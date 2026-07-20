@@ -74,21 +74,10 @@ CREATE TABLE match (
     completed    BOOLEAN NOT NULL DEFAULT FALSE,
     start        TIMESTAMPTZ NOT NULL,
     time_limit   INTERVAL,
+    settings     JSONB NOT NULL DEFAULT '{}'::jsonb,
     create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, match_id)
-);
-
-CREATE TABLE match_setting (
-    game_id               INT NOT NULL,
-    match_id              TEXT NOT NULL,
-    game_parameter_id   INT NOT NULL,
-    value  TEXT NOT NULL,
-    create_date           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    update_date           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (match_id, game_parameter_id),
-    FOREIGN KEY (game_id, match_id) REFERENCES match,
-    FOREIGN KEY (game_id, game_parameter_id, value)  REFERENCES game_parameter_value
 );
 
 
@@ -130,21 +119,11 @@ CREATE TABLE open_challenge (
     number_of_players SMALLINT NOT NULL,
     start        TIMESTAMPTZ,
     time_limit   INTERVAL,
+    settings     JSONB NOT NULL DEFAULT '{}'::jsonb,
     create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 create index on open_challenge(challenger);
-
-CREATE TABLE challenge_setting (
-    game_id               INT NOT NULL REFERENCES GAME,
-    challenge_id              BIGINT NOT NULL REFERENCES OPEN_CHALLENGE,
-    game_parameter_id   INT NOT NULL,
-    value  TEXT NOT NULL,
-    create_date           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    update_date           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (challenge_id, game_parameter_id),
-    FOREIGN KEY (game_id, game_parameter_id, value)  REFERENCES game_parameter_value
-);
 
 
 CREATE TABLE acceptance (
@@ -168,8 +147,8 @@ DECLARE
 BEGIN
     FOREACH t IN ARRAY ARRAY[
         'player', 'game', 'role', 'game_parameter', 'game_parameter_value',
-        'match', 'match_setting', 'participant', 'result',
-        'open_challenge', 'challenge_setting', 'acceptance'
+        'match', 'participant', 'result',
+        'open_challenge', 'acceptance'
     ]
     LOOP
         EXECUTE format(
