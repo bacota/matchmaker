@@ -21,32 +21,32 @@ case class GameRole(
     optional: Boolean
 )
 
-sealed trait Game[T] {
+sealed trait Game{
   def gameId: Int
   def name: String
   def description: String
   def url: String
   def active: Boolean
   def roles: Seq[GameRole]
-  def parameters: Seq[GameParameter[T]]
+  def parameters: Seq[GameParameter[_]]
 }
 
-case class PlayerGame[T](
+case class PlayerGame(
     gameId: Int,
     name: String,
     description: String,
     url: String,
     active: Boolean,
     roles: Seq[GameRole],
-    parameters: Seq[GameParameter[T]]
-) extends Game[T]
+    parameters: Seq[GameParameter[_]]
+) extends Game
 
-case class CharacterGame[T](
+case class CharacterGame(
     gameId: Int,
     name: String,
     description: String,
     url: String,
     active: Boolean,
     roles: Seq[GameRole],
-    parameters: Seq[GameParameter[T]]
-) extends Game[T]
+    parameters: Seq[GameParameter[_]]
+) extends Game
