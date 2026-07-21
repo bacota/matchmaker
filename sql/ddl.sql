@@ -34,6 +34,7 @@ CREATE TABLE game (
     name         TEXT NOT NULL,
     description  TEXT NOT NULL,
     url          TEXT NOT NULL,
+    active Boolean NOT NULL,
     create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -126,6 +127,7 @@ CREATE TABLE participant (
     match_id        TEXT NOT NULL,
     player_id         BIGINT NOT NULL REFERENCES player,
     pending         BOOLEAN NOT NULL DEFAULT FALSE,
+    completed   BOOLEAN NOT NULL,
     due             TIMESTAMPTZ,
     create_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
