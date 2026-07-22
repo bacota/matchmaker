@@ -15,14 +15,14 @@ class OpenChallengeRepo(session: Session[IO]) {
   private val gameId = SkunkIdCodecs.gameId
   private val characterId = SkunkIdCodecs.characterId
   private val instant = SkunkCodecs.instant
-  private val settings: Codec[String] = text
+  private val settings: Codec[String] = SkunkCodecs.jsonb
 
   private def toSeconds(d: Option[Duration]): Option[Double] = d.map(_.getSeconds.toDouble)
   private def fromSeconds(s: Option[Double]): Option[Duration] = s.map(v => Duration.ofSeconds(v.toLong))
 
   private val insertChallenge: Query[(PlayerId, String, Short, Option[Instant], Option[Double], String), ChallengeId] =
     sql"""INSERT INTO open_challenge (challenger, message, number_of_players, start, time_limit, settings)
-          VALUES ($playerId, $text, $int2, ${instant.opt}, ${float8.opt} * INTERVAL '1 second', $settings::jsonb)
+          VALUES ($playerId, $text, $int2, ${instant.opt}, ${float8.opt} * INTERVAL '1 second', $settings)
           RETURNING challenge_id""".query(challengeId)
 
   private val insertPlayerOpenChallenge: Command[(ChallengeId, GameId)] =
@@ -35,7 +35,7 @@ class OpenChallengeRepo(session: Session[IO]) {
     ChallengeId,
     (PlayerId, String, Short, Option[Instant], Option[Double], String, Option[GameId], Option[GameId], Option[CharacterId])
   ] =
-    sql"""SELECT o.challenger, o.message, o.number_of_players, o.start, EXTRACT(EPOCH FROM o.time_limit), o.settings,
+    sql"""SELECT o.challenger, o.message, o.number_of_players, o.start, EXTRACT(EPOCH FROM o.time_limit)::float8, o.settings,
                  poc.game_id AS player_game_id, coc.game_id AS character_game_id, coc.character_id
           FROM open_challenge o
           LEFT JOIN player_open_challenge poc ON poc.challenge_id = o.challenge_id
@@ -45,7 +45,7 @@ class OpenChallengeRepo(session: Session[IO]) {
 
   private val updateChallenge: Command[(PlayerId, String, Short, Option[Instant], Option[Double], String, ChallengeId)] =
     sql"""UPDATE open_challenge SET challenger = $playerId, message = $text, number_of_players = $int2,
-          start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings::jsonb
+          start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings
           WHERE challenge_id = $challengeId""".command
 
   def create(c: OpenChallenge): IO[OpenChallenge] =

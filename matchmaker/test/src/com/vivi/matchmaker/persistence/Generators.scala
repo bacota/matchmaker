@@ -5,18 +5,26 @@ import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 
 object Generators {
+  // Long enough that unique-key columns (nickname, external_id, ...) don't collide across
+  // repeated runs against a persistent local dev database that these tests never clean up.
   def genString: Gen[String] =
-    Gen.choose(6, 16).flatMap(n => Gen.listOfN(n, Gen.alphaNumChar).map(_.mkString))
+    Gen.choose(24, 40).flatMap(n => Gen.listOfN(n, Gen.alphaNumChar).map(_.mkString))
 
   def genInstant: Gen[Instant] = Gen.choose(0L, 2000000000L).map(Instant.ofEpochSecond(_))
 
   def genDuration: Gen[Duration] = Gen.choose(1L, 100000L).map(Duration.ofSeconds(_))
 
+  // ScalaCheck's default seed is deterministic, so separate suites running concurrently in
+  // separate forked JVMs can independently generate the exact same "random" sequence. That's
+  // fine for most fields, but nickname/external_id are unique-constrained, so they're
+  // suffixed with a JVM-entropy-backed UUID to guarantee uniqueness across suites/runs.
+  private def genUniqueString: Gen[String] = genString.map(s => s"$s-${java.util.UUID.randomUUID()}")
+
   def genPlayer: Gen[Player] =
     for {
-      nickname <- genString
+      nickname <- genUniqueString
       isAdmin <- Gen.oneOf(true, false)
-      externalId <- genString
+      externalId <- genUniqueString
     } yield Player(PlayerId(0), nickname, isAdmin, externalId)
 
   def genGame(playerGame: Boolean): Gen[Game] =

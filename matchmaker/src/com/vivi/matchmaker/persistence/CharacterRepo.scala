@@ -11,18 +11,15 @@ import com.vivi.matchmaker.model.{Character, CharacterId, GameId, PlayerId}
 class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private val characterId = SkunkIdCodecs.characterId
   private val playerId = SkunkIdCodecs.playerId
+  private val gameId = SkunkIdCodecs.gameId
   private val state: Codec[T] = SkunkCodecs.jsonAsText[T]
-
-  // character.game_id is BIGINT in the schema (unlike game.game_id, which is INT), so it
-  // needs its own bigint-based codec rather than the shared int4-based GameId codec.
-  private val gameId: Codec[GameId] = int8.imap(v => GameId(v.toInt))(g => g.value.toLong)
 
   private val characterRow: Codec[(GameId, String, String, T, Option[PlayerId])] =
     gameId *: text *: text *: state *: playerId.opt
 
   private val insertCharacter: Query[(GameId, String, String, T, Option[PlayerId]), CharacterId] =
     sql"""INSERT INTO character (game_id, name, description, state, player_id)
-          VALUES ($gameId, $text, $text, $state::jsonb, ${playerId.opt})
+          VALUES ($gameId, $text, $text, $state, ${playerId.opt})
           RETURNING character_id""".query(characterId)
 
   private val selectCharacter: Query[CharacterId, (GameId, String, String, T, Option[PlayerId])] =
@@ -31,7 +28,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
 
   private val updateCharacter: Command[(GameId, String, String, T, Option[PlayerId], CharacterId)] =
     sql"""UPDATE character SET game_id = $gameId, name = $text, description = $text,
-          state = $state::jsonb, player_id = ${playerId.opt}
+          state = $state, player_id = ${playerId.opt}
           WHERE character_id = $characterId""".command
 
   def create(character: Character[T]): IO[Character[T]] =
