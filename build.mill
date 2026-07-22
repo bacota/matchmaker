@@ -4,5 +4,9 @@ import mill._, scalalib._
 
 object matchmaker extends ScalaModule {
   def scalaVersion = "3.3.8"
-  def mvnDeps = Seq(mvn"org.postgresql:postgresql:42.7.4")
+  def mvnDeps = Seq(
+    mvn"org.postgresql:postgresql:42.7.4",
+    mvn"org.tpolecat::doobie-core:1.0.0-RC5",
+    mvn"org.tpolecat::doobie-postgres:1.0.0-RC5"
+  )
 }
