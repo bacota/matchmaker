@@ -15,14 +15,14 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private val gameId = SkunkIdCodecs.gameId
   private val gameRoleId = SkunkIdCodecs.gameRoleId
   private val gameParameterId = SkunkIdCodecs.gameParameterId
-  private val value: Codec[T] = SkunkCodecs.jsonAsText[T]
+  private val value: Codec[T] = SkunkCodecs.plainText[T]
 
   private val insertGameRow: Query[(String, String, String, Boolean), GameId] =
-    sql"""INSERT INTO game (name, description, url, active) VALUES ($varchar, $varchar, $varchar, $bool)
+    sql"""INSERT INTO game (name, description, url, active) VALUES ($text, $text, $text, $bool)
           RETURNING game_id""".query(gameId)
 
   private val updateGameRow: Command[(String, String, String, Boolean, GameId)] =
-    sql"""UPDATE game SET name = $varchar, description = $varchar, url = $varchar, active = $bool
+    sql"""UPDATE game SET name = $text, description = $text, url = $text, active = $bool
           WHERE game_id = $gameId""".command
 
   private val insertPlayerGame: Command[GameId] =
@@ -34,21 +34,21 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private val selectGameRow: Query[GameId, (String, String, String, Boolean, Boolean)] =
     sql"""SELECT g.name, g.description, g.url, g.active, (pg.game_id IS NOT NULL) AS is_player_game
           FROM game g LEFT JOIN player_game pg ON pg.game_id = g.game_id
-          WHERE g.game_id = $gameId""".query(varchar *: varchar *: varchar *: bool *: bool)
+          WHERE g.game_id = $gameId""".query(text *: text *: text *: bool *: bool)
 
   private val insertRoleStmt: Query[(GameId, String, Boolean), GameRoleId] =
-    sql"""INSERT INTO game_role (game_id, name, optional) VALUES ($gameId, $varchar, $bool)
+    sql"""INSERT INTO game_role (game_id, name, optional) VALUES ($gameId, $text, $bool)
           RETURNING game_role_id""".query(gameRoleId)
 
   private val selectRoles: Query[GameId, (GameRoleId, String, Boolean)] =
     sql"SELECT game_role_id, name, optional FROM game_role WHERE game_id = $gameId"
-      .query(gameRoleId *: varchar *: bool)
+      .query(gameRoleId *: text *: bool)
 
   private val deleteRoles: Command[GameId] =
     sql"DELETE FROM game_role WHERE game_id = $gameId".command
 
   private val insertParameterStmt: Query[(GameId, String), GameParameterId] =
-    sql"""INSERT INTO game_parameter (game_id, name) VALUES ($gameId, $varchar)
+    sql"""INSERT INTO game_parameter (game_id, name) VALUES ($gameId, $text)
           RETURNING game_parameter_id""".query(gameParameterId)
 
   private val setDefaultValueStmt: Command[(T, GameId, GameParameterId)] =
@@ -68,7 +68,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
 
   private val selectParameters: Query[GameId, (GameParameterId, String, Option[T])] =
     sql"SELECT game_parameter_id, name, default_value FROM game_parameter WHERE game_id = $gameId"
-      .query(gameParameterId *: varchar *: value.opt)
+      .query(gameParameterId *: text *: value.opt)
 
   private val selectParameterValues: Query[(GameId, GameParameterId), T] =
     sql"SELECT value FROM game_parameter_value WHERE game_id = $gameId AND game_parameter_id = $gameParameterId".query(value)

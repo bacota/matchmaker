@@ -15,14 +15,14 @@ class OpenChallengeRepo(session: Session[IO]) {
   private val gameId = SkunkIdCodecs.gameId
   private val characterId = SkunkIdCodecs.characterId
   private val instant = SkunkCodecs.instant
-  private val settings: Codec[String] = varchar
+  private val settings: Codec[String] = text
 
   private def toSeconds(d: Option[Duration]): Option[Double] = d.map(_.getSeconds.toDouble)
   private def fromSeconds(s: Option[Double]): Option[Duration] = s.map(v => Duration.ofSeconds(v.toLong))
 
   private val insertChallenge: Query[(PlayerId, String, Short, Option[Instant], Option[Double], String), ChallengeId] =
     sql"""INSERT INTO open_challenge (challenger, message, number_of_players, start, time_limit, settings)
-          VALUES ($playerId, $varchar, $int2, ${instant.opt}, ${float8.opt} * INTERVAL '1 second', $settings::jsonb)
+          VALUES ($playerId, $text, $int2, ${instant.opt}, ${float8.opt} * INTERVAL '1 second', $settings::jsonb)
           RETURNING challenge_id""".query(challengeId)
 
   private val insertPlayerOpenChallenge: Command[(ChallengeId, GameId)] =
@@ -41,10 +41,10 @@ class OpenChallengeRepo(session: Session[IO]) {
           LEFT JOIN player_open_challenge poc ON poc.challenge_id = o.challenge_id
           LEFT JOIN character_open_challenge coc ON coc.challenge_id = o.challenge_id
           WHERE o.challenge_id = $challengeId"""
-      .query(playerId *: varchar *: int2 *: instant.opt *: float8.opt *: settings *: gameId.opt *: gameId.opt *: characterId.opt)
+      .query(playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: gameId.opt *: gameId.opt *: characterId.opt)
 
   private val updateChallenge: Command[(PlayerId, String, Short, Option[Instant], Option[Double], String, ChallengeId)] =
-    sql"""UPDATE open_challenge SET challenger = $playerId, message = $varchar, number_of_players = $int2,
+    sql"""UPDATE open_challenge SET challenger = $playerId, message = $text, number_of_players = $int2,
           start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings::jsonb
           WHERE challenge_id = $challengeId""".command
 

@@ -11,18 +11,18 @@ import com.vivi.matchmaker.model.{Player, PlayerId}
 class PlayerRepo(session: Session[IO]) {
   private val playerId = SkunkIdCodecs.playerId
 
-  private val playerRow: Codec[(String, Boolean, String)] = varchar *: bool *: varchar
+  private val playerRow: Codec[(String, Boolean, String)] = text *: bool *: text
 
   private val insertPlayer: Query[(String, Boolean, String), PlayerId] =
     sql"""INSERT INTO player (nickname, is_admin, external_id)
-          VALUES ($varchar, $bool, $varchar)
+          VALUES ($text, $bool, $text)
           RETURNING player_id""".query(playerId)
 
   private val selectPlayer: Query[PlayerId, (String, Boolean, String)] =
     sql"""SELECT nickname, is_admin, external_id FROM player WHERE player_id = $playerId""".query(playerRow)
 
   private val updatePlayer: Command[(String, Boolean, String, PlayerId)] =
-    sql"""UPDATE player SET nickname = $varchar, is_admin = $bool, external_id = $varchar
+    sql"""UPDATE player SET nickname = $text, is_admin = $bool, external_id = $text
           WHERE player_id = $playerId""".command
 
   def create(player: Player): IO[Player] =

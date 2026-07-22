@@ -18,11 +18,11 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private val gameId: Codec[GameId] = int8.imap(v => GameId(v.toInt))(g => g.value.toLong)
 
   private val characterRow: Codec[(GameId, String, String, T, Option[PlayerId])] =
-    gameId *: varchar *: varchar *: state *: playerId.opt
+    gameId *: text *: text *: state *: playerId.opt
 
   private val insertCharacter: Query[(GameId, String, String, T, Option[PlayerId]), CharacterId] =
     sql"""INSERT INTO character (game_id, name, description, state, player_id)
-          VALUES ($gameId, $varchar, $varchar, $state::jsonb, ${playerId.opt})
+          VALUES ($gameId, $text, $text, $state::jsonb, ${playerId.opt})
           RETURNING character_id""".query(characterId)
 
   private val selectCharacter: Query[CharacterId, (GameId, String, String, T, Option[PlayerId])] =
@@ -30,7 +30,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       .query(characterRow)
 
   private val updateCharacter: Command[(GameId, String, String, T, Option[PlayerId], CharacterId)] =
-    sql"""UPDATE character SET game_id = $gameId, name = $varchar, description = $varchar,
+    sql"""UPDATE character SET game_id = $gameId, name = $text, description = $text,
           state = $state::jsonb, player_id = ${playerId.opt}
           WHERE character_id = $characterId""".command
 

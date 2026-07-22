@@ -9,6 +9,15 @@ object matchmaker extends ScalaModule {
     mvn"org.tpolecat::natchez-core:0.3.7"
   )
 
+  object test extends ScalaTests with TestModule.Munit {
+    def mvnDeps = Seq(
+      mvn"org.scalameta::munit:1.0.0",
+      mvn"org.scalameta::munit-scalacheck:1.0.0",
+      mvn"org.typelevel::otel4s-core-trace:0.11.2",
+      mvn"org.typelevel::otel4s-core-metrics:0.11.2"
+    )
+  }
+
   /** Standalone module used only to run Flyway migrations (JDBC-based,
     * independent of the skunk/cats-effect runtime dependencies above).
     * Migration scripts live in matchmaker/resources/db/migration and are
