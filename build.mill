@@ -5,7 +5,8 @@ import mill._, scalalib._
 object matchmaker extends ScalaModule {
   def scalaVersion = "3.3.8"
   def mvnDeps = Seq(
-    mvn"org.tpolecat::skunk-core:0.6.4"
+    mvn"org.tpolecat::skunk-core:1.0.0",
+    mvn"org.tpolecat::natchez-core:0.3.7"
   )
 
   /** Standalone module used only to run Flyway migrations (JDBC-based,
