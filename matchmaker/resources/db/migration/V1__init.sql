@@ -91,7 +91,7 @@ CREATE TABLE game_parameter_value (
 );
 
 alter table game_parameter add foreign key (game_id, game_parameter_id, default_value)
-references game_parameter_value;
+references game_parameter_value deferrable;
 
 CREATE TABLE match (
     game_id      INT NOT NULL REFERENCES game,
