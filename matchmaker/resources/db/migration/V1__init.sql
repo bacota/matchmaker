@@ -49,7 +49,7 @@ CREATE TABLE character_game (
 
 CREATE TABLE character (
 character_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-game_id BIGINT NOT NULL REFERENCES character_game,
+game_id INT NOT NULL REFERENCES character_game,
 name TEXT NOT NULL,
 description TEXT NOT NULL,
 state JSONB NOT NULL,

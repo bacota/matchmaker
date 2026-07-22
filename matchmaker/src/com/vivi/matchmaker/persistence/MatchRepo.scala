@@ -13,7 +13,7 @@ class MatchRepo(session: Session[IO]) {
   private val gameId = SkunkIdCodecs.gameId
   private val matchId = SkunkIdCodecs.matchId
   private val instant = SkunkCodecs.instant
-  private val settings: Codec[String] = text
+  private val settings: Codec[String] = SkunkCodecs.jsonb
 
   // time_limit is bound/read as a second count rather than via a custom INTERVAL codec.
   private def toSeconds(d: Option[Duration]): Option[Double] = d.map(_.getSeconds.toDouble)
@@ -21,7 +21,7 @@ class MatchRepo(session: Session[IO]) {
 
   private val insertMatch: Command[(GameId, MatchId, String, Boolean, Instant, Option[Double], String)] =
     sql"""INSERT INTO match (game_id, match_id, description, completed, start, time_limit, settings)
-          VALUES ($gameId, $matchId, $text, $bool, $instant, ${float8.opt} * INTERVAL '1 second', $settings::jsonb)""".command
+          VALUES ($gameId, $matchId, $text, $bool, $instant, ${float8.opt} * INTERVAL '1 second', $settings)""".command
 
   private val insertPlayerMatchJoin: Command[(GameId, MatchId)] =
     sql"INSERT INTO player_match (game_id, match_id) VALUES ($gameId, $matchId)".command
@@ -30,7 +30,7 @@ class MatchRepo(session: Session[IO]) {
     sql"INSERT INTO character_match (game_id, match_id) VALUES ($gameId, $matchId)".command
 
   private val selectMatch: Query[(GameId, MatchId), (String, Boolean, Instant, Option[Double], String, Boolean)] =
-    sql"""SELECT m.description, m.completed, m.start, EXTRACT(EPOCH FROM m.time_limit), m.settings,
+    sql"""SELECT m.description, m.completed, m.start, EXTRACT(EPOCH FROM m.time_limit)::float8, m.settings,
                  (pm.game_id IS NOT NULL) AS is_player_match
           FROM match m
           LEFT JOIN player_match pm ON pm.game_id = m.game_id AND pm.match_id = m.match_id
@@ -39,7 +39,7 @@ class MatchRepo(session: Session[IO]) {
 
   private val updateMatch: Command[(String, Boolean, Instant, Option[Double], String, GameId, MatchId)] =
     sql"""UPDATE match SET description = $text, completed = $bool, start = $instant,
-          time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings::jsonb
+          time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
   def create(m: Match): IO[Match] =
