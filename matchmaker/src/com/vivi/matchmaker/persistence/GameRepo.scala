@@ -71,15 +71,17 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     sql"SELECT value FROM game_parameter_value WHERE game_id = $int4 AND game_parameter_id = $int4".query(value)
 
   def create(game: Game): IO[Game] =
-    for {
-      gameId <- session.unique(insertGameRow)((game.name, game.description, game.url, game.active))
-      _ <- game match {
-        case _: PlayerGame    => session.execute(insertPlayerGame)(gameId)
-        case _: CharacterGame => session.execute(insertCharacterGame)(gameId)
-      }
-      roles <- game.roles.toList.traverse(insertRole(gameId, _))
-      parameters <- game.parameters.toList.traverse(p => insertParameter(gameId, p.asInstanceOf[GameParameter[T]]))
-    } yield build(game, gameId, roles, parameters)
+    session.transaction.use { _ =>
+      for {
+        gameId <- session.unique(insertGameRow)((game.name, game.description, game.url, game.active))
+        _ <- game match {
+          case _: PlayerGame    => session.execute(insertPlayerGame)(gameId)
+          case _: CharacterGame => session.execute(insertCharacterGame)(gameId)
+        }
+        roles <- game.roles.toList.traverse(insertRole(gameId, _))
+        parameters <- game.parameters.toList.traverse(p => insertParameter(gameId, p.asInstanceOf[GameParameter[T]]))
+      } yield build(game, gameId, roles, parameters)
+    }
 
   def read(gameId: Int): IO[Option[Game]] =
     session.option(selectGameRow)(gameId).flatMap {
@@ -95,11 +97,13 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     }
 
   def update(game: Game): IO[Unit] =
-    for {
-      _ <- session.execute(updateGameRow)((game.name, game.description, game.url, game.active, game.gameId))
-      _ <- replaceRoles(game.gameId, game.roles)
-      _ <- replaceParameters(game.gameId, game.parameters)
-    } yield ()
+    session.transaction.use { _ =>
+      for {
+        _ <- session.execute(updateGameRow)((game.name, game.description, game.url, game.active, game.gameId))
+        _ <- replaceRoles(game.gameId, game.roles)
+        _ <- replaceParameters(game.gameId, game.parameters)
+      } yield ()
+    }
 
   private def insertRole(gameId: Int, role: GameRole): IO[GameRole] =
     session

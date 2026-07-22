@@ -26,13 +26,15 @@ class AcceptanceRepo(session: Session[IO]) {
           WHERE a.challenge_id = $int8 AND a.player_id = $int8""".query(int8.opt)
 
   def create(a: Acceptance): IO[Acceptance] =
-    for {
-      _ <- session.execute(insertAcceptance)((a.challengeId, a.playerId))
-      _ <- a match {
-        case pa: PlayerAcceptance    => session.execute(insertPlayerAcceptance)((pa.challengeId, pa.playerId))
-        case ca: CharacterAcceptance => session.execute(insertCharacterAcceptance)((ca.challengeId, ca.playerId, ca.characterId))
-      }
-    } yield a
+    session.transaction.use { _ =>
+      for {
+        _ <- session.execute(insertAcceptance)((a.challengeId, a.playerId))
+        _ <- a match {
+          case pa: PlayerAcceptance    => session.execute(insertPlayerAcceptance)((pa.challengeId, pa.playerId))
+          case ca: CharacterAcceptance => session.execute(insertCharacterAcceptance)((ca.challengeId, ca.playerId, ca.characterId))
+        }
+      } yield a
+    }
 
   def read(challengeId: Long, playerId: Long): IO[Option[Acceptance]] =
     session.option(selectAcceptance)((challengeId, playerId)).map(_.map {

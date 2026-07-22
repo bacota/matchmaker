@@ -45,21 +45,23 @@ class OpenChallengeRepo(session: Session[IO]) {
           WHERE challenge_id = $int8""".command
 
   def create(c: OpenChallenge): IO[OpenChallenge] =
-    for {
-      challengeId <- session.unique(insertChallenge)(
-        (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings)
-      )
-      result <- c match {
-        case poc: PlayerOpenChallenge =>
-          session
-            .execute(insertPlayerOpenChallenge)((challengeId, poc.gameId))
-            .as(poc.copy(challengeId = challengeId): OpenChallenge)
-        case coc: CharacterOpenChallenge =>
-          session
-            .execute(insertCharacterOpenChallenge)((challengeId, coc.characterId, coc.gameId))
-            .as(coc.copy(challengeId = challengeId): OpenChallenge)
-      }
-    } yield result
+    session.transaction.use { _ =>
+      for {
+        challengeId <- session.unique(insertChallenge)(
+          (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings)
+        )
+        result <- c match {
+          case poc: PlayerOpenChallenge =>
+            session
+              .execute(insertPlayerOpenChallenge)((challengeId, poc.gameId))
+              .as(poc.copy(challengeId = challengeId): OpenChallenge)
+          case coc: CharacterOpenChallenge =>
+            session
+              .execute(insertCharacterOpenChallenge)((challengeId, coc.characterId, coc.gameId))
+              .as(coc.copy(challengeId = challengeId): OpenChallenge)
+        }
+      } yield result
+    }
 
   def read(challengeId: Long): IO[Option[OpenChallenge]] =
     session.option(selectChallenge)(challengeId).map(_.map {
@@ -84,9 +86,11 @@ class OpenChallengeRepo(session: Session[IO]) {
     })
 
   def update(c: OpenChallenge): IO[Unit] =
-    session
-      .execute(updateChallenge)(
-        (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.challengeId)
-      )
-      .void
+    session.transaction.use { _ =>
+      session
+        .execute(updateChallenge)(
+          (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.challengeId)
+        )
+        .void
+    }
 }

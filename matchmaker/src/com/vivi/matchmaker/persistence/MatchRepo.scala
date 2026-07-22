@@ -41,13 +41,15 @@ class MatchRepo(session: Session[IO]) {
           WHERE game_id = $int4 AND match_id = $varchar""".command
 
   def create(m: Match): IO[Match] =
-    for {
-      _ <- session.execute(insertMatch)((m.gameId, m.matchId, m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings))
-      _ <- m match {
-        case _: PlayerMatch    => session.execute(insertPlayerMatchJoin)((m.gameId, m.matchId))
-        case _: CharacterMatch => session.execute(insertCharacterMatchJoin)((m.gameId, m.matchId))
-      }
-    } yield m
+    session.transaction.use { _ =>
+      for {
+        _ <- session.execute(insertMatch)((m.gameId, m.matchId, m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings))
+        _ <- m match {
+          case _: PlayerMatch    => session.execute(insertPlayerMatchJoin)((m.gameId, m.matchId))
+          case _: CharacterMatch => session.execute(insertCharacterMatchJoin)((m.gameId, m.matchId))
+        }
+      } yield m
+    }
 
   def read(gameId: Int, matchId: String): IO[Option[Match]] =
     session.option(selectMatch)((gameId, matchId)).map(_.map {
@@ -58,9 +60,11 @@ class MatchRepo(session: Session[IO]) {
     })
 
   def update(m: Match): IO[Unit] =
-    session
-      .execute(updateMatch)(
-        (m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings, m.gameId, m.matchId)
-      )
-      .void
+    session.transaction.use { _ =>
+      session
+        .execute(updateMatch)(
+          (m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings, m.gameId, m.matchId)
+        )
+        .void
+    }
 }
