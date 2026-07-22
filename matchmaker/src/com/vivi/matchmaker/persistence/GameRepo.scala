@@ -12,63 +12,66 @@ import com.vivi.matchmaker.model._
   * and updated together, so this repo persists the whole aggregate in one call.
   */
 class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
+  private val gameId = SkunkIdCodecs.gameId
+  private val gameRoleId = SkunkIdCodecs.gameRoleId
+  private val gameParameterId = SkunkIdCodecs.gameParameterId
   private val value: Codec[T] = SkunkCodecs.jsonAsText[T]
 
-  private val insertGameRow: Query[(String, String, String, Boolean), Int] =
+  private val insertGameRow: Query[(String, String, String, Boolean), GameId] =
     sql"""INSERT INTO game (name, description, url, active) VALUES ($varchar, $varchar, $varchar, $bool)
-          RETURNING game_id""".query(int4)
+          RETURNING game_id""".query(gameId)
 
-  private val updateGameRow: Command[(String, String, String, Boolean, Int)] =
+  private val updateGameRow: Command[(String, String, String, Boolean, GameId)] =
     sql"""UPDATE game SET name = $varchar, description = $varchar, url = $varchar, active = $bool
-          WHERE game_id = $int4""".command
+          WHERE game_id = $gameId""".command
 
-  private val insertPlayerGame: Command[Int] =
-    sql"INSERT INTO player_game (game_id) VALUES ($int4)".command
+  private val insertPlayerGame: Command[GameId] =
+    sql"INSERT INTO player_game (game_id) VALUES ($gameId)".command
 
-  private val insertCharacterGame: Command[Int] =
-    sql"INSERT INTO character_game (game_id) VALUES ($int4)".command
+  private val insertCharacterGame: Command[GameId] =
+    sql"INSERT INTO character_game (game_id) VALUES ($gameId)".command
 
-  private val selectGameRow: Query[Int, (String, String, String, Boolean, Boolean)] =
+  private val selectGameRow: Query[GameId, (String, String, String, Boolean, Boolean)] =
     sql"""SELECT g.name, g.description, g.url, g.active, (pg.game_id IS NOT NULL) AS is_player_game
           FROM game g LEFT JOIN player_game pg ON pg.game_id = g.game_id
-          WHERE g.game_id = $int4""".query(varchar *: varchar *: varchar *: bool *: bool)
+          WHERE g.game_id = $gameId""".query(varchar *: varchar *: varchar *: bool *: bool)
 
-  private val insertRoleStmt: Query[(Int, String, Boolean), Int] =
-    sql"""INSERT INTO game_role (game_id, name, optional) VALUES ($int4, $varchar, $bool)
-          RETURNING game_role_id""".query(int4)
+  private val insertRoleStmt: Query[(GameId, String, Boolean), GameRoleId] =
+    sql"""INSERT INTO game_role (game_id, name, optional) VALUES ($gameId, $varchar, $bool)
+          RETURNING game_role_id""".query(gameRoleId)
 
-  private val selectRoles: Query[Int, (Int, String, Boolean)] =
-    sql"SELECT game_role_id, name, optional FROM game_role WHERE game_id = $int4"
-      .query(int4 *: varchar *: bool)
+  private val selectRoles: Query[GameId, (GameRoleId, String, Boolean)] =
+    sql"SELECT game_role_id, name, optional FROM game_role WHERE game_id = $gameId"
+      .query(gameRoleId *: varchar *: bool)
 
-  private val deleteRoles: Command[Int] =
-    sql"DELETE FROM game_role WHERE game_id = $int4".command
+  private val deleteRoles: Command[GameId] =
+    sql"DELETE FROM game_role WHERE game_id = $gameId".command
 
-  private val insertParameterStmt: Query[(Int, String), Int] =
-    sql"""INSERT INTO game_parameter (game_id, name) VALUES ($int4, $varchar)
-          RETURNING game_parameter_id""".query(int4)
+  private val insertParameterStmt: Query[(GameId, String), GameParameterId] =
+    sql"""INSERT INTO game_parameter (game_id, name) VALUES ($gameId, $varchar)
+          RETURNING game_parameter_id""".query(gameParameterId)
 
-  private val setDefaultValueStmt: Command[(T, Int, Int)] =
-    sql"UPDATE game_parameter SET default_value = $value WHERE game_id = $int4 AND game_parameter_id = $int4".command
+  private val setDefaultValueStmt: Command[(T, GameId, GameParameterId)] =
+    sql"UPDATE game_parameter SET default_value = $value WHERE game_id = $gameId AND game_parameter_id = $gameParameterId".command
 
-  private val clearDefaultValues: Command[Int] =
-    sql"UPDATE game_parameter SET default_value = NULL WHERE game_id = $int4".command
+  private val clearDefaultValues: Command[GameId] =
+    sql"UPDATE game_parameter SET default_value = NULL WHERE game_id = $gameId".command
 
-  private val insertParameterValueStmt: Command[(Int, Int, T)] =
-    sql"INSERT INTO game_parameter_value (game_id, game_parameter_id, value) VALUES ($int4, $int4, $value)".command
+  private val insertParameterValueStmt: Command[(GameId, GameParameterId, T)] =
+    sql"INSERT INTO game_parameter_value (game_id, game_parameter_id, value) VALUES ($gameId, $gameParameterId, $value)".command
 
-  private val deleteParameterValues: Command[Int] =
-    sql"DELETE FROM game_parameter_value WHERE game_id = $int4".command
+  private val deleteParameterValues: Command[GameId] =
+    sql"DELETE FROM game_parameter_value WHERE game_id = $gameId".command
 
-  private val deleteParameters: Command[Int] =
-    sql"DELETE FROM game_parameter WHERE game_id = $int4".command
+  private val deleteParameters: Command[GameId] =
+    sql"DELETE FROM game_parameter WHERE game_id = $gameId".command
 
-  private val selectParameters: Query[Int, (Int, String, Option[T])] =
-    sql"SELECT game_parameter_id, name, default_value FROM game_parameter WHERE game_id = $int4"
-      .query(int4 *: varchar *: value.opt)
+  private val selectParameters: Query[GameId, (GameParameterId, String, Option[T])] =
+    sql"SELECT game_parameter_id, name, default_value FROM game_parameter WHERE game_id = $gameId"
+      .query(gameParameterId *: varchar *: value.opt)
 
-  private val selectParameterValues: Query[(Int, Int), T] =
-    sql"SELECT value FROM game_parameter_value WHERE game_id = $int4 AND game_parameter_id = $int4".query(value)
+  private val selectParameterValues: Query[(GameId, GameParameterId), T] =
+    sql"SELECT value FROM game_parameter_value WHERE game_id = $gameId AND game_parameter_id = $gameParameterId".query(value)
 
   def create(game: Game): IO[Game] =
     session.transaction.use { _ =>
@@ -83,16 +86,16 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       } yield build(game, gameId, roles, parameters)
     }
 
-  def read(gameId: Int): IO[Option[Game]] =
-    session.option(selectGameRow)(gameId).flatMap {
+  def read(id: GameId): IO[Option[Game]] =
+    session.option(selectGameRow)(id).flatMap {
       case None => IO.pure(None)
       case Some((name, description, url, active, isPlayerGame)) =>
         for {
-          roles <- readRoles(gameId)
-          parameters <- readParameters(gameId)
+          roles <- readRoles(id)
+          parameters <- readParameters(id)
         } yield Some(
-          if (isPlayerGame) PlayerGame(gameId, name, description, url, active, roles, parameters)
-          else CharacterGame(gameId, name, description, url, active, roles, parameters)
+          if (isPlayerGame) PlayerGame(id, name, description, url, active, roles, parameters)
+          else CharacterGame(id, name, description, url, active, roles, parameters)
         )
     }
 
@@ -105,15 +108,15 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       } yield ()
     }
 
-  private def insertRole(gameId: Int, role: GameRole): IO[GameRole] =
+  private def insertRole(gameId: GameId, role: GameRole): IO[GameRole] =
     session
       .unique(insertRoleStmt)((gameId, role.name, role.optional))
       .map(id => role.copy(gameRoleId = id, gameId = gameId))
 
-  private def readRoles(gameId: Int): IO[Seq[GameRole]] =
+  private def readRoles(gameId: GameId): IO[Seq[GameRole]] =
     session.execute(selectRoles)(gameId).map(_.map { case (id, name, optional) => GameRole(id, gameId, name, optional) })
 
-  private def replaceRoles(gameId: Int, roles: Seq[GameRole]): IO[Unit] =
+  private def replaceRoles(gameId: GameId, roles: Seq[GameRole]): IO[Unit] =
     for {
       _ <- session.execute(deleteRoles)(gameId)
       _ <- roles.toList.traverse(insertRole(gameId, _))
@@ -122,7 +125,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   // game_parameter.default_value has a composite FK to game_parameter_value(game_id,
   // game_parameter_id, value), so the parameter row must be inserted before its values
   // exist, and default_value can only be set once a matching value row is present.
-  private def insertParameter(gameId: Int, parameter: GameParameter[T]): IO[GameParameter[T]] =
+  private def insertParameter(gameId: GameId, parameter: GameParameter[T]): IO[GameParameter[T]] =
     for {
       parameterId <- session.unique(insertParameterStmt)((gameId, parameter.name))
       values <- parameter.values.toList.traverse(v => insertParameterValue(gameId, parameterId, v))
@@ -132,22 +135,22 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       }
     } yield parameter.copy(gameId = gameId, gameParameterId = parameterId, values = values)
 
-  private def insertParameterValue(gameId: Int, parameterId: Int, value: GameParameterValue[T]): IO[GameParameterValue[T]] =
+  private def insertParameterValue(gameId: GameId, parameterId: GameParameterId, value: GameParameterValue[T]): IO[GameParameterValue[T]] =
     session
       .execute(insertParameterValueStmt)((gameId, parameterId, value.value))
       .as(value.copy(gameId = gameId, gameParameterId = parameterId))
 
-  private def readParameters(gameId: Int): IO[Seq[GameParameter[T]]] =
+  private def readParameters(gameId: GameId): IO[Seq[GameParameter[T]]] =
     session.execute(selectParameters)(gameId).flatMap(_.traverse { case (parameterId, name, defaultValue) =>
       readParameterValues(gameId, parameterId).map(values => GameParameter(gameId, parameterId, name, defaultValue, values))
     })
 
-  private def readParameterValues(gameId: Int, parameterId: Int): IO[Seq[GameParameterValue[T]]] =
+  private def readParameterValues(gameId: GameId, parameterId: GameParameterId): IO[Seq[GameParameterValue[T]]] =
     session
       .execute(selectParameterValues)((gameId, parameterId))
       .map(_.map(v => GameParameterValue(gameId, parameterId, v)))
 
-  private def replaceParameters(gameId: Int, parameters: Seq[GameParameter[_]]): IO[Unit] =
+  private def replaceParameters(gameId: GameId, parameters: Seq[GameParameter[_]]): IO[Unit] =
     for {
       _ <- session.execute(clearDefaultValues)(gameId)
       _ <- session.execute(deleteParameterValues)(gameId)
@@ -155,7 +158,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       _ <- parameters.toList.traverse(p => insertParameter(gameId, p.asInstanceOf[GameParameter[T]]))
     } yield ()
 
-  private def build(game: Game, gameId: Int, roles: Seq[GameRole], parameters: Seq[GameParameter[T]]): Game =
+  private def build(game: Game, gameId: GameId, roles: Seq[GameRole], parameters: Seq[GameParameter[T]]): Game =
     game match {
       case g: PlayerGame    => g.copy(gameId = gameId, roles = roles, parameters = parameters)
       case g: CharacterGame => g.copy(gameId = gameId, roles = roles, parameters = parameters)

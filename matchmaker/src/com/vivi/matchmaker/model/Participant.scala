@@ -3,33 +3,33 @@ package com.vivi.matchmaker.model
 import java.time.Instant
 
 sealed trait Participant {
-  def participantId: Long
-  def gameId: Int
-  def matchId: String
-  def playerId: Long
+  def participantId: ParticipantId
+  def gameId: GameId
+  def matchId: MatchId
+  def playerId: PlayerId
   def pending: Boolean
   def completed: Boolean
   def due: Option[Instant]
 }
 
 case class PlayerParticipant(
-    participantId: Long,
-    gameId: Int,
-    matchId: String,
-    playerId: Long,
+    participantId: ParticipantId,
+    gameId: GameId,
+    matchId: MatchId,
+    playerId: PlayerId,
     pending: Boolean,
     completed: Boolean,
     due: Option[Instant],
-    gameRoleId: Int
+    gameRoleId: GameRoleId
 ) extends Participant
 
 case class CharacterParticipant(
-    participantId: Long,
-    gameId: Int,
-    matchId: String,
-    playerId: Long,
+    participantId: ParticipantId,
+    gameId: GameId,
+    matchId: MatchId,
+    playerId: PlayerId,
     pending: Boolean,
     completed: Boolean,
     due: Option[Instant],
-    characterId: Long
+    characterId: CharacterId
 ) extends Participant

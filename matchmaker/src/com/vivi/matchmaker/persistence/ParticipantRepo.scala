@@ -10,40 +10,46 @@ import java.time.Instant
 import com.vivi.matchmaker.model._
 
 class ParticipantRepo(session: Session[IO]) {
+  private val participantId = SkunkIdCodecs.participantId
+  private val gameId = SkunkIdCodecs.gameId
+  private val matchId = SkunkIdCodecs.matchId
+  private val playerId = SkunkIdCodecs.playerId
+  private val gameRoleId = SkunkIdCodecs.gameRoleId
+  private val characterId = SkunkIdCodecs.characterId
   private val instant = SkunkCodecs.instant
 
-  private val insertParticipant: Query[(Int, String, Long, Boolean, Boolean, Option[Instant]), Long] =
+  private val insertParticipant: Query[(GameId, MatchId, PlayerId, Boolean, Boolean, Option[Instant]), ParticipantId] =
     sql"""INSERT INTO participant (game_id, match_id, player_id, pending, completed, due)
-          VALUES ($int4, $varchar, $int8, $bool, $bool, ${instant.opt})
-          RETURNING participant_id""".query(int8)
+          VALUES ($gameId, $matchId, $playerId, $bool, $bool, ${instant.opt})
+          RETURNING participant_id""".query(participantId)
 
-  private val insertPlayerParticipant: Command[(Long, Int, String, Int)] =
+  private val insertPlayerParticipant: Command[(ParticipantId, GameId, MatchId, GameRoleId)] =
     sql"""INSERT INTO player_participant (participant_id, game_id, match_id, game_role_id)
-          VALUES ($int8, $int4, $varchar, $int4)""".command
+          VALUES ($participantId, $gameId, $matchId, $gameRoleId)""".command
 
-  private val insertCharacterParticipant: Command[(Long, Int, String, Long)] =
+  private val insertCharacterParticipant: Command[(ParticipantId, GameId, MatchId, CharacterId)] =
     sql"""INSERT INTO character_participant (participant_id, game_id, match_id, character_id)
-          VALUES ($int8, $int4, $varchar, $int8)""".command
+          VALUES ($participantId, $gameId, $matchId, $characterId)""".command
 
   private val selectParticipant
-      : Query[Long, (Int, String, Long, Boolean, Boolean, Option[Instant], Option[Int], Option[Long])] =
+      : Query[ParticipantId, (GameId, MatchId, PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId], Option[CharacterId])] =
     sql"""SELECT p.game_id, p.match_id, p.player_id, p.pending, p.completed, p.due,
                  pp.game_role_id, cp.character_id
           FROM participant p
           LEFT JOIN player_participant pp ON pp.participant_id = p.participant_id
           LEFT JOIN character_participant cp ON cp.participant_id = p.participant_id
-          WHERE p.participant_id = $int8"""
-      .query(int4 *: varchar *: int8 *: bool *: bool *: instant.opt *: int4.opt *: int8.opt)
+          WHERE p.participant_id = $participantId"""
+      .query(gameId *: matchId *: playerId *: bool *: bool *: instant.opt *: gameRoleId.opt *: characterId.opt)
 
-  private val updateParticipant: Command[(Long, Boolean, Boolean, Option[Instant], Long)] =
-    sql"""UPDATE participant SET player_id = $int8, pending = $bool, completed = $bool, due = ${instant.opt}
-          WHERE participant_id = $int8""".command
+  private val updateParticipant: Command[(PlayerId, Boolean, Boolean, Option[Instant], ParticipantId)] =
+    sql"""UPDATE participant SET player_id = $playerId, pending = $bool, completed = $bool, due = ${instant.opt}
+          WHERE participant_id = $participantId""".command
 
-  private val updatePlayerParticipant: Command[(Int, Long)] =
-    sql"UPDATE player_participant SET game_role_id = $int4 WHERE participant_id = $int8".command
+  private val updatePlayerParticipant: Command[(GameRoleId, ParticipantId)] =
+    sql"UPDATE player_participant SET game_role_id = $gameRoleId WHERE participant_id = $participantId".command
 
-  private val updateCharacterParticipant: Command[(Long, Long)] =
-    sql"UPDATE character_participant SET character_id = $int8 WHERE participant_id = $int8".command
+  private val updateCharacterParticipant: Command[(CharacterId, ParticipantId)] =
+    sql"UPDATE character_participant SET character_id = $characterId WHERE participant_id = $participantId".command
 
   def create(p: Participant): IO[Participant] =
     session.transaction.use { _ =>
@@ -62,12 +68,12 @@ class ParticipantRepo(session: Session[IO]) {
       } yield result
     }
 
-  def read(participantId: Long): IO[Option[Participant]] =
-    session.option(selectParticipant)(participantId).map(_.map {
+  def read(id: ParticipantId): IO[Option[Participant]] =
+    session.option(selectParticipant)(id).map(_.map {
       case (gameId, matchId, playerId, pending, completed, due, gameRoleId, characterId) =>
         gameRoleId match {
-          case Some(roleId) => PlayerParticipant(participantId, gameId, matchId, playerId, pending, completed, due, roleId)
-          case None => CharacterParticipant(participantId, gameId, matchId, playerId, pending, completed, due, characterId.get)
+          case Some(roleId) => PlayerParticipant(id, gameId, matchId, playerId, pending, completed, due, roleId)
+          case None => CharacterParticipant(id, gameId, matchId, playerId, pending, completed, due, characterId.get)
         }
     })
 

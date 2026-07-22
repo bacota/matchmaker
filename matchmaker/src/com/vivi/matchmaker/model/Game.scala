@@ -1,28 +1,28 @@
 package com.vivi.matchmaker.model
 
 case class GameParameterValue[T](
-    gameId: Int,
-    gameParameterId: Int,
+    gameId: GameId,
+    gameParameterId: GameParameterId,
     value: T
 )
 
 case class GameParameter[T](
-    gameId: Int,
-    gameParameterId: Int,
+    gameId: GameId,
+    gameParameterId: GameParameterId,
     name: String,
     defaultValue: Option[T],
     values: Seq[GameParameterValue[T]]
 )
 
 case class GameRole(
-    gameRoleId: Int,
-    gameId: Int,
+    gameRoleId: GameRoleId,
+    gameId: GameId,
     name: String,
     optional: Boolean
 )
 
 sealed trait Game{
-  def gameId: Int
+  def gameId: GameId
   def name: String
   def description: String
   def url: String
@@ -32,7 +32,7 @@ sealed trait Game{
 }
 
 case class PlayerGame(
-    gameId: Int,
+    gameId: GameId,
     name: String,
     description: String,
     url: String,
@@ -42,7 +42,7 @@ case class PlayerGame(
 ) extends Game
 
 case class CharacterGame(
-    gameId: Int,
+    gameId: GameId,
     name: String,
     description: String,
     url: String,

@@ -3,8 +3,8 @@ package com.vivi.matchmaker.model
 import java.time.{Duration, Instant}
 
 sealed trait OpenChallenge {
-  def challengeId: Long
-  def challenger: Long
+  def challengeId: ChallengeId
+  def challenger: PlayerId
   def message: String
   def numberOfPlayers: Short
   def start: Option[Instant]
@@ -13,24 +13,24 @@ sealed trait OpenChallenge {
 }
 
 case class PlayerOpenChallenge(
-    challengeId: Long,
-    challenger: Long,
+    challengeId: ChallengeId,
+    challenger: PlayerId,
     message: String,
     numberOfPlayers: Short,
     start: Option[Instant],
     timeLimit: Option[Duration],
     settings: String,
-    gameId: Int
+    gameId: GameId
 ) extends OpenChallenge
 
 case class CharacterOpenChallenge(
-    challengeId: Long,
-    challenger: Long,
+    challengeId: ChallengeId,
+    challenger: PlayerId,
     message: String,
     numberOfPlayers: Short,
     start: Option[Instant],
     timeLimit: Option[Duration],
     settings: String,
-    gameId: Int,
-    characterId: Long
+    gameId: GameId,
+    characterId: CharacterId
 ) extends OpenChallenge

@@ -3,8 +3,8 @@ package com.vivi.matchmaker.model
 import java.time.{Duration, Instant}
 
 sealed trait Match {
-  def gameId: Int
-  def matchId: String
+  def gameId: GameId
+  def matchId: MatchId
   def description: String
   def completed: Boolean
   def start: Instant
@@ -13,8 +13,8 @@ sealed trait Match {
 }
 
 case class PlayerMatch(
-    gameId: Int,
-    matchId: String,
+    gameId: GameId,
+    matchId: MatchId,
     description: String,
     completed: Boolean,
     start: Instant,
@@ -23,8 +23,8 @@ case class PlayerMatch(
 ) extends Match
 
 case class CharacterMatch(
-    gameId: Int,
-    matchId: String,
+    gameId: GameId,
+    matchId: MatchId,
     description: String,
     completed: Boolean,
     start: Instant,

@@ -6,23 +6,24 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.Player
+import com.vivi.matchmaker.model.{Player, PlayerId}
 
 class PlayerRepo(session: Session[IO]) {
+  private val playerId = SkunkIdCodecs.playerId
 
   private val playerRow: Codec[(String, Boolean, String)] = varchar *: bool *: varchar
 
-  private val insertPlayer: Query[(String, Boolean, String), Long] =
+  private val insertPlayer: Query[(String, Boolean, String), PlayerId] =
     sql"""INSERT INTO player (nickname, is_admin, external_id)
           VALUES ($varchar, $bool, $varchar)
-          RETURNING player_id""".query(int8)
+          RETURNING player_id""".query(playerId)
 
-  private val selectPlayer: Query[Long, (String, Boolean, String)] =
-    sql"""SELECT nickname, is_admin, external_id FROM player WHERE player_id = $int8""".query(playerRow)
+  private val selectPlayer: Query[PlayerId, (String, Boolean, String)] =
+    sql"""SELECT nickname, is_admin, external_id FROM player WHERE player_id = $playerId""".query(playerRow)
 
-  private val updatePlayer: Command[(String, Boolean, String, Long)] =
+  private val updatePlayer: Command[(String, Boolean, String, PlayerId)] =
     sql"""UPDATE player SET nickname = $varchar, is_admin = $bool, external_id = $varchar
-          WHERE player_id = $int8""".command
+          WHERE player_id = $playerId""".command
 
   def create(player: Player): IO[Player] =
     session.transaction.use { _ =>
@@ -31,9 +32,9 @@ class PlayerRepo(session: Session[IO]) {
         .map(id => player.copy(playerId = id))
     }
 
-  def read(playerId: Long): IO[Option[Player]] =
-    session.option(selectPlayer)(playerId).map(_.map { case (nickname, isAdmin, externalId) =>
-      Player(playerId, nickname, isAdmin, externalId)
+  def read(id: PlayerId): IO[Option[Player]] =
+    session.option(selectPlayer)(id).map(_.map { case (nickname, isAdmin, externalId) =>
+      Player(id, nickname, isAdmin, externalId)
     })
 
   def update(player: Player): IO[Unit] =

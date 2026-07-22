@@ -9,21 +9,24 @@ import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model._
 
 class AcceptanceRepo(session: Session[IO]) {
+  private val challengeId = SkunkIdCodecs.challengeId
+  private val playerId = SkunkIdCodecs.playerId
+  private val characterId = SkunkIdCodecs.characterId
 
-  private val insertAcceptance: Command[(Long, Long)] =
-    sql"INSERT INTO acceptance (challenge_id, player_id) VALUES ($int8, $int8)".command
+  private val insertAcceptance: Command[(ChallengeId, PlayerId)] =
+    sql"INSERT INTO acceptance (challenge_id, player_id) VALUES ($challengeId, $playerId)".command
 
-  private val insertPlayerAcceptance: Command[(Long, Long)] =
-    sql"INSERT INTO player_acceptance (challenge_id, player_id) VALUES ($int8, $int8)".command
+  private val insertPlayerAcceptance: Command[(ChallengeId, PlayerId)] =
+    sql"INSERT INTO player_acceptance (challenge_id, player_id) VALUES ($challengeId, $playerId)".command
 
-  private val insertCharacterAcceptance: Command[(Long, Long, Long)] =
-    sql"INSERT INTO character_acceptance (challenge_id, player_id, character_id) VALUES ($int8, $int8, $int8)".command
+  private val insertCharacterAcceptance: Command[(ChallengeId, PlayerId, CharacterId)] =
+    sql"INSERT INTO character_acceptance (challenge_id, player_id, character_id) VALUES ($challengeId, $playerId, $characterId)".command
 
-  private val selectAcceptance: Query[(Long, Long), Option[Long]] =
+  private val selectAcceptance: Query[(ChallengeId, PlayerId), Option[CharacterId]] =
     sql"""SELECT ca.character_id
           FROM acceptance a
           LEFT JOIN character_acceptance ca ON ca.challenge_id = a.challenge_id AND ca.player_id = a.player_id
-          WHERE a.challenge_id = $int8 AND a.player_id = $int8""".query(int8.opt)
+          WHERE a.challenge_id = $challengeId AND a.player_id = $playerId""".query(characterId.opt)
 
   def create(a: Acceptance): IO[Acceptance] =
     session.transaction.use { _ =>
@@ -36,7 +39,7 @@ class AcceptanceRepo(session: Session[IO]) {
       } yield a
     }
 
-  def read(challengeId: Long, playerId: Long): IO[Option[Acceptance]] =
+  def read(challengeId: ChallengeId, playerId: PlayerId): IO[Option[Acceptance]] =
     session.option(selectAcceptance)((challengeId, playerId)).map(_.map {
       case Some(characterId) => CharacterAcceptance(challengeId, playerId, characterId)
       case None               => PlayerAcceptance(challengeId, playerId)

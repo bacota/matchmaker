@@ -1,10 +1,10 @@
 package com.vivi.matchmaker.model
 
 case class Character[T](
-    characterId: Long,
-    gameId: Long,
+    characterId: CharacterId,
+    gameId: GameId,
     name: String,
     description: String,
     state: T,
-    playerId: Option[Long]
+    playerId: Option[PlayerId]
 )

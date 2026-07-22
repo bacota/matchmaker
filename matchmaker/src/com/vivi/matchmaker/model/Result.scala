@@ -1,7 +1,7 @@
 package com.vivi.matchmaker.model
 
 case class Result(
-    participantId: Long,
+    participantId: ParticipantId,
     rank: Int,
     score: Double
 )

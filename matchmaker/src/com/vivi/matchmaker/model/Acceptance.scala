@@ -1,17 +1,17 @@
 package com.vivi.matchmaker.model
 
 sealed trait Acceptance {
-  def challengeId: Long
-  def playerId: Long
+  def challengeId: ChallengeId
+  def playerId: PlayerId
 }
 
 case class PlayerAcceptance(
-    challengeId: Long,
-    playerId: Long
+    challengeId: ChallengeId,
+    playerId: PlayerId
 ) extends Acceptance
 
 case class CharacterAcceptance(
-    challengeId: Long,
-    playerId: Long,
-    characterId: Long
+    challengeId: ChallengeId,
+    playerId: PlayerId,
+    characterId: CharacterId
 ) extends Acceptance

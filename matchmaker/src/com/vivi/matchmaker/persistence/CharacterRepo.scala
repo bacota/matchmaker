@@ -6,27 +6,33 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.Character
+import com.vivi.matchmaker.model.{Character, CharacterId, GameId, PlayerId}
 
 class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
+  private val characterId = SkunkIdCodecs.characterId
+  private val playerId = SkunkIdCodecs.playerId
   private val state: Codec[T] = SkunkCodecs.jsonAsText[T]
 
-  private val characterRow: Codec[(Long, String, String, T, Option[Long])] =
-    int8 *: varchar *: varchar *: state *: int8.opt
+  // character.game_id is BIGINT in the schema (unlike game.game_id, which is INT), so it
+  // needs its own bigint-based codec rather than the shared int4-based GameId codec.
+  private val gameId: Codec[GameId] = int8.imap(v => GameId(v.toInt))(g => g.value.toLong)
 
-  private val insertCharacter: Query[(Long, String, String, T, Option[Long]), Long] =
+  private val characterRow: Codec[(GameId, String, String, T, Option[PlayerId])] =
+    gameId *: varchar *: varchar *: state *: playerId.opt
+
+  private val insertCharacter: Query[(GameId, String, String, T, Option[PlayerId]), CharacterId] =
     sql"""INSERT INTO character (game_id, name, description, state, player_id)
-          VALUES ($int8, $varchar, $varchar, $state::jsonb, ${int8.opt})
-          RETURNING character_id""".query(int8)
+          VALUES ($gameId, $varchar, $varchar, $state::jsonb, ${playerId.opt})
+          RETURNING character_id""".query(characterId)
 
-  private val selectCharacter: Query[Long, (Long, String, String, T, Option[Long])] =
-    sql"""SELECT game_id, name, description, state, player_id FROM character WHERE character_id = $int8"""
+  private val selectCharacter: Query[CharacterId, (GameId, String, String, T, Option[PlayerId])] =
+    sql"""SELECT game_id, name, description, state, player_id FROM character WHERE character_id = $characterId"""
       .query(characterRow)
 
-  private val updateCharacter: Command[(Long, String, String, T, Option[Long], Long)] =
-    sql"""UPDATE character SET game_id = $int8, name = $varchar, description = $varchar,
-          state = $state::jsonb, player_id = ${int8.opt}
-          WHERE character_id = $int8""".command
+  private val updateCharacter: Command[(GameId, String, String, T, Option[PlayerId], CharacterId)] =
+    sql"""UPDATE character SET game_id = $gameId, name = $varchar, description = $varchar,
+          state = $state::jsonb, player_id = ${playerId.opt}
+          WHERE character_id = $characterId""".command
 
   def create(character: Character[T]): IO[Character[T]] =
     session.transaction.use { _ =>
@@ -37,9 +43,9 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         .map(id => character.copy(characterId = id))
     }
 
-  def read(characterId: Long): IO[Option[Character[T]]] =
-    session.option(selectCharacter)(characterId).map(_.map { case (gameId, name, description, state, playerId) =>
-      Character(characterId, gameId, name, description, state, playerId)
+  def read(id: CharacterId): IO[Option[Character[T]]] =
+    session.option(selectCharacter)(id).map(_.map { case (gameId, name, description, state, playerId) =>
+      Character(id, gameId, name, description, state, playerId)
     })
 
   def update(character: Character[T]): IO[Unit] =
