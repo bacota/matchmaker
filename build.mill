@@ -7,4 +7,26 @@ object matchmaker extends ScalaModule {
   def mvnDeps = Seq(
     mvn"org.tpolecat::skunk-core:0.6.4"
   )
+
+  /** Standalone module used only to run Flyway migrations (JDBC-based,
+    * independent of the skunk/cats-effect runtime dependencies above).
+    * Migration scripts live in matchmaker/resources/db/migration and are
+    * shared via that resources directory (matchmaker's default resource path).
+    */
+  object flyway extends ScalaModule {
+    def scalaVersion = "3.3.8"
+    def mvnDeps = Seq(
+      mvn"org.flywaydb:flyway-core:10.20.1",
+      mvn"org.flywaydb:flyway-database-postgresql:10.20.1",
+      mvn"org.postgresql:postgresql:42.7.4"
+    )
+
+    /** Run pending migrations against the database given by env vars
+      * FLYWAY_URL, FLYWAY_USER, FLYWAY_PASSWORD, e.g.:
+      *
+      *   FLYWAY_URL=jdbc:postgresql://localhost:5432/matchmaker \
+      *   FLYWAY_USER=matchmaker FLYWAY_PASSWORD=secret \
+      *   ./mill matchmaker.flyway.runMain com.vivi.matchmaker.flyway.Migrate
+      */
+  }
 }
