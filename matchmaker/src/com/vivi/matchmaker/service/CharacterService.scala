@@ -84,7 +84,7 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
         }
         (existing, game) = joined
         _ <- IO.raiseUnless(callerExternalId == game.externalId)(
-          UnauthorizedError(s"caller '$callerExternalId' may not update the state of character ${characterId.value}")
+          UnauthorizedError(s"invalid game externalId for character ${characterId.value}")
         )
         updated = existing.copy(state = state)
         _ <- characterRepo.update(updated)
