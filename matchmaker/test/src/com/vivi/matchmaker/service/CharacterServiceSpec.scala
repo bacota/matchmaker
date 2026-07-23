@@ -19,12 +19,12 @@ class CharacterServiceSpec extends PropertySuite {
   private def genUniqueString: Gen[String] =
     Gen.choose(24, 40).flatMap(n => Gen.listOfN(n, Gen.alphaNumChar).map(_.mkString)).map(s => s"$s-${java.util.UUID.randomUUID()}")
 
-  private def makeCharacterGame(gameExternalId: String): IO[CharacterGame] =
+  private def makeCharacterGame(gameExternalId: String): IO[Game] =
     TestSession.resource.use { session =>
       new GameRepo[String](session).create(
-        CharacterGame(GameId(0), "game", "description", "url", active = true, Seq.empty, Seq.empty, gameExternalId)
+        Game(GameId(0), "game", "description", "url", active = true, Seq.empty, Seq.empty, gameExternalId)
       )
-    }.map(_.asInstanceOf[CharacterGame])
+    }
 
   property("create creates a character owned for the given player") {
     forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {

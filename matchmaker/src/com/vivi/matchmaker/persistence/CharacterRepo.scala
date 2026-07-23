@@ -6,7 +6,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.{Character, CharacterGame, CharacterId, GameId, Player, PlayerId}
+import com.vivi.matchmaker.model.{Character, CharacterId, Game, GameId, Player, PlayerId}
 
 class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private val characterId = SkunkIdCodecs.characterId
@@ -67,7 +67,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     * no character with this id exists and when it has no owning player (since it then has no
     * matching row in this join).
     */
-  def readWithOwnerAndGame(id: CharacterId): IO[Option[(Character[T], Player, CharacterGame)]] =
+  def readWithOwnerAndGame(id: CharacterId): IO[Option[(Character[T], Player, Game)]] =
     session.option(selectCharacterWithOwnerAndGame)(id).map(_.map {
       case (
             charGameId,
@@ -86,7 +86,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           ) =>
         val character = Character(id, charGameId, name, description, state, Some(charPlayerId))
         val player = Player(charPlayerId, nickname, isAdmin, externalId)
-        val game = CharacterGame(charGameId, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId)
+        val game = Game(charGameId, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId)
         (character, player, game)
     })
 

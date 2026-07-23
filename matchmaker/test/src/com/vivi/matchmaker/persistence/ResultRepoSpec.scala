@@ -14,17 +14,19 @@ class ResultRepoSpec extends PropertySuite {
           val gameRepo = new GameRepo[String](session)
           val matchRepo = new MatchRepo(session)
           val playerRepo = new PlayerRepo(session)
+          val characterRepo = new CharacterRepo[String](session)
           val participantRepo = new ParticipantRepo(session)
           val resultRepo = new ResultRepo(session)
 
           for {
-            createdGame <- gameRepo.create(Generators.genGameWithRole(true).sample.get)
+            createdGame <- gameRepo.create(Generators.genGameWithRole.sample.get)
             matchId = MatchId(matchIdStr)
-            _ <- matchRepo.create(Generators.genMatch(createdGame.gameId, matchId, true).sample.get)
+            _ <- matchRepo.create(Generators.genMatch(createdGame.gameId, matchId).sample.get)
             createdPlayer <- playerRepo.create(player)
+            createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
             createdParticipant <- participantRepo.create(
               Generators
-                .genPlayerParticipant(createdGame.gameId, matchId, createdPlayer.playerId, createdGame.roles.head.gameRoleId)
+                .genParticipant(createdGame.gameId, matchId, createdPlayer.playerId, createdCharacter.characterId)
                 .sample
                 .get
             )

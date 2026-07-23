@@ -1,7 +1,6 @@
 package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
-import cats.syntax.all._
 import skunk._
 import skunk.implicits._
 import skunk.codec.all._
@@ -23,19 +22,11 @@ class MatchRepo(session: Session[IO]) {
     sql"""INSERT INTO match (game_id, match_id, description, completed, start, time_limit, settings)
           VALUES ($gameId, $matchId, $text, $bool, $instant, ${float8.opt} * INTERVAL '1 second', $settings)""".command
 
-  private val insertPlayerMatchJoin: Command[(GameId, MatchId)] =
-    sql"INSERT INTO player_match (game_id, match_id) VALUES ($gameId, $matchId)".command
-
-  private val insertCharacterMatchJoin: Command[(GameId, MatchId)] =
-    sql"INSERT INTO character_match (game_id, match_id) VALUES ($gameId, $matchId)".command
-
-  private val selectMatch: Query[(GameId, MatchId), (String, Boolean, Instant, Option[Double], String, Boolean)] =
-    sql"""SELECT m.description, m.completed, m.start, EXTRACT(EPOCH FROM m.time_limit)::float8, m.settings,
-                 (pm.game_id IS NOT NULL) AS is_player_match
-          FROM match m
-          LEFT JOIN player_match pm ON pm.game_id = m.game_id AND pm.match_id = m.match_id
-          WHERE m.game_id = $gameId AND m.match_id = $matchId"""
-      .query(text *: bool *: instant *: float8.opt *: settings *: bool)
+  private val selectMatch: Query[(GameId, MatchId), (String, Boolean, Instant, Option[Double], String)] =
+    sql"""SELECT description, completed, start, EXTRACT(EPOCH FROM time_limit)::float8, settings
+          FROM match
+          WHERE game_id = $gameId AND match_id = $matchId"""
+      .query(text *: bool *: instant *: float8.opt *: settings)
 
   private val updateMatch: Command[(String, Boolean, Instant, Option[Double], String, GameId, MatchId)] =
     sql"""UPDATE match SET description = $text, completed = $bool, start = $instant,
@@ -43,30 +34,18 @@ class MatchRepo(session: Session[IO]) {
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
   def create(m: Match): IO[Match] =
-    session.transaction.use { _ =>
-      for {
-        _ <- session.execute(insertMatch)((m.gameId, m.matchId, m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings))
-        _ <- m match {
-          case _: PlayerMatch    => session.execute(insertPlayerMatchJoin)((m.gameId, m.matchId))
-          case _: CharacterMatch => session.execute(insertCharacterMatchJoin)((m.gameId, m.matchId))
-        }
-      } yield m
-    }
+    session
+      .execute(insertMatch)((m.gameId, m.matchId, m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings))
+      .as(m)
 
   def read(gameId: GameId, matchId: MatchId): IO[Option[Match]] =
     session.option(selectMatch)((gameId, matchId)).map(_.map {
-      case (description, completed, start, timeLimitSeconds, settings, isPlayerMatch) =>
-        val timeLimit = fromSeconds(timeLimitSeconds)
-        if (isPlayerMatch) PlayerMatch(gameId, matchId, description, completed, start, timeLimit, settings)
-        else CharacterMatch(gameId, matchId, description, completed, start, timeLimit, settings)
+      case (description, completed, start, timeLimitSeconds, settings) =>
+        Match(gameId, matchId, description, completed, start, fromSeconds(timeLimitSeconds), settings)
     })
 
   def update(m: Match): IO[Unit] =
-    session.transaction.use { _ =>
-      session
-        .execute(updateMatch)(
-          (m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings, m.gameId, m.matchId)
-        )
-        .void
-    }
+    session
+      .execute(updateMatch)((m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings, m.gameId, m.matchId))
+      .void
 }
