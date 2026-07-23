@@ -4,12 +4,11 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
-import org.scalacheck.Gen
 import com.vivi.matchmaker.model.MatchId
 
 class ParticipantRepoSpec extends PropertySuite {
   property("create then read returns the participant just created") {
-    forAll(Gen.oneOf(true, false), Generators.genString, Generators.genPlayer) { (isPlayerVariant, matchIdStr, player) =>
+    forAll(Generators.genString, Generators.genPlayer) { (matchIdStr, player) =>
       TestSession.resource
         .use { session =>
           val gameRepo = new GameRepo[String](session)
@@ -19,26 +18,15 @@ class ParticipantRepoSpec extends PropertySuite {
           val participantRepo = new ParticipantRepo(session)
 
           for {
-            createdGame <- gameRepo.create(Generators.genGameWithRole(isPlayerVariant).sample.get)
+            createdGame <- gameRepo.create(Generators.genGameWithRole.sample.get)
             matchId = MatchId(matchIdStr)
-            m <- IO.pure(Generators.genMatch(createdGame.gameId, matchId, isPlayerVariant).sample.get)
+            m <- IO.pure(Generators.genMatch(createdGame.gameId, matchId).sample.get)
             _ <- matchRepo.create(m)
             createdPlayer <- playerRepo.create(player)
-            participant <-
-              if (isPlayerVariant)
-                IO.pure(
-                  Generators
-                    .genPlayerParticipant(createdGame.gameId, matchId, createdPlayer.playerId, createdGame.roles.head.gameRoleId)
-                    .sample
-                    .get
-                )
-              else
-                characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get).map { createdCharacter =>
-                  Generators
-                    .genCharacterParticipant(createdGame.gameId, matchId, createdPlayer.playerId, createdCharacter.characterId)
-                    .sample
-                    .get
-                }
+            createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
+            participant <- IO.pure(
+              Generators.genParticipant(createdGame.gameId, matchId, createdPlayer.playerId, createdCharacter.characterId).sample.get
+            )
             created <- participantRepo.create(participant)
             found <- participantRepo.read(created.participantId)
           } yield found == Some(created)

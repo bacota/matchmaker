@@ -21,20 +21,7 @@ case class GameRole(
     optional: Boolean
 )
 
-sealed trait Game{
-  def gameId: GameId
-  def name: String
-  def description: String
-  def url: String
-  def active: Boolean
-  def roles: Seq[GameRole]
-  def parameters: Seq[GameParameter[_]]
-  // Shared secret identifying the game itself, used to authorize requests made on the
-  // game's behalf (e.g. creating or updating a character).
-  def externalId: String
-}
-
-case class PlayerGame(
+case class Game(
     gameId: GameId,
     name: String,
     description: String,
@@ -42,16 +29,7 @@ case class PlayerGame(
     active: Boolean,
     roles: Seq[GameRole],
     parameters: Seq[GameParameter[_]],
+    // Shared secret identifying the game itself, used to authorize requests made on the
+    // game's behalf (e.g. creating or updating a character).
     externalId: String
-) extends Game
-
-case class CharacterGame(
-    gameId: GameId,
-    name: String,
-    description: String,
-    url: String,
-    active: Boolean,
-    roles: Seq[GameRole],
-    parameters: Seq[GameParameter[_]],
-    externalId: String
-) extends Game
+)

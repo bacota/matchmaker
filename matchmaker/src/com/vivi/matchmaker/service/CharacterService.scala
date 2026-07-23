@@ -31,9 +31,8 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
           UnauthorizedError(s"caller '$callerExternalId' may not create a character for '$externalId'")
         )
         game <- gameRepo.read(gameId).flatMap {
-          case Some(g: CharacterGame) => IO.pure(g)
-          case Some(_)                => IO.raiseError(ValidationError(s"game ${gameId.value} is not a character game"))
-          case None                   => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+          case Some(g) => IO.pure(g)
+          case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
         }
         _ <- IO.raiseUnless(gameExternalId == game.externalId)(UnauthorizedError(s"invalid game externalId"))
         player <- playerRepo.readByExternalId(externalId).flatMap {

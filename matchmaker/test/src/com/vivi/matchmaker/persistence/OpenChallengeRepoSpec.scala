@@ -1,13 +1,13 @@
 package com.vivi.matchmaker.persistence
 
+import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
-import org.scalacheck.Gen
 
 class OpenChallengeRepoSpec extends PropertySuite {
   property("create then read returns the open challenge just created") {
-    forAll(Gen.oneOf(true, false), Generators.genPlayer) { (isPlayerVariant, player) =>
+    forAll(Generators.genPlayer) { player =>
       TestSession.resource
         .use { session =>
           val gameRepo = new GameRepo[String](session)
@@ -16,18 +16,12 @@ class OpenChallengeRepoSpec extends PropertySuite {
           val openChallengeRepo = new OpenChallengeRepo(session)
 
           for {
-            createdGame <- gameRepo.create(Generators.genGame(isPlayerVariant).sample.get)
+            createdGame <- gameRepo.create(Generators.genGame.sample.get)
             createdPlayer <- playerRepo.create(player)
-            challenge <-
-              if (isPlayerVariant)
-                cats.effect.IO.pure(Generators.genPlayerOpenChallenge(createdPlayer.playerId, createdGame.gameId).sample.get)
-              else
-                characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get).map { createdCharacter =>
-                  Generators
-                    .genCharacterOpenChallenge(createdPlayer.playerId, createdGame.gameId, createdCharacter.characterId)
-                    .sample
-                    .get
-                }
+            createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
+            challenge <- IO.pure(
+              Generators.genOpenChallenge(createdPlayer.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
+            )
             created <- openChallengeRepo.create(challenge)
             found <- openChallengeRepo.read(created.challengeId)
           } yield found == Some(created)
