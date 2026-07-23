@@ -29,11 +29,33 @@ class RegistrationServiceSpec extends ScalaCheckSuite {
     }
   }
 
+  property("register rejects a blank externalId") {
+    forAll(genUniqueString) { nickname =>
+      service.register(nickname, "").attempt.unsafeRunSync() match {
+        case Left(_: ValidationError) => true
+        case _                        => false
+      }
+    }
+  }
+
   property("register rejects a duplicate externalId") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname1, nickname2, externalId) =>
       val result = for {
         _ <- service.register(nickname1, externalId)
         second <- service.register(nickname2, externalId).attempt
+      } yield second
+      result.unsafeRunSync() match {
+        case Left(_: ConflictError) => true
+        case _                      => false
+      }
+    }
+  }
+
+  property("register rejects a duplicate nickname") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId1, externalId2) =>
+      val result = for {
+        _ <- service.register(nickname, externalId1)
+        second <- service.register(nickname, externalId2).attempt
       } yield second
       result.unsafeRunSync() match {
         case Left(_: ConflictError) => true
