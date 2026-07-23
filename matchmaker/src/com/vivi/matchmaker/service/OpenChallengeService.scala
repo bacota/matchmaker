@@ -83,21 +83,23 @@ class OpenChallengeService[T](config: DbConfig)(using codec: TextCodec[T]) {
       val characterRepo = new CharacterRepo[T](session)
       val challengeRepo = new OpenChallengeRepo(session)
       val acceptanceRepo = new AcceptanceRepo(session)
-      for {
-        challenge <- challengeRepo.read(challengeId).flatMap {
-          case Some(c) => IO.pure(c)
-          case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value}"))
-        }
-        joined <- characterRepo.readWithOwnerAndGame(challenge.characterId).flatMap {
-          case Some(t) => IO.pure(t)
-          case None    => IO.raiseError(NotFoundError(s"no character with id ${challenge.characterId.value}"))
-        }
-        (_, owner, _) = joined
-        _ <- IO.raiseUnless(callerExternalId == owner.externalId)(
-          UnauthorizedError(s"caller '$callerExternalId' may not delete challenge ${challengeId.value}")
-        )
-        _ <- acceptanceRepo.deleteAllForChallenge(challengeId)
-        _ <- challengeRepo.delete(challengeId)
-      } yield ()
+      session.transaction.use { _ =>
+        for {
+          challenge <- challengeRepo.read(challengeId).flatMap {
+            case Some(c) => IO.pure(c)
+            case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value}"))
+          }
+          joined <- characterRepo.readWithOwnerAndGame(challenge.characterId).flatMap {
+            case Some(t) => IO.pure(t)
+            case None    => IO.raiseError(NotFoundError(s"no character with id ${challenge.characterId.value}"))
+          }
+          (_, owner, _) = joined
+          _ <- IO.raiseUnless(callerExternalId == owner.externalId)(
+            UnauthorizedError(s"caller '$callerExternalId' may not delete challenge ${challengeId.value}")
+          )
+          _ <- acceptanceRepo.deleteAllForChallenge(challengeId)
+          _ <- challengeRepo.delete(challengeId)
+        } yield ()
+      }
     }
 }
