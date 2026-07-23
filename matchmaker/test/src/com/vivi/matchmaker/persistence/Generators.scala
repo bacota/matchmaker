@@ -34,7 +34,9 @@ object Generators {
       url <- genString
       active <- Gen.oneOf(true, false)
       externalId <- genUniqueString
-    } yield Game(GameId(0), name, description, url, active, Seq.empty, Seq.empty, externalId)
+      minPlayers <- Gen.choose(1, 4)
+      maxPlayers <- Gen.choose(4, 8)
+    } yield Game(GameId.unassigned, name, description, url, active, Seq.empty, Seq.empty, externalId, minPlayers, maxPlayers)
 
   def genGameWithRole: Gen[Game] =
     for {
@@ -42,7 +44,7 @@ object Generators {
       roleName <- genString
       optional <- Gen.oneOf(true, false)
     } yield {
-      val role = GameRole(GameRoleId(0), GameId(0), roleName, optional)
+      val role = GameRole(GameRoleId(0), GameId.unassigned, roleName, optional)
       base.copy(roles = Seq(role))
     }
 

@@ -31,5 +31,7 @@ case class Game(
     parameters: Seq[GameParameter[_]],
     // Shared secret identifying the game itself, used to authorize requests made on the
     // game's behalf (e.g. creating or updating a character).
-    externalId: String
+    externalId: String,
+    minPlayers: Int,
+    maxPlayers: Int
 )

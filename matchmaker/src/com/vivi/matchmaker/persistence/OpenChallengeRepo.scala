@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
+import cats.syntax.all._
 import skunk._
 import skunk.implicits._
 import skunk.codec.all._
@@ -33,6 +34,10 @@ class OpenChallengeRepo(session: Session[IO]) {
           WHERE challenge_id = $challengeId"""
       .query(gameId *: characterId *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings)
 
+  private val selectChallengeForUpdate: Query[ChallengeId, (GameId, Short)] =
+    sql"""SELECT game_id, number_of_players FROM open_challenge WHERE challenge_id = $challengeId FOR UPDATE"""
+      .query(gameId *: int2)
+
   private val updateChallenge: Command[(PlayerId, String, Short, Option[Instant], Option[Double], String, ChallengeId)] =
     sql"""UPDATE open_challenge SET challenger = $playerId, message = $text, number_of_players = $int2,
           start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings
@@ -51,10 +56,23 @@ class OpenChallengeRepo(session: Session[IO]) {
         OpenChallenge(id, challenger, message, numberOfPlayers, start, fromSeconds(timeLimitSeconds), settings, gameId, characterId)
     })
 
+  /** Reads a challenge's gameId and numberOfPlayers, taking a row lock (`FOR UPDATE`) that is
+    * held until the enclosing transaction commits or rolls back. Callers use this to
+    * serialize concurrent acceptance attempts against the same challenge's capacity check.
+    */
+  def readForUpdate(id: ChallengeId): IO[Option[(GameId, Short)]] =
+    session.option(selectChallengeForUpdate)(id)
+
   def update(c: OpenChallenge): IO[Unit] =
     session
       .execute(updateChallenge)(
         (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.challengeId)
       )
       .void
+
+  private val deleteChallenge: Command[ChallengeId] =
+    sql"DELETE FROM open_challenge WHERE challenge_id = $challengeId".command
+
+  def delete(id: ChallengeId): IO[Unit] =
+    session.execute(deleteChallenge)(id).void
 }
