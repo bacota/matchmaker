@@ -2,12 +2,12 @@ package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import munit.ScalaCheckSuite
+import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
 import org.scalacheck.Gen
 import com.vivi.matchmaker.model.MatchId
 
-class ParticipantRepoSpec extends ScalaCheckSuite {
+class ParticipantRepoSpec extends PropertySuite {
   property("create then read returns the participant just created") {
     forAll(Gen.oneOf(true, false), Generators.genString, Generators.genPlayer) { (isPlayerVariant, matchIdStr, player) =>
       TestSession.resource

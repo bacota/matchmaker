@@ -2,14 +2,14 @@ package com.vivi.matchmaker.service
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import munit.ScalaCheckSuite
+import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
 import org.scalacheck.Gen
 import com.vivi.matchmaker.TestMigration
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{Generators, TestSession}
 
-class GameServiceSpec extends ScalaCheckSuite {
+class GameServiceSpec extends PropertySuite {
   TestMigration.ensure()
 
   private val config = DbConfig(host = "localhost", database = "matchmaker", user = "matchmaker", password = Some("matchmaker"))

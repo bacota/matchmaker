@@ -51,9 +51,8 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   ] =
     sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
                  p.nickname, p.is_admin, p.external_id,
-                 g.name, g.description, g.url, g.active, cg.signing_key
+                 g.name, g.description, g.url, g.active, g.external_id
           FROM character c
-          JOIN character_game cg ON cg.game_id = c.game_id
           JOIN game g ON g.game_id = c.game_id
           JOIN player p ON p.player_id = c.player_id
           WHERE c.character_id = $characterId"""
@@ -83,11 +82,11 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
             gameDescription,
             gameUrl,
             gameActive,
-            signingKey
+            gameExternalId
           ) =>
         val character = Character(id, charGameId, name, description, state, Some(charPlayerId))
         val player = Player(charPlayerId, nickname, isAdmin, externalId)
-        val game = CharacterGame(charGameId, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, signingKey)
+        val game = CharacterGame(charGameId, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId)
         (character, player, game)
     })
 

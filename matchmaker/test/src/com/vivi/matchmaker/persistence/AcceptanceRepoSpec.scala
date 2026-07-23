@@ -2,12 +2,12 @@ package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import munit.ScalaCheckSuite
+import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
 import org.scalacheck.Gen
 import com.vivi.matchmaker.model.{CharacterAcceptance, PlayerAcceptance}
 
-class AcceptanceRepoSpec extends ScalaCheckSuite {
+class AcceptanceRepoSpec extends PropertySuite {
   property("create then read returns the acceptance just created") {
     forAll(Gen.oneOf(true, false), Generators.genPlayer, Generators.genPlayer) { (isPlayerVariant, challenger, acceptor) =>
       TestSession.resource

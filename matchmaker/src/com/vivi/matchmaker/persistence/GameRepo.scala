@@ -17,27 +17,25 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private val gameParameterId = SkunkIdCodecs.gameParameterId
   private val value: Codec[T] = SkunkCodecs.plainText[T]
 
-  private val insertGameRow: Query[(String, String, String, Boolean), GameId] =
-    sql"""INSERT INTO game (name, description, url, active) VALUES ($text, $text, $text, $bool)
+  private val insertGameRow: Query[(String, String, String, Boolean, String), GameId] =
+    sql"""INSERT INTO game (name, description, url, active, external_id) VALUES ($text, $text, $text, $bool, $text)
           RETURNING game_id""".query(gameId)
 
-  private val updateGameRow: Command[(String, String, String, Boolean, GameId)] =
-    sql"""UPDATE game SET name = $text, description = $text, url = $text, active = $bool
+  private val updateGameRow: Command[(String, String, String, Boolean, String, GameId)] =
+    sql"""UPDATE game SET name = $text, description = $text, url = $text, active = $bool, external_id = $text
           WHERE game_id = $gameId""".command
 
   private val insertPlayerGame: Command[GameId] =
     sql"INSERT INTO player_game (game_id) VALUES ($gameId)".command
 
-  private val insertCharacterGame: Command[(GameId, String)] =
-    sql"INSERT INTO character_game (game_id, signing_key) VALUES ($gameId, $text)".command
+  private val insertCharacterGame: Command[GameId] =
+    sql"INSERT INTO character_game (game_id) VALUES ($gameId)".command
 
-  private val selectGameRow: Query[GameId, (String, String, String, Boolean, Boolean, Option[String])] =
-    sql"""SELECT g.name, g.description, g.url, g.active, (pg.game_id IS NOT NULL) AS is_player_game,
-                 cg.signing_key
+  private val selectGameRow: Query[GameId, (String, String, String, Boolean, String, Boolean)] =
+    sql"""SELECT g.name, g.description, g.url, g.active, g.external_id, (pg.game_id IS NOT NULL) AS is_player_game
           FROM game g
           LEFT JOIN player_game pg ON pg.game_id = g.game_id
-          LEFT JOIN character_game cg ON cg.game_id = g.game_id
-          WHERE g.game_id = $gameId""".query(text *: text *: text *: bool *: bool *: text.opt)
+          WHERE g.game_id = $gameId""".query(text *: text *: text *: bool *: text *: bool)
 
   private val insertRoleStmt: Query[(GameId, String, Boolean), GameRoleId] =
     sql"""INSERT INTO game_role (game_id, name, optional) VALUES ($gameId, $text, $bool)
@@ -79,40 +77,33 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   def create(game: Game): IO[Game] =
     session.transaction.use { _ =>
       for {
-        gameId <- session.unique(insertGameRow)((game.name, game.description, game.url, game.active))
+        gameId <- session.unique(insertGameRow)((game.name, game.description, game.url, game.active, game.externalId))
         _ <- game match {
           case _: PlayerGame    => session.execute(insertPlayerGame)(gameId)
-          case g: CharacterGame => session.execute(insertCharacterGame)((gameId, g.verificationKey))
+          case _: CharacterGame => session.execute(insertCharacterGame)(gameId)
         }
         roles <- game.roles.toList.traverse(insertRole(gameId, _))
         parameters <- game.parameters.toList.traverse(p => insertParameter(gameId, p.asInstanceOf[GameParameter[T]]))
       } yield build(game, gameId, roles, parameters)
     }
 
-  private val updateVerificationKey: Command[(String, GameId)] =
-    sql"UPDATE character_game SET signing_key = $text WHERE game_id = $gameId".command
-
   def read(id: GameId): IO[Option[Game]] =
     session.option(selectGameRow)(id).flatMap {
       case None => IO.pure(None)
-      case Some((name, description, url, active, isPlayerGame, verificationKey)) =>
+      case Some((name, description, url, active, externalId, isPlayerGame)) =>
         for {
           roles <- readRoles(id)
           parameters <- readParameters(id)
         } yield Some(
-          if (isPlayerGame) PlayerGame(id, name, description, url, active, roles, parameters)
-          else CharacterGame(id, name, description, url, active, roles, parameters, verificationKey.getOrElse(throw new IllegalStateException(s"Missing signing_key for character game ${id.value}")))
+          if (isPlayerGame) PlayerGame(id, name, description, url, active, roles, parameters, externalId)
+          else CharacterGame(id, name, description, url, active, roles, parameters, externalId)
         )
     }
 
   def update(game: Game): IO[Unit] =
     session.transaction.use { _ =>
       for {
-        _ <- session.execute(updateGameRow)((game.name, game.description, game.url, game.active, game.gameId))
-        _ <- game match {
-          case g: CharacterGame => session.execute(updateVerificationKey)((g.verificationKey, g.gameId)).void
-          case _: PlayerGame    => IO.unit
-        }
+        _ <- session.execute(updateGameRow)((game.name, game.description, game.url, game.active, game.externalId, game.gameId))
         _ <- replaceRoles(game.gameId, game.roles)
         _ <- replaceParameters(game.gameId, game.parameters)
       } yield ()
