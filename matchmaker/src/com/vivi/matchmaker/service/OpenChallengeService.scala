@@ -71,7 +71,7 @@ class OpenChallengeService[T](config: DbConfig)(using codec: TextCodec[T]) {
           )
           count <- acceptanceRepo.countForChallenge(challengeId)
           _ <- IO.raiseUnless(count + 1 <= maxPlayers.toLong)(
-            ValidationError(s"challenge ${challengeId.value} already has $maxPlayers acceptance(s)")
+            ValidationError(s"challenge ${challengeId.value} already has $count acceptance(s) (capacity $maxPlayers)")
           )
           created <- acceptanceRepo.create(Acceptance(challengeId, owner.playerId, game.gameId, characterId))
         } yield created
