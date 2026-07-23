@@ -105,7 +105,7 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
       val publicKey = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(keyBytes))
       val verifier = Signature.getInstance(signatureAlgorithm)
       verifier.initVerify(publicKey)
-      verifier.update((state + externalId).getBytes("UTF-8"))
+      verifier.update(s"${state.length}:$state$externalId".getBytes(java.nio.charset.StandardCharsets.UTF_8))
       verifier.verify(Base64.getDecoder.decode(signature))
     }.handleErrorWith(_ => IO.pure(false)).flatMap { valid =>
       IO.raiseUnless(valid)(UnauthorizedError("invalid signature"))
