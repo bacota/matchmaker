@@ -41,6 +41,43 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
       } yield character
     }
 
+  /** @param signature base64-encoded signature over `codec.encode(state) + externalId`,
+    *                   produced by the game's private key
+    */
+  def update(
+      characterId: CharacterId,
+      gameId: GameId,
+      name: String,
+      description: String,
+      state: T,
+      externalId: String,
+      signature: String
+  ): IO[Character[T]] =
+    DbSession.resource(config).use { session =>
+      val gameRepo = new GameRepo[T](session)
+      val playerRepo = new PlayerRepo(session)
+      val characterRepo = new CharacterRepo[T](session)
+      for {
+        game <- gameRepo.read(gameId).flatMap {
+          case Some(g: CharacterGame) => IO.pure(g)
+          case Some(_)                => IO.raiseError(ValidationError(s"game ${gameId.value} is not a character game"))
+          case None                   => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+        }
+        existing <- characterRepo.read(characterId).flatMap {
+          case Some(c) if c.gameId == gameId => IO.pure(c)
+          case Some(_)                       => IO.raiseError(ValidationError(s"character ${characterId.value} does not belong to game ${gameId.value}"))
+          case None                          => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
+        }
+        player <- playerRepo.readByExternalId(externalId).flatMap {
+          case Some(p) => IO.pure(p)
+          case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
+        }
+        _ <- verifySignature(game.signingKey, codec.encode(state), externalId, signature)
+        updated = existing.copy(name = name, description = description, state = state, playerId = Some(player.playerId))
+        _ <- characterRepo.update(updated)
+      } yield updated
+    }
+
   private def verifySignature(publicKeyBase64: String, state: String, externalId: String, signature: String): IO[Unit] =
     IO {
       val keyBytes = Base64.getDecoder.decode(publicKeyBase64)
