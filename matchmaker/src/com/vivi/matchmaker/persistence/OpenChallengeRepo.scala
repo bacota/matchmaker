@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
+import cats.syntax.all._
 import skunk._
 import skunk.implicits._
 import skunk.codec.all._
@@ -57,4 +58,10 @@ class OpenChallengeRepo(session: Session[IO]) {
         (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.challengeId)
       )
       .void
+
+  private val deleteChallenge: Command[ChallengeId] =
+    sql"DELETE FROM open_challenge WHERE challenge_id = $challengeId".command
+
+  def delete(id: ChallengeId): IO[Unit] =
+    session.execute(deleteChallenge)(id).void
 }

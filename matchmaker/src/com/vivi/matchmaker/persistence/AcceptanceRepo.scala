@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
+import cats.syntax.all._
 import skunk._
 import skunk.implicits._
 import skunk.codec.all._
@@ -18,6 +19,12 @@ class AcceptanceRepo(session: Session[IO]) {
   private val selectAcceptance: Query[(ChallengeId, PlayerId), CharacterId] =
     sql"""SELECT character_id FROM acceptance WHERE challenge_id = $challengeId AND player_id = $playerId"""
       .query(characterId)
+
+  private val deleteByChallenge: Command[ChallengeId] =
+    sql"DELETE FROM acceptance WHERE challenge_id = $challengeId".command
+
+  def deleteAllForChallenge(challengeId: ChallengeId): IO[Unit] =
+    session.execute(deleteByChallenge)(challengeId).void
 
   def create(a: Acceptance): IO[Acceptance] =
     session.execute(insertAcceptance)((a.challengeId, a.playerId, a.characterId)).as(a)
