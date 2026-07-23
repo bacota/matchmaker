@@ -5,10 +5,13 @@ import cats.effect.unsafe.implicits.global
 import munit.ScalaCheckSuite
 import org.scalacheck.Prop._
 import org.scalacheck.Gen
+import com.vivi.matchmaker.TestMigration
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{Generators, TestSession}
 
 class GameServiceSpec extends ScalaCheckSuite {
+  TestMigration.ensure()
+
   private val config = DbConfig(host = "localhost", database = "matchmaker", user = "matchmaker", password = Some("matchmaker"))
   private val gameService = new GameService[String](config)
   private val registrationService = new RegistrationService(config)

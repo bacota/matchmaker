@@ -81,27 +81,27 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       for {
         gameId <- session.unique(insertGameRow)((game.name, game.description, game.url, game.active))
         _ <- game match {
-          case _: PlayerGame       => session.execute(insertPlayerGame)(gameId)
-          case g: CharacterGame => session.execute(insertCharacterGame)((gameId, g.signingKey))
+          case _: PlayerGame    => session.execute(insertPlayerGame)(gameId)
+          case g: CharacterGame => session.execute(insertCharacterGame)((gameId, g.verificationKey))
         }
         roles <- game.roles.toList.traverse(insertRole(gameId, _))
         parameters <- game.parameters.toList.traverse(p => insertParameter(gameId, p.asInstanceOf[GameParameter[T]]))
       } yield build(game, gameId, roles, parameters)
     }
 
-  private val updateSigningKey: Command[(String, GameId)] =
+  private val updateVerificationKey: Command[(String, GameId)] =
     sql"UPDATE character_game SET signing_key = $text WHERE game_id = $gameId".command
 
   def read(id: GameId): IO[Option[Game]] =
     session.option(selectGameRow)(id).flatMap {
       case None => IO.pure(None)
-      case Some((name, description, url, active, isPlayerGame, signingKey)) =>
+      case Some((name, description, url, active, isPlayerGame, verificationKey)) =>
         for {
           roles <- readRoles(id)
           parameters <- readParameters(id)
         } yield Some(
           if (isPlayerGame) PlayerGame(id, name, description, url, active, roles, parameters)
-          else CharacterGame(id, name, description, url, active, roles, parameters, signingKey.getOrElse(throw new IllegalStateException(s"Missing signing_key for character game ${id.value}")))
+          else CharacterGame(id, name, description, url, active, roles, parameters, verificationKey.getOrElse(throw new IllegalStateException(s"Missing signing_key for character game ${id.value}")))
         )
     }
 
@@ -110,7 +110,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       for {
         _ <- session.execute(updateGameRow)((game.name, game.description, game.url, game.active, game.gameId))
         _ <- game match {
-          case g: CharacterGame => session.execute(updateSigningKey)((g.signingKey, g.gameId)).void
+          case g: CharacterGame => session.execute(updateVerificationKey)((g.verificationKey, g.gameId)).void
           case _: PlayerGame    => IO.unit
         }
         _ <- replaceRoles(game.gameId, game.roles)

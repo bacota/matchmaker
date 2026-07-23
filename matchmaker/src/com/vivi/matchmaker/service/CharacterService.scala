@@ -7,10 +7,10 @@ import cats.effect.IO
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, PlayerRepo, TextCodec}
 
-/** Creates characters. The character's state and the owning player's externalId must be
-  * signed by the game's private key; the corresponding public key is stored on the
-  * CharacterGame row (`signing_key`, base64-encoded X.509) and used to verify the signature
-  * passed in by the caller.
+/** Creates and updates characters. The character's state and the owning player's externalId
+  * must be signed by the game's private key; the corresponding public key is stored on the
+  * CharacterGame row (`verificationKey`, base64-encoded X.509, backed by the `signing_key`
+  * column) and used to verify the signature passed in by the caller.
   */
 class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
 
@@ -34,7 +34,7 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
           case Some(p) => IO.pure(p)
           case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
         }
-        _ <- verifySignature(game.signingKey, codec.encode(state), externalId, signature)
+        _ <- verifySignature(game.verificationKey, codec.encode(state), externalId, signature)
         character <- characterRepo.create(
           Character(CharacterId(0), gameId, name, description, state, Some(player.playerId))
         )
@@ -72,7 +72,7 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
           case Some(p) => IO.pure(p)
           case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
         }
-        _ <- verifySignature(game.signingKey, codec.encode(state), externalId, signature)
+        _ <- verifySignature(game.verificationKey, codec.encode(state), externalId, signature)
         updated = existing.copy(name = name, description = description, state = state, playerId = Some(player.playerId))
         _ <- characterRepo.update(updated)
       } yield updated

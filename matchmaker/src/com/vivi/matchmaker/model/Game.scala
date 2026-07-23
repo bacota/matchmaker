@@ -50,5 +50,5 @@ case class CharacterGame(
     roles: Seq[GameRole],
     parameters: Seq[GameParameter[_]],
     // Public key used to verify signatures on character-creation requests for this game.
-    signingKey: String
+    verificationKey: String
 ) extends Game

@@ -4,8 +4,11 @@ import cats.effect.unsafe.implicits.global
 import munit.ScalaCheckSuite
 import org.scalacheck.Prop._
 import org.scalacheck.Gen
+import com.vivi.matchmaker.TestMigration
 
 class RegistrationServiceSpec extends ScalaCheckSuite {
+  TestMigration.ensure()
+
   private val config = DbConfig(host = "localhost", database = "matchmaker", user = "matchmaker", password = Some("matchmaker"))
   private val service = new RegistrationService(config)
 
