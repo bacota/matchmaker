@@ -33,9 +33,10 @@ object Generators {
       description <- genString
       url <- genString
       active <- Gen.oneOf(true, false)
+      signingKey <- genString
     } yield
       if (playerGame) PlayerGame(GameId(0), name, description, url, active, Seq.empty, Seq.empty)
-      else CharacterGame(GameId(0), name, description, url, active, Seq.empty, Seq.empty)
+      else CharacterGame(GameId(0), name, description, url, active, Seq.empty, Seq.empty, signingKey)
 
   def genGameWithRole(playerGame: Boolean): Gen[Game] =
     for {
