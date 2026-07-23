@@ -32,7 +32,10 @@ class RegistrationServiceSpec extends ScalaCheckSuite {
         _ <- service.register(nickname1, externalId)
         second <- service.register(nickname2, externalId).attempt
       } yield second
-      result.unsafeRunSync().isLeft
+      result.unsafeRunSync() match {
+        case Left(_: ConflictError) => true
+        case _                      => false
+      }
     }
   }
 }
