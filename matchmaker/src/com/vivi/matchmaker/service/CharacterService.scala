@@ -4,12 +4,12 @@ import cats.effect.IO
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, PlayerRepo, TextCodec}
 
-/** Creates and updates characters. Requests must be authorized by the game itself, by
-  * supplying the game's `externalId` (a shared secret stored on the game row), in
-  * addition to `callerExternalId`, which identifies the player making the request: for
-  * `create` it must match `externalId` (the player the character is being created for),
-  * and for `update` it must match the externalId of the character's current owner, i.e.
-  * before the update is applied.
+/** Creates and updates characters. `create` and `update` are authorized by
+  * `callerExternalId`, which identifies the player making the request: for `create` it must
+  * match `externalId` (the player the character is being created for), and for `update` it
+  * must match the externalId of the character's current owner, i.e. before the update is
+  * applied. `updateState` is instead authorized on behalf of the game itself: its
+  * `callerExternalId` must match the externalId of the game the character belongs to.
   */
 class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
 
@@ -17,10 +17,8 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
       gameId: GameId,
       name: String,
       description: String,
-      state: T,
       externalId: String,
-      callerExternalId: String,
-      gameExternalId: String
+      callerExternalId: String
   ): IO[Character[T]] =
     DbSession.resource(config).use { session =>
       val gameRepo = new GameRepo[T](session)
@@ -30,17 +28,16 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
         _ <- IO.raiseUnless(callerExternalId == externalId)(
           UnauthorizedError(s"caller '$callerExternalId' may not create a character for '$externalId'")
         )
-        game <- gameRepo.read(gameId).flatMap {
+        _ <- gameRepo.read(gameId).flatMap {
           case Some(g) => IO.pure(g)
           case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
         }
-        _ <- IO.raiseUnless(gameExternalId == game.externalId)(UnauthorizedError(s"invalid game externalId"))
         player <- playerRepo.readByExternalId(externalId).flatMap {
           case Some(p) => IO.pure(p)
           case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
         }
         character <- characterRepo.create(
-          Character(CharacterId(0), gameId, name, description, state, Some(player.playerId))
+          Character(CharacterId(0), gameId, name, description, codec.decode(""), Some(player.playerId))
         )
       } yield character
     }
@@ -49,10 +46,8 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
       characterId: CharacterId,
       name: String,
       description: String,
-      state: T,
       externalId: String,
-      callerExternalId: String,
-      gameExternalId: String
+      callerExternalId: String
   ): IO[Character[T]] =
     DbSession.resource(config).use { session =>
       val playerRepo = new PlayerRepo(session)
@@ -62,16 +57,36 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
           case Some(t) => IO.pure(t)
           case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
         }
-        (existing, currentOwner, game) = joined
+        (existing, currentOwner, _) = joined
         _ <- IO.raiseUnless(callerExternalId == currentOwner.externalId)(
           UnauthorizedError(s"caller '$callerExternalId' may not update character ${characterId.value}")
         )
-        _ <- IO.raiseUnless(gameExternalId == game.externalId)(UnauthorizedError(s"invalid game externalId"))
         player <- playerRepo.readByExternalId(externalId).flatMap {
           case Some(p) => IO.pure(p)
           case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
         }
-        updated = existing.copy(name = name, description = description, state = state, playerId = Some(player.playerId))
+        updated = existing.copy(name = name, description = description, playerId = Some(player.playerId))
+        _ <- characterRepo.update(updated)
+      } yield updated
+    }
+
+  def updateState(
+      characterId: CharacterId,
+      state: T,
+      callerExternalId: String
+  ): IO[Character[T]] =
+    DbSession.resource(config).use { session =>
+      val characterRepo = new CharacterRepo[T](session)
+      for {
+        joined <- characterRepo.readWithGame(characterId).flatMap {
+          case Some(t) => IO.pure(t)
+          case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
+        }
+        (existing, game) = joined
+        _ <- IO.raiseUnless(callerExternalId == game.externalId)(
+          UnauthorizedError(s"invalid game externalId for character ${characterId.value}")
+        )
+        updated = existing.copy(state = state)
         _ <- characterRepo.update(updated)
       } yield updated
     }
