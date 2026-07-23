@@ -11,6 +11,11 @@ import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, PlayerRepo, Tex
   * must be signed by the game's private key; the corresponding public key is stored on the
   * CharacterGame row (`verificationKey`, base64-encoded X.509, backed by the `signing_key`
   * column) and used to verify the signature passed in by the caller.
+  *
+  * Both methods additionally take `callerExternalId`, identifying the player making the
+  * request, as an authorization check independent of the signature: for `create` it must
+  * match `externalId` (the player the signed state is for), and for `update` it must match
+  * the externalId of the character's current owner, i.e. before the update is applied.
   */
 class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
 
@@ -19,12 +24,23 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
   /** @param signature base64-encoded signature over `codec.encode(state) + externalId`,
     *                   produced by the game's private key
     */
-  def create(gameId: GameId, name: String, description: String, state: T, externalId: String, signature: String): IO[Character[T]] =
+  def create(
+      gameId: GameId,
+      name: String,
+      description: String,
+      state: T,
+      externalId: String,
+      callerExternalId: String,
+      signature: String
+  ): IO[Character[T]] =
     DbSession.resource(config).use { session =>
       val gameRepo = new GameRepo[T](session)
       val playerRepo = new PlayerRepo(session)
       val characterRepo = new CharacterRepo[T](session)
       for {
+        _ <- IO.raiseUnless(callerExternalId == externalId)(
+          UnauthorizedError(s"caller '$callerExternalId' may not create a character for '$externalId'")
+        )
         game <- gameRepo.read(gameId).flatMap {
           case Some(g: CharacterGame) => IO.pure(g)
           case Some(_)                => IO.raiseError(ValidationError(s"game ${gameId.value} is not a character game"))
@@ -51,6 +67,7 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
       description: String,
       state: T,
       externalId: String,
+      callerExternalId: String,
       signature: String
   ): IO[Character[T]] =
     DbSession.resource(config).use { session =>
@@ -68,6 +85,17 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
           case Some(_)                       => IO.raiseError(ValidationError(s"character ${characterId.value} does not belong to game ${gameId.value}"))
           case None                          => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
         }
+        currentOwner <- existing.playerId match {
+          case Some(id) =>
+            playerRepo.read(id).flatMap {
+              case Some(p) => IO.pure(p)
+              case None    => IO.raiseError(NotFoundError(s"no player with id ${id.value}"))
+            }
+          case None => IO.raiseError(UnauthorizedError(s"character ${characterId.value} has no owning player"))
+        }
+        _ <- IO.raiseUnless(callerExternalId == currentOwner.externalId)(
+          UnauthorizedError(s"caller '$callerExternalId' may not update character ${characterId.value}")
+        )
         player <- playerRepo.readByExternalId(externalId).flatMap {
           case Some(p) => IO.pure(p)
           case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
