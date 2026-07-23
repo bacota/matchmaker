@@ -4,12 +4,18 @@ opaque type PlayerId = Long
 object PlayerId {
   def apply(value: Long): PlayerId = value
   extension (id: PlayerId) def value: Long = id
+
+  /** Sentinel for a player that hasn't been persisted yet (its id is DB-generated on create). */
+  val unassigned: PlayerId = PlayerId(0)
 }
 
 opaque type GameId = Int
 object GameId {
   def apply(value: Int): GameId = value
   extension (id: GameId) def value: Int = id
+
+  /** Sentinel for a game that hasn't been persisted yet (its id is DB-generated on create). */
+  val unassigned: GameId = GameId(0)
 }
 
 opaque type MatchId = String

@@ -16,7 +16,7 @@ class RegistrationService(config: DbConfig) {
       _ <- IO.raiseWhen(externalId.trim.isEmpty)(ValidationError("externalId must not be blank"))
       player <- DbSession.resource(config).use { session =>
         new PlayerRepo(session)
-          .create(Player(PlayerId(0), nickname, isAdmin = false, externalId))
+          .create(Player(PlayerId.unassigned, nickname, isAdmin = false, externalId))
           .recoverWith { case SqlState.UniqueViolation(_) =>
             IO.raiseError(ConflictError(s"nickname '$nickname' or externalId '$externalId' is already registered"))
           }

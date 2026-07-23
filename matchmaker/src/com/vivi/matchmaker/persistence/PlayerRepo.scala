@@ -21,6 +21,10 @@ class PlayerRepo(session: Session[IO]) {
   private val selectPlayer: Query[PlayerId, (String, Boolean, String)] =
     sql"""SELECT nickname, is_admin, external_id FROM player WHERE player_id = $playerId""".query(playerRow)
 
+  private val selectPlayerByExternalId: Query[String, (PlayerId, String, Boolean)] =
+    sql"""SELECT player_id, nickname, is_admin FROM player WHERE external_id = $text"""
+      .query(playerId *: text *: bool)
+
   private val updatePlayer: Command[(String, Boolean, String, PlayerId)] =
     sql"""UPDATE player SET nickname = $text, is_admin = $bool, external_id = $text
           WHERE player_id = $playerId""".command
@@ -34,6 +38,11 @@ class PlayerRepo(session: Session[IO]) {
 
   def read(id: PlayerId): IO[Option[Player]] =
     session.option(selectPlayer)(id).map(_.map { case (nickname, isAdmin, externalId) =>
+      Player(id, nickname, isAdmin, externalId)
+    })
+
+  def readByExternalId(externalId: String): IO[Option[Player]] =
+    session.option(selectPlayerByExternalId)(externalId).map(_.map { case (id, nickname, isAdmin) =>
       Player(id, nickname, isAdmin, externalId)
     })
 
