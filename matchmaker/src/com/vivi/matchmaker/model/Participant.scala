@@ -2,7 +2,7 @@ package com.vivi.matchmaker.model
 
 import java.time.Instant
 
-case class CharacterParticipant(
+case class Participant(
     participantId: ParticipantId,
     gameId: GameId,
     matchId: MatchId,

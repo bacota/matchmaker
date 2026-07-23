@@ -53,20 +53,20 @@ object Generators {
       state <- genString
     } yield Character(CharacterId(0), gameId, name, description, state, playerId)
 
-  def genMatch(gameId: GameId, matchId: MatchId): Gen[CharacterMatch] =
+  def genMatch(gameId: GameId, matchId: MatchId): Gen[Match] =
     for {
       description <- genString
       completed <- Gen.oneOf(true, false)
       start <- genInstant
       timeLimit <- Gen.option(genDuration)
-    } yield CharacterMatch(gameId, matchId, description, completed, start, timeLimit, "{}")
+    } yield Match(gameId, matchId, description, completed, start, timeLimit, "{}")
 
-  def genParticipant(gameId: GameId, matchId: MatchId, playerId: PlayerId, characterId: CharacterId): Gen[CharacterParticipant] =
+  def genParticipant(gameId: GameId, matchId: MatchId, playerId: PlayerId, characterId: CharacterId): Gen[Participant] =
     for {
       pending <- Gen.oneOf(true, false)
       completed <- Gen.oneOf(true, false)
       due <- Gen.option(genInstant)
-    } yield CharacterParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, characterId)
+    } yield Participant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, characterId)
 
   def genResult(participantId: ParticipantId): Gen[Result] =
     for {
@@ -74,11 +74,11 @@ object Generators {
       score <- Gen.choose(0.0, 1000.0)
     } yield Result(participantId, rank, score)
 
-  def genOpenChallenge(challenger: PlayerId, gameId: GameId, characterId: CharacterId): Gen[CharacterOpenChallenge] =
+  def genOpenChallenge(challenger: PlayerId, gameId: GameId, characterId: CharacterId): Gen[OpenChallenge] =
     for {
       message <- genString
       numberOfPlayers <- Gen.choose(1, 10)
       start <- Gen.option(genInstant)
       timeLimit <- Gen.option(genDuration)
-    } yield CharacterOpenChallenge(ChallengeId(0), challenger, message, numberOfPlayers.toShort, start, timeLimit, "{}", gameId, characterId)
+    } yield OpenChallenge(ChallengeId(0), challenger, message, numberOfPlayers.toShort, start, timeLimit, "{}", gameId, characterId)
 }

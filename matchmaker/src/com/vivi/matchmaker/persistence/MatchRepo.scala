@@ -33,18 +33,18 @@ class MatchRepo(session: Session[IO]) {
           time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
-  def create(m: CharacterMatch): IO[CharacterMatch] =
+  def create(m: Match): IO[Match] =
     session
       .execute(insertMatch)((m.gameId, m.matchId, m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings))
       .as(m)
 
-  def read(gameId: GameId, matchId: MatchId): IO[Option[CharacterMatch]] =
+  def read(gameId: GameId, matchId: MatchId): IO[Option[Match]] =
     session.option(selectMatch)((gameId, matchId)).map(_.map {
       case (description, completed, start, timeLimitSeconds, settings) =>
-        CharacterMatch(gameId, matchId, description, completed, start, fromSeconds(timeLimitSeconds), settings)
+        Match(gameId, matchId, description, completed, start, fromSeconds(timeLimitSeconds), settings)
     })
 
-  def update(m: CharacterMatch): IO[Unit] =
+  def update(m: Match): IO[Unit] =
     session
       .execute(updateMatch)((m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings, m.gameId, m.matchId))
       .void

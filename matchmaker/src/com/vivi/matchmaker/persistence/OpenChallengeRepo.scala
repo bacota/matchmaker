@@ -38,20 +38,20 @@ class OpenChallengeRepo(session: Session[IO]) {
           start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings
           WHERE challenge_id = $challengeId""".command
 
-  def create(c: CharacterOpenChallenge): IO[CharacterOpenChallenge] =
+  def create(c: OpenChallenge): IO[OpenChallenge] =
     session
       .unique(insertChallenge)(
         (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.gameId, c.characterId)
       )
       .map(id => c.copy(challengeId = id))
 
-  def read(id: ChallengeId): IO[Option[CharacterOpenChallenge]] =
+  def read(id: ChallengeId): IO[Option[OpenChallenge]] =
     session.option(selectChallenge)(id).map(_.map {
       case (gameId, characterId, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings) =>
-        CharacterOpenChallenge(id, challenger, message, numberOfPlayers, start, fromSeconds(timeLimitSeconds), settings, gameId, characterId)
+        OpenChallenge(id, challenger, message, numberOfPlayers, start, fromSeconds(timeLimitSeconds), settings, gameId, characterId)
     })
 
-  def update(c: CharacterOpenChallenge): IO[Unit] =
+  def update(c: OpenChallenge): IO[Unit] =
     session
       .execute(updateChallenge)(
         (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.challengeId)

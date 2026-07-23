@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
-import com.vivi.matchmaker.model.CharacterAcceptance
+import com.vivi.matchmaker.model.Acceptance
 
 class AcceptanceRepoSpec extends PropertySuite {
   property("create then read returns the acceptance just created") {
@@ -26,7 +26,7 @@ class AcceptanceRepoSpec extends PropertySuite {
               Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
             )
             createdChallenge <- openChallengeRepo.create(challenge)
-            acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdChallenge.characterId)
+            acceptance = Acceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdChallenge.characterId)
             created <- acceptanceRepo.create(acceptance)
             found <- acceptanceRepo.read(created.challengeId, created.playerId)
           } yield found == Some(created)

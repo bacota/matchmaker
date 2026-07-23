@@ -32,18 +32,18 @@ class ParticipantRepo(session: Session[IO]) {
           character_id = $characterId
           WHERE participant_id = $participantId""".command
 
-  def create(p: CharacterParticipant): IO[CharacterParticipant] =
+  def create(p: Participant): IO[Participant] =
     session
       .unique(insertParticipant)((p.gameId, p.matchId, p.playerId, p.pending, p.completed, p.due, p.characterId))
       .map(id => p.copy(participantId = id))
 
-  def read(id: ParticipantId): IO[Option[CharacterParticipant]] =
+  def read(id: ParticipantId): IO[Option[Participant]] =
     session.option(selectParticipant)(id).map(_.map {
       case (characterId, gameId, matchId, playerId, pending, completed, due) =>
-        CharacterParticipant(id, gameId, matchId, playerId, pending, completed, due, characterId)
+        Participant(id, gameId, matchId, playerId, pending, completed, due, characterId)
     })
 
-  def update(p: CharacterParticipant): IO[Unit] =
+  def update(p: Participant): IO[Unit] =
     session
       .execute(updateParticipant)((p.playerId, p.pending, p.completed, p.due, p.characterId, p.participantId))
       .void

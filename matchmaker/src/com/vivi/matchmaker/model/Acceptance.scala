@@ -1,6 +1,6 @@
 package com.vivi.matchmaker.model
 
-case class CharacterAcceptance(
+case class Acceptance(
     challengeId: ChallengeId,
     playerId: PlayerId,
     characterId: CharacterId

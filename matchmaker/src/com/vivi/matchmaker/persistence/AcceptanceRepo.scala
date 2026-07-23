@@ -19,15 +19,15 @@ class AcceptanceRepo(session: Session[IO]) {
     sql"""SELECT character_id FROM acceptance WHERE challenge_id = $challengeId AND player_id = $playerId"""
       .query(characterId)
 
-  def create(a: CharacterAcceptance): IO[CharacterAcceptance] =
+  def create(a: Acceptance): IO[Acceptance] =
     session.execute(insertAcceptance)((a.challengeId, a.playerId, a.characterId)).as(a)
 
-  def read(challengeId: ChallengeId, playerId: PlayerId): IO[Option[CharacterAcceptance]] =
+  def read(challengeId: ChallengeId, playerId: PlayerId): IO[Option[Acceptance]] =
     session
       .option(selectAcceptance)((challengeId, playerId))
-      .map(_.map(characterId => CharacterAcceptance(challengeId, playerId, characterId)))
+      .map(_.map(characterId => Acceptance(challengeId, playerId, characterId)))
 
   // Acceptance's only fields are the composite key (plus characterId, which is fixed at
   // creation), so there is nothing mutable to update. Provided for interface symmetry.
-  def update(a: CharacterAcceptance): IO[Unit] = IO.unit
+  def update(a: Acceptance): IO[Unit] = IO.unit
 }

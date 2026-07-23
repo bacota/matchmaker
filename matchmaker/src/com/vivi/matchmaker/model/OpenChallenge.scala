@@ -2,7 +2,7 @@ package com.vivi.matchmaker.model
 
 import java.time.{Duration, Instant}
 
-case class CharacterOpenChallenge(
+case class OpenChallenge(
     challengeId: ChallengeId,
     challenger: PlayerId,
     message: String,
