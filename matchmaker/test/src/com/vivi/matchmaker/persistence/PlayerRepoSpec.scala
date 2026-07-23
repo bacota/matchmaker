@@ -1,10 +1,10 @@
 package com.vivi.matchmaker.persistence
 
 import cats.effect.unsafe.implicits.global
-import munit.ScalaCheckSuite
+import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
 
-class PlayerRepoSpec extends ScalaCheckSuite {
+class PlayerRepoSpec extends PropertySuite {
   property("create then read returns the player just created") {
     forAll(Generators.genPlayer) { player =>
       TestSession.resource
