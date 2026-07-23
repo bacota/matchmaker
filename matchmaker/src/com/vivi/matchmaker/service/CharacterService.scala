@@ -70,26 +70,21 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
       signature: String
   ): IO[Character[T]] =
     DbSession.resource(config).use { session =>
-      val gameRepo = new GameRepo[T](session)
       val playerRepo = new PlayerRepo(session)
       val characterRepo = new CharacterRepo[T](session)
       for {
-        existing <- characterRepo.read(characterId).flatMap {
-          case Some(c) => IO.pure(c)
+        joined <- characterRepo.readWithOwnerAndGame(characterId).flatMap {
+          case Some(t) => IO.pure(t)
           case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
         }
-        game <- gameRepo.read(existing.gameId).flatMap {
-          case Some(g: CharacterGame) => IO.pure(g)
-          case Some(_)                => IO.raiseError(ValidationError(s"game ${existing.gameId.value} is not a character game"))
-          case None                   => IO.raiseError(NotFoundError(s"no game with id ${existing.gameId.value}"))
+        (existing, currentOwnerOpt, game) = joined
+        currentOwner <- currentOwnerOpt match {
+          case Some(p) => IO.pure(p)
+          case None    => IO.raiseError(UnauthorizedError(s"character ${characterId.value} has no owning player"))
         }
-        currentOwner <- existing.playerId match {
-          case Some(id) =>
-            playerRepo.read(id).flatMap {
-              case Some(p) => IO.pure(p)
-              case None    => IO.raiseError(NotFoundError(s"no player with id ${id.value}"))
-            }
-          case None => IO.raiseError(UnauthorizedError(s"character ${characterId.value} has no owning player"))
+        verificationKey <- game match {
+          case g: CharacterGame => IO.pure(g.verificationKey)
+          case _                => IO.raiseError(ValidationError(s"game ${existing.gameId.value} is not a character game"))
         }
         _ <- IO.raiseUnless(callerExternalId == currentOwner.externalId)(
           UnauthorizedError(s"caller '$callerExternalId' may not update character ${characterId.value}")
@@ -98,7 +93,7 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
           case Some(p) => IO.pure(p)
           case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
         }
-        _ <- verifySignature(game.verificationKey, codec.encode(state), externalId, signature)
+        _ <- verifySignature(verificationKey, codec.encode(state), externalId, signature)
         updated = existing.copy(name = name, description = description, state = state, playerId = Some(player.playerId))
         _ <- characterRepo.update(updated)
       } yield updated

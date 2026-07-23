@@ -6,7 +6,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.{Character, CharacterId, GameId, PlayerId}
+import com.vivi.matchmaker.model.{Character, CharacterGame, CharacterId, Game, GameId, Player, PlayerId}
 
 class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private val characterId = SkunkIdCodecs.characterId
@@ -43,6 +43,50 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   def read(id: CharacterId): IO[Option[Character[T]]] =
     session.option(selectCharacter)(id).map(_.map { case (gameId, name, description, state, playerId) =>
       Character(id, gameId, name, description, state, playerId)
+    })
+
+  private val selectCharacterWithOwnerAndGame: Query[
+    CharacterId,
+    (GameId, String, String, T, Option[PlayerId], Option[String], Option[Boolean], Option[String], String, String, String, Boolean, String)
+  ] =
+    sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
+                 p.nickname, p.is_admin, p.external_id,
+                 g.name, g.description, g.url, g.active, cg.signing_key
+          FROM character c
+          JOIN character_game cg ON cg.game_id = c.game_id
+          JOIN game g ON g.game_id = c.game_id
+          LEFT JOIN player p ON p.player_id = c.player_id
+          WHERE c.character_id = $characterId"""
+      .query(
+        gameId *: text *: text *: state *: playerId.opt *:
+          text.opt *: bool.opt *: text.opt *:
+          text *: text *: text *: bool *: text
+      )
+
+  /** Reads a character together with its owning player (if any) and its game, in a single
+    * query, by joining the character, player, character_game, and game tables.
+    */
+  def readWithOwnerAndGame(id: CharacterId): IO[Option[(Character[T], Option[Player], Game)]] =
+    session.option(selectCharacterWithOwnerAndGame)(id).map(_.map {
+      case (
+            charGameId,
+            name,
+            description,
+            state,
+            charPlayerId,
+            nickname,
+            isAdmin,
+            externalId,
+            gameName,
+            gameDescription,
+            gameUrl,
+            gameActive,
+            signingKey
+          ) =>
+        val character = Character(id, charGameId, name, description, state, charPlayerId)
+        val player = (charPlayerId, nickname, isAdmin, externalId).mapN(Player.apply)
+        val game = CharacterGame(charGameId, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, signingKey)
+        (character, player, game)
     })
 
   def update(character: Character[T]): IO[Unit] =

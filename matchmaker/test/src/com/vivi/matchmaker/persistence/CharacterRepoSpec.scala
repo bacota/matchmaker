@@ -25,4 +25,23 @@ class CharacterRepoSpec extends ScalaCheckSuite {
         .unsafeRunSync()
     }
   }
+
+  property("readWithOwnerAndGame returns the character joined with its owner and game") {
+    forAll(Generators.genGame(false), Gen.oneOf(true, false), Generators.genPlayer) { (game, withPlayer, player) =>
+      TestSession.resource
+        .use { session =>
+          val gameRepo = new GameRepo[String](session)
+          val playerRepo = new PlayerRepo(session)
+          val characterRepo = new CharacterRepo[String](session)
+          for {
+            createdGame <- gameRepo.create(game)
+            createdPlayer <- if (withPlayer) playerRepo.create(player).map(Some(_)) else IO.pure(None)
+            character <- IO.pure(Generators.genCharacter(createdGame.gameId, createdPlayer.map(_.playerId)).sample.get)
+            created <- characterRepo.create(character)
+            found <- characterRepo.readWithOwnerAndGame(created.characterId)
+          } yield found == Some((created, createdPlayer, createdGame))
+        }
+        .unsafeRunSync()
+    }
+  }
 }
