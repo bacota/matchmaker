@@ -25,7 +25,7 @@ object Generators {
       nickname <- genUniqueString
       isAdmin <- Gen.oneOf(true, false)
       externalId <- genUniqueString
-    } yield Player(PlayerId(0), nickname, isAdmin, externalId)
+    } yield Player(PlayerId.unassigned, nickname, isAdmin, externalId)
 
   def genGame(playerGame: Boolean): Gen[Game] =
     for {
