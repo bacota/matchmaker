@@ -22,7 +22,10 @@ class RegistrationServiceSpec extends ScalaCheckSuite {
 
   property("register rejects a blank nickname") {
     forAll(genUniqueString) { externalId =>
-      service.register("", externalId).attempt.unsafeRunSync().isLeft
+      service.register("", externalId).attempt.unsafeRunSync() match {
+        case Left(_: ValidationError) => true
+        case _                        => false
+      }
     }
   }
 
