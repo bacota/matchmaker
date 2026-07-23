@@ -90,6 +90,29 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         (character, player, game)
     })
 
+  private val selectCharacterWithGame: Query[
+    CharacterId,
+    (GameId, String, String, T, Option[PlayerId], String, String, String, Boolean, String)
+  ] =
+    sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
+                 g.name, g.description, g.url, g.active, g.external_id
+          FROM character c
+          JOIN game g ON g.game_id = c.game_id
+          WHERE c.character_id = $characterId"""
+      .query(gameId *: text *: text *: state *: playerId.opt *: text *: text *: text *: bool *: text)
+
+  /** Reads a character together with its game, in a single query, joining the character and
+    * game tables. Unlike readWithOwnerAndGame, this does not require the character to have an
+    * owning player.
+    */
+  def readWithGame(id: CharacterId): IO[Option[(Character[T], Game)]] =
+    session.option(selectCharacterWithGame)(id).map(_.map {
+      case (charGameId, name, description, state, charPlayerId, gameName, gameDescription, gameUrl, gameActive, gameExternalId) =>
+        val character = Character(id, charGameId, name, description, state, charPlayerId)
+        val game = Game(charGameId, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId)
+        (character, game)
+    })
+
   def update(character: Character[T]): IO[Unit] =
     session.transaction.use { _ =>
       session
