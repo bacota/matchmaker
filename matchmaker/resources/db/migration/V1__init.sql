@@ -35,21 +35,15 @@ CREATE TABLE game (
     description  TEXT NOT NULL,
     url          TEXT NOT NULL,
     active Boolean NOT NULL,
+    external_id  TEXT NOT NULL,
     create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE TABLE player_game (
-    game_id INT not null primary key references game
-);
-
-CREATE TABLE character_game (
-    game_id INT not null primary key references game
-);
+create index on game(external_id);
 
 CREATE TABLE character (
 character_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-game_id INT NOT NULL REFERENCES character_game,
+game_id INT NOT NULL REFERENCES game,
 name TEXT NOT NULL,
 description TEXT NOT NULL,
 state JSONB NOT NULL,
@@ -106,26 +100,12 @@ CREATE TABLE match (
     PRIMARY KEY (game_id, match_id)
 );
 
-CREATE TABLE player_match(
-    game_id      INT NOT NULL REFERENCES player_game,
-    match_id     TEXT NOT NULL,
-    PRIMARY KEY (game_id, match_id),
-    FOREIGN KEY  (game_id, match_id) references match
-
-);
-
-CREATE TABLE character_match(
-    game_id      INT NOT NULL REFERENCES character_game,
-    match_id     TEXT NOT NULL,
-    PRIMARY KEY (game_id, match_id),
-    FOREIGN KEY  (game_id, match_id) references match
-);
-
 CREATE TABLE participant (
     participant_id BIGINT NOT NULL PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     game_id         INT NOT NULL,
     match_id        TEXT NOT NULL,
     player_id         BIGINT NOT NULL REFERENCES player,
+    character_id BIGINT NOT NULL REFERENCES character,
     pending         BOOLEAN NOT NULL DEFAULT FALSE,
     completed   BOOLEAN NOT NULL,
     due             TIMESTAMPTZ,
@@ -135,29 +115,8 @@ CREATE TABLE participant (
 );
 create index on participant(player_id);
 create index on participant(game_id, match_id);
+create index on participant(character_id);
 create index participant_pending on participant(game_id, match_id, player_id) where pending=true;
-
-
-
-CREATE TABLE player_participant(
-    participant_id BIGINT NOT NULL PRIMARY KEY REFERENCES participant,
-    game_id         INT NOT NULL,
-    match_id        TEXT NOT NULL,
-    game_role_id      INT NOT NULL REFERENCES game_role,
-    FOREIGN KEY (game_id, match_id) REFERENCES player_match
-);
-create index on player_participant(game_id, match_id);
-
-
-CREATE TABLE character_participant(
-    participant_id BIGINT NOT NULL PRIMARY KEY REFERENCES participant,
-    game_id         INT NOT NULL,
-    match_id        TEXT NOT NULL,
-    character_id BIGINT NOT NULL REFERENCES character ,
-    FOREIGN KEY (game_id, match_id) REFERENCES character_match
-);
-create index on character_participant(game_id, match_id);
-create index on character_participant(character_id);
 
 CREATE TABLE result (
     participant_id   BIGINT NOT NULL PRIMARY KEY  REFERENCES participant,
@@ -176,51 +135,24 @@ CREATE TABLE open_challenge (
     start        TIMESTAMPTZ,
     time_limit   INTERVAL,
     settings     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    game_id INT NOT NULL REFERENCES game,
+    character_id BIGINT NOT NULL REFERENCES character,
     create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 create index on open_challenge(challenger);
-
-CREATE TABLE player_open_challenge(
-     challenge_id  BIGINT PRIMARY KEY REFERENCES open_challenge,
-     game_id INT NOT NULL REFERENCES player_game
-);
-
-CREATE TABLE character_open_challenge(
-    challenge_id  BIGINT PRIMARY KEY REFERENCES open_challenge,
-    character_id  BIGINT NOT NULL REFERENCES character,
-     game_id INT NOT NULL REFERENCES character_game
-);
-create index on character_open_challenge(character_id);
+create index on open_challenge(character_id);
 
 CREATE TABLE acceptance (
     challenge_id      BIGINT NOT NULL REFERENCES open_challenge,
     player_id         BIGINT NOT NULL REFERENCES player,
+    character_id BIGINT NOT NULL REFERENCES character,
     create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (challenge_id, player_id)
 );
 create index on acceptance(player_id);
-
-
-CREATE TABLE player_acceptance (
-    challenge_id      BIGINT NOT NULL REFERENCES player_open_challenge,
-    player_id BIGINT NOT NULL,
-    PRIMARY KEY (challenge_id, player_id),
-    FOREIGN KEY (challenge_id, player_id) references acceptance
-);
-
-CREATE TABLE character_acceptance (
-    challenge_id      BIGINT NOT NULL  REFERENCES character_open_challenge,
-    player_id BIGINT NOT NULL,
-    character_id BIGINT NOT NULL REFERENCES character,
-    PRIMARY KEY (challenge_id, player_id, character_id),
-    FOREIGN KEY (challenge_id, player_id) references acceptance
-);
-create index on character_acceptance(character_id);
-
-
-
+create index on acceptance(character_id);
 
 
 -- ---------------------------------------------------------------------
