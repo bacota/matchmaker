@@ -48,5 +48,7 @@ case class CharacterGame(
     url: String,
     active: Boolean,
     roles: Seq[GameRole],
-    parameters: Seq[GameParameter[_]]
+    parameters: Seq[GameParameter[_]],
+    // Public key used to verify signatures on character-creation requests for this game.
+    verificationKey: String
 ) extends Game

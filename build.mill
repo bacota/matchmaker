@@ -14,7 +14,10 @@ object matchmaker extends ScalaModule {
       mvn"org.scalameta::munit:1.0.0",
       mvn"org.scalameta::munit-scalacheck:1.0.0",
       mvn"org.typelevel::otel4s-core-trace:0.11.2",
-      mvn"org.typelevel::otel4s-core-metrics:0.11.2"
+      mvn"org.typelevel::otel4s-core-metrics:0.11.2",
+      mvn"org.flywaydb:flyway-core:10.20.1",
+      mvn"org.flywaydb:flyway-database-postgresql:10.20.1",
+      mvn"org.postgresql:postgresql:42.7.4"
     )
   }
 
