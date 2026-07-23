@@ -17,18 +17,20 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private val gameParameterId = SkunkIdCodecs.gameParameterId
   private val value: Codec[T] = SkunkCodecs.plainText[T]
 
-  private val insertGameRow: Query[(String, String, String, Boolean, String), GameId] =
-    sql"""INSERT INTO game (name, description, url, active, external_id) VALUES ($text, $text, $text, $bool, $text)
+  private val insertGameRow: Query[(String, String, String, Boolean, String, Int, Int), GameId] =
+    sql"""INSERT INTO game (name, description, url, active, external_id, min_players, max_players)
+          VALUES ($text, $text, $text, $bool, $text, $int4, $int4)
           RETURNING game_id""".query(gameId)
 
-  private val updateGameRow: Command[(String, String, String, Boolean, String, GameId)] =
-    sql"""UPDATE game SET name = $text, description = $text, url = $text, active = $bool, external_id = $text
+  private val updateGameRow: Command[(String, String, String, Boolean, String, Int, Int, GameId)] =
+    sql"""UPDATE game SET name = $text, description = $text, url = $text, active = $bool, external_id = $text,
+          min_players = $int4, max_players = $int4
           WHERE game_id = $gameId""".command
 
-  private val selectGameRow: Query[GameId, (String, String, String, Boolean, String)] =
-    sql"""SELECT name, description, url, active, external_id
+  private val selectGameRow: Query[GameId, (String, String, String, Boolean, String, Int, Int)] =
+    sql"""SELECT name, description, url, active, external_id, min_players, max_players
           FROM game
-          WHERE game_id = $gameId""".query(text *: text *: text *: bool *: text)
+          WHERE game_id = $gameId""".query(text *: text *: text *: bool *: text *: int4 *: int4)
 
   private val insertRoleStmt: Query[(GameId, String, Boolean), GameRoleId] =
     sql"""INSERT INTO game_role (game_id, name, optional) VALUES ($gameId, $text, $bool)
@@ -70,7 +72,9 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   def create(game: Game): IO[Game] =
     session.transaction.use { _ =>
       for {
-        gameId <- session.unique(insertGameRow)((game.name, game.description, game.url, game.active, game.externalId))
+        gameId <- session.unique(insertGameRow)(
+          (game.name, game.description, game.url, game.active, game.externalId, game.minPlayers, game.maxPlayers)
+        )
         roles <- game.roles.toList.traverse(insertRole(gameId, _))
         parameters <- game.parameters.toList.traverse(p => insertParameter(gameId, p.asInstanceOf[GameParameter[T]]))
       } yield game.copy(gameId = gameId, roles = roles, parameters = parameters)
@@ -79,17 +83,19 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   def read(id: GameId): IO[Option[Game]] =
     session.option(selectGameRow)(id).flatMap {
       case None => IO.pure(None)
-      case Some((name, description, url, active, externalId)) =>
+      case Some((name, description, url, active, externalId, minPlayers, maxPlayers)) =>
         for {
           roles <- readRoles(id)
           parameters <- readParameters(id)
-        } yield Some(Game(id, name, description, url, active, roles, parameters, externalId))
+        } yield Some(Game(id, name, description, url, active, roles, parameters, externalId, minPlayers, maxPlayers))
     }
 
   def update(game: Game): IO[Unit] =
     session.transaction.use { _ =>
       for {
-        _ <- session.execute(updateGameRow)((game.name, game.description, game.url, game.active, game.externalId, game.gameId))
+        _ <- session.execute(updateGameRow)(
+          (game.name, game.description, game.url, game.active, game.externalId, game.minPlayers, game.maxPlayers, game.gameId)
+        )
         _ <- replaceRoles(game.gameId, game.roles)
         _ <- replaceParameters(game.gameId, game.parameters)
       } yield ()

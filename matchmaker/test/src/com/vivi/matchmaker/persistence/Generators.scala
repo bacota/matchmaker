@@ -34,7 +34,9 @@ object Generators {
       url <- genString
       active <- Gen.oneOf(true, false)
       externalId <- genUniqueString
-    } yield Game(GameId(0), name, description, url, active, Seq.empty, Seq.empty, externalId)
+      minPlayers <- Gen.choose(1, 4)
+      maxPlayers <- Gen.choose(4, 8)
+    } yield Game(GameId(0), name, description, url, active, Seq.empty, Seq.empty, externalId, minPlayers, maxPlayers)
 
   def genGameWithRole: Gen[Game] =
     for {

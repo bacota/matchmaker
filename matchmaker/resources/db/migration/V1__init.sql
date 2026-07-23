@@ -36,6 +36,8 @@ CREATE TABLE game (
     url          TEXT NOT NULL,
     active Boolean NOT NULL,
     external_id  TEXT NOT NULL,
+    min_players  INT NOT NULL,
+    max_players  INT NOT NULL,
     create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

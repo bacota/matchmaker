@@ -47,11 +47,11 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
 
   private val selectCharacterWithOwnerAndGame: Query[
     CharacterId,
-    (GameId, String, String, T, PlayerId, String, Boolean, String, String, String, String, Boolean, String)
+    (GameId, String, String, T, PlayerId, String, Boolean, String, String, String, String, Boolean, String, Int, Int)
   ] =
     sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
                  p.nickname, p.is_admin, p.external_id,
-                 g.name, g.description, g.url, g.active, g.external_id
+                 g.name, g.description, g.url, g.active, g.external_id, g.min_players, g.max_players
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           JOIN player p ON p.player_id = c.player_id
@@ -59,7 +59,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       .query(
         gameId *: text *: text *: state *: playerId *:
           text *: bool *: text *:
-          text *: text *: text *: bool *: text
+          text *: text *: text *: bool *: text *: int4 *: int4
       )
 
   /** Reads a character together with its owning player and its game, in a single query, by
@@ -82,24 +82,26 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
             gameDescription,
             gameUrl,
             gameActive,
-            gameExternalId
+            gameExternalId,
+            gameMinPlayers,
+            gameMaxPlayers
           ) =>
         val character = Character(id, charGameId, name, description, state, Some(charPlayerId))
         val player = Player(charPlayerId, nickname, isAdmin, externalId)
-        val game = Game(charGameId, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId)
+        val game = Game(charGameId, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId, gameMinPlayers, gameMaxPlayers)
         (character, player, game)
     })
 
   private val selectCharacterWithGame: Query[
     CharacterId,
-    (GameId, String, String, T, Option[PlayerId], String, String, String, Boolean, String)
+    (GameId, String, String, T, Option[PlayerId], String, String, String, Boolean, String, Int, Int)
   ] =
     sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
-                 g.name, g.description, g.url, g.active, g.external_id
+                 g.name, g.description, g.url, g.active, g.external_id, g.min_players, g.max_players
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           WHERE c.character_id = $characterId"""
-      .query(gameId *: text *: text *: state *: playerId.opt *: text *: text *: text *: bool *: text)
+      .query(gameId *: text *: text *: state *: playerId.opt *: text *: text *: text *: bool *: text *: int4 *: int4)
 
   /** Reads a character together with its game, in a single query, joining the character and
     * game tables. Unlike readWithOwnerAndGame, this does not require the character to have an
@@ -107,9 +109,9 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     */
   def readWithGame(id: CharacterId): IO[Option[(Character[T], Game)]] =
     session.option(selectCharacterWithGame)(id).map(_.map {
-      case (charGameId, name, description, state, charPlayerId, gameName, gameDescription, gameUrl, gameActive, gameExternalId) =>
+      case (charGameId, name, description, state, charPlayerId, gameName, gameDescription, gameUrl, gameActive, gameExternalId, gameMinPlayers, gameMaxPlayers) =>
         val character = Character(id, charGameId, name, description, state, charPlayerId)
-        val game = Game(charGameId, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId)
+        val game = Game(charGameId, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId, gameMinPlayers, gameMaxPlayers)
         (character, game)
     })
 
