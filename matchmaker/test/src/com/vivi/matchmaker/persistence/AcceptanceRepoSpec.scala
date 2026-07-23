@@ -26,7 +26,7 @@ class AcceptanceRepoSpec extends PropertySuite {
               Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
             )
             createdChallenge <- openChallengeRepo.create(challenge)
-            acceptance = Acceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdChallenge.characterId)
+            acceptance = Acceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdChallenge.characterId)
             created <- acceptanceRepo.create(acceptance)
             found <- acceptanceRepo.read(created.challengeId, created.playerId)
           } yield found == Some(created)

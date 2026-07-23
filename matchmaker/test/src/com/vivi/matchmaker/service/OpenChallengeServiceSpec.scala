@@ -94,7 +94,9 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 3), externalId)
           accepterFixture <- makeFixture(accepterNickname, accepterExternalId, minPlayers = 2, maxPlayers = 4)
           _ <- TestSession.resource.use { session =>
-            new AcceptanceRepo(session).create(Acceptance(created.challengeId, accepterFixture.owner.playerId, accepterFixture.character.characterId))
+            new AcceptanceRepo(session).create(
+              Acceptance(created.challengeId, accepterFixture.owner.playerId, accepterFixture.game.gameId, accepterFixture.character.characterId)
+            )
           }
           _ <- challengeService.delete(created.challengeId, externalId)
           remainingChallenge <- TestSession.resource.use(session => new com.vivi.matchmaker.persistence.OpenChallengeRepo(session).read(created.challengeId))
