@@ -20,6 +20,11 @@ class OpenChallengeService[T](config: DbConfig)(using codec: TextCodec[T]) {
           case None    => IO.raiseError(NotFoundError(s"no character with id ${challenge.characterId.value}"))
         }
         (_, owner, game) = joined
+        _ <- IO.raiseUnless(challenge.gameId == game.gameId)(
+          ValidationError(
+            s"challenge game_id ${challenge.gameId.value} does not match character's game_id ${game.gameId.value}"
+          )
+        )
         _ <- IO.raiseUnless(callerExternalId == owner.externalId)(
           UnauthorizedError(s"caller '$callerExternalId' may not create a challenge for character ${challenge.characterId.value}")
         )
