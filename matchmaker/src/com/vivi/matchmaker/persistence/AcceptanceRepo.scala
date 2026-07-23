@@ -33,6 +33,12 @@ class AcceptanceRepo(session: Session[IO]) {
   def deleteAllForChallenge(challengeId: ChallengeId): IO[Unit] =
     session.execute(deleteByChallenge)(challengeId).void
 
+  private val countByChallenge: Query[ChallengeId, Long] =
+    sql"SELECT count(*) FROM acceptance WHERE challenge_id = $challengeId".query(int8)
+
+  def countForChallenge(challengeId: ChallengeId): IO[Long] =
+    session.unique(countByChallenge)(challengeId)
+
   def create(a: Acceptance): IO[Acceptance] =
     session.execute(insertAcceptance)((a.challengeId, a.playerId, a.gameId, a.characterId)).as(a)
 

@@ -34,6 +34,16 @@ class OpenChallengeServiceSpec extends PropertySuite {
       } yield Fixture(owner, game, character)
     }
 
+  private def makeCharacterInGame(game: Game, nickname: String, externalId: String): IO[(Player, Character[String])] =
+    TestSession.resource.use { session =>
+      for {
+        player <- registrationService.register(nickname, externalId)
+        character <- new CharacterRepo[String](session).create(
+          Character(CharacterId(0), game.gameId, "character", "description", "", Some(player.playerId))
+        )
+      } yield (player, character)
+    }
+
   private def challengeFor(fixture: Fixture, numberOfPlayers: Int): OpenChallenge =
     OpenChallenge(ChallengeId(0), fixture.owner.playerId, "message", numberOfPlayers.toShort, None, None, "{}", fixture.game.gameId, fixture.character.characterId)
 
@@ -83,6 +93,75 @@ class OpenChallengeServiceSpec extends PropertySuite {
         case _                        => false
       }
       result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("accept creates an acceptance when authorized and within capacity") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, accepterNickname, accepterExternalId) =>
+        val result = for {
+          fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
+          created <- challengeService.create(challengeFor(fixture, 3), externalId)
+          accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
+          (accepterPlayer, accepterCharacter) = accepter
+          accepted <- challengeService.accept(created.challengeId, accepterCharacter.characterId, accepterExternalId)
+        } yield accepted.challengeId == created.challengeId &&
+          accepted.characterId == accepterCharacter.characterId &&
+          accepted.playerId == accepterPlayer.playerId
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("accept rejects a caller who does not own the accepting character") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, accepterNickname, accepterExternalId, otherExternalId) =>
+        val result = for {
+          fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
+          created <- challengeService.create(challengeFor(fixture, 3), externalId)
+          accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
+          (_, accepterCharacter) = accepter
+          attempt <- challengeService.accept(created.challengeId, accepterCharacter.characterId, otherExternalId).attempt
+        } yield attempt match {
+          case Left(_: UnauthorizedError) => true
+          case _                          => false
+        }
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("accept rejects a character from a different game than the challenge") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, accepterNickname, accepterExternalId) =>
+        val result = for {
+          fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
+          created <- challengeService.create(challengeFor(fixture, 3), externalId)
+          otherGameFixture <- makeFixture(accepterNickname, accepterExternalId, minPlayers = 2, maxPlayers = 4)
+          attempt <- challengeService
+            .accept(created.challengeId, otherGameFixture.character.characterId, accepterExternalId)
+            .attempt
+        } yield attempt match {
+          case Left(_: ValidationError) => true
+          case _                        => false
+        }
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("accept rejects once acceptances would exceed the challenge's numberOfPlayers") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, firstNickname, firstExternalId, secondNickname, secondExternalId) =>
+        val result = for {
+          fixture <- makeFixture(nickname, externalId, minPlayers = 1, maxPlayers = 4)
+          created <- challengeService.create(challengeFor(fixture, 1), externalId)
+          first <- makeCharacterInGame(fixture.game, firstNickname, firstExternalId)
+          _ <- challengeService.accept(created.challengeId, first._2.characterId, firstExternalId)
+          second <- makeCharacterInGame(fixture.game, secondNickname, secondExternalId)
+          attempt <- challengeService.accept(created.challengeId, second._2.characterId, secondExternalId).attempt
+        } yield attempt match {
+          case Left(_: ValidationError) => true
+          case _                        => false
+        }
+        result.timeout(10.seconds).unsafeRunSync()
     }
   }
 
