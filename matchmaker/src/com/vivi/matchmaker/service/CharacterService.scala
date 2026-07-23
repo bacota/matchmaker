@@ -77,15 +77,7 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
           case Some(t) => IO.pure(t)
           case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
         }
-        (existing, currentOwnerOpt, game) = joined
-        currentOwner <- currentOwnerOpt match {
-          case Some(p) => IO.pure(p)
-          case None    => IO.raiseError(UnauthorizedError(s"character ${characterId.value} has no owning player"))
-        }
-        verificationKey <- game match {
-          case g: CharacterGame => IO.pure(g.verificationKey)
-          case _                => IO.raiseError(ValidationError(s"game ${existing.gameId.value} is not a character game"))
-        }
+        (existing, currentOwner, game) = joined
         _ <- IO.raiseUnless(callerExternalId == currentOwner.externalId)(
           UnauthorizedError(s"caller '$callerExternalId' may not update character ${characterId.value}")
         )
@@ -93,7 +85,7 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
           case Some(p) => IO.pure(p)
           case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
         }
-        _ <- verifySignature(verificationKey, codec.encode(state), externalId, signature)
+        _ <- verifySignature(game.verificationKey, codec.encode(state), externalId, signature)
         updated = existing.copy(name = name, description = description, state = state, playerId = Some(player.playerId))
         _ <- characterRepo.update(updated)
       } yield updated

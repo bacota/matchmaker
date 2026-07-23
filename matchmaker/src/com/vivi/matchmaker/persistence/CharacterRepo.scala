@@ -6,7 +6,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.{Character, CharacterGame, CharacterId, Game, GameId, Player, PlayerId}
+import com.vivi.matchmaker.model.{Character, CharacterGame, CharacterId, GameId, Player, PlayerId}
 
 class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private val characterId = SkunkIdCodecs.characterId
@@ -47,7 +47,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
 
   private val selectCharacterWithOwnerAndGame: Query[
     CharacterId,
-    (GameId, String, String, T, Option[PlayerId], Option[String], Option[Boolean], Option[String], String, String, String, Boolean, String)
+    (GameId, String, String, T, PlayerId, String, Boolean, String, String, String, String, Boolean, String)
   ] =
     sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
                  p.nickname, p.is_admin, p.external_id,
@@ -55,18 +55,20 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           FROM character c
           JOIN character_game cg ON cg.game_id = c.game_id
           JOIN game g ON g.game_id = c.game_id
-          LEFT JOIN player p ON p.player_id = c.player_id
+          JOIN player p ON p.player_id = c.player_id
           WHERE c.character_id = $characterId"""
       .query(
-        gameId *: text *: text *: state *: playerId.opt *:
-          text.opt *: bool.opt *: text.opt *:
+        gameId *: text *: text *: state *: playerId *:
+          text *: bool *: text *:
           text *: text *: text *: bool *: text
       )
 
-  /** Reads a character together with its owning player (if any) and its game, in a single
-    * query, by joining the character, player, character_game, and game tables.
+  /** Reads a character together with its owning player and its game, in a single query, by
+    * joining the character, player, character_game, and game tables. Returns None both when
+    * no character with this id exists and when it has no owning player (since it then has no
+    * matching row in this join).
     */
-  def readWithOwnerAndGame(id: CharacterId): IO[Option[(Character[T], Option[Player], Game)]] =
+  def readWithOwnerAndGame(id: CharacterId): IO[Option[(Character[T], Player, CharacterGame)]] =
     session.option(selectCharacterWithOwnerAndGame)(id).map(_.map {
       case (
             charGameId,
@@ -83,8 +85,8 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
             gameActive,
             signingKey
           ) =>
-        val character = Character(id, charGameId, name, description, state, charPlayerId)
-        val player = (charPlayerId, nickname, isAdmin, externalId).mapN(Player.apply)
+        val character = Character(id, charGameId, name, description, state, Some(charPlayerId))
+        val player = Player(charPlayerId, nickname, isAdmin, externalId)
         val game = CharacterGame(charGameId, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, signingKey)
         (character, player, game)
     })
