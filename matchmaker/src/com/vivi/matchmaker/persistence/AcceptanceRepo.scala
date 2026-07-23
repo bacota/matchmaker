@@ -6,6 +6,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
+import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 
 class AcceptanceRepo(session: Session[IO]) {
@@ -13,6 +14,8 @@ class AcceptanceRepo(session: Session[IO]) {
   private val playerId = SkunkIdCodecs.playerId
   private val gameId = SkunkIdCodecs.gameId
   private val characterId = SkunkIdCodecs.characterId
+  private val instant = SkunkCodecs.instant
+  private val settings: Codec[String] = SkunkCodecs.jsonb
 
   private val insertAcceptance: Command[(ChallengeId, PlayerId, GameId, CharacterId)] =
     sql"INSERT INTO acceptance (challenge_id, player_id, game_id, character_id) VALUES ($challengeId, $playerId, $gameId, $characterId)".command
@@ -44,6 +47,70 @@ class AcceptanceRepo(session: Session[IO]) {
 
   def countForChallenge(challengeId: ChallengeId): IO[Long] =
     session.unique(countByChallenge)(challengeId)
+
+  private val playerRow: Codec[(String, Boolean, String)] = text *: bool *: text
+
+  // GameId/CharacterId are opaque types from Ids.scala, so (as elsewhere in this file) the
+  // trailing pair is decoded via the underlying int4/int8 codecs and mapped afterward rather
+  // than chained directly, to avoid the skunk twiddle-list match-type resolution failure.
+  private val acceptanceWithChallengeAndPlayersRow
+      : Codec[
+          (PlayerId, String, Short, Option[Instant], Option[Double], String, (Int, Long), (String, Boolean, String), String, Boolean, String)
+        ] =
+    playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: (int4 *: int8) *: playerRow *: playerRow
+
+  private val selectAcceptanceWithChallengeAndPlayers
+      : Query[
+          (ChallengeId, PlayerId),
+          (PlayerId, String, Short, Option[Instant], Option[Double], String, (Int, Long), (String, Boolean, String), String, Boolean, String)
+        ] =
+    sql"""SELECT oc.challenger, oc.message, oc.number_of_players, oc.start,
+                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.game_id, oc.character_id,
+                 acceptor.nickname, acceptor.is_admin, acceptor.external_id,
+                 challenger.nickname, challenger.is_admin, challenger.external_id
+          FROM acceptance a
+          JOIN open_challenge oc ON oc.challenge_id = a.challenge_id
+          JOIN player acceptor ON acceptor.player_id = a.player_id
+          JOIN player challenger ON challenger.player_id = oc.challenger
+          WHERE a.challenge_id = $challengeId AND a.player_id = $playerId"""
+      .query(acceptanceWithChallengeAndPlayersRow)
+
+  /** Reads, in one join query, everything needed to authorize deleting an acceptance: the
+    * challenge it belongs to, the accepting player, and the challenger (the player who owns
+    * the challenge).
+    */
+  def readWithChallengeAndPlayers(challengeId: ChallengeId, playerId: PlayerId): IO[Option[(OpenChallenge, Player, Player)]] =
+    session.option(selectAcceptanceWithChallengeAndPlayers)((challengeId, playerId)).map(_.map {
+      case (
+            challenger,
+            message,
+            numberOfPlayers,
+            start,
+            timeLimitSeconds,
+            settings,
+            (gameIdValue, characterIdValue),
+            (acceptorNickname, acceptorIsAdmin, acceptorExternalId),
+            challengerNickname,
+            challengerIsAdmin,
+            challengerExternalId
+          ) =>
+        val gameId = GameId(gameIdValue)
+        val characterId = CharacterId(characterIdValue)
+        val challengeModel = OpenChallenge(
+          challengeId,
+          challenger,
+          message,
+          numberOfPlayers,
+          start,
+          timeLimitSeconds.map(v => Duration.ofSeconds(v.toLong)),
+          settings,
+          gameId,
+          characterId
+        )
+        val acceptor = Player(playerId, acceptorNickname, acceptorIsAdmin, acceptorExternalId)
+        val challengerPlayer = Player(challenger, challengerNickname, challengerIsAdmin, challengerExternalId)
+        (challengeModel, acceptor, challengerPlayer)
+    })
 
   def create(a: Acceptance): IO[Acceptance] =
     session.execute(insertAcceptance)((a.challengeId, a.playerId, a.gameId, a.characterId)).as(a)
