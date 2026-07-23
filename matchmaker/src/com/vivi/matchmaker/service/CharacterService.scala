@@ -62,7 +62,6 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
     */
   def update(
       characterId: CharacterId,
-      gameId: GameId,
       name: String,
       description: String,
       state: T,
@@ -75,15 +74,14 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
       val playerRepo = new PlayerRepo(session)
       val characterRepo = new CharacterRepo[T](session)
       for {
-        game <- gameRepo.read(gameId).flatMap {
-          case Some(g: CharacterGame) => IO.pure(g)
-          case Some(_)                => IO.raiseError(ValidationError(s"game ${gameId.value} is not a character game"))
-          case None                   => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
-        }
         existing <- characterRepo.read(characterId).flatMap {
-          case Some(c) if c.gameId == gameId => IO.pure(c)
-          case Some(_)                       => IO.raiseError(ValidationError(s"character ${characterId.value} does not belong to game ${gameId.value}"))
-          case None                          => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
+          case Some(c) => IO.pure(c)
+          case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
+        }
+        game <- gameRepo.read(existing.gameId).flatMap {
+          case Some(g: CharacterGame) => IO.pure(g)
+          case Some(_)                => IO.raiseError(ValidationError(s"game ${existing.gameId.value} is not a character game"))
+          case None                   => IO.raiseError(NotFoundError(s"no game with id ${existing.gameId.value}"))
         }
         currentOwner <- existing.playerId match {
           case Some(id) =>
