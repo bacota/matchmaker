@@ -33,6 +33,12 @@ class AcceptanceRepo(session: Session[IO]) {
   def deleteAllForChallenge(challengeId: ChallengeId): IO[Unit] =
     session.execute(deleteByChallenge)(challengeId).void
 
+  private val deleteOne: Command[(ChallengeId, PlayerId)] =
+    sql"DELETE FROM acceptance WHERE challenge_id = $challengeId AND player_id = $playerId".command
+
+  def delete(challengeId: ChallengeId, playerId: PlayerId): IO[Unit] =
+    session.execute(deleteOne)((challengeId, playerId)).void
+
   private val countByChallenge: Query[ChallengeId, Long] =
     sql"SELECT count(*) FROM acceptance WHERE challenge_id = $challengeId".query(int8)
 
