@@ -26,8 +26,12 @@ class GameService[T](config: DbConfig)(using codec: TextCodec[T]) {
           if (game.gameId == GameId.unassigned) gameRepo.create(game)
           else
             gameRepo.read(game.gameId).flatMap {
-              case None    => IO.raiseError(NotFoundError(s"no game with id ${game.gameId.value}"))
-              case Some(_) => gameRepo.update(game) *> gameRepo.read(game.gameId).map(_.get)
+              case None => IO.raiseError(NotFoundError(s"no game with id ${game.gameId.value}"))
+              case Some(_) =>
+                gameRepo.update(game) *> gameRepo.read(game.gameId).flatMap {
+                  case Some(updated) => IO.pure(updated)
+                  case None          => IO.raiseError(NotFoundError(s"no game with id ${game.gameId.value}"))
+                }
             }
       } yield result
     }
