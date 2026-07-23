@@ -101,7 +101,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           parameters <- readParameters(id)
         } yield Some(
           if (isPlayerGame) PlayerGame(id, name, description, url, active, roles, parameters)
-          else CharacterGame(id, name, description, url, active, roles, parameters, signingKey.get)
+          else CharacterGame(id, name, description, url, active, roles, parameters, signingKey.getOrElse(throw new IllegalStateException(s"Missing signing_key for character game ${id.value}")))
         )
     }
 
