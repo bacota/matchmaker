@@ -34,4 +34,58 @@ class AcceptanceRepoSpec extends PropertySuite {
         .unsafeRunSync()
     }
   }
+
+  property("readWithChallengeAndPlayers returns the challenge, acceptor, and challenger") {
+    forAll(Generators.genPlayer, Generators.genPlayer) { (challenger, acceptor) =>
+      TestSession.resource
+        .use { session =>
+          val gameRepo = new GameRepo[String](session)
+          val playerRepo = new PlayerRepo(session)
+          val characterRepo = new CharacterRepo[String](session)
+          val openChallengeRepo = new OpenChallengeRepo(session)
+          val acceptanceRepo = new AcceptanceRepo(session)
+
+          for {
+            createdGame <- gameRepo.create(Generators.genGame.sample.get)
+            createdChallenger <- playerRepo.create(challenger)
+            createdAcceptor <- playerRepo.create(acceptor)
+            createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
+            challenge <- IO.pure(
+              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
+            )
+            createdChallenge <- openChallengeRepo.create(challenge)
+            acceptance = Acceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdChallenge.characterId)
+            created <- acceptanceRepo.create(acceptance)
+            found <- acceptanceRepo.readWithChallengeAndPlayers(created.challengeId, created.playerId)
+          } yield found.contains((createdChallenge, createdAcceptor, createdChallenger))
+        }
+        .unsafeRunSync()
+    }
+  }
+
+  property("readWithChallengeAndPlayers returns None when there is no matching acceptance") {
+    forAll(Generators.genPlayer, Generators.genPlayer) { (challenger, acceptor) =>
+      TestSession.resource
+        .use { session =>
+          val gameRepo = new GameRepo[String](session)
+          val playerRepo = new PlayerRepo(session)
+          val characterRepo = new CharacterRepo[String](session)
+          val openChallengeRepo = new OpenChallengeRepo(session)
+          val acceptanceRepo = new AcceptanceRepo(session)
+
+          for {
+            createdGame <- gameRepo.create(Generators.genGame.sample.get)
+            createdChallenger <- playerRepo.create(challenger)
+            createdAcceptor <- playerRepo.create(acceptor)
+            createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
+            challenge <- IO.pure(
+              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
+            )
+            createdChallenge <- openChallengeRepo.create(challenge)
+            found <- acceptanceRepo.readWithChallengeAndPlayers(createdChallenge.challengeId, createdAcceptor.playerId)
+          } yield found.isEmpty
+        }
+        .unsafeRunSync()
+    }
+  }
 }
