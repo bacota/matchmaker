@@ -10,20 +10,16 @@ import Json.given
 /** Maps requests onto service calls.
   *
   * Every route needs the caller's identity, so it is resolved once here rather than in each
-  * branch — which also makes this the single place that changes when the `X-External-Id` header
-  * is replaced by a verified Cognito token.
+  * branch. How it is established is the `Authenticator`'s business, not the router's: the same
+  * routes serve a gateway-verified Cognito token and a trusted local header.
   */
 object Router {
 
-  def dispatch(services: Services[String], request: Request): IO[Response] =
-    callerOf(request) match {
-      case None         => IO.pure(Errors.unauthenticated)
-      case Some(caller) => route(services, request, caller).handleError(Errors.toResponse)
+  def dispatch(services: Services[String], request: Request, authenticator: Authenticator): IO[Response] =
+    authenticator.callerOf(request) match {
+      case Left(rejection) => IO.pure(rejection)
+      case Right(caller)   => route(services, request, caller).handleError(Errors.toResponse)
     }
-
-  /** The caller's external id, absent if the header is missing or blank. */
-  private def callerOf(request: Request): Option[String] =
-    request.header(ApiGateway.ExternalIdHeader).map(_.trim).filter(_.nonEmpty)
 
   private def route(services: Services[String], request: Request, caller: String): IO[Response] =
     (request.method.toUpperCase, request.segments) match {

@@ -32,7 +32,7 @@ class RouterSpec extends FunSuite {
   ): Request = Request(method, path, headers, Map.empty, body)
 
   private def dispatch(request: Request): ApiGateway.Response =
-    Router.dispatch(services, request).unsafeRunSync()
+    Router.dispatch(services, request, Authenticator.TrustedHeader).unsafeRunSync()
 
   private def statusOf(method: String, path: String, headers: Map[String, String], body: String): Int =
     dispatch(request(method, path, headers, body)).statusCode
@@ -126,6 +126,31 @@ class RouterSpec extends FunSuite {
     routed.foreach { case (method, path, body) =>
       assertEquals(statusOf(method, path, Map.empty, body), 401, s"$method $path")
     }
+  }
+
+  test("the caller comes from the authenticator, not from the header") {
+    // Stands in for GatewayClaims, which will take the caller from a verified token rather than a
+    // header: the routes must not care where the identity came from.
+    val fromElsewhere = new Authenticator {
+      def callerOf(request: Request): Either[ApiGateway.Response, String] = Right("sub-from-token")
+    }
+
+    val response = Router.dispatch(services, request("GET", "/me", headers = Map.empty), fromElsewhere).unsafeRunSync()
+
+    // No header at all, yet the request is authenticated and reaches the unusable pool.
+    assertEquals(response.statusCode, 500)
+  }
+
+  test("an authenticator's rejection is returned as it wrote it") {
+    val alwaysExpired = new Authenticator {
+      def callerOf(request: Request): Either[ApiGateway.Response, String] =
+        Left(Errors.response(401, "token has expired"))
+    }
+
+    val response = Router.dispatch(services, request("GET", "/me"), alwaysExpired).unsafeRunSync()
+
+    assertEquals(response.statusCode, 401)
+    assert(response.body.contains("token has expired"), response.body)
   }
 
   test("service errors map onto the statuses the API promises") {
