@@ -33,9 +33,10 @@ case "$env" in
 esac
 
 backend="environments/$env.backend.hcl"
-vars="environments/$env.tfvars"
+vars="environments/$env.tfvars"          # account facts, gitignored
+settings="environments/$env.settings.tfvars" # policy, committed
 
-for required in "$backend" "$vars"; do
+for required in "$backend" "$vars" "$settings"; do
   if [ ! -f "$required" ]; then
     echo "missing $required" >&2
     [ "$required" = "$vars" ] && echo "copy $vars.example to $vars and fill it in" >&2
@@ -54,7 +55,9 @@ shift
 # providers) either reject -var-file or do not need it.
 case "$command" in
   plan | apply | destroy | refresh | import | console)
-    exec terraform "$command" -var-file="$vars" "$@"
+    # Settings first, so a value in the environment's own tfvars can override the committed policy
+    # for a one-off — later -var-file wins.
+    exec terraform "$command" -var-file="$settings" -var-file="$vars" "$@"
     ;;
   *)
     exec terraform "$command" "$@"

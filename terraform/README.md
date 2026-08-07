@@ -5,23 +5,29 @@ The matchmaker API, running as a Java Lambda behind an API Gateway HTTP API.
 ## Layout
 
 ```
-main.tf                        one root for every environment
-variables.tf                   account facts, supplied per environment
-modules/api                    the Lambda, the HTTP API, Cognito, and their IAM roles
-environments/<env>.tfvars      account facts (gitignored; copy the .example)
-environments/<env>.backend.hcl which state this environment uses
-tf.sh                          run terraform against one environment
+main.tf                             one root for every environment; names none of them
+variables.tf                        every input, with validation
+modules/api                         the Lambda, the HTTP API, Cognito, and their IAM roles
+environments/<env>.settings.tfvars  policy: memory, retention, security, session length (committed)
+environments/<env>.tfvars           account facts: endpoints, subnets, secrets (gitignored)
+environments/<env>.backend.hcl      which state this environment uses
+tf.sh                               run terraform against one environment
 ```
 
 **One configuration, not one per environment.** Environments differ only in values, and the values
 split in two:
 
-- **Policy** — memory, log retention, advanced security, session length. These are decisions, so
-  they are committed, in `local.settings` in `main.tf`, where dev and prod sit side by side and
-  can be compared without diffing two directories.
+- **Policy** — memory, log retention, advanced security, session length. Decisions, so they are
+  committed, in `environments/<env>.settings.tfvars`. `diff` those two files to see exactly how
+  prod differs from dev.
 - **Account facts** — the database endpoint, subnets, security groups, secret name, domain prefix,
   URLs. These name real infrastructure, so they live in `environments/<env>.tfvars`, which is
   gitignored.
+
+The four policy variables have **no defaults**. A run that does not supply them fails with "No
+value for required variable" rather than quietly inheriting something: prod with dev's log
+retention loses its audit trail, and prod with advanced security off loses compromised-credential
+blocking. Neither should be reachable by forgetting a flag.
 
 Every resource is named `matchmaker-${environment}-...`, so both environments can live in one
 account, and each has its own state key so neither can be applied over the other.
@@ -37,14 +43,14 @@ account, and each has its own state key so neither can be applied over the other
 A single root serving several environments has one sharp edge: terraform remembers the chosen
 backend in `.terraform`, so a bare `terraform apply` after working on the other environment would
 target the wrong state, with no warning and a plan that looks entirely reasonable. `tf.sh`
-re-initialises the backend on every run and always passes the matching var file, which removes
+re-initialises the backend on every run and always passes both var files, which removes
 that edge. Running `terraform` directly reintroduces it.
 
 ### Adding an environment
 
-Add a block to `local.settings` in `main.tf`, add the name to the `environment` variable's
-validation in `variables.tf`, and add `environments/<env>.tfvars` and `.backend.hcl`. No new
-directory, and no copy of the module block to keep in step.
+Add three files under `environments/`: `<env>.settings.tfvars`, `<env>.tfvars` and
+`<env>.backend.hcl`. Then `./tf.sh <env> apply`. **No terraform is edited** — `main.tf` names no
+environment, and the `environment` variable is validated by format rather than against a list.
 
 ## What this does not create
 
