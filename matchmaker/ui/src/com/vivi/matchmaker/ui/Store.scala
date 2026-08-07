@@ -16,11 +16,29 @@ import com.vivi.matchmaker.model._
   */
 object Store {
 
-  /** `None` while unknown, `Some(None)` once it is known there is no player yet. That third state
-    * is what tells registration from a still-loading page; collapsing it to `None` would flash
-    * the registration form at every signed-in user on every load.
+  /** What is known about the caller's player.
+    *
+    * Four states rather than an `Option`, because the differences matter to what is shown:
+    * `Loading` must not flash the registration form at an existing player, and `Unavailable` must
+    * not either — a 500 or a dropped connection is not evidence that the account does not exist,
+    * and telling a registered player to register would be actively misleading.
     */
-  val player: Var[Option[Option[Player]]] = Var(None)
+  enum PlayerState {
+    case Loading
+    case Unregistered
+    case Registered(player: Player)
+    case Unavailable(message: String)
+  }
+
+  val player: Var[PlayerState] = Var(PlayerState.Loading)
+
+  /** The player, when there is one. Anything else — loading, unregistered, unreachable — is
+    * `None`, so views that only need the player itself do not have to restate the distinction.
+    */
+  def currentPlayer: Signal[Option[Player]] = player.signal.map {
+    case PlayerState.Registered(p) => Some(p)
+    case _                         => None
+  }
 
   /** Whether there is a usable token, mirrored into a `Var` because `sessionStorage` is not
     * observable: without this the UI would not notice a session ending until something re-rendered
@@ -34,7 +52,7 @@ object Store {
   def sessionExpired(): Unit = {
     Auth.clearSession()
     signedIn.set(false)
-    player.set(None)
+    player.set(PlayerState.Loading)
     due.set(Seq.empty)
     active.set(Seq.empty)
     completed.set(Seq.empty)
@@ -101,22 +119,30 @@ object Store {
     * A 403 from `/me` is not an error: it is how the API says this Cognito identity has no player
     * yet, which is the case self-registration exists for.
     */
-  def loadAll(): Unit =
+  def loadAll(): Unit = {
+    player.set(PlayerState.Loading)
+
     ApiClient.me().onComplete {
       case Success(p) =>
         error.set(None)
-        player.set(Some(Some(p)))
+        player.set(PlayerState.Registered(p))
         refreshMatches()
         refreshGames()
 
+      // The one failure that is not a failure: 403 is how the API says this Cognito identity has
+      // no player yet, which is what self-registration exists for.
       case Failure(ApiError(403, _)) =>
         error.set(None)
-        player.set(Some(None))
+        player.set(PlayerState.Unregistered)
 
+      // Anything else — 5xx, a network error, a response that would not parse — says nothing
+      // about whether the account exists. Offering to create one here would invite a registered
+      // player to register a second time, so this reports the failure and offers a retry instead.
       case Failure(other) =>
         report(other)
-        player.set(Some(None))
+        player.set(PlayerState.Unavailable(messageOf(other)))
     }
+  }
 
   def refreshMatches(): Unit = {
     run(ApiClient.dueMatches())(due.set)

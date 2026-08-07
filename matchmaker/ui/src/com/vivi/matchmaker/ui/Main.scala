@@ -51,7 +51,7 @@ object Views {
       cls := "header",
       h1("Matchmaker"),
       child <-- Store.player.signal.map {
-        case Some(Some(player)) =>
+        case Store.PlayerState.Registered(player) =>
           div(cls := "who", span(player.nickname), button(cls := "link", "Sign out", onClick --> (_ => Auth.signOut())))
         case _ => emptyNode
       },
@@ -84,10 +84,25 @@ object Views {
   private def signedInBody: HtmlElement =
     div(
       child <-- Store.player.signal.map {
-        case None             => p(cls := "loading", "Loading…")
-        case Some(None)       => registration
-        case Some(Some(_))    => home
+        case Store.PlayerState.Loading             => p(cls := "loading", "Loading…")
+        case Store.PlayerState.Unregistered        => registration
+        case Store.PlayerState.Registered(_)       => home
+        case Store.PlayerState.Unavailable(reason) => unavailable(reason)
       }
+    )
+
+  /** The API could not be reached, or answered in a way that says nothing about this account.
+    *
+    * Deliberately not the registration form: the player may well exist, and inviting them to
+    * register again would be wrong as well as confusing. A retry is all this can honestly offer.
+    */
+  private def unavailable(reason: String): HtmlElement =
+    div(
+      cls := "card",
+      h2("Could not load your account"),
+      p(reason),
+      p(cls := "detail", "This is a problem reaching the server, not a problem with your sign-in."),
+      button("Try again", onClick --> (_ => Store.loadAll()))
     )
 
   private def registration: HtmlElement = {
@@ -106,7 +121,7 @@ object Views {
         disabled <-- nickname.signal.map(_.trim.isEmpty),
         onClick --> { _ =>
           Store.run(ApiClient.register(nickname.now().trim)) { player =>
-            Store.player.set(Some(Some(player)))
+            Store.player.set(Store.PlayerState.Registered(player))
             Store.refreshMatches()
             Store.refreshGames()
           }
@@ -410,7 +425,7 @@ object Views {
   private def validPlayerCount(game: Game, raw: String): Boolean =
     raw.trim.toIntOption.exists(count => count >= game.minPlayers && count <= game.maxPlayers)
 
-  private def currentPlayer: Signal[Option[Player]] = Store.player.signal.map(_.flatten)
+  private def currentPlayer: Signal[Option[Player]] = Store.currentPlayer
 }
 
 /** Formatting that has to be readable rather than exact. */
