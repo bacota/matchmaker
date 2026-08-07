@@ -4,9 +4,12 @@ import cats.effect.{IO, Resource}
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import skunk.Session
+import upickle.default.write
+import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.TextCodec.given
 import com.vivi.matchmaker.service._
 import ApiGateway.Request
+import Json.given
 
 /** Routing, authentication and error mapping, none of which need a database.
   *
@@ -70,27 +73,58 @@ class RouterSpec extends FunSuite {
     assertEquals(dispatch(request("DELETE", "/challenges/1/acceptances/abc")).statusCode, 400)
   }
 
+  /** Bodies are serialized from real model values rather than hand-written JSON, so that a body
+    * is never accidentally invalid — which would fail the request at parsing with 400 and hide
+    * whether the route matched at all.
+    */
+  private val gameBody = write(
+    Game(GameId.unassigned, "name", "description", "url", active = true, Seq.empty, Seq.empty, "secret", 2, 4)
+  )
+
+  private val challengeBody = write(
+    OpenChallenge(ChallengeId(0), PlayerId(1), "message", 2.toShort, None, None, "{}", GameId(1), CharacterId(1))
+  )
+
+  /** Every route in `Router`. Keep in step with it: a route missing from here is a route no test
+    * would notice breaking.
+    */
+  private val routed = List(
+    ("POST", "/register", """{"nickname":"tester"}"""),
+    ("GET", "/me", "{}"),
+    ("GET", "/me/matches", "{}"),
+    ("GET", "/me/matches/due", "{}"),
+    ("GET", "/me/matches/completed", "{}"),
+    ("GET", "/games", "{}"),
+    ("POST", "/games", gameBody),
+    ("GET", "/games/1/challenges", "{}"),
+    ("POST", "/games/1/characters", """{"name":"n","description":"d","externalId":"sub-1"}"""),
+    ("PUT", "/characters/1", """{"name":"n","description":"d","externalId":"sub-1"}"""),
+    ("PUT", "/characters/1/state", """{"state":"s"}"""),
+    ("POST", "/challenges", challengeBody),
+    ("DELETE", "/challenges/1", "{}"),
+    ("POST", "/challenges/1/acceptances", """{"characterId":1}"""),
+    ("DELETE", "/challenges/1/acceptances/2", "{}")
+  )
+
   test("every routed endpoint reaches a service rather than falling through to 404") {
     // A route that matched will hit the unusable pool and come back 500; one that did not match
-    // comes back 404. So a 500 here is exactly the evidence that the route is wired up.
-    val routed = List(
-      ("POST", "/register", """{"nickname":"tester"}"""),
-      ("GET", "/me", "{}"),
-      ("GET", "/me/matches", "{}"),
-      ("GET", "/me/matches/due", "{}"),
-      ("GET", "/me/matches/completed", "{}"),
-      ("GET", "/games", "{}"),
-      ("GET", "/games/1/challenges", "{}"),
-      ("POST", "/games/1/characters", """{"name":"n","description":"d","externalId":"sub-1"}"""),
-      ("PUT", "/characters/1", """{"name":"n","description":"d","externalId":"sub-1"}"""),
-      ("PUT", "/characters/1/state", """{"state":"s"}"""),
-      ("POST", "/challenges/1/acceptances", """{"characterId":1}"""),
-      ("DELETE", "/challenges/1", "{}"),
-      ("DELETE", "/challenges/1/acceptances/2", "{}")
-    )
-
+    // comes back 404, and one whose body failed to parse comes back 400. So a 500 here is
+    // exactly the evidence that the route is wired up and its body was understood.
     routed.foreach { case (method, path, body) =>
       assertEquals(statusOf(method, path, Map("x-external-id" -> "sub-1"), body), 500, s"$method $path")
+    }
+  }
+
+  test("the routed list covers every route Router declares") {
+    // A count, because the route table cannot be enumerated from Router itself. It fails loudly
+    // when a route is added there without a corresponding entry above.
+    assertEquals(routed.size, 15)
+    assertEquals(routed.distinct.size, routed.size)
+  }
+
+  test("every routed endpoint requires the identity header") {
+    routed.foreach { case (method, path, body) =>
+      assertEquals(statusOf(method, path, Map.empty, body), 401, s"$method $path")
     }
   }
 
