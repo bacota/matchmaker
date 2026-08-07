@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Matchmaker</title>
+    <link rel="stylesheet" href="./app.css" />
+
+    <!--
+      Where this page points. Filled in from the terraform outputs of the environment you are
+      running against:
+
+        apiEndpoint    = terraform output -raw api_endpoint
+        hostedLoginUrl = terraform output -raw hosted_login_url
+        clientId       = terraform output -raw user_pool_client_id
+
+      None of these are secrets — the client id is a query parameter of the authorize URL. The
+      same main.js serves every environment; only this block changes.
+
+      redirectUri defaults to the URL this page is served from, which must be listed in the
+      pool's callback_urls exactly. The dev pool already lists http://localhost:8080/ and
+      http://localhost:5173/.
+    -->
+    <script>
+      window.matchmakerConfig = {
+        apiEndpoint: "http://localhost:8080",
+        hostedLoginUrl: "https://REPLACE-ME.auth.us-east-1.amazoncognito.com",
+        clientId: "REPLACE-ME"
+      };
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <!--
+      Written by `mill matchmaker.ui.fastLinkJS` (development) or `fullLinkJS` (deployment); copy
+      or symlink it next to this file. A module, because the build sets ModuleKind.ESModule.
+    -->
+    <script type="module">
+      import { main } from "./main.js";
+      main();
+    </script>
+  </body>
+</html>

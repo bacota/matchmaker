@@ -115,6 +115,25 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         (character, game)
     })
 
+  // `state` is deliberately not the last column: a trailing abstract-typed codec defeats skunk's
+  // twiddle-list resolution, the same wrinkle `characterRow` above works around by ordering.
+  private val selectCharactersForPlayerAndGame: Query[(PlayerId, GameId), (CharacterId, String, T, String)] =
+    sql"""SELECT character_id, name, state, description
+          FROM character
+          WHERE player_id = $playerId AND game_id = $gameId
+          ORDER BY name"""
+      .query(characterId *: text *: state *: text)
+
+  /** Every character this player has in this game.
+    *
+    * Ordered by name so the list is stable between calls: an unordered query may return rows in
+    * whatever order the planner likes, which shows up as a select that reshuffles itself.
+    */
+  def listForPlayerAndGame(playerId: PlayerId, gameId: GameId): IO[List[Character[T]]] =
+    session.execute(selectCharactersForPlayerAndGame)((playerId, gameId)).map(_.map {
+      case (id, name, state, description) => Character(id, gameId, name, description, state, Some(playerId))
+    })
+
   def update(character: Character[T]): IO[Unit] =
     session.transaction.use { _ =>
       session

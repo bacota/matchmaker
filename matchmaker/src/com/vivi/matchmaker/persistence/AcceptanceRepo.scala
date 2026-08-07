@@ -112,6 +112,27 @@ class AcceptanceRepo(session: Session[IO]) {
         (challengeModel, acceptor, challengerPlayer)
     })
 
+  // Same twiddle-list workaround as above, for the same reason: the trailing pair is opaque, so
+  // it is decoded through int4/int8 and mapped afterward.
+  private val selectAcceptancesForPlayer: Query[PlayerId, (ChallengeId, Int, Long)] =
+    sql"""SELECT challenge_id, game_id, character_id
+          FROM acceptance
+          WHERE player_id = $playerId
+          ORDER BY challenge_id"""
+      .query(challengeId *: (int4 *: int8))
+
+  /** Every acceptance this player has outstanding.
+    *
+    * An acceptance survives until the challenge becomes a match or the player backs out, so this
+    * is what "what have I said yes to?" means — the UI needs it to offer backing out without
+    * first knowing which challenge to look under.
+    */
+  def listForPlayer(playerId: PlayerId): IO[List[Acceptance]] =
+    session.execute(selectAcceptancesForPlayer)(playerId).map(_.map {
+      case (challenge, gameIdValue, characterIdValue) =>
+        Acceptance(challenge, playerId, GameId(gameIdValue), CharacterId(characterIdValue))
+    })
+
   def create(a: Acceptance): IO[Acceptance] =
     session.execute(insertAcceptance)((a.challengeId, a.playerId, a.gameId, a.characterId)).as(a)
 

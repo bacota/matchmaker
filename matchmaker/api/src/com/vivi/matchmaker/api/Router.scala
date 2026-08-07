@@ -30,6 +30,9 @@ object Router {
       case ("GET", "me" :: Nil) =>
         ok(services.players.me(caller))
 
+      case ("GET", "me" :: "acceptances" :: Nil) =>
+        ok(services.acceptances.mine(caller))
+
       case ("GET", "me" :: "matches" :: Nil) =>
         ok(services.matches.active(caller))
 
@@ -47,6 +50,9 @@ object Router {
 
       case ("GET", "games" :: gameId :: "challenges" :: Nil) =>
         withGameId(gameId)(id => ok(services.challenges.listByGame(id, caller)))
+
+      case ("GET", "games" :: gameId :: "characters" :: Nil) =>
+        withGameId(gameId)(id => ok(services.characters.listForGame(id, caller)))
 
       case ("POST", "games" :: gameId :: "characters" :: Nil) =>
         withGameId(gameId) { id =>

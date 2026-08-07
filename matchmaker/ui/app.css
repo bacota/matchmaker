@@ -1,0 +1,172 @@
+/* Plain CSS, no framework: the UI is a handful of lists and forms, and a framework would be a
+   larger dependency than everything it styles. */
+
+:root {
+  --line: #d8d8d8;
+  --muted: #666;
+  --accent: #1a5fb4;
+  --warn: #a51d2d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 15px/1.5 system-ui, sans-serif;
+  color: #1a1a1a;
+  background: #fafafa;
+}
+
+.app {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 4rem;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+h2 {
+  font-size: 1.05rem;
+  margin: 1.75rem 0 0.5rem;
+}
+
+h3 {
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 1rem 0 0.35rem;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.75rem;
+}
+
+.who {
+  margin-left: auto;
+  color: var(--muted);
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.error {
+  flex-basis: 100%;
+  background: #fdf0f0;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.detail {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.due {
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+.pending {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.empty,
+.loading {
+  color: var(--muted);
+  font-style: italic;
+  margin: 0.25rem 0;
+}
+
+.detail-panel {
+  margin-top: 0.6rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line);
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  padding: 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.card input {
+  display: block;
+  width: 100%;
+  margin-bottom: 0.5rem;
+  padding: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font: inherit;
+}
+
+button {
+  font: inherit;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #fff;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Buttons that are really links: the expand toggles and the destructive secondary actions. */
+button.link,
+button.toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+}
+
+button.toggle {
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+}

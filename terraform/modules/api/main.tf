@@ -108,6 +108,11 @@ resource "aws_lambda_function" "api" {
       DB_SECRET_NAME = var.db_secret_name
       DB_POOL_SIZE   = tostring(var.db_pool_size)
 
+      # Selects how the caller is identified. "gateway" means the claims the JWT authorizer put
+      # in the request context are trusted, which is only sound because the route above cannot be
+      # reached without passing that authorizer.
+      AUTH_MODE = "gateway"
+
       PARAMETERS_SECRETS_EXTENSION_HTTP_PORT = tostring(var.secrets_extension_port)
     }
   }
@@ -126,6 +131,21 @@ resource "aws_lambda_function" "api" {
 resource "aws_apigatewayv2_api" "api" {
   name          = "${local.name}-api"
   protocol_type = "HTTP"
+
+  # The UI is served from somewhere else — S3, a static host, or a local port during development
+  # — so every call it makes is cross-origin and needs this. Origins are listed rather than
+  # wildcarded: `*` is incompatible with sending credentials, and there is no reason for an
+  # arbitrary page to be able to call this API with a token it somehow obtained.
+  #
+  # API Gateway answers the OPTIONS preflight itself, before the JWT authorizer runs. That matters
+  # because a preflight carries no Authorization header and would otherwise be rejected with 401,
+  # which the browser reports only as an opaque CORS failure.
+  cors_configuration {
+    allow_origins = var.cors_allowed_origins
+    allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    allow_headers = ["authorization", "content-type"]
+    max_age       = 3600
+  }
 }
 
 resource "aws_apigatewayv2_integration" "lambda" {
@@ -135,12 +155,38 @@ resource "aws_apigatewayv2_integration" "lambda" {
   payload_format_version = "2.0"
 }
 
+# Verifies the Cognito token before the function is invoked: signature, expiry, issuer and
+# audience. An unverified request is rejected by the gateway with 401 and never reaches any code,
+# which is why `Authenticator.GatewayClaims` reads the `sub` claim without re-checking it.
+#
+# `audience` is the app client id, which matches the `aud` claim of an *ID* token. Cognito's
+# access tokens carry `client_id` instead and would be rejected here, so callers send the ID
+# token — see terraform/README.md.
+resource "aws_apigatewayv2_authorizer" "cognito" {
+  api_id           = aws_apigatewayv2_api.api.id
+  name             = "${local.name}-cognito"
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+
+  jwt_configuration {
+    issuer   = "https://cognito-idp.${data.aws_region.current.region}.amazonaws.com/${aws_cognito_user_pool.users.id}"
+    audience = [aws_cognito_user_pool_client.app.id]
+  }
+}
+
 # A single catch-all route: the application routes by path itself, so there is nothing to gain
 # from restating every path here and keeping the two in step.
+#
+# The authorizer is attached here rather than per-route, so that a route added to the application
+# is authenticated by default. There is deliberately no public route: even registration requires a
+# signed-in user, because a player is created *for* a Cognito identity.
 resource "aws_apigatewayv2_route" "default" {
   api_id    = aws_apigatewayv2_api.api.id
   route_key = "$default"
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
 resource "aws_cloudwatch_log_group" "api_access" {

@@ -91,12 +91,14 @@ class RouterSpec extends FunSuite {
   private val routed = List(
     ("POST", "/register", """{"nickname":"tester"}"""),
     ("GET", "/me", "{}"),
+    ("GET", "/me/acceptances", "{}"),
     ("GET", "/me/matches", "{}"),
     ("GET", "/me/matches/due", "{}"),
     ("GET", "/me/matches/completed", "{}"),
     ("GET", "/games", "{}"),
     ("POST", "/games", gameBody),
     ("GET", "/games/1/challenges", "{}"),
+    ("GET", "/games/1/characters", "{}"),
     ("POST", "/games/1/characters", """{"name":"n","description":"d","externalId":"sub-1"}"""),
     ("PUT", "/characters/1", """{"name":"n","description":"d","externalId":"sub-1"}"""),
     ("PUT", "/characters/1/state", """{"state":"s"}"""),
@@ -118,7 +120,7 @@ class RouterSpec extends FunSuite {
   test("the routed list covers every route Router declares") {
     // A count, because the route table cannot be enumerated from Router itself. It fails loudly
     // when a route is added there without a corresponding entry above.
-    assertEquals(routed.size, 15)
+    assertEquals(routed.size, 17)
     assertEquals(routed.distinct.size, routed.size)
   }
 
@@ -151,6 +153,28 @@ class RouterSpec extends FunSuite {
 
     assertEquals(response.statusCode, 401)
     assert(response.body.contains("token has expired"), response.body)
+  }
+
+  test("the gateway authenticator takes the caller from the verified sub claim") {
+    val request = Request("GET", "/me", Map.empty, Map.empty, "{}", Map("sub" -> "sub-from-token", "email" -> "a@b.c"))
+
+    assertEquals(Authenticator.GatewayClaims.callerOf(request), Right("sub-from-token"))
+  }
+
+  test("the gateway authenticator ignores the identity header entirely") {
+    // The header is the local mode's mechanism. Were it honoured deployed, anyone could set it
+    // and become any player, which is exactly what the JWT authorizer is there to prevent.
+    val request = Request("GET", "/me", Map("x-external-id" -> "someone-else"), Map.empty, "{}")
+
+    assert(Authenticator.GatewayClaims.callerOf(request).isLeft)
+  }
+
+  test("a request with no claims is unauthenticated under the gateway authenticator") {
+    val response = Router
+      .dispatch(services, request("GET", "/me", headers = Map.empty), Authenticator.GatewayClaims)
+      .unsafeRunSync()
+
+    assertEquals(response.statusCode, 401)
   }
 
   test("service errors map onto the statuses the API promises") {

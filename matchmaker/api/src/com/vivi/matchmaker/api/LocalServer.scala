@@ -55,14 +55,15 @@ object LocalServer {
 
   private def authMode: String = env("AUTH_MODE").getOrElse("header")
 
-  /** Local runs default to trusting the header, which is also all that exists today. When Cognito
-    * lands, `AUTH_MODE=cognito` selects in-process token verification against the dev user pool's
-    * public JWKS — see `Authenticator`.
+  /** Local runs trust the header. `gateway` is not offered here on purpose: it reads claims that
+    * only API Gateway's authorizer can put there, so locally it would authenticate nobody.
+    * Verifying a real dev-pool token in-process is `Authenticator.VerifiedToken`, which does not
+    * exist yet.
     */
   private def authenticator: Authenticator = authMode match {
     case "header" => Authenticator.TrustedHeader
     case other =>
-      throw new IllegalArgumentException(s"unknown AUTH_MODE '$other'; only 'header' exists so far")
+      throw new IllegalArgumentException(s"unknown AUTH_MODE '$other'; only 'header' works locally")
   }
 
   /** Credentials come straight from the environment here, where the Lambda reads them from
