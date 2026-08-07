@@ -17,10 +17,31 @@ case class Config(
     apiEndpoint: String,
     hostedLoginUrl: String,
     clientId: String,
-    redirectUri: String
-)
+    redirectUri: String,
+    authMode: String,
+    localExternalId: String
+) {
+
+  /** True in the local development mode, where there is no Cognito and the caller's identity is
+    * asserted rather than proved. See `Config.HeaderAuth`.
+    */
+  def headerAuth: Boolean = authMode == Config.HeaderAuth
+}
 
 object Config {
+
+  /** Tokens from Cognito hosted login. The only mode that is safe anywhere real. */
+  val CognitoAuth = "cognito"
+
+  /** Development only: the identity is sent in `X-External-Id` and believed. It exists to click
+    * through the UI against `LocalServer` with no AWS involved.
+    *
+    * It is worth being blunt about what this is: **authentication turned off**. Anyone who can
+    * reach the API can be anyone. It is usable only because `LocalServer` binds to loopback and
+    * the deployed function does not accept it — `Handler` defaults to `gateway`, and the
+    * terraform sets `AUTH_MODE=gateway` explicitly.
+    */
+  val HeaderAuth = "header"
 
   /** Fails loudly and immediately on a missing field. A UI that started up and then failed every
     * request with an opaque error would be far harder to diagnose than one that does not start.
@@ -33,25 +54,36 @@ object Config {
         "window.matchmakerConfig is not set; index.html must define it before loading main.js"
       )
 
-    def field(name: String): String = {
+    def optional(name: String): Option[String] = {
       val value = raw.selectDynamic(name)
-      if (js.isUndefined(value) || value == null || value.toString.isEmpty)
-        throw new IllegalStateException(s"matchmakerConfig.$name is not set")
-      value.toString
+      if (js.isUndefined(value) || value == null || value.toString.isEmpty) None
+      else Some(value.toString)
     }
+
+    def field(name: String): String =
+      optional(name).getOrElse(throw new IllegalStateException(s"matchmakerConfig.$name is not set"))
+
+    val mode = optional("authMode").getOrElse(CognitoAuth)
+
+    if (mode != CognitoAuth && mode != HeaderAuth)
+      throw new IllegalStateException(s"matchmakerConfig.authMode is '$mode'; expected '$CognitoAuth' or '$HeaderAuth'")
 
     Config(
       apiEndpoint = field("apiEndpoint").stripSuffix("/"),
-      hostedLoginUrl = field("hostedLoginUrl").stripSuffix("/"),
-      clientId = field("clientId"),
+      // The Cognito settings are only needed to sign in, so header mode does not require them —
+      // the point of that mode is to run with no pool at all.
+      hostedLoginUrl = (if (mode == HeaderAuth) optional("hostedLoginUrl") else Some(field("hostedLoginUrl")))
+        .getOrElse("")
+        .stripSuffix("/"),
+      clientId = (if (mode == HeaderAuth) optional("clientId") else Some(field("clientId"))).getOrElse(""),
       // Defaults to wherever the page is served from, which is what makes a local build work
       // against the dev pool without editing anything — provided this exact URL is one of the
       // pool's callback_urls, which Cognito matches literally.
-      redirectUri = {
-        val configured = raw.selectDynamic("redirectUri")
-        if (js.isUndefined(configured) || configured == null) defaultRedirectUri
-        else configured.toString
-      }
+      redirectUri = optional("redirectUri").getOrElse(defaultRedirectUri),
+      authMode = mode,
+      // Whoever you are when there is nothing to prove it. Configurable so two browser profiles
+      // can be two players, which is what testing a challenge and an acceptance needs.
+      localExternalId = optional("localExternalId").getOrElse("local-dev-1")
     )
   }
 

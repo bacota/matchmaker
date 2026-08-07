@@ -17,17 +17,22 @@ object Main {
   def main(): Unit = {
     // Must run before anything reads the token: this is the page load that carries the
     // authorization code, and until it has been redeemed there is no session.
-    Auth.completeSignIn() match {
-      case Some(signIn) =>
-        signIn.onComplete { outcome =>
-          outcome.failed.foreach(Store.report)
+    if (Config.current.headerAuth) {
+      // Nothing to sign in to: the identity is whatever the config says. Straight to the app.
+      Store.signedIn.set(true)
+      Store.loadAll()
+    } else
+      Auth.completeSignIn() match {
+        case Some(signIn) =>
+          signIn.onComplete { outcome =>
+            outcome.failed.foreach(Store.report)
+            Store.signedIn.set(Auth.isSignedIn)
+            if (Auth.isSignedIn) Store.loadAll()
+          }
+        case None =>
           Store.signedIn.set(Auth.isSignedIn)
           if (Auth.isSignedIn) Store.loadAll()
-        }
-      case None =>
-        Store.signedIn.set(Auth.isSignedIn)
-        if (Auth.isSignedIn) Store.loadAll()
-    }
+      }
 
     renderOnDomContentLoaded(dom.document.getElementById("app"), Views.app)
   }
@@ -50,9 +55,19 @@ object Views {
     div(
       cls := "header",
       h1("Matchmaker"),
+      // Unmissable, because a page that looks like the real thing but authenticates nobody is
+      // exactly the page you do not want to be confused about.
+      if (Config.current.headerAuth)
+        div(cls := "banner", s"local mode — signed in as ${Config.current.localExternalId}, no authentication")
+      else emptyNode,
       child <-- Store.player.signal.map {
         case Store.PlayerState.Registered(player) =>
-          div(cls := "who", span(player.nickname), button(cls := "link", "Sign out", onClick --> (_ => Auth.signOut())))
+          div(
+            cls := "who",
+            span(player.nickname),
+            if (Config.current.headerAuth) emptyNode
+            else button(cls := "link", "Sign out", onClick --> (_ => Auth.signOut()))
+          )
         case _ => emptyNode
       },
       child <-- Store.error.signal.map {

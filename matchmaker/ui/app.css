@@ -170,3 +170,16 @@ button.toggle {
   font-weight: inherit;
   color: inherit;
 }
+
+/* Local development mode: no authentication at all. Loud on purpose — this page looks exactly
+   like the real one otherwise. */
+.banner {
+  flex-basis: 100%;
+  order: 99;
+  background: #fff6e0;
+  border: 1px solid #c88a00;
+  color: #7a5400;
+  border-radius: 4px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+}

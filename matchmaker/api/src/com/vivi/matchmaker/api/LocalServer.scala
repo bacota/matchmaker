@@ -51,7 +51,22 @@ object LocalServer {
     println(s"matchmaker listening on http://localhost:$port")
     println(s"  database  ${config.user}@${config.host}:${config.port}/${config.database}")
     println(s"  auth      $authMode")
+    println(s"  cors      ${allowedOrigins.mkString(", ")}")
   }
+
+  /** Origins the browser UI may call this from.
+    *
+    * The UI is served by a separate static server, so every call it makes is cross-origin. Only
+    * loopback origins are allowed and only ones listed here: this process trusts an unverified
+    * header for identity, so anything that can call it can be anyone, and a permissive `*` would
+    * hand that to any page the developer happens to have open.
+    */
+  private lazy val allowedOrigins: Set[String] =
+    env("LOCAL_CORS_ORIGINS")
+      .map(_.split(',').iterator.map(_.trim).filter(_.nonEmpty).toSet)
+      .getOrElse(Set("http://localhost:5173", "http://127.0.0.1:5173", s"http://localhost:$uiPort"))
+
+  private def uiPort: Int = env("PORT").flatMap(_.toIntOption).getOrElse(8080)
 
   private def authMode: String = env("AUTH_MODE").getOrElse("header")
 
@@ -84,6 +99,17 @@ object LocalServer {
 
     def handle(exchange: HttpExchange): Unit =
       try {
+        val origin = Option(exchange.getRequestHeaders.getFirst("Origin")).filter(allowedOrigins.contains)
+        origin.foreach(allowed => applyCorsHeaders(exchange, allowed))
+
+        // The browser's preflight. It carries no body and must be answered without reaching the
+        // router: it has no identity header, so it would come back 401 and the browser would
+        // report only an opaque CORS failure.
+        if (exchange.getRequestMethod.equalsIgnoreCase("OPTIONS")) {
+          exchange.sendResponseHeaders(204, -1)
+          return
+        }
+
         val response =
           try
             Router
@@ -103,6 +129,21 @@ object LocalServer {
 
         send(exchange, response)
       } finally exchange.close()
+
+    /** Echoes back the one origin that matched rather than `*`, which is both what a credentialed
+      * request requires and a smaller thing to get wrong. Set before the status line, since the
+      * JDK server writes headers when `sendResponseHeaders` is called.
+      */
+    private def applyCorsHeaders(exchange: HttpExchange, origin: String): Unit = {
+      val headers = exchange.getResponseHeaders
+      headers.set("Access-Control-Allow-Origin", origin)
+      headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+      headers.set("Access-Control-Allow-Headers", "content-type, x-external-id, authorization")
+      headers.set("Access-Control-Max-Age", "600")
+      // Two different origins can get two different answers from this URL, so caches must not
+      // serve one to the other.
+      headers.set("Vary", "Origin")
+    }
 
     private def requestOf(exchange: HttpExchange): Request = {
       val uri = exchange.getRequestURI

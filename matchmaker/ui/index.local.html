@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Matchmaker (local)</title>
+    <link rel="stylesheet" href="./app.css" />
+
+    <!--
+      LOCAL DEVELOPMENT ONLY. authMode "header" means there is no authentication: the identity
+      below is asserted in the X-External-Id header and believed, exactly as `LocalServer` does.
+
+      Never serve this file anywhere but localhost, and never point it at a deployed API — the
+      Lambda would refuse it anyway, since `Handler` defaults to AUTH_MODE=gateway and the
+      terraform sets it explicitly.
+
+      To be a second player, copy this file, change localExternalId, and open it in another
+      browser profile. Two identities are what testing a challenge and an acceptance needs.
+    -->
+    <script>
+      window.matchmakerConfig = {
+        authMode: "header",
+        localExternalId: "local-dev-1",
+        apiEndpoint: "http://localhost:8080"
+      };
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <script type="module">
+      import { main } from "./main.js";
+      main();
+    </script>
+  </body>
+</html>
