@@ -9,8 +9,7 @@ import com.vivi.matchmaker.TestMigration
 class RegistrationServiceSpec extends PropertySuite {
   TestMigration.ensure()
 
-  private val config = DbConfig(host = "localhost", database = "matchmaker", user = "matchmaker", password = Some("matchmaker"))
-  private val service = new RegistrationService(config)
+  private val service = TestServices.services.registration
 
   private def genUniqueString: Gen[String] =
     Gen.choose(24, 40).flatMap(n => Gen.listOfN(n, Gen.alphaNumChar).map(_.mkString)).map(s => s"$s-${java.util.UUID.randomUUID()}")

@@ -12,9 +12,8 @@ import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, GameRepo,
 class OpenChallengeServiceSpec extends PropertySuite {
   TestMigration.ensure()
 
-  private val config = DbConfig(host = "localhost", database = "matchmaker", user = "matchmaker", password = Some("matchmaker"))
-  private val challengeService = new OpenChallengeService[String](config)
-  private val registrationService = new RegistrationService(config)
+  private val challengeService = TestServices.services.challenges
+  private val registrationService = TestServices.services.registration
 
   private def genUniqueString: Gen[String] =
     Gen.choose(24, 40).flatMap(n => Gen.listOfN(n, Gen.alphaNumChar).map(_.mkString)).map(s => s"$s-${java.util.UUID.randomUUID()}")
@@ -184,6 +183,30 @@ class OpenChallengeServiceSpec extends PropertySuite {
           )
         } yield remainingChallenge.isEmpty && remainingAcceptance.isEmpty
         result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("listByGame returns the game's open challenges") {
+    forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+      val result = for {
+        fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
+        created <- challengeService.create(challengeFor(fixture, 3), externalId)
+        listed <- challengeService.listByGame(fixture.game.gameId, externalId)
+      } yield listed.map(_.challengeId) == List(created.challengeId)
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("listByGame rejects an unregistered caller") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, strangerExternalId) =>
+      val result = for {
+        fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
+        attempt <- challengeService.listByGame(fixture.game.gameId, strangerExternalId).attempt
+      } yield attempt match {
+        case Left(_: UnauthorizedError) => true
+        case _                          => false
+      }
+      result.timeout(10.seconds).unsafeRunSync()
     }
   }
 

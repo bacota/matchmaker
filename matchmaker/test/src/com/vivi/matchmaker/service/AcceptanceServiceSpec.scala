@@ -12,10 +12,9 @@ import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, GameRepo,
 class AcceptanceServiceSpec extends PropertySuite {
   TestMigration.ensure()
 
-  private val config = DbConfig(host = "localhost", database = "matchmaker", user = "matchmaker", password = Some("matchmaker"))
-  private val challengeService = new OpenChallengeService[String](config)
-  private val acceptanceService = new AcceptanceService(config)
-  private val registrationService = new RegistrationService(config)
+  private val challengeService = TestServices.services.challenges
+  private val acceptanceService = TestServices.services.acceptances
+  private val registrationService = TestServices.services.registration
 
   private def genUniqueString: Gen[String] =
     Gen.choose(24, 40).flatMap(n => Gen.listOfN(n, Gen.alphaNumChar).map(_.mkString)).map(s => s"$s-${java.util.UUID.randomUUID()}")

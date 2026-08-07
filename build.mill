@@ -21,6 +21,32 @@ object matchmaker extends ScalaModule {
     )
   }
 
+  /** The HTTP API, packaged as an AWS Lambda behind an API Gateway HTTP API.
+    *
+    * Deployable jar: `mill matchmaker.api.assembly`, whose handler is
+    * `com.vivi.matchmaker.api.Handler::handleRequest`.
+    *
+    * `aws-lambda-java-events` is deliberately not a dependency: it would pull in Jackson purely
+    * to model the event, which the payload-v2 JSON is small enough to parse with upickle.
+    */
+  object api extends ScalaModule {
+    def scalaVersion = "3.3.8"
+    def moduleDeps = Seq(matchmaker)
+    def mvnDeps = Seq(
+      mvn"com.amazonaws:aws-lambda-java-core:1.2.3",
+      mvn"com.lihaoyi::upickle:4.0.2",
+      mvn"software.amazon.awssdk:secretsmanager:2.29.0"
+    )
+
+    object test extends ScalaTests with TestModule.Munit {
+      def mvnDeps = Seq(
+        mvn"org.scalameta::munit:1.0.4",
+        mvn"org.typelevel::otel4s-core-trace:0.11.2",
+        mvn"org.typelevel::otel4s-core-metrics:0.11.2"
+      )
+    }
+  }
+
   /** Standalone module used only to run Flyway migrations (JDBC-based,
     * independent of the skunk/cats-effect runtime dependencies above).
     * Migration scripts live in matchmaker/resources/db/migration and are

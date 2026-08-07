@@ -8,13 +8,13 @@ import com.vivi.matchmaker.persistence.PlayerRepo
 /** Registers new players. Anyone may register (no authorization rule), subject to the
   * precondition that nickname and externalId are both non-blank and not already taken.
   */
-class RegistrationService(config: DbConfig) {
+class RegistrationService(sessionPool: SessionPool) {
 
   def register(nickname: String, externalId: String): IO[Player] =
     for {
       _ <- IO.raiseWhen(nickname.trim.isEmpty)(ValidationError("nickname must not be blank"))
       _ <- IO.raiseWhen(externalId.trim.isEmpty)(ValidationError("externalId must not be blank"))
-      player <- DbSession.resource(config).use { session =>
+      player <- sessionPool.use { session =>
         new PlayerRepo(session)
           .create(Player(PlayerId.unassigned, nickname, isAdmin = false, externalId))
           .recoverWith { case SqlState.UniqueViolation(_) =>

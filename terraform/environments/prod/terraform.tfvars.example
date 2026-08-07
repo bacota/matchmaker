@@ -1,0 +1,15 @@
+// Copy to terraform.tfvars and fill in from the existing database and network.
+// terraform.tfvars is gitignored: these identify real infrastructure.
+
+region = "us-east-1"
+
+// Aurora writer endpoint, with or without a port.
+rds_endpoint = "matchmaker-prod.cluster-xxxxxxxx.us-east-1.rds.amazonaws.com"
+db_name      = "matchmaker"
+
+// An existing Secrets Manager secret holding {"username": ..., "password": ...}.
+db_secret_name = "matchmaker/prod/db"
+
+// Private subnets that can reach the database, and security groups the database accepts.
+subnet_ids         = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
+security_group_ids = ["sg-cccccccc"]

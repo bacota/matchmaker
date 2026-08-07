@@ -143,6 +143,72 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       .execute(selectParameterValues)((gameId, parameterId))
       .map(_.map(v => GameParameterValue(gameId, parameterId, v)))
 
+  // Listing deliberately does not reuse readRoles/readParameters: those are per-game, so
+  // calling them for each game would be a query per game (and per parameter). These four
+  // statements fetch every game's rows in one pass each, and the aggregate is assembled below.
+  private val selectAllGameRows: Query[Boolean, (GameId, String, String, String, Boolean, String, Int, Int)] =
+    sql"""SELECT game_id, name, description, url, active, external_id, min_players, max_players
+          FROM game
+          WHERE (NOT $bool OR active)
+          ORDER BY name"""
+      .query(gameId *: text *: text *: text *: bool *: text *: int4 *: int4)
+
+  private val selectAllRoles: Query[Boolean, (GameId, GameRoleId, String, Boolean)] =
+    sql"""SELECT r.game_id, r.game_role_id, r.name, r.optional
+          FROM game_role r JOIN game g ON g.game_id = r.game_id
+          WHERE (NOT $bool OR g.active)"""
+      .query(gameId *: gameRoleId *: text *: bool)
+
+  private val selectAllParameters: Query[Boolean, (GameId, GameParameterId, String, Option[T])] =
+    sql"""SELECT p.game_id, p.game_parameter_id, p.name, p.default_value
+          FROM game_parameter p JOIN game g ON g.game_id = p.game_id
+          WHERE (NOT $bool OR g.active)"""
+      .query(gameId *: gameParameterId *: text *: value.opt)
+
+  // The ids are decoded as raw int4 and wrapped below, and `value` is selected first, so that
+  // the twiddle ends in a concrete type: a twiddle ending in the abstract T (or in an opaque id)
+  // does not reduce to a tuple, because neither can be shown to be disjoint from Tuple here.
+  private val selectAllParameterValues: Query[Boolean, (T, Int, Int)] =
+    sql"""SELECT v.value, v.game_id, v.game_parameter_id
+          FROM game_parameter_value v JOIN game g ON g.game_id = v.game_id
+          WHERE (NOT $bool OR g.active)"""
+      .query(value *: int4 *: int4)
+
+  /** All games with their roles and parameters, in four queries regardless of how many games
+    * there are.
+    *
+    * @param activeOnly restrict to games flagged active
+    */
+  def list(activeOnly: Boolean): IO[List[Game]] =
+    for {
+      gameRows <- session.execute(selectAllGameRows)(activeOnly)
+      roleRows <- session.execute(selectAllRoles)(activeOnly)
+      parameterRows <- session.execute(selectAllParameters)(activeOnly)
+      valueRows <- session.execute(selectAllParameterValues)(activeOnly)
+    } yield {
+      val rolesByGame = roleRows.groupMap(_._1) { case (gameId, id, name, optional) => GameRole(id, gameId, name, optional) }
+      val valuesByParameter = valueRows
+        .map { case (v, gameId, parameterId) => GameParameterValue(GameId(gameId), GameParameterId(parameterId), v) }
+        .groupBy(v => (v.gameId, v.gameParameterId))
+      val parametersByGame = parameterRows.groupMap(_._1) { case (gameId, parameterId, name, defaultValue) =>
+        GameParameter(gameId, parameterId, name, defaultValue, valuesByParameter.getOrElse((gameId, parameterId), Nil))
+      }
+      gameRows.map { case (id, name, description, url, active, externalId, minPlayers, maxPlayers) =>
+        Game(
+          id,
+          name,
+          description,
+          url,
+          active,
+          rolesByGame.getOrElse(id, Nil),
+          parametersByGame.getOrElse(id, Nil),
+          externalId,
+          minPlayers,
+          maxPlayers
+        )
+      }
+    }
+
   private def replaceParameters(gameId: GameId, parameters: Seq[GameParameter[_]]): IO[Unit] =
     for {
       _ <- session.execute(clearDefaultValues)(gameId)
