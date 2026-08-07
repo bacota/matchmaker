@@ -27,7 +27,7 @@ class Handler extends RequestStreamHandler {
       try {
         val request = ApiGateway.decodeRequest(event)
         Router
-          .dispatch(services, request)
+          .dispatch(services, request, Handler.authenticator)
           .handleError { error =>
             // Router maps ServiceErrors itself; reaching here means something unexpected, so
             // the detail goes to CloudWatch and only a generic message goes to the caller.
@@ -54,6 +54,12 @@ object Handler {
     */
   lazy val services: Services[String] =
     Services.resource[String](dbConfig(), poolSize).allocated.unsafeRunSync()._1
+
+  /** How the caller is identified. This becomes `Authenticator.GatewayClaims` once the API has a
+    * Cognito JWT authorizer in front of it; until then the header is taken on trust, which is
+    * only acceptable while nothing is publicly reachable.
+    */
+  val authenticator: Authenticator = Authenticator.TrustedHeader
 
   private def poolSize: Int =
     sys.env.get("DB_POOL_SIZE").flatMap(_.toIntOption).getOrElse(Services.defaultPoolSize)
