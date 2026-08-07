@@ -186,15 +186,21 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           LEFT JOIN game_parameter_value v
                  ON v.game_id = p.game_id AND v.game_parameter_id = p.game_parameter_id
           WHERE (NOT $bool OR g.active)
-          ORDER BY g.name, g.game_id"""
+          ORDER BY g.game_id"""
       .query(
         gameId *: text *: text *: text *: bool *: text *: int4 *: int4 *:
           int4.opt *: text.opt *: bool.opt *:
           int4.opt *: text.opt *: value.opt *: value.opt
       )
 
-  /** All games with their roles and parameters, in a single query regardless of how many games
-    * there are.
+  /** All games with their roles and parameters, sorted by name, in a single query regardless of
+    * how many games there are.
+    *
+    * The sort is applied here rather than in the query for two reasons. The database would be
+    * sorting the join's cross product, where this sorts one entry per game, after the rows have
+    * been collapsed. And `ORDER BY name` would use the server's collation, which need not match
+    * between a local Postgres and Aurora, whereas this ordering is the same wherever it runs.
+    * The query still orders by game_id, which only has to be stable, not meaningful.
     *
     * @param activeOnly restrict to games flagged active
     */
@@ -202,11 +208,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     session.execute(selectGameAggregate)(activeOnly).map { rows =>
       val listRows = rows.map(GameListRow.apply.tupled)
 
-      // groupBy loses ordering, so the ORDER BY is honoured by walking the ids in the order the
-      // rows arrived rather than by iterating the resulting map.
-      val byGame = listRows.groupBy(_.gameId)
-      listRows.map(_.gameId).distinct.map { id =>
-        val gameRows = byGame(id)
+      listRows.groupBy(_.gameId).toList.map { case (id, gameRows) =>
         val head = gameRows.head
 
         val roles = gameRows.flatMap { row =>
@@ -246,6 +248,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           head.maxPlayers
         )
       }
+        // game_id breaks ties, so games sharing a name still come back in a stable order.
+        .sortBy(game => (game.name, game.gameId.value))
     }
 
   private def replaceParameters(gameId: GameId, parameters: Seq[GameParameter[_]]): IO[Unit] =

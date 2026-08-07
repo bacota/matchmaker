@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.persistence
 
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all._
 import com.vivi.matchmaker.PropertySuite
 import com.vivi.matchmaker.model._
 import org.scalacheck.Prop._
@@ -67,6 +68,34 @@ class GameRepoSpec extends PropertySuite {
       listed.parameters.map(_.asInstanceOf[GameParameter[String]].values.map(_.value).toSet).toSet,
       read.parameters.map(_.asInstanceOf[GameParameter[String]].values.map(_.value).toSet).toSet
     )
+  }
+
+  test("list returns games sorted by name, with game id breaking ties") {
+    // Names are suffixed with a shared unique token so this run's games can be picked out of a
+    // database these tests never clean up, while still sorting among themselves.
+    val token = java.util.UUID.randomUUID().toString
+    val names = List("charlie", "alpha", "bravo", "alpha")
+
+    val (created, listed) = TestSession.resource
+      .use { session =>
+        val repo = new GameRepo[String](session)
+        for {
+          created <- names.traverse(n => repo.create(Generators.genGame.sample.get.copy(name = s"$n-$token")))
+          listed <- repo.list(activeOnly = false)
+        } yield (created, listed)
+      }
+      .unsafeRunSync()
+
+    val ours = listed.filter(_.name.endsWith(token))
+    assertEquals(ours.size, 4)
+
+    // Sorted by name...
+    assertEquals(ours.map(_.name), ours.map(_.name).sorted)
+
+    // ...and the two games named "alpha" are ordered by id, not left to chance.
+    val alphas = ours.filter(_.name.startsWith("alpha")).map(_.gameId.value)
+    assertEquals(alphas, alphas.sorted)
+    assertEquals(alphas.toSet, created.filter(_.name.startsWith("alpha")).map(_.gameId.value).toSet)
   }
 
   test("list keeps a game that has neither roles nor parameters") {
