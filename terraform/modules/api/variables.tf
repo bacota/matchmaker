@@ -87,8 +87,10 @@ variable "hosted_login_domain_prefix" {
   type        = string
 
   validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,62}$", var.hosted_login_domain_prefix))
-    error_message = "Must be lowercase letters, digits and hyphens, starting with a letter or digit."
+    # Must start and end with a letter or digit: Cognito rejects a leading or trailing hyphen, and
+    # doing so here fails the plan rather than the apply, after the rest of the run has succeeded.
+    condition     = can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", var.hosted_login_domain_prefix))
+    error_message = "Must be 1-63 lowercase letters, digits and hyphens, starting and ending with a letter or digit."
   }
 }
 
