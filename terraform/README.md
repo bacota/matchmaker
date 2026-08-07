@@ -5,13 +5,46 @@ The matchmaker API, running as a Java Lambda behind an API Gateway HTTP API.
 ## Layout
 
 ```
-modules/api          the Lambda, the HTTP API, and their IAM roles
-environments/dev     dev instance of that module
-environments/prod    prod instance of that module
+main.tf                        one root for every environment
+variables.tf                   account facts, supplied per environment
+modules/api                    the Lambda, the HTTP API, Cognito, and their IAM roles
+environments/<env>.tfvars      account facts (gitignored; copy the .example)
+environments/<env>.backend.hcl which state this environment uses
+tf.sh                          run terraform against one environment
 ```
 
+**One configuration, not one per environment.** Environments differ only in values, and the values
+split in two:
+
+- **Policy** — memory, log retention, advanced security, session length. These are decisions, so
+  they are committed, in `local.settings` in `main.tf`, where dev and prod sit side by side and
+  can be compared without diffing two directories.
+- **Account facts** — the database endpoint, subnets, security groups, secret name, domain prefix,
+  URLs. These name real infrastructure, so they live in `environments/<env>.tfvars`, which is
+  gitignored.
+
 Every resource is named `matchmaker-${environment}-...`, so both environments can live in one
-account.
+account, and each has its own state key so neither can be applied over the other.
+
+### Always use `tf.sh`
+
+```sh
+./tf.sh dev plan
+./tf.sh prod apply
+./tf.sh dev output -raw api_endpoint
+```
+
+A single root serving several environments has one sharp edge: terraform remembers the chosen
+backend in `.terraform`, so a bare `terraform apply` after working on the other environment would
+target the wrong state, with no warning and a plan that looks entirely reasonable. `tf.sh`
+re-initialises the backend on every run and always passes the matching var file, which removes
+that edge. Running `terraform` directly reintroduces it.
+
+### Adding an environment
+
+Add a block to `local.settings` in `main.tf`, add the name to the `environment` variable's
+validation in `variables.tf`, and add `environments/<env>.tfvars` and `.backend.hcl`. No new
+directory, and no copy of the module block to keep in step.
 
 ## What this does not create
 
@@ -38,13 +71,12 @@ The database and its credentials are managed elsewhere and referenced by variabl
 mill matchmaker.api.assembly
 
 # 2. Point terraform at your infrastructure.
-cd terraform/environments/dev
-cp terraform.tfvars.example terraform.tfvars   # then edit it
-$EDITOR backend.tf                             # uncomment and fill in the S3 backend
+cd terraform
+cp environments/dev.tfvars.example environments/dev.tfvars   # then edit it
+$EDITOR environments/dev.backend.hcl                         # the S3 bucket and lock table
 
-# 3. Apply.
-terraform init
-terraform apply
+# 3. Apply. tf.sh handles init, the backend, and the var file.
+./tf.sh dev apply
 ```
 
 Redeploying code is the same `assembly` then `apply`: the function's `source_code_hash` tracks
@@ -100,9 +132,9 @@ header.
 
 ### Locally
 
-`LocalServer` still runs with `AUTH_MODE=header`, taking the caller from `X-External-Id` on trust.
-That is a development convenience with no gateway in front of it — bind it to loopback and do not
-expose it. Verifying a real dev-pool token in-process (against the pool's public JWKS, which needs
+`LocalServer` runs with `AUTH_MODE=header`, taking the caller from `X-External-Id` on trust. It
+binds to loopback and allows only loopback CORS origins; see `matchmaker/ui/README.md` for the
+local stack. Verifying a real dev-pool token in-process (against the pool's public JWKS, which needs
 no AWS credentials) is `Authenticator.VerifiedToken`, which is not written yet.
 
 ### After the first apply
@@ -112,5 +144,5 @@ secret — the client id is a query parameter of the authorize URL. Then check t
 anonymous callers:
 
 ```sh
-curl -i $(terraform output -raw api_endpoint)/me     # 401 from the gateway, before any code runs
+curl -i $(./tf.sh dev output -raw api_endpoint)/me     # 401 from the gateway, before any code runs
 ```

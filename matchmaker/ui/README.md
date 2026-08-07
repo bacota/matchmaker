@@ -60,12 +60,13 @@ keep that contained, and all three matter:
 ```sh
 # 1. Deploy, if you have not.
 mill matchmaker.api.assembly
-cd terraform/environments/dev
-cp terraform.tfvars.example terraform.tfvars   # RDS, subnets, SGs, secret, domain prefix
-terraform init && terraform apply
+cd terraform
+cp environments/dev.tfvars.example environments/dev.tfvars   # RDS, subnets, SGs, secret, domain
+$EDITOR environments/dev.backend.hcl                         # S3 bucket and lock table
+./tf.sh dev apply
 
 # 2. Read off the three public values the UI needs.
-terraform output    # api_endpoint, hosted_login_url, user_pool_client_id
+./tf.sh dev output  # api_endpoint, hosted_login_url, user_pool_client_id
 
 # 3. Paste them into index.html's config block, then link and serve as above.
 mill matchmaker.ui.fastLinkJS
