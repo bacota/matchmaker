@@ -115,6 +115,14 @@ variable "logout_urls" {
   description = "URLs the hosted UI may redirect to after sign-out. Same exact-match rule as callback_urls."
   type        = list(string)
   default     = []
+
+  validation {
+    condition = alltrue([
+      for u in var.logout_urls :
+      can(regex("^https://", u)) || can(regex("^http://localhost(?::[0-9]+)?/", u))
+    ])
+    error_message = "logout_urls must be https:// URLs (or http://localhost[:port]/ for local dev)."
+  }
 }
 
 variable "password_minimum_length" {
