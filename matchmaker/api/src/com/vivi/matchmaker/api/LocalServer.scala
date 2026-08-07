@@ -36,7 +36,7 @@ object LocalServer {
     // Unlike the Lambda, this process has a shutdown, so the pool's finalizer is kept and run.
     val (services, release) = Services.resource[String](config, poolSize).allocated.unsafeRunSync()
 
-    val server = HttpServer.create(new InetSocketAddress(port), 0)
+    val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
     server.createContext("/", new Dispatcher(services, authenticator))
     // The default executor runs requests one at a time on the accepting thread, which would make
     // a connection pool pointless. Sized to the pool, since that is the real limit.
