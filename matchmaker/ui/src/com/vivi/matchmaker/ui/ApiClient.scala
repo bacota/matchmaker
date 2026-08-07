@@ -114,7 +114,11 @@ object ApiClient {
     init.method = method
 
     val headers = js.Dictionary("accept" -> "application/json")
-    Auth.idToken.foreach(token => headers("authorization") = s"Bearer $token")
+
+    // Two ways of saying who is calling, and only one of them is evidence. `LocalServer` reads
+    // the header; the gateway reads the token and verifies it before the function is reached.
+    if (Config.current.headerAuth) headers("x-external-id") = Config.current.localExternalId
+    else Auth.idToken.foreach(token => headers("authorization") = s"Bearer $token")
     body.foreach { payload =>
       headers("content-type") = "application/json"
       init.body = payload
@@ -130,7 +134,9 @@ object ApiClient {
         case (status, text) =>
           // The token has expired or been revoked. Dropping it here means the next render shows
           // the sign-in button instead of repeating a request that cannot succeed.
-          if (status == 401) Store.sessionExpired()
+          // In header mode there is no session to expire, and clearing one would only wipe the
+          // screen; a 401 there means the server is not in header mode, which the message says.
+          if (status == 401 && !Config.current.headerAuth) Store.sessionExpired()
           Future.failed(ApiError(status, messageOf(text)))
       }
   }
