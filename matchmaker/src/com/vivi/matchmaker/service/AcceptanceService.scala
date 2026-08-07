@@ -7,10 +7,10 @@ import com.vivi.matchmaker.persistence.AcceptanceRepo
 /** Deletes acceptances. Authorized by `callerExternalId` matching either the player who made
   * the acceptance or the player who owns the challenge (i.e. the challenger).
   */
-class AcceptanceService(config: DbConfig) {
+class AcceptanceService(sessionPool: SessionPool) {
 
   def delete(challengeId: ChallengeId, playerId: PlayerId, callerExternalId: String): IO[Unit] =
-    DbSession.resource(config).use { session =>
+    sessionPool.use { session =>
       val acceptanceRepo = new AcceptanceRepo(session)
       for {
         joined <- acceptanceRepo.readWithChallengeAndPlayers(challengeId, playerId).flatMap {

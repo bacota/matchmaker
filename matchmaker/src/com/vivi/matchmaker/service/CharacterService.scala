@@ -11,7 +11,7 @@ import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, PlayerRepo, Tex
   * applied. `updateState` is instead authorized on behalf of the game itself: its
   * `callerExternalId` must match the externalId of the game the character belongs to.
   */
-class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
+class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 
   def create(
       gameId: GameId,
@@ -20,7 +20,7 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
       externalId: String,
       callerExternalId: String
   ): IO[Character[T]] =
-    DbSession.resource(config).use { session =>
+    sessionPool.use { session =>
       val gameRepo = new GameRepo[T](session)
       val playerRepo = new PlayerRepo(session)
       val characterRepo = new CharacterRepo[T](session)
@@ -49,7 +49,7 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
       externalId: String,
       callerExternalId: String
   ): IO[Character[T]] =
-    DbSession.resource(config).use { session =>
+    sessionPool.use { session =>
       val playerRepo = new PlayerRepo(session)
       val characterRepo = new CharacterRepo[T](session)
       for {
@@ -75,7 +75,7 @@ class CharacterService[T](config: DbConfig)(using codec: TextCodec[T]) {
       state: T,
       callerExternalId: String
   ): IO[Character[T]] =
-    DbSession.resource(config).use { session =>
+    sessionPool.use { session =>
       val characterRepo = new CharacterRepo[T](session)
       for {
         joined <- characterRepo.readWithGame(characterId).flatMap {

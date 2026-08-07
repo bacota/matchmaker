@@ -75,4 +75,20 @@ class OpenChallengeRepo(session: Session[IO]) {
 
   def delete(id: ChallengeId): IO[Unit] =
     session.execute(deleteChallenge)(id).void
+
+  private val selectChallengesByGame
+      : Query[GameId, (ChallengeId, CharacterId, PlayerId, String, Short, Option[Instant], Option[Double], String)] =
+    sql"""SELECT challenge_id, character_id, challenger, message, number_of_players, start,
+                 EXTRACT(EPOCH FROM time_limit)::float8, settings
+          FROM open_challenge
+          WHERE game_id = $gameId
+          ORDER BY create_date DESC"""
+      .query(challengeId *: characterId *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings)
+
+  /** Every open challenge for a game, newest first. */
+  def listByGame(id: GameId): IO[List[OpenChallenge]] =
+    session.execute(selectChallengesByGame)(id).map(_.map {
+      case (challengeId, characterId, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings) =>
+        OpenChallenge(challengeId, challenger, message, numberOfPlayers, start, fromSeconds(timeLimitSeconds), settings, id, characterId)
+    })
 }

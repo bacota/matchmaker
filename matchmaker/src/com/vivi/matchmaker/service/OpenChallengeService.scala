@@ -2,16 +2,16 @@ package com.vivi.matchmaker.service
 
 import cats.effect.IO
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, OpenChallengeRepo, TextCodec}
+import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, OpenChallengeRepo, PlayerRepo, TextCodec}
 
 /** Creates and deletes open challenges. Both operations are authorized by
   * `callerExternalId`, which must match the externalId of the player who owns the
   * challenge's character.
   */
-class OpenChallengeService[T](config: DbConfig)(using codec: TextCodec[T]) {
+class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 
   def create(challenge: OpenChallenge, callerExternalId: String): IO[OpenChallenge] =
-    DbSession.resource(config).use { session =>
+    sessionPool.use { session =>
       val characterRepo = new CharacterRepo[T](session)
       val challengeRepo = new OpenChallengeRepo(session)
       for {
@@ -47,7 +47,7 @@ class OpenChallengeService[T](config: DbConfig)(using codec: TextCodec[T]) {
     * against concurrent acceptance attempts.
     */
   def accept(challengeId: ChallengeId, characterId: CharacterId, callerExternalId: String): IO[Acceptance] =
-    DbSession.resource(config).use { session =>
+    sessionPool.use { session =>
       val characterRepo = new CharacterRepo[T](session)
       val challengeRepo = new OpenChallengeRepo(session)
       val acceptanceRepo = new AcceptanceRepo(session)
@@ -78,8 +78,22 @@ class OpenChallengeService[T](config: DbConfig)(using codec: TextCodec[T]) {
       }
     }
 
+  /** The open challenges for a game, which any registered player may browse in order to accept
+    * one.
+    */
+  def listByGame(gameId: GameId, callerExternalId: String): IO[List[OpenChallenge]] =
+    sessionPool.use { session =>
+      for {
+        _ <- new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+          case Some(player) => IO.pure(player)
+          case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+        }
+        challenges <- new OpenChallengeRepo(session).listByGame(gameId)
+      } yield challenges
+    }
+
   def delete(challengeId: ChallengeId, callerExternalId: String): IO[Unit] =
-    DbSession.resource(config).use { session =>
+    sessionPool.use { session =>
       val characterRepo = new CharacterRepo[T](session)
       val challengeRepo = new OpenChallengeRepo(session)
       val acceptanceRepo = new AcceptanceRepo(session)

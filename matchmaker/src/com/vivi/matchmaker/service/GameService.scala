@@ -8,7 +8,7 @@ import com.vivi.matchmaker.persistence.{GameRepo, PlayerRepo, TextCodec}
 /** Creates or updates a Game, together with all of its roles, parameters, and parameter
   * values. Only an admin may do this.
   */
-class GameService[T](config: DbConfig)(using codec: TextCodec[T]) {
+class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 
   /** Creates `game` if it has no id yet (gameId == GameId.unassigned), otherwise updates the
     * existing game with that id. Returns the persisted state, including any
@@ -17,7 +17,7 @@ class GameService[T](config: DbConfig)(using codec: TextCodec[T]) {
     * @param externalUserId identifies the caller; must belong to an existing admin player
     */
   def createOrUpdate(externalUserId: String, game: Game): IO[Game] =
-    DbSession.resource(config).use { session =>
+    sessionPool.use { session =>
       val playerRepo = new PlayerRepo(session)
       val gameRepo = new GameRepo[T](session)
       for {
@@ -34,6 +34,24 @@ class GameService[T](config: DbConfig)(using codec: TextCodec[T]) {
                 }
             }
       } yield result
+    }
+
+  /** Lists games for any registered caller. Unlike `createOrUpdate` this needs no admin rights —
+    * the game catalogue is what every player browses — but the caller must still be a known
+    * player.
+    *
+    * @param activeOnly hide games flagged inactive
+    */
+  def list(callerExternalId: String, activeOnly: Boolean = false): IO[List[Game]] =
+    sessionPool.use { session =>
+      val playerRepo = new PlayerRepo(session)
+      for {
+        _ <- playerRepo.readByExternalId(callerExternalId).flatMap {
+          case Some(player) => IO.pure(player)
+          case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+        }
+        games <- new GameRepo[T](session).list(activeOnly)
+      } yield games
     }
 
   private def authorize(playerRepo: PlayerRepo, externalUserId: String): IO[Player] =

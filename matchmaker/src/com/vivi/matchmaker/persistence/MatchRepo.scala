@@ -48,4 +48,61 @@ class MatchRepo(session: Session[IO]) {
     session
       .execute(updateMatch)((m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings, m.gameId, m.matchId))
       .void
+
+  private val playerId = SkunkIdCodecs.playerId
+
+  // participant_id and character_id are decoded as raw int8 and wrapped in `toSummary`, and
+  // `pending` is selected last, so that the twiddle ends in a concrete type: one ending in an
+  // opaque id does not reduce to a tuple, because an opaque type cannot be shown to be disjoint
+  // from Tuple outside the scope that defines it.
+  private val summaryColumns =
+    gameId *: matchId *: text *: text *: bool *: instant *: instant.opt *: int8 *: int8 *: bool
+
+  private def toSummary(
+      row: (GameId, MatchId, String, String, Boolean, Instant, Option[Instant], Long, Long, Boolean)
+  ): MatchSummary = {
+    val (gameId, matchId, gameName, description, completed, start, due, participantId, characterId, pending) = row
+    MatchSummary(
+      gameId,
+      matchId,
+      gameName,
+      description,
+      completed,
+      start,
+      due,
+      pending,
+      ParticipantId(participantId),
+      CharacterId(characterId)
+    )
+  }
+
+  // Ordering puts the most urgent first for due lists and the most recent first for history;
+  // NULLS LAST keeps matches with no deadline from crowding out ones that have a deadline.
+  private val selectForPlayer =
+    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.start,
+                 p.due, p.participant_id, p.character_id, p.pending
+          FROM participant p
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN game g ON g.game_id = m.game_id
+          WHERE p.player_id = $playerId AND m.completed = $bool
+          ORDER BY p.due ASC NULLS LAST, m.start DESC"""
+      .query(summaryColumns)
+
+  private val selectDueForPlayer =
+    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.start,
+                 p.due, p.participant_id, p.character_id, p.pending
+          FROM participant p
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN game g ON g.game_id = m.game_id
+          WHERE p.player_id = $playerId AND p.pending = true AND m.completed = false
+          ORDER BY p.due ASC NULLS LAST, m.start DESC"""
+      .query(summaryColumns)
+
+  /** Every match the player is in, either still running (`completed = false`) or finished. */
+  def listForPlayer(playerId: PlayerId, completed: Boolean): IO[List[MatchSummary]] =
+    session.execute(selectForPlayer)((playerId, completed)).map(_.map(toSummary))
+
+  /** The running matches in which it is this player's turn. */
+  def listDueForPlayer(playerId: PlayerId): IO[List[MatchSummary]] =
+    session.execute(selectDueForPlayer)(playerId).map(_.map(toSummary))
 }

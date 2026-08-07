@@ -12,9 +12,8 @@ import com.vivi.matchmaker.persistence.{GameRepo, TestSession}
 class CharacterServiceSpec extends PropertySuite {
   TestMigration.ensure()
 
-  private val config = DbConfig(host = "localhost", database = "matchmaker", user = "matchmaker", password = Some("matchmaker"))
-  private val characterService = new CharacterService[String](config)
-  private val registrationService = new RegistrationService(config)
+  private val characterService = TestServices.services.characters
+  private val registrationService = TestServices.services.registration
 
   private def genUniqueString: Gen[String] =
     Gen.choose(24, 40).flatMap(n => Gen.listOfN(n, Gen.alphaNumChar).map(_.mkString)).map(s => s"$s-${java.util.UUID.randomUUID()}")
