@@ -143,68 +143,107 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       .execute(selectParameterValues)((gameId, parameterId))
       .map(_.map(v => GameParameterValue(gameId, parameterId, v)))
 
-  // Listing deliberately does not reuse readRoles/readParameters: those are per-game, so
-  // calling them for each game would be a query per game (and per parameter). These four
-  // statements fetch every game's rows in one pass each, and the aggregate is assembled below.
-  private val selectAllGameRows: Query[Boolean, (GameId, String, String, String, Boolean, String, Int, Int)] =
-    sql"""SELECT game_id, name, description, url, active, external_id, min_players, max_players
-          FROM game
-          WHERE (NOT $bool OR active)
-          ORDER BY name"""
-      .query(gameId *: text *: text *: text *: bool *: text *: int4 *: int4)
+  /** One row of the listing join: a game, optionally one of its roles, and optionally one of its
+    * parameters together with one of that parameter's values.
+    *
+    * The role and parameter columns are nullable because the joins are outer — a game with no
+    * roles still has to appear — and the ids are decoded as raw ints because a twiddle ending in
+    * an opaque id does not reduce to a tuple (an opaque type cannot be shown to be disjoint from
+    * Tuple outside the scope that defines it).
+    */
+  private case class GameListRow(
+      gameId: GameId,
+      name: String,
+      description: String,
+      url: String,
+      active: Boolean,
+      externalId: String,
+      minPlayers: Int,
+      maxPlayers: Int,
+      roleId: Option[Int],
+      roleName: Option[String],
+      roleOptional: Option[Boolean],
+      parameterId: Option[Int],
+      parameterName: Option[String],
+      parameterDefault: Option[T],
+      parameterValue: Option[T]
+  )
 
-  private val selectAllRoles: Query[Boolean, (GameId, GameRoleId, String, Boolean)] =
-    sql"""SELECT r.game_id, r.game_role_id, r.name, r.optional
-          FROM game_role r JOIN game g ON g.game_id = r.game_id
-          WHERE (NOT $bool OR g.active)"""
-      .query(gameId *: gameRoleId *: text *: bool)
+  // Roles and parameter values are independent one-to-many branches off game, so joining both in
+  // one statement yields their cross product: a game with 2 roles and 3 parameter values comes
+  // back as 6 rows. That is what `list` de-duplicates below. It is the right trade while these
+  // collections stay small — which the schema encourages, since both describe a game's rules
+  // rather than its activity — but it is the reason to revisit this if they ever grow.
+  private val selectGameAggregate =
+    sql"""SELECT g.game_id, g.name, g.description, g.url, g.active, g.external_id,
+                 g.min_players, g.max_players,
+                 r.game_role_id, r.name, r.optional,
+                 p.game_parameter_id, p.name, p.default_value,
+                 v.value
+          FROM game g
+          LEFT JOIN game_role r ON r.game_id = g.game_id
+          LEFT JOIN game_parameter p ON p.game_id = g.game_id
+          LEFT JOIN game_parameter_value v
+                 ON v.game_id = p.game_id AND v.game_parameter_id = p.game_parameter_id
+          WHERE (NOT $bool OR g.active)
+          ORDER BY g.name, g.game_id"""
+      .query(
+        gameId *: text *: text *: text *: bool *: text *: int4 *: int4 *:
+          int4.opt *: text.opt *: bool.opt *:
+          int4.opt *: text.opt *: value.opt *: value.opt
+      )
 
-  private val selectAllParameters: Query[Boolean, (GameId, GameParameterId, String, Option[T])] =
-    sql"""SELECT p.game_id, p.game_parameter_id, p.name, p.default_value
-          FROM game_parameter p JOIN game g ON g.game_id = p.game_id
-          WHERE (NOT $bool OR g.active)"""
-      .query(gameId *: gameParameterId *: text *: value.opt)
-
-  // The ids are decoded as raw int4 and wrapped below, and `value` is selected first, so that
-  // the twiddle ends in a concrete type: a twiddle ending in the abstract T (or in an opaque id)
-  // does not reduce to a tuple, because neither can be shown to be disjoint from Tuple here.
-  private val selectAllParameterValues: Query[Boolean, (T, Int, Int)] =
-    sql"""SELECT v.value, v.game_id, v.game_parameter_id
-          FROM game_parameter_value v JOIN game g ON g.game_id = v.game_id
-          WHERE (NOT $bool OR g.active)"""
-      .query(value *: int4 *: int4)
-
-  /** All games with their roles and parameters, in four queries regardless of how many games
+  /** All games with their roles and parameters, in a single query regardless of how many games
     * there are.
     *
     * @param activeOnly restrict to games flagged active
     */
   def list(activeOnly: Boolean): IO[List[Game]] =
-    for {
-      gameRows <- session.execute(selectAllGameRows)(activeOnly)
-      roleRows <- session.execute(selectAllRoles)(activeOnly)
-      parameterRows <- session.execute(selectAllParameters)(activeOnly)
-      valueRows <- session.execute(selectAllParameterValues)(activeOnly)
-    } yield {
-      val rolesByGame = roleRows.groupMap(_._1) { case (gameId, id, name, optional) => GameRole(id, gameId, name, optional) }
-      val valuesByParameter = valueRows
-        .map { case (v, gameId, parameterId) => GameParameterValue(GameId(gameId), GameParameterId(parameterId), v) }
-        .groupBy(v => (v.gameId, v.gameParameterId))
-      val parametersByGame = parameterRows.groupMap(_._1) { case (gameId, parameterId, name, defaultValue) =>
-        GameParameter(gameId, parameterId, name, defaultValue, valuesByParameter.getOrElse((gameId, parameterId), Nil))
-      }
-      gameRows.map { case (id, name, description, url, active, externalId, minPlayers, maxPlayers) =>
+    session.execute(selectGameAggregate)(activeOnly).map { rows =>
+      val listRows = rows.map(GameListRow.apply.tupled)
+
+      // groupBy loses ordering, so the ORDER BY is honoured by walking the ids in the order the
+      // rows arrived rather than by iterating the resulting map.
+      val byGame = listRows.groupBy(_.gameId)
+      listRows.map(_.gameId).distinct.map { id =>
+        val gameRows = byGame(id)
+        val head = gameRows.head
+
+        val roles = gameRows.flatMap { row =>
+          for {
+            roleId <- row.roleId
+            name <- row.roleName
+            optional <- row.roleOptional
+          } yield GameRole(GameRoleId(roleId), id, name, optional)
+        }.distinctBy(_.gameRoleId)
+
+        val parameters = gameRows
+          .flatMap(row => row.parameterId.zip(row.parameterName).map { case (pid, name) => (pid, name, row) })
+          .groupBy(_._1)
+          .toList
+          .map { case (parameterId, parameterRows) =>
+            val (_, name, first) = parameterRows.head
+            GameParameter(
+              id,
+              GameParameterId(parameterId),
+              name,
+              first.parameterDefault,
+              parameterRows.flatMap(_._3.parameterValue).distinct.map(GameParameterValue(id, GameParameterId(parameterId), _))
+            )
+          }
+          .sortBy(_.gameParameterId.value)
+
         Game(
           id,
-          name,
-          description,
-          url,
-          active,
-          rolesByGame.getOrElse(id, Nil),
-          parametersByGame.getOrElse(id, Nil),
-          externalId,
-          minPlayers,
-          maxPlayers
+          head.name,
+          head.description,
+          head.url,
+          head.active,
+          roles,
+          parameters,
+          head.externalId,
+          head.minPlayers,
+          head.maxPlayers
         )
       }
     }
