@@ -104,10 +104,12 @@ variable "callback_urls" {
   type        = list(string)
 
   validation {
-    condition     = length(var.callback_urls) > 0
-    error_message = "At least one callback URL is required, or hosted login has nowhere to return to."
+    condition = length(var.callback_urls) > 0 && alltrue([
+      for u in var.callback_urls :
+      can(regex("^https://", u)) || can(regex("^http://localhost(?::[0-9]+)?/", u))
+    ])
+    error_message = "callback_urls must be non-empty and each URL must start with https:// (or http://localhost[:port]/ for local dev)."
   }
-}
 
 variable "logout_urls" {
   description = "URLs the hosted UI may redirect to after sign-out. Same exact-match rule as callback_urls."
