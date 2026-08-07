@@ -112,4 +112,40 @@ class AcceptanceServiceSpec extends PropertySuite {
         result.timeout(10.seconds).unsafeRunSync()
     }
   }
+
+  property("mine lists the caller's own acceptances") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, accepterNickname, accepterExternalId) =>
+        val result = for {
+          set <- setUp(nickname, externalId, accepterNickname, accepterExternalId)
+          (_, created, accepterPlayer, _) = set
+          mine <- acceptanceService.mine(accepterExternalId)
+        } yield mine.exists(a => a.challengeId == created.challengeId && a.playerId == accepterPlayer.playerId)
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("mine does not show one player the acceptances of another") {
+    // The route takes no player id, so this is really checking that the caller's identity is what
+    // scopes the query — the property the whole design of this method rests on.
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, accepterNickname, accepterExternalId) =>
+        val result = for {
+          set <- setUp(nickname, externalId, accepterNickname, accepterExternalId)
+          (_, created, _, _) = set
+          challengerSees <- acceptanceService.mine(externalId)
+        } yield !challengerSees.exists(_.challengeId == created.challengeId)
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("mine rejects a caller with no player") {
+    forAll(genUniqueString) { unknownExternalId =>
+      val result = acceptanceService.mine(unknownExternalId).attempt.map {
+        case Left(_: UnauthorizedError) => true
+        case _                          => false
+      }
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
 }

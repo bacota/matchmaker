@@ -1,0 +1,143 @@
+package com.vivi.matchmaker.ui
+
+import scala.concurrent.Future
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.scalajs.js
+import scala.util.Try
+import org.scalajs.dom
+import org.scalajs.dom.{HttpMethod, RequestInit}
+import upickle.default.{ReadWriter, read, write}
+import com.vivi.matchmaker.api.Json
+import com.vivi.matchmaker.api.Json.given
+import com.vivi.matchmaker.model._
+
+/** A failed request, carrying the status so callers can distinguish the cases that mean
+  * something: 403 on `/me` means "signed in but not registered", 401 means the token is no good.
+  */
+case class ApiError(status: Int, message: String) extends RuntimeException(s"$status: $message")
+
+/** The HTTP API, as the browser sees it.
+  *
+  * Every method sends the Cognito ID token as a bearer token; API Gateway's JWT authorizer
+  * verifies it and the function reads the caller's identity from the token's claims. Nothing here
+  * sends a player id to say who is calling, because nothing here could be trusted to.
+  *
+  * Request and response bodies use `Json` from the shared sources — literally the same codecs the
+  * server encodes with, so the two cannot drift.
+  */
+object ApiClient {
+
+  def me(): Future[Player] = get[Player]("/me")
+
+  def register(nickname: String): Future[Player] =
+    send[Player](HttpMethod.POST, "/register", Some(write(Json.RegisterRequest(nickname))))
+
+  def dueMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches/due")
+
+  def activeMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches")
+
+  def completedMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches/completed")
+
+  /** Everything the caller has said yes to and that has not yet become a match. Takes no player
+    * id: the server scopes it to whoever the token says is calling.
+    */
+  def acceptances(): Future[Seq[Acceptance]] = get[Seq[Acceptance]]("/me/acceptances")
+
+  def characters(gameId: GameId): Future[Seq[Character[String]]] =
+    get[Seq[Character[String]]](s"/games/${gameId.value}/characters")
+
+  def games(activeOnly: Boolean): Future[Seq[Game]] =
+    get[Seq[Game]](if (activeOnly) "/games?activeOnly=true" else "/games")
+
+  def challenges(gameId: GameId): Future[Seq[OpenChallenge]] =
+    get[Seq[OpenChallenge]](s"/games/${gameId.value}/challenges")
+
+  def createChallenge(challenge: OpenChallenge): Future[OpenChallenge] =
+    send[OpenChallenge](HttpMethod.POST, "/challenges", Some(write(challenge)))
+
+  def deleteChallenge(challengeId: ChallengeId): Future[Unit] =
+    sendUnit(HttpMethod.DELETE, s"/challenges/${challengeId.value}", None)
+
+  def accept(challengeId: ChallengeId, characterId: CharacterId): Future[Acceptance] =
+    send[Acceptance](
+      HttpMethod.POST,
+      s"/challenges/${challengeId.value}/acceptances",
+      Some(write(Json.AcceptRequest(characterId)))
+    )
+
+  /** Backs out of a challenge already accepted. The player id is in the path because the route
+    * also serves a challenger removing someone else's acceptance; the server still checks that
+    * the caller is entitled to either.
+    */
+  def withdraw(challengeId: ChallengeId, playerId: PlayerId): Future[Unit] =
+    sendUnit(HttpMethod.DELETE, s"/challenges/${challengeId.value}/acceptances/${playerId.value}", None)
+
+  def createCharacter(
+      gameId: GameId,
+      name: String,
+      description: String,
+      playerExternalId: String
+  ): Future[Character[String]] =
+    send[Character[String]](
+      HttpMethod.POST,
+      s"/games/${gameId.value}/characters",
+      // `externalId` on this route names the player the character is being created for, and the
+      // server refuses any value but the caller's own. It is the caller's `sub`, which is exactly
+      // what the token already says — the field is redundant here and simply echoed back.
+      Some(write(Json.CharacterRequest(name, description, playerExternalId)))
+    )
+
+  private def get[A: ReadWriter](path: String): Future[A] = send[A](HttpMethod.GET, path, None)
+
+  private def send[A: ReadWriter](method: HttpMethod, path: String, body: Option[String]): Future[A] =
+    request(method, path, body).flatMap { case (status, text) =>
+      Future.fromTry(decode[A](status, text, path))
+    }
+
+  private def sendUnit(method: HttpMethod, path: String, body: Option[String]): Future[Unit] =
+    request(method, path, body).map(_ => ())
+
+  private def decode[A: ReadWriter](status: Int, text: String, path: String): Try[A] =
+    Try(read[A](text)).recover { case error =>
+      // A body that will not parse is not a transport failure; saying which call produced it is
+      // the difference between a one-line fix and a hunt.
+      throw ApiError(status, s"could not read the response to $path: ${error.getMessage}")
+    }
+
+  /** Performs the request and turns a non-2xx into a failed `Future`.
+    *
+    * `fetch` only fails its promise when the request never happened; a 500 is a perfectly
+    * successful fetch. Without this every caller would have to check `response.ok` itself.
+    */
+  private def request(method: HttpMethod, path: String, body: Option[String]): Future[(Int, String)] = {
+    val init = new RequestInit {}
+    init.method = method
+
+    val headers = js.Dictionary("accept" -> "application/json")
+    Auth.idToken.foreach(token => headers("authorization") = s"Bearer $token")
+    body.foreach { payload =>
+      headers("content-type") = "application/json"
+      init.body = payload
+    }
+    init.headers = headers
+
+    dom
+      .fetch(s"${Config.current.apiEndpoint}$path", init)
+      .toFuture
+      .flatMap(response => response.text().toFuture.map(text => (response.status, text)))
+      .flatMap {
+        case (status, text) if status >= 200 && status < 300 => Future.successful((status, text))
+        case (status, text) =>
+          // The token has expired or been revoked. Dropping it here means the next render shows
+          // the sign-in button instead of repeating a request that cannot succeed.
+          if (status == 401) Store.sessionExpired()
+          Future.failed(ApiError(status, messageOf(text)))
+      }
+  }
+
+  /** The API answers errors as `{"error": "..."}`. Anything else — a gateway's own 401, say — is
+    * shown as it arrived rather than replaced with something vaguer.
+    */
+  private def messageOf(body: String): String =
+    Try(ujson.read(body)("error").str).getOrElse(if (body.isEmpty) "no response body" else body)
+}

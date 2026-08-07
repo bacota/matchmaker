@@ -34,14 +34,24 @@ variable "hosted_login_domain_prefix" { type = string }
 
 variable "callback_urls" {
   type = list(string)
-  # The local UI and local server run against the dev pool, so that hosted login and PKCE are
-  # exercised for real before anything is deployed. Cognito allows http only for localhost.
-  default = ["http://localhost:8080/callback", "http://localhost:5173/callback"]
+  # The local UI runs against the dev pool, so that hosted login and PKCE are exercised for real
+  # before anything is deployed. Cognito allows http only for localhost.
+  #
+  # These are page roots, not a /callback path: the UI handles the redirect on the page it left
+  # from, and Cognito matches callback URLs literally. They must equal what the browser reports
+  # as the page's own URL, which is what `Config.redirectUri` defaults to.
+  default = ["http://localhost:5173/", "http://localhost:8080/"]
 }
 
 variable "logout_urls" {
   type    = list(string)
   default = ["http://localhost:8080/", "http://localhost:5173/"]
+}
+
+// Where the UI is served from during development. Origins only, no trailing slash.
+variable "cors_allowed_origins" {
+  type    = list(string)
+  default = ["http://localhost:8080", "http://localhost:5173"]
 }
 
 module "api" {
@@ -58,6 +68,7 @@ module "api" {
   lambda_jar_path             = var.lambda_jar_path
 
   hosted_login_domain_prefix = var.hosted_login_domain_prefix
+  cors_allowed_origins       = var.cors_allowed_origins
   callback_urls              = var.callback_urls
   logout_urls                = var.logout_urls
 

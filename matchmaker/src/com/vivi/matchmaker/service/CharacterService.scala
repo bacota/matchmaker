@@ -13,6 +13,28 @@ import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, PlayerRepo, Tex
   */
 class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 
+  /** The caller's own characters in one game.
+    *
+    * Scoped to the caller rather than taking a player id, for the same reason `create` checks
+    * one: a character carries a player's state in a game, and there is no route by which one
+    * player should be able to enumerate another's.
+    *
+    * An unknown game is not an error here — a player simply has no characters in it — but an
+    * unknown caller is, because that means the token is for someone with no player at all.
+    */
+  def listForGame(gameId: GameId, callerExternalId: String): IO[List[Character[T]]] =
+    sessionPool.use { session =>
+      val playerRepo = new PlayerRepo(session)
+      val characterRepo = new CharacterRepo[T](session)
+      for {
+        player <- playerRepo.readByExternalId(callerExternalId).flatMap {
+          case Some(p) => IO.pure(p)
+          case None    => IO.raiseError(UnauthorizedError(s"no player for caller '$callerExternalId'"))
+        }
+        characters <- characterRepo.listForPlayerAndGame(player.playerId, gameId)
+      } yield characters
+    }
+
   def create(
       gameId: GameId,
       name: String,

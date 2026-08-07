@@ -37,6 +37,9 @@ variable "hosted_login_domain_prefix" { type = string }
 variable "callback_urls" { type = list(string) }
 variable "logout_urls" { type = list(string) }
 
+// Origin the UI is served from. No localhost here.
+variable "cors_allowed_origins" { type = list(string) }
+
 module "api" {
   source = "../../modules/api"
 
@@ -56,6 +59,7 @@ module "api" {
   log_retention_days = 90
 
   hosted_login_domain_prefix = var.hosted_login_domain_prefix
+  cors_allowed_origins       = var.cors_allowed_origins
   callback_urls              = var.callback_urls
   logout_urls                = var.logout_urls
 

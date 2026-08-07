@@ -61,4 +61,58 @@ class CharacterRepoSpec extends PropertySuite {
         .unsafeRunSync()
     }
   }
+
+  property("listForPlayerAndGame returns only this player's characters in this game") {
+    forAll(Generators.genPlayer) { player =>
+      TestSession.resource
+        .use { session =>
+          val gameRepo = new GameRepo[String](session)
+          val playerRepo = new PlayerRepo(session)
+          val characterRepo = new CharacterRepo[String](session)
+
+          for {
+            game <- gameRepo.create(Generators.genGame.sample.get)
+            otherGame <- gameRepo.create(Generators.genGame.sample.get)
+            owner <- playerRepo.create(player)
+
+            mine <- characterRepo.create(
+              Generators.genCharacter(game.gameId, Some(owner.playerId)).sample.get
+            )
+            // Same player, different game: must not appear.
+            _ <- characterRepo.create(
+              Generators.genCharacter(otherGame.gameId, Some(owner.playerId)).sample.get
+            )
+            // Same game, no owner: must not appear either, since the query is by player.
+            _ <- characterRepo.create(Generators.genCharacter(game.gameId, None).sample.get)
+
+            found <- characterRepo.listForPlayerAndGame(owner.playerId, game.gameId)
+          } yield found.map(_.characterId) == List(mine.characterId) &&
+            found.forall(c => c.gameId == game.gameId && c.playerId == Some(owner.playerId))
+        }
+        .unsafeRunSync()
+    }
+  }
+
+  property("listForPlayerAndGame returns the character's name, description and state") {
+    // The columns are selected in an unusual order to work around a skunk twiddle-list wrinkle,
+    // so this checks the fields actually land where they belong rather than being transposed.
+    forAll(Generators.genPlayer) { player =>
+      TestSession.resource
+        .use { session =>
+          val gameRepo = new GameRepo[String](session)
+          val playerRepo = new PlayerRepo(session)
+          val characterRepo = new CharacterRepo[String](session)
+
+          for {
+            game <- gameRepo.create(Generators.genGame.sample.get)
+            owner <- playerRepo.create(player)
+            created <- characterRepo.create(
+              Generators.genCharacter(game.gameId, Some(owner.playerId)).sample.get
+            )
+            found <- characterRepo.listForPlayerAndGame(owner.playerId, game.gameId)
+          } yield found == List(created)
+        }
+        .unsafeRunSync()
+    }
+  }
 }

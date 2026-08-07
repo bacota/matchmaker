@@ -115,6 +115,20 @@ variable "logout_urls" {
   default     = []
 }
 
+variable "cors_allowed_origins" {
+  description = <<-EOT
+    Origins the browser UI is served from, e.g. https://matchmaker.example.com or
+    http://localhost:5173. Scheme, host and port only — no path, and no trailing slash, which the
+    browser will not match.
+  EOT
+  type        = list(string)
+
+  validation {
+    condition     = !contains(var.cors_allowed_origins, "*")
+    error_message = "Wildcard origins are not allowed: the UI sends an Authorization header, and any page could then call this API."
+  }
+}
+
 variable "password_minimum_length" {
   description = "Minimum password length the pool enforces."
   type        = number

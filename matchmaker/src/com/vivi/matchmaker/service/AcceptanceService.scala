@@ -2,12 +2,31 @@ package com.vivi.matchmaker.service
 
 import cats.effect.IO
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.AcceptanceRepo
+import com.vivi.matchmaker.persistence.{AcceptanceRepo, PlayerRepo}
 
-/** Deletes acceptances. Authorized by `callerExternalId` matching either the player who made
-  * the acceptance or the player who owns the challenge (i.e. the challenger).
+/** Lists and deletes acceptances. `delete` is authorized by `callerExternalId` matching either
+  * the player who made the acceptance or the player who owns the challenge (i.e. the challenger);
+  * `mine` is scoped to the caller's own player and so needs no further check.
   */
 class AcceptanceService(sessionPool: SessionPool) {
+
+  /** Every acceptance the caller has outstanding.
+    *
+    * Deliberately takes no player id: it lists the caller's own acceptances and nobody else's, so
+    * there is no parameter that could ask for someone else's and no check needed to refuse it.
+    */
+  def mine(callerExternalId: String): IO[List[Acceptance]] =
+    sessionPool.use { session =>
+      val playerRepo = new PlayerRepo(session)
+      val acceptanceRepo = new AcceptanceRepo(session)
+      for {
+        player <- playerRepo.readByExternalId(callerExternalId).flatMap {
+          case Some(p) => IO.pure(p)
+          case None    => IO.raiseError(UnauthorizedError(s"no player for caller '$callerExternalId'"))
+        }
+        acceptances <- acceptanceRepo.listForPlayer(player.playerId)
+      } yield acceptances
+    }
 
   def delete(challengeId: ChallengeId, playerId: PlayerId, callerExternalId: String): IO[Unit] =
     sessionPool.use { session =>

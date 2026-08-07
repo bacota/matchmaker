@@ -1,6 +1,20 @@
 package build
 
-import mill._, scalalib._
+import mill._, scalalib._, scalajslib._
+
+/** Sources compiled for both the JVM API and the Scala.js UI.
+  *
+  * Two directories, neither of which may use anything outside the standard library and
+  * `java.time`: `model`, and `api/Json.scala`, which is the wire format. Sharing the codecs
+  * rather than restating them in the UI is the point — a field renamed on one side then fails to
+  * compile on the other instead of failing at runtime as a missing key.
+  *
+  * Both modules that use it sit at `matchmaker/<name>`, so the repository root is two levels up.
+  */
+def sharedSources(moduleDir: os.Path): Seq[os.Path] = {
+  val root = moduleDir / os.up / os.up
+  Seq(root / "shared" / "src", root / "matchmaker" / "src" / "com" / "vivi" / "matchmaker" / "model")
+}
 
 object matchmaker extends ScalaModule {
   def scalaVersion = "3.3.8"
@@ -52,6 +66,10 @@ object matchmaker extends ScalaModule {
       mvn"com.lihaoyi::upickle:4.0.2"
     )
 
+    // Json.scala lives in shared/, compiled here and again for the UI. The model directory is
+    // already on this module's path through `matchmaker`, so only the former is added.
+    def sources = Task.Sources(moduleDir / "src", sharedSources(moduleDir).head)
+
     /** TASTy files carry Scala 3 signatures for compiling *against* this jar. Nothing compiles
       * against a Lambda artifact, and they are a fifth of its size.
       */
@@ -63,6 +81,41 @@ object matchmaker extends ScalaModule {
         mvn"org.typelevel::otel4s-core-trace:0.11.2",
         mvn"org.typelevel::otel4s-core-metrics:0.11.2"
       )
+    }
+  }
+
+  /** The browser UI: Scala.js and Laminar, talking to the same HTTP API as any other client.
+    *
+    * `mill matchmaker.ui.fastLinkJS` for development, `fullLinkJS` for a deployable bundle; both
+    * write `main.js` into their own out directory, which `ui/index.html` loads. There is no
+    * bundler and no npm: Laminar and scalajs-dom are Scala libraries, and the only browser APIs
+    * used (fetch, crypto.subtle, sessionStorage) are standard.
+    *
+    * It compiles the model and the API's `Json` codecs from source rather than depending on
+    * `matchmaker`, which cannot cross-compile — skunk and cats-effect are JVM-only.
+    */
+  object ui extends ScalaJSModule {
+    def scalaVersion = "3.3.8"
+    def scalaJSVersion = "1.17.0"
+
+    def sources = Task.Sources(Seq(moduleDir / "src") ++ sharedSources(moduleDir)*)
+
+    def mvnDeps = Seq(
+      mvn"org.scala-js::scalajs-dom::2.8.0",
+      mvn"com.raquo::laminar::17.2.0",
+      mvn"com.lihaoyi::upickle::4.0.2",
+      // The shared model uses java.time, which Scala.js does not implement itself.
+      mvn"io.github.cquiroz::scala-java-time::2.6.0"
+    )
+
+    /** A module rather than a plain script, so that `fullLinkJS` can split output and so that
+      * `index.html` can `import` it — Scala.js's default is a single non-module script, which
+      * cannot be loaded with `type="module"`.
+      */
+    def moduleKind = mill.scalajslib.api.ModuleKind.ESModule
+
+    object test extends ScalaJSTests with TestModule.Munit {
+      def mvnDeps = Seq(mvn"org.scalameta::munit::1.0.4")
     }
   }
 

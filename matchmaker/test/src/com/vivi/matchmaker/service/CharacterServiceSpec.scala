@@ -114,4 +114,44 @@ class CharacterServiceSpec extends PropertySuite {
         result.timeout(10.seconds).unsafeRunSync()
     }
   }
+
+  property("listForGame returns the caller's characters in that game") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, name, gameExternalId) =>
+        val result = for {
+          _ <- registrationService.register(nickname, externalId)
+          game <- makeCharacterGame(gameExternalId)
+          created <- characterService.create(game.gameId, name, "description", externalId, externalId)
+          found <- characterService.listForGame(game.gameId, externalId)
+        } yield found.map(_.characterId) == List(created.characterId)
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("listForGame shows a player nothing of another player's characters") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, otherNickname, otherExternalId, name, gameExternalId) =>
+        val result = for {
+          _ <- registrationService.register(nickname, externalId)
+          _ <- registrationService.register(otherNickname, otherExternalId)
+          game <- makeCharacterGame(gameExternalId)
+          _ <- characterService.create(game.gameId, name, "description", externalId, externalId)
+          found <- characterService.listForGame(game.gameId, otherExternalId)
+        } yield found.isEmpty
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("listForGame rejects a caller with no player") {
+    forAll(genUniqueString, genUniqueString) { (unknownExternalId, gameExternalId) =>
+      val result = for {
+        game <- makeCharacterGame(gameExternalId)
+        attempt <- characterService.listForGame(game.gameId, unknownExternalId).attempt
+      } yield attempt match {
+        case Left(_: UnauthorizedError) => true
+        case _                          => false
+      }
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
 }

@@ -24,5 +24,8 @@ hosted_login_domain_prefix = "matchmaker-xxxxxx"
 
 // Exact URLs, https only — no localhost in prod. A URL listed here is one an authorization code
 // may be delivered to.
-callback_urls = ["https://matchmaker.example.com/callback"]
+callback_urls = ["https://matchmaker.example.com/"]
 logout_urls   = ["https://matchmaker.example.com/"]
+
+// Origin the UI is served from — scheme, host and port, no path and no trailing slash.
+cors_allowed_origins = ["https://matchmaker.example.com"]

@@ -131,6 +131,21 @@ resource "aws_lambda_function" "api" {
 resource "aws_apigatewayv2_api" "api" {
   name          = "${local.name}-api"
   protocol_type = "HTTP"
+
+  # The UI is served from somewhere else — S3, a static host, or a local port during development
+  # — so every call it makes is cross-origin and needs this. Origins are listed rather than
+  # wildcarded: `*` is incompatible with sending credentials, and there is no reason for an
+  # arbitrary page to be able to call this API with a token it somehow obtained.
+  #
+  # API Gateway answers the OPTIONS preflight itself, before the JWT authorizer runs. That matters
+  # because a preflight carries no Authorization header and would otherwise be rejected with 401,
+  # which the browser reports only as an opaque CORS failure.
+  cors_configuration {
+    allow_origins = var.cors_allowed_origins
+    allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    allow_headers = ["authorization", "content-type"]
+    max_age       = 3600
+  }
 }
 
 resource "aws_apigatewayv2_integration" "lambda" {
