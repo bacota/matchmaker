@@ -1,0 +1,24 @@
+// Copy to prod.tfvars and fill in. *.tfvars is gitignored: these name real infrastructure.
+//
+// Only account facts belong here; prod's policy differences live in local.settings in ../main.tf.
+
+environment = "prod"
+region      = "us-east-1"
+
+rds_endpoint = "matchmaker-prod.cluster-xxxxxxxx.us-east-1.rds.amazonaws.com"
+db_name      = "matchmaker"
+
+db_secret_name = "matchmaker/prod/db"
+
+subnet_ids         = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
+security_group_ids = ["sg-cccccccc"]
+
+secrets_extension_layer_arn = "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17"
+
+hosted_login_domain_prefix = "matchmaker-xxxxxx"
+
+// https only, and no localhost: every URL here is one an authorization code may be delivered to.
+callback_urls = ["https://matchmaker.example.com/"]
+logout_urls   = ["https://matchmaker.example.com/"]
+
+cors_allowed_origins = ["https://matchmaker.example.com"]

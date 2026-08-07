@@ -8,6 +8,9 @@ out
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+# Per-environment policy (memory, retention, session length) is a reviewable decision, not an
+# account fact, so these are committed while *.tfvars is not.
+!*.settings.tfvars
 crash.log
 
 # Scala.js output symlinked next to index.html for local serving.

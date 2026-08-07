@@ -5,13 +5,52 @@ The matchmaker API, running as a Java Lambda behind an API Gateway HTTP API.
 ## Layout
 
 ```
-modules/api          the Lambda, the HTTP API, and their IAM roles
-environments/dev     dev instance of that module
-environments/prod    prod instance of that module
+main.tf                             one root for every environment; names none of them
+variables.tf                        every input, with validation
+modules/api                         the Lambda, the HTTP API, Cognito, and their IAM roles
+environments/<env>.settings.tfvars  policy: memory, retention, security, session length (committed)
+environments/<env>.tfvars           account facts: endpoints, subnets, secrets (gitignored)
+environments/<env>.backend.hcl      which state this environment uses
+tf.sh                               run terraform against one environment
 ```
 
+**One configuration, not one per environment.** Environments differ only in values, and the values
+split in two:
+
+- **Policy** — memory, log retention, advanced security, session length. Decisions, so they are
+  committed, in `environments/<env>.settings.tfvars`. `diff` those two files to see exactly how
+  prod differs from dev.
+- **Account facts** — the database endpoint, subnets, security groups, secret name, domain prefix,
+  URLs. These name real infrastructure, so they live in `environments/<env>.tfvars`, which is
+  gitignored.
+
+The four policy variables have **no defaults**. A run that does not supply them fails with "No
+value for required variable" rather than quietly inheriting something: prod with dev's log
+retention loses its audit trail, and prod with advanced security off loses compromised-credential
+blocking. Neither should be reachable by forgetting a flag.
+
 Every resource is named `matchmaker-${environment}-...`, so both environments can live in one
-account.
+account, and each has its own state key so neither can be applied over the other.
+
+### Always use `tf.sh`
+
+```sh
+./tf.sh dev plan
+./tf.sh prod apply
+./tf.sh dev output -raw api_endpoint
+```
+
+A single root serving several environments has one sharp edge: terraform remembers the chosen
+backend in `.terraform`, so a bare `terraform apply` after working on the other environment would
+target the wrong state, with no warning and a plan that looks entirely reasonable. `tf.sh`
+re-initialises the backend on every run and always passes both var files, which removes
+that edge. Running `terraform` directly reintroduces it.
+
+### Adding an environment
+
+Add three files under `environments/`: `<env>.settings.tfvars`, `<env>.tfvars` and
+`<env>.backend.hcl`. Then `./tf.sh <env> apply`. **No terraform is edited** — `main.tf` names no
+environment, and the `environment` variable is validated by format rather than against a list.
 
 ## What this does not create
 
@@ -38,13 +77,12 @@ The database and its credentials are managed elsewhere and referenced by variabl
 mill matchmaker.api.assembly
 
 # 2. Point terraform at your infrastructure.
-cd terraform/environments/dev
-cp terraform.tfvars.example terraform.tfvars   # then edit it
-$EDITOR backend.tf                             # uncomment and fill in the S3 backend
+cd terraform
+cp environments/dev.tfvars.example environments/dev.tfvars   # then edit it
+$EDITOR environments/dev.backend.hcl                         # the S3 bucket and lock table
 
-# 3. Apply.
-terraform init
-terraform apply
+# 3. Apply. tf.sh handles init, the backend, and the var file.
+./tf.sh dev apply
 ```
 
 Redeploying code is the same `assembly` then `apply`: the function's `source_code_hash` tracks
@@ -100,9 +138,9 @@ header.
 
 ### Locally
 
-`LocalServer` still runs with `AUTH_MODE=header`, taking the caller from `X-External-Id` on trust.
-That is a development convenience with no gateway in front of it — bind it to loopback and do not
-expose it. Verifying a real dev-pool token in-process (against the pool's public JWKS, which needs
+`LocalServer` runs with `AUTH_MODE=header`, taking the caller from `X-External-Id` on trust. It
+binds to loopback and allows only loopback CORS origins; see `matchmaker/ui/README.md` for the
+local stack. Verifying a real dev-pool token in-process (against the pool's public JWKS, which needs
 no AWS credentials) is `Authenticator.VerifiedToken`, which is not written yet.
 
 ### After the first apply
@@ -112,5 +150,5 @@ secret — the client id is a query parameter of the authorize URL. Then check t
 anonymous callers:
 
 ```sh
-curl -i $(terraform output -raw api_endpoint)/me     # 401 from the gateway, before any code runs
+curl -i $(./tf.sh dev output -raw api_endpoint)/me     # 401 from the gateway, before any code runs
 ```

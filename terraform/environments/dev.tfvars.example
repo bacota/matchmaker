@@ -1,0 +1,32 @@
+// Copy to dev.tfvars and fill in from the existing database and network.
+// *.tfvars is gitignored: these name real infrastructure.
+//
+// Only account facts belong here. What dev *does* differently from prod — memory, log retention,
+// advanced security, session length — is policy and lives in local.settings in ../main.tf.
+
+environment = "dev"
+region      = "us-east-1"
+
+rds_endpoint = "matchmaker-dev.cluster-xxxxxxxx.us-east-1.rds.amazonaws.com"
+db_name      = "matchmaker"
+
+// An existing Secrets Manager secret holding {"username": ..., "password": ...}.
+db_secret_name = "matchmaker/dev/db"
+
+subnet_ids         = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
+security_group_ids = ["sg-cccccccc"]
+
+// Region- and version-specific; look up the current ARN in the AWS Secrets Manager User Guide.
+secrets_extension_layer_arn = "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17"
+
+// Unique across all AWS accounts, so expect to need a second guess if the apply fails on it.
+hosted_login_domain_prefix = "matchmaker-dev-xxxxxx"
+
+// The local UI runs against the dev pool, so hosted login and PKCE are exercised for real before
+// anything is deployed. Cognito allows http only for localhost. Matched literally, trailing slash
+// included, and must equal the URL the browser reports for the page.
+callback_urls = ["http://localhost:5173/", "http://localhost:8080/"]
+logout_urls   = ["http://localhost:5173/", "http://localhost:8080/"]
+
+// Origins only: no path, no trailing slash.
+cors_allowed_origins = ["http://localhost:5173", "http://localhost:8080"]
