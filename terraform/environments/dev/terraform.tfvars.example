@@ -13,3 +13,7 @@ db_secret_name = "matchmaker/dev/db"
 // Private subnets that can reach the database, and security groups the database accepts.
 subnet_ids         = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
 security_group_ids = ["sg-cccccccc"]
+
+// AWS Parameters and Secrets Lambda Extension layer. Region- and version-specific; look up the
+// current ARN for your region in the AWS Secrets Manager User Guide.
+secrets_extension_layer_arn = "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17"

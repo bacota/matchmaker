@@ -22,6 +22,7 @@ variable "db_name" { type = string }
 variable "db_secret_name" { type = string }
 variable "subnet_ids" { type = list(string) }
 variable "security_group_ids" { type = list(string) }
+variable "secrets_extension_layer_arn" { type = string }
 
 variable "lambda_jar_path" {
   description = "Built with `mill matchmaker.api.assembly`."
@@ -38,7 +39,9 @@ module "api" {
   db_secret_name     = var.db_secret_name
   subnet_ids         = var.subnet_ids
   security_group_ids = var.security_group_ids
-  lambda_jar_path    = var.lambda_jar_path
+
+  secrets_extension_layer_arn = var.secrets_extension_layer_arn
+  lambda_jar_path             = var.lambda_jar_path
 
   # More memory buys proportionally more CPU, which is what shortens the JVM cold start; logs are
   # kept far longer than in dev.

@@ -22,6 +22,26 @@ variable "db_secret_name" {
   type        = string
 }
 
+variable "secrets_extension_layer_arn" {
+  description = <<-EOT
+    ARN of the AWS Parameters and Secrets Lambda Extension layer, which serves Secrets Manager to
+    the function over localhost. The function reads its database credentials through it instead of
+    bundling the AWS SDK.
+
+    The ARN is region- and version-specific and AWS publishes no wildcard for it, so it has to be
+    given explicitly. Look up the current one for your region under "Parameters and Secrets Lambda
+    extension" in the AWS Secrets Manager User Guide. It looks like:
+    arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17
+  EOT
+  type        = string
+}
+
+variable "secrets_extension_port" {
+  description = "Port the secrets extension listens on inside the sandbox."
+  type        = number
+  default     = 2773
+}
+
 variable "subnet_ids" {
   description = "Private subnets the Lambda is attached to. Must be able to reach the database."
   type        = list(string)

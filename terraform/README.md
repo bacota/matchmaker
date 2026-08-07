@@ -22,6 +22,11 @@ The database and its credentials are managed elsewhere and referenced by variabl
   `{"username": ..., "password": ...}`. Terraform reads only the secret's ARN, in order to scope
   the Lambda's `secretsmanager:GetSecretValue` grant. The credential value never enters the
   Terraform state or a plan.
+- `secrets_extension_layer_arn` — the AWS Parameters and Secrets Lambda Extension layer. The
+  function reads its credentials from this over `localhost` rather than bundling the AWS SDK,
+  which would add roughly 8 MB (Netty and Apache HttpClient) to serve one call per cold start.
+  The ARN is region- and version-specific, so AWS publishes no default worth hardcoding; find
+  the current one for your region in the AWS Secrets Manager User Guide.
 - `subnet_ids` / `security_group_ids` — the network. The Lambda is VPC-attached, because Aurora
   is not publicly reachable. The database's security group must accept traffic from the security
   groups given here.

@@ -4,8 +4,20 @@ import mill._, scalalib._
 
 object matchmaker extends ScalaModule {
   def scalaVersion = "3.3.8"
+
+  /** skunk brings twiddles-core, which declares munit at *compile* scope rather than test (an
+    * upstream packaging slip), and its SCRAM client does the same with junit. Left alone, a test
+    * framework ends up inside the deployed artifact.
+    */
   def mvnDeps = Seq(
-    mvn"org.tpolecat::skunk-core:1.0.0",
+    mvn"org.tpolecat::skunk-core:1.0.0"
+      .exclude(
+        ("org.scalameta", "munit_3"),
+        ("org.scalameta", "munit-diff_3"),
+        ("org.scalameta", "junit-interface"),
+        ("junit", "junit"),
+        ("org.hamcrest", "hamcrest-core")
+      ),
     mvn"org.tpolecat::natchez-core:0.3.10"
   )
 
@@ -26,17 +38,24 @@ object matchmaker extends ScalaModule {
     * Deployable jar: `mill matchmaker.api.assembly`, whose handler is
     * `com.vivi.matchmaker.api.Handler::handleRequest`.
     *
-    * `aws-lambda-java-events` is deliberately not a dependency: it would pull in Jackson purely
-    * to model the event, which the payload-v2 JSON is small enough to parse with upickle.
+    * Two dependencies are deliberately absent, both to keep the cold start short:
+    * `aws-lambda-java-events`, which would pull in Jackson purely to model the event; and the AWS
+    * SDK, which would pull in Netty and Apache HttpClient (8 MB) to make one call per cold start.
+    * The secret is fetched from the Parameters and Secrets Lambda Extension instead — see
+    * `Handler.credentials`.
     */
   object api extends ScalaModule {
     def scalaVersion = "3.3.8"
     def moduleDeps = Seq(matchmaker)
     def mvnDeps = Seq(
       mvn"com.amazonaws:aws-lambda-java-core:1.2.3",
-      mvn"com.lihaoyi::upickle:4.0.2",
-      mvn"software.amazon.awssdk:secretsmanager:2.29.0"
+      mvn"com.lihaoyi::upickle:4.0.2"
     )
+
+    /** TASTy files carry Scala 3 signatures for compiling *against* this jar. Nothing compiles
+      * against a Lambda artifact, and they are a fifth of its size.
+      */
+    def assemblyRules = super.assemblyRules ++ Seq(Assembly.Rule.ExcludePattern(".*\\.tasty"))
 
     object test extends ScalaTests with TestModule.Munit {
       def mvnDeps = Seq(

@@ -91,6 +91,10 @@ resource "aws_lambda_function" "api" {
   memory_size = var.lambda_memory_mb
   timeout     = var.lambda_timeout_s
 
+  # Serves Secrets Manager over localhost, so the function does not have to carry the AWS SDK to
+  # read one secret. The grant below is still what authorizes the read.
+  layers = [var.secrets_extension_layer_arn]
+
   vpc_config {
     subnet_ids         = var.subnet_ids
     security_group_ids = var.security_group_ids
@@ -103,6 +107,8 @@ resource "aws_lambda_function" "api" {
       DB_NAME        = var.db_name
       DB_SECRET_NAME = var.db_secret_name
       DB_POOL_SIZE   = tostring(var.db_pool_size)
+
+      PARAMETERS_SECRETS_EXTENSION_HTTP_PORT = tostring(var.secrets_extension_port)
     }
   }
 

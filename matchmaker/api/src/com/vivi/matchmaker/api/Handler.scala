@@ -1,13 +1,14 @@
 package com.vivi.matchmaker.api
 
 import java.io.{InputStream, OutputStream}
+import java.net.URI
+import java.net.URLEncoder
+import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.charset.StandardCharsets
 import cats.effect.unsafe.implicits.global
 import com.amazonaws.services.lambda.runtime.{Context, RequestStreamHandler}
 import com.vivi.matchmaker.persistence.TextCodec.given
 import com.vivi.matchmaker.service.{DbConfig, Services}
-import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient
-import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest
 
 /** Lambda entry point, behind an API Gateway HTTP API using payload format 2.0.
   *
@@ -75,13 +76,38 @@ object Handler {
     )
   }
 
-  /** Reads the standard RDS secret shape, `{"username": ..., "password": ...}`. */
+  /** Fetches the credentials from the AWS Parameters and Secrets Lambda Extension, which serves
+    * Secrets Manager over `localhost` and caches the result for the container's lifetime.
+    *
+    * This is why the AWS SDK is not a dependency: the SDK brings Netty and Apache HttpClient —
+    * around 8 MB, and their initialization — for one call per cold start, where the JDK's own
+    * HTTP client and a layer will do. Authorization still comes from the function's execution
+    * role, so the `secretsmanager:GetSecretValue` grant in the terraform is still required.
+    *
+    * The secret is expected in the standard RDS shape, `{"username": ..., "password": ...}`.
+    */
   private def credentials(secretName: String): (String, String) = {
-    val client = SecretsManagerClient.create()
-    try {
-      val secret = client.getSecretValue(GetSecretValueRequest.builder().secretId(secretName).build()).secretString()
-      val parsed = ujson.read(secret)
-      (parsed("username").str, parsed("password").str)
-    } finally client.close()
+    val port = sys.env.get("PARAMETERS_SECRETS_EXTENSION_HTTP_PORT").flatMap(_.toIntOption).getOrElse(2773)
+    val uri = URI.create(
+      s"http://localhost:$port/secretsmanager/get?secretId=${URLEncoder.encode(secretName, StandardCharsets.UTF_8)}"
+    )
+
+    val request = HttpRequest
+      .newBuilder(uri)
+      // The extension authenticates callers with the function's own session token, so that other
+      // processes in the sandbox cannot read secrets through it.
+      .header("X-Aws-Parameters-Secrets-Token", required("AWS_SESSION_TOKEN"))
+      .GET()
+      .build()
+
+    val response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString())
+    if (response.statusCode() != 200)
+      throw new IllegalStateException(
+        s"secrets extension returned ${response.statusCode()} for '$secretName'; is the layer attached?"
+      )
+
+    // The extension mirrors the GetSecretValue response, so the secret itself is JSON in a string.
+    val parsed = ujson.read(ujson.read(response.body())("SecretString").str)
+    (parsed("username").str, parsed("password").str)
   }
 }
