@@ -70,6 +70,50 @@ class ApiGatewaySpec extends FunSuite {
     assertEquals(request.query, Map.empty[String, String])
   }
 
+  /** What a JWT authorizer adds to the request context, in the shape API Gateway sends it: every
+    * claim a string, except the array-valued ones.
+    */
+  private val authorizedEvent =
+    """{
+      |  "rawPath": "/me",
+      |  "requestContext": {
+      |    "http": {"method": "GET"},
+      |    "authorizer": {
+      |      "jwt": {
+      |        "claims": {
+      |          "sub": "8f14e45f-ceea-467a-9a1b-1f2c3d4e5f60",
+      |          "email": "player@example.com",
+      |          "email_verified": "true",
+      |          "token_use": "id",
+      |          "cognito:groups": ["admins"],
+      |          "exp": "1767225600"
+      |        },
+      |        "scopes": null
+      |      }
+      |    }
+      |  }
+      |}""".stripMargin
+
+  test("decodes the claims a JWT authorizer put in the request context") {
+    val request = ApiGateway.decodeRequest(authorizedEvent)
+    assertEquals(request.claim("sub"), Some("8f14e45f-ceea-467a-9a1b-1f2c3d4e5f60"))
+    assertEquals(request.claim("email"), Some("player@example.com"))
+  }
+
+  test("an array-valued claim is dropped rather than mangled into a string") {
+    // cognito:groups arrives as a JSON array. Nothing reads it yet; what matters is that its
+    // presence does not fail the decode of the claims beside it.
+    val request = ApiGateway.decodeRequest(authorizedEvent)
+    assertEquals(request.claim("cognito:groups"), None)
+    assertEquals(request.claim("exp"), Some("1767225600"))
+  }
+
+  test("an event with no authorizer decodes to no claims") {
+    // The local server and any unauthenticated route land here, so this must be empty rather
+    // than throwing — GatewayClaims turns it into a 401.
+    assertEquals(ApiGateway.decodeRequest(event()).claims, Map.empty[String, String])
+  }
+
   test("splits the path into non-empty segments") {
     assertEquals(ApiGateway.decodeRequest(event(path = "/games/7/characters")).segments, List("games", "7", "characters"))
     assertEquals(ApiGateway.decodeRequest(event(path = "/")).segments, Nil)

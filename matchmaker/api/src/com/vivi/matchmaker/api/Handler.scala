@@ -55,11 +55,18 @@ object Handler {
   lazy val services: Services[String] =
     Services.resource[String](dbConfig(), poolSize).allocated.unsafeRunSync()._1
 
-  /** How the caller is identified. This becomes `Authenticator.GatewayClaims` once the API has a
-    * Cognito JWT authorizer in front of it; until then the header is taken on trust, which is
-    * only acceptable while nothing is publicly reachable.
+  /** How the caller is identified, chosen by `AUTH_MODE`.
+    *
+    * The terraform sets this to `gateway`, so a deployed function trusts only claims from the
+    * Cognito JWT authorizer. The default is deliberately the *other* way round: an unset variable
+    * means no infrastructure was involved, and a function that fell back to trusting a header
+    * would turn a terraform mistake into an open API. Failing loudly is the safe default here.
     */
-  val authenticator: Authenticator = Authenticator.TrustedHeader
+  val authenticator: Authenticator = sys.env.getOrElse("AUTH_MODE", "gateway") match {
+    case "gateway" => Authenticator.GatewayClaims
+    case "header"  => Authenticator.TrustedHeader
+    case other     => throw new IllegalStateException(s"unknown AUTH_MODE '$other'; expected 'gateway' or 'header'")
+  }
 
   private def poolSize: Int =
     sys.env.get("DB_POOL_SIZE").flatMap(_.toIntOption).getOrElse(Services.defaultPoolSize)

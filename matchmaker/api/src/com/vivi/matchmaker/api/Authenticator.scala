@@ -35,16 +35,33 @@ object Authenticator {
         .toRight(Errors.unauthenticated)
   }
 
-  /* Two further implementations are expected when Cognito lands, and are the reason this is an
-   * interface rather than a method on Router:
+  /** Takes the caller's identity from the `sub` claim of the token API Gateway already verified.
+    *
+    * This deliberately verifies nothing. The JWT authorizer in front of the function checks the
+    * signature, expiry, issuer and audience, and rejects the request with 401 before the function
+    * is invoked; re-doing that here would mean fetching JWKS on the request path for no gain.
+    *
+    * What that argument rests on is that the function is only reachable through the gateway, and
+    * that every route carries the authorizer. Both are true in the terraform — the `$default`
+    * route sets `authorization_type = "JWT"` and the only `lambda_permission` is API Gateway's —
+    * and if either stopped being true, a request arriving with no claims would be unauthenticated
+    * rather than admitted, which is what the missing-`sub` case below is for.
+    */
+  object GatewayClaims extends Authenticator {
+    def callerOf(request: Request): Either[Response, String] =
+      request
+        .claim("sub")
+        .filter(_.nonEmpty)
+        .toRight(Errors.unauthenticatedToken)
+  }
+
+  /* One further implementation is expected, and is part of why this is an interface rather than a
+   * method on Router:
    *
-   *   GatewayClaims  - production. Reads `sub` out of requestContext.authorizer.jwt.claims, which
-   *                    means teaching ApiGateway.decodeRequest to keep that object. It does not
-   *                    verify anything, because the gateway already did and the function is only
-   *                    reachable through it.
    *   VerifiedToken  - local. Verifies a real token against the pool's JWKS endpoint, which is
    *                    public, so a localhost server can validate genuine tokens from the dev
-   *                    user pool with no AWS credentials and no emulation. This is what exercises
-   *                    the PKCE redirect and code exchange, which TrustedHeader never touches.
+   *                    user pool with no AWS credentials and no emulation. Note that verification
+   *                    needs network I/O, so this signature would have to change to return IO
+   *                    before that lands. TrustedHeader remains the zero-setup local mode.
    */
 }

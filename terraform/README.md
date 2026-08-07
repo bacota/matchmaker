@@ -55,8 +55,62 @@ comments in `build.mill`.
 
 ## Authentication
 
-There is none yet. The API takes the caller's identity from an `X-External-Id` header and trusts
-it, which is safe only because nothing is deployed publicly yet. Before this is exposed to real
-users it needs the Cognito hosted-login/PKCE flow described in `design.txt`, at which point the
-header is replaced by a verified token — a change confined to `Router.callerOf`, plus a Cognito
-user pool and a JWT authorizer here.
+Cognito hosted login, with an API Gateway JWT authorizer in front of every route.
+
+**Each environment gets its own user pool.** A dev token is meaningless in prod, and a dev sign-up
+can never become a prod account. The pool, its hosted login domain, and one app client are all
+created by `modules/api/cognito.tf`.
+
+The flow:
+
+1. The browser sends the user to the hosted UI, `${hosted_login_url}/login?...`, with a PKCE
+   `code_challenge`.
+2. The user signs in or signs up there. **Passwords are never typed into this application** —
+   that is the point of hosted login.
+3. Cognito redirects back to one of `callback_urls` with an authorization code.
+4. The browser exchanges the code at `${hosted_login_url}/oauth2/token`, sending the PKCE
+   `code_verifier`, and gets an ID token back.
+5. Every API call carries `Authorization: Bearer <id token>`.
+
+### PKCE
+
+The app client is created with `generate_secret = false`, making it a *public* client. Cognito
+requires PKCE for the authorization code grant on public clients, so there is no separate switch:
+PKCE is enabled by that line and a caller cannot opt out of it. The implicit grant is not among
+`allowed_oauth_flows`, so there is no flow available that skips it.
+
+### ID token, not access token
+
+The authorizer's `audience` is the app client id, which matches the `aud` claim of a Cognito **ID**
+token. Cognito's access tokens carry `client_id` instead and have no `aud`, so they are rejected.
+Send the ID token.
+
+### What the application trusts
+
+API Gateway verifies signature, expiry, issuer and audience before the function is invoked, and
+answers 401 itself otherwise. The function reads the `sub` claim out of
+`requestContext.authorizer.jwt.claims` and does not re-verify it — see `Authenticator.GatewayClaims`.
+That is sound only because the `$default` route sets `authorization_type = "JWT"` and the only
+`lambda_permission` is API Gateway's. If you add a route, it inherits the authorizer; if you ever
+add one that does not, the function will answer 401 rather than admit an unidentified caller.
+
+`AUTH_MODE=gateway` selects this, and the terraform sets it. The code defaults to `gateway` when
+the variable is unset, so a terraform mistake cannot degrade the deployed function into trusting a
+header.
+
+### Locally
+
+`LocalServer` still runs with `AUTH_MODE=header`, taking the caller from `X-External-Id` on trust.
+That is a development convenience with no gateway in front of it — bind it to loopback and do not
+expose it. Verifying a real dev-pool token in-process (against the pool's public JWKS, which needs
+no AWS credentials) is `Authenticator.VerifiedToken`, which is not written yet.
+
+### After the first apply
+
+Give the UI these outputs: `hosted_login_url`, `user_pool_client_id`, `api_endpoint`. None are
+secret — the client id is a query parameter of the authorize URL. Then check the API refuses
+anonymous callers:
+
+```sh
+curl -i $(terraform output -raw api_endpoint)/me     # 401 from the gateway, before any code runs
+```

@@ -17,3 +17,12 @@ security_group_ids = ["sg-cccccccc"]
 // AWS Parameters and Secrets Lambda Extension layer. Region- and version-specific; look up the
 // current ARN for your region in the AWS Secrets Manager User Guide.
 secrets_extension_layer_arn = "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17"
+
+// Prefix of the hosted login domain, giving
+// https://<prefix>.auth.us-east-1.amazoncognito.com. Unique across all AWS accounts.
+hosted_login_domain_prefix = "matchmaker-xxxxxx"
+
+// Exact URLs, https only — no localhost in prod. A URL listed here is one an authorization code
+// may be delivered to.
+callback_urls = ["https://matchmaker.example.com/callback"]
+logout_urls   = ["https://matchmaker.example.com/"]

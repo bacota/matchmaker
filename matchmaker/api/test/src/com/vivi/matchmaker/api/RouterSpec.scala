@@ -153,6 +153,28 @@ class RouterSpec extends FunSuite {
     assert(response.body.contains("token has expired"), response.body)
   }
 
+  test("the gateway authenticator takes the caller from the verified sub claim") {
+    val request = Request("GET", "/me", Map.empty, Map.empty, "{}", Map("sub" -> "sub-from-token", "email" -> "a@b.c"))
+
+    assertEquals(Authenticator.GatewayClaims.callerOf(request), Right("sub-from-token"))
+  }
+
+  test("the gateway authenticator ignores the identity header entirely") {
+    // The header is the local mode's mechanism. Were it honoured deployed, anyone could set it
+    // and become any player, which is exactly what the JWT authorizer is there to prevent.
+    val request = Request("GET", "/me", Map("x-external-id" -> "someone-else"), Map.empty, "{}")
+
+    assert(Authenticator.GatewayClaims.callerOf(request).isLeft)
+  }
+
+  test("a request with no claims is unauthenticated under the gateway authenticator") {
+    val response = Router
+      .dispatch(services, request("GET", "/me", headers = Map.empty), Authenticator.GatewayClaims)
+      .unsafeRunSync()
+
+    assertEquals(response.statusCode, 401)
+  }
+
   test("service errors map onto the statuses the API promises") {
     assertEquals(Errors.statusFor(ValidationError("x")), 400)
     assertEquals(Errors.statusFor(UnauthorizedError("x")), 403)

@@ -17,3 +17,13 @@ security_group_ids = ["sg-cccccccc"]
 // AWS Parameters and Secrets Lambda Extension layer. Region- and version-specific; look up the
 // current ARN for your region in the AWS Secrets Manager User Guide.
 secrets_extension_layer_arn = "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17"
+
+// Prefix of the hosted login domain, giving
+// https://<prefix>.auth.us-east-1.amazoncognito.com. Unique across all AWS accounts, so expect to
+// need a second guess if the apply fails on it.
+hosted_login_domain_prefix = "matchmaker-dev-xxxxxx"
+
+// Where hosted login may return to. The defaults in main.tf cover the local server and a local
+// UI; uncomment to add another.
+// callback_urls = ["http://localhost:8080/callback"]
+// logout_urls   = ["http://localhost:8080/"]

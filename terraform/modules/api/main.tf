@@ -108,6 +108,11 @@ resource "aws_lambda_function" "api" {
       DB_SECRET_NAME = var.db_secret_name
       DB_POOL_SIZE   = tostring(var.db_pool_size)
 
+      # Selects how the caller is identified. "gateway" means the claims the JWT authorizer put
+      # in the request context are trusted, which is only sound because the route above cannot be
+      # reached without passing that authorizer.
+      AUTH_MODE = "gateway"
+
       PARAMETERS_SECRETS_EXTENSION_HTTP_PORT = tostring(var.secrets_extension_port)
     }
   }
@@ -135,12 +140,38 @@ resource "aws_apigatewayv2_integration" "lambda" {
   payload_format_version = "2.0"
 }
 
+# Verifies the Cognito token before the function is invoked: signature, expiry, issuer and
+# audience. An unverified request is rejected by the gateway with 401 and never reaches any code,
+# which is why `Authenticator.GatewayClaims` reads the `sub` claim without re-checking it.
+#
+# `audience` is the app client id, which matches the `aud` claim of an *ID* token. Cognito's
+# access tokens carry `client_id` instead and would be rejected here, so callers send the ID
+# token — see terraform/README.md.
+resource "aws_apigatewayv2_authorizer" "cognito" {
+  api_id           = aws_apigatewayv2_api.api.id
+  name             = "${local.name}-cognito"
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+
+  jwt_configuration {
+    issuer   = "https://cognito-idp.${data.aws_region.current.region}.amazonaws.com/${aws_cognito_user_pool.users.id}"
+    audience = [aws_cognito_user_pool_client.app.id]
+  }
+}
+
 # A single catch-all route: the application routes by path itself, so there is nothing to gain
 # from restating every path here and keeping the two in step.
+#
+# The authorizer is attached here rather than per-route, so that a route added to the application
+# is authenticated by default. There is deliberately no public route: even registration requires a
+# signed-in user, because a player is created *for* a Cognito identity.
 resource "aws_apigatewayv2_route" "default" {
   api_id    = aws_apigatewayv2_api.api.id
   route_key = "$default"
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
 resource "aws_cloudwatch_log_group" "api_access" {

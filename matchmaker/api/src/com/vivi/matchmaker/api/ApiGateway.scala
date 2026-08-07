@@ -18,9 +18,18 @@ object ApiGateway {
       path: String,
       headers: Map[String, String],
       query: Map[String, String],
-      body: String
+      body: String,
+      claims: Map[String, String] = Map.empty
   ) {
     def header(name: String): Option[String] = headers.get(name.toLowerCase)
+
+    /** A claim from the token the gateway's JWT authorizer already verified.
+      *
+      * Empty when there is no authorizer in front of the function — locally, or if the route were
+      * ever left unauthenticated — so a caller of this must decide what an absent claim means
+      * rather than assuming the request was authenticated.
+      */
+    def claim(name: String): Option[String] = claims.get(name)
 
     /** Path split into non-empty segments: `/games/7/characters` becomes `List("games","7","characters")`. */
     def segments: List[String] = path.split('/').iterator.filter(_.nonEmpty).toList
@@ -28,8 +37,9 @@ object ApiGateway {
 
   case class Response(statusCode: Int, body: String)
 
-  /** Header carrying the caller's identity. A stand-in for a verified Cognito `sub` until
-    * hosted-login token validation replaces it — which is a change to `Router.callerOf` alone.
+  /** Header carrying the caller's identity in the local development mode, where there is no
+    * gateway to verify a token. Deployed, the identity is the `sub` claim instead — see
+    * `Authenticator`.
     */
   val ExternalIdHeader = "X-External-Id"
 
@@ -70,7 +80,21 @@ object ApiGateway {
     }
     val body = if (isBase64 && rawBody.nonEmpty) String(Base64.getDecoder.decode(rawBody)) else rawBody
 
-    Request(method, path, headers, query, body)
+    // requestContext.authorizer.jwt.claims, present only when a JWT authorizer ran. Values are
+    // strings except for the array-valued ones (`cognito:groups`, `aud` in some flows), which are
+    // dropped rather than guessed at: nothing here needs them.
+    val claims = event.obj
+      .get("requestContext")
+      .flatMap(_.obj.get("authorizer"))
+      .flatMap(_.obj.get("jwt"))
+      .flatMap(_.obj.get("claims"))
+      .flatMap {
+        case o: ujson.Obj => Some(o.value.flatMap { case (k, v) => strOpt(v).map(k -> _) }.toMap)
+        case _            => None
+      }
+      .getOrElse(Map.empty[String, String])
+
+    Request(method, path, headers, query, body, claims)
   }
 
   def encodeResponse(response: Response): String =

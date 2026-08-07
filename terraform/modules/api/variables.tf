@@ -75,6 +75,72 @@ variable "db_pool_size" {
   default     = 4
 }
 
+variable "hosted_login_domain_prefix" {
+  description = <<-EOT
+    Prefix of the Cognito hosted login domain, giving
+    https://<prefix>.auth.<region>.amazoncognito.com.
+
+    This is unique across all AWS accounts, not just yours, so it cannot be derived from the
+    environment name — pick something and expect to have to try again if it is taken. Changing it
+    later invalidates every callback URL registered with an identity provider.
+  EOT
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,62}$", var.hosted_login_domain_prefix))
+    error_message = "Must be lowercase letters, digits and hyphens, starting with a letter or digit."
+  }
+}
+
+variable "callback_urls" {
+  description = <<-EOT
+    URLs the hosted UI may redirect to after sign-in. Exact matches, including the path: a URL not
+    listed here fails at the authorize step with an opaque error, which is the usual cause of a
+    login that will not start.
+
+    Cognito requires https except for http://localhost, which is what lets a local UI use the real
+    dev pool.
+  EOT
+  type        = list(string)
+
+  validation {
+    condition     = length(var.callback_urls) > 0
+    error_message = "At least one callback URL is required, or hosted login has nowhere to return to."
+  }
+}
+
+variable "logout_urls" {
+  description = "URLs the hosted UI may redirect to after sign-out. Same exact-match rule as callback_urls."
+  type        = list(string)
+  default     = []
+}
+
+variable "password_minimum_length" {
+  description = "Minimum password length the pool enforces."
+  type        = number
+  default     = 12
+}
+
+variable "refresh_token_validity_days" {
+  description = "How long a refresh token stays usable, and so how long a player stays signed in."
+  type        = number
+  default     = 30
+}
+
+variable "advanced_security_mode" {
+  description = <<-EOT
+    Cognito advanced security: "OFF", "AUDIT" (log risk findings) or "ENFORCED" (block and
+    challenge). Billed per monthly active user, so it is off by default and set per environment.
+  EOT
+  type        = string
+  default     = "OFF"
+
+  validation {
+    condition     = contains(["OFF", "AUDIT", "ENFORCED"], var.advanced_security_mode)
+    error_message = "Must be OFF, AUDIT or ENFORCED."
+  }
+}
+
 variable "log_retention_days" {
   description = "Retention for the Lambda and API access log groups."
   type        = number

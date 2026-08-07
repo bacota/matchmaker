@@ -32,6 +32,12 @@ object Errors {
   val unauthenticated: Response =
     response(401, s"missing ${ApiGateway.ExternalIdHeader} header")
 
+  /** No verified `sub` reached the function. Deployed, the gateway's authorizer answers 401 long
+    * before this, so seeing it means a request arrived without passing one.
+    */
+  val unauthenticatedToken: Response =
+    response(401, "no verified identity in request")
+
   val notFound: Response = response(404, "no such endpoint")
 
   def badRequest(message: String): Response = response(400, message)
