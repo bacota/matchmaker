@@ -59,9 +59,14 @@ module "ui" {
   source = "./modules/ui"
 
   environment  = var.environment
+  bucket_name  = var.ui_bucket_name
   ui_dir       = var.ui_dir
   main_js_path = var.main_js_path
   price_class  = var.ui_price_class
+
+  domain_name     = var.ui_domain_name
+  hosted_zone_id  = var.hosted_zone_id
+  certificate_arn = var.ui_certificate_arn
 
   api_endpoint        = module.api.api_endpoint
   hosted_login_url    = module.api.hosted_login_url

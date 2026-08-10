@@ -41,3 +41,11 @@ output "ui_distribution_id" {
   description = "For `aws cloudfront create-invalidation` if you need to bypass the cache."
   value       = module.ui.distribution_id
 }
+
+output "ui_distribution_domain_name" {
+  description = <<-EOT
+    The distribution's own *.cloudfront.net name. With a custom domain configured this differs from
+    ui_url, and comparing the two is the quickest way to tell a DNS problem from a CloudFront one.
+  EOT
+  value       = module.ui.distribution_domain_name
+}

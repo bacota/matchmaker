@@ -86,8 +86,58 @@ Objects are uploaded with `source_hash`, so a rebuilt `main.js` shows up as a ch
 a rebuilt jar does. They are cached for 60 seconds and `config.js` not at all, so a redeploy is
 visible without an invalidation; if you need one anyway, `ui_distribution_id` is an output.
 
-A custom domain means an ACM certificate in **us-east-1**, `aliases` on the distribution, and
-adding the domain to `callback_urls` — Cognito matches them literally, trailing slash included.
+### The bucket name
+
+`ui_bucket_name` names the bucket. S3 names are global rather than per-account, so
+`matchmaker-<env>-ui` is not guaranteed to be free; leaving the variable empty falls back to that
+name. It belongs in `environments/<env>.tfvars` with the other account facts, because changing it
+on a live deployment **replaces the bucket** — terraform creates the new one, uploads the four
+objects, repoints the distribution and destroys the old one.
+
+### A custom domain
+
+Three variables, set together in `environments/<env>.tfvars`: `ui_domain_name`, `hosted_zone_id`
+and `ui_certificate_arn`. Leave them empty — the usual choice for dev — and the site keeps its
+generated `*.cloudfront.net` name, with nothing written to Route 53 and no certificate needed. Set
+one but not the others and the plan fails on a precondition rather than half-configuring the
+distribution.
+
+With them set, an apply:
+
+1. Puts the domain on the distribution as an `alias`, served with `ui_certificate_arn` under
+   `sni-only` and a TLSv1.2 floor.
+2. Points `A` and `AAAA` alias records at the distribution. Both families, because the distribution
+   answers on IPv6 and an `A` record alone leaves IPv6-only clients unable to resolve the site.
+   Alias rather than CNAME: a CNAME cannot sit at a zone apex, and aliases are not billed per query.
+
+**The certificate and the zone are referenced, never created.** Both normally outlive this stack
+and are shared beyond it — a certificate usually fronts more than one distribution, and a zone
+holds records this configuration knows nothing about — so issuing them here would also mean being
+able to destroy them. This is the same treatment `db_secret_name` gets.
+
+Two things about the certificate are enforced by CloudFront rather than by preference:
+
+- **It must be in us-east-1**, whatever `region` the rest of the stack runs in. That is the only
+  region CloudFront reads certificates from. The module checks the region straight off the ARN,
+  because otherwise this surfaces at apply time as `InvalidViewerCertificate`, which does not
+  mention the region.
+- **It must already be ISSUED.** A certificate still pending DNS validation is rejected, and the
+  error names the ARN rather than the reason. Validate it before applying:
+
+  ```sh
+  aws acm describe-certificate --region us-east-1 \
+    --certificate-arn "$ui_certificate_arn" --query 'Certificate.[Status,DomainName]'
+  ```
+
+The `url` and `origin` outputs follow the domain, and those are what `callback_urls` and
+`cors_allowed_origins` are built from. So adding a domain also moves the user pool's callbacks and
+the API's CORS origins onto it in the same apply, and **the domain must not be repeated** in the
+`callback_urls` / `cors_allowed_origins` variables — those are for anything *else* hosted login may
+return to.
+
+Expect an apply that adds or changes the domain to spend several minutes deploying the
+distribution. `ui_distribution_domain_name` stays reachable throughout: if the site is down,
+comparing it against `ui_url` separates a DNS problem from a CloudFront one.
 
 ## What this does not create
 
@@ -106,6 +156,14 @@ The database and its credentials are managed elsewhere and referenced by variabl
 - `subnet_ids` / `security_group_ids` — the network. The Lambda is VPC-attached, because Aurora
   is not publicly reachable. The database's security group must accept traffic from the security
   groups given here.
+
+Nor the two things a custom domain needs, for the same reason — they outlive this stack and are
+shared beyond it, so owning them here would mean being able to destroy them:
+
+- `hosted_zone_id` — an existing Route 53 public hosted zone. Terraform writes the UI's `A` and
+  `AAAA` records into it and touches nothing else in the zone.
+- `ui_certificate_arn` — an existing ACM certificate covering `ui_domain_name`, in **us-east-1**
+  and already ISSUED.
 
 ## Deploying
 

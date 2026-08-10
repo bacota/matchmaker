@@ -30,3 +30,13 @@ logout_urls   = ["http://localhost:5173/", "http://localhost:8080/"]
 
 // Origins only: no path, no trailing slash.
 cors_allowed_origins = ["http://localhost:5173", "http://localhost:8080"]
+
+// Bucket the built UI is uploaded to. S3 names are global, so pick something unlikely to be taken.
+// Omit to get "matchmaker-dev-ui".
+ui_bucket_name = "matchmaker-dev-ui"
+
+// Dev has no custom domain: leave these empty and the UI keeps its *.cloudfront.net name, with no
+// Route 53 record and no certificate needed. See prod.tfvars.example for the other case.
+ui_domain_name     = ""
+hosted_zone_id     = ""
+ui_certificate_arn = ""

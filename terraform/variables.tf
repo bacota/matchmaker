@@ -168,6 +168,55 @@ variable "main_js_path" {
   default     = "../out/matchmaker/ui/fullLinkJS.dest/main.js"
 }
 
+variable "ui_bucket_name" {
+  description = <<-EOT
+    Bucket the built UI is uploaded to. S3 bucket names are global rather than per-account, so the
+    environment name alone does not guarantee one is available.
+
+    Empty falls back to "matchmaker-<environment>-ui". Belongs in environments/<env>.tfvars, with
+    the other account facts — it names a real bucket, and changing it replaces that bucket.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "ui_domain_name" {
+  description = <<-EOT
+    Domain the UI is served from, e.g. "matchmaker.example.com". Empty keeps the generated
+    *.cloudfront.net name and writes nothing to Route 53 — which is the usual choice for dev.
+
+    Setting it requires hosted_zone_id and ui_certificate_arn as well, and moves the user pool's
+    callback URLs and the API's CORS origins onto the new name.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "ui_certificate_arn" {
+  description = <<-EOT
+    ARN of an existing ACM certificate covering ui_domain_name. Required whenever ui_domain_name is
+    set, and must be in us-east-1 — the only region CloudFront reads certificates from — and
+    already ISSUED.
+
+    Referenced, never created, for the same reason as the hosted zone and the database secret: a
+    certificate normally outlives and is shared beyond this stack.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "hosted_zone_id" {
+  description = <<-EOT
+    Existing Route 53 public hosted zone that ui_domain_name sits in, e.g. "Z1234567890ABC".
+    Required whenever ui_domain_name is set.
+
+    The zone is looked up, never created or destroyed: it generally holds records unrelated to this
+    application.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "ui_price_class" {
   description = <<-EOT
     CloudFront price class for the UI distribution. PriceClass_All serves from every edge region;
