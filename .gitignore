@@ -16,3 +16,4 @@ crash.log
 # Scala.js output symlinked next to index.html for local serving.
 matchmaker/ui/main.js
 matchmaker/ui/main.js.map
+matchmaker/ui/config.js

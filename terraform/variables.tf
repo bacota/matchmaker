@@ -33,6 +33,7 @@ variable "region" {
 variable "lambda_memory_mb" {
   description = "Lambda memory, which also sets its CPU share. The JVM cold start is sensitive to this."
   type        = number
+  default     = 2048
 
   validation {
     condition     = var.lambda_memory_mb >= 512
@@ -43,6 +44,7 @@ variable "lambda_memory_mb" {
 variable "log_retention_days" {
   description = "Retention for the Lambda and API access log groups."
   type        = number
+  default     = 7
 
   validation {
     # The values CloudWatch actually accepts. An arbitrary number is rejected at apply time with a
@@ -61,6 +63,7 @@ variable "advanced_security_mode" {
     challenge). Billed per monthly active user, which is why it is a per-environment decision.
   EOT
   type        = string
+  default     = "OFF"
 
   validation {
     condition     = contains(["OFF", "AUDIT", "ENFORCED"], var.advanced_security_mode)
@@ -71,6 +74,7 @@ variable "advanced_security_mode" {
 variable "refresh_token_validity_days" {
   description = "How long a refresh token stays usable, and so how long a player stays signed in."
   type        = number
+  default     = 30
 
   validation {
     condition     = var.refresh_token_validity_days >= 1 && var.refresh_token_validity_days <= 3650
@@ -83,7 +87,7 @@ variable "refresh_token_validity_days" {
 # ---------------------------------------------------------------------------
 
 variable "rds_endpoint" {
-  description = "Aurora writer endpoint, with or without a port."
+  description = "RDS writer endpoint, with or without a port."
   type        = string
 }
 
@@ -141,4 +145,86 @@ variable "logout_urls" {
 variable "cors_allowed_origins" {
   description = "Origins the UI is served from: scheme, host and port, no path and no trailing slash."
   type        = list(string)
+}
+
+# ---------------------------------------------------------------------------
+# The browser UI
+# ---------------------------------------------------------------------------
+
+variable "ui_dir" {
+  description = "Directory holding the UI's index.html and app.css."
+  type        = string
+  default     = "../matchmaker/ui"
+}
+
+variable "main_js_path" {
+  description = <<-EOT
+    Linked JavaScript to upload. Default is the `fullLinkJS` output, which is optimised and
+    minified; `fastLinkJS` output is several times larger and is for local development.
+
+    Build it with `mill matchmaker.ui.fullLinkJS` before applying.
+  EOT
+  type        = string
+  default     = "../out/matchmaker/ui/fullLinkJS.dest/main.js"
+}
+
+variable "ui_bucket_name" {
+  description = <<-EOT
+    Bucket the built UI is uploaded to. S3 bucket names are global rather than per-account, so the
+    environment name alone does not guarantee one is available.
+
+    Empty falls back to "matchmaker-<environment>-ui". Belongs in environments/<env>.tfvars, with
+    the other account facts — it names a real bucket, and changing it replaces that bucket.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "ui_domain_name" {
+  description = <<-EOT
+    Domain the UI is served from, e.g. "matchmaker.example.com". Empty keeps the generated
+    *.cloudfront.net name and writes nothing to Route 53 — which is the usual choice for dev.
+
+    Setting it requires hosted_zone_id and ui_certificate_arn as well, and moves the user pool's
+    callback URLs and the API's CORS origins onto the new name.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "ui_certificate_arn" {
+  description = <<-EOT
+    ARN of an existing ACM certificate covering ui_domain_name. Required whenever ui_domain_name is
+    set, and must be in us-east-1 — the only region CloudFront reads certificates from — and
+    already ISSUED.
+
+    Referenced, never created, for the same reason as the hosted zone and the database secret: a
+    certificate normally outlives and is shared beyond this stack.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "hosted_zone_id" {
+  description = <<-EOT
+    Existing Route 53 public hosted zone that ui_domain_name sits in, e.g. "Z1234567890ABC".
+    Required whenever ui_domain_name is set.
+
+    The zone is looked up, never created or destroyed: it generally holds records unrelated to this
+    application.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "ui_price_class" {
+  description = <<-EOT
+    CloudFront price class for the UI distribution. PriceClass_All serves from every edge region;
+    PriceClass_200 and PriceClass_100 are cheaper and progressively slower outside North America
+    and Europe.
+
+    Set it per environment in environments/<env>.settings.tfvars if dev does not need the reach.
+  EOT
+  type        = string
+  default     = "PriceClass_All"
 }

@@ -17,8 +17,27 @@ secrets_extension_layer_arn = "arn:aws:lambda:us-east-1:177933569100:layer:AWS-P
 
 hosted_login_domain_prefix = "matchmaker-xxxxxx"
 
-// https only, and no localhost: every URL here is one an authorization code may be delivered to.
-callback_urls = ["https://matchmaker.example.com/"]
-logout_urls   = ["https://matchmaker.example.com/"]
+// Bucket the built UI is uploaded to. S3 names are global, so this may need a second guess.
+ui_bucket_name = "matchmaker-prod-ui"
 
-cors_allowed_origins = ["https://matchmaker.example.com"]
+// The custom domain, the existing public hosted zone it lives in, and an existing ACM certificate
+// covering it. All three are required together. Terraform puts the name on the distribution as an
+// alias and points A and AAAA records at it; the zone and the certificate are referenced, never
+// created.
+//
+// The certificate must be in us-east-1 whatever `region` says — that is the only region CloudFront
+// reads them from — and must already be ISSUED, or the apply fails on the distribution.
+ui_domain_name     = "matchmaker.example.com"
+hosted_zone_id     = "Z1234567890ABC"
+ui_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+
+// Additions only. The UI's own URL is always allowed — ../main.tf concatenates module.ui.url,
+// which follows ui_domain_name — so do not repeat it here. These are for anything *else* that
+// hosted login may return to.
+//
+// https only, and no localhost: every URL here is one an authorization code may be delivered to.
+callback_urls = []
+logout_urls   = []
+
+// Likewise additions: the UI's own origin is already included.
+cors_allowed_origins = []
