@@ -139,6 +139,42 @@ Expect an apply that adds or changes the domain to spend several minutes deployi
 distribution. `ui_distribution_domain_name` stays reachable throughout: if the site is down,
 comparing it against `ui_url` separates a DNS problem from a CloudFront one.
 
+## Cold starts: SnapStart
+
+`lambda_snap_start` (default true, per environment) snapshots the initialized JVM at publish time,
+so a cold start resumes that image instead of booting a JVM and loading classes again. It is the
+largest cold-start win available to a JVM Lambda.
+
+It only applies to **published versions**, never `$LATEST`. So the function sets `publish = true`,
+an alias named `live` follows each published version, and the API Gateway integration and the
+`lambda:InvokeFunction` permission are both **qualified to that alias**. Pointing the gateway at
+the unqualified function would silently opt out of SnapStart while still paying to publish; leaving
+the permission unqualified would fail every request with `AccessDeniedException` in the gateway's
+access log and nothing at all in the function's. The alias earns its keep separately, too — a bad
+deploy can be rolled back by moving it to the previous version without touching the API.
+
+Both are unconditional, so turning `lambda_snap_start` off removes the snapshot without rearranging
+how the gateway reaches the function.
+
+### What must not be in the snapshot
+
+A snapshot is restored into *many* execution environments, so anything captured in it is shared by
+all of them. That rules out open sockets, credentials, and anything that has to be unique.
+
+This is safe today by construction rather than by luck: `Handler.services` is a `lazy val`, and the
+Lambda runtime only *constructs* the handler during init — it does not invoke it. The database
+pool, the Secrets Manager fetch and the session token therefore all happen on the first request,
+after restore. The snapshot holds an initialized JVM and loaded classes, and nothing else.
+
+The corollary is that the pool and the secret fetch are still paid on the first request, so the
+restore is partial. Moving them into init would complete it, but only alongside `org.crac`
+checkpoint/restore hooks that tear the pool down before the snapshot and rebuild it after —
+without them every restored environment would come up holding the same dead TCP connections.
+**Do not make `services` eager without adding those hooks.**
+
+Expect an apply that changes the jar to spend an extra minute or two here: AWS runs the init phase
+and takes the snapshot before the new version becomes usable.
+
 ## What this does not create
 
 The database and its credentials are managed elsewhere and referenced by variable:

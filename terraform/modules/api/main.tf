@@ -91,6 +91,34 @@ resource "aws_lambda_function" "api" {
   memory_size = var.lambda_memory_mb
   timeout     = var.lambda_timeout_s
 
+  /* SnapStart: the JVM is initialized once at publish time and every cold start resumes that
+   * snapshot instead of booting a JVM and loading classes again.
+   *
+   * Two things make this correct rather than merely faster:
+   *
+   * - It only applies to *published versions*, never $LATEST. That is why `publish` is on and why
+   *   the integration below invokes the alias — pointing the gateway at the unqualified function
+   *   would silently opt out and leave nothing but the publish cost.
+   * - Nothing that must be unique per environment may be captured in the snapshot. The handler's
+   *   database pool, its credentials and its session token are all behind a `lazy val` that the
+   *   Lambda runtime does not touch while constructing the handler, so the snapshot holds loaded
+   *   classes and an initialized JVM but no sockets and no secrets. Priming those during init
+   *   would restore every execution environment onto the same dead TCP connections, and would
+   *   need `org.crac` checkpoint/restore hooks to be safe.
+   */
+  dynamic "snap_start" {
+    for_each = var.lambda_snap_start ? [1] : []
+    content {
+      apply_on = "PublishedVersions"
+    }
+  }
+
+  # Each apply publishes a new immutable version, which the alias then moves to. Required by
+  # SnapStart, and independently useful: a bad deploy is rolled back by repointing the alias.
+  # Unconditional, so that toggling lambda_snap_start does not also rearrange how the gateway
+  # reaches the function.
+  publish = true
+
   # Serves Secrets Manager over localhost, so the function does not have to carry the AWS SDK to
   # read one secret. The grant below is still what authorizes the read.
   layers = [var.secrets_extension_layer_arn]
@@ -124,6 +152,24 @@ resource "aws_lambda_function" "api" {
   ]
 }
 
+/* The alias everything invokes, always pointing at the version this apply published.
+ *
+ * SnapStart is the reason it has to exist — a snapshot is taken per published version, and only a
+ * qualified invocation can resume one — but it is worth having on its own: the gateway names a
+ * stable ARN, and a bad deploy can be rolled back by moving the alias to the previous version
+ * without touching the API.
+ *
+ * Publishing a version with SnapStart on is not instant: AWS runs the init phase and takes the
+ * snapshot before the version becomes usable, so expect an apply that changes the jar to sit here
+ * for a minute or two.
+ */
+resource "aws_lambda_alias" "live" {
+  name             = "live"
+  description      = "Version currently serving the HTTP API."
+  function_name    = aws_lambda_function.api.function_name
+  function_version = aws_lambda_function.api.version
+}
+
 # ---------------------------------------------------------------------------
 # HTTP API
 # ---------------------------------------------------------------------------
@@ -149,9 +195,11 @@ resource "aws_apigatewayv2_api" "api" {
 }
 
 resource "aws_apigatewayv2_integration" "lambda" {
-  api_id                 = aws_apigatewayv2_api.api.id
-  integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.api.invoke_arn
+  api_id           = aws_apigatewayv2_api.api.id
+  integration_type = "AWS_PROXY"
+  # The alias, not the function. An unqualified invoke_arn reaches $LATEST, which has no snapshot
+  # and so would quietly cold-start a JVM on every new execution environment.
+  integration_uri        = aws_lambda_alias.live.invoke_arn
   payload_format_version = "2.0"
 }
 
@@ -218,4 +266,9 @@ resource "aws_lambda_permission" "api_gateway" {
   function_name = aws_lambda_function.api.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
+
+  # Scoped to the alias. A permission on the unqualified function does not authorize invoking a
+  # qualified one, so without this every request would come back as 500 with an
+  # AccessDeniedException in the gateway's access log and nothing at all in the function's.
+  qualifier = aws_lambda_alias.live.name
 }

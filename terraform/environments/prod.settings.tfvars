@@ -5,6 +5,10 @@
 lambda_memory_mb   = 2048
 log_retention_days = 90
 
+// Snapshot the initialized JVM at publish time. This is what keeps a cold start from being a
+// visible pause for whoever triggered it.
+lambda_snap_start = true
+
 // Real accounts: block sign-ins using credentials known to be compromised, and challenge risky
 // ones. Billed per monthly active user.
 advanced_security_mode = "ENFORCED"

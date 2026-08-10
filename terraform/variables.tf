@@ -41,6 +41,20 @@ variable "lambda_memory_mb" {
   }
 }
 
+variable "lambda_snap_start" {
+  description = <<-EOT
+    Snapshot the initialized JVM at publish time so cold starts resume it rather than booting one.
+    The largest cold-start win available to a JVM Lambda, and the reason the function is published
+    and invoked through an alias.
+
+    Per-environment because it is a trade: publishing a version takes a minute or two longer, since
+    AWS runs the init phase and snapshots it before the version is usable. Worth turning off in an
+    environment where deploys are frequent and cold-start latency does not matter.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "log_retention_days" {
   description = "Retention for the Lambda and API access log groups."
   type        = number

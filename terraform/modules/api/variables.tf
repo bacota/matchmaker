@@ -69,6 +69,23 @@ variable "lambda_timeout_s" {
   default     = 30
 }
 
+variable "lambda_snap_start" {
+  description = <<-EOT
+    Whether to snapshot the initialized JVM at publish time so cold starts resume it instead of
+    booting one. This is the single largest cold-start win available to a JVM Lambda.
+
+    Safe here only because the handler builds its database pool, credentials and session token
+    lazily, on the first request rather than during init — so none of them are captured in the
+    snapshot and restored into many execution environments at once. Priming them at init would
+    require org.crac checkpoint/restore hooks first.
+
+    Turning this off still leaves the function published and invoked through the "live" alias; only
+    the snapshot goes away.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "db_pool_size" {
   description = "Maximum pooled database connections per Lambda container."
   type        = number

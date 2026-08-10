@@ -41,6 +41,7 @@ module "api" {
 
   # Policy, from environments/<env>.settings.tfvars.
   lambda_memory_mb            = var.lambda_memory_mb
+  lambda_snap_start           = var.lambda_snap_start
   log_retention_days          = var.log_retention_days
   advanced_security_mode      = var.advanced_security_mode
   refresh_token_validity_days = var.refresh_token_validity_days
