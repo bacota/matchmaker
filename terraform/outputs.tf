@@ -27,3 +27,17 @@ output "hosted_login_url" {
 output "jwt_issuer" {
   value = module.api.jwt_issuer
 }
+
+output "ui_url" {
+  description = "Where the deployed UI is served. Already registered as a callback URL and CORS origin."
+  value       = module.ui.url
+}
+
+output "ui_bucket" {
+  value = module.ui.bucket
+}
+
+output "ui_distribution_id" {
+  description = "For `aws cloudfront create-invalidation` if you need to bypass the cache."
+  value       = module.ui.distribution_id
+}

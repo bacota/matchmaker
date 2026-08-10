@@ -8,6 +8,7 @@ The matchmaker API, running as a Java Lambda behind an API Gateway HTTP API.
 main.tf                             one root for every environment; names none of them
 variables.tf                        every input, with validation
 modules/api                         the Lambda, the HTTP API, Cognito, and their IAM roles
+modules/ui                          the S3 bucket and CloudFront distribution serving the UI
 environments/<env>.settings.tfvars  policy: memory, retention, security, session length (committed)
 environments/<env>.tfvars           account facts: endpoints, subnets, secrets (gitignored)
 environments/<env>.backend.hcl      which state this environment uses
@@ -51,6 +52,42 @@ that edge. Running `terraform` directly reintroduces it.
 Add three files under `environments/`: `<env>.settings.tfvars`, `<env>.tfvars` and
 `<env>.backend.hcl`. Then `./tf.sh <env> apply`. **No terraform is edited** — `main.tf` names no
 environment, and the `environment` variable is validated by format rather than against a list.
+
+## The UI
+
+`modules/ui` builds a private S3 bucket behind a CloudFront distribution and uploads four files:
+`index.html`, `app.css`, `main.js`, and a `config.js` that terraform generates.
+
+Three things about it are deliberate:
+
+- **CloudFront, not an S3 website endpoint.** Website endpoints serve plain http, and
+  `crypto.subtle` — which PKCE needs to hash the code verifier — does not exist outside a secure
+  context. Hosted login would work locally and fail on the deployed site.
+- **`config.js` is generated**, from `api_endpoint`, `hosted_login_url` and `user_pool_client_id`
+  as the API module actually produced them. There is no step where three values are copied into a
+  file by hand, and so no way for them to go stale. None of them are secret.
+- **The distribution's own URL is added to `callback_urls` and `cors_allowed_origins`
+  automatically**, so the site can sign in the moment it exists. The variables of the same name
+  add to it — localhost for dev, a custom domain for prod.
+
+The two modules reference each other. That is not a cycle: the bucket and distribution are created
+first, the Cognito client then takes the distribution's URL as a callback, and `config.js` is
+written last with that client's id.
+
+Build the JavaScript before applying — `filemd5` on a missing file fails the plan:
+
+```sh
+mill matchmaker.ui.fullLinkJS   # not fastLinkJS: several times smaller, and minified
+./tf.sh dev apply
+./tf.sh dev output -raw ui_url
+```
+
+Objects are uploaded with `source_hash`, so a rebuilt `main.js` shows up as a change the same way
+a rebuilt jar does. They are cached for 60 seconds and `config.js` not at all, so a redeploy is
+visible without an invalidation; if you need one anyway, `ui_distribution_id` is an output.
+
+A custom domain means an ACM certificate in **us-east-1**, `aliases` on the distribution, and
+adding the domain to `callback_urls` — Cognito matches them literally, trailing slash included.
 
 ## What this does not create
 
