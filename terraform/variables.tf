@@ -33,7 +33,7 @@ variable "region" {
 variable "lambda_memory_mb" {
   description = "Lambda memory, which also sets its CPU share. The JVM cold start is sensitive to this."
   type        = number
-  default = 2048
+  default     = 2048
 
   validation {
     condition     = var.lambda_memory_mb >= 512
@@ -44,7 +44,7 @@ variable "lambda_memory_mb" {
 variable "log_retention_days" {
   description = "Retention for the Lambda and API access log groups."
   type        = number
-  default = 7
+  default     = 7
 
   validation {
     # The values CloudWatch actually accepts. An arbitrary number is rejected at apply time with a
@@ -63,7 +63,7 @@ variable "advanced_security_mode" {
     challenge). Billed per monthly active user, which is why it is a per-environment decision.
   EOT
   type        = string
-  default = "OFF"
+  default     = "OFF"
 
   validation {
     condition     = contains(["OFF", "AUDIT", "ENFORCED"], var.advanced_security_mode)
@@ -74,7 +74,7 @@ variable "advanced_security_mode" {
 variable "refresh_token_validity_days" {
   description = "How long a refresh token stays usable, and so how long a player stays signed in."
   type        = number
-  default = 30
+  default     = 30
 
   validation {
     condition     = var.refresh_token_validity_days >= 1 && var.refresh_token_validity_days <= 3650
@@ -169,7 +169,13 @@ variable "main_js_path" {
 }
 
 variable "ui_price_class" {
-  description = "CloudFront price class for the UI distribution."
+  description = <<-EOT
+    CloudFront price class for the UI distribution. PriceClass_All serves from every edge region;
+    PriceClass_200 and PriceClass_100 are cheaper and progressively slower outside North America
+    and Europe.
+
+    Set it per environment in environments/<env>.settings.tfvars if dev does not need the reach.
+  EOT
   type        = string
-  default     = "PriceClass_100"
+  default     = "PriceClass_All"
 }
