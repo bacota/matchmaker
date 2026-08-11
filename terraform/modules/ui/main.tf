@@ -115,9 +115,14 @@ resource "aws_cloudfront_distribution" "ui" {
     cached_methods         = ["GET", "HEAD"]
     compress               = true
 
-    # CachingOptimized, AWS-managed. The API is called directly from the browser and never through
-    # this distribution, so nothing dynamic is being cached here — only three static files.
-    cache_policy_id = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+    # CachingDisabled, AWS-managed: min/max/default TTL all zero, so every request is forwarded to
+    # S3 and a deploy is live the moment the objects are uploaded. No invalidation, and no window
+    # where index.html and main.js are served from different builds.
+    #
+    # The cost is one S3 GET per request rather than per TTL. That is the right trade for four
+    # small files; if this ever fronts something read-heavy, switch to CachingOptimized
+    # (658327ea-f89d-4fab-a63d-7e88639e58f6) and invalidate on deploy instead.
+    cache_policy_id = "4135ea2d-6df8-4934-9b0a-0e35d3d2f5eb"
   }
 
   restrictions {
@@ -217,17 +222,23 @@ resource "aws_s3_bucket_policy" "ui" {
 # `source_hash` on each object is what makes a rebuilt file show up as a change, the same way
 # `source_code_hash` does for the Lambda jar. Without it terraform compares only the object's
 # metadata and a changed main.js would not be uploaded.
+#
+# Every object is `no-store`, matching the distribution's CachingDisabled policy: nothing is held
+# at the edge and nothing is held by the browser, so an upload is what every visitor sees on their
+# next request. That also removes the one hazard of caching these separately — a browser pairing a
+# fresh index.html with a main.js from the previous build, which fails in ways that look like
+# application bugs.
+#
+# `no-store` rather than `no-cache`: no-cache permits storing the response and revalidating it,
+# which still leaves a stale copy on disk to be served if the revalidation request fails.
 
 resource "aws_s3_object" "index" {
-  bucket       = aws_s3_bucket.ui.id
-  key          = "index.html"
-  source       = "${var.ui_dir}/index.html"
-  source_hash  = filemd5("${var.ui_dir}/index.html")
-  content_type = "text/html"
-
-  # Short, because this is what points at everything else: a stale index.html would keep serving
-  # a main.js that may no longer exist.
-  cache_control = "public, max-age=60"
+  bucket        = aws_s3_bucket.ui.id
+  key           = "index.html"
+  source        = "${var.ui_dir}/index.html"
+  source_hash   = filemd5("${var.ui_dir}/index.html")
+  content_type  = "text/html"
+  cache_control = "no-store"
 }
 
 resource "aws_s3_object" "stylesheet" {
@@ -236,7 +247,7 @@ resource "aws_s3_object" "stylesheet" {
   source        = "${var.ui_dir}/app.css"
   source_hash   = filemd5("${var.ui_dir}/app.css")
   content_type  = "text/css"
-  cache_control = "public, max-age=60"
+  cache_control = "no-store"
 }
 
 resource "aws_s3_object" "script" {
@@ -245,7 +256,7 @@ resource "aws_s3_object" "script" {
   source        = var.main_js_path
   source_hash   = filemd5(var.main_js_path)
   content_type  = "text/javascript"
-  cache_control = "public, max-age=60"
+  cache_control = "no-store"
 }
 
 /* The one file that differs between environments, generated rather than edited.

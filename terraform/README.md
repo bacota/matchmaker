@@ -83,8 +83,24 @@ mill matchmaker.ui.fullLinkJS   # not fastLinkJS: several times smaller, and min
 ```
 
 Objects are uploaded with `source_hash`, so a rebuilt `main.js` shows up as a change the same way
-a rebuilt jar does. They are cached for 60 seconds and `config.js` not at all, so a redeploy is
-visible without an invalidation; if you need one anyway, `ui_distribution_id` is an output.
+a rebuilt jar does.
+
+**The distribution does not cache.** It uses the AWS-managed CachingDisabled policy, so every
+request is forwarded to S3 and an upload is live immediately — no invalidation step, and no window
+where `index.html` and `main.js` are served from different builds. The cost is one S3 GET per
+request instead of one per TTL, which is the right trade for four small files. If this ever fronts
+something read-heavy, switch `cache_policy_id` to CachingOptimized
+(`658327ea-f89d-4fab-a63d-7e88639e58f6`) and invalidate on deploy; `ui_distribution_id` is an
+output for exactly that.
+
+Browsers do not cache it either: all four objects are uploaded with `Cache-Control: no-store`,
+which CloudFront passes through. So a redeploy is what every visitor gets on their next request,
+including one with the page already open. That also removes the hazard of caching these files
+independently — a browser pairing a fresh `index.html` with a `main.js` from the previous build,
+which fails in ways that look like application bugs.
+
+`no-store` rather than `no-cache`: `no-cache` still permits storing the response and revalidating
+it, which leaves a copy on disk that can be served if revalidation fails.
 
 ### The bucket name
 
