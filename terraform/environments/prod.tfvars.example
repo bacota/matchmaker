@@ -8,14 +8,18 @@ region      = "us-east-1"
 rds_endpoint = "matchmaker-prod.cluster-xxxxxxxx.us-east-1.rds.amazonaws.com"
 db_name      = "matchmaker"
 
-db_secret_name = "matchmaker/prod/db"
+// The user only. The password lives in prod.secrets.tfvars, which is not committed.
+db_user = "matchmaker"
 
 subnet_ids         = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
 security_group_ids = ["sg-cccccccc"]
 
-secrets_extension_layer_arn = "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17"
+// Derived from the account and region unless set; see dev.tfvars.example.
 
-hosted_login_domain_prefix = "matchmaker-xxxxxx"
+// Address Cognito mails sign-in codes from. Must be a verified SES identity in this account and
+// region, and the account must be out of the SES sandbox. Without it the pool falls back to
+// Cognito's own sender and its 50-emails-a-day cap, which sign-in cannot depend on.
+cognito_sender_email = "no-reply@matchmaker.example.com"
 
 // Bucket the built UI is uploaded to. S3 names are global, so this may need a second guess.
 ui_bucket_name = "matchmaker-prod-ui"

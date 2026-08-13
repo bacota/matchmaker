@@ -13,33 +13,21 @@ variable "db_name" {
   type        = string
 }
 
-variable "db_secret_name" {
-  description = <<-EOT
-    Name of an existing Secrets Manager secret holding the database credentials, in the standard
-    RDS shape: {"username": ..., "password": ...}. This module reads the secret's ARN to scope the
-    Lambda's permissions; it never creates the secret or reads its value.
-  EOT
+variable "db_user" {
+  description = "Database user the function connects as."
   type        = string
 }
 
-variable "secrets_extension_layer_arn" {
+variable "db_password" {
   description = <<-EOT
-    ARN of the AWS Parameters and Secrets Lambda Extension layer, which serves Secrets Manager to
-    the function over localhost. The function reads its database credentials through it instead of
-    bundling the AWS SDK.
+    Password for db_user, passed to the function as an environment variable.
 
-    The ARN is region- and version-specific and AWS publishes no wildcard for it, so it has to be
-    given explicitly. Look up the current one for your region under "Parameters and Secrets Lambda
-    extension" in the AWS Secrets Manager User Guide. It looks like:
-    arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17
+    Marked sensitive so it is redacted from plan and apply output, but note what that does not
+    cover: the value is stored in plaintext in the terraform state, and in the Lambda's own
+    configuration where anyone holding lambda:GetFunction can read it back.
   EOT
   type        = string
-}
-
-variable "secrets_extension_port" {
-  description = "Port the secrets extension listens on inside the sandbox."
-  type        = number
-  default     = 2773
+  sensitive   = true
 }
 
 variable "subnet_ids" {
@@ -97,17 +85,48 @@ variable "hosted_login_domain_prefix" {
     Prefix of the Cognito hosted login domain, giving
     https://<prefix>.auth.<region>.amazoncognito.com.
 
-    This is unique across all AWS accounts, not just yours, so it cannot be derived from the
-    environment name — pick something and expect to have to try again if it is taken. Changing it
-    later invalidates every callback URL registered with an identity provider.
+    Empty — the default — derives it as "matchmaker-<environment>-<8 hex>", where the hex is a hash
+    of the account id and region. The prefix must be unique across all AWS accounts, not only
+    yours, so the pool name alone will not do; the hash is what makes it unique without anyone
+    having to pick a free name by trial and error. It is deterministic, so the sign-in URL does not
+    move between applies.
+
+    Set it only to override that: an existing pool already on another prefix, or a name chosen for
+    how it reads. Changing it on a live environment invalidates every callback URL registered with
+    an identity provider, and moves the URL players sign in at.
   EOT
   type        = string
+  default     = ""
 
   validation {
     # Must start and end with a letter or digit: Cognito rejects a leading or trailing hyphen, and
     # doing so here fails the plan rather than the apply, after the rest of the run has succeeded.
-    condition     = can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", var.hosted_login_domain_prefix))
+    condition     = var.hosted_login_domain_prefix == "" || can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", var.hosted_login_domain_prefix))
     error_message = "Must be 1-63 lowercase letters, digits and hyphens, starting and ending with a letter or digit."
+  }
+}
+
+variable "cognito_sender_email" {
+  description = <<-EOT
+    Address the pool sends from: one-time sign-in codes, sign-up verification, password resets.
+
+    Empty — the default — uses Cognito's built-in sender, which is capped at 50 emails a day for
+    the whole pool and sends from a no-reply@verificationemail.com address. That is fine until
+    sign-in depends on those emails arriving, which it does now that EMAIL_OTP is a sign-in factor.
+
+    Setting it switches the pool to SES. The address must be a **verified SES identity in this
+    account and region**, and the account must be out of the SES sandbox to mail anyone who has not
+    separately confirmed the address. Neither is checked here, and neither fails until an apply.
+
+    A bare address, not "Name <addr@example.com>": the SES identity ARN is derived from this value,
+    so it has to be the identity itself.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.cognito_sender_email == "" || can(regex("^[^@[:space:]<>]+@[a-z0-9.-]+\\.[a-z]{2,}$", var.cognito_sender_email))
+    error_message = "Must be a single bare email address, without a display name."
   }
 }
 
