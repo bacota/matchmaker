@@ -10,20 +10,34 @@ variables.tf                        every input, with validation
 modules/api                         the Lambda, the HTTP API, Cognito, and their IAM roles
 modules/ui                          the S3 bucket and CloudFront distribution serving the UI
 environments/<env>.settings.tfvars  policy: memory, retention, security, session length (committed)
-environments/<env>.tfvars           account facts: endpoints, subnets, secrets (gitignored)
+environments/<env>.tfvars           account facts: endpoints, subnets, user names (committed)
+environments/<env>.secrets.tfvars   credentials, and nothing else (gitignored)
 environments/<env>.backend.hcl      which state this environment uses
 tf.sh                               run terraform against one environment
 ```
 
 **One configuration, not one per environment.** Environments differ only in values, and the values
-split in two:
+split three ways, layered by `tf.sh` in this order — later files win:
 
-- **Policy** — memory, log retention, advanced security, session length. Decisions, so they are
-  committed, in `environments/<env>.settings.tfvars`. `diff` those two files to see exactly how
-  prod differs from dev.
-- **Account facts** — the database endpoint, subnets, security groups, secret name, domain prefix,
-  URLs. These name real infrastructure, so they live in `environments/<env>.tfvars`, which is
-  gitignored.
+1. **Policy** — memory, log retention, advanced security, session length, SnapStart. Decisions, in
+   `environments/<env>.settings.tfvars`. `diff` those two files to see exactly how prod differs
+   from dev.
+2. **Account facts** — the database endpoint, `db_user`, subnets, security groups, URLs. What already exists in AWS that this stack attaches to, in `environments/<env>.tfvars`.
+3. **Credentials** — `db_password`, in `environments/<env>.secrets.tfvars`.
+
+The first two are **committed**, so any change to what gets deployed shows up in a diff and can be
+reviewed. Only the third is gitignored, matched by `*.secrets.tfvars`, and it should hold nothing
+but secrets — keeping it minimal means there is never a reason to make an exception to that rule.
+
+A fresh clone therefore needs exactly one file written by hand:
+
+```sh
+cp environments/dev.secrets.tfvars.example environments/dev.secrets.tfvars
+$EDITOR environments/dev.secrets.tfvars
+```
+
+`tf.sh` refuses to run without it, naming the file and the copy command rather than letting
+terraform fail later with "No value for required variable".
 
 The four policy variables have **no defaults**. A run that does not supply them fails with "No
 value for required variable" rather than quietly inheriting something: prod with dev's log
@@ -49,8 +63,9 @@ that edge. Running `terraform` directly reintroduces it.
 
 ### Adding an environment
 
-Add three files under `environments/`: `<env>.settings.tfvars`, `<env>.tfvars` and
-`<env>.backend.hcl`. Then `./tf.sh <env> apply`. **No terraform is edited** — `main.tf` names no
+Add four files under `environments/`: `<env>.settings.tfvars`, `<env>.tfvars`,
+`<env>.secrets.tfvars` and `<env>.backend.hcl`. Then `./tf.sh <env> apply`. **No terraform is
+edited** — `main.tf` names no
 environment, and the `environment` variable is validated by format rather than against a list.
 
 ## The UI
@@ -129,7 +144,7 @@ With them set, an apply:
 **The certificate and the zone are referenced, never created.** Both normally outlive this stack
 and are shared beyond it — a certificate usually fronts more than one distribution, and a zone
 holds records this configuration knows nothing about — so issuing them here would also mean being
-able to destroy them. This is the same treatment `db_secret_name` gets.
+able to destroy them.
 
 Two things about the certificate are enforced by CloudFront rather than by preference:
 
@@ -155,6 +170,31 @@ Expect an apply that adds or changes the domain to spend several minutes deployi
 distribution. `ui_distribution_domain_name` stays reachable throughout: if the site is down,
 comparing it against `ui_url` separates a DNS problem from a CloudFront one.
 
+## The hosted login domain
+
+Cognito serves sign-in from `https://<prefix>.auth.<region>.amazoncognito.com`, and that prefix has
+to be unique across **every AWS account**, not just yours. So it cannot simply be the pool name —
+`matchmaker-dev` is exactly the sort of name someone else has already claimed.
+
+Rather than making you guess a free name and re-run the apply until one sticks,
+`hosted_login_domain_prefix` defaults to empty and the module derives:
+
+```
+matchmaker-<environment>-<8 hex characters of sha256(account id + region)>
+```
+
+for example `matchmaker-dev-ea602e3a`. That is unique in practice, and deterministic — the same
+account and environment always produce the same prefix, so the URL players sign in at does not move
+between applies. At most 40 characters, given the 20-character cap on `environment`, against
+Cognito's limit of 63.
+
+The account id is **hashed rather than used directly**: this hostname is public, appearing in every
+authorize URL, and there is no reason to publish an AWS account number.
+
+Set the variable to override it — a pool already living under another prefix, or a name chosen for
+how it reads to users. Changing it on a live environment moves the sign-in URL and invalidates
+every callback registered with an identity provider.
+
 ## Cold starts: SnapStart
 
 `lambda_snap_start` (default true, per environment) snapshots the initialized JVM at publish time,
@@ -179,11 +219,10 @@ all of them. That rules out open sockets, credentials, and anything that has to 
 
 This is safe today by construction rather than by luck: `Handler.services` is a `lazy val`, and the
 Lambda runtime only *constructs* the handler during init — it does not invoke it. The database
-pool, the Secrets Manager fetch and the session token therefore all happen on the first request,
-after restore. The snapshot holds an initialized JVM and loaded classes, and nothing else.
+pool is therefore built on the first request, after restore. The snapshot holds an initialized JVM
+and loaded classes, and nothing else.
 
-The corollary is that the pool and the secret fetch are still paid on the first request, so the
-restore is partial. Moving them into init would complete it, but only alongside `org.crac`
+The corollary is that the pool is still built on the first request, so the restore is partial. Moving them into init would complete it, but only alongside `org.crac`
 checkpoint/restore hooks that tear the pool down before the snapshot and rebuild it after —
 without them every restored environment would come up holding the same dead TCP connections.
 **Do not make `services` eager without adding those hooks.**
@@ -196,18 +235,39 @@ and takes the snapshot before the new version becomes usable.
 The database and its credentials are managed elsewhere and referenced by variable:
 
 - `rds_endpoint` / `db_name` — the Aurora cluster.
-- `db_secret_name` — an existing Secrets Manager secret holding
-  `{"username": ..., "password": ...}`. Terraform reads only the secret's ARN, in order to scope
-  the Lambda's `secretsmanager:GetSecretValue` grant. The credential value never enters the
-  Terraform state or a plan.
-- `secrets_extension_layer_arn` — the AWS Parameters and Secrets Lambda Extension layer. The
-  function reads its credentials from this over `localhost` rather than bundling the AWS SDK,
-  which would add roughly 8 MB (Netty and Apache HttpClient) to serve one call per cold start.
-  The ARN is region- and version-specific, so AWS publishes no default worth hardcoding; find
-  the current one for your region in the AWS Secrets Manager User Guide.
+- `db_user` / `db_password` — the credentials, passed straight through to the function as
+  environment variables. See below.
 - `subnet_ids` / `security_group_ids` — the network. The Lambda is VPC-attached, because Aurora
   is not publicly reachable. The database's security group must accept traffic from the security
   groups given here.
+
+### The database password
+
+`db_password` reaches the function as the `DB_PASSWORD` environment variable, alongside `DB_HOST`,
+`DB_PORT`, `DB_NAME` and `DB_USER`. `Handler.dbConfig` reads all five and builds the `DbConfig`
+directly — the function makes no AWS call and carries no AWS dependency beyond the Lambda runtime
+interface.
+
+It is set in `environments/<env>.secrets.tfvars`, which is gitignored, and it is the only value
+in this configuration that is. The variable is also marked `sensitive`, which redacts it from plan
+and apply output.
+
+**Neither of those makes the value private.** Two places still hold it in plaintext:
+
+- **The terraform state.** Anyone who can read the state bucket can read the password. Restrict
+  that bucket to whoever is allowed to deploy.
+- **The Lambda's own configuration.** Any principal with `lambda:GetFunction` can read it back,
+  and it appears in the console's environment-variables panel. That is a wider audience than
+  `secretsmanager:GetSecretValue` on a single secret would have been.
+
+Rotating means editing `<env>.secrets.tfvars` and running an apply, which publishes a new function
+version.
+
+If that trade stops being acceptable, the alternative is Secrets Manager plus the AWS Parameters
+and Secrets Lambda Extension: terraform grants `secretsmanager:GetSecretValue` scoped to one
+secret, and the function fetches the value at runtime over `localhost:2773`, so the credential
+never enters the state or the function's configuration. That is what this configuration did
+previously; `git log` has the working version.
 
 Nor the two things a custom domain needs, for the same reason — they outlive this stack and are
 shared beyond it, so owning them here would mean being able to destroy them:
@@ -256,12 +316,15 @@ The steps below are the same thing by hand.
 # 1. Build the jar the Lambda runs.
 mill matchmaker.api.assembly
 
-# 2. Point terraform at your infrastructure.
+# 2. Supply the one file that is not in the repository, and point the backend at your state.
 cd terraform
-cp environments/dev.tfvars.example environments/dev.tfvars   # then edit it
-$EDITOR environments/dev.backend.hcl                         # the S3 bucket and lock table
+cp environments/dev.secrets.tfvars.example environments/dev.secrets.tfvars  # the db password
+$EDITOR environments/dev.backend.hcl                                        # bucket, lock table
 
-# 3. Apply. tf.sh handles init, the backend, and the var file.
+# Account facts (dev.tfvars) and policy (dev.settings.tfvars) are already committed; edit them
+# if your endpoint, subnets or security groups differ.
+
+# 3. Apply. tf.sh handles init, the backend, and all three var files.
 ./tf.sh dev apply
 ```
 
@@ -283,8 +346,8 @@ The flow:
 
 1. The browser sends the user to the hosted UI, `${hosted_login_url}/login?...`, with a PKCE
    `code_challenge`.
-2. The user signs in or signs up there. **Passwords are never typed into this application** —
-   that is the point of hosted login.
+2. The user signs in or signs up there, with a password **or a one-time code emailed to them**.
+   **Neither is ever typed into this application** — that is the point of hosted login.
 3. Cognito redirects back to one of `callback_urls` with an authorization code.
 4. The browser exchanges the code at `${hosted_login_url}/oauth2/token`, sending the PKCE
    `code_verifier`, and gets an ID token back.
@@ -296,6 +359,57 @@ The app client is created with `generate_secret = false`, making it a *public* c
 requires PKCE for the authorization code grant on public clients, so there is no separate switch:
 PKCE is enabled by that line and a caller cannot opt out of it. The implicit grant is not among
 `allowed_oauth_flows`, so there is no flow available that skips it.
+
+### Passwordless sign-in by email
+
+The pool's `sign_in_policy.allowed_first_auth_factors` is `["PASSWORD", "EMAIL_OTP"]`, so a player
+can sign in either by typing a password or by having Cognito mail them a one-time code. It is
+*added* to passwords rather than replacing them: existing players keep working, and a player who
+never sets a password never has to invent one. Email is already the sign-in identifier and is
+already in `auto_verified_attributes`, so the code goes to an address Cognito has confirmed.
+
+Three other things have to line up, and all three are easy to miss:
+
+- **`ALLOW_USER_AUTH` in the client's `explicit_auth_flows`.** This is the choice-based flow, where
+  the client asks which factors are available and the player picks. Without it the pool accepts
+  `EMAIL_OTP` and nothing ever offers it.
+- **`managed_login_version = 2` on the domain.** The classic hosted UI has no passwordless support
+  at all, so this is required rather than cosmetic — but it does change how the sign-in pages look.
+- **An `aws_cognito_managed_login_branding` record**, or managed login will not render. Cognito's
+  own defaults are used (`use_cognito_provided_values = true`); swap in a `settings` document to
+  theme it.
+
+Nothing changes in the application. The browser still goes to `/login`, still gets an authorization
+code back, and still exchanges it with PKCE — which factor the player chose is entirely Cognito's
+business, and the ID token that comes back is the same either way.
+
+### Who the mail comes from
+
+`cognito_sender_email` sets the address. Leave it empty — the dev default — and the pool uses
+Cognito's built-in sender, which is capped at **50 emails a day** across the whole pool and sends
+from `no-reply@verificationemail.com`. That was tolerable when email only carried sign-up
+verification. Now that a player can sign in with an emailed code, an environment with real players
+should set it:
+
+```hcl
+cognito_sender_email = "no-reply@matchmaker.example.com"
+```
+
+which switches the pool to SES (`email_sending_account = "DEVELOPER"`). The **SES identity ARN is
+derived** from the address rather than asked for separately — an email identity is always
+`arn:<partition>:ses:<region>:<account>:identity/<address>`, and the module already knows all
+three parts.
+
+Two prerequisites that terraform cannot check, and that fail at apply rather than at plan:
+
+- **The address must be a verified SES identity** in this account and region. If you verified the
+  *domain* instead of the individual address, the derived ARN does not exist and the apply fails
+  naming it — say so and the ARN can be made an override.
+- **The account must be out of the SES sandbox**, or the pool can only mail addresses that have
+  themselves been verified, which defeats the point for sign-up.
+
+The value must be a bare address, not `Name <addr@example.com>`, because the ARN is derived from
+it; a `validation` block rejects the display-name form up front.
 
 ### ID token, not access token
 

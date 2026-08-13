@@ -11,17 +11,20 @@ terraform {
 locals {
   name = "matchmaker-${var.environment}"
 
+  # Empty means "derive one"; see the domain resource in cognito.tf for why it is built this way.
+  # substr of a sha256 rather than the account id itself, so the public hostname does not carry
+  # the AWS account number. Deterministic, so the sign-in URL is stable across applies.
+  hosted_login_domain = (
+    var.hosted_login_domain_prefix != ""
+    ? var.hosted_login_domain_prefix
+    : "${local.name}-${substr(sha256("${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"), 0, 8)}"
+  )
+
   # rds_endpoint may or may not carry a port; Aurora's endpoint attribute does not, while the
   # console shows one. Accept both rather than making callers normalize it.
   endpoint_parts = split(":", var.rds_endpoint)
   db_host        = local.endpoint_parts[0]
   db_port        = length(local.endpoint_parts) > 1 ? local.endpoint_parts[1] : "5432"
-}
-
-# The secret itself is managed elsewhere: its value is a credential this configuration should
-# neither set nor be able to show in a plan. Only its ARN is needed, to scope the grant below.
-data "aws_secretsmanager_secret" "db" {
-  name = var.db_secret_name
 }
 
 # ---------------------------------------------------------------------------
@@ -53,19 +56,6 @@ resource "aws_iam_role_policy_attachment" "basic_execution" {
 resource "aws_iam_role_policy_attachment" "vpc_access" {
   role       = aws_iam_role.lambda.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
-data "aws_iam_policy_document" "read_db_secret" {
-  statement {
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [data.aws_secretsmanager_secret.db.arn]
-  }
-}
-
-resource "aws_iam_role_policy" "read_db_secret" {
-  name   = "${local.name}-read-db-secret"
-  role   = aws_iam_role.lambda.id
-  policy = data.aws_iam_policy_document.read_db_secret.json
 }
 
 # ---------------------------------------------------------------------------
@@ -100,11 +90,10 @@ resource "aws_lambda_function" "api" {
    *   the integration below invokes the alias — pointing the gateway at the unqualified function
    *   would silently opt out and leave nothing but the publish cost.
    * - Nothing that must be unique per environment may be captured in the snapshot. The handler's
-   *   database pool, its credentials and its session token are all behind a `lazy val` that the
-   *   Lambda runtime does not touch while constructing the handler, so the snapshot holds loaded
-   *   classes and an initialized JVM but no sockets and no secrets. Priming those during init
-   *   would restore every execution environment onto the same dead TCP connections, and would
-   *   need `org.crac` checkpoint/restore hooks to be safe.
+   *   database pool sits behind a `lazy val` that the Lambda runtime does not touch while
+   *   constructing the handler, so the snapshot holds loaded classes and an initialized JVM but no
+   *   sockets. Priming the pool during init would restore every execution environment onto the
+   *   same dead TCP connections, and would need `org.crac` checkpoint/restore hooks to be safe.
    */
   dynamic "snap_start" {
     for_each = var.lambda_snap_start ? [1] : []
@@ -119,10 +108,6 @@ resource "aws_lambda_function" "api" {
   # reaches the function.
   publish = true
 
-  # Serves Secrets Manager over localhost, so the function does not have to carry the AWS SDK to
-  # read one secret. The grant below is still what authorizes the read.
-  layers = [var.secrets_extension_layer_arn]
-
   vpc_config {
     subnet_ids         = var.subnet_ids
     security_group_ids = var.security_group_ids
@@ -130,18 +115,20 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      DB_HOST        = local.db_host
-      DB_PORT        = local.db_port
-      DB_NAME        = var.db_name
-      DB_SECRET_NAME = var.db_secret_name
-      DB_POOL_SIZE   = tostring(var.db_pool_size)
+      DB_HOST      = local.db_host
+      DB_PORT      = local.db_port
+      DB_NAME      = var.db_name
+      DB_USER      = var.db_user
+      DB_POOL_SIZE = tostring(var.db_pool_size)
+
+      # In the function's configuration in plaintext, readable by anyone with lambda:GetFunction,
+      # and in the terraform state. That is the trade this variable makes; see its description.
+      DB_PASSWORD = var.db_password
 
       # Selects how the caller is identified. "gateway" means the claims the JWT authorizer put
       # in the request context are trusted, which is only sound because the route above cannot be
       # reached without passing that authorizer.
       AUTH_MODE = "gateway"
-
-      PARAMETERS_SECRETS_EXTENSION_HTTP_PORT = tostring(var.secrets_extension_port)
     }
   }
 

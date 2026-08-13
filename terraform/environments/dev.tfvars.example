@@ -10,17 +10,18 @@ region      = "us-east-1"
 rds_endpoint = "matchmaker-dev.cluster-xxxxxxxx.us-east-1.rds.amazonaws.com"
 db_name      = "matchmaker"
 
-// An existing Secrets Manager secret holding {"username": ..., "password": ...}.
-db_secret_name = "matchmaker/dev/db"
+// The user only. The password lives in dev.secrets.tfvars, which is not committed.
+db_user = "matchmaker"
 
 subnet_ids         = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
 security_group_ids = ["sg-cccccccc"]
 
-// Region- and version-specific; look up the current ARN in the AWS Secrets Manager User Guide.
-secrets_extension_layer_arn = "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17"
+// hosted_login_domain_prefix is not set: it is derived as matchmaker-dev-<8 hex> from the account
+// and region, which is unique without anyone having to find a free name. Set it only to pin a
+// specific one.
 
-// Unique across all AWS accounts, so expect to need a second guess if the apply fails on it.
-hosted_login_domain_prefix = "matchmaker-dev-xxxxxx"
+// cognito_sender_email is not set either, so the pool uses Cognito's built-in sender. Fine for a
+// handful of testers; see prod.tfvars.example for the SES version.
 
 // The local UI runs against the dev pool, so hosted login and PKCE are exercised for real before
 // anything is deployed. Cognito allows http only for localhost. Matched literally, trailing slash

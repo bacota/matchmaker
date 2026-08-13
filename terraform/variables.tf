@@ -107,9 +107,22 @@ variable "rds_endpoint" {
 
 variable "db_name" { type = string }
 
-variable "db_secret_name" {
-  description = "Existing Secrets Manager secret holding {\"username\": ..., \"password\": ...}. Never created here."
+variable "db_user" {
+  description = "Database user the function connects as."
   type        = string
+}
+
+variable "db_password" {
+  description = <<-EOT
+    Password for db_user. Reaches the function as a Lambda environment variable.
+
+    Sensitive, so terraform redacts it from plan and apply output — but that is only the console.
+    The value is written in plaintext to the terraform state, and into the Lambda's configuration
+    where any principal with lambda:GetFunction can read it. Protect the state bucket accordingly,
+    and keep this in the gitignored environments/<env>.tfvars.
+  EOT
+  type        = string
+  sensitive   = true
 }
 
 variable "subnet_ids" {
@@ -120,11 +133,6 @@ variable "subnet_ids" {
 variable "security_group_ids" {
   description = "Security groups the database accepts traffic from."
   type        = list(string)
-}
-
-variable "secrets_extension_layer_arn" {
-  description = "AWS Parameters and Secrets Lambda Extension layer. Region- and version-specific."
-  type        = string
 }
 
 variable "lambda_jar_path" {
@@ -138,8 +146,25 @@ variable "lambda_jar_path" {
 # ---------------------------------------------------------------------------
 
 variable "hosted_login_domain_prefix" {
-  description = "Prefix of the hosted login domain. Unique across all AWS accounts, so it cannot be derived from the environment name."
+  description = <<-EOT
+    Prefix of the hosted login domain. Leave empty to derive "matchmaker-<environment>-<8 hex>"
+    from the account and region — unique without having to guess a free name, and stable across
+    applies. Set it only to pin a specific name.
+  EOT
   type        = string
+  default     = ""
+}
+
+variable "cognito_sender_email" {
+  description = <<-EOT
+    Address Cognito sends sign-in codes and verification mail from. Must be a verified SES identity
+    in this account and region.
+
+    Empty uses Cognito's built-in sender, which is limited to 50 emails a day for the whole pool —
+    acceptable in dev, not in an environment where players sign in with an emailed one-time code.
+  EOT
+  type        = string
+  default     = ""
 }
 
 variable "callback_urls" {

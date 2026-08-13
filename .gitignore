@@ -1,8 +1,8 @@
 out
 *.txt
 
-# Terraform: provider plugins are re-fetched by `init`, state and plans can contain secrets,
-# and tfvars name real infrastructure. The lock file is committed on purpose.
+# Terraform: provider plugins are re-fetched by `init`, and state and plans can contain secrets.
+# The lock file is committed on purpose.
 .terraform/
 *.tfstate
 *.tfstate.*
