@@ -10,7 +10,7 @@ variables.tf                        every input, with validation
 modules/api                         the Lambda, the HTTP API, Cognito, and their IAM roles
 modules/ui                          the S3 bucket and CloudFront distribution serving the UI
 environments/<env>.settings.tfvars  policy: memory, retention, security, session length (committed)
-environments/<env>.tfvars           account facts: endpoints, subnets, secrets (gitignored)
+environments/<env>.tfvars           account facts: endpoints, credentials, subnets (gitignored)
 environments/<env>.backend.hcl      which state this environment uses
 tf.sh                               run terraform against one environment
 ```
@@ -21,8 +21,8 @@ split in two:
 - **Policy** — memory, log retention, advanced security, session length. Decisions, so they are
   committed, in `environments/<env>.settings.tfvars`. `diff` those two files to see exactly how
   prod differs from dev.
-- **Account facts** — the database endpoint, subnets, security groups, secret name, domain prefix,
-  URLs. These name real infrastructure, so they live in `environments/<env>.tfvars`, which is
+- **Account facts** — the database endpoint and credentials, subnets, security groups, domain
+  prefix, URLs. These name real infrastructure, so they live in `environments/<env>.tfvars`, which is
   gitignored.
 
 The four policy variables have **no defaults**. A run that does not supply them fails with "No
@@ -129,7 +129,7 @@ With them set, an apply:
 **The certificate and the zone are referenced, never created.** Both normally outlive this stack
 and are shared beyond it — a certificate usually fronts more than one distribution, and a zone
 holds records this configuration knows nothing about — so issuing them here would also mean being
-able to destroy them. This is the same treatment `db_secret_name` gets.
+able to destroy them.
 
 Two things about the certificate are enforced by CloudFront rather than by preference:
 
@@ -179,11 +179,10 @@ all of them. That rules out open sockets, credentials, and anything that has to 
 
 This is safe today by construction rather than by luck: `Handler.services` is a `lazy val`, and the
 Lambda runtime only *constructs* the handler during init — it does not invoke it. The database
-pool, the Secrets Manager fetch and the session token therefore all happen on the first request,
-after restore. The snapshot holds an initialized JVM and loaded classes, and nothing else.
+pool is therefore built on the first request, after restore. The snapshot holds an initialized JVM
+and loaded classes, and nothing else.
 
-The corollary is that the pool and the secret fetch are still paid on the first request, so the
-restore is partial. Moving them into init would complete it, but only alongside `org.crac`
+The corollary is that the pool is still built on the first request, so the restore is partial. Moving them into init would complete it, but only alongside `org.crac`
 checkpoint/restore hooks that tear the pool down before the snapshot and rebuild it after —
 without them every restored environment would come up holding the same dead TCP connections.
 **Do not make `services` eager without adding those hooks.**
@@ -196,18 +195,35 @@ and takes the snapshot before the new version becomes usable.
 The database and its credentials are managed elsewhere and referenced by variable:
 
 - `rds_endpoint` / `db_name` — the Aurora cluster.
-- `db_secret_name` — an existing Secrets Manager secret holding
-  `{"username": ..., "password": ...}`. Terraform reads only the secret's ARN, in order to scope
-  the Lambda's `secretsmanager:GetSecretValue` grant. The credential value never enters the
-  Terraform state or a plan.
-- `secrets_extension_layer_arn` — the AWS Parameters and Secrets Lambda Extension layer. The
-  function reads its credentials from this over `localhost` rather than bundling the AWS SDK,
-  which would add roughly 8 MB (Netty and Apache HttpClient) to serve one call per cold start.
-  The ARN is region- and version-specific, so AWS publishes no default worth hardcoding; find
-  the current one for your region in the AWS Secrets Manager User Guide.
+- `db_user` / `db_password` — the credentials, passed straight through to the function as
+  environment variables. See below.
 - `subnet_ids` / `security_group_ids` — the network. The Lambda is VPC-attached, because Aurora
   is not publicly reachable. The database's security group must accept traffic from the security
   groups given here.
+
+### The database password
+
+`db_password` reaches the function as the `DB_PASSWORD` environment variable, alongside `DB_HOST`,
+`DB_PORT`, `DB_NAME` and `DB_USER`. `Handler.dbConfig` reads all five and builds the `DbConfig`
+directly — the function makes no AWS call and carries no AWS dependency beyond the Lambda runtime
+interface.
+
+The variable is marked `sensitive`, which redacts it from plan and apply output. **That is the
+console only.** Two places still hold it in plaintext:
+
+- **The terraform state.** Anyone who can read the state bucket can read the password. Restrict
+  that bucket to whoever is allowed to deploy.
+- **The Lambda's own configuration.** Any principal with `lambda:GetFunction` can read it back,
+  and it appears in the console's environment-variables panel. That is a wider audience than
+  `secretsmanager:GetSecretValue` on a single secret would have been.
+
+Rotating means running an apply, which publishes a new function version.
+
+If that trade stops being acceptable, the alternative is Secrets Manager plus the AWS Parameters
+and Secrets Lambda Extension: terraform grants `secretsmanager:GetSecretValue` scoped to one
+secret, and the function fetches the value at runtime over `localhost:2773`, so the credential
+never enters the state or the function's configuration. That is what this configuration did
+previously; `git log` has the working version.
 
 Nor the two things a custom domain needs, for the same reason — they outlive this stack and are
 shared beyond it, so owning them here would mean being able to destroy them:

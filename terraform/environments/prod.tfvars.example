@@ -8,12 +8,14 @@ region      = "us-east-1"
 rds_endpoint = "matchmaker-prod.cluster-xxxxxxxx.us-east-1.rds.amazonaws.com"
 db_name      = "matchmaker"
 
-db_secret_name = "matchmaker/prod/db"
+// Passed to the Lambda as environment variables. The password ends up in the terraform state and
+// in the function's configuration in plaintext, so this file stays gitignored and the state bucket
+// stays locked down.
+db_user     = "matchmaker"
+db_password = "replace-me"
 
 subnet_ids         = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
 security_group_ids = ["sg-cccccccc"]
-
-secrets_extension_layer_arn = "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17"
 
 hosted_login_domain_prefix = "matchmaker-xxxxxx"
 

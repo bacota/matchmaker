@@ -10,14 +10,14 @@ region      = "us-east-1"
 rds_endpoint = "matchmaker-dev.cluster-xxxxxxxx.us-east-1.rds.amazonaws.com"
 db_name      = "matchmaker"
 
-// An existing Secrets Manager secret holding {"username": ..., "password": ...}.
-db_secret_name = "matchmaker/dev/db"
+// Passed to the Lambda as environment variables. The password ends up in the terraform state and
+// in the function's configuration in plaintext, so this file stays gitignored and the state bucket
+// stays locked down.
+db_user     = "matchmaker"
+db_password = "replace-me"
 
 subnet_ids         = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
 security_group_ids = ["sg-cccccccc"]
-
-// Region- and version-specific; look up the current ARN in the AWS Secrets Manager User Guide.
-secrets_extension_layer_arn = "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17"
 
 // Unique across all AWS accounts, so expect to need a second guess if the apply fails on it.
 hosted_login_domain_prefix = "matchmaker-dev-xxxxxx"

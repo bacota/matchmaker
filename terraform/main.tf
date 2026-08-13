@@ -21,13 +21,13 @@ module "api" {
   environment = var.environment
 
   # Account facts, from environments/<env>.tfvars.
-  rds_endpoint                = var.rds_endpoint
-  db_name                     = var.db_name
-  db_secret_name              = var.db_secret_name
-  subnet_ids                  = var.subnet_ids
-  security_group_ids          = var.security_group_ids
-  secrets_extension_layer_arn = var.secrets_extension_layer_arn
-  lambda_jar_path             = var.lambda_jar_path
+  rds_endpoint       = var.rds_endpoint
+  db_name            = var.db_name
+  db_user            = var.db_user
+  db_password        = var.db_password
+  subnet_ids         = var.subnet_ids
+  security_group_ids = var.security_group_ids
+  lambda_jar_path    = var.lambda_jar_path
 
   hosted_login_domain_prefix = var.hosted_login_domain_prefix
 

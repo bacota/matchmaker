@@ -13,33 +13,21 @@ variable "db_name" {
   type        = string
 }
 
-variable "db_secret_name" {
-  description = <<-EOT
-    Name of an existing Secrets Manager secret holding the database credentials, in the standard
-    RDS shape: {"username": ..., "password": ...}. This module reads the secret's ARN to scope the
-    Lambda's permissions; it never creates the secret or reads its value.
-  EOT
+variable "db_user" {
+  description = "Database user the function connects as."
   type        = string
 }
 
-variable "secrets_extension_layer_arn" {
+variable "db_password" {
   description = <<-EOT
-    ARN of the AWS Parameters and Secrets Lambda Extension layer, which serves Secrets Manager to
-    the function over localhost. The function reads its database credentials through it instead of
-    bundling the AWS SDK.
+    Password for db_user, passed to the function as an environment variable.
 
-    The ARN is region- and version-specific and AWS publishes no wildcard for it, so it has to be
-    given explicitly. Look up the current one for your region under "Parameters and Secrets Lambda
-    extension" in the AWS Secrets Manager User Guide. It looks like:
-    arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:17
+    Marked sensitive so it is redacted from plan and apply output, but note what that does not
+    cover: the value is stored in plaintext in the terraform state, and in the Lambda's own
+    configuration where anyone holding lambda:GetFunction can read it back.
   EOT
   type        = string
-}
-
-variable "secrets_extension_port" {
-  description = "Port the secrets extension listens on inside the sandbox."
-  type        = number
-  default     = 2773
+  sensitive   = true
 }
 
 variable "subnet_ids" {

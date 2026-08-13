@@ -1,9 +1,6 @@
 package com.vivi.matchmaker.api
 
 import java.io.{InputStream, OutputStream}
-import java.net.URI
-import java.net.URLEncoder
-import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.charset.StandardCharsets
 import cats.effect.unsafe.implicits.global
 import com.amazonaws.services.lambda.runtime.{Context, RequestStreamHandler}
@@ -74,53 +71,19 @@ object Handler {
   private def required(name: String): String =
     sys.env.getOrElse(name, throw new IllegalStateException(s"$name is not set"))
 
-  /** Assembles the database configuration from environment variables, with the credentials read
-    * from the Secrets Manager secret named by `DB_SECRET_NAME` so they never appear in the
-    * function's environment.
+  /** Assembles the database configuration from the function's environment variables.
+    *
+    * The credentials arrive the same way as the host and database name. That keeps the function
+    * free of any AWS dependency — no SDK, no extension layer, no network call before the first
+    * query — at the cost of the password being readable from the function's configuration by
+    * anyone holding `lambda:GetFunction`.
     */
-  private def dbConfig(): DbConfig = {
-    val (user, password) = credentials(required("DB_SECRET_NAME"))
+  private def dbConfig(): DbConfig =
     DbConfig(
       host = required("DB_HOST"),
       port = sys.env.get("DB_PORT").flatMap(_.toIntOption).getOrElse(5432),
       database = required("DB_NAME"),
-      user = user,
-      password = Some(password)
+      user = required("DB_USER"),
+      password = Some(required("DB_PASSWORD"))
     )
-  }
-
-  /** Fetches the credentials from the AWS Parameters and Secrets Lambda Extension, which serves
-    * Secrets Manager over `localhost` and caches the result for the container's lifetime.
-    *
-    * This is why the AWS SDK is not a dependency: the SDK brings Netty and Apache HttpClient —
-    * around 8 MB, and their initialization — for one call per cold start, where the JDK's own
-    * HTTP client and a layer will do. Authorization still comes from the function's execution
-    * role, so the `secretsmanager:GetSecretValue` grant in the terraform is still required.
-    *
-    * The secret is expected in the standard RDS shape, `{"username": ..., "password": ...}`.
-    */
-  private def credentials(secretName: String): (String, String) = {
-    val port = sys.env.get("PARAMETERS_SECRETS_EXTENSION_HTTP_PORT").flatMap(_.toIntOption).getOrElse(2773)
-    val uri = URI.create(
-      s"http://localhost:$port/secretsmanager/get?secretId=${URLEncoder.encode(secretName, StandardCharsets.UTF_8)}"
-    )
-
-    val request = HttpRequest
-      .newBuilder(uri)
-      // The extension authenticates callers with the function's own session token, so that other
-      // processes in the sandbox cannot read secrets through it.
-      .header("X-Aws-Parameters-Secrets-Token", required("AWS_SESSION_TOKEN"))
-      .GET()
-      .build()
-
-    val response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString())
-    if (response.statusCode() != 200)
-      throw new IllegalStateException(
-        s"secrets extension returned ${response.statusCode()} for '$secretName'; is the layer attached?"
-      )
-
-    // The extension mirrors the GetSecretValue response, so the secret itself is JSON in a string.
-    val parsed = ujson.read(ujson.read(response.body())("SecretString").str)
-    (parsed("username").str, parsed("password").str)
-  }
 }
