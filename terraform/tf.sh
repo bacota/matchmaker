@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env bash -x
 #
 # Runs terraform against one environment, from the single root configuration.
 #
@@ -65,6 +65,17 @@ shift
 
 # Commands that read or change infrastructure need the variables; the rest (fmt, validate,
 # providers) either reject -var-file or do not need it.
+# Applying a saved plan is the one case that must not pass -var-file: the plan already fixes every
+# value, and terraform rejects the combination rather than ignoring it. Detected by looking for an
+# existing file among the arguments, which is what a saved plan is.
+if [ "$command" = apply ]; then
+  for arg in "$@"; do
+    if [ -f "$arg" ]; then
+      exec terraform apply "$@"
+    fi
+  done
+fi
+
 case "$command" in
   plan | apply | destroy | refresh | import | console)
     # Later -var-file wins, so the order is least to most specific: policy, then account facts,

@@ -6,12 +6,11 @@ out
 .terraform/
 *.tfstate
 *.tfstate.*
-
-# Credentials only. Everything else — account facts in <env>.tfvars, policy in
-# <env>.settings.tfvars — is committed, so a change to what gets deployed shows up in a diff.
-# This one file holds the values that must not: keep it to secrets, so there is never a reason
-# to reach for an exception.
 *.secrets.tfvars
+!*.tfvars.example
+# Per-environment policy (memory, retention, session length) is a reviewable decision, not an
+# account fact, so these are committed while *.tfvars is not.
+!*.settings.tfvars
 crash.log
 
 # Scala.js output symlinked next to index.html for local serving.
