@@ -85,16 +85,23 @@ variable "hosted_login_domain_prefix" {
     Prefix of the Cognito hosted login domain, giving
     https://<prefix>.auth.<region>.amazoncognito.com.
 
-    This is unique across all AWS accounts, not just yours, so it cannot be derived from the
-    environment name — pick something and expect to have to try again if it is taken. Changing it
-    later invalidates every callback URL registered with an identity provider.
+    Empty — the default — derives it as "matchmaker-<environment>-<8 hex>", where the hex is a hash
+    of the account id and region. The prefix must be unique across all AWS accounts, not only
+    yours, so the pool name alone will not do; the hash is what makes it unique without anyone
+    having to pick a free name by trial and error. It is deterministic, so the sign-in URL does not
+    move between applies.
+
+    Set it only to override that: an existing pool already on another prefix, or a name chosen for
+    how it reads. Changing it on a live environment invalidates every callback URL registered with
+    an identity provider, and moves the URL players sign in at.
   EOT
   type        = string
+  default     = ""
 
   validation {
     # Must start and end with a letter or digit: Cognito rejects a leading or trailing hyphen, and
     # doing so here fails the plan rather than the apply, after the rest of the run has succeeded.
-    condition     = can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", var.hosted_login_domain_prefix))
+    condition     = var.hosted_login_domain_prefix == "" || can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", var.hosted_login_domain_prefix))
     error_message = "Must be 1-63 lowercase letters, digits and hyphens, starting and ending with a letter or digit."
   }
 }

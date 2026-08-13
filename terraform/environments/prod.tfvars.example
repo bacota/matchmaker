@@ -14,7 +14,7 @@ db_user = "matchmaker"
 subnet_ids         = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
 security_group_ids = ["sg-cccccccc"]
 
-hosted_login_domain_prefix = "matchmaker-xxxxxx"
+// Derived from the account and region unless set; see dev.tfvars.example.
 
 // Bucket the built UI is uploaded to. S3 names are global, so this may need a second guess.
 ui_bucket_name = "matchmaker-prod-ui"

@@ -16,9 +16,6 @@ db_user = "matchmaker"
 subnet_ids         = ["subnet-0f0fe68b2e7e3b126"]
 security_group_ids = ["sg-ee324e96"]
 
-// Unique across all AWS accounts, so expect to need a second guess if the apply fails on it.
-hosted_login_domain_prefix = "matchmaker-dev-xxxxxx"
-
 // The local UI runs against the dev pool, so hosted login and PKCE are exercised for real before
 // anything is deployed. Cognito allows http only for localhost. Matched literally, trailing slash
 // included, and must equal the URL the browser reports for the page.

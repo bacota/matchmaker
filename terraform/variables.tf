@@ -146,8 +146,13 @@ variable "lambda_jar_path" {
 # ---------------------------------------------------------------------------
 
 variable "hosted_login_domain_prefix" {
-  description = "Prefix of the hosted login domain. Unique across all AWS accounts, so it cannot be derived from the environment name."
+  description = <<-EOT
+    Prefix of the hosted login domain. Leave empty to derive "matchmaker-<environment>-<8 hex>"
+    from the account and region — unique without having to guess a free name, and stable across
+    applies. Set it only to pin a specific name.
+  EOT
   type        = string
+  default     = ""
 }
 
 variable "callback_urls" {

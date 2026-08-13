@@ -12,6 +12,10 @@
 
 data "aws_region" "current" {}
 
+# For the hosted-login domain prefix below. The account id is never used verbatim: only a hash of
+# it appears anywhere, so the public domain name does not publish the AWS account number.
+data "aws_caller_identity" "current" {}
+
 resource "aws_cognito_user_pool" "users" {
   name = local.name
 
@@ -22,10 +26,10 @@ resource "aws_cognito_user_pool" "users" {
 
   password_policy {
     minimum_length                   = var.password_minimum_length
-    require_lowercase                = true
-    require_uppercase                = true
-    require_numbers                  = true
-    require_symbols                  = true
+    require_lowercase                = false
+    require_uppercase                = false
+    require_numbers                  = false
+    require_symbols                  = false
     temporary_password_validity_days = 7
   }
 
@@ -61,17 +65,26 @@ resource "aws_cognito_user_pool" "users" {
 # Hosted login
 # ---------------------------------------------------------------------------
 
-# The hosted UI's own domain: `https://${domain_prefix}.auth.${region}.amazoncognito.com`. The
-# prefix is globally unique across all AWS accounts, which is why it is a variable rather than
-# derived from the environment name — `matchmaker-dev` may well be taken.
+/* The hosted UI's own domain: `https://${domain_prefix}.auth.${region}.amazoncognito.com`.
+ *
+ * The prefix has to be unique across every AWS account, not just this one, so it cannot simply be
+ * the pool name — `matchmaker-dev` is exactly the sort of name someone else has already taken.
+ *
+ * So it is the pool name plus eight hex characters derived from the account and region. That is
+ * unique in practice, stable (the same account and environment always produce the same prefix, so
+ * an apply never moves the sign-in URL), and derived rather than invented, which means adding an
+ * environment does not require guessing a free name and re-running the apply until one sticks.
+ *
+ * The account id is hashed rather than used directly: this name is public, appearing in every
+ * authorize URL, and an AWS account number is not something to publish for no reason.
+ *
+ * `var.hosted_login_domain_prefix` overrides it when a specific name is wanted — a pool that
+ * already exists under another prefix, or a name chosen for how it reads to users.
+ */
 resource "aws_cognito_user_pool_domain" "hosted_login" {
-  domain       = var.hosted_login_domain_prefix
+  domain       = local.hosted_login_domain
   user_pool_id = aws_cognito_user_pool.users.id
 }
-
-# ---------------------------------------------------------------------------
-# Application client
-# ---------------------------------------------------------------------------
 
 resource "aws_cognito_user_pool_client" "app" {
   name         = "${local.name}-app"

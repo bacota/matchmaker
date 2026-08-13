@@ -11,6 +11,15 @@ terraform {
 locals {
   name = "matchmaker-${var.environment}"
 
+  # Empty means "derive one"; see the domain resource in cognito.tf for why it is built this way.
+  # substr of a sha256 rather than the account id itself, so the public hostname does not carry
+  # the AWS account number. Deterministic, so the sign-in URL is stable across applies.
+  hosted_login_domain = (
+    var.hosted_login_domain_prefix != ""
+    ? var.hosted_login_domain_prefix
+    : "${local.name}-${substr(sha256("${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"), 0, 8)}"
+  )
+
   # rds_endpoint may or may not carry a port; Aurora's endpoint attribute does not, while the
   # console shows one. Accept both rather than making callers normalize it.
   endpoint_parts = split(":", var.rds_endpoint)

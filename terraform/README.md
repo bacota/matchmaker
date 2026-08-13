@@ -22,8 +22,7 @@ split three ways, layered by `tf.sh` in this order — later files win:
 1. **Policy** — memory, log retention, advanced security, session length, SnapStart. Decisions, in
    `environments/<env>.settings.tfvars`. `diff` those two files to see exactly how prod differs
    from dev.
-2. **Account facts** — the database endpoint, `db_user`, subnets, security groups, domain prefix,
-   URLs. What already exists in AWS that this stack attaches to, in `environments/<env>.tfvars`.
+2. **Account facts** — the database endpoint, `db_user`, subnets, security groups, URLs. What already exists in AWS that this stack attaches to, in `environments/<env>.tfvars`.
 3. **Credentials** — `db_password`, in `environments/<env>.secrets.tfvars`.
 
 The first two are **committed**, so any change to what gets deployed shows up in a diff and can be
@@ -170,6 +169,31 @@ return to.
 Expect an apply that adds or changes the domain to spend several minutes deploying the
 distribution. `ui_distribution_domain_name` stays reachable throughout: if the site is down,
 comparing it against `ui_url` separates a DNS problem from a CloudFront one.
+
+## The hosted login domain
+
+Cognito serves sign-in from `https://<prefix>.auth.<region>.amazoncognito.com`, and that prefix has
+to be unique across **every AWS account**, not just yours. So it cannot simply be the pool name —
+`matchmaker-dev` is exactly the sort of name someone else has already claimed.
+
+Rather than making you guess a free name and re-run the apply until one sticks,
+`hosted_login_domain_prefix` defaults to empty and the module derives:
+
+```
+matchmaker-<environment>-<8 hex characters of sha256(account id + region)>
+```
+
+for example `matchmaker-dev-ea602e3a`. That is unique in practice, and deterministic — the same
+account and environment always produce the same prefix, so the URL players sign in at does not move
+between applies. At most 40 characters, given the 20-character cap on `environment`, against
+Cognito's limit of 63.
+
+The account id is **hashed rather than used directly**: this hostname is public, appearing in every
+authorize URL, and there is no reason to publish an AWS account number.
+
+Set the variable to override it — a pool already living under another prefix, or a name chosen for
+how it reads to users. Changing it on a live environment moves the sign-in URL and invalidates
+every callback registered with an identity provider.
 
 ## Cold starts: SnapStart
 
