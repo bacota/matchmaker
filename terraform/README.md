@@ -219,6 +219,39 @@ shared beyond it, so owning them here would mean being able to destroy them:
 
 ## Deploying
 
+`./deploy.sh <env>` from the repository root does the whole thing:
+
+```sh
+./deploy.sh dev
+./deploy.sh prod --yes           # no confirmation prompt
+./deploy.sh dev --skip-migrate   # schema already current
+./deploy.sh dev --skip-build     # artifacts already built
+```
+
+in this order, which is not arbitrary:
+
+1. `mill __.compile` — everything, tests included, so a broken build stops the deploy before it
+   touches anything.
+2. `matchmaker.api.assembly` and `matchmaker.ui.fullLinkJS` — the two artifacts terraform uploads.
+3. **Flyway**, so the schema is ready before code that expects it goes live. Connection details are
+   read from `<env>.tfvars` and `<env>.secrets.tfvars`, the same files terraform uses.
+4. `terraform plan -out=<file>`, a confirmation prompt, then **apply of that saved plan** — so what
+   is applied is exactly what was displayed. A bare `apply` would compute a second plan, which can
+   differ from the one you reviewed.
+
+Two things to know:
+
+- **Flyway needs a route to the database**, which is not publicly reachable — it is in the VPC the
+  Lambda attaches to. This step works from a VPN, a bastion tunnel, or a runner inside the VPC, and
+  not from an arbitrary laptop. `--skip-migrate` when the schema is already current.
+- **Migrating before applying is the safe order only for additive migrations.** A migration that
+  drops or renames something breaks the deployed function the moment it runs, before the new code
+  is live. Expand in one deploy, contract in a later one.
+
+The steps below are the same thing by hand.
+
+### By hand
+
 ```sh
 # 1. Build the jar the Lambda runs.
 mill matchmaker.api.assembly

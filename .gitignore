@@ -6,7 +6,7 @@ out
 .terraform/
 *.tfstate
 *.tfstate.*
-*.tfvars
+*.secrets.tfvars
 !*.tfvars.example
 # Per-environment policy (memory, retention, session length) is a reviewable decision, not an
 # account fact, so these are committed while *.tfvars is not.
