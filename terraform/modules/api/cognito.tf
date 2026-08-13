@@ -16,6 +16,9 @@ data "aws_region" "current" {}
 # it appears anywhere, so the public domain name does not publish the AWS account number.
 data "aws_caller_identity" "current" {}
 
+# For the SES identity ARN below, so this still builds a valid ARN in GovCloud and China.
+data "aws_partition" "current" {}
+
 resource "aws_cognito_user_pool" "users" {
   name = local.name
 
@@ -31,6 +34,40 @@ resource "aws_cognito_user_pool" "users" {
     require_numbers                  = false
     require_symbols                  = false
     temporary_password_validity_days = 7
+  }
+
+  /* Sign-in factors the pool accepts *first*, before any MFA step.
+   *
+   * EMAIL_OTP is passwordless: Cognito mails a one-time code and that code alone signs the player
+   * in. PASSWORD is kept alongside it, so this adds a way in rather than replacing one — existing
+   * players keep their passwords, and a player who never sets one never needs to invent it.
+   *
+   * Suits this application specifically: email is already the sign-in identifier and is already
+   * verified (`auto_verified_attributes` below), so the OTP is delivered to an address Cognito has
+   * confirmed the player controls.
+   */
+  sign_in_policy {
+    allowed_first_auth_factors = ["PASSWORD", "EMAIL_OTP"]
+  }
+
+  /* Who the pool's mail comes from.
+   *
+   * Without this Cognito uses its own sender, which is capped at 50 emails a day across the pool
+   * and comes from an address nobody recognizes. Sign-in now depends on those emails, so an
+   * environment that real players use wants SES here.
+   *
+   * source_arn is derived from the address rather than asked for separately: an SES email identity
+   * is always arn:aws:ses:<region>:<account>:identity/<address>, both of which this module already
+   * knows. If the *domain* is verified rather than the individual address, that derived ARN will
+   * not exist and the apply fails naming it.
+   */
+  dynamic "email_configuration" {
+    for_each = var.cognito_sender_email == "" ? [] : [var.cognito_sender_email]
+    content {
+      email_sending_account = "DEVELOPER"
+      from_email_address    = email_configuration.value
+      source_arn            = "arn:${data.aws_partition.current.partition}:ses:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:identity/${email_configuration.value}"
+    }
   }
 
   account_recovery_setting {
@@ -84,6 +121,21 @@ resource "aws_cognito_user_pool" "users" {
 resource "aws_cognito_user_pool_domain" "hosted_login" {
   domain       = local.hosted_login_domain
   user_pool_id = aws_cognito_user_pool.users.id
+
+  # Managed login (branding version 2) rather than the classic hosted UI. Not a cosmetic choice:
+  # the classic pages have no passwordless support at all, so EMAIL_OTP would be enabled on the
+  # pool and unreachable from the browser. This does change how the sign-in pages look.
+  managed_login_version = 2
+}
+
+# Managed login refuses to render without a branding record. Cognito's own defaults are used rather
+# than a style defined here: it is a sign-in page for a game, and a hand-built theme is a thing to
+# maintain for no benefit. Replace `use_cognito_provided_values` with a `settings` document to
+# theme it later.
+resource "aws_cognito_managed_login_branding" "hosted_login" {
+  user_pool_id                = aws_cognito_user_pool.users.id
+  client_id                   = aws_cognito_user_pool_client.app.id
+  use_cognito_provided_values = true
 }
 
 resource "aws_cognito_user_pool_client" "app" {
@@ -135,6 +187,10 @@ resource "aws_cognito_user_pool_client" "app" {
     # No USER_PASSWORD_AUTH: passwords are typed into the hosted UI, never into this application,
     # which is the reason to use hosted login at all.
     "ALLOW_USER_SRP_AUTH",
+    # The choice-based flow: the client asks which factors are available and the player picks one.
+    # This is what surfaces "email me a code" as an option — without it the pool would accept
+    # EMAIL_OTP and nothing would ever offer it.
+    "ALLOW_USER_AUTH",
   ]
 
   read_attributes  = ["email", "email_verified"]

@@ -20,6 +20,9 @@ security_group_ids = ["sg-cccccccc"]
 // and region, which is unique without anyone having to find a free name. Set it only to pin a
 // specific one.
 
+// cognito_sender_email is not set either, so the pool uses Cognito's built-in sender. Fine for a
+// handful of testers; see prod.tfvars.example for the SES version.
+
 // The local UI runs against the dev pool, so hosted login and PKCE are exercised for real before
 // anything is deployed. Cognito allows http only for localhost. Matched literally, trailing slash
 // included, and must equal the URL the browser reports for the page.

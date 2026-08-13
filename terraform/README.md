@@ -313,8 +313,8 @@ The flow:
 
 1. The browser sends the user to the hosted UI, `${hosted_login_url}/login?...`, with a PKCE
    `code_challenge`.
-2. The user signs in or signs up there. **Passwords are never typed into this application** —
-   that is the point of hosted login.
+2. The user signs in or signs up there, with a password **or a one-time code emailed to them**.
+   **Neither is ever typed into this application** — that is the point of hosted login.
 3. Cognito redirects back to one of `callback_urls` with an authorization code.
 4. The browser exchanges the code at `${hosted_login_url}/oauth2/token`, sending the PKCE
    `code_verifier`, and gets an ID token back.
@@ -326,6 +326,57 @@ The app client is created with `generate_secret = false`, making it a *public* c
 requires PKCE for the authorization code grant on public clients, so there is no separate switch:
 PKCE is enabled by that line and a caller cannot opt out of it. The implicit grant is not among
 `allowed_oauth_flows`, so there is no flow available that skips it.
+
+### Passwordless sign-in by email
+
+The pool's `sign_in_policy.allowed_first_auth_factors` is `["PASSWORD", "EMAIL_OTP"]`, so a player
+can sign in either by typing a password or by having Cognito mail them a one-time code. It is
+*added* to passwords rather than replacing them: existing players keep working, and a player who
+never sets a password never has to invent one. Email is already the sign-in identifier and is
+already in `auto_verified_attributes`, so the code goes to an address Cognito has confirmed.
+
+Three other things have to line up, and all three are easy to miss:
+
+- **`ALLOW_USER_AUTH` in the client's `explicit_auth_flows`.** This is the choice-based flow, where
+  the client asks which factors are available and the player picks. Without it the pool accepts
+  `EMAIL_OTP` and nothing ever offers it.
+- **`managed_login_version = 2` on the domain.** The classic hosted UI has no passwordless support
+  at all, so this is required rather than cosmetic — but it does change how the sign-in pages look.
+- **An `aws_cognito_managed_login_branding` record**, or managed login will not render. Cognito's
+  own defaults are used (`use_cognito_provided_values = true`); swap in a `settings` document to
+  theme it.
+
+Nothing changes in the application. The browser still goes to `/login`, still gets an authorization
+code back, and still exchanges it with PKCE — which factor the player chose is entirely Cognito's
+business, and the ID token that comes back is the same either way.
+
+### Who the mail comes from
+
+`cognito_sender_email` sets the address. Leave it empty — the dev default — and the pool uses
+Cognito's built-in sender, which is capped at **50 emails a day** across the whole pool and sends
+from `no-reply@verificationemail.com`. That was tolerable when email only carried sign-up
+verification. Now that a player can sign in with an emailed code, an environment with real players
+should set it:
+
+```hcl
+cognito_sender_email = "no-reply@matchmaker.example.com"
+```
+
+which switches the pool to SES (`email_sending_account = "DEVELOPER"`). The **SES identity ARN is
+derived** from the address rather than asked for separately — an email identity is always
+`arn:<partition>:ses:<region>:<account>:identity/<address>`, and the module already knows all
+three parts.
+
+Two prerequisites that terraform cannot check, and that fail at apply rather than at plan:
+
+- **The address must be a verified SES identity** in this account and region. If you verified the
+  *domain* instead of the individual address, the derived ARN does not exist and the apply fails
+  naming it — say so and the ARN can be made an override.
+- **The account must be out of the SES sandbox**, or the pool can only mail addresses that have
+  themselves been verified, which defeats the point for sign-up.
+
+The value must be a bare address, not `Name <addr@example.com>`, because the ARN is derived from
+it; a `validation` block rejects the display-name form up front.
 
 ### ID token, not access token
 

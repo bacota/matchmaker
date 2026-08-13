@@ -16,6 +16,11 @@ security_group_ids = ["sg-cccccccc"]
 
 // Derived from the account and region unless set; see dev.tfvars.example.
 
+// Address Cognito mails sign-in codes from. Must be a verified SES identity in this account and
+// region, and the account must be out of the SES sandbox. Without it the pool falls back to
+// Cognito's own sender and its 50-emails-a-day cap, which sign-in cannot depend on.
+cognito_sender_email = "no-reply@matchmaker.example.com"
+
 // Bucket the built UI is uploaded to. S3 names are global, so this may need a second guess.
 ui_bucket_name = "matchmaker-prod-ui"
 

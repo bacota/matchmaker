@@ -106,6 +106,30 @@ variable "hosted_login_domain_prefix" {
   }
 }
 
+variable "cognito_sender_email" {
+  description = <<-EOT
+    Address the pool sends from: one-time sign-in codes, sign-up verification, password resets.
+
+    Empty — the default — uses Cognito's built-in sender, which is capped at 50 emails a day for
+    the whole pool and sends from a no-reply@verificationemail.com address. That is fine until
+    sign-in depends on those emails arriving, which it does now that EMAIL_OTP is a sign-in factor.
+
+    Setting it switches the pool to SES. The address must be a **verified SES identity in this
+    account and region**, and the account must be out of the SES sandbox to mail anyone who has not
+    separately confirmed the address. Neither is checked here, and neither fails until an apply.
+
+    A bare address, not "Name <addr@example.com>": the SES identity ARN is derived from this value,
+    so it has to be the identity itself.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.cognito_sender_email == "" || can(regex("^[^@[:space:]<>]+@[a-z0-9.-]+\\.[a-z]{2,}$", var.cognito_sender_email))
+    error_message = "Must be a single bare email address, without a display name."
+  }
+}
+
 variable "callback_urls" {
   description = <<-EOT
     URLs the hosted UI may redirect to after sign-in. Exact matches, including the path: a URL not

@@ -155,6 +155,18 @@ variable "hosted_login_domain_prefix" {
   default     = ""
 }
 
+variable "cognito_sender_email" {
+  description = <<-EOT
+    Address Cognito sends sign-in codes and verification mail from. Must be a verified SES identity
+    in this account and region.
+
+    Empty uses Cognito's built-in sender, which is limited to 50 emails a day for the whole pool —
+    acceptable in dev, not in an environment where players sign in with an emailed one-time code.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "callback_urls" {
   description = <<-EOT
     URLs hosted login may return to, matched literally by Cognito — the trailing slash counts.
