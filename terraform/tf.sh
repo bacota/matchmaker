@@ -10,7 +10,15 @@
 # remembered in .terraform, so a plain `terraform apply` after working on another environment
 # would target the wrong state, with no warning and a plan that looks plausible. This script
 # removes that edge by re-initialising the backend on every run and always passing the matching
-# var file. Use it rather than terraform directly.
+# var files. Use it rather than terraform directly.
+#
+# Three var files per environment, layered in this order:
+#
+#   <env>.settings.tfvars   policy: memory, retention, session length            committed
+#   <env>.tfvars            account facts: endpoints, subnets, user names        committed
+#   <env>.secrets.tfvars    credentials                                          gitignored
+#
+# Later files win, so a secret can override anything, and the first two can be read in a diff.
 
 set -euo pipefail
 
@@ -33,13 +41,17 @@ case "$env" in
 esac
 
 backend="environments/$env.backend.hcl"
-vars="environments/$env.tfvars"          # account facts, gitignored
-settings="environments/$env.settings.tfvars" # policy, committed
+settings="environments/$env.settings.tfvars"  # policy, committed
+vars="environments/$env.tfvars"               # account facts, committed
+secrets="environments/$env.secrets.tfvars"    # credentials, gitignored
 
-for required in "$backend" "$vars" "$settings"; do
+for required in "$backend" "$settings" "$vars" "$secrets"; do
   if [ ! -f "$required" ]; then
     echo "missing $required" >&2
-    [ "$required" = "$vars" ] && echo "copy $vars.example to $vars and fill it in" >&2
+    if [ "$required" = "$secrets" ]; then
+      # The one file that is not in the repository, so it is the one a fresh clone is missing.
+      echo "copy $secrets.example to $secrets and fill in the database password" >&2
+    fi
     exit 1
   fi
 done
@@ -55,9 +67,13 @@ shift
 # providers) either reject -var-file or do not need it.
 case "$command" in
   plan | apply | destroy | refresh | import | console)
-    # Settings first, so a value in the environment's own tfvars can override the committed policy
-    # for a one-off — later -var-file wins.
-    exec terraform "$command" -var-file="$settings" -var-file="$vars" "$@"
+    # Later -var-file wins, so the order is least to most specific: policy, then account facts,
+    # then credentials.
+    exec terraform "$command" \
+      -var-file="$settings" \
+      -var-file="$vars" \
+      -var-file="$secrets" \
+      "$@"
     ;;
   *)
     exec terraform "$command" "$@"

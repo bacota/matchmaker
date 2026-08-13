@@ -10,20 +10,35 @@ variables.tf                        every input, with validation
 modules/api                         the Lambda, the HTTP API, Cognito, and their IAM roles
 modules/ui                          the S3 bucket and CloudFront distribution serving the UI
 environments/<env>.settings.tfvars  policy: memory, retention, security, session length (committed)
-environments/<env>.tfvars           account facts: endpoints, credentials, subnets (gitignored)
+environments/<env>.tfvars           account facts: endpoints, subnets, user names (committed)
+environments/<env>.secrets.tfvars   credentials, and nothing else (gitignored)
 environments/<env>.backend.hcl      which state this environment uses
 tf.sh                               run terraform against one environment
 ```
 
 **One configuration, not one per environment.** Environments differ only in values, and the values
-split in two:
+split three ways, layered by `tf.sh` in this order — later files win:
 
-- **Policy** — memory, log retention, advanced security, session length. Decisions, so they are
-  committed, in `environments/<env>.settings.tfvars`. `diff` those two files to see exactly how
-  prod differs from dev.
-- **Account facts** — the database endpoint and credentials, subnets, security groups, domain
-  prefix, URLs. These name real infrastructure, so they live in `environments/<env>.tfvars`, which is
-  gitignored.
+1. **Policy** — memory, log retention, advanced security, session length, SnapStart. Decisions, in
+   `environments/<env>.settings.tfvars`. `diff` those two files to see exactly how prod differs
+   from dev.
+2. **Account facts** — the database endpoint, `db_user`, subnets, security groups, domain prefix,
+   URLs. What already exists in AWS that this stack attaches to, in `environments/<env>.tfvars`.
+3. **Credentials** — `db_password`, in `environments/<env>.secrets.tfvars`.
+
+The first two are **committed**, so any change to what gets deployed shows up in a diff and can be
+reviewed. Only the third is gitignored, matched by `*.secrets.tfvars`, and it should hold nothing
+but secrets — keeping it minimal means there is never a reason to make an exception to that rule.
+
+A fresh clone therefore needs exactly one file written by hand:
+
+```sh
+cp environments/dev.secrets.tfvars.example environments/dev.secrets.tfvars
+$EDITOR environments/dev.secrets.tfvars
+```
+
+`tf.sh` refuses to run without it, naming the file and the copy command rather than letting
+terraform fail later with "No value for required variable".
 
 The four policy variables have **no defaults**. A run that does not supply them fails with "No
 value for required variable" rather than quietly inheriting something: prod with dev's log
@@ -49,8 +64,9 @@ that edge. Running `terraform` directly reintroduces it.
 
 ### Adding an environment
 
-Add three files under `environments/`: `<env>.settings.tfvars`, `<env>.tfvars` and
-`<env>.backend.hcl`. Then `./tf.sh <env> apply`. **No terraform is edited** — `main.tf` names no
+Add four files under `environments/`: `<env>.settings.tfvars`, `<env>.tfvars`,
+`<env>.secrets.tfvars` and `<env>.backend.hcl`. Then `./tf.sh <env> apply`. **No terraform is
+edited** — `main.tf` names no
 environment, and the `environment` variable is validated by format rather than against a list.
 
 ## The UI
@@ -208,8 +224,11 @@ The database and its credentials are managed elsewhere and referenced by variabl
 directly — the function makes no AWS call and carries no AWS dependency beyond the Lambda runtime
 interface.
 
-The variable is marked `sensitive`, which redacts it from plan and apply output. **That is the
-console only.** Two places still hold it in plaintext:
+It is set in `environments/<env>.secrets.tfvars`, which is gitignored, and it is the only value
+in this configuration that is. The variable is also marked `sensitive`, which redacts it from plan
+and apply output.
+
+**Neither of those makes the value private.** Two places still hold it in plaintext:
 
 - **The terraform state.** Anyone who can read the state bucket can read the password. Restrict
   that bucket to whoever is allowed to deploy.
@@ -217,7 +236,8 @@ console only.** Two places still hold it in plaintext:
   and it appears in the console's environment-variables panel. That is a wider audience than
   `secretsmanager:GetSecretValue` on a single secret would have been.
 
-Rotating means running an apply, which publishes a new function version.
+Rotating means editing `<env>.secrets.tfvars` and running an apply, which publishes a new function
+version.
 
 If that trade stops being acceptable, the alternative is Secrets Manager plus the AWS Parameters
 and Secrets Lambda Extension: terraform grants `secretsmanager:GetSecretValue` scoped to one
@@ -239,12 +259,15 @@ shared beyond it, so owning them here would mean being able to destroy them:
 # 1. Build the jar the Lambda runs.
 mill matchmaker.api.assembly
 
-# 2. Point terraform at your infrastructure.
+# 2. Supply the one file that is not in the repository, and point the backend at your state.
 cd terraform
-cp environments/dev.tfvars.example environments/dev.tfvars   # then edit it
-$EDITOR environments/dev.backend.hcl                         # the S3 bucket and lock table
+cp environments/dev.secrets.tfvars.example environments/dev.secrets.tfvars  # the db password
+$EDITOR environments/dev.backend.hcl                                        # bucket, lock table
 
-# 3. Apply. tf.sh handles init, the backend, and the var file.
+# Account facts (dev.tfvars) and policy (dev.settings.tfvars) are already committed; edit them
+# if your endpoint, subnets or security groups differ.
+
+# 3. Apply. tf.sh handles init, the backend, and all three var files.
 ./tf.sh dev apply
 ```
 

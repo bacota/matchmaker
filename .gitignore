@@ -1,16 +1,17 @@
 out
 *.txt
 
-# Terraform: provider plugins are re-fetched by `init`, state and plans can contain secrets,
-# and tfvars name real infrastructure. The lock file is committed on purpose.
+# Terraform: provider plugins are re-fetched by `init`, and state and plans can contain secrets.
+# The lock file is committed on purpose.
 .terraform/
 *.tfstate
 *.tfstate.*
-*.tfvars
-!*.tfvars.example
-# Per-environment policy (memory, retention, session length) is a reviewable decision, not an
-# account fact, so these are committed while *.tfvars is not.
-!*.settings.tfvars
+
+# Credentials only. Everything else — account facts in <env>.tfvars, policy in
+# <env>.settings.tfvars — is committed, so a change to what gets deployed shows up in a diff.
+# This one file holds the values that must not: keep it to secrets, so there is never a reason
+# to reach for an exception.
+*.secrets.tfvars
 crash.log
 
 # Scala.js output symlinked next to index.html for local serving.
