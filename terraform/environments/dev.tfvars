@@ -19,7 +19,7 @@ security_group_ids = ["sg-ee324e96"]
 // The local UI runs against the dev pool, so hosted login and PKCE are exercised for real before
 // anything is deployed. Cognito allows http only for localhost. Matched literally, trailing slash
 // included, and must equal the URL the browser reports for the page.
-callback_urls = ["http://localhost:5173/", "http://localhost:8080/", "https://]
+callback_urls = ["http://localhost:5173/", "http://localhost:8080/"]
 logout_urls   = ["http://localhost:5173/", "http://localhost:8080/"]
 
 // Origins only: no path, no trailing slash.
