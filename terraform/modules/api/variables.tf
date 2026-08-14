@@ -193,7 +193,7 @@ variable "cors_allowed_origins" {
 variable "password_minimum_length" {
   description = "Minimum password length the pool enforces."
   type        = number
-  default     = 12
+  default     = 8
 }
 
 variable "refresh_token_validity_days" {
