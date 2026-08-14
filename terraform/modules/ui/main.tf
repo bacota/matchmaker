@@ -62,6 +62,13 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "ui" {
 # Origin access
 # ---------------------------------------------------------------------------
 
+# Looked up by name rather than written as an id. Managed policy ids are fixed and public, so a
+# literal would work, but a mistyped one is only caught at apply, as a 404 NoSuchCachePolicy that
+# does not say which of the distribution's fields was wrong.
+data "aws_cloudfront_cache_policy" "caching_disabled" {
+  name = "Managed-CachingDisabled"
+}
+
 resource "aws_cloudfront_origin_access_control" "ui" {
   name                              = local.name
   origin_access_control_origin_type = "s3"
@@ -120,9 +127,9 @@ resource "aws_cloudfront_distribution" "ui" {
     # where index.html and main.js are served from different builds.
     #
     # The cost is one S3 GET per request rather than per TTL. That is the right trade for four
-    # small files; if this ever fronts something read-heavy, switch to CachingOptimized
-    # (658327ea-f89d-4fab-a63d-7e88639e58f6) and invalidate on deploy instead.
-    cache_policy_id = "4135ea2d-6df8-4934-9b0a-0e35d3d2f5eb"
+    # small files; if this ever fronts something read-heavy, switch to Managed-CachingOptimized
+    # and invalidate on deploy instead.
+    cache_policy_id = data.aws_cloudfront_cache_policy.caching_disabled.id
   }
 
   restrictions {

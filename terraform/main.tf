@@ -1,5 +1,8 @@
 terraform {
-  required_version = ">= 1.5"
+  # 1.10 rather than 1.5 for the backend: S3-native locking (`use_lockfile` in
+  # environments/<env>.backend.hcl) was added there. The modules stay at 1.5 — nothing in them
+  # needs anything newer.
+  required_version = ">= 1.10"
   required_providers {
     aws = {
       source  = "hashicorp/aws"

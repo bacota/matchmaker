@@ -25,11 +25,11 @@ logout_urls   = ["http://localhost:5173/", "http://localhost:8080/"]
 // Origins only: no path, no trailing slash.
 cors_allowed_origins = ["http://localhost:5173", "http://localhost:8080"]
 
-ui_bucket_name = "matchmaker.vivi.com"
+ui_bucket_name = "matchmaker-vivi-com"
 
 // Dev has no custom domain: leave these empty and the UI keeps its *.cloudfront.net name, with no
 // Route 53 record and no certificate needed. See prod.tfvars.example for the other case.
-ui_domain_name     = "matchmaker-dev.vivi.com"
-hosted_zone_id     = "Z3QWMCZNYC6R5N"
-ui_certificate_arn = "arn:aws:acm:us-east-1:181246307823:certificate/1c7403a4-0f2e-4a1a-a573-be110c9642b8"
+ui_domain_name       = "matchmaker-dev.vivi.com"
+hosted_zone_id       = "Z3QWMCZNYC6R5N"
+ui_certificate_arn   = "arn:aws:acm:us-east-1:181246307823:certificate/1c7403a4-0f2e-4a1a-a573-be110c9642b8"
 cognito_sender_email = "matchmaker@vivi.com"

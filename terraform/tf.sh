@@ -1,4 +1,4 @@
-#!/usr/bin/env bash -x
+#!/usr/bin/env bash
 #
 # Runs terraform against one environment, from the single root configuration.
 #

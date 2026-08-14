@@ -47,6 +47,29 @@ blocking. Neither should be reachable by forgetting a flag.
 Every resource is named `matchmaker-${environment}-...`, so both environments can live in one
 account, and each has its own state key so neither can be applied over the other.
 
+### State and locking
+
+State lives in S3, one key per environment, configured in `environments/<env>.backend.hcl` and
+passed at init time by `tf.sh`.
+
+Locking uses **`use_lockfile = true`**, which takes a `.tflock` object in the same bucket beside
+the state file. No DynamoDB table: S3 gained conditional writes, which is all a lock needs, so the
+table was a second piece of infrastructure to create, pay for and keep in step with the bucket.
+`dynamodb_table` is deprecated in favour of this, and terraform warns if you set it.
+
+This needs **Terraform 1.10 or newer**, which is why the root `required_version` is `>= 1.10` while
+the modules stay at `>= 1.5` — nothing in them needs anything newer.
+
+Two things the bucket wants, neither created here:
+
+- **Versioning**, so a corrupted or truncated state can be rolled back to the previous object.
+- **`s3:DeleteObject`** in whatever policy governs the deploying principal, on top of Get and Put:
+  releasing a lock deletes the `.tflock` object. Without it every run acquires a lock it can never
+  release, and the next one blocks.
+
+If a run is killed mid-apply the lock object survives; `terraform force-unlock <id>` clears it,
+with the usual caveat that you must be sure nothing else is really running.
+
 ### Always use `tf.sh`
 
 ```sh
@@ -319,7 +342,7 @@ mill matchmaker.api.assembly
 # 2. Supply the one file that is not in the repository, and point the backend at your state.
 cd terraform
 cp environments/dev.secrets.tfvars.example environments/dev.secrets.tfvars  # the db password
-$EDITOR environments/dev.backend.hcl                                        # bucket, lock table
+$EDITOR environments/dev.backend.hcl                                        # the state bucket
 
 # Account facts (dev.tfvars) and policy (dev.settings.tfvars) are already committed; edit them
 # if your endpoint, subnets or security groups differ.

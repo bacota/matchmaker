@@ -11,16 +11,32 @@ variable "bucket_name" {
     Empty means "matchmaker-<environment>-ui". Changing this on an existing deployment replaces the
     bucket: terraform creates the new one, uploads the four objects, repoints the distribution and
     destroys the old one.
+
+    Dots are rejected. They are perfectly legal in a bucket name generally — the restriction is
+    specific to serving the bucket through CloudFront; see the validation below. There is also no
+    reason to want one here: with CloudFront and OAC in front, nobody ever sees this name, so it
+    does not need to match the site's domain the way an S3 website bucket would.
   EOT
   type        = string
   default     = ""
 
   validation {
-    # Checked here rather than at apply time, where the failure is a generic InvalidBucketName.
-    # Only the subset that is also a valid virtual-host name is allowed: dots would break the
-    # regional domain name the distribution uses as its origin.
+    /* Stricter than S3's own naming rules, deliberately.
+     *
+     * CloudFront reaches this bucket at its virtual-hosted address,
+     * <bucket>.s3.<region>.amazonaws.com, over HTTPS. AWS serves that with a wildcard certificate
+     * for *.s3.<region>.amazonaws.com, and a wildcard matches exactly one label — so a bucket with
+     * a dot in its name produces a hostname the certificate does not cover, and the origin
+     * handshake fails. From the S3 user guide: "When you're using virtual-hosted-style general
+     * purpose buckets with SSL, the SSL wildcard certificate matches only buckets that do not
+     * contain dots (.)."
+     *
+     * The documented workarounds are to use HTTP or to supply your own certificate verification,
+     * and neither is available to a CloudFront S3 origin. The failure mode is a 502 from
+     * CloudFront that says nothing about the bucket name, which is why this is caught at plan.
+     */
     condition     = var.bucket_name == "" || can(regex("^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])$", var.bucket_name))
-    error_message = "Must be 3-63 lowercase letters, digits and hyphens, starting and ending with a letter or digit, and without dots."
+    error_message = "Must be 3-63 lowercase letters, digits and hyphens, starting and ending with a letter or digit. Dots are legal in S3 but break the TLS handshake when CloudFront fetches from the bucket, so they are rejected here."
   }
 }
 
