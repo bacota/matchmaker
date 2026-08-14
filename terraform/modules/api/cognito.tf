@@ -56,17 +56,21 @@ resource "aws_cognito_user_pool" "users" {
    * and comes from an address nobody recognizes. Sign-in now depends on those emails, so an
    * environment that real players use wants SES here.
    *
-   * source_arn is derived from the address rather than asked for separately: an SES email identity
-   * is always arn:aws:ses:<region>:<account>:identity/<address>, both of which this module already
-   * knows. If the *domain* is verified rather than the individual address, that derived ARN will
-   * not exist and the apply fails naming it.
+   * source_arn defaults to the address's own identity — an SES email identity is always
+   * arn:aws:ses:<region>:<account>:identity/<address>, both of which this module already knows, so
+   * the common case needs no second variable. When the verified identity is a domain rather than
+   * the address, that derived ARN does not exist; cognito_sender_identity_arn overrides it.
    */
   dynamic "email_configuration" {
     for_each = var.cognito_sender_email == "" ? [] : [var.cognito_sender_email]
     content {
       email_sending_account = "DEVELOPER"
       from_email_address    = email_configuration.value
-      source_arn            = "arn:${data.aws_partition.current.partition}:ses:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:identity/${email_configuration.value}"
+      source_arn = (
+        var.cognito_sender_identity_arn != ""
+        ? var.cognito_sender_identity_arn
+        : "arn:${data.aws_partition.current.partition}:ses:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:identity/${email_configuration.value}"
+      )
     }
   }
 

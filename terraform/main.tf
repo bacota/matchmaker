@@ -32,8 +32,9 @@ module "api" {
   security_group_ids = var.security_group_ids
   lambda_jar_path    = var.lambda_jar_path
 
-  hosted_login_domain_prefix = var.hosted_login_domain_prefix
-  cognito_sender_email       = var.cognito_sender_email
+  hosted_login_domain_prefix  = var.hosted_login_domain_prefix
+  cognito_sender_email        = var.cognito_sender_email
+  cognito_sender_identity_arn = var.cognito_sender_identity_arn
 
   # The deployed UI's own URL is always allowed, without anyone having to copy it into a tfvars
   # after the first apply — that copy is exactly the kind of thing that goes stale and produces a

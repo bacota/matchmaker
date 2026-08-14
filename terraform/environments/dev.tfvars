@@ -29,7 +29,10 @@ ui_bucket_name = "matchmaker-vivi-com"
 
 // Dev has no custom domain: leave these empty and the UI keeps its *.cloudfront.net name, with no
 // Route 53 record and no certificate needed. See prod.tfvars.example for the other case.
-ui_domain_name       = "matchmaker-dev.vivi.com"
-hosted_zone_id       = "Z3QWMCZNYC6R5N"
-ui_certificate_arn   = "arn:aws:acm:us-east-1:181246307823:certificate/1c7403a4-0f2e-4a1a-a573-be110c9642b8"
-cognito_sender_email = "matchmaker@vivi.com"
+ui_domain_name     = "matchmaker-dev.vivi.com"
+hosted_zone_id     = "Z3QWMCZNYC6R5N"
+ui_certificate_arn = "arn:aws:acm:us-east-1:181246307823:certificate/1c7403a4-0f2e-4a1a-a573-be110c9642b8"
+// The verified SES identity is the domain, not this address — `aws ses list-identities` lists
+// vivi.com but no matchmaker@vivi.com — so the identity ARN has to be given rather than derived.
+cognito_sender_email        = "matchmaker@vivi.com"
+cognito_sender_identity_arn = "arn:aws:ses:us-east-1:181246307823:identity/vivi.com"

@@ -118,8 +118,9 @@ variable "cognito_sender_email" {
     account and region**, and the account must be out of the SES sandbox to mail anyone who has not
     separately confirmed the address. Neither is checked here, and neither fails until an apply.
 
-    A bare address, not "Name <addr@example.com>": the SES identity ARN is derived from this value,
-    so it has to be the identity itself.
+    A bare address, not "Name <addr@example.com>": by default the SES identity ARN is derived from
+    this value, so it has to be the identity itself. Set cognito_sender_identity_arn when the
+    verified identity is something else — a domain, most often.
   EOT
   type        = string
   default     = ""
@@ -127,6 +128,28 @@ variable "cognito_sender_email" {
   validation {
     condition     = var.cognito_sender_email == "" || can(regex("^[^@[:space:]<>]+@[a-z0-9.-]+\\.[a-z]{2,}$", var.cognito_sender_email))
     error_message = "Must be a single bare email address, without a display name."
+  }
+}
+
+variable "cognito_sender_identity_arn" {
+  description = <<-EOT
+    ARN of the verified SES identity the pool sends as. Only consulted when cognito_sender_email is
+    set; empty derives it as identity/<cognito_sender_email> in this account and region.
+
+    That derivation is right only when the individual address was verified. Verifying a *domain* —
+    the usual choice, since it covers every address under it — produces identity/example.com
+    instead, and the derived ARN names an identity that does not exist. The apply then fails on the
+    user pool with a message about the ARN, not about which address was being sent from.
+
+    So: verified address, leave this empty. Verified domain, set it to the domain identity's ARN.
+    SES must consider cognito_sender_email to be within it either way.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.cognito_sender_identity_arn == "" || can(regex("^arn:aws[a-z-]*:ses:[a-z0-9-]+:[0-9]{12}:identity/", var.cognito_sender_identity_arn))
+    error_message = "Must be an SES identity ARN: arn:aws:ses:<region>:<account>:identity/<domain or address>."
   }
 }
 

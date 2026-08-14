@@ -167,6 +167,16 @@ variable "cognito_sender_email" {
   default     = ""
 }
 
+variable "cognito_sender_identity_arn" {
+  description = <<-EOT
+    ARN of the verified SES identity behind cognito_sender_email. Empty derives
+    identity/<cognito_sender_email>, which is correct when that exact address was verified. Set it
+    when a domain was verified instead — the derived ARN would name an identity that does not exist.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "callback_urls" {
   description = <<-EOT
     URLs hosted login may return to, matched literally by Cognito — the trailing slash counts.
