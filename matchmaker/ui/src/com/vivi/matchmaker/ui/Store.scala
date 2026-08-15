@@ -61,6 +61,7 @@ object Store {
     charactersByGame.set(Map.empty)
     acceptances.set(Seq.empty)
     expandedGames.set(Set.empty)
+    showNewGame.set(false)
   }
 
   val due: Var[Seq[MatchSummary]] = Var(Seq.empty)
@@ -85,6 +86,11 @@ object Store {
 
   val expandedGames: Var[Set[GameId]] = Var(Set.empty)
   val showActive: Var[Boolean] = Var(false)
+
+  /** Whether the admin-only new-game form is open. Collapsed by default: an admin is a player
+    * first, and the form is not what they came to the page for.
+    */
+  val showNewGame: Var[Boolean] = Var(false)
   val showCompleted: Var[Boolean] = Var(false)
 
   /** The last thing that went wrong, shown as a banner. A single slot rather than a list: the

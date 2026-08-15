@@ -27,6 +27,13 @@ object Pkce {
     base64Url(bytes)
   }
 
+  /** A shared secret for something other than a login — a new game's `externalId`, which
+    * authorizes requests made on that game's behalf. Same 256 bits from the same CSPRNG; it lives
+    * here so that every unguessable value in this UI is generated in one place, rather than by
+    * whatever the calling code happens to reach for.
+    */
+  def newSecret(): String = newVerifier()
+
   /** Opaque value round-tripped through the redirect and compared on return, so that a callback
     * this UI did not initiate is rejected rather than acted on (RFC 6749 §10.12).
     */

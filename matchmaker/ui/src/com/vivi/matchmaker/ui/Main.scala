@@ -277,8 +277,97 @@ object Views {
       child <-- Store.games.signal.map {
         case Nil   => p(cls := "empty", "No games are set up yet.")
         case games => ul(games.map(gameRow))
+      },
+      // Only for admins, because only an admin can create one — the server rejects anyone else
+      // with a 403, and offering a button that always fails would be worse than not offering it.
+      child <-- currentPlayer.map {
+        case Some(player) if player.isAdmin => newGameSection
+        case _                              => emptyNode
       }
     )
+
+  /** "An admin user should be able to create a new game."
+    *
+    * The form asks for the five things a game cannot be created without. Roles and parameters are
+    * deliberately not here: they are per-game structure, the create route accepts a game with
+    * none, and building an editor for them is a screen of its own rather than a field on this one.
+    */
+  private def newGameSection: HtmlElement =
+    div(
+      h3(
+        button(
+          cls := "toggle",
+          child.text <-- Store.showNewGame.signal.map(if (_) "▾" else "▸"),
+          " Add a game",
+          onClick --> (_ => Store.showNewGame.update(!_))
+        )
+      ),
+      child <-- Store.showNewGame.signal.map(if (_) newGameForm else emptyNode)
+    )
+
+  private def newGameForm: HtmlElement = {
+    val name = Var("")
+    val description = Var("")
+    val url = Var("")
+    val minPlayers = Var("2")
+    val maxPlayers = Var("2")
+
+    def counts: Signal[Option[(Int, Int)]] =
+      minPlayers.signal.combineWith(maxPlayers.signal).map { case (low, high) =>
+        (low.trim.toIntOption, high.trim.toIntOption) match {
+          case (Some(l), Some(h)) if l >= 1 && h >= l => Some((l, h))
+          case _                                      => None
+        }
+      }
+
+    div(
+      cls := "card",
+      input(placeholder := "name", controlled(value <-- name.signal, onInput.mapToValue --> name)),
+      input(
+        placeholder := "description",
+        controlled(value <-- description.signal, onInput.mapToValue --> description)
+      ),
+      input(placeholder := "url", controlled(value <-- url.signal, onInput.mapToValue --> url)),
+      label("Players ", input(tpe := "number", minAttr := "1", controlled(value <-- minPlayers.signal, onInput.mapToValue --> minPlayers))),
+      label(" to ", input(tpe := "number", minAttr := "1", controlled(value <-- maxPlayers.signal, onInput.mapToValue --> maxPlayers))),
+      button(
+        "Create game",
+        disabled <-- name.signal.combineWith(counts).map { case (n, valid) => n.trim.isEmpty || valid.isEmpty },
+        onClick --> { _ =>
+          // Safe because the button is disabled until both parse and min <= max.
+          val (low, high) = minPlayers.now().trim.toInt -> maxPlayers.now().trim.toInt
+
+          val game = Game(
+            // Unassigned means create; the server assigns the real id. Same sentinel the
+            // challenge form uses.
+            gameId = GameId.unassigned,
+            name = name.now().trim,
+            description = description.now().trim,
+            url = url.now().trim,
+            // A game nobody can see is not what "create a game" means, and `refreshGames` only
+            // asks for active ones — creating it inactive would look like the button did nothing.
+            active = true,
+            roles = Seq.empty,
+            parameters = Seq.empty,
+            // The game's own shared secret, used to authorize requests the game makes on its own
+            // behalf. Generated rather than typed: it is a credential, and one an admin inventing
+            // it by hand would invent badly.
+            externalId = Pkce.newSecret(),
+            minPlayers = low,
+            maxPlayers = high
+          )
+
+          Store.run(ApiClient.createGame(game)) { _ =>
+            name.set("")
+            description.set("")
+            url.set("")
+            Store.showNewGame.set(false)
+            Store.refreshGames()
+          }
+        }
+      )
+    )
+  }
 
   private def gameRow(game: Game): HtmlElement =
     li(

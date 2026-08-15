@@ -49,6 +49,14 @@ object ApiClient {
   def games(activeOnly: Boolean): Future[Seq[Game]] =
     get[Seq[Game]](if (activeOnly) "/games?activeOnly=true" else "/games")
 
+  /** Creates a game, or updates one when `gameId` is already assigned. The same route does both,
+    * which is why this is `POST /games` rather than a `PUT` on an id that does not exist yet. The
+    * server refuses this to anyone who is not an admin, so the button is admin-only too — but the
+    * check that matters is the server's.
+    */
+  def createGame(game: Game): Future[Game] =
+    send[Game](HttpMethod.POST, "/games", Some(write(game)))
+
   def challenges(gameId: GameId): Future[Seq[OpenChallenge]] =
     get[Seq[OpenChallenge]](s"/games/${gameId.value}/challenges")
 

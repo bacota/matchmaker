@@ -47,6 +47,33 @@ class WireFormatSpec extends FunSuite {
     assertEquals(decoded.parameters.head.asInstanceOf[GameParameter[String]].defaultValue, Some("5+3"))
   }
 
+  // What the admin's "Add a game" form actually posts: no id yet, and both existential-typed
+  // collections empty. An empty `parameters` is the case a codec pinned to GameParameter[String]
+  // could plausibly get wrong without the round-trip above noticing.
+  test("a game being created encodes with an unassigned id and no roles or parameters") {
+    val game = Game(
+      gameId = GameId.unassigned,
+      name = "Go",
+      description = "19x19",
+      url = "https://example.com/go",
+      active = true,
+      roles = Seq.empty,
+      parameters = Seq.empty,
+      externalId = "generated-secret",
+      minPlayers = 2,
+      maxPlayers = 2
+    )
+
+    val json = ujson.read(write(game))
+    assertEquals(json("gameId").num.toInt, 0)
+    assertEquals(json("roles").arr.length, 0)
+    assertEquals(json("parameters").arr.length, 0)
+
+    val decoded = read[Game](write(game))
+    assertEquals(decoded.gameId, GameId.unassigned)
+    assertEquals(decoded.parameters, Seq.empty)
+  }
+
   test("ids are transparent on the wire, not wrapped in an object") {
     // A UI that sent {"value": 7} where the server expects 7 would fail only at runtime, so the
     // encoding is asserted rather than just the round trip.
