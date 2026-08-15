@@ -45,6 +45,20 @@ class RouterSpec extends FunSuite {
     assertEquals(statusOf("GET", "/me", Map("x-external-id" -> "   "), "{}"), 401)
   }
 
+  // Guards the by-name `services` parameter. `fail` as the argument stands in for the pool
+  // construction the deployed handler would do: if the parameter is ever made strict again, this
+  // test fails rather than a rejected request quietly paying for a database pool it never uses.
+  test("a rejected request never forces the services") {
+    val alwaysRejects = new Authenticator {
+      def callerOf(request: Request): Either[ApiGateway.Response, String] = Left(Errors.response(401, "no"))
+    }
+
+    val response =
+      Router.dispatch(fail("services must not be forced for a rejected request"), request("GET", "/me"), alwaysRejects)
+
+    assertEquals(response.unsafeRunSync().statusCode, 401)
+  }
+
   test("an unknown path is not found") {
     assertEquals(dispatch(request("GET", "/nonsense")).statusCode, 404)
   }

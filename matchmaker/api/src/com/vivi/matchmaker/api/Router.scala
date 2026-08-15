@@ -15,7 +15,12 @@ import Json.given
   */
 object Router {
 
-  def dispatch(services: Services[String], request: Request, authenticator: Authenticator): IO[Response] =
+  /** `services` is by name so that a rejected request never builds them. `Handler` passes a lazy
+    * val that opens the database pool on first touch, and an unauthenticated request is answered
+    * before any route is chosen — a 401 has no business constructing a pool, and on a cold
+    * container it would pay the whole initialization to do it.
+    */
+  def dispatch(services: => Services[String], request: Request, authenticator: Authenticator): IO[Response] =
     authenticator.callerOf(request) match {
       case Left(rejection) => IO.pure(rejection)
       case Right(caller)   => route(services, request, caller).handleError(Errors.toResponse)
