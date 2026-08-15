@@ -13,7 +13,7 @@ db_name      = "matchmaker"
 // The user only; the password is in dev.secrets.tfvars.
 db_user = "matchmaker"
 
-subnet_ids         = ["subnet-0f0fe68b2e7e3b126"]
+subnet_ids         = ["subnet-ecc447b4"]
 security_group_ids = ["sg-ee324e96"]
 
 // The local UI runs against the dev pool, so hosted login and PKCE are exercised for real before
