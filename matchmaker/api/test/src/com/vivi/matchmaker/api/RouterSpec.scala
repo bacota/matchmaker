@@ -49,12 +49,19 @@ class RouterSpec extends FunSuite {
    * identified — the gateway routes OPTIONS to the function precisely because its $default route
    * would otherwise send it to the JWT authorizer and get a 401.
    */
+  private val preflightHeaders =
+    Map(
+      "origin" -> "https://example.test",
+      "access-control-request-method" -> "GET",
+      "access-control-request-headers" -> "authorization,content-type"
+    )
+
   test("a CORS preflight is answered without authentication") {
-    assertEquals(statusOf("OPTIONS", "/me", Map.empty, ""), 204)
+    assertEquals(statusOf("OPTIONS", "/me", preflightHeaders, ""), 204)
   }
 
   test("a preflight is answered for a path that has no route") {
-    assertEquals(statusOf("OPTIONS", "/nonsense", Map.empty, ""), 204)
+    assertEquals(statusOf("OPTIONS", "/nonsense", preflightHeaders, ""), 204)
   }
 
   // Guards the by-name `services` parameter: `unusablePool` fails on use, so forcing it here would
