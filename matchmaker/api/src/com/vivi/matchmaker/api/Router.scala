@@ -15,25 +15,11 @@ import Json.given
   */
 object Router {
 
-  /** `services` is by name because a preflight is answered without it. `Handler` passes a lazy val
-    * that builds the database pool on first touch, and a cold container's first request is often
-    * the OPTIONS — forcing it there would open Postgres connections to answer a question about
-    * headers, and would fail the preflight outright if the database were unreachable.
-    */
-  def dispatch(services: => Services[String], request: Request, authenticator: Authenticator): IO[Response] =
-    // A CORS preflight carries no credentials, so it cannot be authenticated and must be answered
-    // before the authenticator runs. Only the status matters here: the gateway's cors_configuration
-    // supplies the headers the browser is asking for.
-    if (
-      request.method.equalsIgnoreCase("OPTIONS") &&
-      request.header("origin").nonEmpty &&
-      request.header("access-control-request-method").nonEmpty
-    ) IO.pure(Response(204, ""))
-    else
-      authenticator.callerOf(request) match {
-        case Left(rejection) => IO.pure(rejection)
-        case Right(caller)   => route(services, request, caller).handleError(Errors.toResponse)
-      }
+  def dispatch(services: Services[String], request: Request, authenticator: Authenticator): IO[Response] =
+    authenticator.callerOf(request) match {
+      case Left(rejection) => IO.pure(rejection)
+      case Right(caller)   => route(services, request, caller).handleError(Errors.toResponse)
+    }
 
   private def route(services: Services[String], request: Request, caller: String): IO[Response] =
     (request.method.toUpperCase, request.segments) match {

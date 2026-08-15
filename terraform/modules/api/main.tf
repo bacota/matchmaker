@@ -170,9 +170,9 @@ resource "aws_apigatewayv2_api" "api" {
   # wildcarded: `*` is incompatible with sending credentials, and there is no reason for an
   # arbitrary page to be able to call this API with a token it somehow obtained.
   #
-  # These headers are attached by the gateway to every response, including ones it generates
-  # itself. That is not enough on its own to make a preflight work — see the OPTIONS route below,
-  # which is what actually gets it a success status.
+  # API Gateway answers the OPTIONS preflight itself, before the JWT authorizer runs. That matters
+  # because a preflight carries no Authorization header and would otherwise be rejected with 401,
+  # which the browser reports only as an opaque CORS failure.
   cors_configuration {
     allow_origins = var.cors_allowed_origins
     allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
@@ -222,29 +222,6 @@ resource "aws_apigatewayv2_route" "default" {
 
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
-}
-
-/* The CORS preflight, and the one route that is deliberately unauthenticated.
- *
- * API Gateway answers a preflight itself only when *no* route matches it, and $default above
- * matches everything — so without this the OPTIONS request reaches the JWT authorizer, arrives
- * with no Authorization header (a preflight never carries credentials, which is the point of it)
- * and comes back 401. The browser reports that as nothing more useful than "Response to preflight
- * request doesn't pass access control check".
- *
- * A more specific route wins over $default, so this one takes the preflight to the function, which
- * answers 204 before authenticating anything. Nothing is disclosed by that: the body is empty, and
- * the headers the browser is actually asking about come from cors_configuration above.
- *
- * {proxy+} needs at least one path segment, so a preflight to the bare / still falls to $default
- * and 401s. Nothing is served there.
- */
-resource "aws_apigatewayv2_route" "preflight" {
-  api_id    = aws_apigatewayv2_api.api.id
-  route_key = "OPTIONS /{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
-
-  authorization_type = "NONE"
 }
 
 resource "aws_cloudwatch_log_group" "api_access" {
