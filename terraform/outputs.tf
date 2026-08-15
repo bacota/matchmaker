@@ -49,3 +49,13 @@ output "ui_distribution_domain_name" {
   EOT
   value       = module.ui.distribution_domain_name
 }
+
+# Empty unless cognito_sender_email is set; see the admin user in modules/api/cognito.tf.
+output "admin_external_id" {
+  description = "The admin Cognito user's `sub`. deploy.sh reads this to seed the admin player row."
+  value       = module.api.admin_external_id
+}
+
+output "admin_email" {
+  value = module.api.admin_email
+}

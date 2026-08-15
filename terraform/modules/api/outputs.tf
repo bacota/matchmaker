@@ -44,3 +44,22 @@ output "jwt_issuer" {
   description = "Token issuer, whose /.well-known/jwks.json serves the public keys. Used by the local server to verify tokens itself."
   value       = "https://cognito-idp.${data.aws_region.current.region}.amazonaws.com/${aws_cognito_user_pool.users.id}"
 }
+
+# ---------------------------------------------------------------------------
+# Admin user
+# ---------------------------------------------------------------------------
+#
+# Both empty when cognito_sender_email is unset, in which case no admin user was created.
+
+output "admin_external_id" {
+  description = <<-EOT
+    The admin user's `sub`, which is the external_id of its player row. deploy.sh passes this to
+    the admin seeder; a player row carrying any other value is not this account.
+  EOT
+  value       = one(aws_cognito_user.admin[*].sub)
+}
+
+output "admin_email" {
+  description = "Address the admin user signs in with, and where its invitation was sent."
+  value       = one(aws_cognito_user.admin[*].username)
+}

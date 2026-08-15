@@ -138,6 +138,12 @@ object matchmaker extends ScalaModule {
       *   FLYWAY_URL=jdbc:postgresql://localhost:5432/matchmaker \
       *   FLYWAY_USER=matchmaker FLYWAY_PASSWORD=secret \
       *   ./mill matchmaker.flyway.runMain com.vivi.matchmaker.flyway.Migrate
+      *
+      * SeedAdmin runs the same way, on the same variables plus
+      * ADMIN_EXTERNAL_ID, to give the admin Cognito user a player row.
       */
+    object test extends ScalaTests with TestModule.Munit {
+      def mvnDeps = Seq(mvn"org.scalameta::munit::1.0.4")
+    }
   }
 }

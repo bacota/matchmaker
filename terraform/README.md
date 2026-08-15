@@ -23,7 +23,8 @@ split three ways, layered by `tf.sh` in this order — later files win:
    `environments/<env>.settings.tfvars`. `diff` those two files to see exactly how prod differs
    from dev.
 2. **Account facts** — the database endpoint, `db_user`, subnets, security groups, URLs. What already exists in AWS that this stack attaches to, in `environments/<env>.tfvars`.
-3. **Credentials** — `db_password`, in `environments/<env>.secrets.tfvars`.
+3. **Credentials** — `db_password`, and `admin_initial_password` if you set one, in
+   `environments/<env>.secrets.tfvars`.
 
 The first two are **committed**, so any change to what gets deployed shows up in a diff and can be
 reviewed. Only the third is gitignored, matched by `*.secrets.tfvars`, and it should hold nothing
@@ -433,6 +434,48 @@ Two prerequisites that terraform cannot check, and that fail at apply rather tha
 
 The value must be a bare address, not `Name <addr@example.com>`, because the ARN is derived from
 it; a `validation` block rejects the display-name form up front.
+
+### The first administrator
+
+Setting `cognito_sender_email` also creates **one admin user** in the pool, signing in with that
+same address. Without it a new environment has no way in: every route needs a signed-in caller, and
+creating a game needs an *admin* player, so the first administrator would have to sign up through
+hosted login and then be granted admin by hand in the database.
+
+The address is the sender's on purpose — it is already a verified SES identity, so Cognito's
+invitation reaches it even in the SES sandbox, which no other address is guaranteed to do.
+
+How that account gets its first password is `admin_initial_password`'s decision:
+
+- **Left empty**, Cognito generates a temporary password and mails it. Nothing secret enters the
+  configuration or the state. The first sign-in is the new-password challenge, and the account is
+  `CONFIRMED` after it. Prefer this whenever the address can actually receive mail.
+- **Set**, that value is installed as a *permanent* password and the account is `CONFIRMED`
+  immediately, so you can sign in without waiting on an email. The invitation is suppressed, since
+  it would quote a temporary password that is not the one to use. It goes in
+  `environments/<env>.secrets.tfvars` next to `db_password`, and like `db_password` it is
+  **plaintext in the terraform state** — a bootstrap credential, not a permanent one. Sign in,
+  change it in managed login, and the value here stops being live. Changing the variable later
+  resets the password again.
+
+Either way, once the account is `CONFIRMED` it can use `EMAIL_OTP` like anyone else.
+
+An administrator is two things — a Cognito user *and* a player row with `is_admin` — and terraform
+can only make the first. The player table lives in the VPC and has no terraform resource, so
+`deploy.sh` finishes the job: after the apply it reads the `admin_external_id` output (the user's
+`sub`) and runs `SeedAdmin`, which inserts the row, or grants admin to a row that already carries
+that `sub`. It runs on every deploy and does nothing when the row is already correct.
+
+Two consequences worth knowing:
+
+- The seeding step needs a route into the VPC, exactly like the Flyway step, and `--skip-migrate`
+  skips both.
+- The Cognito user has `prevent_destroy`. Recreating it issues a new `sub`, and the player row is
+  keyed by the old one — the account would come back with no player and no way to grant itself
+  admin again.
+
+`ADMIN_NICKNAME` (default `admin`) names the row when it is created; an existing player keeps the
+nickname it already has.
 
 ### ID token, not access token
 

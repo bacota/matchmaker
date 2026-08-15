@@ -221,3 +221,33 @@ variable "log_retention_days" {
   type        = number
   default     = 30
 }
+
+variable "admin_initial_password" {
+  description = <<-EOT
+    Password for the admin user, set once when that user is created.
+
+    Empty — the default — has Cognito generate a temporary password and mail it to
+    cognito_sender_email, which keeps every secret out of this configuration and out of the state.
+    Prefer it when the address can actually receive mail.
+
+    Set it when it cannot: a new environment whose account is still in the SES sandbox has no way
+    to deliver the invitation, and this is then the only way to sign in at all. The value is
+    installed as a permanent password and the account is CONFIRMED immediately.
+
+    Must satisfy the pool's password_policy, which is not checked here and fails at apply.
+
+    Marked sensitive, but note what that does not cover: like db_password it is stored in plaintext
+    in the terraform state. Treat it as a bootstrap credential — sign in, change it in managed
+    login, and the value here stops being the live one. Changing this variable afterwards resets
+    the password again.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+
+  validation {
+    # Cognito's own floor. The pool's minimum_length may be higher; that one is enforced at apply.
+    condition     = var.admin_initial_password == "" || length(var.admin_initial_password) >= 6
+    error_message = "Must be at least 6 characters, and at least password_minimum_length."
+  }
+}

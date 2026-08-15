@@ -13,6 +13,8 @@
 #   2. build the two artifacts terraform uploads: the Lambda jar and the linked UI
 #   3. run Flyway, so the schema is ready before code that expects it is live
 #   4. plan, show it, and apply *that saved plan* — not a second one computed after you looked
+#   5. give the admin Cognito user a player row, which can only happen after the apply that
+#      created it, because the row is keyed by the `sub` that apply assigns
 #
 # Step 3 before step 4 is the safe order only for additive migrations. A migration that drops or
 # renames something breaks the currently deployed function the moment it runs, before the new code
@@ -30,7 +32,7 @@ usage: $0 <dev|prod> [--yes] [--skip-build] [--skip-migrate]
 
   --yes           apply without asking for confirmation
   --skip-build    do not compile or rebuild artifacts (they must already exist)
-  --skip-migrate  do not run Flyway
+  --skip-migrate  do not touch the database: no Flyway, no admin player
 EOF
   exit 2
 }
@@ -120,11 +122,11 @@ fi
 # 3. Migrate
 # ---------------------------------------------------------------------------
 
-if [ "$skip_migrate" = true ]; then
-  step "Skipping migrations"
-else
-  step "Running Flyway against $env"
-
+# Sets host_port, database, user and password from the tfvars files. Both database steps need
+# them, and neither runs when --skip-migrate is given, so the reads stay out of the top level:
+# nobody should have to hold the database password to deploy code alone.
+resolve_db() {
+  local endpoint
   endpoint=$(tfvar rds_endpoint "$vars")
   database=$(tfvar db_name "$vars")
   user=$(tfvar db_user "$vars")
@@ -140,7 +142,14 @@ else
     *:*) host_port=$endpoint ;;
     *) host_port="$endpoint:5432" ;;
   esac
+}
 
+if [ "$skip_migrate" = true ]; then
+  step "Skipping migrations"
+else
+  step "Running Flyway against $env"
+
+  resolve_db
   echo "    $user@$host_port/$database"
 
   # The database is not publicly reachable: it sits in the VPC the Lambda attaches to. This step
@@ -180,6 +189,37 @@ fi
 
 step "Applying to $env"
 (cd "$TERRAFORM_DIR" && ./tf.sh "$env" apply "$plan_file")
+
+# ---------------------------------------------------------------------------
+# 5. Seed the admin player
+# ---------------------------------------------------------------------------
+#
+# Terraform creates the admin Cognito user but cannot create its player row: the player table is
+# in the VPC, and there is no terraform resource that inserts one. So the two halves are joined
+# here, after the apply, once the user's `sub` exists to key the row by.
+#
+# After the migration step and gated on the same flag, for the same reason: it is the other thing
+# in this script that needs a route into the VPC. Empty output means no admin user was configured
+# — cognito_sender_email is unset — which is not an error.
+
+if [ "$skip_migrate" = true ]; then
+  step "Skipping the admin player"
+else
+  admin_external_id=$(cd "$TERRAFORM_DIR" && ./tf.sh "$env" output -raw admin_external_id 2>/dev/null || true)
+
+  if [ -z "$admin_external_id" ]; then
+    step "No admin user configured; set cognito_sender_email to create one"
+  else
+    step "Seeding the admin player"
+
+    resolve_db
+    FLYWAY_URL="jdbc:postgresql://$host_port/$database" \
+      FLYWAY_USER="$user" \
+      FLYWAY_PASSWORD="$password" \
+      ADMIN_EXTERNAL_ID="$admin_external_id" \
+      mill --ticker false matchmaker.flyway.runMain com.vivi.matchmaker.flyway.SeedAdmin
+  fi
+fi
 
 step "Done"
 (cd "$TERRAFORM_DIR" && ./tf.sh "$env" output)

@@ -277,3 +277,16 @@ variable "ui_price_class" {
   type        = string
   default     = "PriceClass_All"
 }
+
+variable "admin_initial_password" {
+  description = <<-EOT
+    Password for the admin Cognito user, set once at creation. Empty mails a temporary password to
+    cognito_sender_email instead; set it when that address cannot receive mail yet.
+
+    A credential, so it belongs in environments/<env>.secrets.tfvars. Stored in plaintext in the
+    state; treat it as a bootstrap value and change it in managed login after the first sign-in.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}

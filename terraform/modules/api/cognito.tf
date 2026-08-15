@@ -200,3 +200,75 @@ resource "aws_cognito_user_pool_client" "app" {
   read_attributes  = ["email", "email_verified"]
   write_attributes = ["email"]
 }
+
+# ---------------------------------------------------------------------------
+# Admin user
+# ---------------------------------------------------------------------------
+
+/* One administrator, created with the pool.
+ *
+ * A pool with no users is not a working environment: every route requires a signed-in caller, and
+ * the routes that create games require an *admin* player, so without this someone has to sign up
+ * through hosted login and then hand-edit a row in the database to grant themselves admin. This
+ * makes the first administrator part of the environment instead of a manual step.
+ *
+ * The address is cognito_sender_email — the same address the pool sends its mail from. That is
+ * deliberate: it is already a verified SES identity in this account, so the temporary password
+ * below reaches it even while the account is in the SES sandbox, which no other address is
+ * guaranteed to do. It also means the user only exists when the pool has a real sender; with the
+ * built-in Cognito sender there is nowhere reliable to deliver the invitation, so `count` is zero.
+ *
+ * Two ways in, chosen by admin_initial_password:
+ *
+ * - Unset (the default): no password is given, so Cognito generates a temporary one and mails it.
+ *   Nothing secret enters the configuration or the state. The first sign-in is the new-password
+ *   challenge, which managed login renders; after that the account is CONFIRMED.
+ * - Set: that password is installed as a *permanent* one and the account is CONFIRMED
+ *   immediately, so the administrator can sign in without waiting on an email — which is what
+ *   makes a brand-new environment usable before SES is out of the sandbox. The invitation is
+ *   suppressed, since it would carry a temporary password that is not the one to use.
+ *
+ * Either way, once the account is CONFIRMED, EMAIL_OTP works for it like any other player's.
+ */
+resource "aws_cognito_user" "admin" {
+  count = var.cognito_sender_email == "" ? 0 : 1
+
+  user_pool_id = aws_cognito_user_pool.users.id
+  username     = var.cognito_sender_email
+
+  # Permanent, not temporary: a temporary password expires (7 days, per the pool's policy above)
+  # and forces a change on first use, which would make the variable's value wrong as soon as it
+  # was used. null when unset, which is how terraform omits an argument entirely.
+  password = var.admin_initial_password != "" ? var.admin_initial_password : null
+
+  # Nothing to deliver when the password is already known; without this Cognito still mails an
+  # invitation quoting a temporary password that no longer signs anyone in.
+  message_action           = var.admin_initial_password != "" ? "SUPPRESS" : null
+  desired_delivery_mediums = var.admin_initial_password != "" ? null : ["EMAIL"]
+
+  attributes = {
+    email = var.cognito_sender_email
+
+    # Pre-verified: the address is a verified SES identity, and an unverified one cannot use
+    # account recovery or EMAIL_OTP — which would leave the administrator locked out of the two
+    # ways back in.
+    email_verified = true
+  }
+
+  lifecycle {
+    # Recreating this user issues a new `sub`, and the admin's player row is keyed by the old one:
+    # the account would come back with no player attached and no way to grant itself admin again.
+    prevent_destroy = true
+
+    /* Cognito owns temporary_password after the first sign-in, and the other two only ever mean
+     * anything while the user is being created — an invitation cannot be un-sent. Ignoring them
+     * keeps a later change to admin_initial_password from proposing to alter arguments that
+     * cannot be altered on an existing user.
+     *
+     * `password` is deliberately *not* ignored, so that changing admin_initial_password actually
+     * resets the password. An administrator who has since changed it in managed login is
+     * unaffected: terraform compares against the configuration, which has not moved.
+     */
+    ignore_changes = [temporary_password, message_action, desired_delivery_mediums]
+  }
+}

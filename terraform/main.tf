@@ -36,6 +36,9 @@ module "api" {
   cognito_sender_email        = var.cognito_sender_email
   cognito_sender_identity_arn = var.cognito_sender_identity_arn
 
+  # A credential, from environments/<env>.secrets.tfvars alongside db_password.
+  admin_initial_password = var.admin_initial_password
+
   # The deployed UI's own URL is always allowed, without anyone having to copy it into a tfvars
   # after the first apply — that copy is exactly the kind of thing that goes stale and produces a
   # sign-in that fails with an opaque error. The variables add to it: localhost in dev, a custom
