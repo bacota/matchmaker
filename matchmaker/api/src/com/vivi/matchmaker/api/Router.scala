@@ -24,7 +24,11 @@ object Router {
     // A CORS preflight carries no credentials, so it cannot be authenticated and must be answered
     // before the authenticator runs. Only the status matters here: the gateway's cors_configuration
     // supplies the headers the browser is asking for.
-    if (request.method.equalsIgnoreCase("OPTIONS")) IO.pure(Response(204, ""))
+    if (
+      request.method.equalsIgnoreCase("OPTIONS") &&
+      request.header("origin").nonEmpty &&
+      request.header("access-control-request-method").nonEmpty
+    ) IO.pure(Response(204, ""))
     else
       authenticator.callerOf(request) match {
         case Left(rejection) => IO.pure(rejection)
