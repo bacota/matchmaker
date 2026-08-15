@@ -170,9 +170,9 @@ resource "aws_apigatewayv2_api" "api" {
   # wildcarded: `*` is incompatible with sending credentials, and there is no reason for an
   # arbitrary page to be able to call this API with a token it somehow obtained.
   #
-  # These headers are attached by the gateway to every response, including ones it generates
-  # itself. That is not enough on its own to make a preflight work — see the OPTIONS route below,
-  # which is what actually gets it a success status.
+  # API Gateway answers the OPTIONS preflight itself, before the JWT authorizer runs. That matters
+  # because a preflight carries no Authorization header and would otherwise be rejected with 401,
+  # which the browser reports only as an opaque CORS failure.
   cors_configuration {
     allow_origins = var.cors_allowed_origins
     allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
@@ -209,42 +209,65 @@ resource "aws_apigatewayv2_authorizer" "cognito" {
   }
 }
 
-# A single catch-all route: the application routes by path itself, so there is nothing to gain
-# from restating every path here and keeping the two in step.
-#
-# The authorizer is attached here rather than per-route, so that a route added to the application
-# is authenticated by default. There is deliberately no public route: even registration requires a
-# signed-in user, because a player is created *for* a Cognito identity.
-resource "aws_apigatewayv2_route" "default" {
+/* Every route the application serves, restated here.
+ *
+ * A single $default route would be less to maintain, and was what this used to be — but $default
+ * matches *every* method, OPTIONS included, and API Gateway answers a CORS preflight itself only
+ * when no route matches it. So the preflight went to the JWT authorizer, arrived without an
+ * Authorization header (a preflight never carries credentials) and came back 401, which a browser
+ * reports as nothing more useful than a failed access control check.
+ *
+ * Listing the routes leaves OPTIONS unmatched, which is precisely what lets the gateway handle
+ * preflights: it answers them from cors_configuration above, without the authorizer and without
+ * invoking the function. Unknown paths are rejected at the edge for the same reason.
+ *
+ * The cost is that this list and `Router.scala` are two copies of one table. A route added there
+ * and not here returns 404 with nothing in the function's logs, because the request never reaches
+ * it. RouterSpec's `routed` list is the third copy; keep all three in step.
+ *
+ * Path parameter names are arbitrary to the gateway — the function re-parses the path itself — but
+ * they match the router's names so the two read the same.
+ */
+locals {
+  routes = [
+    "POST /register",
+
+    "GET /me",
+    "GET /me/acceptances",
+    "GET /me/matches",
+    "GET /me/matches/due",
+    "GET /me/matches/completed",
+
+    "GET /games",
+    "POST /games",
+    "GET /games/{gameId}/challenges",
+    "GET /games/{gameId}/characters",
+    "POST /games/{gameId}/characters",
+
+    "PUT /characters/{characterId}",
+    # X-External-Id carries the game's shared secret here, not a player's id — but the route is
+    # still behind the authorizer, so a signed-in caller is required either way.
+    "PUT /characters/{characterId}/state",
+
+    "POST /challenges",
+    "DELETE /challenges/{challengeId}",
+    "POST /challenges/{challengeId}/acceptances",
+    "DELETE /challenges/{challengeId}/acceptances/{playerId}",
+  ]
+}
+
+# Every route is authenticated: there is deliberately no public one, because even registration
+# creates a player *for* an existing Cognito identity. A new route added to the list above is
+# therefore authenticated by construction — there is no per-route decision to forget.
+resource "aws_apigatewayv2_route" "routes" {
+  for_each = toset(local.routes)
+
   api_id    = aws_apigatewayv2_api.api.id
-  route_key = "$default"
+  route_key = each.value
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
-}
-
-/* The CORS preflight, and the one route that is deliberately unauthenticated.
- *
- * API Gateway answers a preflight itself only when *no* route matches it, and $default above
- * matches everything — so without this the OPTIONS request reaches the JWT authorizer, arrives
- * with no Authorization header (a preflight never carries credentials, which is the point of it)
- * and comes back 401. The browser reports that as nothing more useful than "Response to preflight
- * request doesn't pass access control check".
- *
- * A more specific route wins over $default, so this one takes the preflight to the function, which
- * answers 204 before authenticating anything. Nothing is disclosed by that: the body is empty, and
- * the headers the browser is actually asking about come from cors_configuration above.
- *
- * {proxy+} needs at least one path segment, so a preflight to the bare / still falls to $default
- * and 401s. Nothing is served there.
- */
-resource "aws_apigatewayv2_route" "preflight" {
-  api_id    = aws_apigatewayv2_api.api.id
-  route_key = "OPTIONS /{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
-
-  authorization_type = "NONE"
 }
 
 resource "aws_cloudwatch_log_group" "api_access" {

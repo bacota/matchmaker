@@ -45,38 +45,18 @@ class RouterSpec extends FunSuite {
     assertEquals(statusOf("GET", "/me", Map("x-external-id" -> "   "), "{}"), 401)
   }
 
-  /* A preflight arrives with no credentials, so answering it must not depend on the caller being
-   * identified — the gateway routes OPTIONS to the function precisely because its $default route
-   * would otherwise send it to the JWT authorizer and get a 401.
-   */
-  private val preflightHeaders =
-    Map(
-      "origin" -> "https://example.test",
-      "access-control-request-method" -> "GET",
-      "access-control-request-headers" -> "authorization,content-type"
-    )
-
-  test("a CORS preflight is answered without authentication") {
-    assertEquals(statusOf("OPTIONS", "/me", preflightHeaders, ""), 204)
-  }
-
-  test("a preflight is answered for a path that has no route") {
-    assertEquals(statusOf("OPTIONS", "/nonsense", preflightHeaders, ""), 204)
-  }
-
-  // Guards the by-name `services` parameter: `unusablePool` fails on use, so forcing it here would
-  // throw rather than return 204. That is what keeps a preflight on a cold container from opening
-  // database connections to answer a question about headers.
-  test("a preflight does not touch the database") {
-    val neverCalled = new Authenticator {
-      def callerOf(request: Request) = fail("the authenticator must not run for a preflight")
+  // Guards the by-name `services` parameter. `fail` as the argument stands in for the pool
+  // construction the deployed handler would do: if the parameter is ever made strict again, this
+  // test fails rather than a rejected request quietly paying for a database pool it never uses.
+  test("a rejected request never forces the services") {
+    val alwaysRejects = new Authenticator {
+      def callerOf(request: Request): Either[ApiGateway.Response, String] = Left(Errors.response(401, "no"))
     }
-    val response =
-      Router
-        .dispatch(fail("services must not be forced to answer a preflight"), request("OPTIONS", "/me"), neverCalled)
-        .unsafeRunSync()
 
-    assertEquals(response.statusCode, 204)
+    val response =
+      Router.dispatch(fail("services must not be forced for a rejected request"), request("GET", "/me"), alwaysRejects)
+
+    assertEquals(response.unsafeRunSync().statusCode, 401)
   }
 
   test("an unknown path is not found") {
