@@ -31,6 +31,7 @@ create index on player(external_id);
 
 CREATE TABLE game (
     game_id      INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    game_type CHAR(1) not null check (game_type in ('C','P')),
     name         TEXT NOT NULL,
     description  TEXT NOT NULL,
     url          TEXT NOT NULL,
@@ -42,6 +43,8 @@ CREATE TABLE game (
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 create index on game(external_id);
+create unique index on game(game_type, game_id);
+
 
 -- character_id is generated to be globally unique (not just per-game), so it alone
 -- identifies a character everywhere except in foreign keys. The primary key is
@@ -110,62 +113,105 @@ CREATE TABLE match (
 );
 
 CREATE TABLE participant (
-    participant_id BIGINT NOT NULL PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     game_id         INT NOT NULL,
+    participant_id BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY,
+    game_type CHAR(1) not null check (game_type in ('C','P')),
     match_id        TEXT NOT NULL,
     player_id         BIGINT NOT NULL REFERENCES player,
-    character_id BIGINT NOT NULL,
     pending         BOOLEAN NOT NULL DEFAULT FALSE,
     completed   BOOLEAN NOT NULL,
     due             TIMESTAMPTZ,
     create_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (game_id, participant_id),
     FOREIGN KEY (game_id, match_id) REFERENCES match,
-    FOREIGN KEY (game_id, character_id) REFERENCES character (game_id, character_id)
+    FOREIGN KEY (game_type, game_id) REFERENCES game (game_type, game_id)
 );
 create index on participant(player_id);
 create index on participant(game_id, match_id);
-create index on participant(character_id);
 create index participant_pending on participant(game_id, match_id, player_id) where pending=true;
 
+CREATE TABLE character_participant (
+    game_id         INT NOT NULL,
+    participant_id BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY,
+    game_type CHAR(1) not null check (game_type = 'C'),
+    character_id BIGINT NOT NULL,
+    PRIMARY KEY (game_id, participant_id),
+    FOREIGN KEY  (game_id, participant_id) REFERENCES participant,
+    FOREIGN KEY (game_id, character_id) REFERENCES character (game_id, character_id)
+);
+create index on character_participant(game_id, character_id);
+
+
 CREATE TABLE result (
-    participant_id   BIGINT NOT NULL PRIMARY KEY  REFERENCES participant,
+    game_id         INT NOT NULL,
+    participant_id   BIGINT NOT NULL,
     rank            INTEGER NOT NULL,
     score           NUMERIC NOT NULL,
     create_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    update_date     TIMESTAMPTZ NOT NULL DEFAULT now()
+    update_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (game_id, participant_id),
+    FOREIGN KEY (game_id, participant_id) references participant
 );
 
 
 CREATE TABLE open_challenge (
-    challenge_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    game_id INT NOT NULL REFERENCES game,    
+    challenge_id BIGINT GENERATED ALWAYS AS IDENTITY,
+    game_type CHAR(1) not null check (game_type in ('C','P')),    
     challenger   BIGINT NOT NULL REFERENCES player,
     message TEXT default '',
     number_of_players SMALLINT NOT NULL,
     start        TIMESTAMPTZ,
     time_limit   INTERVAL,
     settings     JSONB NOT NULL DEFAULT '{}'::jsonb,
-    game_id INT NOT NULL REFERENCES game,
-    character_id BIGINT NOT NULL,
     create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    FOREIGN KEY (game_id, character_id) REFERENCES character (game_id, character_id)
+    PRIMARY KEY(game_id, challenge_id),
+    FOREIGN KEY (game_id, game_type) references game (game_id, game_type)
 );
 create index on open_challenge(challenger);
-create index on open_challenge(character_id);
+
+CREATE TABLE character_open_challenge(
+   game_id INT NOT NULL REFERENCES game,    
+   challenge_id BIGINT GENERATED ALWAYS AS IDENTITY,
+   game_type CHAR(1) not null check (game_type = 'C'),
+   character_id BIGINT NOT NULL,
+   PRIMARY KEY(game_id, challenge_id),
+   FOREIGN KEY (game_id, challenge_id) REFERENCES open_challenge,
+   FOREIGN KEY (game_id, game_type) references game (game_id, game_type),
+   FOREIGN KEY (game_id, character_id) REFERENCES character (game_id, character_id)
+);
+create index on character_open_challenge(game_id, character_id);
+
 
 CREATE TABLE acceptance (
-    challenge_id      BIGINT NOT NULL REFERENCES open_challenge,
-    player_id         BIGINT NOT NULL REFERENCES player,
     game_id INT NOT NULL REFERENCES game,
-    character_id BIGINT NOT NULL,
+    challenge_id      BIGINT NOT NULL,
+    game_type CHAR(1) not null check (game_type in ('C','P')),
+    player_id         BIGINT NOT NULL REFERENCES player,
     create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (challenge_id, player_id),
-    FOREIGN KEY (game_id, character_id) REFERENCES character (game_id, character_id)
+    PRIMARY KEY (game_id, challenge_id, player_id),
+    FOREIGN KEY (game_id, challenge_id) references open_challenge,
+    FOREIGN KEY (game_id, game_type) references game (game_id, game_type)
 );
 create index on acceptance(player_id);
-create index on acceptance(character_id);
+
+CREATE TABLE character_acceptance(
+    game_id INT NOT NULL REFERENCES game,
+    challenge_id      BIGINT NOT NULL,
+    game_type CHAR(1) not null check (game_type = 'C'),
+    player_id         BIGINT NOT NULL REFERENCES player,    
+    character_id BIGINT NOT NULL,
+    FOREIGN KEY (game_id, challenge_id, player_id) references acceptance,    
+    FOREIGN KEY (game_type, game_id) references game (game_type, game_id),
+    FOREIGN KEY (game_id, character_id) REFERENCES character
+);
+create index on character_acceptance(game_id, character_id);
+create index on character_acceptance(player_id);
+
+
 
 
 -- ---------------------------------------------------------------------
