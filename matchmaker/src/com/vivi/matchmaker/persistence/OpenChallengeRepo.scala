@@ -27,12 +27,8 @@ class OpenChallengeRepo(session: Session[IO]) {
           VALUES ($gameType, $playerId, $text, $int2, ${instant.opt}, ${float8.opt} * INTERVAL '1 second', $settings, $gameId)
           RETURNING challenge_id""".query(challengeId)
 
-  // challenge_id is GENERATED ALWAYS AS IDENTITY on this table too, but it must actually equal
-  // the challenge_id its FK references on open_challenge, so it has to be supplied explicitly
-  // rather than left to generate its own (unrelated) value — hence OVERRIDING SYSTEM VALUE.
   private val insertCharacterChallenge: Command[(GameId, ChallengeId, CharacterId)] =
     sql"""INSERT INTO character_open_challenge (game_id, challenge_id, game_type, character_id)
-          OVERRIDING SYSTEM VALUE
           VALUES ($gameId, $challengeId, 'C', $characterId)""".command
 
   // A trailing opaque-typed codec defeats skunk's twiddle-list match-type resolution from

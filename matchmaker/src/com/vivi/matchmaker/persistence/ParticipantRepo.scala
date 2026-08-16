@@ -23,12 +23,8 @@ class ParticipantRepo(session: Session[IO]) {
           VALUES ($gameId, $matchId, $gameType, $playerId, $bool, $bool, ${instant.opt})
           RETURNING participant_id""".query(participantId)
 
-  // participant_id is GENERATED ALWAYS AS IDENTITY on this table too, but it must actually equal
-  // the participant_id its FK references on participant, so it has to be supplied explicitly
-  // rather than left to generate its own (unrelated) value — hence OVERRIDING SYSTEM VALUE.
   private val insertCharacterParticipant: Command[(GameId, ParticipantId, CharacterId)] =
     sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id)
-          OVERRIDING SYSTEM VALUE
           VALUES ($gameId, $participantId, 'C', $characterId)""".command
 
   private val selectParticipant: Query[
