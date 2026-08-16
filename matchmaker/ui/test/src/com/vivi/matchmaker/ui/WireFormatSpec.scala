@@ -20,6 +20,7 @@ class WireFormatSpec extends FunSuite {
     // String. This is the codec most likely to break, so it is the one exercised in full.
     val game = Game(
       gameId = GameId(7),
+      gameType = GameType.Character,
       name = "Chess",
       description = "the usual",
       url = "https://example.com/chess",
@@ -53,6 +54,7 @@ class WireFormatSpec extends FunSuite {
   test("a game being created encodes with an unassigned id and no roles or parameters") {
     val game = Game(
       gameId = GameId.unassigned,
+      gameType = GameType.Plain,
       name = "Go",
       description = "19x19",
       url = "https://example.com/go",
@@ -93,7 +95,7 @@ class WireFormatSpec extends FunSuite {
       due = Some(Instant.parse("2026-08-08T12:00:00Z")),
       pending = true,
       participantId = ParticipantId(3),
-      characterId = CharacterId(4)
+      characterId = Some(CharacterId(4))
     )
 
     val decoded = read[MatchSummary](write(summary))
@@ -103,7 +105,7 @@ class WireFormatSpec extends FunSuite {
   }
 
   test("an absent optional stays absent rather than becoming a default") {
-    val challenge = OpenChallenge(
+    val challenge = CharacterOpenChallenge(
       challengeId = ChallengeId(0),
       challenger = PlayerId(1),
       message = "anyone?",

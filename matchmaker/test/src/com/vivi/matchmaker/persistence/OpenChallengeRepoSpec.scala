@@ -16,7 +16,7 @@ class OpenChallengeRepoSpec extends PropertySuite {
           val openChallengeRepo = new OpenChallengeRepo(session)
 
           for {
-            createdGame <- gameRepo.create(Generators.genGame.sample.get)
+            createdGame <- gameRepo.create(Generators.genGame().sample.get)
             createdPlayer <- playerRepo.create(player)
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
             challenge <- IO.pure(

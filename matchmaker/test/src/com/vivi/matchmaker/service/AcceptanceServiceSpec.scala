@@ -26,7 +26,7 @@ class AcceptanceServiceSpec extends PropertySuite {
       for {
         owner <- registrationService.register(nickname, externalId)
         game <- new GameRepo[String](session).create(
-          Game(GameId.unassigned, "game", "description", "url", active = true, Seq.empty, Seq.empty, genUniqueString.sample.get, 2, 4)
+          Game(GameId.unassigned, GameType.Character, "game", "description", "url", active = true, Seq.empty, Seq.empty, genUniqueString.sample.get, 2, 4)
         )
         character <- new CharacterRepo[String](session).create(
           Character(CharacterId(0), game.gameId, "character", "description", "", Some(owner.playerId))
@@ -45,7 +45,7 @@ class AcceptanceServiceSpec extends PropertySuite {
     }
 
   private def challengeFor(fixture: Fixture, numberOfPlayers: Int): OpenChallenge =
-    OpenChallenge(ChallengeId(0), fixture.owner.playerId, "message", numberOfPlayers.toShort, None, None, "{}", fixture.game.gameId, fixture.character.characterId)
+    CharacterOpenChallenge(ChallengeId(0), fixture.owner.playerId, "message", numberOfPlayers.toShort, None, None, "{}", fixture.game.gameId, fixture.character.characterId)
 
   private def setUp(nickname: String, externalId: String, accepterNickname: String, accepterExternalId: String) =
     for {
@@ -53,7 +53,7 @@ class AcceptanceServiceSpec extends PropertySuite {
       created <- challengeService.create(challengeFor(fixture, 3), externalId)
       accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
       (accepterPlayer, accepterCharacter) = accepter
-      accepted <- challengeService.accept(created.challengeId, accepterCharacter.characterId, accepterExternalId)
+      accepted <- challengeService.accept(created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
     } yield (fixture, created, accepterPlayer, accepted)
 
   property("delete removes the acceptance when called by the acceptor") {

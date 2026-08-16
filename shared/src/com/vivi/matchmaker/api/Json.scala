@@ -24,6 +24,9 @@ object Json {
   given ReadWriter[ParticipantId] = readwriter[Long].bimap(_.value, ParticipantId.apply)
   given ReadWriter[ChallengeId] = readwriter[Long].bimap(_.value, ChallengeId.apply)
 
+  // Transparent on the wire as its single-character code, mirroring the DB's game_type column.
+  given ReadWriter[GameType] = readwriter[String].bimap(_.code.toString, s => GameType.fromCode(s.head))
+
   given ReadWriter[Instant] = readwriter[String].bimap(_.toString, Instant.parse)
 
   // Seconds, matching how the persistence layer stores time_limit.
@@ -34,8 +37,20 @@ object Json {
   given ReadWriter[GameParameterValue[String]] = macroRW
   given ReadWriter[GameParameter[String]] = macroRW
   given ReadWriter[Character[String]] = macroRW
-  given ReadWriter[OpenChallenge] = macroRW
-  given ReadWriter[Acceptance] = macroRW
+
+  // Sealed-trait wire format: each concrete case gets its own macro-derived ReadWriter, merged
+  // into one for the trait. upickle tags the JSON with a discriminator field so a reader can
+  // tell a PlainOpenChallenge from a CharacterOpenChallenge (etc.) apart on the way back in.
+  given ReadWriter[PlainOpenChallenge] = macroRW
+  given ReadWriter[CharacterOpenChallenge] = macroRW
+  given ReadWriter[OpenChallenge] =
+    ReadWriter.merge(summon[ReadWriter[PlainOpenChallenge]], summon[ReadWriter[CharacterOpenChallenge]])
+
+  given ReadWriter[PlainAcceptance] = macroRW
+  given ReadWriter[CharacterAcceptance] = macroRW
+  given ReadWriter[Acceptance] =
+    ReadWriter.merge(summon[ReadWriter[PlainAcceptance]], summon[ReadWriter[CharacterAcceptance]])
+
   given ReadWriter[MatchSummary] = macroRW
 
   /** Structural twin of `Game` with the existential in `parameters` pinned to `String`.
@@ -46,6 +61,7 @@ object Json {
     */
   private case class GameDto(
       gameId: GameId,
+      gameType: GameType,
       name: String,
       description: String,
       url: String,
@@ -63,6 +79,7 @@ object Json {
     game =>
       GameDto(
         game.gameId,
+        game.gameType,
         game.name,
         game.description,
         game.url,
@@ -76,6 +93,7 @@ object Json {
     dto =>
       Game(
         dto.gameId,
+        dto.gameType,
         dto.name,
         dto.description,
         dto.url,
@@ -93,7 +111,10 @@ object Json {
   case class RegisterRequest(nickname: String)
   case class CharacterRequest(name: String, description: String, externalId: String)
   case class UpdateStateRequest(state: String)
-  case class AcceptRequest(characterId: CharacterId)
+
+  // characterId is present iff the challenge being accepted belongs to a 'C'-type game; the
+  // service layer checks that correspondence rather than trusting the caller to get it right.
+  case class AcceptRequest(characterId: Option[CharacterId])
 
   given ReadWriter[RegisterRequest] = macroRW
   given ReadWriter[CharacterRequest] = macroRW

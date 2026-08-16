@@ -8,6 +8,7 @@ import java.time.Instant
   * match would be a query per row.
   *
   * @param due when the player's turn is due, if it is their turn at all
+  * @param characterId the character playing this participant's seat, if the game requires one
   */
 case class MatchSummary(
     gameId: GameId,
@@ -19,5 +20,5 @@ case class MatchSummary(
     due: Option[Instant],
     pending: Boolean,
     participantId: ParticipantId,
-    characterId: CharacterId
+    characterId: Option[CharacterId]
 )

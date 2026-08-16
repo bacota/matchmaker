@@ -8,7 +8,7 @@ import org.scalacheck.Gen
 
 class CharacterRepoSpec extends PropertySuite {
   property("create then read returns the character just created") {
-    forAll(Generators.genGame, Gen.oneOf(true, false), Generators.genPlayer) { (game, withPlayer, player) =>
+    forAll(Generators.genGame(), Gen.oneOf(true, false), Generators.genPlayer) { (game, withPlayer, player) =>
       TestSession.resource
         .use { session =>
           val gameRepo = new GameRepo[String](session)
@@ -27,7 +27,7 @@ class CharacterRepoSpec extends PropertySuite {
   }
 
   property("readWithOwnerAndGame returns the character joined with its owner and game") {
-    forAll(Generators.genGame, Generators.genPlayer) { (game, player) =>
+    forAll(Generators.genGame(), Generators.genPlayer) { (game, player) =>
       TestSession.resource
         .use { session =>
           val gameRepo = new GameRepo[String](session)
@@ -46,7 +46,7 @@ class CharacterRepoSpec extends PropertySuite {
   }
 
   property("readWithOwnerAndGame returns None for a character with no owning player") {
-    forAll(Generators.genGame) { game =>
+    forAll(Generators.genGame()) { game =>
       TestSession.resource
         .use { session =>
           val gameRepo = new GameRepo[String](session)
@@ -71,8 +71,8 @@ class CharacterRepoSpec extends PropertySuite {
           val characterRepo = new CharacterRepo[String](session)
 
           for {
-            game <- gameRepo.create(Generators.genGame.sample.get)
-            otherGame <- gameRepo.create(Generators.genGame.sample.get)
+            game <- gameRepo.create(Generators.genGame().sample.get)
+            otherGame <- gameRepo.create(Generators.genGame().sample.get)
             owner <- playerRepo.create(player)
 
             mine <- characterRepo.create(
@@ -104,7 +104,7 @@ class CharacterRepoSpec extends PropertySuite {
           val characterRepo = new CharacterRepo[String](session)
 
           for {
-            game <- gameRepo.create(Generators.genGame.sample.get)
+            game <- gameRepo.create(Generators.genGame().sample.get)
             owner <- playerRepo.create(player)
             created <- characterRepo.create(
               Generators.genCharacter(game.gameId, Some(owner.playerId)).sample.get

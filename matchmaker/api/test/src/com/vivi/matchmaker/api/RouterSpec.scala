@@ -92,11 +92,11 @@ class RouterSpec extends FunSuite {
     * whether the route matched at all.
     */
   private val gameBody = write(
-    Game(GameId.unassigned, "name", "description", "url", active = true, Seq.empty, Seq.empty, "secret", 2, 4)
+    Game(GameId.unassigned, GameType.Character, "name", "description", "url", active = true, Seq.empty, Seq.empty, "secret", 2, 4)
   )
 
   private val challengeBody = write(
-    OpenChallenge(ChallengeId(0), PlayerId(1), "message", 2.toShort, None, None, "{}", GameId(1), CharacterId(1))
+    CharacterOpenChallenge(ChallengeId(0), PlayerId(1), "message", 2.toShort, None, None, "{}", GameId(1), CharacterId(1))
   )
 
   /** Every route in `Router`. Keep in step with it: a route missing from here is a route no test

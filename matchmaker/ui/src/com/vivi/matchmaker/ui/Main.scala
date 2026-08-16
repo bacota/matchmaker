@@ -311,6 +311,7 @@ object Views {
     val url = Var("")
     val minPlayers = Var("2")
     val maxPlayers = Var("2")
+    val gameType: Var[GameType] = Var(GameType.Character)
 
     def counts: Signal[Option[(Int, Int)]] =
       minPlayers.signal.combineWith(maxPlayers.signal).map { case (low, high) =>
@@ -330,6 +331,14 @@ object Views {
       input(placeholder := "url", controlled(value <-- url.signal, onInput.mapToValue --> url)),
       label("Players ", input(tpe := "number", minAttr := "1", controlled(value <-- minPlayers.signal, onInput.mapToValue --> minPlayers))),
       label(" to ", input(tpe := "number", minAttr := "1", controlled(value <-- maxPlayers.signal, onInput.mapToValue --> maxPlayers))),
+      label(
+        "Requires characters ",
+        input(
+          tpe := "checkbox",
+          checked <-- gameType.signal.map(_ == GameType.Character),
+          onClick --> (_ => gameType.update(gt => if (gt == GameType.Character) GameType.Plain else GameType.Character))
+        )
+      ),
       button(
         "Create game",
         disabled <-- name.signal.combineWith(counts).map { case (n, valid) => n.trim.isEmpty || valid.isEmpty },
@@ -341,6 +350,7 @@ object Views {
             // Unassigned means create; the server assigns the real id. Same sentinel the
             // challenge form uses.
             gameId = GameId.unassigned,
+            gameType = gameType.now(),
             name = name.now().trim,
             description = description.now().trim,
             url = url.now().trim,
@@ -389,17 +399,25 @@ object Views {
   private def gameDetail(game: Game): HtmlElement =
     div(
       cls := "detail-panel",
-      child <-- currentPlayer.combineWith(Store.charactersByGame.signal).map {
-        case (None, _) => p(cls := "empty", "Loading…")
-        case (Some(player), byGame) =>
-          byGame.get(game.gameId) match {
-            case None                       => p(cls := "empty", "Loading…")
-            // A character is needed before this player can either offer or accept a challenge, so
-            // there is nothing to show until there is one.
-            case Some(Nil)                  => characterForm(game, player)
-            case Some(characters)           => challengePanel(game, player, characters.head.characterId)
-          }
-      }
+      // A 'P'-type game never needs a character, so its challenge panel doesn't wait on
+      // Store.charactersByGame at all.
+      child <-- (if (game.gameType == GameType.Plain)
+                   currentPlayer.map {
+                     case None         => p(cls := "empty", "Loading…")
+                     case Some(player) => challengePanel(game, player, None)
+                   }
+                 else
+                   currentPlayer.combineWith(Store.charactersByGame.signal).map {
+                     case (None, _) => p(cls := "empty", "Loading…")
+                     case (Some(player), byGame) =>
+                       byGame.get(game.gameId) match {
+                         case None              => p(cls := "empty", "Loading…")
+                         // A character is needed before this player can either offer or accept a
+                         // challenge, so there is nothing to show until there is one.
+                         case Some(Nil)         => characterForm(game, player)
+                         case Some(characters)  => challengePanel(game, player, Some(characters.head.characterId))
+                       }
+                   })
     )
 
   private def characterForm(game: Game, player: Player): HtmlElement = {
@@ -427,7 +445,7 @@ object Views {
     )
   }
 
-  private def challengePanel(game: Game, player: Player, characterId: CharacterId): HtmlElement =
+  private def challengePanel(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement =
     div(
       child <-- Store.challengesByGame.signal.map { byGame =>
         byGame.get(game.gameId) match {
@@ -462,7 +480,7 @@ object Views {
       )
     )
 
-  private def openChallengeRow(game: Game, challenge: OpenChallenge, characterId: CharacterId): HtmlElement =
+  private def openChallengeRow(game: Game, challenge: OpenChallenge, characterId: Option[CharacterId]): HtmlElement =
     li(
       cls := "row",
       div(cls := "title", challenge.message),
@@ -480,7 +498,7 @@ object Views {
       )
     )
 
-  private def newChallengeForm(game: Game, player: Player, characterId: CharacterId): HtmlElement = {
+  private def newChallengeForm(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement = {
     val message = Var("")
     val players = Var(game.minPlayers.toString)
 
@@ -503,19 +521,33 @@ object Views {
           m.trim.isEmpty || !validPlayerCount(game, p)
         },
         onClick --> { _ =>
-          val challenge = OpenChallenge(
-            // The server assigns the id; this is the same unassigned-sentinel convention the
-            // service layer uses on create.
-            challengeId = ChallengeId(0),
-            challenger = player.playerId,
-            message = message.now().trim,
-            numberOfPlayers = players.now().trim.toShort,
-            start = None,
-            timeLimit = None,
-            settings = "{}",
-            gameId = game.gameId,
-            characterId = characterId
-          )
+          // The server assigns the id; this is the same unassigned-sentinel convention the
+          // service layer uses on create.
+          val challenge: OpenChallenge = characterId match {
+            case Some(cid) =>
+              CharacterOpenChallenge(
+                challengeId = ChallengeId(0),
+                challenger = player.playerId,
+                message = message.now().trim,
+                numberOfPlayers = players.now().trim.toShort,
+                start = None,
+                timeLimit = None,
+                settings = "{}",
+                gameId = game.gameId,
+                characterId = cid
+              )
+            case None =>
+              PlainOpenChallenge(
+                challengeId = ChallengeId(0),
+                challenger = player.playerId,
+                message = message.now().trim,
+                numberOfPlayers = players.now().trim.toShort,
+                start = None,
+                timeLimit = None,
+                settings = "{}",
+                gameId = game.gameId
+              )
+          }
 
           Store.run(ApiClient.createChallenge(challenge)) { _ =>
             message.set("")

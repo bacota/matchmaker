@@ -14,7 +14,7 @@ class MatchRepoSpec extends PropertySuite {
           val gameRepo = new GameRepo[String](session)
           val matchRepo = new MatchRepo(session)
           for {
-            createdGame <- gameRepo.create(Generators.genGame.sample.get)
+            createdGame <- gameRepo.create(Generators.genGame().sample.get)
             matchId = MatchId(matchIdStr)
             m <- IO.pure(Generators.genMatch(createdGame.gameId, matchId).sample.get)
             created <- matchRepo.create(m)

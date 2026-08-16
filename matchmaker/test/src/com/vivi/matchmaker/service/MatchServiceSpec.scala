@@ -33,7 +33,7 @@ class MatchServiceSpec extends PropertySuite {
       for {
         player <- registrationService.register(nickname, externalId)
         game <- new GameRepo[String](session).create(
-          Game(GameId.unassigned, "game", "description", "url", active = true, Seq.empty, Seq.empty, genUniqueString.sample.get, 2, 4)
+          Game(GameId.unassigned, GameType.Character, "game", "description", "url", active = true, Seq.empty, Seq.empty, genUniqueString.sample.get, 2, 4)
         )
         character <- new CharacterRepo[String](session).create(
           Character(CharacterId(0), game.gameId, "character", "description", "", Some(player.playerId))
@@ -43,7 +43,7 @@ class MatchServiceSpec extends PropertySuite {
           Match(game.gameId, matchId, "description", completed, Instant.ofEpochSecond(1000), None, "{}")
         )
         _ <- new ParticipantRepo(session).create(
-          Participant(ParticipantId(0), game.gameId, matchId, player.playerId, pending, completed, Some(Instant.ofEpochSecond(2000)), character.characterId)
+          CharacterParticipant(ParticipantId(0), game.gameId, matchId, player.playerId, pending, completed, Some(Instant.ofEpochSecond(2000)), character.characterId)
         )
       } yield (player, game, matchId)
     }

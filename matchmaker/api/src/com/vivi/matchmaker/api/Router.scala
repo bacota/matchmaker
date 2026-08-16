@@ -88,7 +88,9 @@ object Router {
 
       case ("POST", "challenges" :: challengeId :: "acceptances" :: Nil) =>
         withChallengeId(challengeId) { id =>
-          body[Json.AcceptRequest](request).flatMap(r => created(services.challenges.accept(id, r.characterId, caller)))
+          body[Json.AcceptRequest](request).flatMap { r =>
+            created(services.challenges.accept(id, r.characterId, caller))
+          }
         }
 
       case ("DELETE", "challenges" :: challengeId :: "acceptances" :: playerId :: Nil) =>

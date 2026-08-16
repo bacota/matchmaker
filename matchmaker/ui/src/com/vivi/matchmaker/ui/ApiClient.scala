@@ -66,7 +66,7 @@ object ApiClient {
   def deleteChallenge(challengeId: ChallengeId): Future[Unit] =
     sendUnit(HttpMethod.DELETE, s"/challenges/${challengeId.value}", None)
 
-  def accept(challengeId: ChallengeId, characterId: CharacterId): Future[Acceptance] =
+  def accept(challengeId: ChallengeId, characterId: Option[CharacterId]): Future[Acceptance] =
     send[Acceptance](
       HttpMethod.POST,
       s"/challenges/${challengeId.value}/acceptances",

@@ -54,12 +54,13 @@ class MatchRepo(session: Session[IO]) {
   // participant_id and character_id are decoded as raw int8 and wrapped in `toSummary`, and
   // `pending` is selected last, so that the twiddle ends in a concrete type: one ending in an
   // opaque id does not reduce to a tuple, because an opaque type cannot be shown to be disjoint
-  // from Tuple outside the scope that defines it.
+  // from Tuple outside the scope that defines it. character_id is nullable: a 'P'-type game's
+  // participant has no character_participant row at all.
   private val summaryColumns =
-    gameId *: matchId *: text *: text *: bool *: instant *: instant.opt *: int8 *: int8 *: bool
+    gameId *: matchId *: text *: text *: bool *: instant *: instant.opt *: int8 *: int8.opt *: bool
 
   private def toSummary(
-      row: (GameId, MatchId, String, String, Boolean, Instant, Option[Instant], Long, Long, Boolean)
+      row: (GameId, MatchId, String, String, Boolean, Instant, Option[Instant], Long, Option[Long], Boolean)
   ): MatchSummary = {
     val (gameId, matchId, gameName, description, completed, start, due, participantId, characterId, pending) = row
     MatchSummary(
@@ -72,7 +73,7 @@ class MatchRepo(session: Session[IO]) {
       due,
       pending,
       ParticipantId(participantId),
-      CharacterId(characterId)
+      characterId.map(CharacterId.apply)
     )
   }
 
@@ -80,20 +81,22 @@ class MatchRepo(session: Session[IO]) {
   // NULLS LAST keeps matches with no deadline from crowding out ones that have a deadline.
   private val selectForPlayer =
     sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.start,
-                 p.due, p.participant_id, p.character_id, p.pending
+                 p.due, p.participant_id, cp.character_id, p.pending
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
+          LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           WHERE p.player_id = $playerId AND m.completed = $bool
           ORDER BY p.due ASC NULLS LAST, m.start DESC"""
       .query(summaryColumns)
 
   private val selectDueForPlayer =
     sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.start,
-                 p.due, p.participant_id, p.character_id, p.pending
+                 p.due, p.participant_id, cp.character_id, p.pending
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
+          LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           WHERE p.player_id = $playerId AND p.pending = true AND m.completed = false
           ORDER BY p.due ASC NULLS LAST, m.start DESC"""
       .query(summaryColumns)

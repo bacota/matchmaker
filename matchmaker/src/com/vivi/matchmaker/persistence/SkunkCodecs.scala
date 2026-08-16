@@ -4,11 +4,18 @@ import skunk._
 import skunk.codec.all._
 import skunk.data.Type
 import java.time.{Instant, OffsetDateTime, ZoneOffset}
+import com.vivi.matchmaker.model.GameType
 
 object SkunkCodecs {
 
   val instant: Codec[Instant] =
     timestamptz.imap(_.toInstant)(i => OffsetDateTime.ofInstant(i, ZoneOffset.UTC))
+
+  /** The `game_type` discriminator column (`CHAR(1)`, `'C'`/`'P'`), on `game` and on every
+    * table split by it (`open_challenge`, `acceptance`, `participant`, and their `character_*`
+    * siblings).
+    */
+  val gameType: Codec[GameType] = bpchar(1).imap(s => GameType.fromCode(s.head))(_.code.toString)
 
   /** skunk-core ships no jsonb codec, so this declares one directly: bound and read as the
     * raw JSON text, tagged with the "jsonb" wire type so skunk's strict column-alignment

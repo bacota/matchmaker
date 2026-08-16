@@ -27,7 +27,9 @@ object Generators {
       externalId <- genUniqueString
     } yield Player(PlayerId.unassigned, nickname, isAdmin, externalId)
 
-  def genGame: Gen[Game] =
+  // Existing suites all build a character alongside the game, so Character is the default;
+  // Plain-game coverage passes gameType explicitly.
+  def genGame(gameType: GameType = GameType.Character): Gen[Game] =
     for {
       name <- genString
       description <- genString
@@ -36,11 +38,11 @@ object Generators {
       externalId <- genUniqueString
       minPlayers <- Gen.choose(1, 4)
       maxPlayers <- Gen.choose(4, 8)
-    } yield Game(GameId.unassigned, name, description, url, active, Seq.empty, Seq.empty, externalId, minPlayers, maxPlayers)
+    } yield Game(GameId.unassigned, gameType, name, description, url, active, Seq.empty, Seq.empty, externalId, minPlayers, maxPlayers)
 
   def genGameWithRole: Gen[Game] =
     for {
-      base <- genGame
+      base <- genGame()
       roleName <- genString
       optional <- Gen.oneOf(true, false)
     } yield {
@@ -68,13 +70,13 @@ object Generators {
       pending <- Gen.oneOf(true, false)
       completed <- Gen.oneOf(true, false)
       due <- Gen.option(genInstant)
-    } yield Participant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, characterId)
+    } yield CharacterParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, characterId)
 
-  def genResult(participantId: ParticipantId): Gen[Result] =
+  def genResult(gameId: GameId, participantId: ParticipantId): Gen[Result] =
     for {
       rank <- Gen.choose(1, 100)
       score <- Gen.choose(0.0, 1000.0)
-    } yield Result(participantId, rank, score)
+    } yield Result(gameId, participantId, rank, score)
 
   def genOpenChallenge(challenger: PlayerId, gameId: GameId, characterId: CharacterId): Gen[OpenChallenge] =
     for {
@@ -82,5 +84,5 @@ object Generators {
       numberOfPlayers <- Gen.choose(1, 10)
       start <- Gen.option(genInstant)
       timeLimit <- Gen.option(genDuration)
-    } yield OpenChallenge(ChallengeId(0), challenger, message, numberOfPlayers.toShort, start, timeLimit, "{}", gameId, characterId)
+    } yield CharacterOpenChallenge(ChallengeId(0), challenger, message, numberOfPlayers.toShort, start, timeLimit, "{}", gameId, characterId)
 }

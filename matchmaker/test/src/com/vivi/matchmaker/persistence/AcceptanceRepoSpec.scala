@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
-import com.vivi.matchmaker.model.Acceptance
+import com.vivi.matchmaker.model.{Acceptance, CharacterAcceptance}
 
 class AcceptanceRepoSpec extends PropertySuite {
   property("create then read returns the acceptance just created") {
@@ -18,7 +18,7 @@ class AcceptanceRepoSpec extends PropertySuite {
           val acceptanceRepo = new AcceptanceRepo(session)
 
           for {
-            createdGame <- gameRepo.create(Generators.genGame.sample.get)
+            createdGame <- gameRepo.create(Generators.genGame().sample.get)
             createdChallenger <- playerRepo.create(challenger)
             createdAcceptor <- playerRepo.create(acceptor)
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
@@ -26,7 +26,7 @@ class AcceptanceRepoSpec extends PropertySuite {
               Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
             )
             createdChallenge <- openChallengeRepo.create(challenge)
-            acceptance = Acceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdChallenge.characterId)
+            acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId)
             created <- acceptanceRepo.create(acceptance)
             found <- acceptanceRepo.read(created.challengeId, created.playerId)
           } yield found == Some(created)
@@ -46,7 +46,7 @@ class AcceptanceRepoSpec extends PropertySuite {
           val acceptanceRepo = new AcceptanceRepo(session)
 
           for {
-            createdGame <- gameRepo.create(Generators.genGame.sample.get)
+            createdGame <- gameRepo.create(Generators.genGame().sample.get)
             createdChallenger <- playerRepo.create(challenger)
             createdAcceptor <- playerRepo.create(acceptor)
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
@@ -54,7 +54,7 @@ class AcceptanceRepoSpec extends PropertySuite {
               Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
             )
             createdChallenge <- openChallengeRepo.create(challenge)
-            acceptance = Acceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdChallenge.characterId)
+            acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId)
             created <- acceptanceRepo.create(acceptance)
             found <- acceptanceRepo.readWithChallengeAndPlayers(created.challengeId, created.playerId)
           } yield found.contains((createdChallenge, createdAcceptor, createdChallenger))
@@ -74,7 +74,7 @@ class AcceptanceRepoSpec extends PropertySuite {
           val acceptanceRepo = new AcceptanceRepo(session)
 
           for {
-            createdGame <- gameRepo.create(Generators.genGame.sample.get)
+            createdGame <- gameRepo.create(Generators.genGame().sample.get)
             createdChallenger <- playerRepo.create(challenger)
             createdAcceptor <- playerRepo.create(acceptor)
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
@@ -100,7 +100,7 @@ class AcceptanceRepoSpec extends PropertySuite {
           val acceptanceRepo = new AcceptanceRepo(session)
 
           for {
-            createdGame <- gameRepo.create(Generators.genGame.sample.get)
+            createdGame <- gameRepo.create(Generators.genGame().sample.get)
             createdChallenger <- playerRepo.create(challenger)
             createdAcceptor <- playerRepo.create(acceptor)
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
@@ -113,12 +113,12 @@ class AcceptanceRepoSpec extends PropertySuite {
             second <- openChallengeRepo.create(
               Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
             )
-            _ <- acceptanceRepo.create(Acceptance(first.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId))
-            _ <- acceptanceRepo.create(Acceptance(second.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId))
+            _ <- acceptanceRepo.create(CharacterAcceptance(first.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId))
+            _ <- acceptanceRepo.create(CharacterAcceptance(second.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId))
 
             // The challenger accepts one of them too: its row must not appear in the acceptor's
             // list, which is the whole point of scoping the query by player.
-            _ <- acceptanceRepo.create(Acceptance(first.challengeId, createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId))
+            _ <- acceptanceRepo.create(CharacterAcceptance(first.challengeId, createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId))
 
             mine <- acceptanceRepo.listForPlayer(createdAcceptor.playerId)
           } yield mine.map(_.challengeId).toSet == Set(first.challengeId, second.challengeId) &&

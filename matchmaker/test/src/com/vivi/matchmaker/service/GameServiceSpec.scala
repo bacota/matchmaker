@@ -42,7 +42,7 @@ class GameServiceSpec extends PropertySuite {
     forAll(Generators.genString) { newName =>
       val result = for {
         admin <- makeAdmin()
-        game <- IO(Generators.genGame.sample.get)
+        game <- IO(Generators.genGame().sample.get)
         created <- gameService.createOrUpdate(admin.externalId, game)
         updated <- gameService.createOrUpdate(admin.externalId, created.copy(name = newName))
       } yield updated.gameId == created.gameId && updated.name == newName
@@ -54,7 +54,7 @@ class GameServiceSpec extends PropertySuite {
   property("createOrUpdate rejects an unknown user") {
     forAll(genUniqueString) { unknownExternalId =>
       val result = for {
-        game <- IO(Generators.genGame.sample.get)
+        game <- IO(Generators.genGame().sample.get)
         attempt <- gameService.createOrUpdate(unknownExternalId, game).attempt
       } yield attempt match {
         case Left(_: UnauthorizedError) => true
@@ -69,7 +69,7 @@ class GameServiceSpec extends PropertySuite {
     forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
       val result = for {
         _ <- registrationService.register(nickname, externalId)
-        game <- IO(Generators.genGame.sample.get)
+        game <- IO(Generators.genGame().sample.get)
         attempt <- gameService.createOrUpdate(externalId, game).attempt
       } yield attempt match {
         case Left(_: UnauthorizedError) => true
@@ -83,7 +83,7 @@ class GameServiceSpec extends PropertySuite {
   test("createOrUpdate rejects an update for a nonexistent game id") {
     val result = for {
       admin <- makeAdmin()
-      game <- IO(Generators.genGame.sample.get)
+      game <- IO(Generators.genGame().sample.get)
       nonexistent = game.copy(gameId = GameId(Int.MaxValue))
       attempt <- gameService.createOrUpdate(admin.externalId, nonexistent).attempt
     } yield attempt match {
@@ -111,7 +111,7 @@ class GameServiceSpec extends PropertySuite {
   test("list with activeOnly hides inactive games") {
     val result = for {
       admin <- makeAdmin()
-      inactive <- IO(Generators.genGame.sample.get.copy(active = false))
+      inactive <- IO(Generators.genGame().sample.get.copy(active = false))
       created <- gameService.createOrUpdate(admin.externalId, inactive)
       all <- gameService.list(admin.externalId)
       activeOnly <- gameService.list(admin.externalId, activeOnly = true)

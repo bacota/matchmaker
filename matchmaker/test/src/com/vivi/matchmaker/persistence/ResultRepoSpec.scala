@@ -30,7 +30,7 @@ class ResultRepoSpec extends PropertySuite {
                 .sample
                 .get
             )
-            result <- IO.pure(Generators.genResult(createdParticipant.participantId).sample.get)
+            result <- IO.pure(Generators.genResult(createdGame.gameId, createdParticipant.participantId).sample.get)
             created <- resultRepo.create(result)
             found <- resultRepo.read(created.participantId)
           } yield found == Some(created)

@@ -21,8 +21,22 @@ case class GameRole(
     optional: Boolean
 )
 
+/** Whether a game's challenges/acceptances/participants require an attached character.
+  * Mirrors the `game_type` discriminator column (`'C'`/`'P'`) that `game` and every table
+  * split into a `character_*` sibling (`open_challenge`, `acceptance`, `participant`) carry.
+  */
+enum GameType(val code: Char) {
+  case Character extends GameType('C')
+  case Plain extends GameType('P')
+}
+object GameType {
+  def fromCode(c: Char): GameType =
+    values.find(_.code == c).getOrElse(throw new IllegalArgumentException(s"unknown game_type code '$c'"))
+}
+
 case class Game(
     gameId: GameId,
+    gameType: GameType,
     name: String,
     description: String,
     url: String,

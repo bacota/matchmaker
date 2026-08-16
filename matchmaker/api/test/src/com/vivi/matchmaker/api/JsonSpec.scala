@@ -17,6 +17,7 @@ class JsonSpec extends FunSuite {
   test("a Game round-trips, including its existential parameters") {
     val game = Game(
       GameId(1),
+      GameType.Character,
       "name",
       "description",
       "url",
@@ -44,7 +45,7 @@ class JsonSpec extends FunSuite {
   }
 
   test("an OpenChallenge round-trips its Short, Instant and Duration fields") {
-    val challenge = OpenChallenge(
+    val challenge = CharacterOpenChallenge(
       ChallengeId(1),
       PlayerId(2),
       "message",
@@ -61,7 +62,7 @@ class JsonSpec extends FunSuite {
   test("a Duration is seconds and an Instant is ISO-8601") {
     val json = ujson.read(
       write(
-        OpenChallenge(
+        CharacterOpenChallenge(
           ChallengeId(1),
           PlayerId(2),
           "m",
@@ -89,7 +90,7 @@ class JsonSpec extends FunSuite {
       due = Some(Instant.ofEpochSecond(2000)),
       pending = true,
       participantId = ParticipantId(5),
-      characterId = CharacterId(6)
+      characterId = Some(CharacterId(6))
     )
     assertEquals(read[MatchSummary](write(summary)), summary)
   }
