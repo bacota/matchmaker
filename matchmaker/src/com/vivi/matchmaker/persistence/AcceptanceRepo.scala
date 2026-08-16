@@ -21,9 +21,15 @@ class AcceptanceRepo(session: Session[IO]) {
   private val insertAcceptance: Command[(ChallengeId, PlayerId, GameType, GameId)] =
     sql"INSERT INTO acceptance (challenge_id, player_id, game_type, game_id) VALUES ($challengeId, $playerId, $gameType, $gameId)".command
 
-  private val insertCharacterAcceptance: Command[(GameId, ChallengeId, PlayerId, CharacterId)] =
-    sql"""INSERT INTO character_acceptance (game_id, challenge_id, game_type, player_id, character_id)
-          VALUES ($gameId, $challengeId, 'C', $playerId, $characterId)""".command
+  // Atomic insert for a CharacterAcceptance: inserts both acceptance and character_acceptance in one statement.
+  private val insertCharacterAcceptance: Command[(ChallengeId, PlayerId, GameId, CharacterId)] =
+    sql"""WITH ins AS (
+          INSERT INTO acceptance (challenge_id, player_id, game_type, game_id)
+          VALUES ($challengeId, $playerId, 'C', $gameId)
+          RETURNING game_id, challenge_id, player_id
+        )
+        INSERT INTO character_acceptance (game_id, challenge_id, game_type, player_id, character_id)
+        SELECT game_id, challenge_id, 'C', player_id, $characterId FROM ins""".command
 
   private def toAcceptance(challengeId: ChallengeId, playerId: PlayerId, gameId: GameId, gameType: GameType, characterIdValue: Option[Long]): Acceptance =
     gameType match {
