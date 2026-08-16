@@ -133,7 +133,7 @@ create index participant_pending on participant(game_id, match_id, player_id) wh
 
 CREATE TABLE character_participant (
     game_id         INT NOT NULL,
-    participant_id BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY,
+    participant_id BIGINT NOT NULL,
     game_type CHAR(1) not null check (game_type = 'C'),
     character_id BIGINT NOT NULL,
     PRIMARY KEY (game_id, participant_id),
@@ -174,7 +174,7 @@ create index on open_challenge(challenger);
 
 CREATE TABLE character_open_challenge(
    game_id INT NOT NULL REFERENCES game,    
-   challenge_id BIGINT GENERATED ALWAYS AS IDENTITY,
+   challenge_id BIGINT,
    game_type CHAR(1) not null check (game_type = 'C'),
    character_id BIGINT NOT NULL,
    PRIMARY KEY(game_id, challenge_id),
