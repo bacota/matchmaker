@@ -51,7 +51,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
       val result = for {
         fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
         created <- challengeService.create(challengeFor(fixture, 3), externalId)
-      } yield created.numberOfPlayers == 3.toShort && created.asInstanceOf[CharacterOpenChallenge].characterId == fixture.character.characterId
+      } yield created match { case c: CharacterOpenChallenge => c.numberOfPlayers == 3.toShort && c.characterId == fixture.character.characterId; case _ => false }
       result.timeout(10.seconds).unsafeRunSync()
     }
   }
