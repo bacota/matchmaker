@@ -19,22 +19,26 @@ class Handler extends RequestStreamHandler {
 
   override def handleRequest(input: InputStream, output: OutputStream, context: Context): Unit = {
     val event = String(input.readAllBytes(), StandardCharsets.UTF_8)
+    val log = (msg: String) => Option(context).foreach(_.getLogger.log(msg))
 
     val response =
       try {
         val request = ApiGateway.decodeRequest(event)
-        Router
+        //log(s"handling ${request.method} ${request.path}")
+        val result = Router
           .dispatch(services, request, Handler.authenticator)
           .handleError { error =>
             // Router maps ServiceErrors itself; reaching here means something unexpected, so
             // the detail goes to CloudWatch and only a generic message goes to the caller.
-            Option(context).foreach(_.getLogger.log(s"unhandled error: $error"))
+            //log(s"unhandled error on ${request.method} ${request.path}: $error")
             Errors.toResponse(error)
           }
           .unsafeRunSync()
+        log(s"handled ${request.method} ${request.path} -> ${result.statusCode}")
+        result
       } catch {
         case error: Throwable =>
-          Option(context).foreach(_.getLogger.log(s"could not handle event: $error"))
+          log(s"could not handle event: $error")
           Errors.response(500, "internal error")
       }
 

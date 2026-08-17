@@ -2,12 +2,13 @@
 // decisions, and a change to one should be visible in a diff.
 
 // Small and cheap. Everything here is disposable.
-lambda_memory_mb   = 1024
+lambda_memory_mb   = 2048
 log_retention_days = 7
 
-// On in dev too, so that what prod does at a cold start is what dev exercises. Set it false if the
-// extra minute each apply spends snapshotting the JVM gets in the way.
-lambda_snap_start = true
+// Off for now: the snapshot isn't ready the moment an apply finishes, and a request that lands in
+// that window gets a 500 with nothing in the function's own logs to explain it. Set back to true
+// once that's worth working around again.
+lambda_snap_start = false
 
 // Off: advanced security is billed per monthly active user, and there is nothing in dev worth
 // protecting. Set to AUDIT to see the risk findings without paying for enforcement decisions.

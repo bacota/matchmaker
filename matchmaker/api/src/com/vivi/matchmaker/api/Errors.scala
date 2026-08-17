@@ -21,12 +21,15 @@ object Errors {
   /** Turns a failure into a response.
     *
     * Anything that is not a `ServiceError` is an infrastructure failure — a dropped connection,
-    * a bug — and its message could disclose internals, so only a generic message is returned.
-    * The real exception is left to the caller to log.
+    * a bug — and its message could disclose internals, so only a generic message is returned to
+    * the caller. The real exception is printed to stderr here (rather than left to the caller to
+    * log, which nothing was actually doing) so it lands in CloudWatch either way.
     */
   def toResponse(error: Throwable): Response = error match {
     case e: ServiceError => response(statusFor(e), e.getMessage)
-    case _               => response(500, "internal error")
+    case e =>
+      e.printStackTrace()
+      response(500, "internal error")
   }
 
   val unauthenticated: Response =
