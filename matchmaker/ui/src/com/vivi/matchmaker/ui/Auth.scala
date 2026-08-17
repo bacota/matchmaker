@@ -53,7 +53,9 @@ object Auth {
   /** An ID token that is good to send, refreshing first if the current one has run out.
     *
     * `None` means there is no session left — either nothing was stored, or the refresh token was
-    * rejected, in which case the stored session has already been cleared.
+    * rejected, in which case the stored session has already been cleared. A failed future means
+    * the refresh could not be attempted (Cognito unreachable, a 5xx); the session survives and
+    * the caller's request fails instead.
     */
   def freshIdToken(): Future[Option[String]] =
     idToken match {
@@ -73,9 +75,10 @@ object Auth {
 
   /** Exchanges the refresh token for a new ID token.
     *
-    * A refused refresh token is the end of the session — expired, revoked, or the player signed
-    * out elsewhere — so the stored session is cleared rather than retried. Cognito does not
-    * normally return a new refresh token here; one is stored if it does.
+    * `None`, with the stored session cleared, means the session is genuinely over (see
+    * `endsSession`). A failed future means this attempt did not get through and the session is
+    * still intact. Cognito does not normally return a new refresh token here; one is stored if
+    * it does.
     */
   private def refresh(token: String): Future[Option[String]] = {
     val form = new URLSearchParams()
@@ -84,14 +87,36 @@ object Auth {
     form.set("refresh_token", token)
 
     postToken(form)
-      .map { body =>
-        store(body)
-        idToken
+      .flatMap { body =>
+        // A 200 carrying no id_token is as much a dead end as a rejection: returning None while
+        // leaving the refresh token stored would refresh again on the next call, forever, and
+        // send every request unauthenticated in between.
+        Future.fromTry(idTokenOf(body)).map { fresh =>
+          store(body)
+          Some(fresh)
+        }
       }
-      .recover { case _ =>
-        clearSession()
-        None
+      .recoverWith {
+        case error if endsSession(error) =>
+          clearSession()
+          Future.successful(None)
       }
+  }
+
+  /** Whether a failed refresh means the session itself is over, rather than that this attempt did
+    * not get through.
+    *
+    * The distinction matters: clearing the session on a dropped connection or a Cognito 5xx would
+    * sign a player out mid-game over something that would have worked a second later. Those
+    * failures are left to propagate, so the call that triggered the refresh fails and can be
+    * retried with the session intact.
+    */
+  private def endsSession(error: Throwable): Boolean = error match {
+    // The refresh token is expired, revoked, or signed out elsewhere. Nothing to retry with.
+    case TokenError(400, body) => Try(ujson.read(body)("error").str).toOption.contains("invalid_grant")
+    // A 200 with no usable token in it. Retrying would loop, so this ends the session too.
+    case _: MalformedTokenResponse => true
+    case _                         => false
   }
 
   /** Sends the browser to the hosted UI. Does not return: the page navigates away.
@@ -215,8 +240,7 @@ object Auth {
       .flatMap(response => response.text().toFuture.map(body => (response.status, body)))
       .flatMap {
         case (200, body) => Future.successful(body)
-        case (status, body) =>
-          Future.failed(new IllegalStateException(s"token request failed ($status): $body"))
+        case (status, body) => Future.failed(TokenError(status, body))
       }
   }
 
@@ -230,8 +254,16 @@ object Auth {
 
   private def idTokenOf(body: String): Try[String] =
     Try(ujson.read(body)("id_token").str).recoverWith { case _ =>
-      Failure(new IllegalStateException("token response carried no id_token"))
+      Failure(MalformedTokenResponse())
     }
+
+  /** A non-200 from the token endpoint, keeping the status and body so the caller can tell a
+    * rejected token from an unreachable Cognito.
+    */
+  private case class TokenError(status: Int, body: String)
+      extends Exception(s"token request failed ($status): $body")
+
+  private case class MalformedTokenResponse() extends Exception("token response carried no id_token")
 
   /** True when the token's `exp` is still in the future, with a small margin so that a token
     * about to expire is not sent on a request that will outlive it.
