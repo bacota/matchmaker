@@ -182,7 +182,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
             new com.vivi.matchmaker.persistence.OpenChallengeRepo(session).read(fixture.game.gameId, created.challengeId)
           )
           remainingAcceptance <- TestSession.resource.use(session =>
-            new AcceptanceRepo(session).read(created.challengeId, accepterPlayer.playerId)
+            new AcceptanceRepo(session).read(fixture.game.gameId, created.challengeId, accepterPlayer.playerId)
           )
         } yield remainingChallenge.isEmpty && remainingAcceptance.isEmpty
         result.timeout(10.seconds).unsafeRunSync()

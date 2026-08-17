@@ -222,7 +222,7 @@ object Views {
             cls := "link",
             "Back out",
             onClick --> { _ =>
-              Store.run(ApiClient.withdraw(acceptance.challengeId, player.playerId)) { _ =>
+              Store.run(ApiClient.withdraw(acceptance.gameId, acceptance.challengeId, player.playerId)) { _ =>
                 Store.refreshMatches()
                 // The challenge is open again, so the game's list is stale if it is on screen.
                 if (Store.expandedGames.now().contains(acceptance.gameId))

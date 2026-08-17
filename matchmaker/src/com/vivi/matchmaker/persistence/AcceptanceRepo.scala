@@ -42,77 +42,79 @@ class AcceptanceRepo(session: Session[IO]) {
         PlainAcceptance(challengeId, playerId, gameId)
     }
 
-  // A trailing opaque-typed codec (GameId/CharacterId are opaque types defined in Ids.scala)
-  // defeats skunk's twiddle-list match-type resolution from outside that file, so the
-  // character_id column is decoded via the underlying int8 codec and mapped afterward instead.
-  private val selectAcceptance: Query[(ChallengeId, PlayerId), (GameType, GameId, Option[Long])] =
-    sql"""SELECT a.game_type, a.game_id, ca.character_id
+  // acceptance's primary key is the composite (game_id, challenge_id, player_id) — challenge_id
+  // and player_id alone do not identify a row — so game_id is required in every lookup below,
+  // not just challenge_id and player_id.
+  private val selectAcceptance: Query[(GameId, ChallengeId, PlayerId), (GameType, Option[Long])] =
+    sql"""SELECT a.game_type, ca.character_id
           FROM acceptance a
           LEFT JOIN character_acceptance ca
                  ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.player_id = a.player_id
-          WHERE a.challenge_id = $challengeId AND a.player_id = $playerId"""
-      .query(gameType *: gameId *: int8.opt)
+          WHERE a.game_id = $gameId AND a.challenge_id = $challengeId AND a.player_id = $playerId"""
+      .query(gameType *: int8.opt)
 
   // character_acceptance has a FK to acceptance, so its rows must go first — deleting the
   // parent row while a character_acceptance row still references it is a FK violation.
-  private val deleteCharacterAcceptancesByChallenge: Command[ChallengeId] =
-    sql"DELETE FROM character_acceptance WHERE challenge_id = $challengeId".command
+  private val deleteCharacterAcceptancesByChallenge: Command[(GameId, ChallengeId)] =
+    sql"DELETE FROM character_acceptance WHERE game_id = $gameId AND challenge_id = $challengeId".command
 
-  private val deleteByChallenge: Command[ChallengeId] =
-    sql"DELETE FROM acceptance WHERE challenge_id = $challengeId".command
+  private val deleteByChallenge: Command[(GameId, ChallengeId)] =
+    sql"DELETE FROM acceptance WHERE game_id = $gameId AND challenge_id = $challengeId".command
 
-  def deleteAllForChallenge(challengeId: ChallengeId): IO[Unit] =
+  def deleteAllForChallenge(gameId: GameId, challengeId: ChallengeId): IO[Unit] =
     for {
-      _ <- session.execute(deleteCharacterAcceptancesByChallenge)(challengeId)
-      _ <- session.execute(deleteByChallenge)(challengeId)
+      _ <- session.execute(deleteCharacterAcceptancesByChallenge)((gameId, challengeId))
+      _ <- session.execute(deleteByChallenge)((gameId, challengeId))
     } yield ()
 
-  private val deleteCharacterAcceptanceOne: Command[(ChallengeId, PlayerId)] =
-    sql"DELETE FROM character_acceptance WHERE challenge_id = $challengeId AND player_id = $playerId".command
+  private val deleteCharacterAcceptanceOne: Command[(GameId, ChallengeId, PlayerId)] =
+    sql"DELETE FROM character_acceptance WHERE game_id = $gameId AND challenge_id = $challengeId AND player_id = $playerId".command
 
-  private val deleteOne: Command[(ChallengeId, PlayerId)] =
-    sql"DELETE FROM acceptance WHERE challenge_id = $challengeId AND player_id = $playerId".command
+  private val deleteOne: Command[(GameId, ChallengeId, PlayerId)] =
+    sql"DELETE FROM acceptance WHERE game_id = $gameId AND challenge_id = $challengeId AND player_id = $playerId".command
 
-  def delete(challengeId: ChallengeId, playerId: PlayerId): IO[Unit] =
+  def delete(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId): IO[Unit] =
     for {
-      _ <- session.execute(deleteCharacterAcceptanceOne)((challengeId, playerId))
-      _ <- session.execute(deleteOne)((challengeId, playerId))
+      _ <- session.execute(deleteCharacterAcceptanceOne)((gameId, challengeId, playerId))
+      _ <- session.execute(deleteOne)((gameId, challengeId, playerId))
     } yield ()
 
-  private val countByChallenge: Query[ChallengeId, Long] =
-    sql"SELECT count(*) FROM acceptance WHERE challenge_id = $challengeId".query(int8)
+  private val countByChallenge: Query[(GameId, ChallengeId), Long] =
+    sql"SELECT count(*) FROM acceptance WHERE game_id = $gameId AND challenge_id = $challengeId".query(int8)
 
-  def countForChallenge(challengeId: ChallengeId): IO[Long] =
-    session.unique(countByChallenge)(challengeId)
+  def countForChallenge(gameId: GameId, challengeId: ChallengeId): IO[Long] =
+    session.unique(countByChallenge)((gameId, challengeId))
 
   private val playerRow: Codec[(String, Boolean, String)] = text *: bool *: text
 
+  // gameId is a query parameter here, not a selected column — the caller already knows it (it's
+  // how the row is looked up), so there's no need to round-trip it back out.
   private val acceptanceWithChallengeAndPlayersRow: Codec[
-    (GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, GameId, Option[Long],
+    (GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Option[Long],
       (String, Boolean, String), String, Boolean, String)
   ] =
-    gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: gameId *: int8.opt *:
+    gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: int8.opt *:
       playerRow *: text *: bool *: text
 
   private val selectAcceptanceWithChallengeAndPlayers = sql"""
     SELECT a.game_type, oc.challenger, oc.message, oc.number_of_players, oc.start,
-           EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.game_id, cc.character_id,
+           EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, cc.character_id,
            acceptor.nickname, acceptor.is_admin, acceptor.external_id,
            challenger.nickname, challenger.is_admin, challenger.external_id
     FROM acceptance a
-    JOIN open_challenge oc ON oc.challenge_id = a.challenge_id
+    JOIN open_challenge oc ON oc.game_id = a.game_id AND oc.challenge_id = a.challenge_id
     LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
     JOIN player acceptor ON acceptor.player_id = a.player_id
     JOIN player challenger ON challenger.player_id = oc.challenger
-    WHERE a.challenge_id = $challengeId AND a.player_id = $playerId"""
+    WHERE a.game_id = $gameId AND a.challenge_id = $challengeId AND a.player_id = $playerId"""
     .query(acceptanceWithChallengeAndPlayersRow)
 
   /** Reads, in one join query, everything needed to authorize deleting an acceptance: the
     * challenge it belongs to, the accepting player, and the challenger (the player who owns
     * the challenge).
     */
-  def readWithChallengeAndPlayers(challengeId: ChallengeId, playerId: PlayerId): IO[Option[(OpenChallenge, Player, Player)]] =
-    session.option(selectAcceptanceWithChallengeAndPlayers)((challengeId, playerId)).map(_.map {
+  def readWithChallengeAndPlayers(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId): IO[Option[(OpenChallenge, Player, Player)]] =
+    session.option(selectAcceptanceWithChallengeAndPlayers)((gameId, challengeId, playerId)).map(_.map {
       case (
             gameType,
             challenger,
@@ -121,7 +123,6 @@ class AcceptanceRepo(session: Session[IO]) {
             start,
             timeLimitSeconds,
             settings,
-            gameId,
             characterIdValue,
             (acceptorNickname, acceptorIsAdmin, acceptorExternalId),
             challengerNickname,
@@ -156,7 +157,9 @@ class AcceptanceRepo(session: Session[IO]) {
     *
     * An acceptance survives until the challenge becomes a match or the player backs out, so this
     * is what "what have I said yes to?" means — the UI needs it to offer backing out without
-    * first knowing which challenge to look under.
+    * first knowing which challenge to look under. Scoped by player_id alone rather than the full
+    * composite key deliberately: a player may have acceptances across many games, and listing
+    * "everything I've accepted" is exactly the case where the game isn't known ahead of time.
     */
   def listForPlayer(playerId: PlayerId): IO[List[Acceptance]] =
     session.execute(selectAcceptancesForPlayer)(playerId).map(_.map {
@@ -174,10 +177,10 @@ class AcceptanceRepo(session: Session[IO]) {
         session.execute(insertAcceptance)((a.challengeId, a.playerId, GameType.Plain, a.gameId)).as(a)
     }
 
-  def read(challengeId: ChallengeId, playerId: PlayerId): IO[Option[Acceptance]] =
+  def read(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId): IO[Option[Acceptance]] =
     session
-      .option(selectAcceptance)((challengeId, playerId))
-      .map(_.map { case (gt, gameId, characterIdValue) => toAcceptance(challengeId, playerId, gameId, gt, characterIdValue) })
+      .option(selectAcceptance)((gameId, challengeId, playerId))
+      .map(_.map { case (gt, characterIdValue) => toAcceptance(challengeId, playerId, gameId, gt, characterIdValue) })
 
   // Acceptance's only fields are the composite key (plus gameId/characterId, which are fixed
   // at creation), so there is nothing mutable to update. Provided for interface symmetry.

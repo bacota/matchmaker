@@ -77,8 +77,8 @@ object ApiClient {
     * also serves a challenger removing someone else's acceptance; the server still checks that
     * the caller is entitled to either.
     */
-  def withdraw(challengeId: ChallengeId, playerId: PlayerId): Future[Unit] =
-    sendUnit(HttpMethod.DELETE, s"/challenges/${challengeId.value}/acceptances/${playerId.value}", None)
+  def withdraw(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId): Future[Unit] =
+    sendUnit(HttpMethod.DELETE, s"/challenges/${gameId.value}/${challengeId.value}/acceptances/${playerId.value}", None)
 
   def createCharacter(
       gameId: GameId,

@@ -97,9 +97,11 @@ object Router {
           }
         }
 
-      case ("DELETE", "challenges" :: challengeId :: "acceptances" :: playerId :: Nil) =>
-        withChallengeId(challengeId) { challenge =>
-          withPlayerId(playerId)(player => noContent(services.acceptances.delete(challenge, player, caller)))
+      case ("DELETE", "challenges" :: gameId :: challengeId :: "acceptances" :: playerId :: Nil) =>
+        withGameId(gameId) { gid =>
+          withChallengeId(challengeId) { challenge =>
+            withPlayerId(playerId)(player => noContent(services.acceptances.delete(gid, challenge, player, caller)))
+          }
         }
 
       case _ => IO.pure(Errors.notFound)

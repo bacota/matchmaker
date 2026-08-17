@@ -84,7 +84,7 @@ class RouterSpec extends FunSuite {
   }
 
   test("a non-numeric player id in an acceptance path is a bad request") {
-    assertEquals(dispatch(request("DELETE", "/challenges/1/acceptances/abc")).statusCode, 400)
+    assertEquals(dispatch(request("DELETE", "/challenges/1/1/acceptances/abc")).statusCode, 400)
   }
 
   /** Bodies are serialized from real model values rather than hand-written JSON, so that a body
@@ -119,7 +119,7 @@ class RouterSpec extends FunSuite {
     ("POST", "/challenges", challengeBody),
     ("DELETE", "/challenges/1/1", "{}"),
     ("POST", "/challenges/1/1/acceptances", """{"characterId":1}"""),
-    ("DELETE", "/challenges/1/acceptances/2", "{}")
+    ("DELETE", "/challenges/1/1/acceptances/2", "{}")
   )
 
   test("every routed endpoint reaches a service rather than falling through to 404") {

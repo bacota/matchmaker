@@ -61,9 +61,11 @@ class AcceptanceServiceSpec extends PropertySuite {
       (nickname, externalId, accepterNickname, accepterExternalId) =>
         val result = for {
           setup <- setUp(nickname, externalId, accepterNickname, accepterExternalId)
-          (_, created, accepterPlayer, _) = setup
-          _ <- acceptanceService.delete(created.challengeId, accepterPlayer.playerId, accepterExternalId)
-          remaining <- TestSession.resource.use(session => new AcceptanceRepo(session).read(created.challengeId, accepterPlayer.playerId))
+          (fixture, created, accepterPlayer, _) = setup
+          _ <- acceptanceService.delete(fixture.game.gameId, created.challengeId, accepterPlayer.playerId, accepterExternalId)
+          remaining <- TestSession.resource.use(session =>
+            new AcceptanceRepo(session).read(fixture.game.gameId, created.challengeId, accepterPlayer.playerId)
+          )
         } yield remaining.isEmpty
         result.timeout(10.seconds).unsafeRunSync()
     }
@@ -74,9 +76,11 @@ class AcceptanceServiceSpec extends PropertySuite {
       (nickname, externalId, accepterNickname, accepterExternalId) =>
         val result = for {
           setup <- setUp(nickname, externalId, accepterNickname, accepterExternalId)
-          (_, created, accepterPlayer, _) = setup
-          _ <- acceptanceService.delete(created.challengeId, accepterPlayer.playerId, externalId)
-          remaining <- TestSession.resource.use(session => new AcceptanceRepo(session).read(created.challengeId, accepterPlayer.playerId))
+          (fixture, created, accepterPlayer, _) = setup
+          _ <- acceptanceService.delete(fixture.game.gameId, created.challengeId, accepterPlayer.playerId, externalId)
+          remaining <- TestSession.resource.use(session =>
+            new AcceptanceRepo(session).read(fixture.game.gameId, created.challengeId, accepterPlayer.playerId)
+          )
         } yield remaining.isEmpty
         result.timeout(10.seconds).unsafeRunSync()
     }
@@ -87,8 +91,8 @@ class AcceptanceServiceSpec extends PropertySuite {
       (nickname, externalId, accepterNickname, accepterExternalId, otherExternalId) =>
         val result = for {
           setup <- setUp(nickname, externalId, accepterNickname, accepterExternalId)
-          (_, created, accepterPlayer, _) = setup
-          attempt <- acceptanceService.delete(created.challengeId, accepterPlayer.playerId, otherExternalId).attempt
+          (fixture, created, accepterPlayer, _) = setup
+          attempt <- acceptanceService.delete(fixture.game.gameId, created.challengeId, accepterPlayer.playerId, otherExternalId).attempt
         } yield attempt match {
           case Left(_: UnauthorizedError) => true
           case _                          => false
@@ -104,7 +108,7 @@ class AcceptanceServiceSpec extends PropertySuite {
           fixture <- makeFixture(nickname, externalId)
           created <- challengeService.create(challengeFor(fixture, 3), externalId)
           other <- registrationService.register(otherNickname, otherExternalId)
-          attempt <- acceptanceService.delete(created.challengeId, other.playerId, otherExternalId).attempt
+          attempt <- acceptanceService.delete(fixture.game.gameId, created.challengeId, other.playerId, otherExternalId).attempt
         } yield attempt match {
           case Left(_: NotFoundError) => true
           case _                      => false

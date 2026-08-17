@@ -28,7 +28,7 @@ class AcceptanceRepoSpec extends PropertySuite {
             createdChallenge <- openChallengeRepo.create(challenge)
             acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId)
             created <- acceptanceRepo.create(acceptance)
-            found <- acceptanceRepo.read(created.challengeId, created.playerId)
+            found <- acceptanceRepo.read(createdGame.gameId, created.challengeId, created.playerId)
           } yield found == Some(created)
         }
         .unsafeRunSync()
@@ -62,7 +62,7 @@ class AcceptanceRepoSpec extends PropertySuite {
             createdChallenge <- openChallengeRepo.create(challenge)
             acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId)
             _ <- acceptanceRepo.create(acceptance)
-            count <- acceptanceRepo.countForChallenge(createdChallenge.challengeId)
+            count <- acceptanceRepo.countForChallenge(createdGame.gameId, createdChallenge.challengeId)
           } yield count == 1L
         }
         .unsafeRunSync()
@@ -90,7 +90,7 @@ class AcceptanceRepoSpec extends PropertySuite {
             createdChallenge <- openChallengeRepo.create(challenge)
             acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId)
             created <- acceptanceRepo.create(acceptance)
-            found <- acceptanceRepo.readWithChallengeAndPlayers(created.challengeId, created.playerId)
+            found <- acceptanceRepo.readWithChallengeAndPlayers(createdGame.gameId, created.challengeId, created.playerId)
           } yield found.contains((createdChallenge, createdAcceptor, createdChallenger))
         }
         .unsafeRunSync()
@@ -116,7 +116,7 @@ class AcceptanceRepoSpec extends PropertySuite {
               Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
             )
             createdChallenge <- openChallengeRepo.create(challenge)
-            found <- acceptanceRepo.readWithChallengeAndPlayers(createdChallenge.challengeId, createdAcceptor.playerId)
+            found <- acceptanceRepo.readWithChallengeAndPlayers(createdGame.gameId, createdChallenge.challengeId, createdAcceptor.playerId)
           } yield found.isEmpty
         }
         .unsafeRunSync()
