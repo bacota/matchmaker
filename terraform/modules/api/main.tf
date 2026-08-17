@@ -250,9 +250,9 @@ locals {
     "PUT /characters/{characterId}/state",
 
     "POST /challenges",
-    "DELETE /challenges/{challengeId}",
-    "POST /challenges/{challengeId}/acceptances",
-    "DELETE /challenges/{challengeId}/acceptances/{playerId}",
+    "DELETE /challenges/{gameId}/{challengeId}",
+    "POST /challenges/{gameId}/{challengeId}/acceptances",
+    "DELETE /challenges/{gameId}/{challengeId}/acceptances/{playerId}",
   ]
 }
 
