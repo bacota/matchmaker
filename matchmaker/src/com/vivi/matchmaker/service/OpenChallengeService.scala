@@ -74,15 +74,16 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
       } yield created
     }
 
-  /** Accepts `challengeId`, authorized by `callerExternalId`. For a `'C'`-type game's challenge,
-    * `characterId` must be `Some`, naming the character accepting on the caller's behalf, and is
-    * authorized the same way `create` authorizes a [[CharacterOpenChallenge]]. For a `'P'`-type
-    * game's challenge, `characterId` must be `None`, and the caller accepts as themselves. The
-    * challenge row is locked (`FOR UPDATE`) before counting existing acceptances, so that the
-    * capacity check (acceptances, including this one, must not exceed the challenge's
-    * numberOfPlayers) is race-free against concurrent acceptance attempts.
+  /** Accepts `challengeId` in game `gameId`, authorized by `callerExternalId`. For a `'C'`-type
+    * game's challenge, `characterId` must be `Some`, naming the character accepting on the
+    * caller's behalf, and is authorized the same way `create` authorizes a
+    * [[CharacterOpenChallenge]]. For a `'P'`-type game's challenge, `characterId` must be `None`,
+    * and the caller accepts as themselves. The challenge row is locked (`FOR UPDATE`) before
+    * counting existing acceptances, so that the capacity check (acceptances, including this one,
+    * must not exceed the challenge's numberOfPlayers) is race-free against concurrent acceptance
+    * attempts.
     */
-  def accept(challengeId: ChallengeId, characterId: Option[CharacterId], callerExternalId: String): IO[Acceptance] =
+  def accept(gameId: GameId, challengeId: ChallengeId, characterId: Option[CharacterId], callerExternalId: String): IO[Acceptance] =
     sessionPool.use { session =>
       val characterRepo = new CharacterRepo[T](session)
       val playerRepo = new PlayerRepo(session)
@@ -90,11 +91,11 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
       val acceptanceRepo = new AcceptanceRepo(session)
       session.transaction.use { _ =>
         for {
-          challengeInfo <- challengeRepo.readForUpdate(challengeId).flatMap {
+          challengeInfo <- challengeRepo.readForUpdate(gameId, challengeId).flatMap {
             case Some(t) => IO.pure(t)
-            case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value}"))
+            case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
           }
-          (challengeGameId, gameType, maxPlayers) = challengeInfo
+          (gameType, maxPlayers) = challengeInfo
           acceptance <- (gameType, characterId) match {
             case (GameType.Character, Some(cid)) =>
               for {
@@ -106,13 +107,13 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
                 _ <- IO.raiseUnless(callerExternalId == owner.externalId)(
                   UnauthorizedError(s"caller '$callerExternalId' may not accept challenge ${challengeId.value} for character ${cid.value}")
                 )
-                _ <- IO.raiseUnless(game.gameId == challengeGameId)(
+                _ <- IO.raiseUnless(game.gameId == gameId)(
                   ValidationError(s"character ${cid.value} is not from the same game as challenge ${challengeId.value}")
                 )
-              } yield CharacterAcceptance(challengeId, owner.playerId, game.gameId, cid): Acceptance
+              } yield CharacterAcceptance(challengeId, owner.playerId, gameId, cid): Acceptance
             case (GameType.Plain, None) =>
               playerRepo.readByExternalId(callerExternalId).flatMap {
-                case Some(player) => IO.pure(PlainAcceptance(challengeId, player.playerId, challengeGameId): Acceptance)
+                case Some(player) => IO.pure(PlainAcceptance(challengeId, player.playerId, gameId): Acceptance)
                 case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
               }
             case (GameType.Character, None) =>
@@ -143,7 +144,7 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
       } yield challenges
     }
 
-  def delete(challengeId: ChallengeId, callerExternalId: String): IO[Unit] =
+  def delete(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Unit] =
     sessionPool.use { session =>
       val characterRepo = new CharacterRepo[T](session)
       val playerRepo = new PlayerRepo(session)
@@ -151,9 +152,9 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
       val acceptanceRepo = new AcceptanceRepo(session)
       session.transaction.use { _ =>
         for {
-          challenge <- challengeRepo.read(challengeId).flatMap {
+          challenge <- challengeRepo.read(gameId, challengeId).flatMap {
             case Some(c) => IO.pure(c)
-            case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value}"))
+            case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
           }
           _ <- challenge match {
             case cc: CharacterOpenChallenge =>
@@ -172,7 +173,7 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
               }
           }
           _ <- acceptanceRepo.deleteAllForChallenge(challengeId)
-          _ <- challengeRepo.delete(challengeId)
+          _ <- challengeRepo.delete(gameId, challengeId)
         } yield ()
       }
     }

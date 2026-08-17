@@ -23,7 +23,7 @@ class OpenChallengeRepoSpec extends PropertySuite {
               Generators.genOpenChallenge(createdPlayer.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
             )
             created <- openChallengeRepo.create(challenge)
-            found <- openChallengeRepo.read(created.challengeId)
+            found <- openChallengeRepo.read(createdGame.gameId, created.challengeId)
           } yield found == Some(created)
         }
         .unsafeRunSync()

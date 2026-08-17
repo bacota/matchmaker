@@ -475,7 +475,7 @@ object Views {
       button(
         "Delete",
         onClick --> { _ =>
-          Store.run(ApiClient.deleteChallenge(challenge.challengeId))(_ => Store.refreshChallenges(game.gameId))
+          Store.run(ApiClient.deleteChallenge(game.gameId, challenge.challengeId))(_ => Store.refreshChallenges(game.gameId))
         }
       )
     )
@@ -488,7 +488,7 @@ object Views {
       button(
         "Accept",
         onClick --> { _ =>
-          Store.run(ApiClient.accept(challenge.challengeId, characterId)) { _ =>
+          Store.run(ApiClient.accept(game.gameId, challenge.challengeId, characterId)) { _ =>
             // Accepting may complete the challenge into a match, which changes the match lists as
             // well as this one, so both are reloaded.
             Store.refreshChallenges(game.gameId)

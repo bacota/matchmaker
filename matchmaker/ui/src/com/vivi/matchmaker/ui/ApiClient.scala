@@ -63,13 +63,13 @@ object ApiClient {
   def createChallenge(challenge: OpenChallenge): Future[OpenChallenge] =
     send[OpenChallenge](HttpMethod.POST, "/challenges", Some(write(challenge)))
 
-  def deleteChallenge(challengeId: ChallengeId): Future[Unit] =
-    sendUnit(HttpMethod.DELETE, s"/challenges/${challengeId.value}", None)
+  def deleteChallenge(gameId: GameId, challengeId: ChallengeId): Future[Unit] =
+    sendUnit(HttpMethod.DELETE, s"/challenges/${gameId.value}/${challengeId.value}", None)
 
-  def accept(challengeId: ChallengeId, characterId: Option[CharacterId]): Future[Acceptance] =
+  def accept(gameId: GameId, challengeId: ChallengeId, characterId: Option[CharacterId]): Future[Acceptance] =
     send[Acceptance](
       HttpMethod.POST,
-      s"/challenges/${challengeId.value}/acceptances",
+      s"/challenges/${gameId.value}/${challengeId.value}/acceptances",
       Some(write(Json.AcceptRequest(characterId)))
     )
 

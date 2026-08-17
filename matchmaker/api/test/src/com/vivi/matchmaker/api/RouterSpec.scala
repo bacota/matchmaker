@@ -117,8 +117,8 @@ class RouterSpec extends FunSuite {
     ("PUT", "/characters/1", """{"name":"n","description":"d","externalId":"sub-1"}"""),
     ("PUT", "/characters/1/state", """{"state":"s"}"""),
     ("POST", "/challenges", challengeBody),
-    ("DELETE", "/challenges/1", "{}"),
-    ("POST", "/challenges/1/acceptances", """{"characterId":1}"""),
+    ("DELETE", "/challenges/1/1", "{}"),
+    ("POST", "/challenges/1/1/acceptances", """{"characterId":1}"""),
     ("DELETE", "/challenges/1/acceptances/2", "{}")
   )
 

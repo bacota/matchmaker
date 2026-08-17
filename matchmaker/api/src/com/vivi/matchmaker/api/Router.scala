@@ -83,13 +83,17 @@ object Router {
       case ("POST", "challenges" :: Nil) =>
         body[OpenChallenge](request).flatMap(c => created(services.challenges.create(c, caller)))
 
-      case ("DELETE", "challenges" :: challengeId :: Nil) =>
-        withChallengeId(challengeId)(id => noContent(services.challenges.delete(id, caller)))
+      case ("DELETE", "challenges" :: gameId :: challengeId :: Nil) =>
+        withGameId(gameId) { gid =>
+          withChallengeId(challengeId)(id => noContent(services.challenges.delete(gid, id, caller)))
+        }
 
-      case ("POST", "challenges" :: challengeId :: "acceptances" :: Nil) =>
-        withChallengeId(challengeId) { id =>
-          body[Json.AcceptRequest](request).flatMap { r =>
-            created(services.challenges.accept(id, r.characterId, caller))
+      case ("POST", "challenges" :: gameId :: challengeId :: "acceptances" :: Nil) =>
+        withGameId(gameId) { gid =>
+          withChallengeId(challengeId) { id =>
+            body[Json.AcceptRequest](request).flatMap { r =>
+              created(services.challenges.accept(gid, id, r.characterId, caller))
+            }
           }
         }
 

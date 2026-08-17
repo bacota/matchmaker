@@ -53,7 +53,7 @@ class AcceptanceServiceSpec extends PropertySuite {
       created <- challengeService.create(challengeFor(fixture, 3), externalId)
       accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
       (accepterPlayer, accepterCharacter) = accepter
-      accepted <- challengeService.accept(created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
+      accepted <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
     } yield (fixture, created, accepterPlayer, accepted)
 
   property("delete removes the acceptance when called by the acceptor") {

@@ -103,7 +103,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 3), externalId)
           accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
           (accepterPlayer, accepterCharacter) = accepter
-          accepted <- challengeService.accept(created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
+          accepted <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
         } yield accepted.challengeId == created.challengeId &&
           accepted.asInstanceOf[CharacterAcceptance].characterId == accepterCharacter.characterId &&
           accepted.playerId == accepterPlayer.playerId
@@ -119,7 +119,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 3), externalId)
           accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
           (_, accepterCharacter) = accepter
-          attempt <- challengeService.accept(created.challengeId, Some(accepterCharacter.characterId), otherExternalId).attempt
+          attempt <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), otherExternalId).attempt
         } yield attempt match {
           case Left(_: UnauthorizedError) => true
           case _                          => false
@@ -136,7 +136,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 3), externalId)
           otherGameFixture <- makeFixture(accepterNickname, accepterExternalId, minPlayers = 2, maxPlayers = 4)
           attempt <- challengeService
-            .accept(created.challengeId, Some(otherGameFixture.character.characterId), accepterExternalId)
+            .accept(fixture.game.gameId, created.challengeId, Some(otherGameFixture.character.characterId), accepterExternalId)
             .attempt
         } yield attempt match {
           case Left(_: ValidationError) => true
@@ -153,9 +153,9 @@ class OpenChallengeServiceSpec extends PropertySuite {
           fixture <- makeFixture(nickname, externalId, minPlayers = 1, maxPlayers = 4)
           created <- challengeService.create(challengeFor(fixture, 1), externalId)
           first <- makeCharacterInGame(fixture.game, firstNickname, firstExternalId)
-          _ <- challengeService.accept(created.challengeId, Some(first._2.characterId), firstExternalId)
+          _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(first._2.characterId), firstExternalId)
           second <- makeCharacterInGame(fixture.game, secondNickname, secondExternalId)
-          attempt <- challengeService.accept(created.challengeId, Some(second._2.characterId), secondExternalId).attempt
+          attempt <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(second._2.characterId), secondExternalId).attempt
         } yield attempt match {
           case Left(_: ValidationError) => true
           case _                        => false
@@ -177,8 +177,10 @@ class OpenChallengeServiceSpec extends PropertySuite {
               CharacterAcceptance(created.challengeId, accepterPlayer.playerId, fixture.game.gameId, accepterCharacter.characterId)
             )
           }
-          _ <- challengeService.delete(created.challengeId, externalId)
-          remainingChallenge <- TestSession.resource.use(session => new com.vivi.matchmaker.persistence.OpenChallengeRepo(session).read(created.challengeId))
+          _ <- challengeService.delete(fixture.game.gameId, created.challengeId, externalId)
+          remainingChallenge <- TestSession.resource.use(session =>
+            new com.vivi.matchmaker.persistence.OpenChallengeRepo(session).read(fixture.game.gameId, created.challengeId)
+          )
           remainingAcceptance <- TestSession.resource.use(session =>
             new AcceptanceRepo(session).read(created.challengeId, accepterPlayer.playerId)
           )
@@ -216,7 +218,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
       val result = for {
         fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
         created <- challengeService.create(challengeFor(fixture, 3), externalId)
-        attempt <- challengeService.delete(created.challengeId, otherExternalId).attempt
+        attempt <- challengeService.delete(fixture.game.gameId, created.challengeId, otherExternalId).attempt
       } yield attempt match {
         case Left(_: UnauthorizedError) => true
         case _                          => false
