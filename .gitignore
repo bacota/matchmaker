@@ -12,6 +12,7 @@ out
 # account fact, so these are committed while *.tfvars is not.
 !*.settings.tfvars
 crash.log
+flyway-dev.sh
 
 # Scala.js output symlinked next to index.html for local serving.
 matchmaker/ui/main.js

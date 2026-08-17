@@ -32,7 +32,10 @@ object matchmaker extends ScalaModule {
         ("junit", "junit"),
         ("org.hamcrest", "hamcrest-core")
       ),
-    mvn"org.tpolecat::natchez-core:0.3.10"
+    mvn"org.tpolecat::natchez-core:0.3.10",
+    // For the jsonb columns this module reads and writes as structured data (result.scores).
+    // Already inside the deployed jar by way of `api`, so this costs nothing there.
+    mvn"com.lihaoyi::upickle:4.0.2"
   )
 
   object test extends ScalaTests with TestModule.Munit {

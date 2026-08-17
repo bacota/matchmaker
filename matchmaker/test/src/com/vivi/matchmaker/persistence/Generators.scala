@@ -75,8 +75,19 @@ object Generators {
   def genResult(gameId: GameId, participantId: ParticipantId): Gen[Result] =
     for {
       rank <- Gen.choose(1, 100)
-      score <- Gen.choose(0.0, 1000.0)
-    } yield Result(gameId, participantId, rank, score)
+      scores <- genScores
+      isWinner <- Gen.oneOf(true, false)
+    } yield Result(gameId, participantId, rank, scores, isWinner)
+
+  /* Values are restricted to the shapes a jsonb round trip preserves exactly: a Double comes
+   * back a Double, but an Int would come back a Double too, so ints are not generated here. */
+  private def genScores: Gen[Map[String, Any]] =
+    Gen.mapOf(
+      for {
+        key <- genString
+        value <- Gen.oneOf[Any](Gen.choose(0.0, 1000.0), genString, Gen.oneOf(true, false))
+      } yield key -> value
+    )
 
   def genOpenChallenge(challenger: PlayerId, gameId: GameId, characterId: CharacterId): Gen[OpenChallenge] =
     for {
