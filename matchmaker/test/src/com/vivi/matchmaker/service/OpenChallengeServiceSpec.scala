@@ -143,7 +143,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 3), externalId)
           accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
           (accepterPlayer, accepterCharacter) = accepter
-          accepted <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
+          accepted <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), None, accepterExternalId)
         } yield accepted.challengeId == created.challengeId &&
           accepted.asInstanceOf[CharacterAcceptance].characterId == accepterCharacter.characterId &&
           accepted.playerId == accepterPlayer.playerId
@@ -159,7 +159,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 3), externalId)
           accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
           (_, accepterCharacter) = accepter
-          attempt <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), otherExternalId).attempt
+          attempt <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), None, otherExternalId).attempt
         } yield attempt match {
           case Left(_: UnauthorizedError) => true
           case _                          => false
@@ -176,7 +176,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 3), externalId)
           otherGameFixture <- makeFixture(accepterNickname, accepterExternalId, minPlayers = 2, maxPlayers = 4)
           attempt <- challengeService
-            .accept(fixture.game.gameId, created.challengeId, Some(otherGameFixture.character.characterId), accepterExternalId)
+            .accept(fixture.game.gameId, created.challengeId, Some(otherGameFixture.character.characterId), None, accepterExternalId)
             .attempt
         } yield attempt match {
           case Left(_: ValidationError) => true
@@ -195,9 +195,9 @@ class OpenChallengeServiceSpec extends PropertySuite {
           // one-player challenge is already full and nobody could accept it at all.
           created <- challengeService.create(challengeFor(fixture, 2), externalId)
           first <- makeCharacterInGame(fixture.game, firstNickname, firstExternalId)
-          _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(first._2.characterId), firstExternalId)
+          _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(first._2.characterId), None, firstExternalId)
           second <- makeCharacterInGame(fixture.game, secondNickname, secondExternalId)
-          attempt <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(second._2.characterId), secondExternalId).attempt
+          attempt <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(second._2.characterId), None, secondExternalId).attempt
         } yield attempt match {
           case Left(_: ValidationError) => true
           case _                        => false
@@ -217,9 +217,9 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 2), externalId)
           accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
           (_, accepterCharacter) = accepter
-          _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
+          _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), None, accepterExternalId)
           attempt <- challengeService
-            .accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
+            .accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), None, accepterExternalId)
             .attempt
         } yield attempt match {
           case Left(_: ConflictError) => true

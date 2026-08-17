@@ -66,12 +66,32 @@ object ApiClient {
   def deleteChallenge(gameId: GameId, challengeId: ChallengeId): Future[Unit] =
     sendUnit(HttpMethod.DELETE, s"/challenges/${gameId.value}/${challengeId.value}", None)
 
-  def accept(gameId: GameId, challengeId: ChallengeId, characterId: Option[CharacterId]): Future[Acceptance] =
+  def accept(
+      gameId: GameId,
+      challengeId: ChallengeId,
+      characterId: Option[CharacterId],
+      gameRoleId: Option[GameRoleId] = None
+  ): Future[Acceptance] =
     send[Acceptance](
       HttpMethod.POST,
       s"/challenges/${gameId.value}/${challengeId.value}/acceptances",
-      Some(write(Json.AcceptRequest(characterId)))
+      Some(write(Json.AcceptRequest(characterId, gameRoleId)))
     )
+
+  /** Turns the caller's own challenge into a match: the server asks the game engine to create the
+    * game and answers with the match, including the url the player plays it at.
+    */
+  def startChallenge(gameId: GameId, challengeId: ChallengeId): Future[Match] =
+    send[Match](HttpMethod.POST, s"/challenges/${gameId.value}/${challengeId.value}/start", None)
+
+  def matchDetail(gameId: GameId, matchId: MatchId): Future[Match] =
+    get[Match](s"/games/${gameId.value}/matches/${matchId.value}")
+
+  /** Asks the server to re-check the match with the game engine, for when a callback has gone
+    * missing and matchmaker's idea of whose turn it is has fallen behind.
+    */
+  def refreshMatch(gameId: GameId, matchId: MatchId): Future[Match] =
+    send[Match](HttpMethod.POST, s"/games/${gameId.value}/matches/${matchId.value}/refresh", None)
 
   /** Backs out of a challenge already accepted. The player id is in the path because the route
     * also serves a challenger removing someone else's acceptance; the server still checks that

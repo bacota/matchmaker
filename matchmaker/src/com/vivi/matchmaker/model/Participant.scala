@@ -13,6 +13,9 @@ sealed trait Participant {
   def pending: Boolean
   def completed: Boolean
   def due: Option[Instant]
+
+  /** The role this seat plays, carried over from the acceptance the participant was made from. */
+  def gameRoleId: Option[GameRoleId]
 }
 
 case class PlainParticipant(
@@ -22,7 +25,8 @@ case class PlainParticipant(
     playerId: PlayerId,
     pending: Boolean,
     completed: Boolean,
-    due: Option[Instant]
+    due: Option[Instant],
+    gameRoleId: Option[GameRoleId] = None
 ) extends Participant
 
 case class CharacterParticipant(
@@ -33,5 +37,6 @@ case class CharacterParticipant(
     pending: Boolean,
     completed: Boolean,
     due: Option[Instant],
-    characterId: CharacterId
+    characterId: CharacterId,
+    gameRoleId: Option[GameRoleId] = None
 ) extends Participant

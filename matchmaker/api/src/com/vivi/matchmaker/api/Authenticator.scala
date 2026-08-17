@@ -55,6 +55,45 @@ object Authenticator {
         .toRight(Errors.unauthenticatedToken)
   }
 
+  /** Takes the caller's identity from the IAM principal API Gateway verified the signature of.
+    *
+    * This is how the game engine's callbacks are authenticated. An `AWS_IAM`-authorized route
+    * rejects an unsigned or wrongly-signed request before the function is invoked, so what
+    * arrives here is a principal the gateway has already established — the same argument
+    * [[GatewayClaims]] makes about a verified token.
+    *
+    * The identity is the *role*, not the session: a role assumed twice produces two different
+    * session ARNs, so `arn:aws:sts::123:assumed-role/game-engine/i-0abc` is normalized to
+    * `arn:aws:iam::123:role/game-engine`. That is the value an administrator records as the
+    * game's `externalId`, which is what the services compare a game-authorized caller against.
+    */
+  object GatewayIam extends Authenticator {
+    def callerOf(request: Request): Either[Response, String] =
+      request.iam
+        .map(_.roleArn)
+        .filter(_.nonEmpty)
+        .toRight(Errors.unauthenticated)
+  }
+
+  /** The deployed authenticator: whichever authorizer actually ran decides how the caller is
+    * identified.
+    *
+    * A route in API Gateway carries exactly one authorizer, so the event says unambiguously which
+    * kind of caller this is: the player routes carry the Cognito JWT authorizer and arrive with
+    * claims, and the game engine's callback routes are `AWS_IAM` and arrive with a principal.
+    * Routing on the event rather than on the path means the two cannot drift apart — the function
+    * cannot decide a request is a game callback when the gateway authenticated it as a player.
+    *
+    * Neither present is still unauthenticated, which is what keeps a route accidentally left open
+    * from being admitted here.
+    */
+  object Gateway extends Authenticator {
+    def callerOf(request: Request): Either[Response, String] =
+      if (request.claims.nonEmpty) GatewayClaims.callerOf(request)
+      else if (request.iam.isDefined) GatewayIam.callerOf(request)
+      else Left(Errors.unauthenticatedToken)
+  }
+
   /* One further implementation is expected, and is part of why this is an interface rather than a
    * method on Router:
    *

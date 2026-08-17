@@ -58,13 +58,14 @@ object Handler {
 
   /** How the caller is identified, chosen by `AUTH_MODE`.
     *
-    * The terraform sets this to `gateway`, so a deployed function trusts only claims from the
-    * Cognito JWT authorizer. The default is deliberately the *other* way round: an unset variable
+    * The terraform sets this to `gateway`, so a deployed function trusts only what an authorizer
+    * in front of it established: a claim from the Cognito JWT authorizer on the player routes, or
+    * the signing principal on the `AWS_IAM` routes the game engine calls back on. The default is deliberately the *other* way round: an unset variable
     * means no infrastructure was involved, and a function that fell back to trusting a header
     * would turn a terraform mistake into an open API. Failing loudly is the safe default here.
     */
   val authenticator: Authenticator = sys.env.getOrElse("AUTH_MODE", "gateway") match {
-    case "gateway" => Authenticator.GatewayClaims
+    case "gateway" => Authenticator.Gateway
     case "header"  => Authenticator.TrustedHeader
     case other     => throw new IllegalStateException(s"unknown AUTH_MODE '$other'; expected 'gateway' or 'header'")
   }

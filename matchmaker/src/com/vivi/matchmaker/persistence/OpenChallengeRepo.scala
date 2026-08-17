@@ -15,6 +15,7 @@ class OpenChallengeRepo(session: Session[IO]) {
   private val gameId = SkunkIdCodecs.gameId
   private val characterId = SkunkIdCodecs.characterId
   private val gameType = SkunkCodecs.gameType
+  private val gameRoleId = SkunkIdCodecs.gameRoleId
   private val instant = SkunkCodecs.instant
   private val settings: Codec[String] = SkunkCodecs.jsonb
 
@@ -22,9 +23,11 @@ class OpenChallengeRepo(session: Session[IO]) {
   private def fromSeconds(s: Option[Double]): Option[Duration] = s.map(v => Duration.ofSeconds(v.toLong))
 
   private val insertChallenge
-      : Query[(GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, GameId), ChallengeId] =
-    sql"""INSERT INTO open_challenge (game_type, challenger, message, number_of_players, start, time_limit, settings, game_id)
-          VALUES ($gameType, $playerId, $text, $int2, ${instant.opt}, ${float8.opt} * INTERVAL '1 second', $settings, $gameId)
+      : Query[(GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, GameId, Boolean, Option[GameRoleId]), ChallengeId] =
+    sql"""INSERT INTO open_challenge (game_type, challenger, message, number_of_players, start, time_limit,
+                                      settings, game_id, public, game_role_id)
+          VALUES ($gameType, $playerId, $text, $int2, ${instant.opt}, ${float8.opt} * INTERVAL '1 second',
+                  $settings, $gameId, $bool, ${gameRoleId.opt})
           RETURNING challenge_id""".query(challengeId)
 
   private val insertCharacterChallenge: Command[(GameId, ChallengeId, CharacterId)] =
@@ -35,24 +38,24 @@ class OpenChallengeRepo(session: Session[IO]) {
   // outside Ids.scala (see AcceptanceRepo's gameAndCharacterId comment); characterId is decoded
   // as a raw int8 here and wrapped afterward for the same reason.
   private val challengeRow: Codec[
-    (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Option[Long])
+    (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long])
   ] =
-    gameType *: gameId *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: int8.opt
+    gameType *: gameId *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId.opt *: int8.opt
 
   private def toChallenge(
       id: ChallengeId,
-      row: (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Option[Long])
+      row: (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long])
   ): OpenChallenge = {
-    val (gameType, gameId, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, characterIdValue) = row
+    val (gameType, gameId, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue) = row
     val timeLimit = fromSeconds(timeLimitSeconds)
     gameType match {
       case GameType.Character =>
         val cid = characterIdValue.getOrElse(
           throw new IllegalStateException(s"open_challenge ${id.value} is game_type 'C' but has no character_open_challenge row")
         )
-        CharacterOpenChallenge(id, challenger, message, numberOfPlayers, start, timeLimit, settings, gameId, CharacterId(cid))
+        CharacterOpenChallenge(id, challenger, message, numberOfPlayers, start, timeLimit, settings, gameId, CharacterId(cid), isPublic, roleId)
       case GameType.Plain =>
-        PlainOpenChallenge(id, challenger, message, numberOfPlayers, start, timeLimit, settings, gameId)
+        PlainOpenChallenge(id, challenger, message, numberOfPlayers, start, timeLimit, settings, gameId, isPublic, roleId)
     }
   }
 
@@ -60,10 +63,10 @@ class OpenChallengeRepo(session: Session[IO]) {
   // is not declared unique — so both columns are required here, not challenge_id alone.
   private val selectChallenge: Query[
     (GameId, ChallengeId),
-    (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Option[Long])
+    (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long])
   ] =
     sql"""SELECT oc.game_type, oc.game_id, oc.challenger, oc.message, oc.number_of_players, oc.start,
-                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, cc.character_id
+                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, oc.game_role_id, cc.character_id
           FROM open_challenge oc
           LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
           WHERE oc.game_id = $gameId AND oc.challenge_id = $challengeId"""
@@ -75,9 +78,10 @@ class OpenChallengeRepo(session: Session[IO]) {
       .query(gameType *: int2)
 
   private val updateChallenge
-      : Command[(PlayerId, String, Short, Option[Instant], Option[Double], String, GameId, ChallengeId)] =
+      : Command[(PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], GameId, ChallengeId)] =
     sql"""UPDATE open_challenge SET challenger = $playerId, message = $text, number_of_players = $int2,
-          start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings
+          start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
+          public = $bool, game_role_id = ${gameRoleId.opt}
           WHERE game_id = $gameId AND challenge_id = $challengeId""".command
 
   /** Inserts the challenge, and for a [[CharacterOpenChallenge]] its character row too.
@@ -92,7 +96,7 @@ class OpenChallengeRepo(session: Session[IO]) {
     }
     for {
       id <- session.unique(insertChallenge)(
-        (gt, c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.gameId)
+        (gt, c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.gameId, c.isPublic, c.gameRoleId)
       )
       _ <- c match {
         case cc: CharacterOpenChallenge => session.execute(insertCharacterChallenge)((c.gameId, id, cc.characterId)).void
@@ -118,7 +122,7 @@ class OpenChallengeRepo(session: Session[IO]) {
   def update(c: OpenChallenge): IO[Unit] =
     session
       .execute(updateChallenge)(
-        (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.gameId, c.challengeId)
+        (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.isPublic, c.gameRoleId, c.gameId, c.challengeId)
       )
       .void
 
@@ -140,20 +144,23 @@ class OpenChallengeRepo(session: Session[IO]) {
 
   private val selectChallengesByGame: Query[
     GameId,
-    (ChallengeId, GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Option[Long])
+    (ChallengeId, GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long])
   ] =
     sql"""SELECT oc.challenge_id, oc.game_type, oc.challenger, oc.message, oc.number_of_players, oc.start,
-                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, cc.character_id
+                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, oc.game_role_id, cc.character_id
           FROM open_challenge oc
           LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
           WHERE oc.game_id = $gameId
           ORDER BY oc.create_date DESC"""
-      .query(challengeId *: gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: int8.opt)
+      .query(challengeId *: gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId.opt *: int8.opt)
 
   /** Every open challenge for a game, newest first. */
   def listByGame(id: GameId): IO[List[OpenChallenge]] =
     session.execute(selectChallengesByGame)(id).map(_.map {
-      case (challengeId, gt, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, characterIdValue) =>
-        toChallenge(challengeId, (gt, id, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, characterIdValue))
+      case (challengeId, gt, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue) =>
+        toChallenge(
+          challengeId,
+          (gt, id, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue)
+        )
     })
 }

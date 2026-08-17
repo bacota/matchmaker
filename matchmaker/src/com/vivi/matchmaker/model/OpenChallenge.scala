@@ -19,6 +19,14 @@ sealed trait OpenChallenge {
   def timeLimit: Option[Duration]
   def settings: String
   def gameId: GameId
+
+  /** Whether the match this challenge becomes may be watched by anyone, rather than only by the
+    * players in it. Decided by the challenger here and passed to the game engine when the match
+    * is created, which is what makes the engine issue a public url for it. */
+  def isPublic: Boolean
+
+  /** The role the challenger will play, which their own (implicit) acceptance is recorded with. */
+  def gameRoleId: Option[GameRoleId]
 }
 
 case class PlainOpenChallenge(
@@ -29,7 +37,9 @@ case class PlainOpenChallenge(
     start: Option[Instant],
     timeLimit: Option[Duration],
     settings: String,
-    gameId: GameId
+    gameId: GameId,
+    isPublic: Boolean = false,
+    gameRoleId: Option[GameRoleId] = None
 ) extends OpenChallenge
 
 case class CharacterOpenChallenge(
@@ -41,5 +51,7 @@ case class CharacterOpenChallenge(
     timeLimit: Option[Duration],
     settings: String,
     gameId: GameId,
-    characterId: CharacterId
+    characterId: CharacterId,
+    isPublic: Boolean = false,
+    gameRoleId: Option[GameRoleId] = None
 ) extends OpenChallenge

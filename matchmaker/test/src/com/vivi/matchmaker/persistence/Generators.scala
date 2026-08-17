@@ -63,7 +63,13 @@ object Generators {
       completed <- Gen.oneOf(true, false)
       start <- genInstant
       timeLimit <- Gen.option(genDuration)
-    } yield Match(gameId, matchId, description, completed, start, timeLimit, "{}")
+      isPublic <- Gen.oneOf(true, false)
+      // The urls are the game engine's, so they are generated as opaque strings — matchmaker
+      // stores whatever it is handed and never parses them.
+      statusUrl <- Gen.option(genString.map("https://engine.example.com/status/" + _))
+      playUrl <- Gen.option(genString.map("https://engine.example.com/play/" + _))
+      publicUrl <- Gen.option(genString.map("https://engine.example.com/watch/" + _))
+    } yield Match(gameId, matchId, description, completed, start, timeLimit, "{}", isPublic, statusUrl, playUrl, publicUrl)
 
   def genParticipant(gameId: GameId, matchId: MatchId, playerId: PlayerId, characterId: CharacterId): Gen[Participant] =
     for {
@@ -71,6 +77,14 @@ object Generators {
       completed <- Gen.oneOf(true, false)
       due <- Gen.option(genInstant)
     } yield CharacterParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, characterId)
+
+  /** As `genParticipant`, for a game that has no characters. */
+  def genPlainParticipant(gameId: GameId, matchId: MatchId, playerId: PlayerId): Gen[Participant] =
+    for {
+      pending <- Gen.oneOf(true, false)
+      completed <- Gen.oneOf(true, false)
+      due <- Gen.option(genInstant)
+    } yield PlainParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due)
 
   def genResult(gameId: GameId, participantId: ParticipantId): Gen[Result] =
     for {
@@ -95,5 +109,8 @@ object Generators {
       numberOfPlayers <- Gen.choose(1, 10)
       start <- Gen.option(genInstant)
       timeLimit <- Gen.option(genDuration)
-    } yield CharacterOpenChallenge(ChallengeId(0), challenger, message, numberOfPlayers.toShort, start, timeLimit, "{}", gameId, characterId)
+      isPublic <- Gen.oneOf(true, false)
+    } yield CharacterOpenChallenge(
+      ChallengeId(0), challenger, message, numberOfPlayers.toShort, start, timeLimit, "{}", gameId, characterId, isPublic
+    )
 }

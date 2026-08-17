@@ -19,7 +19,8 @@ object ApiGateway {
       headers: Map[String, String],
       query: Map[String, String],
       body: String,
-      claims: Map[String, String] = Map.empty
+      claims: Map[String, String] = Map.empty,
+      iam: Option[IamPrincipal] = None
   ) {
     def header(name: String): Option[String] = headers.get(name.toLowerCase)
 
@@ -33,6 +34,27 @@ object ApiGateway {
 
     /** Path split into non-empty segments: `/games/7/characters` becomes `List("games","7","characters")`. */
     def segments: List[String] = path.split('/').iterator.filter(_.nonEmpty).toList
+  }
+
+  /** The signing identity behind an `AWS_IAM`-authorized route, as API Gateway reports it once it
+    * has verified the request's SigV4 signature.
+    *
+    * `userArn` for an assumed role names the *session* — `.../assumed-role/engine/i-0abc123` —
+    * and the session part changes every time the role is assumed, so it cannot be what an
+    * identity is recorded as. [[roleArn]] normalizes it to the role itself, which is stable and
+    * is what an administrator would write down.
+    */
+  case class IamPrincipal(userArn: String, userId: Option[String], accountId: Option[String]) {
+
+    private val assumedRole = """arn:([^:]+):sts::(\d+):assumed-role/([^/]+)/.*""".r
+
+    /** The role this caller assumed, or the ARN as given when it is not an assumed role (an IAM
+      * user's own ARN, say).
+      */
+    def roleArn: String = userArn match {
+      case assumedRole(partition, account, role) => s"arn:$partition:iam::$account:role/$role"
+      case other                                 => other
+    }
   }
 
   case class Response(statusCode: Int, body: String)
@@ -94,7 +116,23 @@ object ApiGateway {
       }
       .getOrElse(Map.empty[String, String])
 
-    Request(method, path, headers, query, body, claims)
+    // requestContext.authorizer.iam, present only when a route is AWS_IAM-authorized — which is
+    // how the game engine's callbacks are protected. Mutually exclusive with the jwt block above:
+    // a route carries one authorizer, and which one it was is what says whether this request is a
+    // player acting on their own behalf or another AWS principal acting on a game's.
+    val iam = event.obj
+      .get("requestContext")
+      .flatMap(_.obj.get("authorizer"))
+      .flatMap(_.obj.get("iam"))
+      .flatMap {
+        case o: ujson.Obj =>
+          o.value.get("userArn").flatMap(strOpt).map { userArn =>
+            IamPrincipal(userArn, o.value.get("userId").flatMap(strOpt), o.value.get("accountId").flatMap(strOpt))
+          }
+        case _ => None
+      }
+
+    Request(method, path, headers, query, body, claims, iam)
   }
 
   def encodeResponse(response: Response): String =

@@ -251,3 +251,28 @@ variable "admin_initial_password" {
     error_message = "Must be at least 6 characters, and at least password_minimum_length."
   }
 }
+
+variable "game_engine_role_names" {
+  description = <<-EOT
+    Names of IAM roles in this account that a game engine runs as, which are allowed to post the
+    move and result callbacks.
+
+    Empty by default: the callback routes are AWS_IAM-authorized, so an unnamed principal cannot
+    reach them at all. If an engine's role lives in another account, leave this empty and have its
+    owner attach the policy this module outputs (engine_callback_policy_arn) instead.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "game_api_execution_arns" {
+  description = <<-EOT
+    execute-api ARNs of the game APIs matchmaker is allowed to call, e.g.
+    "arn:aws:execute-api:us-east-1:123456789012:abcdef123/*/POST/games".
+
+    Empty by default, which means matchmaker's role may call no game API — a game engine that is
+    not behind AWS_IAM needs nothing here, and one that is will reject an unauthorized caller.
+  EOT
+  type        = list(string)
+  default     = []
+}
