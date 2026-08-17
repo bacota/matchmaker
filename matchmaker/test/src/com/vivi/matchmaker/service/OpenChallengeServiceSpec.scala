@@ -164,6 +164,29 @@ class OpenChallengeServiceSpec extends PropertySuite {
     }
   }
 
+  // Regression test: accepting the same challenge twice as the same player used to hit
+  // `acceptance_pkey`'s unique constraint directly (create() has no idea it's a duplicate) and
+  // surface to the caller as a raw 500 instead of a normal service error.
+  property("accept rejects a player who has already accepted the same challenge") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, accepterNickname, accepterExternalId) =>
+        val result = for {
+          fixture <- makeFixture(nickname, externalId, minPlayers = 1, maxPlayers = 4)
+          created <- challengeService.create(challengeFor(fixture, 1), externalId)
+          accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
+          (_, accepterCharacter) = accepter
+          _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
+          attempt <- challengeService
+            .accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
+            .attempt
+        } yield attempt match {
+          case Left(_: ConflictError) => true
+          case _                      => false
+        }
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
   property("delete removes the challenge and its acceptances when authorized by the owner") {
     forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
       (nickname, externalId, accepterNickname, accepterExternalId) =>

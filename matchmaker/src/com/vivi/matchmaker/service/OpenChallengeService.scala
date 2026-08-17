@@ -121,6 +121,10 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
             case (GameType.Plain, Some(_)) =>
               IO.raiseError(ValidationError(s"challenge ${challengeId.value} does not accept a characterId"))
           }
+          existing <- acceptanceRepo.read(gameId, challengeId, acceptance.playerId)
+          _ <- IO.raiseWhen(existing.isDefined)(
+            ConflictError(s"player ${acceptance.playerId.value} has already accepted challenge ${challengeId.value}")
+          )
           count <- acceptanceRepo.countForChallenge(gameId, challengeId)
           _ <- IO.raiseUnless(count + 1 <= maxPlayers.toLong)(
             ValidationError(s"challenge ${challengeId.value} already has $count acceptance(s) (capacity $maxPlayers)")
