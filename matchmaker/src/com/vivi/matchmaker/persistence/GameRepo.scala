@@ -33,6 +33,15 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           FROM game
           WHERE game_id = $gameId""".query(gameType *: text *: text *: text *: bool *: text *: int4 *: int4)
 
+  /* Confirms a game exists and holds it that way for the rest of the transaction.
+   *
+   * FOR SHARE rather than FOR UPDATE: the caller is about to insert a row that references this
+   * game, not modify the game. FOR SHARE blocks a concurrent delete or update of it, while still
+   * letting other transactions take the same lock — so two players creating characters in the
+   * same game do not queue behind each other. */
+  private val lockGameRow: Query[GameId, GameId] =
+    sql"SELECT game_id FROM game WHERE game_id = $gameId FOR SHARE".query(gameId)
+
   private val insertRoleStmt: Query[(GameId, String, Boolean), GameRoleId] =
     sql"""INSERT INTO game_role (game_id, name, optional) VALUES ($gameId, $text, $bool)
           RETURNING game_role_id""".query(gameRoleId)
@@ -78,6 +87,11 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       roles <- game.roles.toList.traverse(insertRole(gameId, _))
       parameters <- game.parameters.toList.traverse(p => insertParameter(gameId, p.asInstanceOf[GameParameter[T]]))
     } yield game.copy(gameId = gameId, roles = roles, parameters = parameters)
+
+  /** Whether the game exists, locking it against modification until the transaction ends. A full
+    * `read` would fetch roles and parameters that a caller checking existence never looks at.
+    */
+  def lockForShare(id: GameId): IO[Option[GameId]] = session.option(lockGameRow)(id)
 
   def read(id: GameId): IO[Option[Game]] =
     session.option(selectGameRow)(id).flatMap {

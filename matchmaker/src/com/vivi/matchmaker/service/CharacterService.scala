@@ -53,11 +53,13 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
           _ <- IO.raiseUnless(callerExternalId == externalId)(
             UnauthorizedError(s"caller '$callerExternalId' may not create a character for '$externalId'")
           )
-          _ <- gameRepo.read(gameId).flatMap {
+          // Locked, not just read: the insert below references both rows, and without the lock
+          // either could be deleted between the check and the insert.
+          _ <- gameRepo.lockForShare(gameId).flatMap {
             case Some(g) => IO.pure(g)
             case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
           }
-          player <- playerRepo.readByExternalId(externalId).flatMap {
+          player <- playerRepo.readByExternalIdForShare(externalId).flatMap {
             case Some(p) => IO.pure(p)
             case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
           }
@@ -82,7 +84,9 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       // update is applied to.
       session.transaction.use { _ =>
         for {
-          joined <- characterRepo.readWithOwnerAndGame(characterId).flatMap {
+          // For update: the ownership checked below has to still hold when the write lands, and
+          // the row read here is the row overwritten at the end of this block.
+          joined <- characterRepo.readWithOwnerAndGameForUpdate(characterId).flatMap {
             case Some(t) => IO.pure(t)
             case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
           }
@@ -90,7 +94,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
           _ <- IO.raiseUnless(callerExternalId == currentOwner.externalId)(
             UnauthorizedError(s"caller '$callerExternalId' may not update character ${characterId.value}")
           )
-          player <- playerRepo.readByExternalId(externalId).flatMap {
+          player <- playerRepo.readByExternalIdForShare(externalId).flatMap {
             case Some(p) => IO.pure(p)
             case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
           }
@@ -110,7 +114,8 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       // Same as update: the game checked here is the game the write is applied under.
       session.transaction.use { _ =>
         for {
-          joined <- characterRepo.readWithGame(characterId).flatMap {
+          // Same as update: read, authorize and write the same row without releasing it.
+          joined <- characterRepo.readWithGameForUpdate(characterId).flatMap {
             case Some(t) => IO.pure(t)
             case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
           }

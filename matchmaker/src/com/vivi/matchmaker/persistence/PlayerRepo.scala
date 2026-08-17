@@ -25,6 +25,12 @@ class PlayerRepo(session: Session[IO]) {
     sql"""SELECT player_id, nickname, is_admin FROM player WHERE external_id = $text"""
       .query(playerId *: text *: bool)
 
+  /* As GameRepo's lockGameRow: FOR SHARE, because callers reference this player from a row they
+   * are inserting rather than modifying the player itself. */
+  private val selectPlayerByExternalIdForShare: Query[String, (PlayerId, String, Boolean)] =
+    sql"""SELECT player_id, nickname, is_admin FROM player WHERE external_id = $text FOR SHARE"""
+      .query(playerId *: text *: bool)
+
   private val updatePlayer: Command[(String, Boolean, String, PlayerId)] =
     sql"""UPDATE player SET nickname = $text, is_admin = $bool, external_id = $text
           WHERE player_id = $playerId""".command
@@ -41,6 +47,14 @@ class PlayerRepo(session: Session[IO]) {
 
   def readByExternalId(externalId: String): IO[Option[Player]] =
     session.option(selectPlayerByExternalId)(externalId).map(_.map { case (id, nickname, isAdmin) =>
+      Player(id, nickname, isAdmin, externalId)
+    })
+
+  /** As `readByExternalId`, but holding the player row against concurrent modification until the
+    * transaction ends.
+    */
+  def readByExternalIdForShare(externalId: String): IO[Option[Player]] =
+    session.option(selectPlayerByExternalIdForShare)(externalId).map(_.map { case (id, nickname, isAdmin) =>
       Player(id, nickname, isAdmin, externalId)
     })
 
