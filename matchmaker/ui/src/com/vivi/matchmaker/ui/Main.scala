@@ -311,7 +311,9 @@ object Views {
     val url = Var("")
     val minPlayers = Var("2")
     val maxPlayers = Var("2")
-    val gameType: Var[GameType] = Var(GameType.Character)
+    // Plain by default: requiring characters is the additional commitment, so it is the box an
+    // admin ticks rather than the one they have to remember to untick.
+    val gameType: Var[GameType] = Var(GameType.Plain)
 
     def counts: Signal[Option[(Int, Int)]] =
       minPlayers.signal.combineWith(maxPlayers.signal).map { case (low, high) =>

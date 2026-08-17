@@ -30,48 +30,60 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
       val characterRepo = new CharacterRepo[T](session)
       val playerRepo = new PlayerRepo(session)
       val challengeRepo = new OpenChallengeRepo(session)
-      for {
-        game <- requireGame(gameRepo, challenge.gameId)
-        _ <- challenge match {
-          case cc: CharacterOpenChallenge =>
-            for {
-              _ <- IO.raiseUnless(game.gameType == GameType.Character)(
-                ValidationError(s"game ${game.gameId.value} does not require a character, but a CharacterOpenChallenge was given")
-              )
-              joined <- characterRepo.readWithOwnerAndGame(cc.characterId).flatMap {
-                case Some(t) => IO.pure(t)
-                case None    => IO.raiseError(NotFoundError(s"no character with id ${cc.characterId.value}"))
-              }
-              (_, owner, characterGame) = joined
-              _ <- IO.raiseUnless(challenge.gameId == characterGame.gameId)(
-                ValidationError(
-                  s"challenge game_id ${challenge.gameId.value} does not match character's game_id ${characterGame.gameId.value}"
+      val acceptanceRepo = new AcceptanceRepo(session)
+      // Creating a challenge is itself an acceptance of it: the challenger is the first
+      // participant. Both rows go in together so a challenge can never exist with its creator
+      // missing from its own acceptances.
+      session.transaction.use { _ =>
+        for {
+          game <- requireGame(gameRepo, challenge.gameId)
+          _ <- challenge match {
+            case cc: CharacterOpenChallenge =>
+              for {
+                _ <- IO.raiseUnless(game.gameType == GameType.Character)(
+                  ValidationError(s"game ${game.gameId.value} does not require a character, but a CharacterOpenChallenge was given")
                 )
-              )
-              _ <- IO.raiseUnless(callerExternalId == owner.externalId)(
-                UnauthorizedError(s"caller '$callerExternalId' may not create a challenge for character ${cc.characterId.value}")
-              )
-            } yield ()
-          case _: PlainOpenChallenge =>
-            for {
-              _ <- IO.raiseUnless(game.gameType == GameType.Plain)(
-                ValidationError(s"game ${game.gameId.value} requires a character, but a PlainOpenChallenge was given")
-              )
-              challengerPlayer <- requirePlayer(playerRepo, challenge.challenger)
-              _ <- IO.raiseUnless(callerExternalId == challengerPlayer.externalId)(
-                UnauthorizedError(s"caller '$callerExternalId' may not create a challenge for player ${challenge.challenger.value}")
-              )
-            } yield ()
-        }
-        _ <- IO.raiseUnless(
-          challenge.numberOfPlayers >= game.minPlayers && challenge.numberOfPlayers <= game.maxPlayers
-        )(
-          ValidationError(
-            s"numberOfPlayers ${challenge.numberOfPlayers} is not in range [${game.minPlayers}, ${game.maxPlayers}]"
+                joined <- characterRepo.readWithOwnerAndGame(cc.characterId).flatMap {
+                  case Some(t) => IO.pure(t)
+                  case None    => IO.raiseError(NotFoundError(s"no character with id ${cc.characterId.value}"))
+                }
+                (_, owner, characterGame) = joined
+                _ <- IO.raiseUnless(challenge.gameId == characterGame.gameId)(
+                  ValidationError(
+                    s"challenge game_id ${challenge.gameId.value} does not match character's game_id ${characterGame.gameId.value}"
+                  )
+                )
+                _ <- IO.raiseUnless(callerExternalId == owner.externalId)(
+                  UnauthorizedError(s"caller '$callerExternalId' may not create a challenge for character ${cc.characterId.value}")
+                )
+              } yield ()
+            case _: PlainOpenChallenge =>
+              for {
+                _ <- IO.raiseUnless(game.gameType == GameType.Plain)(
+                  ValidationError(s"game ${game.gameId.value} requires a character, but a PlainOpenChallenge was given")
+                )
+                challengerPlayer <- requirePlayer(playerRepo, challenge.challenger)
+                _ <- IO.raiseUnless(callerExternalId == challengerPlayer.externalId)(
+                  UnauthorizedError(s"caller '$callerExternalId' may not create a challenge for player ${challenge.challenger.value}")
+                )
+              } yield ()
+          }
+          _ <- IO.raiseUnless(
+            challenge.numberOfPlayers >= game.minPlayers && challenge.numberOfPlayers <= game.maxPlayers
+          )(
+            ValidationError(
+              s"numberOfPlayers ${challenge.numberOfPlayers} is not in range [${game.minPlayers}, ${game.maxPlayers}]"
+            )
           )
-        )
-        created <- challengeRepo.create(challenge)
-      } yield created
+          created <- challengeRepo.createHere(challenge)
+          _ <- acceptanceRepo.create(created match {
+            case cc: CharacterOpenChallenge =>
+              CharacterAcceptance(cc.challengeId, cc.challenger, cc.gameId, cc.characterId)
+            case pc: PlainOpenChallenge =>
+              PlainAcceptance(pc.challengeId, pc.challenger, pc.gameId)
+          })
+        } yield created
+      }
     }
 
   /** Accepts `challengeId` in game `gameId`, authorized by `callerExternalId`. For a `'C'`-type
