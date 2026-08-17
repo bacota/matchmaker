@@ -83,7 +83,7 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
               s"numberOfPlayers ${challenge.numberOfPlayers} is not in range [${game.minPlayers}, ${game.maxPlayers}]"
             )
           )
-          created <- challengeRepo.createHere(challenge)
+          created <- challengeRepo.create(challenge)
           _ <- acceptanceRepo.create(created match {
             case cc: CharacterOpenChallenge =>
               CharacterAcceptance(cc.challengeId, cc.challenger, cc.gameId, cc.characterId)

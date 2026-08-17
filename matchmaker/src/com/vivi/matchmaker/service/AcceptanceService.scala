@@ -31,18 +31,22 @@ class AcceptanceService(sessionPool: SessionPool) {
   def delete(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId, callerExternalId: String): IO[Unit] =
     sessionPool.use { session =>
       val acceptanceRepo = new AcceptanceRepo(session)
-      for {
-        joined <- acceptanceRepo.readWithChallengeAndPlayers(gameId, challengeId, playerId).flatMap {
-          case Some(t) => IO.pure(t)
-          case None    => IO.raiseError(NotFoundError(s"no acceptance for challenge ${challengeId.value} and player ${playerId.value}"))
-        }
-        (_, acceptor, challenger) = joined
-        _ <- IO.raiseUnless(callerExternalId == acceptor.externalId || callerExternalId == challenger.externalId)(
-          UnauthorizedError(
-            s"caller '$callerExternalId' may not delete acceptance for challenge ${challengeId.value} and player ${playerId.value}"
+      // The repo's delete removes the character_acceptance row and the acceptance row as separate
+      // statements, and the authorization checked below must hold for both.
+      session.transaction.use { _ =>
+        for {
+          joined <- acceptanceRepo.readWithChallengeAndPlayers(gameId, challengeId, playerId).flatMap {
+            case Some(t) => IO.pure(t)
+            case None    => IO.raiseError(NotFoundError(s"no acceptance for challenge ${challengeId.value} and player ${playerId.value}"))
+          }
+          (_, acceptor, challenger) = joined
+          _ <- IO.raiseUnless(callerExternalId == acceptor.externalId || callerExternalId == challenger.externalId)(
+            UnauthorizedError(
+              s"caller '$callerExternalId' may not delete acceptance for challenge ${challengeId.value} and player ${playerId.value}"
+            )
           )
-        )
-        _ <- acceptanceRepo.delete(gameId, challengeId, playerId)
-      } yield ()
+          _ <- acceptanceRepo.delete(gameId, challengeId, playerId)
+        } yield ()
+      }
     }
 }

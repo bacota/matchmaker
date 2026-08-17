@@ -46,22 +46,26 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       val gameRepo = new GameRepo[T](session)
       val playerRepo = new PlayerRepo(session)
       val characterRepo = new CharacterRepo[T](session)
-      for {
-        _ <- IO.raiseUnless(callerExternalId == externalId)(
-          UnauthorizedError(s"caller '$callerExternalId' may not create a character for '$externalId'")
-        )
-        _ <- gameRepo.read(gameId).flatMap {
-          case Some(g) => IO.pure(g)
-          case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
-        }
-        player <- playerRepo.readByExternalId(externalId).flatMap {
-          case Some(p) => IO.pure(p)
-          case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
-        }
-        character <- characterRepo.create(
-          Character(CharacterId(0), gameId, name, description, codec.decode(""), Some(player.playerId))
-        )
-      } yield character
+      // The checks below decide whether the insert is allowed; running them in the same
+      // transaction as the insert keeps that decision from going stale before it lands.
+      session.transaction.use { _ =>
+        for {
+          _ <- IO.raiseUnless(callerExternalId == externalId)(
+            UnauthorizedError(s"caller '$callerExternalId' may not create a character for '$externalId'")
+          )
+          _ <- gameRepo.read(gameId).flatMap {
+            case Some(g) => IO.pure(g)
+            case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+          }
+          player <- playerRepo.readByExternalId(externalId).flatMap {
+            case Some(p) => IO.pure(p)
+            case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
+          }
+          character <- characterRepo.create(
+            Character(CharacterId(0), gameId, name, description, codec.decode(""), Some(player.playerId))
+          )
+        } yield character
+      }
     }
 
   def update(
@@ -74,22 +78,26 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
     sessionPool.use { session =>
       val playerRepo = new PlayerRepo(session)
       val characterRepo = new CharacterRepo[T](session)
-      for {
-        joined <- characterRepo.readWithOwnerAndGame(characterId).flatMap {
-          case Some(t) => IO.pure(t)
-          case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
-        }
-        (existing, currentOwner, _) = joined
-        _ <- IO.raiseUnless(callerExternalId == currentOwner.externalId)(
-          UnauthorizedError(s"caller '$callerExternalId' may not update character ${characterId.value}")
-        )
-        player <- playerRepo.readByExternalId(externalId).flatMap {
-          case Some(p) => IO.pure(p)
-          case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
-        }
-        updated = existing.copy(name = name, description = description, playerId = Some(player.playerId))
-        _ <- characterRepo.update(updated)
-      } yield updated
+      // Read, authorize and write as one change: the owner checked here is the owner the
+      // update is applied to.
+      session.transaction.use { _ =>
+        for {
+          joined <- characterRepo.readWithOwnerAndGame(characterId).flatMap {
+            case Some(t) => IO.pure(t)
+            case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
+          }
+          (existing, currentOwner, _) = joined
+          _ <- IO.raiseUnless(callerExternalId == currentOwner.externalId)(
+            UnauthorizedError(s"caller '$callerExternalId' may not update character ${characterId.value}")
+          )
+          player <- playerRepo.readByExternalId(externalId).flatMap {
+            case Some(p) => IO.pure(p)
+            case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
+          }
+          updated = existing.copy(name = name, description = description, playerId = Some(player.playerId))
+          _ <- characterRepo.update(updated)
+        } yield updated
+      }
     }
 
   def updateState(
@@ -99,17 +107,20 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
   ): IO[Character[T]] =
     sessionPool.use { session =>
       val characterRepo = new CharacterRepo[T](session)
-      for {
-        joined <- characterRepo.readWithGame(characterId).flatMap {
-          case Some(t) => IO.pure(t)
-          case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
-        }
-        (existing, game) = joined
-        _ <- IO.raiseUnless(callerExternalId == game.externalId)(
-          UnauthorizedError(s"invalid game externalId for character ${characterId.value}")
-        )
-        updated = existing.copy(state = state)
-        _ <- characterRepo.update(updated)
-      } yield updated
+      // Same as update: the game checked here is the game the write is applied under.
+      session.transaction.use { _ =>
+        for {
+          joined <- characterRepo.readWithGame(characterId).flatMap {
+            case Some(t) => IO.pure(t)
+            case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
+          }
+          (existing, game) = joined
+          _ <- IO.raiseUnless(callerExternalId == game.externalId)(
+            UnauthorizedError(s"invalid game externalId for character ${characterId.value}")
+          )
+          updated = existing.copy(state = state)
+          _ <- characterRepo.update(updated)
+        } yield updated
+      }
     }
 }

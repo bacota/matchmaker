@@ -29,15 +29,11 @@ class ResultRepo(session: Session[IO]) {
     sql"UPDATE result SET rank = $int4, score = $score WHERE game_id = $gameId AND participant_id = $participantId".command
 
   def create(result: Result): IO[Result] =
-    session.transaction.use { _ =>
-      session.execute(insertResult)((result.gameId, result.participantId, result.rank, result.score)).as(result)
-    }
+    session.execute(insertResult)((result.gameId, result.participantId, result.rank, result.score)).as(result)
 
   def read(gameId: GameId, id: ParticipantId): IO[Option[Result]] =
     session.option(selectResult)((gameId, id)).map(_.map { case (rank, score) => Result(gameId, id, rank, score) })
 
   def update(result: Result): IO[Unit] =
-    session.transaction.use { _ =>
-      session.execute(updateResult)((result.rank, result.score, result.gameId, result.participantId)).void
-    }
+    session.execute(updateResult)((result.rank, result.score, result.gameId, result.participantId)).void
 }

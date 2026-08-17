@@ -30,11 +30,9 @@ class PlayerRepo(session: Session[IO]) {
           WHERE player_id = $playerId""".command
 
   def create(player: Player): IO[Player] =
-    session.transaction.use { _ =>
-      session
-        .unique(insertPlayer)((player.nickname, player.isAdmin, player.externalId))
-        .map(id => player.copy(playerId = id))
-    }
+    session
+      .unique(insertPlayer)((player.nickname, player.isAdmin, player.externalId))
+      .map(id => player.copy(playerId = id))
 
   def read(id: PlayerId): IO[Option[Player]] =
     session.option(selectPlayer)(id).map(_.map { case (nickname, isAdmin, externalId) =>
@@ -47,7 +45,5 @@ class PlayerRepo(session: Session[IO]) {
     })
 
   def update(player: Player): IO[Unit] =
-    session.transaction.use { _ =>
-      session.execute(updatePlayer)((player.nickname, player.isAdmin, player.externalId, player.playerId)).void
-    }
+    session.execute(updatePlayer)((player.nickname, player.isAdmin, player.externalId, player.playerId)).void
 }

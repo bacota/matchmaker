@@ -33,13 +33,11 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           WHERE character_id = $characterId""".command
 
   def create(character: Character[T]): IO[Character[T]] =
-    session.transaction.use { _ =>
-      session
-        .unique(insertCharacter)(
-          (character.gameId, character.name, character.description, character.state, character.playerId)
-        )
-        .map(id => character.copy(characterId = id))
-    }
+    session
+      .unique(insertCharacter)(
+        (character.gameId, character.name, character.description, character.state, character.playerId)
+      )
+      .map(id => character.copy(characterId = id))
 
   def read(id: CharacterId): IO[Option[Character[T]]] =
     session.option(selectCharacter)(id).map(_.map { case (gameId, name, description, state, playerId) =>
@@ -137,18 +135,16 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     })
 
   def update(character: Character[T]): IO[Unit] =
-    session.transaction.use { _ =>
-      session
-        .execute(updateCharacter)(
-          (
-            character.gameId,
-            character.name,
-            character.description,
-            character.state,
-            character.playerId,
-            character.characterId
-          )
+    session
+      .execute(updateCharacter)(
+        (
+          character.gameId,
+          character.name,
+          character.description,
+          character.state,
+          character.playerId,
+          character.characterId
         )
-        .void
-    }
+      )
+      .void
 }

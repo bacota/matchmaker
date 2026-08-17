@@ -20,20 +20,24 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
     sessionPool.use { session =>
       val playerRepo = new PlayerRepo(session)
       val gameRepo = new GameRepo[T](session)
-      for {
-        _ <- authorize(playerRepo, externalUserId)
-        result <-
-          if (game.gameId == GameId.unassigned) gameRepo.create(game)
-          else
-            gameRepo.read(game.gameId).flatMap {
-              case None => IO.raiseError(NotFoundError(s"no game with id ${game.gameId.value}"))
-              case Some(_) =>
-                gameRepo.update(game) *> gameRepo.read(game.gameId).flatMap {
-                  case Some(updated) => IO.pure(updated)
-                  case None          => IO.raiseError(NotFoundError(s"no game with id ${game.gameId.value}"))
-                }
-            }
-      } yield result
+      // A game is its rows plus its roles, parameters and parameter values; the repo writes
+      // them as separate statements, so the transaction that makes them one change lives here.
+      session.transaction.use { _ =>
+        for {
+          _ <- authorize(playerRepo, externalUserId)
+          result <-
+            if (game.gameId == GameId.unassigned) gameRepo.create(game)
+            else
+              gameRepo.read(game.gameId).flatMap {
+                case None => IO.raiseError(NotFoundError(s"no game with id ${game.gameId.value}"))
+                case Some(_) =>
+                  gameRepo.update(game) *> gameRepo.read(game.gameId).flatMap {
+                    case Some(updated) => IO.pure(updated)
+                    case None          => IO.raiseError(NotFoundError(s"no game with id ${game.gameId.value}"))
+                  }
+              }
+        } yield result
+      }
     }
 
   /** Lists games for any registered caller. Unlike `createOrUpdate` this needs no admin rights —
