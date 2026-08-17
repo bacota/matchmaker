@@ -318,10 +318,12 @@ resource "aws_apigatewayv2_route" "iam_routes" {
  * resource policy — that is a REST API feature — so the grant can only be identity-based, which
  * means it has to live on the engine's role.
  *
- * The engine's role belongs to whoever runs the engine and is not managed here, so this module
- * publishes the policy and leaves attaching it to them (or set game_engine_role_names, below, if
- * the roles do live in this account). Nothing can call the callbacks until that happens, which is
- * the right default: unnamed is unreachable.
+ * The engine's role belongs to whoever runs the engine and is not created here: it is named by ARN
+ * in game_engine_role_arns and only granted. A role in this account is granted by attaching the
+ * policy below; a role in another account cannot be attached to from here, so for those this
+ * module just publishes the policy (engine_callback_policy_arn) for its owner to attach. Nothing
+ * can call the callbacks until one of those happens, which is the right default: ungranted is
+ * unreachable.
  */
 data "aws_iam_policy_document" "engine_callbacks" {
   statement {
@@ -342,8 +344,21 @@ resource "aws_iam_policy" "engine_callbacks" {
   policy      = data.aws_iam_policy_document.engine_callbacks.json
 }
 
+/* Only the roles that live in this account: an attachment names a role, and a name is only
+ * resolvable within the account applying it. A cross-account ARN is kept out rather than passed
+ * through as a name that would either fail to apply or, worse, match a same-named local role. */
+locals {
+  local_engine_role_names = [
+    for arn in var.game_engine_role_arns :
+    # The name is everything after "role/", which keeps a role at a path (role/team/engine)
+    # intact — the attachment wants "team/engine", not "engine".
+    join("/", slice(split("/", arn), 1, length(split("/", arn))))
+    if split(":", arn)[4] == data.aws_caller_identity.current.account_id
+  ]
+}
+
 resource "aws_iam_role_policy_attachment" "engine_callbacks" {
-  for_each = toset(var.game_engine_role_names)
+  for_each = toset(local.local_engine_role_names)
 
   role       = each.value
   policy_arn = aws_iam_policy.engine_callbacks.arn

@@ -252,17 +252,29 @@ variable "admin_initial_password" {
   }
 }
 
-variable "game_engine_role_names" {
+variable "game_engine_role_arns" {
   description = <<-EOT
-    Names of IAM roles in this account that a game engine runs as, which are allowed to post the
-    move and result callbacks.
+    ARNs of the IAM roles a game engine runs as, which are allowed to post the move and result
+    callbacks, e.g. "arn:aws:iam::123456789012:role/game-engine".
 
-    Empty by default: the callback routes are AWS_IAM-authorized, so an unnamed principal cannot
-    reach them at all. If an engine's role lives in another account, leave this empty and have its
-    owner attach the policy this module outputs (engine_callback_policy_arn) instead.
+    The roles themselves belong to whoever runs the engine and are not created here — this module
+    only grants them permission. An ARN in this account has the callback policy attached for you;
+    one in another account cannot be attached to from here, so its owner attaches the policy this
+    module outputs (engine_callback_policy_arn) instead.
+
+    Empty by default: the callback routes are AWS_IAM-authorized, so an ungranted principal cannot
+    reach them at all.
+
+    Each ARN is also what matchmaker matches a callback against: a game's external_id must be set
+    to the role ARN of the engine that runs it (see Authenticator.GatewayIam).
   EOT
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = alltrue([for arn in var.game_engine_role_arns : can(regex("^arn:[^:]+:iam::[0-9]{12}:role/.+$", arn))])
+    error_message = "Each entry must be an IAM role ARN, e.g. arn:aws:iam::123456789012:role/game-engine."
+  }
 }
 
 variable "game_api_execution_arns" {
