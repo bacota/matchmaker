@@ -27,25 +27,29 @@ class ParticipantRepo(session: Session[IO]) {
     sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id)
           VALUES ($gameId, $participantId, 'C', $characterId)""".command
 
+  // participant_id is only unique within its game_id — the table's primary key is the composite
+  // (game_id, participant_id), with no separate UNIQUE(participant_id) the way character has —
+  // so both columns are required in the WHERE clause here, not participant_id alone.
   private val selectParticipant: Query[
-    ParticipantId,
-    (GameType, GameId, MatchId, PlayerId, Boolean, Boolean, Option[Instant], Option[Long])
+    (GameId, ParticipantId),
+    (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], Option[Long])
   ] =
-    sql"""SELECT p.game_type, p.game_id, p.match_id, p.player_id, p.pending, p.completed, p.due, cp.character_id
+    sql"""SELECT p.game_type, p.match_id, p.player_id, p.pending, p.completed, p.due, cp.character_id
           FROM participant p
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
-          WHERE p.participant_id = $participantId"""
-      .query(gameType *: gameId *: matchId *: playerId *: bool *: bool *: instant.opt *: int8.opt)
+          WHERE p.game_id = $gameId AND p.participant_id = $participantId"""
+      .query(gameType *: matchId *: playerId *: bool *: bool *: instant.opt *: int8.opt)
 
-  private val updateParticipant: Command[(PlayerId, Boolean, Boolean, Option[Instant], ParticipantId)] =
+  private val updateParticipant: Command[(PlayerId, Boolean, Boolean, Option[Instant], GameId, ParticipantId)] =
     sql"""UPDATE participant SET player_id = $playerId, pending = $bool, completed = $bool, due = ${instant.opt}
-          WHERE participant_id = $participantId""".command
+          WHERE game_id = $gameId AND participant_id = $participantId""".command
 
   private def toParticipant(
       id: ParticipantId,
-      row: (GameType, GameId, MatchId, PlayerId, Boolean, Boolean, Option[Instant], Option[Long])
+      gameId: GameId,
+      row: (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], Option[Long])
   ): Participant = {
-    val (gameType, gameId, matchId, playerId, pending, completed, due, characterIdValue) = row
+    val (gameType, matchId, playerId, pending, completed, due, characterIdValue) = row
     gameType match {
       case GameType.Character =>
         val cid = characterIdValue.getOrElse(
@@ -76,11 +80,11 @@ class ParticipantRepo(session: Session[IO]) {
     }
   }
 
-  def read(id: ParticipantId): IO[Option[Participant]] =
-    session.option(selectParticipant)(id).map(_.map(row => toParticipant(id, row)))
+  def read(gameId: GameId, id: ParticipantId): IO[Option[Participant]] =
+    session.option(selectParticipant)((gameId, id)).map(_.map(row => toParticipant(id, gameId, row)))
 
   def update(p: Participant): IO[Unit] =
     session
-      .execute(updateParticipant)((p.playerId, p.pending, p.completed, p.due, p.participantId))
+      .execute(updateParticipant)((p.playerId, p.pending, p.completed, p.due, p.gameId, p.participantId))
       .void
 }

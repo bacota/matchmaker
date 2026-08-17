@@ -19,25 +19,25 @@ class ResultRepo(session: Session[IO]) {
   private val insertResult: Command[(GameId, ParticipantId, Int, Double)] =
     sql"INSERT INTO result (game_id, participant_id, rank, score) VALUES ($gameId, $participantId, $int4, $score)".command
 
-  // participant_id alone already identifies the row (it's globally unique, not just per game),
-  // so looking it up doesn't need game_id — but game_id is still selected, both to populate the
-  // model and because result's primary key is (game_id, participant_id).
-  private val selectResult: Query[ParticipantId, (GameId, Int, Double)] =
-    sql"SELECT game_id, rank, score FROM result WHERE participant_id = $participantId".query(gameId *: int4 *: score)
+  // result's primary key is the composite (game_id, participant_id) — participant_id alone is
+  // not declared unique (unlike character_id, which has its own explicit UNIQUE constraint), so
+  // both columns are required in the WHERE clause here, not participant_id alone.
+  private val selectResult: Query[(GameId, ParticipantId), (Int, Double)] =
+    sql"SELECT rank, score FROM result WHERE game_id = $gameId AND participant_id = $participantId".query(int4 *: score)
 
-  private val updateResult: Command[(Int, Double, ParticipantId)] =
-    sql"UPDATE result SET rank = $int4, score = $score WHERE participant_id = $participantId".command
+  private val updateResult: Command[(Int, Double, GameId, ParticipantId)] =
+    sql"UPDATE result SET rank = $int4, score = $score WHERE game_id = $gameId AND participant_id = $participantId".command
 
   def create(result: Result): IO[Result] =
     session.transaction.use { _ =>
       session.execute(insertResult)((result.gameId, result.participantId, result.rank, result.score)).as(result)
     }
 
-  def read(id: ParticipantId): IO[Option[Result]] =
-    session.option(selectResult)(id).map(_.map { case (gameId, rank, score) => Result(gameId, id, rank, score) })
+  def read(gameId: GameId, id: ParticipantId): IO[Option[Result]] =
+    session.option(selectResult)((gameId, id)).map(_.map { case (rank, score) => Result(gameId, id, rank, score) })
 
   def update(result: Result): IO[Unit] =
     session.transaction.use { _ =>
-      session.execute(updateResult)((result.rank, result.score, result.participantId)).void
+      session.execute(updateResult)((result.rank, result.score, result.gameId, result.participantId)).void
     }
 }

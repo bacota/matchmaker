@@ -28,7 +28,7 @@ class ParticipantRepoSpec extends PropertySuite {
               Generators.genParticipant(createdGame.gameId, matchId, createdPlayer.playerId, createdCharacter.characterId).sample.get
             )
             created <- participantRepo.create(participant)
-            found <- participantRepo.read(created.participantId)
+            found <- participantRepo.read(created.gameId, created.participantId)
           } yield found == Some(created)
         }
         .unsafeRunSync()

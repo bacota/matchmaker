@@ -32,7 +32,7 @@ class ResultRepoSpec extends PropertySuite {
             )
             result <- IO.pure(Generators.genResult(createdGame.gameId, createdParticipant.participantId).sample.get)
             created <- resultRepo.create(result)
-            found <- resultRepo.read(created.participantId)
+            found <- resultRepo.read(created.gameId, created.participantId)
           } yield found == Some(created)
         }
         .unsafeRunSync()
