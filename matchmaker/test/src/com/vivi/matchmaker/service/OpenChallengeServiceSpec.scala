@@ -87,6 +87,28 @@ class OpenChallengeServiceSpec extends PropertySuite {
     }
   }
 
+  // Regression test: owning the character is not the whole story — the challenger field says who
+  // the challenge belongs to, and a caller must not be able to point it at another player.
+  property("create rejects a challenger who does not own the character") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, otherNickname, otherExternalId) =>
+        val result = for {
+          fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
+          other <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
+          (otherPlayer, _) = other
+          challenge = challengeFor(fixture, 3) match {
+            case c: CharacterOpenChallenge => c.copy(challenger = otherPlayer.playerId)
+            case c                         => c
+          }
+          attempt <- challengeService.create(challenge, externalId).attempt
+        } yield attempt match {
+          case Left(_: UnauthorizedError) => true
+          case _                          => false
+        }
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
   property("create rejects a numberOfPlayers below the game's minPlayers") {
     forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
       val result = for {

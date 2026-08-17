@@ -56,6 +56,14 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
                 _ <- IO.raiseUnless(callerExternalId == owner.externalId)(
                   UnauthorizedError(s"caller '$callerExternalId' may not create a challenge for character ${cc.characterId.value}")
                 )
+                // The caller owning the character is not enough on its own: challenger names the
+                // player the challenge (and now its implicit acceptance) is recorded under, so it
+                // has to be the character's owner too, not some other player the caller picked.
+                _ <- IO.raiseUnless(challenge.challenger == owner.playerId)(
+                  UnauthorizedError(
+                    s"player ${challenge.challenger.value} does not own character ${cc.characterId.value}"
+                  )
+                )
               } yield ()
             case _: PlainOpenChallenge =>
               for {
