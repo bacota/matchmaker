@@ -117,16 +117,27 @@ object ApiClient {
     * `fetch` only fails its promise when the request never happened; a 500 is a perfectly
     * successful fetch. Without this every caller would have to check `response.ok` itself.
     */
-  private def request(method: HttpMethod, path: String, body: Option[String]): Future[(Int, String)] = {
+  private def request(method: HttpMethod, path: String, body: Option[String]): Future[(Int, String)] =
+    // Two ways of saying who is calling, and only one of them is evidence. `LocalServer` reads
+    // the header; the gateway reads the token and verifies it before the function is reached.
+    // Asking for the token before every call is what lets an expired one be refreshed here,
+    // rather than becoming a 401 the player has to sign in again to clear.
+    if (Config.current.headerAuth) send(method, path, body, None)
+    else Auth.freshIdToken().flatMap(token => send(method, path, body, token))
+
+  private def send(
+      method: HttpMethod,
+      path: String,
+      body: Option[String],
+      idToken: Option[String]
+  ): Future[(Int, String)] = {
     val init = new RequestInit {}
     init.method = method
 
     val headers = js.Dictionary("accept" -> "application/json")
 
-    // Two ways of saying who is calling, and only one of them is evidence. `LocalServer` reads
-    // the header; the gateway reads the token and verifies it before the function is reached.
     if (Config.current.headerAuth) headers("x-external-id") = Config.current.localExternalId
-    else Auth.idToken.foreach(token => headers("authorization") = s"Bearer $token")
+    else idToken.foreach(token => headers("authorization") = s"Bearer $token")
     body.foreach { payload =>
       headers("content-type") = "application/json"
       init.body = payload
