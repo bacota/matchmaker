@@ -163,25 +163,16 @@ class AcceptanceRepo(session: Session[IO]) {
       case (challenge, gt, gameId, characterIdValue) => toAcceptance(challenge, playerId, gameId, gt, characterIdValue)
     })
 
-  // Deliberately not wrapped in its own session.transaction.use: OpenChallengeService.accept —
-  // the only caller that needs this insert's two statements to be atomic — already holds an
-  // ambient transaction across the whole accept flow (for the FOR UPDATE capacity check), and
-  // skunk transactions do not nest on one session. A caller with no ambient transaction (e.g. a
-  // test creating an acceptance directly) gets two auto-committed statements instead, which is
-  // fine since nothing here observes a partial write.
-  def create(a: Acceptance): IO[Acceptance] = {
-    val gt = a match {
-      case _: CharacterAcceptance => GameType.Character
-      case _: PlainAcceptance     => GameType.Plain
+  // A CharacterAcceptance's insert already writes both the acceptance and character_acceptance
+  // rows in one statement (see insertCharacterAcceptance's CTE), so it must not also go through
+  // insertAcceptance — doing both would insert into acceptance twice and hit its primary key.
+  def create(a: Acceptance): IO[Acceptance] =
+    a match {
+      case ca: CharacterAcceptance =>
+        session.execute(insertCharacterAcceptance)((a.challengeId, a.playerId, a.gameId, ca.characterId)).as(a)
+      case _: PlainAcceptance =>
+        session.execute(insertAcceptance)((a.challengeId, a.playerId, GameType.Plain, a.gameId)).as(a)
     }
-    for {
-      _ <- session.execute(insertAcceptance)((a.challengeId, a.playerId, gt, a.gameId))
-      _ <- a match {
-        case ca: CharacterAcceptance => session.execute(insertCharacterAcceptance)((a.gameId, a.challengeId, a.playerId, ca.characterId)).void
-        case _: PlainAcceptance      => IO.unit
-      }
-    } yield a
-  }
 
   def read(challengeId: ChallengeId, playerId: PlayerId): IO[Option[Acceptance]] =
     session

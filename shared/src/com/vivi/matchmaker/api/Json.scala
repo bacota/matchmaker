@@ -24,7 +24,12 @@ object Json {
   given ReadWriter[ParticipantId] = readwriter[Long].bimap(_.value, ParticipantId.apply)
   given ReadWriter[ChallengeId] = readwriter[Long].bimap(_.value, ChallengeId.apply)
 
-given ReadWriter[GameType] = readwriter[String].bimap(_.code.toString, s => if (s.length == 1) GameType.fromCode(s.head) else throw new IllegalArgumentException(s"expected 1-char gameType code, got '$s'"))
+    given ReadWriter[GameType] = readwriter[String].bimap(_.code.toString,
+        s => {
+            if (s.length == 1) GameType.fromCode(s.head)
+            else throw new IllegalArgumentException(s"expected 1-char gameType code, got '$s'")
+        }
+    )
 
   given ReadWriter[Instant] = readwriter[String].bimap(_.toString, Instant.parse)
 

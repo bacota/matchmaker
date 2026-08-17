@@ -35,6 +35,40 @@ class AcceptanceRepoSpec extends PropertySuite {
     }
   }
 
+  // Regression test for a bug where create() inserted into `acceptance` both directly and (for a
+  // CharacterAcceptance) again inside insertCharacterAcceptance's own CTE — a second insert of the
+  // same primary key, which failed every character-game acceptance with a Postgres error the
+  // caller saw as a 500 (an API Gateway "integrationError"). `create then read` above already
+  // calls create() with a CharacterAcceptance and would have failed outright under that bug, but
+  // this asserts the specific invariant that regressed: exactly one row in `acceptance`.
+  property("create writes exactly one acceptance row for a CharacterAcceptance") {
+    forAll(Generators.genPlayer, Generators.genPlayer) { (challenger, acceptor) =>
+      TestSession.resource
+        .use { session =>
+          val gameRepo = new GameRepo[String](session)
+          val playerRepo = new PlayerRepo(session)
+          val characterRepo = new CharacterRepo[String](session)
+          val openChallengeRepo = new OpenChallengeRepo(session)
+          val acceptanceRepo = new AcceptanceRepo(session)
+
+          for {
+            createdGame <- gameRepo.create(Generators.genGame().sample.get)
+            createdChallenger <- playerRepo.create(challenger)
+            createdAcceptor <- playerRepo.create(acceptor)
+            createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
+            challenge <- IO.pure(
+              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
+            )
+            createdChallenge <- openChallengeRepo.create(challenge)
+            acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId)
+            _ <- acceptanceRepo.create(acceptance)
+            count <- acceptanceRepo.countForChallenge(createdChallenge.challengeId)
+          } yield count == 1L
+        }
+        .unsafeRunSync()
+    }
+  }
+
   property("readWithChallengeAndPlayers returns the challenge, acceptor, and challenger") {
     forAll(Generators.genPlayer, Generators.genPlayer) { (challenger, acceptor) =>
       TestSession.resource
