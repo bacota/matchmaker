@@ -447,20 +447,25 @@ object Views {
 
   private def challengePanel(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement =
     div(
-      child <-- Store.challengesByGame.signal.map { byGame =>
+      child <-- Store.challengesByGame.signal.combineWith(Store.acceptances.signal).map { (byGame, acceptances) =>
         byGame.get(game.gameId) match {
           case None => p(cls := "empty", "Loading challenges…")
           case Some(challenges) =>
             // `ui.txt` asks for the player's own challenges in a separate list, because what you
             // can do with them is different: delete yours, accept someone else's.
             val (mine, others) = challenges.partition(_.challenger == player.playerId)
+            // A challenge this player has already accepted stays open until it fills up, but
+            // offering it again would only produce a duplicate acceptance the service rejects —
+            // so it is dropped from the list rather than shown with an Accept that cannot work.
+            val accepted = acceptances.map(a => (a.gameId, a.challengeId)).toSet
+            val available = others.filterNot(c => accepted.contains((c.gameId, c.challengeId)))
             div(
               h3("Your open challenges"),
               if (mine.isEmpty) p(cls := "empty", "You have none open.")
               else ul(mine.map(myChallengeRow(game, _))),
               h3("Open challenges"),
-              if (others.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
-              else ul(others.map(openChallengeRow(game, _, characterId))),
+              if (available.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
+              else ul(available.map(openChallengeRow(game, _, characterId))),
               newChallengeForm(game, player, characterId)
             )
         }
