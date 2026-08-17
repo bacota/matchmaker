@@ -81,24 +81,32 @@ class OpenChallengeRepo(session: Session[IO]) {
           WHERE game_id = $gameId AND challenge_id = $challengeId""".command
 
   def create(c: OpenChallenge): IO[OpenChallenge] =
-    session.transaction.use { _ =>
-      val gt = c match {
-        case _: CharacterOpenChallenge => GameType.Character
-        case _: PlainOpenChallenge     => GameType.Plain
-      }
-      for {
-        id <- session.unique(insertChallenge)(
-          (gt, c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.gameId)
-        )
-        _ <- c match {
-          case cc: CharacterOpenChallenge => session.execute(insertCharacterChallenge)((c.gameId, id, cc.characterId)).void
-          case _: PlainOpenChallenge      => IO.unit
-        }
-      } yield c match {
-        case cc: CharacterOpenChallenge => cc.copy(challengeId = id)
-        case pc: PlainOpenChallenge     => pc.copy(challengeId = id)
-      }
+    session.transaction.use(_ => createHere(c))
+
+  /** The inserts `create` performs, without opening a transaction of its own.
+    *
+    * skunk rejects nested transactions outright ("Nested transactions are not allowed"), so a
+    * caller that is already inside one — the service creating a challenge and the challenger's
+    * acceptance together — must use this instead of `create`.
+    */
+  def createHere(c: OpenChallenge): IO[OpenChallenge] = {
+    val gt = c match {
+      case _: CharacterOpenChallenge => GameType.Character
+      case _: PlainOpenChallenge     => GameType.Plain
     }
+    for {
+      id <- session.unique(insertChallenge)(
+        (gt, c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.gameId)
+      )
+      _ <- c match {
+        case cc: CharacterOpenChallenge => session.execute(insertCharacterChallenge)((c.gameId, id, cc.characterId)).void
+        case _: PlainOpenChallenge      => IO.unit
+      }
+    } yield c match {
+      case cc: CharacterOpenChallenge => cc.copy(challengeId = id)
+      case pc: PlainOpenChallenge     => pc.copy(challengeId = id)
+    }
+  }
 
   def read(gameId: GameId, id: ChallengeId): IO[Option[OpenChallenge]] =
     session.option(selectChallenge)((gameId, id)).map(_.map(row => toChallenge(id, row)))

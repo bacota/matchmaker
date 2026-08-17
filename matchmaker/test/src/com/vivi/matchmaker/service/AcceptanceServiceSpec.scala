@@ -137,8 +137,11 @@ class AcceptanceServiceSpec extends PropertySuite {
         val result = for {
           set <- setUp(nickname, externalId, accepterNickname, accepterExternalId)
           (_, created, _, _) = set
-          challengerSees <- acceptanceService.mine(externalId)
-        } yield !challengerSees.exists(_.challengeId == created.challengeId)
+          // Not the challenger: creating a challenge accepts it, so the challenger legitimately
+          // has an acceptance of their own. An uninvolved player is the one who must see nothing.
+          outsider <- registrationService.register(s"$nickname-outsider", s"$externalId-outsider")
+          outsiderSees <- acceptanceService.mine(outsider.externalId)
+        } yield !outsiderSees.exists(_.challengeId == created.challengeId)
         result.timeout(10.seconds).unsafeRunSync()
     }
   }

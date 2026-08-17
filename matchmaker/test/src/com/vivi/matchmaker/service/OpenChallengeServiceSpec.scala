@@ -56,6 +56,24 @@ class OpenChallengeServiceSpec extends PropertySuite {
     }
   }
 
+  // Regression test: creating a challenge is itself an acceptance of it, so the challenger must
+  // already be among its acceptances when create returns.
+  property("create accepts the challenge on the challenger's behalf") {
+    forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+      val result = for {
+        fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
+        created <- challengeService.create(challengeFor(fixture, 3), externalId)
+        acceptance <- TestSession.resource.use { session =>
+          new AcceptanceRepo(session).read(fixture.game.gameId, created.challengeId, fixture.owner.playerId)
+        }
+      } yield acceptance match {
+        case Some(a: CharacterAcceptance) => a.characterId == fixture.character.characterId
+        case _                            => false
+      }
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
   property("create rejects a caller who does not own the character") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, otherExternalId) =>
       val result = for {
@@ -151,7 +169,9 @@ class OpenChallengeServiceSpec extends PropertySuite {
       (nickname, externalId, firstNickname, firstExternalId, secondNickname, secondExternalId) =>
         val result = for {
           fixture <- makeFixture(nickname, externalId, minPlayers = 1, maxPlayers = 4)
-          created <- challengeService.create(challengeFor(fixture, 1), externalId)
+          // 2, not 1: the challenger's own acceptance is created with the challenge, so a
+          // one-player challenge is already full and nobody could accept it at all.
+          created <- challengeService.create(challengeFor(fixture, 2), externalId)
           first <- makeCharacterInGame(fixture.game, firstNickname, firstExternalId)
           _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(first._2.characterId), firstExternalId)
           second <- makeCharacterInGame(fixture.game, secondNickname, secondExternalId)
@@ -172,7 +192,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
       (nickname, externalId, accepterNickname, accepterExternalId) =>
         val result = for {
           fixture <- makeFixture(nickname, externalId, minPlayers = 1, maxPlayers = 4)
-          created <- challengeService.create(challengeFor(fixture, 1), externalId)
+          created <- challengeService.create(challengeFor(fixture, 2), externalId)
           accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
           (_, accepterCharacter) = accepter
           _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
