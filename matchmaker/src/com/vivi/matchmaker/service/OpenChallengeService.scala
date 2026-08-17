@@ -18,8 +18,11 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
       case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
     }
 
+  /** The player a challenge is being created or deleted for, locked for the rest of the
+    * transaction so the authorization decided from it cannot be invalidated before the write.
+    */
   private def requirePlayer(playerRepo: PlayerRepo, playerId: PlayerId): IO[Player] =
-    playerRepo.read(playerId).flatMap {
+    playerRepo.readForShare(playerId).flatMap {
       case Some(p) => IO.pure(p)
       case None    => IO.raiseError(NotFoundError(s"no player with id ${playerId.value}"))
     }
@@ -43,7 +46,10 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
                 _ <- IO.raiseUnless(game.gameType == GameType.Character)(
                   ValidationError(s"game ${game.gameId.value} does not require a character, but a CharacterOpenChallenge was given")
                 )
-                joined <- characterRepo.readWithOwnerAndGame(cc.characterId).flatMap {
+                // Locked: ownership is what authorizes this challenge, and the challenge row
+                // inserted below references the character. An unlocked read would let the
+                // character be reassigned or removed between the check and the insert.
+                joined <- characterRepo.readWithOwnerAndGameForUpdate(cc.characterId).flatMap {
                   case Some(t) => IO.pure(t)
                   case None    => IO.raiseError(NotFoundError(s"no character with id ${cc.characterId.value}"))
                 }
@@ -83,7 +89,7 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
               s"numberOfPlayers ${challenge.numberOfPlayers} is not in range [${game.minPlayers}, ${game.maxPlayers}]"
             )
           )
-          created <- challengeRepo.createHere(challenge)
+          created <- challengeRepo.create(challenge)
           _ <- acceptanceRepo.create(created match {
             case cc: CharacterOpenChallenge =>
               CharacterAcceptance(cc.challengeId, cc.challenger, cc.gameId, cc.characterId)
@@ -119,7 +125,9 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
           acceptance <- (gameType, characterId) match {
             case (GameType.Character, Some(cid)) =>
               for {
-                joined <- characterRepo.readWithOwnerAndGame(cid).flatMap {
+                // Locked for the same reason as in create: the acceptance about to be written
+                // names this owner and references this character.
+                joined <- characterRepo.readWithOwnerAndGameForUpdate(cid).flatMap {
                   case Some(t) => IO.pure(t)
                   case None    => IO.raiseError(NotFoundError(s"no character with id ${cid.value}"))
                 }
@@ -132,7 +140,8 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
                 )
               } yield CharacterAcceptance(challengeId, owner.playerId, gameId, cid): Acceptance
             case (GameType.Plain, None) =>
-              playerRepo.readByExternalId(callerExternalId).flatMap {
+              // Locked: the acceptance written below references this player.
+              playerRepo.readByExternalIdForShare(callerExternalId).flatMap {
                 case Some(player) => IO.pure(PlainAcceptance(challengeId, player.playerId, gameId): Acceptance)
                 case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
               }
@@ -182,7 +191,8 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
           }
           _ <- challenge match {
             case cc: CharacterOpenChallenge =>
-              characterRepo.readWithOwnerAndGame(cc.characterId).flatMap {
+              // Locked: the owner read here is the only thing authorizing the delete below.
+              characterRepo.readWithOwnerAndGameForUpdate(cc.characterId).flatMap {
                 case Some((_, owner, _)) =>
                   IO.raiseUnless(callerExternalId == owner.externalId)(
                     UnauthorizedError(s"caller '$callerExternalId' may not delete challenge ${challengeId.value}")

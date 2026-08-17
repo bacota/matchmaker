@@ -80,16 +80,12 @@ class OpenChallengeRepo(session: Session[IO]) {
           start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings
           WHERE game_id = $gameId AND challenge_id = $challengeId""".command
 
-  def create(c: OpenChallenge): IO[OpenChallenge] =
-    session.transaction.use(_ => createHere(c))
-
-  /** The inserts `create` performs, without opening a transaction of its own.
+  /** Inserts the challenge, and for a [[CharacterOpenChallenge]] its character row too.
     *
-    * skunk rejects nested transactions outright ("Nested transactions are not allowed"), so a
-    * caller that is already inside one — the service creating a challenge and the challenger's
-    * acceptance together — must use this instead of `create`.
+    * Like every write in this package it opens no transaction of its own — that is the calling
+    * service's job, and skunk rejects nested transactions outright anyway.
     */
-  def createHere(c: OpenChallenge): IO[OpenChallenge] = {
+  def create(c: OpenChallenge): IO[OpenChallenge] = {
     val gt = c match {
       case _: CharacterOpenChallenge => GameType.Character
       case _: PlainOpenChallenge     => GameType.Plain

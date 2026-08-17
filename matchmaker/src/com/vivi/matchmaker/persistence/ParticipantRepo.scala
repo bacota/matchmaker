@@ -66,17 +66,15 @@ class ParticipantRepo(session: Session[IO]) {
       case _: CharacterParticipant => GameType.Character
       case _: PlainParticipant     => GameType.Plain
     }
-    session.transaction.use { _ =>
-      for {
-        id <- session.unique(insertParticipant)((p.gameId, p.matchId, gt, p.playerId, p.pending, p.completed, p.due))
-        _ <- p match {
-          case cp: CharacterParticipant => session.execute(insertCharacterParticipant)((p.gameId, id, cp.characterId)).void
-          case _: PlainParticipant      => IO.unit
-        }
-      } yield p match {
-        case cp: CharacterParticipant => cp.copy(participantId = id)
-        case pp: PlainParticipant     => pp.copy(participantId = id)
+    for {
+      id <- session.unique(insertParticipant)((p.gameId, p.matchId, gt, p.playerId, p.pending, p.completed, p.due))
+      _ <- p match {
+        case cp: CharacterParticipant => session.execute(insertCharacterParticipant)((p.gameId, id, cp.characterId)).void
+        case _: PlainParticipant      => IO.unit
       }
+    } yield p match {
+      case cp: CharacterParticipant => cp.copy(participantId = id)
+      case pp: PlainParticipant     => pp.copy(participantId = id)
     }
   }
 
