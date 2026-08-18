@@ -90,7 +90,8 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             case Some(t) => IO.pure(t)
             case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
           }
-          (existing, currentOwner, _) = joined
+          existing = joined.character
+          currentOwner = joined.owner
           _ <- IO.raiseUnless(callerExternalId == currentOwner.externalId)(
             UnauthorizedError(s"caller '$callerExternalId' may not update character ${characterId.value}")
           )
@@ -119,7 +120,8 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             case Some(t) => IO.pure(t)
             case None    => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
           }
-          (existing, game) = joined
+          existing = joined.character
+          game = joined.game
           _ <- IO.raiseUnless(callerExternalId == game.externalId)(
             UnauthorizedError(s"invalid game externalId for character ${characterId.value}")
           )

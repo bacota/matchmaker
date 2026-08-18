@@ -54,7 +54,8 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
                   case Some(t) => IO.pure(t)
                   case None    => IO.raiseError(NotFoundError(s"no character with id ${cc.characterId.value}"))
                 }
-                (_, owner, characterGame) = joined
+                owner = joined.owner
+                characterGame = joined.game
                 _ <- IO.raiseUnless(challenge.gameId == characterGame.gameId)(
                   ValidationError(
                     s"challenge game_id ${challenge.gameId.value} does not match character's game_id ${characterGame.gameId.value}"
@@ -136,7 +137,8 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
             case Some(t) => IO.pure(t)
             case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
           }
-          (gameType, maxPlayers) = challengeInfo
+          gameType = challengeInfo.gameType
+          maxPlayers = challengeInfo.numberOfPlayers
           // A role has to be one of this game's, which the schema's composite foreign key also
           // enforces — checked here so that a wrong role is a 400 naming the game rather than a
           // constraint violation surfacing as a 500.
@@ -156,7 +158,8 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
                   case Some(t) => IO.pure(t)
                   case None    => IO.raiseError(NotFoundError(s"no character with id ${cid.value}"))
                 }
-                (_, owner, game) = joined
+                owner = joined.owner
+                game = joined.game
                 _ <- IO.raiseUnless(callerExternalId == owner.externalId)(
                   UnauthorizedError(s"caller '$callerExternalId' may not accept challenge ${challengeId.value} for character ${cid.value}")
                 )
@@ -218,8 +221,8 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
             case cc: CharacterOpenChallenge =>
               // Locked: the owner read here is the only thing authorizing the delete below.
               characterRepo.readWithOwnerAndGameForUpdate(cc.characterId).flatMap {
-                case Some((_, owner, _)) =>
-                  IO.raiseUnless(callerExternalId == owner.externalId)(
+                case Some(joined) =>
+                  IO.raiseUnless(callerExternalId == joined.owner.externalId)(
                     UnauthorizedError(s"caller '$callerExternalId' may not delete challenge ${challengeId.value}")
                   )
                 case None => IO.raiseError(NotFoundError(s"no character with id ${cc.characterId.value}"))
