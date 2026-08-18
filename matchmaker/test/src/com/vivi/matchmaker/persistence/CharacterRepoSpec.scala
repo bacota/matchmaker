@@ -39,7 +39,7 @@ class CharacterRepoSpec extends PropertySuite {
             character <- IO.pure(Generators.genCharacter(createdGame.gameId, Some(createdPlayer.playerId)).sample.get)
             created <- characterRepo.create(character)
             found <- characterRepo.readWithOwnerAndGame(created.characterId)
-          } yield found == Some((created, createdPlayer, createdGame))
+          } yield found == Some(CharacterWithOwnerAndGame(created, createdPlayer, createdGame))
         }
         .unsafeRunSync()
     }

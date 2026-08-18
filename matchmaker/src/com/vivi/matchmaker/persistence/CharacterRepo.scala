@@ -8,6 +8,12 @@ import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model.{Character, CharacterId, Game, GameId, GameType, Player, PlayerId}
 
+/** A character together with its owning player and the game it belongs to. */
+case class CharacterWithOwnerAndGame[T](character: Character[T], owner: Player, game: Game)
+
+/** A character together with the game it belongs to. The character need not have an owner. */
+case class CharacterWithGame[T](character: Character[T], game: Game)
+
 class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private val characterId = SkunkIdCodecs.characterId
   private val playerId = SkunkIdCodecs.playerId
@@ -87,20 +93,20 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     * no character with this id exists and when it has no owning player (since it then has no
     * matching row in this join).
     */
-  def readWithOwnerAndGame(id: CharacterId): IO[Option[(Character[T], Player, Game)]] =
+  def readWithOwnerAndGame(id: CharacterId): IO[Option[CharacterWithOwnerAndGame[T]]] =
     session.option(selectCharacterWithOwnerAndGame)(id).map(_.map(toCharacterWithOwnerAndGame(id, _)))
 
   /** As `readWithOwnerAndGame`, but locking the character row until the enclosing transaction
     * ends, so that a caller which reads, authorizes and then writes cannot have the row change
     * underneath it in between.
     */
-  def readWithOwnerAndGameForUpdate(id: CharacterId): IO[Option[(Character[T], Player, Game)]] =
+  def readWithOwnerAndGameForUpdate(id: CharacterId): IO[Option[CharacterWithOwnerAndGame[T]]] =
     session.option(selectCharacterWithOwnerAndGameForUpdate)(id).map(_.map(toCharacterWithOwnerAndGame(id, _)))
 
   private def toCharacterWithOwnerAndGame(
       id: CharacterId,
       row: (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String, Int, Int)
-  ): (Character[T], Player, Game) = row match {
+  ): CharacterWithOwnerAndGame[T] = row match {
     case (
         charGameId,
         name,
@@ -122,7 +128,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       val character = Character(id, charGameId, name, description, state, Some(charPlayerId))
       val player = Player(charPlayerId, nickname, isAdmin, externalId)
       val game = Game(charGameId, gameType, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId, gameMinPlayers, gameMaxPlayers)
-      (character, player, game)
+      CharacterWithOwnerAndGame(character, player, game)
   }
 
   private val withGameRow: Codec[
@@ -158,21 +164,21 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     * game tables. Unlike readWithOwnerAndGame, this does not require the character to have an
     * owning player.
     */
-  def readWithGame(id: CharacterId): IO[Option[(Character[T], Game)]] =
+  def readWithGame(id: CharacterId): IO[Option[CharacterWithGame[T]]] =
     session.option(selectCharacterWithGame)(id).map(_.map(toCharacterWithGame(id, _)))
 
   /** As `readWithGame`, but locking the character row until the enclosing transaction ends. */
-  def readWithGameForUpdate(id: CharacterId): IO[Option[(Character[T], Game)]] =
+  def readWithGameForUpdate(id: CharacterId): IO[Option[CharacterWithGame[T]]] =
     session.option(selectCharacterWithGameForUpdate)(id).map(_.map(toCharacterWithGame(id, _)))
 
   private def toCharacterWithGame(
       id: CharacterId,
       row: (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String, Int, Int)
-  ): (Character[T], Game) = row match {
+  ): CharacterWithGame[T] = row match {
     case (charGameId, name, description, state, charPlayerId, gameType, gameName, gameDescription, gameUrl, gameActive, gameExternalId, gameMinPlayers, gameMaxPlayers) =>
       val character = Character(id, charGameId, name, description, state, charPlayerId)
       val game = Game(charGameId, gameType, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId, gameMinPlayers, gameMaxPlayers)
-      (character, game)
+      CharacterWithGame(character, game)
   }
 
   // `state` is deliberately not the last column: a trailing abstract-typed codec defeats skunk's

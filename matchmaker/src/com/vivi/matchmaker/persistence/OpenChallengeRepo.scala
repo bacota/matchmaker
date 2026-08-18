@@ -9,6 +9,9 @@ import natchez.Trace.Implicits.noop
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 
+/** The fields read (and locked) by [[OpenChallengeRepo.readForUpdate]]. */
+case class LockedChallenge(gameType: GameType, numberOfPlayers: Short)
+
 /** Reads and writes `open_challenge` (plus its `character_open_challenge` sibling).
   *
   * `OpenChallenge.gameRoleId` has no column here — the challenger's role lives on their own
@@ -127,8 +130,8 @@ class OpenChallengeRepo(session: Session[IO]) {
     * concurrent acceptance attempts against the same challenge's capacity check, and the
     * game_type to decide whether an acceptance must carry a characterId.
     */
-  def readForUpdate(gameId: GameId, id: ChallengeId): IO[Option[(GameType, Short)]] =
-    session.option(selectChallengeForUpdate)((gameId, id))
+  def readForUpdate(gameId: GameId, id: ChallengeId): IO[Option[LockedChallenge]] =
+    session.option(selectChallengeForUpdate)((gameId, id)).map(_.map(LockedChallenge.apply.tupled))
 
   def update(c: OpenChallenge): IO[Unit] =
     session
