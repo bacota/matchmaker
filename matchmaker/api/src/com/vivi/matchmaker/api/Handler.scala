@@ -19,26 +19,38 @@ class Handler extends RequestStreamHandler {
 
   override def handleRequest(input: InputStream, output: OutputStream, context: Context): Unit = {
     val event = String(input.readAllBytes(), StandardCharsets.UTF_8)
-    val log = (msg: String) => Option(context).foreach(_.getLogger.log(msg))
+    // Falls back to stderr when there is no context (local runs, and any invocation the runtime
+    // hands a null one), so a request is never handled with its outcome going nowhere.
+    val log = (msg: String) =>
+      Option(context) match {
+        case Some(c) => c.getLogger.log(msg)
+        case None    => System.err.println(msg)
+      }
+
+    // The request, if it could be decoded — so the catch below can still name what failed.
+    var where = "undecoded event"
 
     val response =
       try {
         val request = ApiGateway.decodeRequest(event)
-        //log(s"handling ${request.method} ${request.path}")
+        where = s"${request.method} ${request.path}"
         val result = Router
           .dispatch(services, request, Handler.authenticator)
           .handleError { error =>
             // Router maps ServiceErrors itself; reaching here means something unexpected, so
             // the detail goes to CloudWatch and only a generic message goes to the caller.
-            //log(s"unhandled error on ${request.method} ${request.path}: $error")
-            Errors.toResponse(error)
+            Errors.toResponse(error, where)
           }
           .unsafeRunSync()
-        log(s"handled ${request.method} ${request.path} -> ${result.statusCode}")
+        log(s"handled $where -> ${result.statusCode}")
         result
       } catch {
+        // Anything that escaped the IO: a decode failure, a fatal error, a container whose
+        // initialization failed. Logged with its stack trace, because a 5xx the caller cannot
+        // see the reason for has to be readable here.
         case error: Throwable =>
-          log(s"could not handle event: $error")
+          Errors.log(error, where)
+          log(s"handled $where -> 500")
           Errors.response(500, "internal error")
       }
 

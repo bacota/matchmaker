@@ -24,7 +24,12 @@ object Router {
   def dispatch(services: => Services[String], request: Request, authenticator: Authenticator): IO[Response] =
     authenticator.callerOf(request) match {
       case Left(rejection) => IO.pure(rejection)
-      case Right(caller)   => route(services, request, caller).handleError(Errors.toResponse)
+      case Right(caller)   =>
+        val where = s"${request.method} ${request.path}"
+        // `route` is called inside the IO rather than before it: it forces the by-name
+        // `services`, and a pool that fails to open would otherwise throw while this IO is being
+        // built — outside the `handleError` below, and so unlogged.
+        IO(route(services, request, caller)).flatten.handleError(Errors.toResponse(_, where))
     }
 
   private def route(services: Services[String], request: Request, caller: String): IO[Response] =
