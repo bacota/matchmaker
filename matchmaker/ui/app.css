@@ -127,7 +127,7 @@ ul {
   margin: 0.75rem 0;
 }
 
-.card input {
+.card input:not([type="checkbox"]) {
   display: block;
   width: 100%;
   margin-bottom: 0.5rem;
@@ -135,6 +135,20 @@ ul {
   border: 1px solid var(--line);
   border-radius: 3px;
   font: inherit;
+}
+
+/* A checkbox and its caption belong on one line: the rule above would otherwise stretch the
+   box to the card's full width and push the caption onto the next line. */
+.card label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.card label input[type="checkbox"] {
+  margin: 0;
+  flex: none;
 }
 
 button {

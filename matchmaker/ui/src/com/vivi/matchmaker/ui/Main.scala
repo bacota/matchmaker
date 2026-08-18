@@ -587,7 +587,7 @@ object Views {
           tpe := "checkbox",
           controlled(checked <-- isPublic.signal, onChange.mapToChecked --> isPublic)
         ),
-        " anyone may watch"
+        "anyone may watch"
       ),
       button(
         "Create challenge",
