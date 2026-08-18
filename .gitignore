@@ -18,3 +18,7 @@ flyway-dev.sh
 matchmaker/ui/main.js
 matchmaker/ui/main.js.map
 matchmaker/ui/config.js
+
+# Metals / Mill BSP connection files, machine-local.
+.bsp/
+.metals/
