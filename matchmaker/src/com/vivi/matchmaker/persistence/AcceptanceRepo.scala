@@ -99,20 +99,29 @@ class AcceptanceRepo(session: Session[IO]) {
   // gameId is a query parameter here, not a selected column — the caller already knows it (it's
   // how the row is looked up), so there's no need to round-trip it back out.
   private val acceptanceWithChallengeAndPlayersRow: Codec[
-    (GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[Long],
+    (GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long],
       (String, Boolean, String), String, Boolean, String)
   ] =
-    gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *: int8.opt *:
+    gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId.opt *: int8.opt *:
       playerRow *: text *: bool *: text
 
+  // `a` is the acceptance being read; `challenger_acceptance` is the challenger's own, which is
+  // where a challenge's gameRoleId lives (there is no such column on open_challenge — see
+  // OpenChallengeRepo). Without it the challenge reconstructed below would report no role at all,
+  // which is not the same thing as the challenger having chosen none.
   private val selectAcceptanceWithChallengeAndPlayers = sql"""
     SELECT a.game_type, oc.challenger, oc.message, oc.number_of_players, oc.start,
-           EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, cc.character_id,
+           EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public,
+           challenger_acceptance.game_role_id, cc.character_id,
            acceptor.nickname, acceptor.is_admin, acceptor.external_id,
            challenger.nickname, challenger.is_admin, challenger.external_id
     FROM acceptance a
     JOIN open_challenge oc ON oc.game_id = a.game_id AND oc.challenge_id = a.challenge_id
     LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
+    LEFT JOIN acceptance challenger_acceptance
+           ON challenger_acceptance.game_id = oc.game_id
+          AND challenger_acceptance.challenge_id = oc.challenge_id
+          AND challenger_acceptance.player_id = oc.challenger
     JOIN player acceptor ON acceptor.player_id = a.player_id
     JOIN player challenger ON challenger.player_id = oc.challenger
     WHERE a.game_id = $gameId AND a.challenge_id = $challengeId AND a.player_id = $playerId"""
@@ -133,6 +142,7 @@ class AcceptanceRepo(session: Session[IO]) {
             timeLimitSeconds,
             settings,
             isPublic,
+            challengerRoleId,
             characterIdValue,
             (acceptorNickname, acceptorIsAdmin, acceptorExternalId),
             challengerNickname,
@@ -145,9 +155,13 @@ class AcceptanceRepo(session: Session[IO]) {
             val cid = characterIdValue.getOrElse(
               throw new IllegalStateException(s"challenge ${challengeId.value} is game_type 'C' but has no character_open_challenge row")
             )
-            CharacterOpenChallenge(challengeId, challenger, message, numberOfPlayers, start, timeLimit, settings, gameId, CharacterId(cid), isPublic)
+            CharacterOpenChallenge(
+              challengeId, challenger, message, numberOfPlayers, start, timeLimit, settings, gameId, CharacterId(cid), isPublic, challengerRoleId
+            )
           case GameType.Plain =>
-            PlainOpenChallenge(challengeId, challenger, message, numberOfPlayers, start, timeLimit, settings, gameId, isPublic)
+            PlainOpenChallenge(
+              challengeId, challenger, message, numberOfPlayers, start, timeLimit, settings, gameId, isPublic, challengerRoleId
+            )
         }
         val acceptor = Player(playerId, acceptorNickname, acceptorIsAdmin, acceptorExternalId)
         val challengerPlayer = Player(challenger, challengerNickname, challengerIsAdmin, challengerExternalId)

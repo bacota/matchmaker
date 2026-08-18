@@ -97,8 +97,14 @@ class OpenChallengeServiceSpec extends PropertySuite {
           new AcceptanceRepo(session).read(game.gameId, created.challengeId, base.owner.playerId)
         }
         listed <- challengeService.listByGame(game.gameId, externalId)
+        // The join query used to authorize deleting an acceptance rebuilds the challenge too, so
+        // it has to reach the challenger's role the same way.
+        joined <- TestSession.resource.use { session =>
+          new AcceptanceRepo(session).readWithChallengeAndPlayers(game.gameId, created.challengeId, base.owner.playerId)
+        }
       } yield acceptance.exists(_.gameRoleId.contains(role)) &&
-        listed.exists(c => c.challengeId == created.challengeId && c.gameRoleId.contains(role))
+        listed.exists(c => c.challengeId == created.challengeId && c.gameRoleId.contains(role)) &&
+        joined.exists((challenge, _, _) => challenge.gameRoleId.contains(role))
       result.timeout(10.seconds).unsafeRunSync()
     }
   }
