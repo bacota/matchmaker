@@ -4,12 +4,13 @@ import java.net.URI
 import java.time.Instant
 import munit.FunSuite
 
-/** Checks the signer against AWS's own published `aws4_testsuite` vectors.
+/** Checks what this wrapper is responsible for: the headers it puts on a request, and the
+  * options it hands the SDK's signer.
   *
-  * The point of testing against a vector rather than against itself: a signature is only useful
-  * if API Gateway computes the same one, and nothing local can tell us whether it does. These
-  * inputs and outputs come from AWS, so agreeing with them is evidence the algorithm is right
-  * rather than merely self-consistent.
+  * The algorithm itself is the SDK's and is not re-tested here — asserting AWS's own published
+  * `aws4_testsuite` vectors against AWS's own signer would only be testing that the dependency
+  * resolved. What does need testing is that this call site drives it the way API Gateway
+  * requires, which is what the encoded-path case below is for.
   */
 class SigV4Spec extends FunSuite {
 
@@ -18,84 +19,61 @@ class SigV4Spec extends FunSuite {
 
   private val signedAt = Instant.parse("2015-08-30T12:36:00Z")
 
-  test("get-vanilla matches the published signature") {
-    val headers = SigV4.sign(
-      method = "GET",
-      uri = URI.create("https://example.amazonaws.com/"),
-      headers = Map.empty,
-      body = "",
-      credentials = credentials,
-      region = "us-east-1",
-      service = "service",
-      now = signedAt
-    )
+  private def sign(url: String, headers: Map[String, String] = Map.empty, body: String = "", creds: AwsCredentials = credentials) =
+    SigV4.sign("GET", URI.create(url), headers, body, creds, "us-east-1", "execute-api", signedAt)
 
-    assertEquals(
-      headers("Authorization"),
-      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, " +
-        "SignedHeaders=host;x-amz-date, " +
-        "Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"
+  test("a signed request carries the headers API Gateway checks") {
+    val headers = sign("https://example.amazonaws.com/")
+
+    assert(
+      headers("Authorization").startsWith(
+        "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/execute-api/aws4_request, "
+      )
     )
+    assert(headers("Authorization").contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date"))
     assertEquals(headers("X-Amz-Date"), "20150830T123600Z")
     assertEquals(headers("Host"), "example.amazonaws.com")
   }
 
-  test("get-vanilla-query-order-key-case matches the published signature") {
+  test("a header on the request is signed but not returned again") {
     val headers = SigV4.sign(
-      method = "GET",
-      uri = URI.create("https://example.amazonaws.com/?Param2=value2&Param1=value1"),
-      headers = Map.empty,
-      body = "",
-      credentials = credentials,
-      region = "us-east-1",
-      service = "service",
-      now = signedAt
+      "POST",
+      URI.create("https://example.amazonaws.com/games"),
+      Map("content-type" -> "application/json"),
+      """{"players":2}""",
+      credentials,
+      "us-east-1",
+      "execute-api",
+      signedAt
     )
 
-    assertEquals(
-      headers("Authorization"),
-      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, " +
-        "SignedHeaders=host;x-amz-date, " +
-        "Signature=b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500"
-    )
-  }
-
-  test("post-x-www-form-urlencoded signs the body it sends") {
-    val headers = SigV4.sign(
-      method = "POST",
-      uri = URI.create("https://example.amazonaws.com/"),
-      headers = Map("content-type" -> "application/x-www-form-urlencoded"),
-      body = "Param1=value1",
-      credentials = credentials,
-      region = "us-east-1",
-      service = "service",
-      now = signedAt
-    )
-
-    assertEquals(
-      headers("Authorization"),
-      "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, " +
-        "SignedHeaders=content-type;host;x-amz-date, " +
-        "Signature=ff11897932ad3f4e8b18135d722051e5ac45fc38421b1da7b9d196a0fe09473a"
-    )
+    assert(headers("Authorization").contains("SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date"))
+    // Returning it would leave the caller to merge two copies of a header the signature covers.
+    assert(!headers.contains("content-type"))
   }
 
   // Temporary credentials are what Lambda actually has, and their token is both signed and sent
   // — an unsigned token would be ignored, and an unsent one would leave the role unidentified.
   test("a session token is both signed and returned") {
-    val headers = SigV4.sign(
-      method = "GET",
-      uri = URI.create("https://example.amazonaws.com/"),
-      headers = Map.empty,
-      body = "",
-      credentials = credentials.copy(sessionToken = Some("session-token")),
-      region = "us-east-1",
-      service = "service",
-      now = signedAt
-    )
+    val headers = sign("https://example.amazonaws.com/", creds = credentials.copy(sessionToken = Some("session-token")))
 
     assertEquals(headers("X-Amz-Security-Token"), "session-token")
-    assert(headers("Authorization").contains("SignedHeaders=host;x-amz-date;x-amz-security-token"))
+    assert(headers("Authorization").contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token"))
+  }
+
+  /* The signer's default is to encode the path a second time before signing it, which is right
+   * for every service but `execute-api` — see the properties SigV4.sign sets. Nothing detects
+   * that on a path with nothing to encode, so this pins one that has: the signature below was
+   * produced with those properties set, and removing either of them changes it. */
+  test("the path is signed as sent, not encoded a second time") {
+    val headers = sign("https://example.amazonaws.com/games/7/matches%20and%20more/")
+
+    assert(
+      headers("Authorization").endsWith(
+        "Signature=62b9b98a748170d6715f3eeb573334a8861c37c196f7d0c5158ab85b8d016458"
+      ),
+      headers("Authorization")
+    )
   }
 
   test("credentials come from the environment when they are set") {

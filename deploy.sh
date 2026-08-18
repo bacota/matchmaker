@@ -111,11 +111,11 @@ if [ "$skip_build" = true ]; then
   step "Skipping build"
 else
   step "Compiling everything"
-  mill --ticker false __.compile
+  mill -j 4 --ticker false __.compile
 
   step "Building the Lambda jar and the UI bundle"
-  mill --ticker false matchmaker.api.assembly
-  mill --ticker false matchmaker.ui.fullLinkJS
+  mill -j 4 --ticker false matchmaker.api.assembly
+  mill -j 4 --ticker false matchmaker.ui.fullLinkJS
 fi
 
 # ---------------------------------------------------------------------------

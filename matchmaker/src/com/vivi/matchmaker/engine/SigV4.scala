@@ -1,12 +1,12 @@
 package com.vivi.matchmaker.engine
 
 import java.net.URI
-import java.nio.charset.StandardCharsets.UTF_8
-import java.security.MessageDigest
-import java.time.{Instant, ZoneOffset}
-import java.time.format.DateTimeFormatter
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
+import java.time.{Clock, Instant, ZoneOffset}
+import scala.jdk.CollectionConverters._
+import software.amazon.awssdk.http.{ContentStreamProvider, SdkHttpMethod, SdkHttpRequest}
+import software.amazon.awssdk.http.auth.aws.signer.{AwsV4FamilyHttpSigner, AwsV4HttpSigner}
+import software.amazon.awssdk.http.auth.spi.signer.HttpSigner
+import software.amazon.awssdk.identity.spi.{AwsCredentialsIdentity, AwsSessionCredentialsIdentity}
 
 /** The credentials a signed request is made with.
   *
@@ -15,7 +15,13 @@ import javax.crypto.spec.SecretKeySpec
   * cache, and `sessionToken` is always present. It is optional here only because long-lived IAM
   * user keys (a local test run against a real API, say) have none.
   */
-case class AwsCredentials(accessKeyId: String, secretAccessKey: String, sessionToken: Option[String])
+case class AwsCredentials(accessKeyId: String, secretAccessKey: String, sessionToken: Option[String]) {
+
+  private[engine] def identity: AwsCredentialsIdentity = sessionToken match {
+    case Some(token) => AwsSessionCredentialsIdentity.create(accessKeyId, secretAccessKey, token)
+    case None        => AwsCredentialsIdentity.create(accessKeyId, secretAccessKey)
+  }
+}
 
 object AwsCredentials {
 
@@ -37,17 +43,13 @@ object AwsCredentials {
   * being granted `execute-api:Invoke` on the game API is necessary but not sufficient — every
   * request it sends has to be signed as well, which is what this does.
   *
-  * Implemented directly rather than via the AWS SDK because the SDK would pull Netty and Apache
-  * HttpClient (about 8 MB) into a Lambda artifact deliberately kept small — see the `api` module
-  * in `build.mill`. The algorithm is fully specified by AWS and is exercised in `SigV4Spec`
-  * against the published test-suite vector, so hand-rolling it is not a guess.
+  * The algorithm itself comes from the AWS SDK's `AwsV4HttpSigner`. That is the signer only —
+  * `http-auth-aws` and its spi/utils dependencies, no service client — so none of the SDK's
+  * HTTP machinery (Netty, Apache HttpClient) is pulled into the Lambda artifact.
   */
 object SigV4 {
 
-  private val algorithm = "AWS4-HMAC-SHA256"
-
-  private val amzDateFormat = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC)
-  private val dateStampFormat = DateTimeFormatter.ofPattern("yyyyMMdd").withZone(ZoneOffset.UTC)
+  private val signer = AwsV4HttpSigner.create()
 
   /** The headers to add to an otherwise-unsigned request so that API Gateway will accept it:
     * `Host`, `X-Amz-Date`, `Authorization`, and `X-Amz-Security-Token` when the credentials are
@@ -67,99 +69,30 @@ object SigV4 {
       service: String = "execute-api",
       now: Instant = Instant.now()
   ): Map[String, String] = {
-    val amzDate = amzDateFormat.format(now)
-    val dateStamp = dateStampFormat.format(now)
-    val host = if (uri.getPort > 0) s"${uri.getHost}:${uri.getPort}" else uri.getHost
+    val request = headers
+      .foldLeft(SdkHttpRequest.builder().uri(uri).method(SdkHttpMethod.fromValue(method.toUpperCase))) {
+        case (builder, (name, value)) => builder.putHeader(name, value)
+      }
+      .build()
 
-    val signedRequestHeaders =
-      headers ++ Map("host" -> host, "x-amz-date" -> amzDate) ++
-        credentials.sessionToken.map("x-amz-security-token" -> _)
-
-    // Canonical headers are lower-cased, sorted by name, and have runs of whitespace in their
-    // values collapsed — the signature is over this normalized form, not over the wire bytes,
-    // so that a proxy reformatting a header does not invalidate it.
-    val canonicalHeaderPairs =
-      signedRequestHeaders.toList.map((name, value) => (name.toLowerCase, value.trim.replaceAll("\\s+", " "))).sortBy(_._1)
-    val canonicalHeaders = canonicalHeaderPairs.map((name, value) => s"$name:$value\n").mkString
-    val signedHeaders = canonicalHeaderPairs.map(_._1).mkString(";")
-
-    val payloadHash = hex(sha256(body))
-
-    val canonicalRequest =
-      List(
-        method.toUpperCase,
-        canonicalPath(uri),
-        canonicalQuery(uri),
-        canonicalHeaders,
-        signedHeaders,
-        payloadHash
-      ).mkString("\n")
-
-    val credentialScope = s"$dateStamp/$region/$service/aws4_request"
-    val stringToSign = List(algorithm, amzDate, credentialScope, hex(sha256(canonicalRequest))).mkString("\n")
-
-    val signature = hex(hmac(signingKey(credentials.secretAccessKey, dateStamp, region, service), stringToSign))
-
-    Map(
-      "Host" -> host,
-      "X-Amz-Date" -> amzDate,
-      "Authorization" ->
-        s"$algorithm Credential=${credentials.accessKeyId}/$credentialScope, SignedHeaders=$signedHeaders, Signature=$signature"
-    ) ++ credentials.sessionToken.map("X-Amz-Security-Token" -> _)
-  }
-
-  // An empty path signs as "/", and each segment is encoded — except that the separators
-  // themselves are not, which is why this cannot just be a whole-string encode.
-  private def canonicalPath(uri: URI): String = {
-    val path = Option(uri.getPath).filter(_.nonEmpty).getOrElse("/")
-    path.split("/", -1).map(uriEncode).mkString("/")
-  }
-
-  // Query parameters are sorted by encoded name (then by value), which is what makes the
-  // canonical form independent of the order they happen to appear in the url.
-  private def canonicalQuery(uri: URI): String =
-    Option(uri.getRawQuery).filter(_.nonEmpty) match {
-      case None => ""
-      case Some(raw) =>
-        raw
-          .split("&")
-          .map { pair =>
-            pair.split("=", 2) match {
-              case Array(name)        => (uriEncode(decode(name)), "")
-              case Array(name, value) => (uriEncode(decode(name)), uriEncode(decode(value)))
-            }
-          }
-          .sorted
-          .map((name, value) => s"$name=$value")
-          .mkString("&")
+    val signed = signer.sign { r =>
+      r.identity(credentials.identity)
+        .request(request)
+        .payload(ContentStreamProvider.fromUtf8String(body))
+        .putProperty(AwsV4FamilyHttpSigner.SERVICE_SIGNING_NAME, service)
+        .putProperty(AwsV4HttpSigner.REGION_NAME, region)
+        // API Gateway signs the path exactly as it is sent. The signer's default is to encode
+        // it a second time, which every other service expects and which `execute-api` rejects.
+        .putProperty(AwsV4FamilyHttpSigner.DOUBLE_URL_ENCODE, false)
+        .putProperty(AwsV4FamilyHttpSigner.NORMALIZE_PATH, false)
+        .putProperty(HttpSigner.SIGNING_CLOCK, Clock.fixed(now, ZoneOffset.UTC))
     }
 
-  private def decode(s: String): String = java.net.URLDecoder.decode(s, UTF_8)
-
-  /* AWS's encoding rules, which are not those of URLEncoder: space is %20 rather than '+',
-   * and the unreserved set is exactly A-Z a-z 0-9 - _ . ~ */
-  private def uriEncode(s: String): String =
-    s.getBytes(UTF_8).map { b =>
-      val c = (b & 0xff).toChar
-      if (c.isLetterOrDigit && c < 128 || c == '-' || c == '_' || c == '.' || c == '~') c.toString
-      else f"%%${b & 0xff}%02X"
-    }.mkString
-
-  private def signingKey(secretAccessKey: String, dateStamp: String, region: String, service: String): Array[Byte] = {
-    val kDate = hmac(s"AWS4$secretAccessKey".getBytes(UTF_8), dateStamp)
-    val kRegion = hmac(kDate, region)
-    val kService = hmac(kRegion, service)
-    hmac(kService, "aws4_request")
+    // The signer returns the whole request's headers, the ones passed in included; only the
+    // ones it added are of interest to a caller that already has the rest.
+    signed.request.headers.asScala.view
+      .mapValues(_.asScala.mkString(","))
+      .toMap
+      .filterNot((name, _) => headers.contains(name))
   }
-
-  private def hmac(key: Array[Byte], data: String): Array[Byte] = {
-    val mac = Mac.getInstance("HmacSHA256")
-    mac.init(SecretKeySpec(key, "HmacSHA256"))
-    mac.doFinal(data.getBytes(UTF_8))
-  }
-
-  private def sha256(s: String): Array[Byte] =
-    MessageDigest.getInstance("SHA-256").digest(s.getBytes(UTF_8))
-
-  private def hex(bytes: Array[Byte]): String = bytes.map(b => f"${b & 0xff}%02x").mkString
 }

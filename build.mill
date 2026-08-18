@@ -35,7 +35,11 @@ object matchmaker extends ScalaModule {
     mvn"org.tpolecat::natchez-core:0.3.10",
     // For the jsonb columns this module reads and writes as structured data (result.scores).
     // Already inside the deployed jar by way of `api`, so this costs nothing there.
-    mvn"com.lihaoyi::upickle:4.0.2"
+    mvn"com.lihaoyi::upickle:4.0.2",
+    // SigV4 signing for the game-engine calls in `engine`. The signer alone, not a service
+    // client: `http-auth-aws` and its spi/utils dependencies come to about 700 KB, where a
+    // client would bring Netty and Apache HttpClient with it. See the `api` module below.
+    mvn"software.amazon.awssdk:http-auth-aws:2.31.78"
   )
 
   object test extends ScalaTests with TestModule.Munit {
@@ -46,7 +50,9 @@ object matchmaker extends ScalaModule {
       mvn"org.typelevel::otel4s-core-metrics:0.11.2",
       mvn"org.flywaydb:flyway-core:13.0.0",
       mvn"org.flywaydb:flyway-database-postgresql:13.0.0",
-      mvn"org.postgresql:postgresql:42.7.13"
+      mvn"org.postgresql:postgresql:42.7.13",
+      // As in `api`: keeps the SDK signer's missing-binder warning out of the test output.
+      mvn"org.slf4j:slf4j-nop:1.7.36"
     )
   }
 
@@ -55,18 +61,22 @@ object matchmaker extends ScalaModule {
     * Deployable jar: `mill matchmaker.api.assembly`, whose handler is
     * `com.vivi.matchmaker.api.Handler::handleRequest`.
     *
-    * Two dependencies are deliberately absent, both to keep the cold start short:
-    * `aws-lambda-java-events`, which would pull in Jackson purely to model the event; and the AWS
-    * SDK, which would pull in Netty and Apache HttpClient (8 MB) to make one call per cold start.
-    * The secret is fetched from the Parameters and Secrets Lambda Extension instead — see
-    * `Handler.credentials`.
+    * `aws-lambda-java-events` is deliberately absent, to keep the cold start short: it would
+    * pull in Jackson purely to model the event, which `ApiGateway` picks apart with ujson
+    * instead. The same argument is why nothing here uses an AWS *service* client — that is what
+    * brings in Netty and Apache HttpClient (8 MB). The SigV4 signer `matchmaker` depends on is
+    * not one, and costs about 700 KB.
+    *
+    * `slf4j-nop` is here only to silence the SDK's missing-binder warning, which would otherwise
+    * be logged on every cold start. Nothing in this project logs through slf4j.
     */
   object api extends ScalaModule {
     def scalaVersion = "3.3.8"
     def moduleDeps = Seq(matchmaker)
     def mvnDeps = Seq(
       mvn"com.amazonaws:aws-lambda-java-core:1.2.3",
-      mvn"com.lihaoyi::upickle:4.0.2"
+      mvn"com.lihaoyi::upickle:4.0.2",
+      mvn"org.slf4j:slf4j-nop:1.7.36"
     )
 
     // Json.scala lives in shared/, compiled here and again for the UI. The model directory is
