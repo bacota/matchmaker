@@ -585,7 +585,7 @@ object Views {
       label(
         input(
           tpe := "checkbox",
-          controlled(checked <-- isPublic.signal, onChange.mapToChecked --> isPublic)
+          controlled(checked <-- isPublic.signal, onClick.mapToChecked --> isPublic)
         ),
         "anyone may watch"
       ),
