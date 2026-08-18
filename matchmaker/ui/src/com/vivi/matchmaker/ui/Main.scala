@@ -273,7 +273,7 @@ object Views {
         onClick --> { _ =>
           Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId)) { m =>
             m.playUrl match {
-              case Some(url) => dom.window.open(url, "_blank")
+              case Some(url) => dom.window.open(url, "_blank", "noopener,noreferrer")
               case None      => Store.error.set(Some("This match has no play url yet."))
             }
           }
