@@ -56,6 +56,7 @@ object Json {
     ReadWriter.merge(summon[ReadWriter[PlainAcceptance]], summon[ReadWriter[CharacterAcceptance]])
 
   given ReadWriter[MatchSummary] = macroRW
+  given ReadWriter[Match] = macroRW
 
   /** Structural twin of `Game` with the existential in `parameters` pinned to `String`.
     *
@@ -118,10 +119,40 @@ object Json {
 
   // characterId is present iff the challenge being accepted belongs to a 'C'-type game; the
   // service layer checks that correspondence rather than trusting the caller to get it right.
-  case class AcceptRequest(characterId: Option[CharacterId])
+  // gameRoleId is the role the accepting player wants to play, and is always optional — a game
+  // need not define roles, and the ones it defines may themselves be optional.
+  case class AcceptRequest(characterId: Option[CharacterId], gameRoleId: Option[GameRoleId] = None)
+
+  /** The game engine's callbacks, from `interaction-design.txt`.
+    *
+    * Both are authorized as the game rather than as a player: X-External-Id carries the game's
+    * shared secret, the same way the character-state route does.
+    *
+    * A participant is named by its id, which the engine was given when the game was created and
+    * quotes back — it never learns matchmaker's player ids.
+    */
+  /** `prevMoveAt` is when this move was made, which is when the clock starts for whoever is named
+    * in `next`. The engine does not state a deadline: matchmaker derives it from the match's own
+    * `timeLimit`, which came from the challenge rather than from the engine.
+    */
+  case class MoveNotification(
+      participantId: ParticipantId,
+      next: List[ParticipantId] = Nil,
+      prevMoveAt: Option[Instant] = None
+  )
+
+  /** One participant's outcome. `scores` is an open map because what a game scores on is the
+    * game's business: it is stored as-is in `result.scores`.
+    */
+  case class ResultEntry(participantId: ParticipantId, rank: Int, scores: Map[String, ujson.Value], isWinner: Boolean)
+
+  case class MatchResults(results: List[ResultEntry])
 
   given ReadWriter[RegisterRequest] = macroRW
   given ReadWriter[CharacterRequest] = macroRW
   given ReadWriter[UpdateStateRequest] = macroRW
   given ReadWriter[AcceptRequest] = macroRW
+  given ReadWriter[MoveNotification] = macroRW
+  given ReadWriter[ResultEntry] = macroRW
+  given ReadWriter[MatchResults] = macroRW
 }

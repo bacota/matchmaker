@@ -74,6 +74,41 @@ class OpenChallengeServiceSpec extends PropertySuite {
     }
   }
 
+  // The challenger's role is not a column on open_challenge — it is stored on the acceptance
+  // create makes for them, and read back from there. This checks both halves: that the role given
+  // on the challenge lands on that acceptance, and that reading the challenge reports it again.
+  property("the challenger's role is stored on their acceptance and read back with the challenge") {
+    forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+      val result = for {
+        base <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
+        game <- TestSession.resource.use { session =>
+          val repo = new GameRepo[String](session)
+          // Read back rather than reuse: the role's id is assigned by the insert.
+          repo.update(base.game.copy(roles = Seq(GameRole(GameRoleId(0), base.game.gameId, "attacker", optional = false)))) *>
+            repo.read(base.game.gameId).map(_.get)
+        }
+        role = game.roles.head.gameRoleId
+        challenge = challengeFor(base, 3) match {
+          case c: CharacterOpenChallenge => c.copy(gameRoleId = Some(role))
+          case other                     => other
+        }
+        created <- challengeService.create(challenge, externalId)
+        acceptance <- TestSession.resource.use { session =>
+          new AcceptanceRepo(session).read(game.gameId, created.challengeId, base.owner.playerId)
+        }
+        listed <- challengeService.listByGame(game.gameId, externalId)
+        // The join query used to authorize deleting an acceptance rebuilds the challenge too, so
+        // it has to reach the challenger's role the same way.
+        joined <- TestSession.resource.use { session =>
+          new AcceptanceRepo(session).readWithChallengeAndPlayers(game.gameId, created.challengeId, base.owner.playerId)
+        }
+      } yield acceptance.exists(_.gameRoleId.contains(role)) &&
+        listed.exists(c => c.challengeId == created.challengeId && c.gameRoleId.contains(role)) &&
+        joined.exists((challenge, _, _) => challenge.gameRoleId.contains(role))
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
   property("create rejects a caller who does not own the character") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, otherExternalId) =>
       val result = for {
@@ -143,7 +178,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 3), externalId)
           accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
           (accepterPlayer, accepterCharacter) = accepter
-          accepted <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
+          accepted <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), None, accepterExternalId)
         } yield accepted.challengeId == created.challengeId &&
           accepted.asInstanceOf[CharacterAcceptance].characterId == accepterCharacter.characterId &&
           accepted.playerId == accepterPlayer.playerId
@@ -159,7 +194,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 3), externalId)
           accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
           (_, accepterCharacter) = accepter
-          attempt <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), otherExternalId).attempt
+          attempt <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), None, otherExternalId).attempt
         } yield attempt match {
           case Left(_: UnauthorizedError) => true
           case _                          => false
@@ -176,7 +211,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 3), externalId)
           otherGameFixture <- makeFixture(accepterNickname, accepterExternalId, minPlayers = 2, maxPlayers = 4)
           attempt <- challengeService
-            .accept(fixture.game.gameId, created.challengeId, Some(otherGameFixture.character.characterId), accepterExternalId)
+            .accept(fixture.game.gameId, created.challengeId, Some(otherGameFixture.character.characterId), None, accepterExternalId)
             .attempt
         } yield attempt match {
           case Left(_: ValidationError) => true
@@ -195,9 +230,9 @@ class OpenChallengeServiceSpec extends PropertySuite {
           // one-player challenge is already full and nobody could accept it at all.
           created <- challengeService.create(challengeFor(fixture, 2), externalId)
           first <- makeCharacterInGame(fixture.game, firstNickname, firstExternalId)
-          _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(first._2.characterId), firstExternalId)
+          _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(first._2.characterId), None, firstExternalId)
           second <- makeCharacterInGame(fixture.game, secondNickname, secondExternalId)
-          attempt <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(second._2.characterId), secondExternalId).attempt
+          attempt <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(second._2.characterId), None, secondExternalId).attempt
         } yield attempt match {
           case Left(_: ValidationError) => true
           case _                        => false
@@ -217,9 +252,9 @@ class OpenChallengeServiceSpec extends PropertySuite {
           created <- challengeService.create(challengeFor(fixture, 2), externalId)
           accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
           (_, accepterCharacter) = accepter
-          _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
+          _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), None, accepterExternalId)
           attempt <- challengeService
-            .accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), accepterExternalId)
+            .accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), None, accepterExternalId)
             .attempt
         } yield attempt match {
           case Left(_: ConflictError) => true

@@ -4,6 +4,7 @@ import cats.effect.IO
 import upickle.default.{ReadWriter, read, write}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.service._
+import com.vivi.matchmaker.util.JsonValues
 import ApiGateway.{Request, Response}
 import Json.given
 
@@ -83,6 +84,13 @@ object Router {
       case ("POST", "challenges" :: Nil) =>
         body[OpenChallenge](request).flatMap(c => created(services.challenges.create(c, caller)))
 
+      // Turns a challenge into a match: matchmaker creates the game in the engine and records
+      // the urls it returns. Only the challenger may do it — the service checks that.
+      case ("POST", "challenges" :: gameId :: challengeId :: "start" :: Nil) =>
+        withGameId(gameId) { gid =>
+          withChallengeId(challengeId)(id => created(services.engine.start(gid, id, caller)))
+        }
+
       case ("DELETE", "challenges" :: gameId :: challengeId :: Nil) =>
         withGameId(gameId) { gid =>
           withChallengeId(challengeId)(id => noContent(services.challenges.delete(gid, id, caller)))
@@ -92,7 +100,7 @@ object Router {
         withGameId(gameId) { gid =>
           withChallengeId(challengeId) { id =>
             body[Json.AcceptRequest](request).flatMap { r =>
-              created(services.challenges.accept(gid, id, r.characterId, caller))
+              created(services.challenges.accept(gid, id, r.characterId, r.gameRoleId, caller))
             }
           }
         }
@@ -101,6 +109,38 @@ object Router {
         withGameId(gameId) { gid =>
           withChallengeId(challengeId) { challenge =>
             withPlayerId(playerId)(player => noContent(services.acceptances.delete(gid, challenge, player, caller)))
+          }
+        }
+
+      case ("GET", "games" :: gameId :: "matches" :: matchId :: Nil) =>
+        withGameId(gameId)(gid => ok(services.engine.read(gid, MatchId(matchId), caller)))
+
+      // Re-checks a running match with the game engine, for a participant who suspects the
+      // state matchmaker holds has fallen behind. Player-authorized, like any other match route.
+      case ("POST", "games" :: gameId :: "matches" :: matchId :: "refresh" :: Nil) =>
+        withGameId(gameId)(gid => ok(services.engine.refresh(gid, MatchId(matchId), caller)))
+
+      // The game engine's two callbacks. Authorized on behalf of the game rather than a player:
+      // X-External-Id carries the game's shared secret, as on the character-state route above.
+      case ("POST", "games" :: gameId :: "matches" :: matchId :: "moves" :: Nil) =>
+        withGameId(gameId) { gid =>
+          body[Json.MoveNotification](request).flatMap { r =>
+            noContent(services.engine.recordMove(gid, MatchId(matchId), r.participantId, r.next, r.prevMoveAt, caller))
+          }
+        }
+
+      case ("POST", "games" :: gameId :: "matches" :: matchId :: "results" :: Nil) =>
+        withGameId(gameId) { gid =>
+          body[Json.MatchResults](request).flatMap { r =>
+            val results = r.results.map(entry =>
+              ReportedResult(
+                entry.participantId,
+                entry.rank,
+                entry.scores.view.mapValues(JsonValues.toScala).toMap,
+                entry.isWinner
+              )
+            )
+            noContent(services.engine.recordResults(gid, MatchId(matchId), results, caller))
           }
         }
 

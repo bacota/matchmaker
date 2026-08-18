@@ -264,7 +264,30 @@ object Views {
       else emptyNode,
       // `pending` marks a participation not yet settled — the player has accepted, but the match
       // has not started. `ui.txt` wants those visible in this list.
-      if (summary.pending) div(cls := "pending", "awaiting other players") else emptyNode
+      if (summary.pending) div(cls := "pending", "awaiting other players") else emptyNode,
+      // The play url lives on the match rather than the summary, and is the game engine's, not
+      // matchmaker's — so it is fetched when asked for and opened directly.
+      button(
+        cls := "link",
+        "Play",
+        onClick --> { _ =>
+          Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId)) { m =>
+            m.playUrl match {
+              case Some(url) => dom.window.open(url, "_blank", "noopener,noreferrer")
+              case None      => Store.error.set(Some("This match has no play url yet."))
+            }
+          }
+        }
+      ),
+      // Step 4 of the engine flow: any participant may ask matchmaker to re-check with the
+      // engine, which is what recovers from a callback that never arrived.
+      button(
+        cls := "link",
+        "Refresh",
+        onClick --> { _ =>
+          Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId))(_ => Store.refreshMatches())
+        }
+      )
     )
 
   // -------------------------------------------------------------------------
@@ -479,6 +502,19 @@ object Views {
       cls := "row",
       div(cls := "title", challenge.message),
       div(cls := "detail", s"${challenge.numberOfPlayers} players"),
+      if (challenge.isPublic) div(cls := "detail", "public") else emptyNode,
+      // Starting is the challenger's call rather than something that happens on the last
+      // acceptance: a challenge for up to six may be worth starting with three. The server
+      // refuses it below the game's minimum.
+      button(
+        "Start",
+        onClick --> { _ =>
+          Store.run(ApiClient.startChallenge(game.gameId, challenge.challengeId)) { _ =>
+            Store.refreshChallenges(game.gameId)
+            Store.refreshMatches()
+          }
+        }
+      ),
       button(
         "Delete",
         onClick --> { _ =>
@@ -487,15 +523,17 @@ object Views {
       )
     )
 
-  private def openChallengeRow(game: Game, challenge: OpenChallenge, characterId: Option[CharacterId]): HtmlElement =
+  private def openChallengeRow(game: Game, challenge: OpenChallenge, characterId: Option[CharacterId]): HtmlElement = {
+    val role = Var(Option.empty[GameRoleId])
     li(
       cls := "row",
       div(cls := "title", challenge.message),
       div(cls := "detail", s"${challenge.numberOfPlayers} players"),
+      roleSelect(game, role),
       button(
         "Accept",
         onClick --> { _ =>
-          Store.run(ApiClient.accept(game.gameId, challenge.challengeId, characterId)) { _ =>
+          Store.run(ApiClient.accept(game.gameId, challenge.challengeId, characterId, role.now())) { _ =>
             // Accepting may complete the challenge into a match, which changes the match lists as
             // well as this one, so both are reloaded.
             Store.refreshChallenges(game.gameId)
@@ -504,10 +542,28 @@ object Views {
         }
       )
     )
+  }
+
+  /** A picker for the role a player will play, which matchmaker passes on to the game engine.
+    * A game with no roles gets no picker, and a role is always optional — the engine is told
+    * nothing rather than something invented.
+    */
+  private def roleSelect(game: Game, selected: Var[Option[GameRoleId]]): Node =
+    if (game.roles.isEmpty) emptyNode
+    else
+      select(
+        onChange.mapToValue --> { raw =>
+          selected.set(raw.toIntOption.map(GameRoleId.apply).filter(id => game.roles.exists(_.gameRoleId == id)))
+        },
+        option(value := "", "any role"),
+        game.roles.map(r => option(value := r.gameRoleId.value.toString, r.name))
+      )
 
   private def newChallengeForm(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement = {
     val message = Var("")
     val players = Var(game.minPlayers.toString)
+    val isPublic = Var(false)
+    val role = Var(Option.empty[GameRoleId])
 
     div(
       cls := "card",
@@ -521,6 +577,17 @@ object Views {
         minAttr := game.minPlayers.toString,
         maxAttr := game.maxPlayers.toString,
         controlled(value <-- players.signal, onInput.mapToValue --> players)
+      ),
+      roleSelect(game, role),
+      // Public means anyone may watch the match, which the game engine implements by issuing a
+      // url that needs no sign-in. It is decided here because it is a property of the game being
+      // offered, not of any one player's part in it.
+      label(
+        input(
+          tpe := "checkbox",
+          controlled(checked <-- isPublic.signal, onChange.mapToChecked --> isPublic)
+        ),
+        " anyone may watch"
       ),
       button(
         "Create challenge",
@@ -541,7 +608,9 @@ object Views {
                 timeLimit = None,
                 settings = "{}",
                 gameId = game.gameId,
-                characterId = cid
+                characterId = cid,
+                isPublic = isPublic.now(),
+                gameRoleId = role.now()
               )
             case None =>
               PlainOpenChallenge(
@@ -552,7 +621,9 @@ object Views {
                 start = None,
                 timeLimit = None,
                 settings = "{}",
-                gameId = game.gameId
+                gameId = game.gameId,
+                isPublic = isPublic.now(),
+                gameRoleId = role.now()
               )
           }
 

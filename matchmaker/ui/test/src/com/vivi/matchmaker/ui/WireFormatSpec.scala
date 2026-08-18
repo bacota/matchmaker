@@ -15,6 +15,27 @@ import com.vivi.matchmaker.model._
   */
 class WireFormatSpec extends FunSuite {
 
+  // The match is what the game-engine flow hands back to the browser, and the urls on it are the
+  // only reason the UI can send a player to the game at all — an absent publicUrl must stay
+  // absent rather than becoming an empty string.
+  test("a match round-trips with the game engine's urls") {
+    val played = Match(
+      gameId = GameId(7),
+      matchId = MatchId("6b7c-uuid"),
+      description = "a friendly game",
+      completed = false,
+      start = Instant.parse("2030-01-01T10:00:00Z"),
+      timeLimit = Some(Duration.ofMinutes(30)),
+      settings = "{}",
+      isPublic = true,
+      statusUrl = Some("https://engine.example.com/status/1"),
+      playUrl = Some("https://engine.example.com/play/1"),
+      publicUrl = None
+    )
+
+    assertEquals(read[Match](write(played)), played)
+  }
+
   test("a game round-trips, including the existential parameters field") {
     // `parameters` is `Seq[GameParameter[_]]`, which no macro can derive; `Json` pins it to
     // String. This is the codec most likely to break, so it is the one exercised in full.

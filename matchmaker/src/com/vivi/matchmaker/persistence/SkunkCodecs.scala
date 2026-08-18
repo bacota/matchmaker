@@ -5,6 +5,7 @@ import skunk.codec.all._
 import skunk.data.Type
 import java.time.{Instant, OffsetDateTime, ZoneOffset}
 import com.vivi.matchmaker.model.GameType
+import com.vivi.matchmaker.util.JsonValues
 
 object SkunkCodecs {
 
@@ -25,39 +26,12 @@ object SkunkCodecs {
 
   /** A jsonb object read as a plain Scala map (`result.scores`).
     *
-    * The model may not depend on a JSON library — it is compiled for Scala.js as well — so the
-    * map holds `Any` and the translation lives here. Numbers come back as `Double`: jsonb keeps
-    * no distinction between an integer and a decimal that would survive the round trip anyway.
+    * The translation itself is `JsonValues`, which the game engine's results callback shares:
+    * the model may not depend on a JSON library — it is compiled for Scala.js as well — so the
+    * map holds `Any` and every crossing of that line goes through the same conversion.
     */
   val jsonObject: Codec[Map[String, Any]] =
-    jsonb.imap(decodeObject)(encodeObject)
-
-  private def decodeObject(s: String): Map[String, Any] = ujson.read(s) match {
-    case ujson.Obj(fields) => fields.view.mapValues(fromJson).toMap
-    case other             => throw IllegalArgumentException(s"expected a JSON object, got: $other")
-  }
-
-  private def encodeObject(m: Map[String, Any]): String =
-    ujson.write(ujson.Obj.from(m.view.map((k, v) => k -> toJson(v))))
-
-  private def fromJson(v: ujson.Value): Any = v match {
-    case ujson.Str(s)      => s
-    case ujson.Num(n)      => n
-    case ujson.Bool(b)     => b
-    case ujson.Null        => null
-    case ujson.Arr(values) => values.map(fromJson).toList
-    case ujson.Obj(fields) => fields.view.mapValues(fromJson).toMap
-  }
-
-  private def toJson(v: Any): ujson.Value = v match {
-    case null                 => ujson.Null
-    case s: String            => ujson.Str(s)
-    case b: Boolean           => ujson.Bool(b)
-    case n: Number            => ujson.Num(n.doubleValue)
-    case m: Map[_, _]         => ujson.Obj.from(m.view.map((k, value) => k.toString -> toJson(value)))
-    case values: Iterable[_]  => ujson.Arr.from(values.map(toJson))
-    case other                => ujson.Str(other.toString)
-  }
+    jsonb.imap(JsonValues.objectToScala)(JsonValues.objectFromScala)
 
   private def jsonStringEncode(s: String): String = {
     val escaped = s.flatMap {

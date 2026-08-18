@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.service
 
 import cats.effect.IO
+import cats.syntax.all._
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, GameRepo, OpenChallengeRepo, PlayerRepo, TextCodec}
 
@@ -82,6 +83,13 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
                 )
               } yield ()
           }
+          // As in accept: a role must be one of this game's, checked here so a wrong one is a
+          // 400 rather than a foreign-key violation surfacing as a 500.
+          _ <- challenge.gameRoleId.traverse_ { roleId =>
+            IO.raiseUnless(game.roles.exists(_.gameRoleId == roleId))(
+              ValidationError(s"game ${game.gameId.value} has no role ${roleId.value}")
+            )
+          }
           _ <- IO.raiseUnless(
             challenge.numberOfPlayers >= game.minPlayers && challenge.numberOfPlayers <= game.maxPlayers
           )(
@@ -92,9 +100,9 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
           created <- challengeRepo.create(challenge)
           _ <- acceptanceRepo.create(created match {
             case cc: CharacterOpenChallenge =>
-              CharacterAcceptance(cc.challengeId, cc.challenger, cc.gameId, cc.characterId)
+              CharacterAcceptance(cc.challengeId, cc.challenger, cc.gameId, cc.characterId, cc.gameRoleId)
             case pc: PlainOpenChallenge =>
-              PlainAcceptance(pc.challengeId, pc.challenger, pc.gameId)
+              PlainAcceptance(pc.challengeId, pc.challenger, pc.gameId, pc.gameRoleId)
           })
         } yield created
       }
@@ -109,8 +117,15 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
     * must not exceed the challenge's numberOfPlayers) is race-free against concurrent acceptance
     * attempts.
     */
-  def accept(gameId: GameId, challengeId: ChallengeId, characterId: Option[CharacterId], callerExternalId: String): IO[Acceptance] =
+  def accept(
+      gameId: GameId,
+      challengeId: ChallengeId,
+      characterId: Option[CharacterId],
+      gameRoleId: Option[GameRoleId],
+      callerExternalId: String
+  ): IO[Acceptance] =
     sessionPool.use { session =>
+      val gameRepo = new GameRepo[T](session)
       val characterRepo = new CharacterRepo[T](session)
       val playerRepo = new PlayerRepo(session)
       val challengeRepo = new OpenChallengeRepo(session)
@@ -122,6 +137,16 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
             case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
           }
           (gameType, maxPlayers) = challengeInfo
+          // A role has to be one of this game's, which the schema's composite foreign key also
+          // enforces — checked here so that a wrong role is a 400 naming the game rather than a
+          // constraint violation surfacing as a 500.
+          _ <- gameRoleId.traverse_ { roleId =>
+            requireGame(gameRepo, gameId).flatMap { game =>
+              IO.raiseUnless(game.roles.exists(_.gameRoleId == roleId))(
+                ValidationError(s"game ${gameId.value} has no role ${roleId.value}")
+              )
+            }
+          }
           acceptance <- (gameType, characterId) match {
             case (GameType.Character, Some(cid)) =>
               for {
@@ -138,11 +163,11 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
                 _ <- IO.raiseUnless(game.gameId == gameId)(
                   ValidationError(s"character ${cid.value} is not from the same game as challenge ${challengeId.value}")
                 )
-              } yield CharacterAcceptance(challengeId, owner.playerId, gameId, cid): Acceptance
+              } yield CharacterAcceptance(challengeId, owner.playerId, gameId, cid, gameRoleId): Acceptance
             case (GameType.Plain, None) =>
               // Locked: the acceptance written below references this player.
               playerRepo.readByExternalIdForShare(callerExternalId).flatMap {
-                case Some(player) => IO.pure(PlainAcceptance(challengeId, player.playerId, gameId): Acceptance)
+                case Some(player) => IO.pure(PlainAcceptance(challengeId, player.playerId, gameId, gameRoleId): Acceptance)
                 case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
               }
             case (GameType.Character, None) =>

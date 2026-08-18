@@ -99,6 +99,10 @@ class RouterSpec extends FunSuite {
     CharacterOpenChallenge(ChallengeId(0), PlayerId(1), "message", 2.toShort, None, None, "{}", GameId(1), CharacterId(1))
   )
 
+  private val resultsBody = write(
+    Json.MatchResults(List(Json.ResultEntry(ParticipantId(1), 1, Map("points" -> ujson.Num(3)), isWinner = true)))
+  )
+
   /** Every route in `Router`. Keep in step with it: a route missing from here is a route no test
     * would notice breaking.
     */
@@ -119,7 +123,12 @@ class RouterSpec extends FunSuite {
     ("POST", "/challenges", challengeBody),
     ("DELETE", "/challenges/1/1", "{}"),
     ("POST", "/challenges/1/1/acceptances", """{"characterId":1}"""),
-    ("DELETE", "/challenges/1/1/acceptances/2", "{}")
+    ("DELETE", "/challenges/1/1/acceptances/2", "{}"),
+    ("POST", "/challenges/1/1/start", "{}"),
+    ("GET", "/games/1/matches/m1", "{}"),
+    ("POST", "/games/1/matches/m1/refresh", "{}"),
+    ("POST", "/games/1/matches/m1/moves", """{"participantId":1,"next":[2],"prevMoveAt":"2030-01-01T00:00:00Z"}"""),
+    ("POST", "/games/1/matches/m1/results", resultsBody)
   )
 
   test("every routed endpoint reaches a service rather than falling through to 404") {
@@ -134,7 +143,7 @@ class RouterSpec extends FunSuite {
   test("the routed list covers every route Router declares") {
     // A count, because the route table cannot be enumerated from Router itself. It fails loudly
     // when a route is added there without a corresponding entry above.
-    assertEquals(routed.size, 17)
+    assertEquals(routed.size, 22)
     assertEquals(routed.distinct.size, routed.size)
   }
 
@@ -167,6 +176,42 @@ class RouterSpec extends FunSuite {
 
     assertEquals(response.statusCode, 401)
     assert(response.body.contains("token has expired"), response.body)
+  }
+
+  // The game engine's callbacks are AWS_IAM-authorized, so the caller is a signing principal
+  // rather than a token subject. Which one it is comes from the event — that is, from whichever
+  // authorizer the gateway actually ran — so the function cannot mistake one for the other.
+  test("the gateway authenticator takes the caller from an IAM principal when that is what ran") {
+    val request = ApiGateway.Request(
+      "POST",
+      "/games/1/matches/m1/results",
+      Map.empty,
+      Map.empty,
+      "{}",
+      claims = Map.empty,
+      iam = Some(ApiGateway.IamPrincipal("arn:aws:sts::123456789012:assumed-role/game-engine/session", None, None))
+    )
+
+    assertEquals(Authenticator.Gateway.callerOf(request), Right("arn:aws:iam::123456789012:role/game-engine"))
+  }
+
+  test("the gateway authenticator prefers a verified token over anything else on the request") {
+    val request = ApiGateway.Request(
+      "GET",
+      "/me",
+      Map(ApiGateway.ExternalIdHeader.toLowerCase -> "spoofed"),
+      Map.empty,
+      "{}",
+      claims = Map("sub" -> "sub-from-token"),
+      iam = None
+    )
+
+    assertEquals(Authenticator.Gateway.callerOf(request), Right("sub-from-token"))
+  }
+
+  test("a request the gateway authenticated in neither way is unauthenticated") {
+    val request = ApiGateway.Request("GET", "/me", Map(ApiGateway.ExternalIdHeader.toLowerCase -> "sub-1"), Map.empty, "{}")
+    assertEquals(Authenticator.Gateway.callerOf(request).map(identity), Left(Errors.unauthenticatedToken))
   }
 
   test("the gateway authenticator takes the caller from the verified sub claim") {

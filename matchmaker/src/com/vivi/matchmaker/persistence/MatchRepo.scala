@@ -18,36 +18,87 @@ class MatchRepo(session: Session[IO]) {
   private def toSeconds(d: Option[Duration]): Option[Double] = d.map(_.getSeconds.toDouble)
   private def fromSeconds(s: Option[Double]): Option[Duration] = s.map(v => Duration.ofSeconds(v.toLong))
 
-  private val insertMatch: Command[(GameId, MatchId, String, Boolean, Instant, Option[Double], String)] =
-    sql"""INSERT INTO match (game_id, match_id, description, completed, start, time_limit, settings)
-          VALUES ($gameId, $matchId, $text, $bool, $instant, ${float8.opt} * INTERVAL '1 second', $settings)""".command
+  private val insertMatch
+      : Command[(GameId, MatchId, String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String])] =
+    sql"""INSERT INTO match (game_id, match_id, description, completed, start, time_limit, settings,
+                             public, status_url, play_url, public_url)
+          VALUES ($gameId, $matchId, $text, $bool, $instant, ${float8.opt} * INTERVAL '1 second', $settings,
+                  $bool, ${text.opt}, ${text.opt}, ${text.opt})""".command
 
-  private val selectMatch: Query[(GameId, MatchId), (String, Boolean, Instant, Option[Double], String)] =
-    sql"""SELECT description, completed, start, EXTRACT(EPOCH FROM time_limit)::float8, settings
+  private val matchRow: Codec[(String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String])] =
+    text *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *: text.opt
+
+  private val selectMatch: Query[
+    (GameId, MatchId),
+    (String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String])
+  ] =
+    sql"""SELECT description, completed, start, EXTRACT(EPOCH FROM time_limit)::float8, settings,
+                 public, status_url, play_url, public_url
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId"""
-      .query(text *: bool *: instant *: float8.opt *: settings)
+      .query(matchRow)
 
-  private val updateMatch: Command[(String, Boolean, Instant, Option[Double], String, GameId, MatchId)] =
+  /* As selectMatch, but holding the row until the transaction ends. Used by the game-engine
+   * callbacks, which read a match, decide from it, and write it back — a concurrent callback for
+   * the same match would otherwise be able to interleave between the two. */
+  private val selectMatchForUpdate: Query[
+    (GameId, MatchId),
+    (String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String])
+  ] =
+    sql"""SELECT description, completed, start, EXTRACT(EPOCH FROM time_limit)::float8, settings,
+                 public, status_url, play_url, public_url
+          FROM match
+          WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
+      .query(matchRow)
+
+  private val updateMatch: Command[
+    (String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String], GameId, MatchId)
+  ] =
     sql"""UPDATE match SET description = $text, completed = $bool, start = $instant,
-          time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings
+          time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
+          public = $bool, status_url = ${text.opt}, play_url = ${text.opt}, public_url = ${text.opt}
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
   def create(m: Match): IO[Match] =
     session
-      .execute(insertMatch)((m.gameId, m.matchId, m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings))
+      .execute(insertMatch)(
+        (m.gameId, m.matchId, m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings,
+          m.isPublic, m.statusUrl, m.playUrl, m.publicUrl)
+      )
       .as(m)
 
+  private def toMatch(
+      gameId: GameId,
+      matchId: MatchId,
+      row: (String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String])
+  ): Match = {
+    val (description, completed, start, timeLimitSeconds, settings, isPublic, statusUrl, playUrl, publicUrl) = row
+    Match(gameId, matchId, description, completed, start, fromSeconds(timeLimitSeconds), settings, isPublic, statusUrl, playUrl, publicUrl)
+  }
+
   def read(gameId: GameId, matchId: MatchId): IO[Option[Match]] =
-    session.option(selectMatch)((gameId, matchId)).map(_.map {
-      case (description, completed, start, timeLimitSeconds, settings) =>
-        Match(gameId, matchId, description, completed, start, fromSeconds(timeLimitSeconds), settings)
-    })
+    session.option(selectMatch)((gameId, matchId)).map(_.map(toMatch(gameId, matchId, _)))
+
+  /** As `read`, but locking the row for the rest of the transaction. */
+  def readForUpdate(gameId: GameId, matchId: MatchId): IO[Option[Match]] =
+    session.option(selectMatchForUpdate)((gameId, matchId)).map(_.map(toMatch(gameId, matchId, _)))
 
   def update(m: Match): IO[Unit] =
     session
-      .execute(updateMatch)((m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings, m.gameId, m.matchId))
+      .execute(updateMatch)(
+        (m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings,
+          m.isPublic, m.statusUrl, m.playUrl, m.publicUrl, m.gameId, m.matchId)
+      )
       .void
+
+  private val deleteMatch: Command[(GameId, MatchId)] =
+    sql"DELETE FROM match WHERE game_id = $gameId AND match_id = $matchId".command
+
+  /** Removes a match. Only used to undo a match whose game the engine failed to create — a
+    * played match is completed, never deleted, and its participants would block this anyway.
+    */
+  def delete(gameId: GameId, matchId: MatchId): IO[Unit] =
+    session.execute(deleteMatch)((gameId, matchId)).void
 
   private val playerId = SkunkIdCodecs.playerId
 

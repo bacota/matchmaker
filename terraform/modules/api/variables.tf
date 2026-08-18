@@ -251,3 +251,40 @@ variable "admin_initial_password" {
     error_message = "Must be at least 6 characters, and at least password_minimum_length."
   }
 }
+
+variable "game_engine_role_arns" {
+  description = <<-EOT
+    ARNs of the IAM roles a game engine runs as, which are allowed to post the move and result
+    callbacks, e.g. "arn:aws:iam::123456789012:role/game-engine".
+
+    The roles themselves belong to whoever runs the engine and are not created here — this module
+    only grants them permission. An ARN in this account has the callback policy attached for you;
+    one in another account cannot be attached to from here, so its owner attaches the policy this
+    module outputs (engine_callback_policy_arn) instead.
+
+    Empty by default: the callback routes are AWS_IAM-authorized, so an ungranted principal cannot
+    reach them at all.
+
+    Each ARN is also what matchmaker matches a callback against: a game's external_id must be set
+    to the role ARN of the engine that runs it (see Authenticator.GatewayIam).
+  EOT
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for arn in var.game_engine_role_arns : can(regex("^arn:[^:]+:iam::[0-9]{12}:role/.+$", arn))])
+    error_message = "Each entry must be an IAM role ARN, e.g. arn:aws:iam::123456789012:role/game-engine."
+  }
+}
+
+variable "game_api_execution_arns" {
+  description = <<-EOT
+    execute-api ARNs of the game APIs matchmaker is allowed to call, e.g.
+    "arn:aws:execute-api:us-east-1:123456789012:abcdef123/*/POST/games".
+
+    Empty by default, which means matchmaker's role may call no game API — a game engine that is
+    not behind AWS_IAM needs nothing here, and one that is will reject an unauthorized caller.
+  EOT
+  type        = list(string)
+  default     = []
+}
