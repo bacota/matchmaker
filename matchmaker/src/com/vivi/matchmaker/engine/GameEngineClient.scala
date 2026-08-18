@@ -44,12 +44,18 @@ case class CreateGameRequest(
   */
 case class CreateGameResponse(statusUrl: String, playUrl: String, publicUrl: Option[String])
 
-/** One participant's state in the engine's answer to a status call (step 4). */
+/** One participant's state in the engine's answer to a status call (step 4).
+  *
+  * `prevMoveAt` is when the move before this participant's was made — the moment their clock
+  * started. The deadline is not the engine's to state: matchmaker derives it from this and the
+  * match's own `timeLimit`, so a match with no time limit has no deadline no matter what the
+  * engine reports.
+  */
 case class EngineParticipantStatus(
     participantId: Long,
     pending: Boolean,
     completed: Boolean,
-    due: Option[Instant]
+    prevMoveAt: Option[Instant]
 )
 
 case class GameStatusResponse(completed: Boolean, participants: List[EngineParticipantStatus])

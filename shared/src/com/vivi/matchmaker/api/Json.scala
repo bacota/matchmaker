@@ -131,7 +131,15 @@ object Json {
     * A participant is named by its id, which the engine was given when the game was created and
     * quotes back — it never learns matchmaker's player ids.
     */
-  case class MoveNotification(participantId: ParticipantId, next: List[ParticipantId] = Nil, due: Option[Instant] = None)
+  /** `prevMoveAt` is when this move was made, which is when the clock starts for whoever is named
+    * in `next`. The engine does not state a deadline: matchmaker derives it from the match's own
+    * `timeLimit`, which came from the challenge rather than from the engine.
+    */
+  case class MoveNotification(
+      participantId: ParticipantId,
+      next: List[ParticipantId] = Nil,
+      prevMoveAt: Option[Instant] = None
+  )
 
   /** One participant's outcome. `scores` is an open map because what a game scores on is the
     * game's business: it is stored as-is in `result.scores`.

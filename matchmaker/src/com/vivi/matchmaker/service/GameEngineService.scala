@@ -140,18 +140,22 @@ class GameEngineService[T](
       .handleError(_ => ())
 
   /** Step 2: a player has moved. `moved` is the participant who moved and is no longer pending;
-    * `next` are the participants whose turn it now is, due at `due`.
+    * `next` are the participants whose turn it now is, whose clock starts at `prevMoveAt`.
     *
     * The engine decides turn order, so matchmaker takes what it is told rather than inferring it.
     * A participant named in neither list is left alone — a game where several players move at
     * once reports only the seat that changed.
+    *
+    * As in [[refresh]], the engine reports when the move happened and matchmaker works out the
+    * deadline from the match's `timeLimit` — the time limit came from the challenge, so it is not
+    * something the engine is in a position to state.
     */
   def recordMove(
       gameId: GameId,
       matchId: MatchId,
       moved: ParticipantId,
       next: List[ParticipantId],
-      due: Option[Instant],
+      prevMoveAt: Option[Instant],
       callerExternalId: String
   ): IO[Unit] =
     sessionPool.use { session =>
@@ -169,7 +173,7 @@ class GameEngineService[T](
           _ <- participantRepo.update(withTurn(mover, pending = false, due = None))
           _ <- next.traverse { id =>
             requireParticipant(participantRepo, gameId, matchId, id)
-              .flatMap(p => participantRepo.update(withTurn(p, pending = true, due = due)))
+              .flatMap(p => participantRepo.update(withTurn(p, pending = true, due = dueFrom(existing, prevMoveAt))))
           }
         } yield ()
       }
@@ -259,7 +263,7 @@ class GameEngineService[T](
                   _ <- status.participants.traverse { reported =>
                     byId.get(ParticipantId(reported.participantId)) match {
                       case Some(p) =>
-                        participantRepo.update(withTurn(p, reported.pending, reported.due, reported.completed))
+                        participantRepo.update(withTurn(p, reported.pending, dueFrom(current, reported.prevMoveAt), reported.completed))
                       // The engine reporting a seat matchmaker does not have is the engine's
                       // problem to explain, not a reason to abandon the seats it does have.
                       case None => IO.unit
@@ -358,6 +362,18 @@ class GameEngineService[T](
           gameRoleId = pa.gameRoleId
         )
     }
+
+  /** When a turn that began at `prevMoveAt` — the moment the move before it was made — is due.
+    *
+    * The engine says when a participant's turn began; how long they get is the match's business,
+    * since the time limit came from the challenge rather than from the engine. A match with no
+    * time limit has no deadline at all — there is nothing to run out.
+    */
+  private def dueFrom(m: Match, prevMoveAt: Option[Instant]): Option[Instant] =
+    for {
+      at <- prevMoveAt
+      limit <- m.timeLimit
+    } yield at.plus(limit)
 
   private def withTurn(p: Participant, pending: Boolean, due: Option[Instant], completed: Boolean = false): Participant =
     p match {

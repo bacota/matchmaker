@@ -3,7 +3,7 @@ package com.vivi.matchmaker.service
 import scala.concurrent.duration._
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import java.time.Instant
+import java.time.{Duration, Instant}
 import org.scalacheck.Gen
 import org.scalacheck.Prop._
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
@@ -70,14 +70,18 @@ class GameEngineServiceSpec extends PropertySuite {
       } yield Fixture(owner, game, character)
     }
 
-  private def challengeFor(fixture: Fixture, isPublic: Boolean = false): OpenChallenge =
+  private def challengeFor(
+      fixture: Fixture,
+      isPublic: Boolean = false,
+      timeLimit: Option[Duration] = None
+  ): OpenChallenge =
     CharacterOpenChallenge(
       ChallengeId(0),
       fixture.owner.playerId,
       "message",
       numberOfPlayers = 2,
       start = None,
-      timeLimit = None,
+      timeLimit = timeLimit,
       settings = "{}",
       gameId = fixture.game.gameId,
       characterId = fixture.character.characterId,
@@ -156,16 +160,19 @@ class GameEngineServiceSpec extends PropertySuite {
   property("a move callback moves the turn on, and is authorized by the game's external id") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
       val services = TestServices.servicesWith(StubEngine())
-      val due = Instant.parse("2030-01-01T00:00:00Z")
+      val prevMoveAt = Instant.parse("2030-01-01T00:00:00Z")
+      // The engine reports when the move was made; the deadline for whoever moves next is that
+      // plus the match's time limit.
+      val due = prevMoveAt.plusSeconds(300)
       val result = for {
         fixture <- makeFixture(nickname, externalId, gameExternalId)
-        challenge <- services.challenges.create(challengeFor(fixture), externalId)
+        challenge <- services.challenges.create(challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(5))), externalId)
         started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
         participants <- participantsOf(started)
         seat = participants.head.participantId
         // A player's own token is not a game's secret, and the callback is the game's route.
         refused <- services.engine.recordMove(fixture.game.gameId, started.matchId, seat, Nil, None, externalId).attempt
-        _ <- services.engine.recordMove(fixture.game.gameId, started.matchId, seat, List(seat), Some(due), gameExternalId)
+        _ <- services.engine.recordMove(fixture.game.gameId, started.matchId, seat, List(seat), Some(prevMoveAt), gameExternalId)
         after <- participantsOf(started)
       } yield refused.left.exists(_.isInstanceOf[UnauthorizedError]) &&
         after.head.pending &&
@@ -201,18 +208,21 @@ class GameEngineServiceSpec extends PropertySuite {
       (nickname, externalId, gameExternalId, otherExternalId) =>
         val engine = StubEngine()
         val services = TestServices.servicesWith(engine)
-        val due = Instant.parse("2031-02-03T04:05:00Z")
+        val prevMoveAt = Instant.parse("2031-02-03T04:05:00Z")
+        // The engine says when the turn started; the deadline is that plus the match's own time
+        // limit, which came from the challenge below.
+        val due = prevMoveAt.plusSeconds(600)
         val result = for {
           fixture <- makeFixture(nickname, externalId, gameExternalId)
           _ <- services.registration.register(s"other-$nickname", otherExternalId)
-          challenge <- services.challenges.create(challengeFor(fixture), externalId)
+          challenge <- services.challenges.create(challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(10))), externalId)
           started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
           participants <- participantsOf(started)
           seat = participants.head.participantId
           _ <- IO {
             engine.status = GameStatusResponse(
               completed = false,
-              participants = List(EngineParticipantStatus(seat.value, pending = true, completed = false, due = Some(due)))
+              participants = List(EngineParticipantStatus(seat.value, pending = true, completed = false, prevMoveAt = Some(prevMoveAt)))
             )
           }
           // Only someone playing the match may ask about it.
@@ -224,6 +234,38 @@ class GameEngineServiceSpec extends PropertySuite {
           after.head.pending &&
           after.head.due.contains(due)
         result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // A match with no time limit has no deadline to compute, whatever the engine reports as the
+  // start of the turn — there is nothing for the player to run out of.
+  property("refresh leaves the due date unset when the match has no time limit") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+      val engine = StubEngine()
+      val services = TestServices.servicesWith(engine)
+      val result = for {
+        fixture <- makeFixture(nickname, externalId, gameExternalId)
+        challenge <- services.challenges.create(challengeFor(fixture, timeLimit = None), externalId)
+        started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+        participants <- participantsOf(started)
+        seat = participants.head.participantId
+        _ <- IO {
+          engine.status = GameStatusResponse(
+            completed = false,
+            participants = List(
+              EngineParticipantStatus(
+                seat.value,
+                pending = true,
+                completed = false,
+                prevMoveAt = Some(Instant.parse("2031-02-03T04:05:00Z"))
+              )
+            )
+          )
+        }
+        _ <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+        after <- participantsOf(started)
+      } yield after.head.pending && after.head.due.isEmpty
+      result.timeout(15.seconds).unsafeRunSync()
     }
   }
 }

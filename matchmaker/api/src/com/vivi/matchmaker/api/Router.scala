@@ -125,7 +125,7 @@ object Router {
       case ("POST", "games" :: gameId :: "matches" :: matchId :: "moves" :: Nil) =>
         withGameId(gameId) { gid =>
           body[Json.MoveNotification](request).flatMap { r =>
-            noContent(services.engine.recordMove(gid, MatchId(matchId), r.participantId, r.next, r.due, caller))
+            noContent(services.engine.recordMove(gid, MatchId(matchId), r.participantId, r.next, r.prevMoveAt, caller))
           }
         }
 
