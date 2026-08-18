@@ -25,7 +25,13 @@ sealed trait OpenChallenge {
     * is created, which is what makes the engine issue a public url for it. */
   def isPublic: Boolean
 
-  /** The role the challenger will play, which their own (implicit) acceptance is recorded with. */
+  /** The role the challenger will play.
+    *
+    * Not a column on `open_challenge`: creating a challenge also creates the challenger's own
+    * acceptance, so this is stored on that acceptance like every other player's role, and is read
+    * back from it. Setting it on a challenge is how the challenger asks for a role at creation;
+    * changing it afterwards means changing their acceptance.
+    */
   def gameRoleId: Option[GameRoleId]
 }
 

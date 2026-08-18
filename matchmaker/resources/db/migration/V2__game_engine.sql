@@ -16,12 +16,11 @@
 -- schema already uses for (game_type, game_id).
 CREATE UNIQUE INDEX ON game_role (game_id, game_role_id);
 
--- game_role_id on open_challenge is the role the challenger will play: creating a challenge is
--- also accepting it, so the challenger needs the same say in their role as everybody else.
+-- No game_role_id here: creating a challenge also creates the challenger's own acceptance, so
+-- their role is already recorded on that row like everybody else's. A column here would be a
+-- second place for the same fact to live, and the two could disagree.
 ALTER TABLE open_challenge
-    ADD COLUMN public BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN game_role_id INT,
-    ADD FOREIGN KEY (game_id, game_role_id) REFERENCES game_role (game_id, game_role_id);
+    ADD COLUMN public BOOLEAN NOT NULL DEFAULT FALSE;
 
 ALTER TABLE acceptance
     ADD COLUMN game_role_id INT,

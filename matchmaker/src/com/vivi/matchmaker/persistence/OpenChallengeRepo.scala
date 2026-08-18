@@ -9,6 +9,13 @@ import natchez.Trace.Implicits.noop
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 
+/** Reads and writes `open_challenge` (plus its `character_open_challenge` sibling).
+  *
+  * `OpenChallenge.gameRoleId` has no column here — the challenger's role lives on their own
+  * acceptance, which `OpenChallengeService.create` writes in the same transaction as the
+  * challenge. Reads join that acceptance back in, so a challenge still reports the role its
+  * challenger will play without the fact being stored twice.
+  */
 class OpenChallengeRepo(session: Session[IO]) {
   private val challengeId = SkunkIdCodecs.challengeId
   private val playerId = SkunkIdCodecs.playerId
@@ -23,11 +30,11 @@ class OpenChallengeRepo(session: Session[IO]) {
   private def fromSeconds(s: Option[Double]): Option[Duration] = s.map(v => Duration.ofSeconds(v.toLong))
 
   private val insertChallenge
-      : Query[(GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, GameId, Boolean, Option[GameRoleId]), ChallengeId] =
+      : Query[(GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, GameId, Boolean), ChallengeId] =
     sql"""INSERT INTO open_challenge (game_type, challenger, message, number_of_players, start, time_limit,
-                                      settings, game_id, public, game_role_id)
+                                      settings, game_id, public)
           VALUES ($gameType, $playerId, $text, $int2, ${instant.opt}, ${float8.opt} * INTERVAL '1 second',
-                  $settings, $gameId, $bool, ${gameRoleId.opt})
+                  $settings, $gameId, $bool)
           RETURNING challenge_id""".query(challengeId)
 
   private val insertCharacterChallenge: Command[(GameId, ChallengeId, CharacterId)] =
@@ -66,9 +73,11 @@ class OpenChallengeRepo(session: Session[IO]) {
     (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long])
   ] =
     sql"""SELECT oc.game_type, oc.game_id, oc.challenger, oc.message, oc.number_of_players, oc.start,
-                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, oc.game_role_id, cc.character_id
+                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, a.game_role_id, cc.character_id
           FROM open_challenge oc
           LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
+          LEFT JOIN acceptance a ON a.game_id = oc.game_id AND a.challenge_id = oc.challenge_id
+                                AND a.player_id = oc.challenger
           WHERE oc.game_id = $gameId AND oc.challenge_id = $challengeId"""
       .query(challengeRow)
 
@@ -77,11 +86,13 @@ class OpenChallengeRepo(session: Session[IO]) {
           WHERE game_id = $gameId AND challenge_id = $challengeId FOR UPDATE"""
       .query(gameType *: int2)
 
+  // gameRoleId is not written here: it belongs to the challenger's acceptance, and changing the
+  // role they will play means updating that row (AcceptanceRepo), not this one.
   private val updateChallenge
-      : Command[(PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], GameId, ChallengeId)] =
+      : Command[(PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameId, ChallengeId)] =
     sql"""UPDATE open_challenge SET challenger = $playerId, message = $text, number_of_players = $int2,
           start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
-          public = $bool, game_role_id = ${gameRoleId.opt}
+          public = $bool
           WHERE game_id = $gameId AND challenge_id = $challengeId""".command
 
   /** Inserts the challenge, and for a [[CharacterOpenChallenge]] its character row too.
@@ -96,7 +107,7 @@ class OpenChallengeRepo(session: Session[IO]) {
     }
     for {
       id <- session.unique(insertChallenge)(
-        (gt, c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.gameId, c.isPublic, c.gameRoleId)
+        (gt, c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.gameId, c.isPublic)
       )
       _ <- c match {
         case cc: CharacterOpenChallenge => session.execute(insertCharacterChallenge)((c.gameId, id, cc.characterId)).void
@@ -122,7 +133,7 @@ class OpenChallengeRepo(session: Session[IO]) {
   def update(c: OpenChallenge): IO[Unit] =
     session
       .execute(updateChallenge)(
-        (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.isPublic, c.gameRoleId, c.gameId, c.challengeId)
+        (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.isPublic, c.gameId, c.challengeId)
       )
       .void
 
@@ -147,9 +158,11 @@ class OpenChallengeRepo(session: Session[IO]) {
     (ChallengeId, GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long])
   ] =
     sql"""SELECT oc.challenge_id, oc.game_type, oc.challenger, oc.message, oc.number_of_players, oc.start,
-                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, oc.game_role_id, cc.character_id
+                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, a.game_role_id, cc.character_id
           FROM open_challenge oc
           LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
+          LEFT JOIN acceptance a ON a.game_id = oc.game_id AND a.challenge_id = oc.challenge_id
+                                AND a.player_id = oc.challenger
           WHERE oc.game_id = $gameId
           ORDER BY oc.create_date DESC"""
       .query(challengeId *: gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId.opt *: int8.opt)
