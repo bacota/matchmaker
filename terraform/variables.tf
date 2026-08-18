@@ -290,3 +290,43 @@ variable "admin_initial_password" {
   default     = ""
   sensitive   = true
 }
+
+# ---------------------------------------------------------------------------
+# Game engines
+# ---------------------------------------------------------------------------
+
+variable "game_engine_role_arns" {
+  description = <<-EOT
+    Roles allowed to post matchmaker's move and result callbacks, beyond any engine this
+    configuration deploys itself. One entry per engine, and each is also what that engine's
+    `game.external_id` must be set to.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "game_api_execution_arns" {
+  description = <<-EOT
+    execute-api ARNs of the game APIs matchmaker may call, beyond any engine this configuration
+    deploys itself. Without an entry, a create-game call is rejected by that API.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "deploy_tictactoe" {
+  description = <<-EOT
+    Deploy the bundled tic-tac-toe engine (modules/tictactoe) alongside matchmaker, and wire the
+    two grants between them.
+
+    For development environments: it is a test fixture with a public play url, not a product.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "tictactoe_jar_path" {
+  description = "Path to the assembled tic-tac-toe jar. Only read when deploy_tictactoe is true."
+  type        = string
+  default     = "../out/engines/tictactoe/assembly.dest/out.jar"
+}

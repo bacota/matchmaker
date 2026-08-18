@@ -43,9 +43,17 @@ module "api" {
   # after the first apply — that copy is exactly the kind of thing that goes stale and produces a
   # sign-in that fails with an opaque error. The variables add to it: localhost in dev, a custom
   # domain in prod.
-  callback_urls        = concat([module.ui.url], var.callback_urls)
+  # The engine's sign-in redirect joins the UI's: its board page runs the same hosted-login flow,
+  # and Cognito will only redirect back to a url registered here.
+  callback_urls        = concat([module.ui.url], var.deploy_tictactoe ? [module.tictactoe[0].auth_callback_url] : [], var.callback_urls)
   logout_urls          = concat([module.ui.url], var.logout_urls)
   cors_allowed_origins = concat([module.ui.origin], var.cors_allowed_origins)
+
+  # The engines this matchmaker may call, and which may call it back. Both directions are
+  # identity-based grants that have to name a role, so both are wired here rather than inside
+  # either module — see the comments on game_engine_role_arns in modules/api/variables.tf.
+  game_engine_role_arns   = concat(var.game_engine_role_arns, var.deploy_tictactoe ? [module.tictactoe[0].lambda_role_arn] : [])
+  game_api_execution_arns = concat(var.game_api_execution_arns, var.deploy_tictactoe ? module.tictactoe[0].api_execution_arns : [])
 
   # Policy, from environments/<env>.settings.tfvars.
   lambda_memory_mb            = var.lambda_memory_mb
@@ -80,4 +88,37 @@ module "ui" {
   api_endpoint        = module.api.api_endpoint
   hosted_login_url    = module.api.hosted_login_url
   user_pool_client_id = module.api.user_pool_client_id
+}
+
+/* A game engine to develop and test the engine interaction against: two-player tic-tac-toe.
+ *
+ * Off by default, and never something a production environment needs — it exists so that all four
+ * exchanges of `interaction-design.txt` can be driven against a real API Gateway, a real signature
+ * and a real callback rather than against a stub. The grants that connect it to matchmaker are in
+ * the api module block above; nothing here depends on that module, so the pair applies in one go.
+ *
+ * A `game` row still has to be created by hand, since matchmaker has no route that registers a
+ * game: its `url` is this module's create_game_url and its `external_id` is its lambda_role_arn.
+ * See engines/tictactoe/README.md.
+ */
+module "tictactoe" {
+  count  = var.deploy_tictactoe ? 1 : 0
+  source = "./modules/tictactoe"
+
+  environment     = var.environment
+  lambda_jar_path = var.tictactoe_jar_path
+
+  # Matchmaker's own role, which is the only caller the engine's AWS_IAM routes admit.
+  matchmaker_role_arns = [module.api.lambda_role_arn]
+
+  # The players sign in to matchmaker's user pool, so that a seat can be recognised by the same
+  # `sub` matchmaker sent the engine as the player's cognitoId. Referencing the api module here
+  # and the engine's callback url there is not a cycle: the callback url comes from the engine's
+  # api id, which settles before either authorizer.
+  cognito_issuer    = module.api.jwt_issuer
+  cognito_client_id = module.api.user_pool_client_id
+  hosted_login_url  = module.api.hosted_login_url
+
+  # The other direction is granted by matchmaker's module, from game_engine_role_arns above.
+  log_retention_days = var.log_retention_days
 }

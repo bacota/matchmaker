@@ -16,3 +16,5 @@ advanced_security_mode = "OFF"
 
 // Long sessions, so testing is not interrupted by signing in again.
 refresh_token_validity_days = 30
+
+deploy_tictactoe = true

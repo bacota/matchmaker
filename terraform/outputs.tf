@@ -59,3 +59,29 @@ output "admin_external_id" {
 output "admin_email" {
   value = module.api.admin_email
 }
+
+# ---------------------------------------------------------------------------
+# Tic-tac-toe engine
+# ---------------------------------------------------------------------------
+#
+# Empty strings when deploy_tictactoe is false, rather than absent: `output -raw` on an output
+# that does not exist is an error, and deploy-tictactoe.sh reads these to print the game row that
+# has to be created by hand.
+
+output "tictactoe_create_game_url" {
+  description = "What to record as the game's `url` in matchmaker. Empty when the engine is not deployed."
+  value       = one(module.tictactoe[*].create_game_url)
+}
+
+output "tictactoe_role_arn" {
+  description = <<-EOT
+    What to record as the game's `external_id`: the engine's execution role, which is the
+    principal API Gateway verifies on its callbacks. Empty when the engine is not deployed.
+  EOT
+  value       = one(module.tictactoe[*].lambda_role_arn)
+}
+
+output "tictactoe_api_endpoint" {
+  description = "Base url of the engine's API, whose /matches/<id>/play is where a player plays."
+  value       = one(module.tictactoe[*].api_endpoint)
+}

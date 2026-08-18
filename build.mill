@@ -160,3 +160,48 @@ object matchmaker extends ScalaModule {
     }
   }
 }
+
+/** Game engines to develop and test matchmaker's engine interaction against.
+  *
+  * These are not part of matchmaker: an engine is a separate system reached over HTTP, and
+  * nothing here depends on the `matchmaker` module — deliberately, since sharing the wire
+  * types would hide exactly the mismatches this code exists to catch. They live in the same
+  * repository only because they are worth nothing on their own.
+  */
+object engines extends Module {
+
+  /** Two-player tic-tac-toe, implementing the game API of `interaction-design.txt`.
+    *
+    * `mill -j 4 engines.tictactoe.runMain com.vivi.tictactoe.LocalServer` runs it locally;
+    * `mill -j 4 engines.tictactoe.assembly` builds the Lambda jar, whose handler is
+    * `com.vivi.tictactoe.Handler::handleRequest`.
+    */
+  object tictactoe extends ScalaModule {
+    def scalaVersion = "3.3.8"
+
+    def mvnDeps = Seq(
+      mvn"com.lihaoyi::upickle:4.0.2",
+      mvn"com.amazonaws:aws-lambda-java-core:1.2.3",
+      // Signs the engine's own calls: DynamoDB, and matchmaker's AWS_IAM callback routes. The
+      // signer only, as in `matchmaker` — a DynamoDB client would bring Netty with it.
+      mvn"software.amazon.awssdk:http-auth-aws:2.31.78",
+      mvn"org.slf4j:slf4j-nop:1.7.36"
+    )
+
+    def assemblyRules = super.assemblyRules ++ Seq(Assembly.Rule.ExcludePattern(".*\\.tasty"))
+
+    /** The engine's tests, and only its tests, depend on matchmaker.
+      *
+      * `ProtocolSpec` reads the engine's JSON with matchmaker's own classes and matchmaker's with
+      * the engine's, which is the check the restated wire types exist for: it fails when a field
+      * is renamed on one side, and it is the reason the engine itself can stay independent.
+      */
+    object test extends ScalaTests with TestModule.Munit {
+      def moduleDeps = super.moduleDeps ++ Seq(matchmaker.api)
+      def mvnDeps = Seq(
+        mvn"org.scalameta::munit:1.0.4",
+        mvn"org.scalameta::munit-scalacheck:1.0.0"
+      )
+    }
+  }
+}
