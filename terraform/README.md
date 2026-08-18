@@ -116,7 +116,7 @@ written last with that client's id.
 Build the JavaScript before applying — `filemd5` on a missing file fails the plan:
 
 ```sh
-mill matchmaker.ui.fullLinkJS   # not fastLinkJS: several times smaller, and minified
+mill -j 4 --ticker false matchmaker.ui.fullLinkJS   # not fastLinkJS: several times smaller, and minified
 ./tf.sh dev apply
 ./tf.sh dev output -raw ui_url
 ```
@@ -314,7 +314,7 @@ shared beyond it, so owning them here would mean being able to destroy them:
 
 in this order, which is not arbitrary:
 
-1. `mill __.compile` — everything, tests included, so a broken build stops the deploy before it
+1. `mill -j 4 --ticker false __.compile` — everything, tests included, so a broken build stops the deploy before it
    touches anything.
 2. `matchmaker.api.assembly` and `matchmaker.ui.fullLinkJS` — the two artifacts terraform uploads.
 3. **Flyway**, so the schema is ready before code that expects it goes live. Connection details are
@@ -338,7 +338,7 @@ The steps below are the same thing by hand.
 
 ```sh
 # 1. Build the jar the Lambda runs.
-mill matchmaker.api.assembly
+mill -j 4 --ticker false matchmaker.api.assembly
 
 # 2. Supply the one file that is not in the repository, and point the backend at your state.
 cd terraform

@@ -35,10 +35,10 @@ Two processes and one insert. Matchmaker in header-auth mode, the engine pointed
 
 ```bash
 # 1. matchmaker on 8080
-AUTH_MODE=header mill -j 4 matchmaker.api.runMain com.vivi.matchmaker.api.LocalServer
+AUTH_MODE=header mill -j 4 --ticker false matchmaker.api.runMain com.vivi.matchmaker.api.LocalServer
 
 # 2. the engine on 8090, calling back as the game 'tictactoe-dev'
-GAME_EXTERNAL_ID=tictactoe-dev mill -j 4 engines.tictactoe.runMain com.vivi.tictactoe.LocalServer
+GAME_EXTERNAL_ID=tictactoe-dev mill -j 4 --ticker false engines.tictactoe.runMain com.vivi.tictactoe.LocalServer
 
 # 3. register it as a game
 psql "$DATABASE_URL" -v url="http://localhost:8090/games" -v external_id="tictactoe-dev" \
@@ -81,7 +81,7 @@ COGNITO_ISSUER=$(cd terraform && ./tf.sh dev output -raw jwt_issuer) \
 COGNITO_CLIENT_ID=$(cd terraform && ./tf.sh dev output -raw user_pool_client_id) \
 HOSTED_LOGIN_URL=$(cd terraform && ./tf.sh dev output -raw hosted_login_url) \
 GAME_EXTERNAL_ID=tictactoe-dev \
-mill -j 4 engines.tictactoe.runMain com.vivi.tictactoe.LocalServer
+mill -j 4 --ticker false engines.tictactoe.runMain com.vivi.tictactoe.LocalServer
 ```
 
 `http://localhost:8090/auth/callback` has to be a registered callback url on that app client for
@@ -118,7 +118,7 @@ deploy_tictactoe = true
 ```
 
 ```bash
-mill -j 4 engines.tictactoe.assembly
+mill -j 4 --ticker false engines.tictactoe.assembly
 ./terraform/tf.sh dev apply
 ```
 

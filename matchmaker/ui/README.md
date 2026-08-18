@@ -18,10 +18,10 @@ FLYWAY_URL=jdbc:postgresql://localhost:5432/matchmaker \
 FLYWAY_USER=matchmaker FLYWAY_PASSWORD=matchmaker ./flyway.sh
 
 # 2. The API on :8080, against local Postgres.
-mill matchmaker.api.runMain com.vivi.matchmaker.api.LocalServer
+mill -j 4 --ticker false matchmaker.api.runMain com.vivi.matchmaker.api.LocalServer
 
 # 3. The UI on :5173.
-mill matchmaker.ui.fastLinkJS
+mill -j 4 --ticker false matchmaker.ui.fastLinkJS
 ln -sf ../../out/matchmaker/ui/fastLinkJS.dest/main.js matchmaker/ui/main.js
 cp matchmaker/ui/config.local.js matchmaker/ui/config.js   # the local-mode configuration
 python3 -m http.server 5173 --directory matchmaker/ui
@@ -66,8 +66,8 @@ S3 bucket behind CloudFront and generates its `config.js` from the pool and gate
 created. There is nothing to paste.
 
 ```sh
-mill matchmaker.api.assembly
-mill matchmaker.ui.fullLinkJS       # not fastLinkJS: this is what gets uploaded
+mill -j 4 --ticker false matchmaker.api.assembly
+mill -j 4 --ticker false matchmaker.ui.fullLinkJS       # not fastLinkJS: this is what gets uploaded
 
 cd terraform
 cp environments/dev.tfvars.example environments/dev.tfvars   # RDS, subnets, SGs, secret, domain
@@ -81,7 +81,7 @@ sourcemaps — copy the generated config and serve locally:
 
 ```sh
 aws s3 cp s3://$(./tf.sh dev output -raw ui_bucket)/config.js matchmaker/ui/config.js
-mill matchmaker.ui.fastLinkJS
+mill -j 4 --ticker false matchmaker.ui.fastLinkJS
 python3 -m http.server 5173 --directory matchmaker/ui
 ```
 

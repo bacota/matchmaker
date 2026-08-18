@@ -158,7 +158,7 @@ else
   FLYWAY_URL="jdbc:postgresql://$host_port/$database" \
     FLYWAY_USER="$user" \
     FLYWAY_PASSWORD="$password" \
-    mill --ticker false matchmaker.flyway.runMain com.vivi.matchmaker.flyway.Migrate
+    mill -j 4 --ticker false matchmaker.flyway.runMain com.vivi.matchmaker.flyway.Migrate
 fi
 
 # ---------------------------------------------------------------------------
@@ -217,7 +217,7 @@ else
       FLYWAY_USER="$user" \
       FLYWAY_PASSWORD="$password" \
       ADMIN_EXTERNAL_ID="$admin_external_id" \
-      mill --ticker false matchmaker.flyway.runMain com.vivi.matchmaker.flyway.SeedAdmin
+      mill -j 4 --ticker false matchmaker.flyway.runMain com.vivi.matchmaker.flyway.SeedAdmin
   fi
 fi
 
