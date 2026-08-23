@@ -61,3 +61,14 @@ case class CharacterOpenChallenge(
     isPublic: Boolean = false,
     gameRoleId: Option[GameRoleId] = None
 ) extends OpenChallenge
+
+/** An open challenge together with how many players have accepted it so far.
+  *
+  * The count is not part of [[OpenChallenge]] itself because a challenge is also what a client
+  * *sends* to create one, and how many acceptances it has is not the client's to state. It is
+  * derived on read, which is the only place it means anything.
+  *
+  * What it is for: a challenge cannot be started below its game's `minPlayers`, and the server
+  * refuses one that is. Sending the count lets the UI not offer a Start that would be refused.
+  */
+case class OpenChallengeSummary(challenge: OpenChallenge, acceptances: Int)

@@ -203,7 +203,7 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
   /** The open challenges for a game, which any registered player may browse in order to accept
     * one.
     */
-  def listByGame(gameId: GameId, callerExternalId: String): IO[List[OpenChallenge]] =
+  def listByGame(gameId: GameId, callerExternalId: String): IO[List[OpenChallengeSummary]] =
     sessionPool.use { session =>
       for {
         _ <- new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {

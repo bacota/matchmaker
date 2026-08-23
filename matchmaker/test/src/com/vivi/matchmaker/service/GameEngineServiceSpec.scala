@@ -148,7 +148,7 @@ class GameEngineServiceSpec extends PropertySuite {
         request.moveCallbackUrl.exists(_.endsWith(s"/matches/${started.matchId.value}/moves")) &&
         participants.size == 1 &&
         participants.head.playerId == fixture.owner.playerId &&
-        remaining.forall(_.challengeId != challenge.challengeId)
+        remaining.forall(_.challenge.challengeId != challenge.challengeId)
       }
       result.timeout(15.seconds).unsafeRunSync()
     }
@@ -180,7 +180,7 @@ class GameEngineServiceSpec extends PropertySuite {
         remaining <- services.challenges.listByGame(fixture.game.gameId, externalId)
         matches <- services.matches.active(externalId)
       } yield attempt.isLeft &&
-        remaining.exists(_.challengeId == challenge.challengeId) &&
+        remaining.exists(_.challenge.challengeId == challenge.challengeId) &&
         matches.isEmpty
       result.timeout(15.seconds).unsafeRunSync()
     }
@@ -325,7 +325,7 @@ class GameEngineServiceSpec extends PropertySuite {
             case None    => IO.pure(None)
           }
         } yield attempt.isLeft &&
-          remaining.forall(_.challengeId != challenge.challengeId) &&
+          remaining.forall(_.challenge.challengeId != challenge.challengeId) &&
           acceptances.forall(_.challengeId != challenge.challengeId) &&
           matches.size == 1 &&
           stranded.exists(_.playUrl.isEmpty)

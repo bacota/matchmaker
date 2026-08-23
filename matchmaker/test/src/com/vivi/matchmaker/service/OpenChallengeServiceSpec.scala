@@ -103,7 +103,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
           new AcceptanceRepo(session).readWithChallengeAndPlayers(game.gameId, created.challengeId, base.owner.playerId)
         }
       } yield acceptance.exists(_.gameRoleId.contains(role)) &&
-        listed.exists(c => c.challengeId == created.challengeId && c.gameRoleId.contains(role)) &&
+        listed.exists(c => c.challenge.challengeId == created.challengeId && c.challenge.gameRoleId.contains(role)) &&
         joined.exists((challenge, _, _) => challenge.gameRoleId.contains(role))
       result.timeout(10.seconds).unsafeRunSync()
     }
@@ -295,8 +295,32 @@ class OpenChallengeServiceSpec extends PropertySuite {
         fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
         created <- challengeService.create(challengeFor(fixture, 3), externalId)
         listed <- challengeService.listByGame(fixture.game.gameId, externalId)
-      } yield listed.map(_.challengeId) == List(created.challengeId)
+      } yield listed.map(_.challenge.challengeId) == List(created.challengeId) &&
+        // Creating a challenge accepts it on the challenger's behalf, so a fresh one is at one.
+        listed.map(_.acceptances) == List(1)
       result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  // The count is what the UI decides whether to offer a Start from, so it has to follow the
+  // acceptances rather than the challenge's requested size.
+  property("listByGame counts the acceptances a challenge has so far") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, otherNickname, otherExternalId) =>
+        val result = for {
+          fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
+          otherPair <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
+          (_, otherCharacter) = otherPair
+          created <- challengeService.create(challengeFor(fixture, 3), externalId)
+          // The challenger's own acceptance, written when the challenge was created.
+          beforeAccept <- challengeService.listByGame(fixture.game.gameId, externalId)
+          _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(otherCharacter.characterId), None, otherExternalId)
+          afterAccept <- challengeService.listByGame(fixture.game.gameId, externalId)
+        } yield beforeAccept.map(_.acceptances) == List(1) &&
+          afterAccept.map(_.acceptances) == List(2) &&
+          // Still short of the three it asked for, so the count is the acceptances, not the size.
+          afterAccept.map(_.challenge.numberOfPlayers) == List(3)
+        result.timeout(10.seconds).unsafeRunSync()
     }
   }
 
