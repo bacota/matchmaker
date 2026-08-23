@@ -1,10 +1,11 @@
 package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
-import cats.effect.{Deferred, IO}
+import cats.effect.{Deferred, IO, Resource}
 import cats.effect.unsafe.implicits.global
 import java.time.{Duration, Instant}
 import org.scalacheck.{Gen, Shrink}
+import skunk.implicits._
 import org.scalacheck.Prop._
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.engine._
@@ -100,12 +101,13 @@ class GameEngineServiceSpec extends PropertySuite {
   private def challengeFor(
       fixture: Fixture,
       isPublic: Boolean = false,
-      timeLimit: Option[Duration] = None
+      timeLimit: Option[Duration] = None,
+      message: String = "message"
   ): OpenChallenge =
     CharacterOpenChallenge(
       ChallengeId(0),
       fixture.owner.playerId,
-      "message",
+      message,
       numberOfPlayers = 2,
       start = None,
       timeLimit = timeLimit,
@@ -276,6 +278,59 @@ class GameEngineServiceSpec extends PropertySuite {
         retried.playUrl.contains("https://engine/play/1") &&
         matches.size == 1
       result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  /** A trigger that refuses to update the match whose description is `explode`, so that a test
+    * can fail the database work that happens *after* the engine has created its game — the one
+    * step of a start that cannot simply be rolled back.
+    */
+  private def refusingMatchUpdates: Resource[IO, Unit] = {
+    def exec(statement: skunk.Command[skunk.Void]): IO[Unit] =
+      TestSession.resource.use(_.execute(statement).void)
+
+    Resource.make(
+      exec(
+        sql"""CREATE OR REPLACE FUNCTION fail_match_update() RETURNS trigger LANGUAGE plpgsql
+              AS 'BEGIN RAISE EXCEPTION ''match update refused by test''; END'""".command
+      ) *> exec(
+        sql"""CREATE TRIGGER fail_match_update_trigger BEFORE UPDATE ON match
+              FOR EACH ROW WHEN (NEW.description = 'explode') EXECUTE FUNCTION fail_match_update()""".command
+      )
+    )(_ => (exec(sql"DROP TRIGGER IF EXISTS fail_match_update_trigger ON match".command) *> exec(
+      sql"DROP FUNCTION IF EXISTS fail_match_update()".command
+    )).handleError(_ => ()))
+  }
+
+  // The engine's game exists by then, so the start cannot be undone — but the claim must not
+  // outlive the failure either, or the challenge is blocked from being started, accepted, deleted
+  // or backed out of for good. The challenge is retired instead, which is the one compensation
+  // that cannot produce a second game in the engine.
+  property("a database failure after the engine call still retires the challenge, rather than stranding it") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+      val services = TestServices.servicesWith(StubEngine())
+      val result = refusingMatchUpdates.use { _ =>
+        for {
+          fixture <- makeFixture(nickname, externalId, gameExternalId)
+          // The message becomes the match's description, which is what the trigger keys on.
+          challenge <- services.challenges.create(challengeFor(fixture, message = "explode"), externalId)
+          attempt <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
+          // No claim left standing, because no challenge left standing.
+          remaining <- services.challenges.listByGame(fixture.game.gameId, externalId)
+          acceptances <- services.acceptances.mine(externalId)
+          matches <- services.matches.active(externalId)
+          // What is left behind is the documented recoverable state: a match with no urls.
+          stranded <- matches.headOption match {
+            case Some(m) => services.engine.read(fixture.game.gameId, m.matchId, externalId).map(Some(_))
+            case None    => IO.pure(None)
+          }
+        } yield attempt.isLeft &&
+          remaining.forall(_.challengeId != challenge.challengeId) &&
+          acceptances.forall(_.challengeId != challenge.challengeId) &&
+          matches.size == 1 &&
+          stranded.exists(_.playUrl.isEmpty)
+      }
+      result.timeout(30.seconds).unsafeRunSync()
     }
   }
 
