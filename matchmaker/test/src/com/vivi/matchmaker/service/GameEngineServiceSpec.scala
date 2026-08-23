@@ -1,7 +1,7 @@
 package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
-import cats.effect.IO
+import cats.effect.{Deferred, IO}
 import cats.effect.unsafe.implicits.global
 import java.time.{Duration, Instant}
 import org.scalacheck.Gen
@@ -36,6 +36,19 @@ class GameEngineServiceSpec extends PropertySuite {
       else IO { lastRequest = Some(request); lastUrl = Some(gameUrl) }.as(response)
 
     def status(statusUrl: String): IO[GameStatusResponse] = IO.pure(status)
+  }
+
+  /** An engine whose createGame parks until it is released, so a test can hold a start in the
+    * window between its first transaction committing and its last one running — which is exactly
+    * the window a second Start used to slip through.
+    */
+  private class GatedEngine(entered: Deferred[IO, Unit], release: Deferred[IO, Unit]) extends GameEngineClient {
+    def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+      entered.complete(()).attempt *> release.get.as(
+        CreateGameResponse("https://engine/status/1", "https://engine/play/1", None)
+      )
+
+    def status(statusUrl: String): IO[GameStatusResponse] = IO.pure(GameStatusResponse(completed = false, participants = Nil))
   }
 
   private def genUniqueString: Gen[String] =
@@ -153,6 +166,52 @@ class GameEngineServiceSpec extends PropertySuite {
       } yield attempt.isLeft &&
         remaining.exists(_.challengeId == challenge.challengeId) &&
         matches.isEmpty
+      result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // The bug this guards: start cannot hold one transaction across the engine call, so the
+  // challenge's FOR UPDATE lock is released long before the challenge is deleted. A second Start
+  // arriving in that window used to re-read a challenge that still looked startable, pass every
+  // check again, and produce a second match and a second engine game. The engine here is parked
+  // mid-call to put the second attempt squarely in that window.
+  property("a second start while the first is still in the engine is refused, leaving one match") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+      val result = for {
+        entered <- Deferred[IO, Unit]
+        release <- Deferred[IO, Unit]
+        services = TestServices.servicesWith(new GatedEngine(entered, release))
+        fixture <- makeFixture(nickname, externalId, gameExternalId)
+        challenge <- services.challenges.create(challengeFor(fixture), externalId)
+        first <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).start
+        // The first start has written and committed its claim and is now inside the engine call.
+        _ <- entered.get
+        second <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
+        _ <- release.complete(())
+        started <- first.joinWithNever
+        matches <- services.matches.active(externalId)
+      } yield second.left.exists(_.isInstanceOf[ConflictError]) &&
+        matches.size == 1 &&
+        matches.head.matchId == started.matchId
+      result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // The claim the fix takes must not outlive a failed start, or the engine being briefly down
+  // would strand the challenge as permanently unstartable.
+  property("a start after a failed engine call succeeds, because the failure released the claim") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+      val failing = TestServices.servicesWith(new StubEngine(fail = true))
+      val working = TestServices.servicesWith(StubEngine())
+      val result = for {
+        fixture <- makeFixture(nickname, externalId, gameExternalId)
+        challenge <- failing.challenges.create(challengeFor(fixture), externalId)
+        attempt <- failing.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
+        retried <- working.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+        matches <- working.matches.active(externalId)
+      } yield attempt.isLeft &&
+        retried.playUrl.contains("https://engine/play/1") &&
+        matches.size == 1
       result.timeout(15.seconds).unsafeRunSync()
     }
   }

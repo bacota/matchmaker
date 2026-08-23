@@ -68,10 +68,17 @@ class GameEngineService[T](
           for {
             // Locked first: two clicks of Start on the same challenge must not both get past the
             // checks below, and the challenge is what both would be reading.
-            _ <- challengeRepo.readForUpdate(gameId, challengeId).flatMap {
-              case Some(_) => IO.unit
+            //
+            // The lock is necessary but not sufficient. It is released when this transaction
+            // commits, which is well before the challenge is deleted at the end of the whole
+            // operation — so without the claim below, the second click would simply wait here,
+            // then re-read a challenge that still looked startable and make a second match.
+            // startedMatchId is the state the lock is guarding.
+            locked <- challengeRepo.readForUpdate(gameId, challengeId).flatMap {
+              case Some(l) => IO.pure(l)
               case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
             }
+            _ <- IO.pure(locked)
             challenge <- requireChallenge(challengeRepo, gameId, challengeId)
             game <- requireGame(gameRepo, gameId)
             challenger <- playerRepo.read(challenge.challenger).flatMap {
@@ -98,6 +105,8 @@ class GameEngineService[T](
               isPublic = challenge.isPublic
             )
             saved <- matchRepo.create(newMatch)
+            // Under the lock taken above, so the next start of this challenge sees the claim.
+            _ <- challengeRepo.claimForStart(gameId, challengeId, matchId)
             participants <- roster.traverse { case (acceptance, externalId, roleName) =>
               participantRepo
                 .create(toParticipant(matchId, acceptance))
@@ -109,7 +118,7 @@ class GameEngineService[T](
 
         response <- engine
           .createGame(game.url, createRequest(matchId, game, challenge, players))
-          .onError(_ => undo(session, gameId, matchId))
+          .onError(_ => undo(session, gameId, challengeId, matchId))
 
         started <- session.transaction.use { _ =>
           val withUrls = saved.copy(
@@ -128,14 +137,20 @@ class GameEngineService[T](
       } yield started
     }
 
-  /* Undoes the match written before the engine call, when that call fails. Errors here are
-   * swallowed on purpose: the caller is already being told the engine failed, and that is the
-   * more useful of the two failures. What is left behind if this does not work is an urlless
-   * match with no results, which `refresh` reports as having no status url. */
-  private def undo(session: skunk.Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] =
+  /* Undoes the match written before the engine call, and the challenge's start claim, when that
+   * call fails. Errors here are swallowed on purpose: the caller is already being told the engine
+   * failed, and that is the more useful of the two failures. What is left behind if this does not
+   * work is an urlless match with no results, which `refresh` reports as having no status url. */
+  private def undo(session: skunk.Session[IO], gameId: GameId, challengeId: ChallengeId, matchId: MatchId): IO[Unit] =
     session.transaction
       .use { _ =>
-        new ParticipantRepo(session).deleteForMatch(gameId, matchId) *> new MatchRepo(session).delete(gameId, matchId)
+        new ParticipantRepo(session).deleteForMatch(gameId, matchId) *>
+          new MatchRepo(session).delete(gameId, matchId) *>
+          // Releasing the claim is what makes "try again" true: the challenge is standing and
+          // startable once more. If this is the part that fails, the challenge stays claimed and
+          // no further start of it will be accepted — the same outcome as before this claim
+          // existed had the deletes failed, and `refresh` still reports the urlless match.
+          new OpenChallengeRepo(session).releaseStartClaim(gameId, challengeId)
       }
       .handleError(_ => ())
 

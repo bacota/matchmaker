@@ -9,8 +9,12 @@ import natchez.Trace.Implicits.noop
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 
-/** The fields read (and locked) by [[OpenChallengeRepo.readForUpdate]]. */
-case class LockedChallenge(gameType: GameType, numberOfPlayers: Short)
+/** The fields read (and locked) by [[OpenChallengeRepo.readForUpdate]].
+  *
+  * `startedMatchId` is non-empty once a challenge has been claimed by
+  * `GameEngineService.start`; see [[OpenChallengeRepo.claimForStart]].
+  */
+case class LockedChallenge(gameType: GameType, numberOfPlayers: Short, startedMatchId: Option[MatchId])
 
 /** Reads and writes `open_challenge` (plus its `character_open_challenge` sibling).
   *
@@ -26,6 +30,7 @@ class OpenChallengeRepo(session: Session[IO]) {
   private val characterId = SkunkIdCodecs.characterId
   private val gameType = SkunkCodecs.gameType
   private val gameRoleId = SkunkIdCodecs.gameRoleId
+  private val matchId = SkunkIdCodecs.matchId
   private val instant = SkunkCodecs.instant
   private val settings: Codec[String] = SkunkCodecs.jsonb
 
@@ -84,10 +89,10 @@ class OpenChallengeRepo(session: Session[IO]) {
           WHERE oc.game_id = $gameId AND oc.challenge_id = $challengeId"""
       .query(challengeRow)
 
-  private val selectChallengeForUpdate: Query[(GameId, ChallengeId), (GameType, Short)] =
-    sql"""SELECT game_type, number_of_players FROM open_challenge
+  private val selectChallengeForUpdate: Query[(GameId, ChallengeId), (GameType, Short, Option[MatchId])] =
+    sql"""SELECT game_type, number_of_players, started_match_id FROM open_challenge
           WHERE game_id = $gameId AND challenge_id = $challengeId FOR UPDATE"""
-      .query(gameType *: int2)
+      .query(gameType *: int2 *: matchId.opt)
 
   // gameRoleId is not written here: it belongs to the challenger's acceptance, and changing the
   // role they will play means updating that row (AcceptanceRepo), not this one.
@@ -125,13 +130,38 @@ class OpenChallengeRepo(session: Session[IO]) {
   def read(gameId: GameId, id: ChallengeId): IO[Option[OpenChallenge]] =
     session.option(selectChallenge)((gameId, id)).map(_.map(row => toChallenge(id, row)))
 
-  /** Reads a challenge's game_type and numberOfPlayers, taking a row lock (`FOR UPDATE`) that is
-    * held until the enclosing transaction commits or rolls back. Callers use this to serialize
-    * concurrent acceptance attempts against the same challenge's capacity check, and the
-    * game_type to decide whether an acceptance must carry a characterId.
+  /** Reads a challenge's game_type, numberOfPlayers and start claim, taking a row lock
+    * (`FOR UPDATE`) that is held until the enclosing transaction commits or rolls back. Callers
+    * use this to serialize concurrent acceptance attempts against the same challenge's capacity
+    * check, the game_type to decide whether an acceptance must carry a characterId, and
+    * startedMatchId to refuse a challenge someone is already starting.
     */
   def readForUpdate(gameId: GameId, id: ChallengeId): IO[Option[LockedChallenge]] =
     session.option(selectChallengeForUpdate)((gameId, id)).map(_.map(LockedChallenge.apply.tupled))
+
+  private val claimChallengeForStart: Command[(MatchId, GameId, ChallengeId)] =
+    sql"""UPDATE open_challenge SET started_match_id = $matchId
+          WHERE game_id = $gameId AND challenge_id = $challengeId""".command
+
+  private val releaseChallengeStartClaim: Command[(GameId, ChallengeId)] =
+    sql"""UPDATE open_challenge SET started_match_id = NULL
+          WHERE game_id = $gameId AND challenge_id = $challengeId""".command
+
+  /** Marks a challenge as being started as `matchId`, so that a second concurrent start is
+    * refused rather than producing a second match.
+    *
+    * Must be called in the same transaction as the [[readForUpdate]] whose row lock it is
+    * guarding: the lock alone only serializes two starts, it does not tell the second one that
+    * the first has already happened. This is the write that does.
+    */
+  def claimForStart(gameId: GameId, id: ChallengeId, matchId: MatchId): IO[Unit] =
+    session.execute(claimChallengeForStart)((matchId, gameId, id)).void
+
+  /** Clears a [[claimForStart]], returning the challenge to startable. Used when the engine call
+    * that the claim was taken for fails and the half-made match is undone.
+    */
+  def releaseStartClaim(gameId: GameId, id: ChallengeId): IO[Unit] =
+    session.execute(releaseChallengeStartClaim)((gameId, id)).void
 
   def update(c: OpenChallenge): IO[Unit] =
     session
