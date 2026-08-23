@@ -78,7 +78,13 @@ class GameEngineService[T](
               case Some(l) => IO.pure(l)
               case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
             }
-            _ <- IO.pure(locked)
+            _ <- locked.startedMatchId.traverse_ { existing =>
+              IO.raiseError(
+                ConflictError(
+                  s"challenge ${challengeId.value} is already being started as match ${existing.value}"
+                )
+              )
+            }
             challenge <- requireChallenge(challengeRepo, gameId, challengeId)
             game <- requireGame(gameRepo, gameId)
             challenger <- playerRepo.read(challenge.challenger).flatMap {
