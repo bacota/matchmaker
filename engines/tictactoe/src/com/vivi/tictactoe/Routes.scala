@@ -46,7 +46,11 @@ class Routes(engine: Engine, playAuth: PlayAuth) {
     try route(request)
     catch {
       case e: ConcurrentModification => error(409, e.getMessage)
-      case NonFatal(e)               => error(500, s"${e.getClass.getSimpleName}: ${e.getMessage}")
+      case NonFatal(e) =>
+        // A bug or a failure of something behind the engine. The caller gets the shape of it;
+        // the trace has to be on stderr or the 500 is not diagnosable.
+        Log.failure(e, s"${request.method} ${request.path}")
+        error(500, s"${e.getClass.getSimpleName}: ${e.getMessage}")
     }
 
   private def route(request: EngineRequest): EngineResponse =

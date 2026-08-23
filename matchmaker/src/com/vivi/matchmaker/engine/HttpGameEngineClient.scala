@@ -19,9 +19,16 @@ import EngineJson.given
   * check a signature. It is not a fallback that could silently weaken a production call: outside
   * that case the credentials come from the execution role and are always set, and an unsigned
   * request to an IAM-authorized route is rejected by API Gateway rather than quietly allowed.
+  *
+  * `credentials` is a function, and is called once per request rather than once per client. The
+  * execution role's credentials are temporary: the runtime rotates them before they expire by
+  * rewriting the environment variables in place, so a copy read when the client was built goes
+  * stale while the client itself stays alive. A signature made with expired credentials is not a
+  * weaker signature, it is a rejected one — API Gateway answers 403 — and the execution
+  * environment it happens in keeps answering 403 until it is recycled.
   */
 class HttpGameEngineClient(
-    credentials: Option[AwsCredentials],
+    credentials: () => Option[AwsCredentials],
     region: String,
     timeout: Duration = Duration.ofSeconds(10),
     httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
@@ -46,7 +53,7 @@ class HttpGameEngineClient(
 
       // Every header the signature covers has to go onto the request exactly as it was signed,
       // so the signed set and the sent set are built from the same map.
-      val signed = credentials match {
+      val signed = credentials() match {
         case Some(creds) => SigV4.sign(method, uri, contentHeaders, payload, creds, region)
         case None        => Map.empty[String, String]
       }
@@ -75,11 +82,13 @@ class HttpGameEngineClient(
 object HttpGameEngineClient {
 
   /** A client configured from the environment: the execution role's credentials and the region
-    * Lambda is running in, both of which the runtime sets.
+    * Lambda is running in, both of which the runtime sets. The region is fixed for the life of
+    * the execution environment; the credentials are re-read for every request, since the runtime
+    * rotates them in place.
     */
   def fromEnvironment(env: String => Option[String] = k => Option(System.getenv(k))): HttpGameEngineClient =
     new HttpGameEngineClient(
-      credentials = AwsCredentials.fromEnvironment(env),
+      credentials = () => AwsCredentials.fromEnvironment(env),
       region = env("AWS_REGION").orElse(env("AWS_DEFAULT_REGION")).getOrElse("us-east-1")
     )
 }
