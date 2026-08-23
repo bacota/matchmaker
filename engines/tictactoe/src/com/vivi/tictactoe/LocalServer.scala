@@ -76,6 +76,7 @@ object LocalServer {
         exchange.getResponseBody.write(bytes)
       } catch {
         case e: Throwable =>
+          Log.failure(e, s"${exchange.getRequestMethod} ${exchange.getRequestURI.getPath}")
           val bytes = s"""{"error":"${e.getClass.getSimpleName}"}""".getBytes(UTF_8)
           exchange.sendResponseHeaders(500, bytes.length.toLong)
           exchange.getResponseBody.write(bytes)

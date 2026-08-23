@@ -110,20 +110,21 @@ object LocalServer {
           return
         }
 
+        val where = s"${exchange.getRequestMethod} ${exchange.getRequestURI.getPath}"
+
         val response =
           try
             Router
               .dispatch(services, requestOf(exchange), authenticator)
               .handleError { error =>
-                // Router maps ServiceErrors itself, so anything arriving here is unexpected and
-                // worth seeing in full on the console — this is a development server.
-                error.printStackTrace()
-                Errors.toResponse(error)
+                // Router maps ServiceErrors itself, so anything arriving here is unexpected;
+                // `toResponse` writes the trace, named by the request that produced it.
+                Errors.toResponse(error, where)
               }
               .unsafeRunSync()
           catch {
             case error: Throwable =>
-              error.printStackTrace()
+              Errors.log(error, where)
               Errors.response(500, "internal error")
           }
 

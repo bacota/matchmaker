@@ -28,6 +28,10 @@ class Handler extends RequestStreamHandler {
         answer
       } catch {
         case e: Throwable =>
+          // Anything that escaped the routes: a decode failure, a fatal error, a container whose
+          // initialization failed. Logged with its stack trace, because a 500 the caller cannot
+          // see the reason for has to be readable here.
+          Log.failure(e, "undecoded event")
           log(s"could not handle event: $e")
           EngineResponse(500, """{"error":"internal error"}""")
       }
