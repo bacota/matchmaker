@@ -297,7 +297,9 @@ class GameEngineServiceSpec extends PropertySuite {
         sql"""CREATE TRIGGER fail_match_update_trigger BEFORE UPDATE ON match
               FOR EACH ROW WHEN (NEW.description = 'explode') EXECUTE FUNCTION fail_match_update()""".command
       )
-    )(_ => exec(sql"DROP TRIGGER IF EXISTS fail_match_update_trigger ON match".command).handleError(_ => ()))
+    )(_ => (exec(sql"DROP TRIGGER IF EXISTS fail_match_update_trigger ON match".command) *> exec(
+      sql"DROP FUNCTION IF EXISTS fail_match_update()".command
+    )).handleError(_ => ()))
   }
 
   // The engine's game exists by then, so the start cannot be undone — but the claim must not
