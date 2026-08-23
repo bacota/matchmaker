@@ -320,12 +320,15 @@ class GameEngineServiceSpec extends PropertySuite {
           acceptances <- services.acceptances.mine(externalId)
           matches <- services.matches.active(externalId)
           // What is left behind is the documented recoverable state: a match with no urls.
-          stranded <- services.engine.read(fixture.game.gameId, matches.head.matchId, externalId)
+          stranded <- matches.headOption match {
+            case Some(m) => services.engine.read(fixture.game.gameId, m.matchId, externalId).map(Some(_))
+            case None    => IO.pure(None)
+          }
         } yield attempt.isLeft &&
           remaining.forall(_.challengeId != challenge.challengeId) &&
           acceptances.forall(_.challengeId != challenge.challengeId) &&
           matches.size == 1 &&
-          stranded.playUrl.isEmpty
+          stranded.exists(_.playUrl.isEmpty)
       }
       result.timeout(30.seconds).unsafeRunSync()
     }
