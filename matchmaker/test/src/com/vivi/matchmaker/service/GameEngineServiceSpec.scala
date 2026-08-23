@@ -221,7 +221,7 @@ class GameEngineServiceSpec extends PropertySuite {
 
   // What the claim refuses. Set directly rather than by parking a real start: the three
   // operations are guarded by the presence of the claim, so that is what the test establishes.
-  property("while a challenge is claimed by a start, it can be neither started, accepted nor deleted") {
+  property("while a challenge is claimed by a start, it can be neither started, accepted, deleted nor backed out of") {
     forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
       (nickname, externalId, gameExternalId, otherExternalId) =>
         val services = TestServices.servicesWith(StubEngine())
@@ -233,18 +233,29 @@ class GameEngineServiceSpec extends PropertySuite {
               .create(Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId)))
           }
           challenge <- services.challenges.create(challengeFor(fixture), externalId)
+          // Accepted before the claim, so that backing out is something that would otherwise
+          // succeed — the point is that the claim is what stops it, not a missing acceptance.
+          _ <- services.challenges
+            .accept(fixture.game.gameId, challenge.challengeId, Some(otherCharacter.characterId), None, otherExternalId)
           _ <- TestSession.resource.use { session =>
             new OpenChallengeRepo(session)
               .claimForStart(fixture.game.gameId, challenge.challengeId, MatchId("in-flight"))
           }
           restarted <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
           accepted <- services.challenges
-            .accept(fixture.game.gameId, challenge.challengeId, Some(otherCharacter.characterId), None, otherExternalId)
+            .accept(fixture.game.gameId, challenge.challengeId, Some(fixture.character.characterId), None, externalId)
             .attempt
           deleted <- services.challenges.delete(fixture.game.gameId, challenge.challengeId, externalId).attempt
+          backedOut <- services.acceptances
+            .delete(fixture.game.gameId, challenge.challengeId, other.playerId, otherExternalId)
+            .attempt
+          // Nothing the claim refused may have taken effect.
+          roster <- services.acceptances.mine(otherExternalId)
         } yield restarted.left.exists(_.isInstanceOf[ConflictError]) &&
           accepted.left.exists(_.isInstanceOf[ConflictError]) &&
-          deleted.left.exists(_.isInstanceOf[ConflictError])
+          deleted.left.exists(_.isInstanceOf[ConflictError]) &&
+          backedOut.left.exists(_.isInstanceOf[ConflictError]) &&
+          roster.exists(_.challengeId == challenge.challengeId)
         result.timeout(15.seconds).unsafeRunSync()
     }
   }
