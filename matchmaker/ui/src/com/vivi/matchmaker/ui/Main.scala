@@ -478,12 +478,12 @@ object Views {
           case Some(challenges) =>
             // `ui.txt` asks for the player's own challenges in a separate list, because what you
             // can do with them is different: delete yours, accept someone else's.
-            val (mine, others) = challenges.partition(_.challenger == player.playerId)
+            val (mine, others) = challenges.partition(_.challenge.challenger == player.playerId)
             // A challenge this player has already accepted stays open until it fills up, but
             // offering it again would only produce a duplicate acceptance the service rejects —
             // so it is dropped from the list rather than shown with an Accept that cannot work.
             val accepted = acceptances.map(a => (a.gameId, a.challengeId)).toSet
-            val available = others.filterNot(c => accepted.contains((c.gameId, c.challengeId)))
+            val available = others.filterNot(c => accepted.contains((c.challenge.gameId, c.challenge.challengeId)))
             div(
               h3("Your open challenges"),
               if (mine.isEmpty) p(cls := "empty", "You have none open.")
@@ -497,24 +497,28 @@ object Views {
       }
     )
 
-  private def myChallengeRow(game: Game, challenge: OpenChallenge): HtmlElement =
+  private def myChallengeRow(game: Game, summary: OpenChallengeSummary): HtmlElement = {
+    val challenge = summary.challenge
     li(
       cls := "row",
       div(cls := "title", challenge.message),
-      div(cls := "detail", s"${challenge.numberOfPlayers} players"),
+      div(cls := "detail", s"${summary.acceptances} of ${challenge.numberOfPlayers} players"),
       if (challenge.isPublic) div(cls := "detail", "public") else emptyNode,
       // Starting is the challenger's call rather than something that happens on the last
-      // acceptance: a challenge for up to six may be worth starting with three. The server
-      // refuses it below the game's minimum.
-      button(
-        "Start",
-        onClick --> { _ =>
-          Store.run(ApiClient.startChallenge(game.gameId, challenge.challengeId)) { _ =>
-            Store.refreshChallenges(game.gameId)
-            Store.refreshMatches()
+      // acceptance: a challenge for up to six may be worth starting with three. But below the
+      // game's minimum the server refuses it outright, so there is no point offering the button
+      // — what the challenger is waiting for is more players, which the count beside it shows.
+      if (summary.acceptances >= game.minPlayers)
+        button(
+          "Start",
+          onClick --> { _ =>
+            Store.run(ApiClient.startChallenge(game.gameId, challenge.challengeId)) { _ =>
+              Store.refreshChallenges(game.gameId)
+              Store.refreshMatches()
+            }
           }
-        }
-      ),
+        )
+      else div(cls := "detail", s"needs ${game.minPlayers} to start"),
       button(
         "Delete",
         onClick --> { _ =>
@@ -522,13 +526,15 @@ object Views {
         }
       )
     )
+  }
 
-  private def openChallengeRow(game: Game, challenge: OpenChallenge, characterId: Option[CharacterId]): HtmlElement = {
+  private def openChallengeRow(game: Game, summary: OpenChallengeSummary, characterId: Option[CharacterId]): HtmlElement = {
+    val challenge = summary.challenge
     val role = Var(Option.empty[GameRoleId])
     li(
       cls := "row",
       div(cls := "title", challenge.message),
-      div(cls := "detail", s"${challenge.numberOfPlayers} players"),
+      div(cls := "detail", s"${summary.acceptances} of ${challenge.numberOfPlayers} players"),
       roleSelect(game, role),
       button(
         "Accept",

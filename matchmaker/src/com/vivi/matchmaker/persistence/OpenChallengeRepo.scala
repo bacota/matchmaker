@@ -186,27 +186,44 @@ class OpenChallengeRepo(session: Session[IO]) {
       _ <- session.execute(deleteChallenge)((gameId, id))
     } yield ()
 
+  // The acceptance count is a scalar subquery rather than another LEFT JOIN: this query already
+  // joins the challenger's own acceptance to read their role, and counting over a second join to
+  // the same table would multiply the rows rather than count them.
   private val selectChallengesByGame: Query[
     GameId,
-    (ChallengeId, GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long])
+    (ChallengeId, GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId],
+      Option[Long], Long)
   ] =
     sql"""SELECT oc.challenge_id, oc.game_type, oc.challenger, oc.message, oc.number_of_players, oc.start,
-                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, a.game_role_id, cc.character_id
+                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, a.game_role_id, cc.character_id,
+                 (SELECT count(*) FROM acceptance ac
+                   WHERE ac.game_id = oc.game_id AND ac.challenge_id = oc.challenge_id)
           FROM open_challenge oc
           LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
           LEFT JOIN acceptance a ON a.game_id = oc.game_id AND a.challenge_id = oc.challenge_id
                                 AND a.player_id = oc.challenger
           WHERE oc.game_id = $gameId
           ORDER BY oc.create_date DESC"""
-      .query(challengeId *: gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId.opt *: int8.opt)
+      .query(
+        challengeId *: gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *:
+          gameRoleId.opt *: int8.opt *: int8
+      )
 
-  /** Every open challenge for a game, newest first. */
-  def listByGame(id: GameId): IO[List[OpenChallenge]] =
+  /** Every open challenge for a game, newest first, each with how many players have accepted it.
+    *
+    * The count comes back with the challenge rather than from a call per challenge: the UI needs
+    * it for every row it draws, to know whether a challenge has enough acceptances to be started.
+    */
+  def listByGame(id: GameId): IO[List[OpenChallengeSummary]] =
     session.execute(selectChallengesByGame)(id).map(_.map {
-      case (challengeId, gt, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue) =>
-        toChallenge(
-          challengeId,
-          (gt, id, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue)
+      case (challengeId, gt, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId,
+            characterIdValue, acceptances) =>
+        OpenChallengeSummary(
+          toChallenge(
+            challengeId,
+            (gt, id, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue)
+          ),
+          acceptances.toInt
         )
     })
 }

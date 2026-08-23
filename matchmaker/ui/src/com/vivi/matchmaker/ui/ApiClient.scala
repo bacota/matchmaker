@@ -57,8 +57,8 @@ object ApiClient {
   def createGame(game: Game): Future[Game] =
     send[Game](HttpMethod.POST, "/games", Some(write(game)))
 
-  def challenges(gameId: GameId): Future[Seq[OpenChallenge]] =
-    get[Seq[OpenChallenge]](s"/games/${gameId.value}/challenges")
+  def challenges(gameId: GameId): Future[Seq[OpenChallengeSummary]] =
+    get[Seq[OpenChallengeSummary]](s"/games/${gameId.value}/challenges")
 
   def createChallenge(challenge: OpenChallenge): Future[OpenChallenge] =
     send[OpenChallenge](HttpMethod.POST, "/challenges", Some(write(challenge)))

@@ -8,7 +8,7 @@ log_retention_days = 7
 // Off for now: the snapshot isn't ready the moment an apply finishes, and a request that lands in
 // that window gets a 500 with nothing in the function's own logs to explain it. Set back to true
 // once that's worth working around again.
-lambda_snap_start = false
+lambda_snap_start = true
 
 // Off: advanced security is billed per monthly active user, and there is nothing in dev worth
 // protecting. Set to AUDIT to see the risk findings without paying for enforcement decisions.

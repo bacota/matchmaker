@@ -72,7 +72,7 @@ object Store {
   /** Open challenges per game, filled in only for games the user has expanded — there is one
     * request per expansion, and games nobody opens cost nothing.
     */
-  val challengesByGame: Var[Map[GameId, Seq[OpenChallenge]]] = Var(Map.empty)
+  val challengesByGame: Var[Map[GameId, Seq[OpenChallengeSummary]]] = Var(Map.empty)
 
   /** The caller's characters per game, loaded alongside the challenges when a game is expanded.
     * Both offering and accepting a challenge need one.

@@ -125,6 +125,53 @@ class WireFormatSpec extends FunSuite {
     assertEquals(decoded.due, summary.due)
   }
 
+  // The challenges page decodes this and nothing else, and the nested `challenge` goes through
+  // the merged OpenChallenge reader. A discriminator or field mapping that does not survive being
+  // nested would break only here, in the browser, on the one screen that loads it.
+  test("an OpenChallengeSummary round-trips both kinds of challenge, keeping the subtype") {
+    val character = OpenChallengeSummary(
+      CharacterOpenChallenge(
+        challengeId = ChallengeId(1),
+        challenger = PlayerId(2),
+        message = "anyone?",
+        numberOfPlayers = 4,
+        start = Some(Instant.parse("2026-08-07T12:00:00Z")),
+        timeLimit = Some(Duration.ofMinutes(5)),
+        settings = "{}",
+        gameId = GameId(3),
+        characterId = CharacterId(9),
+        isPublic = true,
+        gameRoleId = Some(GameRoleId(4))
+      ),
+      acceptances = 2
+    )
+    val plain = OpenChallengeSummary(
+      PlainOpenChallenge(
+        challengeId = ChallengeId(5),
+        challenger = PlayerId(6),
+        message = "a plain game",
+        numberOfPlayers = 2,
+        start = None,
+        timeLimit = None,
+        settings = "{}",
+        gameId = GameId(7)
+      ),
+      acceptances = 1
+    )
+
+    // The list is the response shape; decoding them singly would not notice a broken Seq codec.
+    val decoded = read[Seq[OpenChallengeSummary]](write(Seq(character, plain)))
+
+    assertEquals(decoded, Seq(character, plain))
+    // Which subtype came back decides whether the UI offers a character to accept with, so it is
+    // asserted rather than left to equality.
+    assert(decoded.head.challenge.isInstanceOf[CharacterOpenChallenge])
+    assert(decoded(1).challenge.isInstanceOf[PlainOpenChallenge])
+    // The count is what the Start button is shown or hidden on.
+    assertEquals(decoded.map(_.acceptances), Seq(2, 1))
+    assertEquals(decoded.head.challenge.start, character.challenge.start)
+  }
+
   test("an absent optional stays absent rather than becoming a default") {
     val challenge = CharacterOpenChallenge(
       challengeId = ChallengeId(0),
