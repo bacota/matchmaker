@@ -2,6 +2,7 @@ package com.vivi.matchmaker.service
 
 import cats.effect.IO
 import cats.syntax.all._
+import scala.concurrent.duration._
 import java.time.Instant
 import java.util.UUID
 import com.vivi.matchmaker.engine._
@@ -126,21 +127,62 @@ class GameEngineService[T](
           .createGame(game.url, createRequest(matchId, game, challenge, players))
           .onError(_ => undo(session, gameId, challengeId, matchId))
 
-        started <- session.transaction.use { _ =>
-          val withUrls = saved.copy(
-            statusUrl = Some(response.statusUrl),
-            playUrl = Some(response.playUrl),
-            publicUrl = response.publicUrl
-          )
-          for {
-            _ <- matchRepo.update(withUrls)
-            // The challenge has served its purpose; leaving it would let a second match be
-            // started from the same acceptances.
-            _ <- acceptanceRepo.deleteAllForChallenge(gameId, challengeId)
-            _ <- challengeRepo.delete(gameId, challengeId)
-          } yield withUrls
-        }
+        withUrls = saved.copy(
+          statusUrl = Some(response.statusUrl),
+          playUrl = Some(response.playUrl),
+          publicUrl = response.publicUrl
+        )
+        // Past this point the engine's game exists, so there is no undoing the start — the only
+        // way out is forward. A transient database error here must not be allowed to leave the
+        // challenge claimed forever, because a claim blocks starting, accepting, deleting and
+        // backing out alike.
+        started <- retrying(finish(session, gameId, challengeId, withUrls).as(withUrls))
+          .onError(_ => retire(session, gameId, challengeId))
       } yield started
+    }
+
+  /* The last step of a start: record the urls the engine gave back and retire the challenge that
+   * has now become a match. One transaction, because a challenge left standing beside its own
+   * match would let a second match be started from the same acceptances. */
+  private def finish(
+      session: skunk.Session[IO],
+      gameId: GameId,
+      challengeId: ChallengeId,
+      withUrls: Match
+  ): IO[Unit] =
+    session.transaction.use { _ =>
+      for {
+        _ <- new MatchRepo(session).update(withUrls)
+        _ <- new AcceptanceRepo(session).deleteAllForChallenge(gameId, challengeId)
+        _ <- new OpenChallengeRepo(session).delete(gameId, challengeId)
+      } yield ()
+    }
+
+  /* Retires the challenge without recording the urls, when [[finish]] has failed for good.
+   *
+   * The challenge is spent either way — its game exists in the engine — so the one thing that
+   * must not happen is leaving it claimed, which would block starting, accepting, deleting and
+   * backing out of it for good. Releasing the claim instead would be worse than the disease: the
+   * challenge would look startable again and a second start would create a second game in the
+   * engine, which is the very thing the claim exists to prevent. So the challenge is retired,
+   * and what is left behind is an urlless match that `refresh` reports as having no status url —
+   * the same recoverable state a failed `undo` leaves. Errors are swallowed for the reason they
+   * are in `undo`: the caller is already being told the start failed. */
+  private def retire(session: skunk.Session[IO], gameId: GameId, challengeId: ChallengeId): IO[Unit] =
+    session.transaction
+      .use { _ =>
+        new AcceptanceRepo(session).deleteAllForChallenge(gameId, challengeId) *>
+          new OpenChallengeRepo(session).delete(gameId, challengeId)
+      }
+      .handleError(_ => ())
+
+  /* Retries a database action a few times before giving up. Used only for the work after the
+   * engine call, where failing is not an option that leaves a sane state behind — everywhere
+   * else a failure simply rolls its transaction back. */
+  private def retrying[A](io: IO[A], attempts: Int = 3, delay: FiniteDuration = 100.millis): IO[A] =
+    io.handleErrorWith { error =>
+      if (attempts <= 1) IO.raiseError(error)
+      else IO.sleep(delay) *> retrying(io, attempts - 1, delay * 2)
     }
 
   /* Undoes the match written before the engine call, and the challenge's start claim, when that
