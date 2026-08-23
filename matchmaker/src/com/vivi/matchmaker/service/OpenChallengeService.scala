@@ -137,6 +137,15 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
             case Some(t) => IO.pure(t)
             case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
           }
+          // A challenge whose start is in flight is spoken for: its roster has already been
+          // turned into participants and handed to the engine, so an acceptance added now would
+          // never reach the match and would be deleted with the challenge when the start
+          // finishes. Refused rather than silently lost.
+          _ <- challengeInfo.startedMatchId.traverse_ { existing =>
+            IO.raiseError(
+              ConflictError(s"challenge ${challengeId.value} is being started as match ${existing.value} and can no longer be accepted")
+            )
+          }
           gameType = challengeInfo.gameType
           maxPlayers = challengeInfo.numberOfPlayers
           // A role has to be one of this game's, which the schema's composite foreign key also
@@ -213,6 +222,19 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
       val acceptanceRepo = new AcceptanceRepo(session)
       session.transaction.use { _ =>
         for {
+          // Locked before anything else, for the same reason accept locks: the delete below must
+          // not race a start of the same challenge. Without the lock a delete could land between
+          // a start's first and last transactions and pull the challenge out from under it,
+          // leaving the match already handed to the engine with no challenge to retire.
+          locked <- challengeRepo.readForUpdate(gameId, challengeId).flatMap {
+            case Some(l) => IO.pure(l)
+            case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
+          }
+          _ <- locked.startedMatchId.traverse_ { existing =>
+            IO.raiseError(
+              ConflictError(s"challenge ${challengeId.value} is being started as match ${existing.value} and can no longer be deleted")
+            )
+          }
           challenge <- challengeRepo.read(gameId, challengeId).flatMap {
             case Some(c) => IO.pure(c)
             case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))

@@ -1,16 +1,16 @@
 package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
-import cats.effect.IO
+import cats.effect.{Deferred, IO}
 import cats.effect.unsafe.implicits.global
 import java.time.{Duration, Instant}
-import org.scalacheck.Gen
+import org.scalacheck.{Gen, Shrink}
 import org.scalacheck.Prop._
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, ParticipantRepo, ResultRepo, TestSession}
+import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, OpenChallengeRepo, ParticipantRepo, ResultRepo, TestSession}
 
 /** The game-engine interaction, end to end against the real database with a stubbed engine.
   *
@@ -21,6 +21,12 @@ import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, ParticipantRepo
   */
 class GameEngineServiceSpec extends PropertySuite {
   TestMigration.ensure()
+
+  // Every generator here feeds a fixture built in the database, so a shrink candidate is not a
+  // cheap retry — it is another round of registrations and inserts. Shrinking a failure of one
+  // of these properties runs hundreds of them and buries the failure it was meant to report.
+  // The inputs are opaque unique strings that shrink tells us nothing about anyway.
+  private given noShrink[A]: Shrink[A] = Shrink.shrinkAny
 
   /** Records the last create request so the tests can assert on what the engine was told. */
   private class StubEngine(
@@ -36,6 +42,27 @@ class GameEngineServiceSpec extends PropertySuite {
       else IO { lastRequest = Some(request); lastUrl = Some(gameUrl) }.as(response)
 
     def status(statusUrl: String): IO[GameStatusResponse] = IO.pure(status)
+  }
+
+  /** An engine whose *first* createGame parks until it is released, so a test can hold a start in
+    * the window between its first transaction committing and its last one running — which is
+    * exactly the window a second Start used to slip through.
+    *
+    * Only the first call parks. A later one answers at once, so that a regression shows up as an
+    * assertion about how many matches exist rather than as a test that deadlocks against its own
+    * gate and has to be timed out.
+    */
+  private class GatedEngine(entered: Deferred[IO, Unit], release: Deferred[IO, Unit]) extends GameEngineClient {
+    private val response = CreateGameResponse("https://engine/status/1", "https://engine/play/1", None)
+    @volatile var calls: Int = 0
+
+    def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+      IO { calls += 1; calls == 1 }.flatMap { first =>
+        if (first) entered.complete(()).attempt *> release.get.as(response)
+        else IO.pure(response)
+      }
+
+    def status(statusUrl: String): IO[GameStatusResponse] = IO.pure(GameStatusResponse(completed = false, participants = Nil))
   }
 
   private def genUniqueString: Gen[String] =
@@ -153,6 +180,101 @@ class GameEngineServiceSpec extends PropertySuite {
       } yield attempt.isLeft &&
         remaining.exists(_.challengeId == challenge.challengeId) &&
         matches.isEmpty
+      result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // The bug these guard: start cannot hold one transaction across the engine call, so the
+  // challenge's FOR UPDATE lock is released long before the challenge is deleted. A second Start
+  // arriving in that window used to re-read a challenge that still looked startable, pass every
+  // check again, and produce a second match and a second engine game.
+  //
+  // Split in two on purpose. This one pins down *when* the claim exists — it parks the engine to
+  // hold a start open and looks at the row underneath it — and deliberately makes no second
+  // service call while parked, so it cannot deadlock against its own gate. The next one covers
+  // what the claim then refuses.
+  property("a start in flight leaves the challenge claimed for the whole engine call") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+      val result = for {
+        entered <- Deferred[IO, Unit]
+        release <- Deferred[IO, Unit]
+        engine = new GatedEngine(entered, release)
+        services = TestServices.servicesWith(engine)
+        fixture <- makeFixture(nickname, externalId, gameExternalId)
+        challenge <- services.challenges.create(challengeFor(fixture), externalId)
+        first <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).start
+        // The first start has committed its claim and is now inside the engine call — the window
+        // a second Start used to slip through. A connection of its own, not the services' pool,
+        // so this read cannot be waiting on the session the parked start is holding.
+        claimed <- entered.get *> TestSession.resource.use { session =>
+          new OpenChallengeRepo(session).readForUpdate(fixture.game.gameId, challenge.challengeId)
+        }
+        _ <- release.complete(())
+        started <- first.joinWithNever
+        matches <- services.matches.active(externalId)
+      } yield claimed.flatMap(_.startedMatchId).contains(started.matchId) &&
+        matches.size == 1 &&
+        engine.calls == 1
+      result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // What the claim refuses. Set directly rather than by parking a real start: the three
+  // operations are guarded by the presence of the claim, so that is what the test establishes.
+  property("while a challenge is claimed by a start, it can be neither started, accepted, deleted nor backed out of") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val services = TestServices.servicesWith(StubEngine())
+        val result = for {
+          fixture <- makeFixture(nickname, externalId, gameExternalId)
+          other <- services.registration.register(s"other-$nickname", otherExternalId)
+          otherCharacter <- TestSession.resource.use { session =>
+            new CharacterRepo[String](session)
+              .create(Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId)))
+          }
+          challenge <- services.challenges.create(challengeFor(fixture), externalId)
+          // Accepted before the claim, so that backing out is something that would otherwise
+          // succeed — the point is that the claim is what stops it, not a missing acceptance.
+          _ <- services.challenges
+            .accept(fixture.game.gameId, challenge.challengeId, Some(otherCharacter.characterId), None, otherExternalId)
+          _ <- TestSession.resource.use { session =>
+            new OpenChallengeRepo(session)
+              .claimForStart(fixture.game.gameId, challenge.challengeId, MatchId("in-flight"))
+          }
+          restarted <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
+          accepted <- services.challenges
+            .accept(fixture.game.gameId, challenge.challengeId, Some(fixture.character.characterId), None, externalId)
+            .attempt
+          deleted <- services.challenges.delete(fixture.game.gameId, challenge.challengeId, externalId).attempt
+          backedOut <- services.acceptances
+            .delete(fixture.game.gameId, challenge.challengeId, other.playerId, otherExternalId)
+            .attempt
+          // Nothing the claim refused may have taken effect.
+          roster <- services.acceptances.mine(otherExternalId)
+        } yield restarted.left.exists(_.isInstanceOf[ConflictError]) &&
+          accepted.left.exists(_.isInstanceOf[ConflictError]) &&
+          deleted.left.exists(_.isInstanceOf[ConflictError]) &&
+          backedOut.left.exists(_.isInstanceOf[ConflictError]) &&
+          roster.exists(_.challengeId == challenge.challengeId)
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // The claim must not outlive a failed start, or the engine being briefly down would strand the
+  // challenge as permanently unstartable.
+  property("a start after a failed engine call succeeds, because the failure released the claim") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+      val failing = TestServices.servicesWith(new StubEngine(fail = true))
+      val working = TestServices.servicesWith(StubEngine())
+      val result = for {
+        fixture <- makeFixture(nickname, externalId, gameExternalId)
+        challenge <- failing.challenges.create(challengeFor(fixture), externalId)
+        attempt <- failing.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
+        retried <- working.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+        matches <- working.matches.active(externalId)
+      } yield attempt.isLeft &&
+        retried.playUrl.contains("https://engine/play/1") &&
+        matches.size == 1
       result.timeout(15.seconds).unsafeRunSync()
     }
   }
