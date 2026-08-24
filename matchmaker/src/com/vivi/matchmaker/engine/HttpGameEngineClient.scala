@@ -70,12 +70,34 @@ class HttpGameEngineClient(
         case None          => builder.method(method, HttpRequest.BodyPublishers.noBody()).build()
       }
 
-      IO.blocking(httpClient.send(request, HttpResponse.BodyHandlers.ofString()))
-        .handleErrorWith(e => IO.raiseError(GameEngineError(s"$method $url failed: ${e.getMessage}", e)))
-        .flatMap { response =>
-          if (response.statusCode >= 200 && response.statusCode < 300) IO.pure(response.body)
-          else IO.raiseError(GameEngineError(s"$method $url returned ${response.statusCode}: ${response.body}"))
-        }
+      // An engine hosted on AWS is behind an AWS_IAM-authorized route, which answers an unsigned
+      // request with a bare 403 that names no cause. Sending one is never going to work, so it is
+      // refused here, where what is actually missing can be said. The check is on the host rather
+      // than on signing in general because an unsigned call to a local stub engine is legitimate
+      // — that is the whole reason signing is conditional.
+      val mustBeSigned = Option(uri.getHost).exists(_.endsWith(".amazonaws.com"))
+
+      IO.raiseWhen(mustBeSigned && signed.isEmpty)(
+        GameEngineError(
+          s"$method $url cannot be signed: no AWS credentials in the environment " +
+            "(AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY). An AWS_IAM-authorized route answers an " +
+            "unsigned request with 403 Forbidden."
+        )
+      ) *>
+        IO.blocking(httpClient.send(request, HttpResponse.BodyHandlers.ofString()))
+          .handleErrorWith(e => IO.raiseError(GameEngineError(s"$method $url failed: ${e.getMessage}", e)))
+          .flatMap { response =>
+            if (response.statusCode >= 200 && response.statusCode < 300) IO.pure(response.body)
+            else
+              // Whether the request was signed is the first thing anyone asks of a 403 from
+              // API Gateway, and the answer is not otherwise recoverable from the response.
+              IO.raiseError(
+                GameEngineError(
+                  s"$method $url returned ${response.statusCode}: ${response.body} " +
+                    s"(request was ${if (signed.isEmpty) "unsigned" else s"signed as ${signed.keys.toList.sorted.mkString(", ")}"})"
+                )
+              )
+          }
     }
 }
 

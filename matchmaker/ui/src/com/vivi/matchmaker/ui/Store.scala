@@ -62,6 +62,7 @@ object Store {
     acceptances.set(Seq.empty)
     expandedGames.set(Set.empty)
     showNewGame.set(false)
+    editingGame.set(None)
   }
 
   val due: Var[Seq[MatchSummary]] = Var(Seq.empty)
@@ -91,6 +92,11 @@ object Store {
     * first, and the form is not what they came to the page for.
     */
   val showNewGame: Var[Boolean] = Var(false)
+
+  /** The game whose admin edit form is open, if any. One slot rather than a set: editing two
+    * games at once is not a thing anyone does, and one open form is one place to look for it.
+    */
+  val editingGame: Var[Option[GameId]] = Var(None)
   val showCompleted: Var[Boolean] = Var(false)
 
   /** The last thing that went wrong, shown as a banner. A single slot rather than a list: the
