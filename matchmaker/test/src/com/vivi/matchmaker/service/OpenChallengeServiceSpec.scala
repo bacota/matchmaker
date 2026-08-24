@@ -270,15 +270,18 @@ class OpenChallengeServiceSpec extends PropertySuite {
       (nickname, externalId, accepterNickname, accepterExternalId) =>
         val result = for {
           fixture <- makeFixture(nickname, externalId, minPlayers = 1, maxPlayers = 4)
-          created <- challengeService.create(challengeFor(fixture, 2), externalId)
+          created <- challengeService.create(challengeFor(fixture, 3), externalId)
           accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
           (_, accepterCharacter) = accepter
           _ <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), fixture.game.roles(1).gameRoleId, accepterExternalId)
+          // A different, free role and room to spare, so the only thing that can refuse this is
+          // the rule that a player takes one seat per challenge -- which since V5 is the
+          // application's to enforce and not the key's.
           attempt <- challengeService
-            .accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), fixture.game.roles(1).gameRoleId, accepterExternalId)
+            .accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), fixture.game.roles(2).gameRoleId, accepterExternalId)
             .attempt
         } yield attempt match {
-          case Left(_: ConflictError) => true
+          case Left(e: ConflictError) => e.getMessage.contains("has already accepted")
           case _                      => false
         }
         result.timeout(10.seconds).unsafeRunSync()

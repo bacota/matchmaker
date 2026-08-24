@@ -28,10 +28,10 @@ class AcceptanceRepo(session: Session[IO]) {
     sql"""WITH ins AS (
           INSERT INTO acceptance (challenge_id, player_id, game_type, game_id, game_role_id)
           VALUES ($challengeId, $playerId, 'C', $gameId, $gameRoleId)
-          RETURNING game_id, challenge_id, player_id
+          RETURNING game_id, challenge_id, game_role_id
         )
-        INSERT INTO character_acceptance (game_id, challenge_id, game_type, player_id, character_id)
-        SELECT game_id, challenge_id, 'C', player_id, $characterId FROM ins""".command
+        INSERT INTO character_acceptance (game_id, challenge_id, game_type, game_role_id, character_id)
+        SELECT game_id, challenge_id, 'C', game_role_id, $characterId FROM ins""".command
 
   private def toAcceptance(
       challengeId: ChallengeId,
@@ -51,14 +51,16 @@ class AcceptanceRepo(session: Session[IO]) {
         PlainAcceptance(challengeId, playerId, gameId, roleId)
     }
 
-  // acceptance's primary key is the composite (game_id, challenge_id, player_id) — challenge_id
-  // and player_id alone do not identify a row — so game_id is required in every lookup below,
-  // not just challenge_id and player_id.
+  // acceptance's primary key is the composite (game_id, challenge_id, game_role_id), so game_id
+  // is required in every lookup below rather than challenge_id alone. Looking a row up by player
+  // instead, as this one does, is not a key lookup at all: it holds only because the application
+  // refuses a player a second seat in one challenge (see OpenChallengeService.accept). If that
+  // rule is ever relaxed, this is one of the places that has to stop assuming one row.
   private val selectAcceptance: Query[(GameId, ChallengeId, PlayerId), (GameType, GameRoleId, Option[Long])] =
     sql"""SELECT a.game_type, a.game_role_id, ca.character_id
           FROM acceptance a
           LEFT JOIN character_acceptance ca
-                 ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.player_id = a.player_id
+                 ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.game_role_id = a.game_role_id
           WHERE a.game_id = $gameId AND a.challenge_id = $challengeId AND a.player_id = $playerId"""
       .query(gameType *: gameRoleId *: int8.opt)
 
@@ -76,8 +78,13 @@ class AcceptanceRepo(session: Session[IO]) {
       _ <- session.execute(deleteByChallenge)((gameId, challengeId))
     } yield ()
 
+  // character_acceptance is keyed by role rather than by player, so the row to delete is reached
+  // through the acceptance it extends rather than named directly.
   private val deleteCharacterAcceptanceOne: Command[(GameId, ChallengeId, PlayerId)] =
-    sql"DELETE FROM character_acceptance WHERE game_id = $gameId AND challenge_id = $challengeId AND player_id = $playerId".command
+    sql"""DELETE FROM character_acceptance ca
+          USING acceptance a
+          WHERE a.game_id = ca.game_id AND a.challenge_id = ca.challenge_id AND a.game_role_id = ca.game_role_id
+            AND a.game_id = $gameId AND a.challenge_id = $challengeId AND a.player_id = $playerId""".command
 
   private val deleteOne: Command[(GameId, ChallengeId, PlayerId)] =
     sql"DELETE FROM acceptance WHERE game_id = $gameId AND challenge_id = $challengeId AND player_id = $playerId".command
@@ -87,6 +94,23 @@ class AcceptanceRepo(session: Session[IO]) {
       _ <- session.execute(deleteCharacterAcceptanceOne)((gameId, challengeId, playerId))
       _ <- session.execute(deleteOne)((gameId, challengeId, playerId))
     } yield ()
+
+  private val selectHasAccepted: Query[(GameId, ChallengeId, PlayerId), Boolean] =
+    sql"""SELECT EXISTS (
+            SELECT 1 FROM acceptance
+             WHERE game_id = $gameId AND challenge_id = $challengeId AND player_id = $playerId
+          )""".query(bool)
+
+  /** Whether this player has already accepted this challenge.
+    *
+    * Since V5 the primary key is (game_id, challenge_id, game_role_id), so the database no longer
+    * refuses a player a second seat in one challenge — `OpenChallengeService.accept` does, and
+    * this is what it asks. `EXISTS` rather than reading the row: the question is only whether
+    * there is one, and unlike [[read]] this stays a straight answer if the rule is ever relaxed
+    * and a player does hold two.
+    */
+  def hasAccepted(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId): IO[Boolean] =
+    session.unique(selectHasAccepted)((gameId, challengeId, playerId))
 
   private val selectRolesForChallenge: Query[(GameId, ChallengeId), GameRoleId] =
     sql"""SELECT game_role_id FROM acceptance
@@ -187,7 +211,7 @@ class AcceptanceRepo(session: Session[IO]) {
     sql"""SELECT a.challenge_id, a.game_type, a.game_id, a.game_role_id, ca.character_id
           FROM acceptance a
           LEFT JOIN character_acceptance ca
-                 ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.player_id = a.player_id
+                 ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.game_role_id = a.game_role_id
           WHERE a.player_id = $playerId
           ORDER BY a.challenge_id"""
       .query(challengeId *: gameType *: gameId *: gameRoleId *: int8.opt)
@@ -218,7 +242,7 @@ class AcceptanceRepo(session: Session[IO]) {
           JOIN player pl ON pl.player_id = a.player_id
           JOIN game_role r ON r.game_id = a.game_id AND r.game_role_id = a.game_role_id
           LEFT JOIN character_acceptance ca
-                 ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.player_id = a.player_id
+                 ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.game_role_id = a.game_role_id
           WHERE a.game_id = $gameId AND a.challenge_id = $challengeId
           ORDER BY a.player_id"""
       .query(playerId *: gameType *: text *: gameRoleId *: text *: int8.opt)

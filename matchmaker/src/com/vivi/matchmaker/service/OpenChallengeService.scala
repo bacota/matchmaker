@@ -195,8 +195,17 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
             case (GameType.Plain, Some(_)) =>
               IO.raiseError(ValidationError(s"challenge ${challengeId.value} does not accept a characterId"))
           }
-          existing <- acceptanceRepo.read(gameId, challengeId, acceptance.playerId)
-          _ <- IO.raiseWhen(existing.isDefined)(
+          // One seat per player per challenge. This check is the whole of that rule: since V5 the
+          // acceptance key is (game_id, challenge_id, game_role_id), so the database will happily
+          // hold two rows for one player, and nothing but this refuses them. It is under the
+          // challenge's FOR UPDATE lock, taken above, so two simultaneous accepts by the same
+          // player cannot both find nothing here.
+          //
+          // The rule may be relaxed one day — a player holding two seats in a six-player game is
+          // a coherent thing to want — and relaxing it means deleting these four lines and
+          // nothing else, which is why it lives here rather than in the schema.
+          already <- acceptanceRepo.hasAccepted(gameId, challengeId, acceptance.playerId)
+          _ <- IO.raiseWhen(already)(
             ConflictError(s"player ${acceptance.playerId.value} has already accepted challenge ${challengeId.value}")
           )
           count <- acceptanceRepo.countForChallenge(gameId, challengeId)
