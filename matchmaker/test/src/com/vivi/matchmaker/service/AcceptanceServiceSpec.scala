@@ -26,7 +26,16 @@ class AcceptanceServiceSpec extends PropertySuite {
       for {
         owner <- registrationService.register(nickname, externalId)
         game <- new GameRepo[String](session).create(
-          Game(GameId.unassigned, GameType.Character, "game", "description", "url", active = true, Seq.empty, Seq.empty, genUniqueString.sample.get, 2, 4)
+          Game(
+            GameId.unassigned, GameType.Character, "game", "description", "url", active = true,
+            // Two roles, because every acceptance names one and no two acceptances of a challenge
+            // may name the same one -- the challenger takes the first, the accepter the second.
+            Seq(
+              GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false),
+              GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false)
+            ),
+            Seq.empty, genUniqueString.sample.get, 2, 4
+          )
         )
         character <- new CharacterRepo[String](session).create(
           Character(CharacterId(0), game.gameId, "character", "description", "", Some(owner.playerId))
@@ -45,7 +54,10 @@ class AcceptanceServiceSpec extends PropertySuite {
     }
 
   private def challengeFor(fixture: Fixture, numberOfPlayers: Int): OpenChallenge =
-    CharacterOpenChallenge(ChallengeId(0), fixture.owner.playerId, "message", numberOfPlayers.toShort, None, None, "{}", fixture.game.gameId, fixture.character.characterId)
+    CharacterOpenChallenge(
+      ChallengeId(0), fixture.owner.playerId, "message", numberOfPlayers.toShort, None, None, "{}", fixture.game.gameId,
+      fixture.character.characterId, isPublic = false, gameRoleId = fixture.game.roles.head.gameRoleId
+    )
 
   private def setUp(nickname: String, externalId: String, accepterNickname: String, accepterExternalId: String) =
     for {
@@ -53,7 +65,9 @@ class AcceptanceServiceSpec extends PropertySuite {
       created <- challengeService.create(challengeFor(fixture, 3), externalId)
       accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
       (accepterPlayer, accepterCharacter) = accepter
-      accepted <- challengeService.accept(fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), None, accepterExternalId)
+      accepted <- challengeService.accept(
+        fixture.game.gameId, created.challengeId, Some(accepterCharacter.characterId), fixture.game.roles(1).gameRoleId, accepterExternalId
+      )
     } yield (fixture, created, accepterPlayer, accepted)
 
   property("delete removes the acceptance when called by the acceptor") {

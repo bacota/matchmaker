@@ -96,7 +96,7 @@ class RouterSpec extends FunSuite {
   )
 
   private val challengeBody = write(
-    CharacterOpenChallenge(ChallengeId(0), PlayerId(1), "message", 2.toShort, None, None, "{}", GameId(1), CharacterId(1))
+    CharacterOpenChallenge(ChallengeId(0), PlayerId(1), "message", 2.toShort, None, None, "{}", GameId(1), CharacterId(1), gameRoleId = GameRoleId(1))
   )
 
   private val resultsBody = write(
@@ -122,7 +122,7 @@ class RouterSpec extends FunSuite {
     ("PUT", "/characters/1/state", """{"state":"s"}"""),
     ("POST", "/challenges", challengeBody),
     ("DELETE", "/challenges/1/1", "{}"),
-    ("POST", "/challenges/1/1/acceptances", """{"characterId":1}"""),
+    ("POST", "/challenges/1/1/acceptances", """{"characterId":1,"gameRoleId":1}"""),
     ("DELETE", "/challenges/1/1/acceptances/2", "{}"),
     ("POST", "/challenges/1/1/start", "{}"),
     ("GET", "/games/1/matches/m1", "{}"),

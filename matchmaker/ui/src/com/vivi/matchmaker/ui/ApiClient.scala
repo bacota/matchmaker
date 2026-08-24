@@ -70,7 +70,7 @@ object ApiClient {
       gameId: GameId,
       challengeId: ChallengeId,
       characterId: Option[CharacterId],
-      gameRoleId: Option[GameRoleId] = None
+      gameRoleId: GameRoleId
   ): Future[Acceptance] =
     send[Acceptance](
       HttpMethod.POST,

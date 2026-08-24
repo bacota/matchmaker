@@ -506,9 +506,10 @@ object Views {
       if (challenge.isPublic) div(cls := "detail", "public") else emptyNode,
       // Starting is the challenger's call rather than something that happens on the last
       // acceptance: a challenge for up to six may be worth starting with three. But below the
-      // game's minimum the server refuses it outright, so there is no point offering the button
-      // — what the challenger is waiting for is more players, which the count beside it shows.
-      if (summary.acceptances >= game.minPlayers)
+      // game's minimum, or with a required role nobody has taken, the server refuses it outright
+      // — so there is no point offering the button. What the challenger is waiting for is said
+      // beside it instead: more players, or somebody to play the roles still going begging.
+      if (summary.acceptances >= game.minPlayers && unfilledRoles(game, summary).isEmpty)
         button(
           "Start",
           onClick --> { _ =>
@@ -518,7 +519,8 @@ object Views {
             }
           }
         )
-      else div(cls := "detail", s"needs ${game.minPlayers} to start"),
+      else if (summary.acceptances < game.minPlayers) div(cls := "detail", s"needs ${game.minPlayers} to start")
+      else div(cls := "detail", s"waiting for ${unfilledRoles(game, summary).map(_.name).mkString(", ")}"),
       button(
         "Delete",
         onClick --> { _ =>
@@ -530,46 +532,66 @@ object Views {
 
   private def openChallengeRow(game: Game, summary: OpenChallengeSummary, characterId: Option[CharacterId]): HtmlElement = {
     val challenge = summary.challenge
-    val role = Var(Option.empty[GameRoleId])
+    // Only the roles nobody has claimed yet: accepting as a taken role is refused by the server,
+    // and there is no reason to offer a choice that cannot work. A challenge with none left is
+    // one that is full, and gets no Accept at all.
+    val free = freeRoles(game, summary)
+    val role = Var(free.headOption.map(_.gameRoleId))
     li(
       cls := "row",
       div(cls := "title", challenge.message),
       div(cls := "detail", s"${summary.acceptances} of ${challenge.numberOfPlayers} players"),
-      roleSelect(game, role),
-      button(
-        "Accept",
-        onClick --> { _ =>
-          Store.run(ApiClient.accept(game.gameId, challenge.challengeId, characterId, role.now())) { _ =>
-            // Accepting may complete the challenge into a match, which changes the match lists as
-            // well as this one, so both are reloaded.
-            Store.refreshChallenges(game.gameId)
-            Store.refreshMatches()
+      roleSelect(free, role),
+      if (free.isEmpty) div(cls := "detail", "every role is taken")
+      else
+        button(
+          "Accept",
+          onClick --> { _ =>
+            val chosen = role.now().getOrElse(free.head.gameRoleId)
+            Store.run(ApiClient.accept(game.gameId, challenge.challengeId, characterId, chosen)) { _ =>
+              // Accepting may complete the challenge into a match, which changes the match lists
+              // as well as this one, so both are reloaded.
+              Store.refreshChallenges(game.gameId)
+              Store.refreshMatches()
+            }
           }
-        }
-      )
+        )
     )
   }
 
-  /** A picker for the role a player will play, which matchmaker passes on to the game engine.
-    * A game with no roles gets no picker, and a role is always optional — the engine is told
-    * nothing rather than something invented.
+  /** The roles of `game` that no acceptance of `summary` has claimed yet. */
+  private def freeRoles(game: Game, summary: OpenChallengeSummary): Seq[GameRole] =
+    game.roles.filterNot(r => summary.takenRoles.contains(r.gameRoleId))
+
+  /** The roles a start is still waiting for: required, and unclaimed. Optional roles are exactly
+    * the ones a match need not wait for, so they are not counted here even when free.
     */
-  private def roleSelect(game: Game, selected: Var[Option[GameRoleId]]): Node =
-    if (game.roles.isEmpty) emptyNode
+  private def unfilledRoles(game: Game, summary: OpenChallengeSummary): Seq[GameRole] =
+    freeRoles(game, summary).filterNot(_.optional)
+
+  /** A picker for the role a player will play, which matchmaker passes on to the game engine.
+    *
+    * `choices` are the roles still available. There is no "any role" entry: every seat names a
+    * role, so the first available one stands pre-selected and the picker only changes which.
+    */
+  private def roleSelect(choices: Seq[GameRole], selected: Var[Option[GameRoleId]]): Node =
+    if (choices.isEmpty) emptyNode
     else
       select(
         onChange.mapToValue --> { raw =>
-          selected.set(raw.toIntOption.map(GameRoleId.apply).filter(id => game.roles.exists(_.gameRoleId == id)))
+          selected.set(raw.toIntOption.map(GameRoleId.apply).filter(id => choices.exists(_.gameRoleId == id)))
         },
-        option(value := "", "any role"),
-        game.roles.map(r => option(value := r.gameRoleId.value.toString, r.name))
+        value <-- selected.signal.map(_.map(_.value.toString).getOrElse("")),
+        choices.map(r => option(value := r.gameRoleId.value.toString, r.name))
       )
 
   private def newChallengeForm(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement = {
     val message = Var("")
     val players = Var(game.minPlayers.toString)
     val isPublic = Var(false)
-    val role = Var(Option.empty[GameRoleId])
+    // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
+    // has been claimed yet, so every role of the game is on offer and the first stands selected.
+    val role = Var(game.roles.headOption.map(_.gameRoleId))
 
     div(
       cls := "card",
@@ -584,7 +606,7 @@ object Views {
         maxAttr := game.maxPlayers.toString,
         controlled(value <-- players.signal, onInput.mapToValue --> players)
       ),
-      roleSelect(game, role),
+      roleSelect(game.roles, role),
       // Public means anyone may watch the match, which the game engine implements by issuing a
       // url that needs no sign-in. It is decided here because it is a property of the game being
       // offered, not of any one player's part in it.
@@ -597,45 +619,51 @@ object Views {
       ),
       button(
         "Create challenge",
-        disabled <-- message.signal.combineWith(players.signal).map { case (m, p) =>
-          m.trim.isEmpty || !validPlayerCount(game, p)
+        // A game with no roles at all has nothing an acceptance could name, so no challenge for
+        // it can be created. The server refuses one; this keeps the button from offering it.
+        disabled <-- message.signal.combineWith(players.signal, role.signal).map { case (m, p, r) =>
+          m.trim.isEmpty || !validPlayerCount(game, p) || r.isEmpty
         },
+        // `foreach` rather than a fallback role: with no role there is no challenge to make, and
+        // the disabled button above is what keeps that from being reachable.
         onClick --> { _ =>
-          // The server assigns the id; this is the same unassigned-sentinel convention the
-          // service layer uses on create.
-          val challenge: OpenChallenge = characterId match {
-            case Some(cid) =>
-              CharacterOpenChallenge(
-                challengeId = ChallengeId(0),
-                challenger = player.playerId,
-                message = message.now().trim,
-                numberOfPlayers = players.now().trim.toShort,
-                start = None,
-                timeLimit = None,
-                settings = "{}",
-                gameId = game.gameId,
-                characterId = cid,
-                isPublic = isPublic.now(),
-                gameRoleId = role.now()
-              )
-            case None =>
-              PlainOpenChallenge(
-                challengeId = ChallengeId(0),
-                challenger = player.playerId,
-                message = message.now().trim,
-                numberOfPlayers = players.now().trim.toShort,
-                start = None,
-                timeLimit = None,
-                settings = "{}",
-                gameId = game.gameId,
-                isPublic = isPublic.now(),
-                gameRoleId = role.now()
-              )
-          }
+          role.now().foreach { chosen =>
+            // The server assigns the id; this is the same unassigned-sentinel convention the
+            // service layer uses on create.
+            val challenge: OpenChallenge = characterId match {
+              case Some(cid) =>
+                CharacterOpenChallenge(
+                  challengeId = ChallengeId(0),
+                  challenger = player.playerId,
+                  message = message.now().trim,
+                  numberOfPlayers = players.now().trim.toShort,
+                  start = None,
+                  timeLimit = None,
+                  settings = "{}",
+                  gameId = game.gameId,
+                  characterId = cid,
+                  isPublic = isPublic.now(),
+                  gameRoleId = chosen
+                )
+              case None =>
+                PlainOpenChallenge(
+                  challengeId = ChallengeId(0),
+                  challenger = player.playerId,
+                  message = message.now().trim,
+                  numberOfPlayers = players.now().trim.toShort,
+                  start = None,
+                  timeLimit = None,
+                  settings = "{}",
+                  gameId = game.gameId,
+                  isPublic = isPublic.now(),
+                  gameRoleId = chosen
+                )
+            }
 
-          Store.run(ApiClient.createChallenge(challenge)) { _ =>
-            message.set("")
-            Store.refreshChallenges(game.gameId)
+            Store.run(ApiClient.createChallenge(challenge)) { _ =>
+              message.set("")
+              Store.refreshChallenges(game.gameId)
+            }
           }
         }
       )

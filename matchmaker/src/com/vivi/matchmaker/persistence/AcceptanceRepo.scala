@@ -19,15 +19,15 @@ class AcceptanceRepo(session: Session[IO]) {
   private val instant = SkunkCodecs.instant
   private val settings: Codec[String] = SkunkCodecs.jsonb
 
-  private val insertAcceptance: Command[(ChallengeId, PlayerId, GameType, GameId, Option[GameRoleId])] =
+  private val insertAcceptance: Command[(ChallengeId, PlayerId, GameType, GameId, GameRoleId)] =
     sql"""INSERT INTO acceptance (challenge_id, player_id, game_type, game_id, game_role_id)
-          VALUES ($challengeId, $playerId, $gameType, $gameId, ${gameRoleId.opt})""".command
+          VALUES ($challengeId, $playerId, $gameType, $gameId, $gameRoleId)""".command
 
   // Atomic insert for a CharacterAcceptance: inserts both acceptance and character_acceptance in one statement.
-  private val insertCharacterAcceptance: Command[(ChallengeId, PlayerId, GameId, Option[GameRoleId], CharacterId)] =
+  private val insertCharacterAcceptance: Command[(ChallengeId, PlayerId, GameId, GameRoleId, CharacterId)] =
     sql"""WITH ins AS (
           INSERT INTO acceptance (challenge_id, player_id, game_type, game_id, game_role_id)
-          VALUES ($challengeId, $playerId, 'C', $gameId, ${gameRoleId.opt})
+          VALUES ($challengeId, $playerId, 'C', $gameId, $gameRoleId)
           RETURNING game_id, challenge_id, player_id
         )
         INSERT INTO character_acceptance (game_id, challenge_id, game_type, player_id, character_id)
@@ -38,7 +38,7 @@ class AcceptanceRepo(session: Session[IO]) {
       playerId: PlayerId,
       gameId: GameId,
       gameType: GameType,
-      roleId: Option[GameRoleId],
+      roleId: GameRoleId,
       characterIdValue: Option[Long]
   ): Acceptance =
     gameType match {
@@ -54,13 +54,13 @@ class AcceptanceRepo(session: Session[IO]) {
   // acceptance's primary key is the composite (game_id, challenge_id, player_id) — challenge_id
   // and player_id alone do not identify a row — so game_id is required in every lookup below,
   // not just challenge_id and player_id.
-  private val selectAcceptance: Query[(GameId, ChallengeId, PlayerId), (GameType, Option[GameRoleId], Option[Long])] =
+  private val selectAcceptance: Query[(GameId, ChallengeId, PlayerId), (GameType, GameRoleId, Option[Long])] =
     sql"""SELECT a.game_type, a.game_role_id, ca.character_id
           FROM acceptance a
           LEFT JOIN character_acceptance ca
                  ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.player_id = a.player_id
           WHERE a.game_id = $gameId AND a.challenge_id = $challengeId AND a.player_id = $playerId"""
-      .query(gameType *: gameRoleId.opt *: int8.opt)
+      .query(gameType *: gameRoleId *: int8.opt)
 
   // character_acceptance has a FK to acceptance, so its rows must go first — deleting the
   // parent row while a character_acceptance row still references it is a FK violation.
@@ -88,6 +88,21 @@ class AcceptanceRepo(session: Session[IO]) {
       _ <- session.execute(deleteOne)((gameId, challengeId, playerId))
     } yield ()
 
+  private val selectRolesForChallenge: Query[(GameId, ChallengeId), GameRoleId] =
+    sql"""SELECT game_role_id FROM acceptance
+          WHERE game_id = $gameId AND challenge_id = $challengeId
+          ORDER BY game_role_id""".query(gameRoleId)
+
+  /** The roles already claimed by the acceptances of one challenge.
+    *
+    * Two questions are answered from this and nothing else: whether a role a player is asking for
+    * is still free, and whether every required role of the game has been taken -- which is what a
+    * start waits for. Cheaper than [[listForChallenge]], which joins in players and characters
+    * that neither question needs.
+    */
+  def rolesForChallenge(gameId: GameId, challengeId: ChallengeId): IO[List[GameRoleId]] =
+    session.execute(selectRolesForChallenge)((gameId, challengeId))
+
   private val countByChallenge: Query[(GameId, ChallengeId), Long] =
     sql"SELECT count(*) FROM acceptance WHERE game_id = $gameId AND challenge_id = $challengeId".query(int8)
 
@@ -99,16 +114,16 @@ class AcceptanceRepo(session: Session[IO]) {
   // gameId is a query parameter here, not a selected column — the caller already knows it (it's
   // how the row is looked up), so there's no need to round-trip it back out.
   private val acceptanceWithChallengeAndPlayersRow: Codec[
-    (GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long],
+    (GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long],
       (String, Boolean, String), String, Boolean, String)
   ] =
-    gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId.opt *: int8.opt *:
+    gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId *: int8.opt *:
       playerRow *: text *: bool *: text
 
   // `a` is the acceptance being read; `challenger_acceptance` is the challenger's own, which is
   // where a challenge's gameRoleId lives (there is no such column on open_challenge — see
-  // OpenChallengeRepo). Without it the challenge reconstructed below would report no role at all,
-  // which is not the same thing as the challenger having chosen none.
+  // OpenChallengeRepo). The join is an inner one: every challenge has a challenger's acceptance,
+  // created with it, and that acceptance names a role.
   private val selectAcceptanceWithChallengeAndPlayers = sql"""
     SELECT a.game_type, oc.challenger, oc.message, oc.number_of_players, oc.start,
            EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public,
@@ -118,7 +133,7 @@ class AcceptanceRepo(session: Session[IO]) {
     FROM acceptance a
     JOIN open_challenge oc ON oc.game_id = a.game_id AND oc.challenge_id = a.challenge_id
     LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
-    LEFT JOIN acceptance challenger_acceptance
+    JOIN acceptance challenger_acceptance
            ON challenger_acceptance.game_id = oc.game_id
           AND challenger_acceptance.challenge_id = oc.challenge_id
           AND challenger_acceptance.player_id = oc.challenger
@@ -168,14 +183,14 @@ class AcceptanceRepo(session: Session[IO]) {
         (challengeModel, acceptor, challengerPlayer)
     })
 
-  private val selectAcceptancesForPlayer: Query[PlayerId, (ChallengeId, GameType, GameId, Option[GameRoleId], Option[Long])] =
+  private val selectAcceptancesForPlayer: Query[PlayerId, (ChallengeId, GameType, GameId, GameRoleId, Option[Long])] =
     sql"""SELECT a.challenge_id, a.game_type, a.game_id, a.game_role_id, ca.character_id
           FROM acceptance a
           LEFT JOIN character_acceptance ca
                  ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.player_id = a.player_id
           WHERE a.player_id = $playerId
           ORDER BY a.challenge_id"""
-      .query(challengeId *: gameType *: gameId *: gameRoleId.opt *: int8.opt)
+      .query(challengeId *: gameType *: gameId *: gameRoleId *: int8.opt)
 
   /** Every acceptance this player has outstanding.
     *
@@ -196,24 +211,24 @@ class AcceptanceRepo(session: Session[IO]) {
   // one player lookup per acceptance.
   private val selectAcceptancesForChallenge: Query[
     (GameId, ChallengeId),
-    (PlayerId, GameType, String, Option[GameRoleId], Option[String], Option[Long])
+    (PlayerId, GameType, String, GameRoleId, String, Option[Long])
   ] =
     sql"""SELECT a.player_id, a.game_type, pl.external_id, a.game_role_id, r.name, ca.character_id
           FROM acceptance a
           JOIN player pl ON pl.player_id = a.player_id
-          LEFT JOIN game_role r ON r.game_id = a.game_id AND r.game_role_id = a.game_role_id
+          JOIN game_role r ON r.game_id = a.game_id AND r.game_role_id = a.game_role_id
           LEFT JOIN character_acceptance ca
                  ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.player_id = a.player_id
           WHERE a.game_id = $gameId AND a.challenge_id = $challengeId
           ORDER BY a.player_id"""
-      .query(playerId *: gameType *: text *: gameRoleId.opt *: text.opt *: int8.opt)
+      .query(playerId *: gameType *: text *: gameRoleId *: text *: int8.opt)
 
   /** Every acceptance of one challenge, with each accepting player's external id and role name.
     *
     * This is the roster a challenge turns into when it is started: one participant per acceptance,
     * and one entry in the game engine's create-game request.
     */
-  def listForChallenge(gameId: GameId, challengeId: ChallengeId): IO[List[(Acceptance, String, Option[String])]] =
+  def listForChallenge(gameId: GameId, challengeId: ChallengeId): IO[List[(Acceptance, String, String)]] =
     session.execute(selectAcceptancesForChallenge)((gameId, challengeId)).map(_.map {
       case (playerId, gt, externalId, roleId, roleName, characterIdValue) =>
         (toAcceptance(challengeId, playerId, gameId, gt, roleId, characterIdValue), externalId, roleName)

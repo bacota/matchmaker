@@ -25,7 +25,7 @@ class ParticipantRepoSpec extends PropertySuite {
             createdPlayer <- playerRepo.create(player)
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
             participant <- IO.pure(
-              Generators.genParticipant(createdGame.gameId, matchId, createdPlayer.playerId, createdCharacter.characterId).sample.get
+              Generators.genParticipant(createdGame.gameId, matchId, createdPlayer.playerId, createdCharacter.characterId, createdGame.roles.head.gameRoleId).sample.get
             )
             created <- participantRepo.create(participant)
             found <- participantRepo.read(created.gameId, created.participantId)

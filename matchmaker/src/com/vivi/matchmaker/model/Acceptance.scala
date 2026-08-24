@@ -6,21 +6,23 @@ package com.vivi.matchmaker.model
   * accepting on the player's behalf.
   *
   * `gameRoleId` is the role the player will play in the match, chosen when accepting and carried
-  * onto the [[Participant]] when the challenge is started. It is optional because a game need not
-  * define roles at all, and because a game's roles may themselves be optional.
+  * onto the [[Participant]] when the challenge is started. Every acceptance names one: a seat
+  * with no role is a seat nothing can be said about, and a challenge cannot be started until each
+  * of its game's required roles is actually taken. Two acceptances of one challenge may not name
+  * the same role.
   */
 sealed trait Acceptance {
   def challengeId: ChallengeId
   def playerId: PlayerId
   def gameId: GameId
-  def gameRoleId: Option[GameRoleId]
+  def gameRoleId: GameRoleId
 }
 
 case class PlainAcceptance(
     challengeId: ChallengeId,
     playerId: PlayerId,
     gameId: GameId,
-    gameRoleId: Option[GameRoleId] = None
+    gameRoleId: GameRoleId
 ) extends Acceptance
 
 case class CharacterAcceptance(
@@ -28,5 +30,5 @@ case class CharacterAcceptance(
     playerId: PlayerId,
     gameId: GameId,
     characterId: CharacterId,
-    gameRoleId: Option[GameRoleId] = None
+    gameRoleId: GameRoleId
 ) extends Acceptance

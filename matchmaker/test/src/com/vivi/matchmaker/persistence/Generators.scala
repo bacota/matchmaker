@@ -38,7 +38,25 @@ object Generators {
       externalId <- genUniqueString
       minPlayers <- Gen.choose(1, 4)
       maxPlayers <- Gen.choose(4, 8)
-    } yield Game(GameId.unassigned, gameType, name, description, url, active, Seq.empty, Seq.empty, externalId, minPlayers, maxPlayers)
+      // Two roles, always: since V4 every acceptance names one, so a game with no roles is a
+      // game nothing can be offered or accepted for. Two rather than one because two players in
+      // the same challenge may not share a role.
+    } yield Game(
+      GameId.unassigned,
+      gameType,
+      name,
+      description,
+      url,
+      active,
+      Seq(
+        GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false),
+        GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false)
+      ),
+      Seq.empty,
+      externalId,
+      minPlayers,
+      maxPlayers
+    )
 
   def genGameWithRole: Gen[Game] =
     for {
@@ -71,20 +89,26 @@ object Generators {
       publicUrl <- Gen.option(genString.map("https://engine.example.com/watch/" + _))
     } yield Match(gameId, matchId, description, completed, start, timeLimit, "{}", isPublic, statusUrl, playUrl, publicUrl)
 
-  def genParticipant(gameId: GameId, matchId: MatchId, playerId: PlayerId, characterId: CharacterId): Gen[Participant] =
+  def genParticipant(
+      gameId: GameId,
+      matchId: MatchId,
+      playerId: PlayerId,
+      characterId: CharacterId,
+      gameRoleId: GameRoleId
+  ): Gen[Participant] =
     for {
       pending <- Gen.oneOf(true, false)
       completed <- Gen.oneOf(true, false)
       due <- Gen.option(genInstant)
-    } yield CharacterParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, characterId)
+    } yield CharacterParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, characterId, gameRoleId)
 
   /** As `genParticipant`, for a game that has no characters. */
-  def genPlainParticipant(gameId: GameId, matchId: MatchId, playerId: PlayerId): Gen[Participant] =
+  def genPlainParticipant(gameId: GameId, matchId: MatchId, playerId: PlayerId, gameRoleId: GameRoleId): Gen[Participant] =
     for {
       pending <- Gen.oneOf(true, false)
       completed <- Gen.oneOf(true, false)
       due <- Gen.option(genInstant)
-    } yield PlainParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due)
+    } yield PlainParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, gameRoleId)
 
   def genResult(gameId: GameId, participantId: ParticipantId): Gen[Result] =
     for {
@@ -103,7 +127,7 @@ object Generators {
       } yield key -> value
     )
 
-  def genOpenChallenge(challenger: PlayerId, gameId: GameId, characterId: CharacterId): Gen[OpenChallenge] =
+  def genOpenChallenge(challenger: PlayerId, gameId: GameId, characterId: CharacterId, gameRoleId: GameRoleId): Gen[OpenChallenge] =
     for {
       message <- genString
       numberOfPlayers <- Gen.choose(1, 10)
@@ -111,6 +135,6 @@ object Generators {
       timeLimit <- Gen.option(genDuration)
       isPublic <- Gen.oneOf(true, false)
     } yield CharacterOpenChallenge(
-      ChallengeId(0), challenger, message, numberOfPlayers.toShort, start, timeLimit, "{}", gameId, characterId, isPublic
+      ChallengeId(0), challenger, message, numberOfPlayers.toShort, start, timeLimit, "{}", gameId, characterId, isPublic, gameRoleId
     )
 }

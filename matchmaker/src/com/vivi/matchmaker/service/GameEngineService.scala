@@ -42,6 +42,12 @@ class GameEngineService[T](
     * accepted — which is why this is an explicit action rather than something that happens on the
     * last acceptance: a challenge for up to six players may be worth starting with three.
     *
+    * A challenge is also refused until every one of its game's required (non-optional) roles has
+    * been taken by an acceptance. `minPlayers` alone cannot express that: two players have
+    * accepted a tic-tac-toe challenge whether they are X and O or both asked for X, and only one
+    * of those is a game that can be played. Optional roles are exactly the ones a match need not
+    * wait for.
+    *
     * The engine call sits between two transactions rather than inside one. Holding a transaction
     * open across a call to another system would keep locks for as long as that system takes to
     * answer, and no database transaction can roll the engine's game back anyway.
@@ -99,6 +105,14 @@ class GameEngineService[T](
             _ <- IO.raiseUnless(roster.sizeIs >= game.minPlayers)(
               ValidationError(
                 s"challenge ${challengeId.value} has ${roster.size} acceptance(s); game ${gameId.value} needs at least ${game.minPlayers}"
+              )
+            )
+            taken = roster.map((acceptance, _, _) => acceptance.gameRoleId).toSet
+            unfilled = game.roles.filterNot(_.optional).filterNot(role => taken.contains(role.gameRoleId))
+            _ <- IO.raiseUnless(unfilled.isEmpty)(
+              ValidationError(
+                s"challenge ${challengeId.value} cannot start until every role is filled; nobody is playing " +
+                  unfilled.map(_.name).mkString(", ")
               )
             )
             newMatch = Match(
@@ -380,7 +394,7 @@ class GameEngineService[T](
       participant: Participant,
       acceptance: Acceptance,
       externalId: String,
-      roleName: Option[String]
+      roleName: String
   ): IO[EnginePlayer] = {
     val character = acceptance match {
       case ca: CharacterAcceptance => characterRepo.read(ca.characterId)
@@ -392,7 +406,7 @@ class GameEngineService[T](
         // The engine quotes this back in every callback, which is how a move or a result lands on
         // the right row without the engine knowing anything else about matchmaker's model.
         participantId = participant.participantId.value,
-        role = roleName,
+        role = Some(roleName),
         characterId = c.map(_.characterId.value),
         characterState = c.map(ch => codec.encode(ch.state))
       )

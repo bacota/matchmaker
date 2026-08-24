@@ -29,10 +29,11 @@ sealed trait OpenChallenge {
     *
     * Not a column on `open_challenge`: creating a challenge also creates the challenger's own
     * acceptance, so this is stored on that acceptance like every other player's role, and is read
-    * back from it. Setting it on a challenge is how the challenger asks for a role at creation;
-    * changing it afterwards means changing their acceptance.
+    * back from it. Setting it on a challenge is how the challenger claims a role at creation;
+    * changing it afterwards means changing their acceptance. Mandatory, because the acceptance it
+    * is stored on is.
     */
-  def gameRoleId: Option[GameRoleId]
+  def gameRoleId: GameRoleId
 }
 
 case class PlainOpenChallenge(
@@ -45,7 +46,7 @@ case class PlainOpenChallenge(
     settings: String,
     gameId: GameId,
     isPublic: Boolean = false,
-    gameRoleId: Option[GameRoleId] = None
+    gameRoleId: GameRoleId
 ) extends OpenChallenge
 
 case class CharacterOpenChallenge(
@@ -59,7 +60,7 @@ case class CharacterOpenChallenge(
     gameId: GameId,
     characterId: CharacterId,
     isPublic: Boolean = false,
-    gameRoleId: Option[GameRoleId] = None
+    gameRoleId: GameRoleId
 ) extends OpenChallenge
 
 /** An open challenge together with how many players have accepted it so far.
@@ -68,7 +69,9 @@ case class CharacterOpenChallenge(
   * *sends* to create one, and how many acceptances it has is not the client's to state. It is
   * derived on read, which is the only place it means anything.
   *
-  * What it is for: a challenge cannot be started below its game's `minPlayers`, and the server
-  * refuses one that is. Sending the count lets the UI not offer a Start that would be refused.
+  * What it is for: a challenge cannot be started below its game's `minPlayers`, nor until every
+  * required role of its game has been taken, and the server refuses one that is not ready. Sending
+  * the count and the roles already claimed lets the UI not offer a Start that would be refused,
+  * and not offer a role somebody else has already taken.
   */
-case class OpenChallengeSummary(challenge: OpenChallenge, acceptances: Int)
+case class OpenChallengeSummary(challenge: OpenChallenge, acceptances: Int, takenRoles: Seq[GameRoleId] = Seq.empty)

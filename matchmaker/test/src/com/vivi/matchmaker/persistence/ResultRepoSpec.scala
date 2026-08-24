@@ -26,7 +26,7 @@ class ResultRepoSpec extends PropertySuite {
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
             createdParticipant <- participantRepo.create(
               Generators
-                .genParticipant(createdGame.gameId, matchId, createdPlayer.playerId, createdCharacter.characterId)
+                .genParticipant(createdGame.gameId, matchId, createdPlayer.playerId, createdCharacter.characterId, createdGame.roles.head.gameRoleId)
                 .sample
                 .get
             )
