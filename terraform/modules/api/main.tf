@@ -89,11 +89,19 @@ resource "aws_lambda_function" "api" {
    * - It only applies to *published versions*, never $LATEST. That is why `publish` is on and why
    *   the integration below invokes the alias — pointing the gateway at the unqualified function
    *   would silently opt out and leave nothing but the publish cost.
-   * - Nothing that must be unique per environment may be captured in the snapshot. The handler's
-   *   database pool sits behind a `lazy val` that the Lambda runtime does not touch while
-   *   constructing the handler, so the snapshot holds loaded classes and an initialized JVM but no
-   *   sockets. Priming the pool during init would restore every execution environment onto the
-   *   same dead TCP connections, and would need `org.crac` checkpoint/restore hooks to be safe.
+   * - Nothing that must be unique per execution environment may be captured in the snapshot. The
+   *   handler's database pool sits behind a `lazy val` that the Lambda runtime does not touch
+   *   while constructing the handler, so the snapshot holds loaded classes and an initialized JVM
+   *   but no sockets. Priming the pool during init would restore every execution environment onto
+   *   the same dead TCP connections, and would need `org.crac` checkpoint/restore hooks to be
+   *   safe.
+   *
+   * The second condition is why this is off everywhere today: the execution role's credentials
+   * are per-execution-environment and arrive as environment variables, and Java fixes
+   * System.getenv at JVM start. A restored function therefore reads the snapshot's environment
+   * rather than the live one, AwsCredentials.fromEnvironment finds nothing, and matchmaker's
+   * create-game call reaches the game engine unsigned -- answered with 403 Forbidden. See
+   * lambda_snap_start in the settings tfvars before turning this back on.
    */
   dynamic "snap_start" {
     for_each = var.lambda_snap_start ? [1] : []
