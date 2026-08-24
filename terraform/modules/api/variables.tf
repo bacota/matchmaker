@@ -252,39 +252,40 @@ variable "admin_initial_password" {
   }
 }
 
-variable "game_engine_role_arns" {
+variable "engine_api_keys" {
   description = <<-EOT
-    ARNs of the IAM roles a game engine runs as, which are allowed to post the move and result
-    callbacks, e.g. "arn:aws:iam::123456789012:role/game-engine".
+    The game engines allowed to post move and result callbacks, as `external_id = key`.
 
-    The roles themselves belong to whoever runs the engine and are not created here — this module
-    only grants them permission. An ARN in this account has the callback policy attached for you;
-    one in another account cannot be attached to from here, so its owner attaches the policy this
-    module outputs (engine_callback_policy_arn) instead.
+    The key is the secret matchmaker and that engine share, and it is what a callback proves
+    itself with; the name it is filed under is the identity the callback is attributed to, so it
+    must equal the `external_id` of the engine's row in the `game` table.
 
-    Empty by default: the callback routes are AWS_IAM-authorized, so an ungranted principal cannot
-    reach them at all.
-
-    Each ARN is also what matchmaker matches a callback against: a game's external_id must be set
-    to the role ARN of the engine that runs it (see Authenticator.GatewayIam).
+    Empty by default, which means no engine may call back. That is the right default — an engine
+    that has not been given a key is one nobody has decided to trust yet.
   EOT
-  type        = list(string)
-  default     = []
+  type        = map(string)
+  default     = {}
+  sensitive   = true
 
   validation {
-    condition     = alltrue([for arn in var.game_engine_role_arns : can(regex("^arn:[^:]+:iam::[0-9]{12}:role/.+$", arn))])
-    error_message = "Each entry must be an IAM role ARN, e.g. arn:aws:iam::123456789012:role/game-engine."
+    condition     = alltrue([for key in values(var.engine_api_keys) : length(key) >= 24])
+    error_message = "Each key must be at least 24 characters; it is a bearer token and the only thing protecting the callback routes."
   }
 }
 
-variable "game_api_execution_arns" {
+variable "game_engine_api_keys" {
   description = <<-EOT
-    execute-api ARNs of the game APIs matchmaker is allowed to call, e.g.
-    "arn:aws:execute-api:us-east-1:123456789012:abcdef123/*/POST/games".
+    The other direction: the key matchmaker presents when it creates a game or asks for a match's
+    status, as `host = key`.
 
-    Empty by default, which means matchmaker's role may call no game API — a game engine that is
-    not behind AWS_IAM needs nothing here, and one that is will reject an unauthorized caller.
+    Filed by host rather than by external_id because the host is all matchmaker's engine client
+    knows about the engine it is about to call — it has a url in hand and no identity. In
+    practice each entry pairs with one in `engine_api_keys` and carries the same secret.
+
+    Empty by default, which means matchmaker calls every engine unauthenticated — fine for a
+    local stub, and refused before the request is sent for anything on amazonaws.com.
   EOT
-  type        = list(string)
-  default     = []
+  type        = map(string)
+  default     = {}
+  sensitive   = true
 }

@@ -17,18 +17,22 @@ trait Matchmaker {
   *
   * Authentication differs by deployment, and both are supported because both are real:
   *
-  *   - Deployed, matchmaker's callback routes are `AWS_IAM`, so the request is signed and the
-  *     identity is this engine's execution role. What matchmaker compares it against is the
-  *     game's `external_id`, which must therefore be the role's ARN.
+  *   - Deployed, matchmaker's callback routes take the API key this engine and matchmaker share.
+  *     Matchmaker holds one key per engine, so the key is also what says *which* engine is
+  *     calling: it is filed under the game's `external_id`, and that is the identity the callback
+  *     is attributed to.
   *   - Locally, matchmaker runs with `AUTH_MODE=header` and takes the caller from `X-External-Id`,
   *     so the engine sends the game's external id there instead.
   *
-  * Both may be set: a signed request that also carries the header is what a local engine pointed
+  * Both may be set: a keyed request that also carries the header is what a local engine pointed
   * at a deployed matchmaker would send, and matchmaker ignores whichever its mode does not use.
   */
-class HttpMatchmaker(http: SignedHttp, externalId: Option[String]) extends Matchmaker {
+class HttpMatchmaker(http: SignedHttp, apiKey: Option[String], externalId: Option[String]) extends Matchmaker {
 
-  private def headers = Map("content-type" -> "application/json") ++ externalId.map("x-external-id" -> _)
+  private def headers =
+    Map("content-type" -> "application/json") ++
+      apiKey.map("x-api-key" -> _) ++
+      externalId.map("x-external-id" -> _)
 
   def recordMove(url: String, notification: Protocol.MoveNotification): Unit =
     http.post(url, write(notification), "execute-api", headers)

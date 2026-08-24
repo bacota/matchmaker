@@ -100,15 +100,16 @@ the redirect to come back — deployed, the terraform adds the engine's own call
 | `COGNITO_CLIENT_ID` | App client the board page signs in with, and the audience a token must carry. |
 | `HOSTED_LOGIN_URL` | Base url of the hosted login the page sends players to. |
 | `PLAY_AUTH` | `gateway`, `verify` or `trusted`, overriding the choice above. |
+| `MATCHMAKER_API_KEY` | The secret shared with matchmaker: required on `POST /games` and `GET /matches/{id}/status`, and sent on the callbacks. Optional locally, required in Lambda. |
 
 ## Deployed
 
 `terraform/modules/tictactoe` puts it behind an API Gateway HTTP API with matches in DynamoDB and
-three kinds of route: the matchmaker-facing ones (`POST /games`, `GET /matches/{id}/status`) under
-`AWS_IAM`, the player's (`state`, `moves`) under a JWT authorizer on matchmaker's user pool, and
-the page shells open. It also wires the three grants that connect the pair: matchmaker's role may
-invoke the two IAM routes, this engine's role may post the callbacks, and the engine's
-`/auth/callback` is added to the user pool client's callback urls.
+three kinds of route: the matchmaker-facing ones (`POST /games`, `GET /matches/{id}/status`),
+which require the API key matchmaker and this engine share, the player's (`state`, `moves`) under
+a JWT authorizer on matchmaker's user pool, and the page shells open. The root module generates
+that key and gives it to both sides, so there is nothing to copy; it also adds the engine's
+`/auth/callback` to the user pool client's callback urls.
 
 Enable it from the root configuration:
 
@@ -122,9 +123,10 @@ mill -j 4 --ticker false engines.tictactoe.assembly
 ./terraform/tf.sh dev apply
 ```
 
-Then register the game with the outputs — `create_game_url` as `url`, and `lambda_role_arn` as
-`external_id`, because a deployed matchmaker identifies a callback by the IAM principal API
-Gateway verified rather than by a header.
+Then register the game with the outputs — `create_game_url` as `url`, and `tictactoe_external_id`
+(that is, `tictactoe`) as `external_id`. That name is what matchmaker files this engine's API key
+under, and so is how it tells which engine a callback came from; a row whose `external_id` says
+anything else has its callbacks refused. `./deploy-tictactoe.sh dev` prints the exact command.
 
 ## What this engine is not
 

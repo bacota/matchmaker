@@ -15,11 +15,15 @@ class RoutesSpec extends FunSuite {
     * `?as=`. What the play routes do with the identity — find the seat, refuse if there is none —
     * is the same whichever mode established it, and the modes themselves are `PlayAuthSpec`.
     */
-  private def fixture(isPublic: Boolean = true, playAuth: PlayAuth = PlayAuth.Trusted) = {
+  private def fixture(
+      isPublic: Boolean = true,
+      playAuth: PlayAuth = PlayAuth.Trusted,
+      matchmakerKey: Option[String] = None
+  ) = {
     val store = InMemoryMatchStore()
     val recorder = RecordingMatchmaker()
     val engine = Engine(store, recorder, "http://engine.test")
-    val routes = Routes(engine, playAuth)
+    val routes = Routes(engine, playAuth, matchmakerKey)
 
     val create = Protocol.CreateGameRequest(
       matchId = "m-9",
@@ -174,5 +178,61 @@ class RoutesSpec extends FunSuite {
     val encoded = ujson.read(Handler.encode(EngineResponse(201, """{"ok":true}""")))
     assertEquals(encoded("statusCode").num, 201.0)
     assertEquals(encoded("body").str, """{"ok":true}""")
+  }
+
+  // ---------------------------------------------------------------------------
+  // Matchmaker's own routes
+  // ---------------------------------------------------------------------------
+
+  test("with a key configured, matchmaker's routes need it") {
+    // The fixture's own create call is made with no key, so it is the refusal being asserted.
+    val (routes, _, created) = fixture(matchmakerKey = Some("s3cret"))
+    assertEquals(created.status, 401)
+    assertEquals(routes(EngineRequest("GET", "/matches/m-9/status")).status, 401)
+  }
+
+  test("a wrong key is refused exactly as a missing one is") {
+    val (routes, _, _) = fixture(matchmakerKey = Some("s3cret"))
+    val wrong = routes(EngineRequest("GET", "/matches/m-9/status", headers = Map("x-api-key" -> "s3crea")))
+    assertEquals(wrong.status, 401)
+    assertEquals(wrong.body, routes(EngineRequest("GET", "/matches/m-9/status")).body)
+  }
+
+  test("the right key gets in") {
+    val store = InMemoryMatchStore()
+    val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
+    val routes = Routes(engine, PlayAuth.Trusted, Some("s3cret"))
+    val create = Protocol.CreateGameRequest(
+      matchId = "m-1",
+      gameName = "tic-tac-toe",
+      isPublic = true,
+      parameters = Map.empty,
+      settings = "{}",
+      timeLimitSeconds = None,
+      players = List(
+        Protocol.EnginePlayer("sub-alice", 1L, Some("X"), None, None),
+        Protocol.EnginePlayer("sub-bob", 2L, Some("O"), None, None)
+      ),
+      moveCallbackUrl = None,
+      resultsCallbackUrl = None
+    )
+    val keyed = Map("x-api-key" -> "s3cret")
+    assertEquals(routes(EngineRequest("POST", "/games", Map.empty, write(create), keyed)).status, 201)
+    assertEquals(routes(EngineRequest("GET", "/matches/m-1/status", headers = keyed)).status, 200)
+  }
+
+  test("a player route is not protected by matchmaker's key") {
+    // The key guards the two routes that are matchmaker's, and only those: a player has no key
+    // and must still reach the board.
+    val (routes, _, _) = fixture()
+    assertEquals(routes(EngineRequest("GET", "/health")).status, 200)
+  }
+
+  test("MATCHMAKER_API_KEY is required in Lambda and optional outside it") {
+    assertEquals(Config.matchmakerKey(Map("MATCHMAKER_API_KEY" -> "k").get), Some("k"))
+    assertEquals(Config.matchmakerKey(_ => None), None)
+    // Blank is the same as unset: a variable set to "" is a forgotten one, not an opt-out.
+    assertEquals(Config.matchmakerKey(Map("MATCHMAKER_API_KEY" -> "  ").get), None)
+    intercept[IllegalStateException](Config.matchmakerKey(Map("AWS_LAMBDA_FUNCTION_NAME" -> "engine").get))
   }
 }

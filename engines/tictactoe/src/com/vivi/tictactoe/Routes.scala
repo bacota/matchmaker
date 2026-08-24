@@ -1,5 +1,7 @@
 package com.vivi.tictactoe
 
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import scala.util.control.NonFatal
 import upickle.default.{read, write}
 import Protocol.given
@@ -35,12 +37,33 @@ case class EngineResponse(status: Int, body: String, contentType: String = "appl
   * answer differently from the other.
   *
   * Three kinds of route, authorized three ways. The create and status calls are matchmaker's, and
-  * the terraform puts them behind `AWS_IAM`. The play routes are a player's, and carry a Cognito
+  * carry the API key this engine and matchmaker share — checked here, since nothing in front of
+  * the function checks it. The play routes are a player's, and carry a Cognito
   * ID token from the same user pool matchmaker signs its players in with — [[PlayAuth]] turns
   * that into a subject and [[Engine.seatOf]] turns the subject into a seat. The board is nobody's
   * and needs no identity at all, which is why it is refused unless the match was created public.
   */
-class Routes(engine: Engine, playAuth: PlayAuth) {
+class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String]) {
+
+  /** Matchmaker, or not.
+    *
+    * `None` for `matchmakerKey` means no key was configured, and the route is open — which is
+    * the local case, where the engine is driven by curl and there is no secret to share. A
+    * deployed engine is never in that state: `Config` refuses to start one without a key, so an
+    * unset variable fails at the first cold start rather than quietly serving game creation to
+    * anyone who finds the url.
+    *
+    * The comparison is constant-time, and a wrong key is refused the same way as a missing one:
+    * distinguishing them tells a caller that guessing is worth continuing.
+    */
+  private def fromMatchmaker(request: EngineRequest): Boolean =
+    matchmakerKey match {
+      case None => true
+      case Some(expected) =>
+        request.headers.get("x-api-key").map(_.trim).exists { presented =>
+          MessageDigest.isEqual(presented.getBytes(StandardCharsets.UTF_8), expected.getBytes(StandardCharsets.UTF_8))
+        }
+    }
 
   def apply(request: EngineRequest): EngineResponse =
     try route(request)
@@ -57,6 +80,8 @@ class Routes(engine: Engine, playAuth: PlayAuth) {
     (request.method.toUpperCase, request.segments) match {
 
       // Step 1. Matchmaker creating a game; the only route that makes a match exist.
+      case ("POST", "games" :: Nil) if !fromMatchmaker(request) => unauthenticated
+
       case ("POST", "games" :: Nil) =>
         parse[Protocol.CreateGameRequest](request.body) match {
           case Left(why) => error(400, why)
@@ -68,6 +93,8 @@ class Routes(engine: Engine, playAuth: PlayAuth) {
         }
 
       // Step 4. Matchmaker asking how the match is going.
+      case ("GET", "matches" :: matchId :: "status" :: Nil) if !fromMatchmaker(request) => unauthenticated
+
       case ("GET", "matches" :: matchId :: "status" :: Nil) =>
         engine.status(matchId) match {
           case Left(refusal) => error(refusal)
@@ -161,6 +188,8 @@ class Routes(engine: Engine, playAuth: PlayAuth) {
   private def parse[A: upickle.default.Reader](body: String): Either[String, A] =
     try Right(read[A](body))
     catch { case NonFatal(e) => Left(s"unreadable request body: ${e.getMessage}") }
+
+  private def unauthenticated: EngineResponse = error(401, "this route is matchmaker's; a valid API key is required")
 
   private def error(refusal: Refusal): EngineResponse = error(refusal.status, refusal.message)
 
