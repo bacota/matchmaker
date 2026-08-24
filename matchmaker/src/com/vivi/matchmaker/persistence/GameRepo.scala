@@ -50,8 +50,9 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     sql"SELECT game_role_id, name, optional FROM game_role WHERE game_id = $gameId"
       .query(gameRoleId *: text *: bool)
 
-  private val deleteRoles: Command[GameId] =
-    sql"DELETE FROM game_role WHERE game_id = $gameId".command
+  private val updateRoleStmt: Command[(String, Boolean, GameId, GameRoleId)] =
+    sql"""UPDATE game_role SET name = $text, optional = $bool
+          WHERE game_id = $gameId AND game_role_id = $gameRoleId""".command
 
   private val insertParameterStmt: Query[(GameId, String), GameParameterId] =
     sql"""INSERT INTO game_parameter (game_id, name) VALUES ($gameId, $text)
@@ -108,7 +109,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       _ <- session.execute(updateGameRow)(
         (game.gameType, game.name, game.description, game.url, game.active, game.externalId, game.minPlayers, game.maxPlayers, game.gameId)
       )
-      _ <- replaceRoles(game.gameId, game.roles)
+      _ <- upsertRoles(game.gameId, game.roles)
       _ <- replaceParameters(game.gameId, game.parameters)
     } yield ()
 
@@ -120,11 +121,19 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private def readRoles(gameId: GameId): IO[Seq[GameRole]] =
     session.execute(selectRoles)(gameId).map(_.map { case (id, name, optional) => GameRole(id, gameId, name, optional) })
 
-  private def replaceRoles(gameId: GameId, roles: Seq[GameRole]): IO[Unit] =
-    for {
-      _ <- session.execute(deleteRoles)(gameId)
-      _ <- roles.toList.traverse(insertRole(gameId, _))
-    } yield ()
+  /** Writes a game's roles without ever deleting one.
+    *
+    * A role that carries a real id already exists and is updated in place; one carrying
+    * [[GameRoleId.unassigned]] is new and is inserted. Nothing is removed, and that is the point:
+    * `acceptance` and `participant` both point at `game_role`, so a deleted role is either a
+    * foreign-key violation or, worse, a match whose players have no seats. Refusing the deletion
+    * is `GameService`'s job — this simply has no way to do one.
+    */
+  private def upsertRoles(gameId: GameId, roles: Seq[GameRole]): IO[Unit] =
+    roles.toList.traverse_ { role =>
+      if (role.gameRoleId == GameRoleId.unassigned) insertRole(gameId, role).void
+      else session.execute(updateRoleStmt)((role.name, role.optional, gameId, role.gameRoleId)).void
+    }
 
   // game_parameter.default_value has a composite FK to game_parameter_value(game_id,
   // game_parameter_id, value), so the parameter row must be inserted before its values
@@ -265,6 +274,10 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         .sortBy(game => (game.name, game.gameId.value))
     }
 
+  /** Writes a game's parameters by replacing them wholesale, which — unlike [[upsertRoles]] —
+    * may delete. Nothing outside `game_parameter_value` points at a parameter, so a parameter
+    * that is gone is simply gone, and an admin removing one is a thing they are allowed to do.
+    */
   private def replaceParameters(gameId: GameId, parameters: Seq[GameParameter[_]]): IO[Unit] =
     for {
       _ <- session.execute(clearDefaultValues)(gameId)

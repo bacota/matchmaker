@@ -332,11 +332,24 @@ object Views {
   /* One row of the role or parameter editor, held as Vars rather than plain values so that
    * typing in a row does not rebuild the list and take the cursor with it: the rendered children
    * change only when a row is added or removed. */
-  private case class RoleDraft(name: Var[String], optional: Var[Boolean])
+  /* A role draft carries the id of the role it edits, because that is what tells an edit from an
+   * addition on the way back — and an existing role can never be removed, only renamed or made
+   * optional. Parameters carry no id: they are replaced wholesale, and deleting one is allowed. */
+  private case class RoleDraft(gameRoleId: GameRoleId, name: Var[String], optional: Var[Boolean])
   private case class ParameterDraft(name: Var[String], values: Var[String], default: Var[String])
 
-  private def emptyRole: RoleDraft = RoleDraft(Var(""), Var(false))
+  private def emptyRole: RoleDraft = RoleDraft(GameRoleId.unassigned, Var(""), Var(false))
   private def emptyParameter: ParameterDraft = ParameterDraft(Var(""), Var(""), Var(""))
+
+  private def draftOf(role: GameRole): RoleDraft =
+    RoleDraft(role.gameRoleId, Var(role.name), Var(role.optional))
+
+  private def draftOf(parameter: GameParameter[String]): ParameterDraft =
+    ParameterDraft(
+      Var(parameter.name),
+      Var(parameter.values.map(_.value).mkString(", ")),
+      Var(parameter.defaultValue.getOrElse(""))
+    )
 
   /** The possible values of a parameter, as typed: one comma-separated list, because a parameter
     * with three values is a sentence an admin can type and a list of three inputs is not.
@@ -350,7 +363,9 @@ object Views {
       p(
         cls := "detail",
         "Every seat in a match names a role, so a game needs at least one. An optional role is one " +
-          "a match does not wait to see filled before it can start."
+          "a match does not wait to see filled before it can start. A role that already exists can " +
+          "be renamed but not removed — acceptances and played matches name it, so retire one by " +
+          "making it optional."
       ),
       children <-- roles.signal.map(_.map { draft =>
         div(
@@ -363,7 +378,11 @@ object Views {
             ),
             "optional"
           ),
-          button(cls := "link", "Remove", onClick --> (_ => roles.update(_.filterNot(_ eq draft))))
+          // A role that exists cannot be removed: acceptances and played matches name it. The
+          // server refuses it too — this is why the button is not there to press.
+          if (draft.gameRoleId == GameRoleId.unassigned)
+            button(cls := "link", "Remove", onClick --> (_ => roles.update(_.filterNot(_ eq draft))))
+          else emptyNode
         )
       }),
       button(cls := "link", "Add a role", onClick --> (_ => roles.update(_ :+ emptyRole)))
@@ -399,10 +418,15 @@ object Views {
     * request being made without this form.
     */
   private def rolesOf(drafts: List[RoleDraft]): Either[String, Seq[GameRole]] = {
-    val named = drafts.map(d => (d.name.now().trim, d.optional.now())).filter(_._1.nonEmpty)
-    if (named.isEmpty) Left("A game needs at least one role: every player accepting a challenge takes one.")
-    else if (named.map(_._1).distinct.sizeIs != named.size) Left("Two roles cannot have the same name.")
-    else Right(named.map((name, optional) => GameRole(GameRoleId(0), GameId.unassigned, name, optional)))
+    val all = drafts.map(d => (d.gameRoleId, d.name.now().trim, d.optional.now()))
+    // A blank new row is one the admin added and did not fill in, and is dropped. A blank
+    // existing row is a role whose name has been cleared -- dropping that would ask the server to
+    // delete a role, which it refuses, so it is answered here as what it is.
+    val (blank, named) = all.partition(_._2.isEmpty)
+    if (blank.exists(_._1 != GameRoleId.unassigned)) Left("A role that already exists cannot be left without a name.")
+    else if (named.isEmpty) Left("A game needs at least one role: every player accepting a challenge takes one.")
+    else if (named.map(_._2).distinct.sizeIs != named.size) Left("Two roles cannot have the same name.")
+    else Right(named.map((id, name, optional) => GameRole(id, GameId.unassigned, name, optional)))
   }
 
   private def parametersOf(drafts: List[ParameterDraft]): Either[String, Seq[GameParameter[String]]] = {
@@ -428,19 +452,33 @@ object Views {
       }
   }
 
-  private def newGameForm: HtmlElement = {
-    val name = Var("")
-    val description = Var("")
-    val url = Var("")
-    val minPlayers = Var("2")
-    val maxPlayers = Var("2")
+  private def newGameForm: HtmlElement = gameForm(None)
+
+  /** The admin's game form, for creating one (`existing` is None) or editing one.
+    *
+    * The two are the same form because a game is the same thing either way, and every field is
+    * editable in both: name, description, url, player counts, whether characters are required,
+    * the roles and the parameters. What edit cannot do is delete a role — see [[roleEditor]].
+    *
+    * Two fields are never shown. `externalId` is the game's own credential: kept as it is when
+    * editing, generated when creating, and in neither case something to type. `active` is not on
+    * this form at all, so editing preserves it and creating sets it true.
+    */
+  private def gameForm(existing: Option[Game]): HtmlElement = {
+    val name = Var(existing.map(_.name).getOrElse(""))
+    val description = Var(existing.map(_.description).getOrElse(""))
+    val url = Var(existing.map(_.url).getOrElse(""))
+    val minPlayers = Var(existing.map(_.minPlayers.toString).getOrElse("2"))
+    val maxPlayers = Var(existing.map(_.maxPlayers.toString).getOrElse("2"))
     // Plain by default: requiring characters is the additional commitment, so it is the box an
     // admin ticks rather than the one they have to remember to untick.
-    val gameType: Var[GameType] = Var(GameType.Plain)
-    // One empty role to start with, because a game cannot be created without one; parameters
-    // start empty, because plenty of games have none.
-    val roles = Var(List(emptyRole))
-    val parameters = Var(List.empty[ParameterDraft])
+    val gameType: Var[GameType] = Var(existing.map(_.gameType).getOrElse(GameType.Plain))
+    // A new game starts with one empty role, because it cannot be created without one, and no
+    // parameters, because plenty of games have none. An existing one starts with what it has.
+    val roles = Var(existing.map(_.roles.map(draftOf).toList).getOrElse(List(emptyRole)))
+    val parameters = Var(
+      existing.map(_.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList).getOrElse(Nil)
+    )
 
     def counts: Signal[Option[(Int, Int)]] =
       minPlayers.signal.combineWith(maxPlayers.signal).map { case (low, high) =>
@@ -471,7 +509,7 @@ object Views {
       roleEditor(roles),
       parameterEditor(parameters),
       button(
-        "Create game",
+        if (existing.isDefined) "Save changes" else "Create game",
         disabled <-- name.signal.combineWith(counts).map { case (n, valid) => n.trim.isEmpty || valid.isEmpty },
         onClick --> { _ =>
           // Safe because the button is disabled until both parse and min <= max.
@@ -486,33 +524,43 @@ object Views {
             case Left(problem) => Store.error.set(Some(problem))
             case Right((roleModels, parameterModels)) =>
             val game = Game(
-              // Unassigned means create; the server assigns the real id. Same sentinel the
-              // challenge form uses.
-              gameId = GameId.unassigned,
+              // Unassigned means create and the server assigns the real id — the same sentinel
+              // the challenge form uses; a real id means update that game.
+              gameId = existing.map(_.gameId).getOrElse(GameId.unassigned),
               gameType = gameType.now(),
               name = name.now().trim,
               description = description.now().trim,
               url = url.now().trim,
               // A game nobody can see is not what "create a game" means, and `refreshGames` only
               // asks for active ones — creating it inactive would look like the button did nothing.
-              active = true,
+              // Editing leaves it as it was, since this form has no control for it.
+              active = existing.map(_.active).getOrElse(true),
               roles = roleModels,
               parameters = parameterModels,
               // The game's own shared secret, used to authorize requests the game makes on its own
               // behalf. Generated rather than typed: it is a credential, and one an admin inventing
-              // it by hand would invent badly.
-              externalId = Pkce.newSecret(),
+              // it by hand would invent badly. An edit keeps the one the game already has —
+              // regenerating it would silently lock the game engine out.
+              externalId = existing.map(_.externalId).getOrElse(Pkce.newSecret()),
               minPlayers = low,
               maxPlayers = high
             )
 
-            Store.run(ApiClient.createGame(game)) { _ =>
-              name.set("")
-              description.set("")
-              url.set("")
-              roles.set(List(emptyRole))
-              parameters.set(Nil)
-              Store.showNewGame.set(false)
+            Store.run(ApiClient.createGame(game)) { saved =>
+              if (existing.isEmpty) {
+                name.set("")
+                description.set("")
+                url.set("")
+                roles.set(List(emptyRole))
+                parameters.set(Nil)
+                Store.showNewGame.set(false)
+              } else {
+                // Re-drafted from what came back, so that roles added by this save carry the ids
+                // the insert gave them — without which saving twice would ask to add them again.
+                roles.set(saved.roles.map(draftOf).toList)
+                parameters.set(saved.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList)
+                Store.editingGame.set(None)
+              }
               Store.refreshGames()
             }
           }
@@ -541,6 +589,24 @@ object Views {
   private def gameDetail(game: Game): HtmlElement =
     div(
       cls := "detail-panel",
+      // Only for admins, for the same reason the create form is: the server answers anyone else
+      // with a 403, and a button that always fails is worse than no button.
+      child <-- currentPlayer.combineWith(Store.editingGame.signal).map {
+        case (Some(player), editing) if player.isAdmin =>
+          div(
+            button(
+              cls := "link",
+              if (editing.contains(game.gameId)) "Done editing" else "Edit game",
+              onClick --> { _ =>
+                Store.editingGame.update(current => if (current.contains(game.gameId)) None else Some(game.gameId))
+              }
+            ),
+            // Keyed on the game so that the form is rebuilt when a different game is opened:
+            // its fields are initialised from `game` once, not bound to it.
+            if (editing.contains(game.gameId)) gameForm(Some(game)) else emptyNode
+          )
+        case _ => emptyNode
+      },
       // A 'P'-type game never needs a character, so its challenge panel doesn't wait on
       // Store.charactersByGame at all.
       child <-- (if (game.gameType == GameType.Plain)

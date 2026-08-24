@@ -34,8 +34,8 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             else
               gameRepo.read(trimmed.gameId).flatMap {
                 case None => IO.raiseError(NotFoundError(s"no game with id ${trimmed.gameId.value}"))
-                case Some(_) =>
-                  gameRepo.update(trimmed) *> gameRepo.read(trimmed.gameId).flatMap {
+                case Some(existing) =>
+                  checkRoles(existing, trimmed) *> gameRepo.update(trimmed) *> gameRepo.read(trimmed.gameId).flatMap {
                     case Some(updated) => IO.pure(updated)
                     case None          => IO.raiseError(NotFoundError(s"no game with id ${trimmed.gameId.value}"))
                   }
@@ -61,6 +61,37 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
         games <- new GameRepo[T](session).list(activeOnly)
       } yield games
     }
+
+  /** What an update may do to a game's roles: rename them, make them optional or not, and add
+    * new ones. Not remove one.
+    *
+    * `acceptance` and `participant` both carry a `game_role_id`, so a role that is deleted is a
+    * player with no seat and a played match with no record of who played what. A role that has
+    * outlived its usefulness is made optional instead, which stops a start waiting for it while
+    * leaving every match that used it intact.
+    *
+    * A role is recognised by its id: one carrying [[GameRoleId.unassigned]] is being added, and
+    * an existing id missing from the update is a deletion asked for by omission.
+    */
+  private def checkRoles(existing: Game, incoming: Game): IO[Unit] = {
+    val existingIds = existing.roles.map(_.gameRoleId).toSet
+    val incomingIds = incoming.roles.map(_.gameRoleId).filterNot(_ == GameRoleId.unassigned).toSet
+    val unknown = incomingIds -- existingIds
+    val removed = existing.roles.filterNot(role => incomingIds.contains(role.gameRoleId))
+    for {
+      _ <- IO.raiseUnless(unknown.isEmpty)(
+        ValidationError(
+          s"game ${existing.gameId.value} has no role(s) ${unknown.map(_.value).mkString(", ")}"
+        )
+      )
+      _ <- IO.raiseUnless(removed.isEmpty)(
+        ValidationError(
+          s"role(s) ${removed.map(r => s"'${r.name}'").mkString(", ")} cannot be deleted from game " +
+            s"${existing.gameId.value}: acceptances and past matches name them. Make a role optional instead."
+        )
+      )
+    } yield ()
+  }
 
   /** Strips the whitespace around every role name, parameter name, parameter value and default.
     *

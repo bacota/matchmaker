@@ -34,12 +34,21 @@ opaque type GameRoleId = Int
 object GameRoleId {
   def apply(value: Int): GameRoleId = value
   extension (id: GameRoleId) def value: Int = id
+
+  /** Sentinel for a role that hasn't been persisted yet (its id is DB-generated on create).
+    * Updating a game tells the two apart by it: a role that carries a real id is one that exists
+    * and is being edited, one that carries this is being added.
+    */
+  val unassigned: GameRoleId = GameRoleId(0)
 }
 
 opaque type GameParameterId = Int
 object GameParameterId {
   def apply(value: Int): GameParameterId = value
   extension (id: GameParameterId) def value: Int = id
+
+  /** Sentinel for a parameter that hasn't been persisted yet (its id is DB-generated on create). */
+  val unassigned: GameParameterId = GameParameterId(0)
 }
 
 opaque type ParticipantId = Long
