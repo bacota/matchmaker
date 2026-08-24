@@ -141,9 +141,10 @@ class WireFormatSpec extends FunSuite {
         gameId = GameId(3),
         characterId = CharacterId(9),
         isPublic = true,
-        gameRoleId = Some(GameRoleId(4))
+        gameRoleId = GameRoleId(4)
       ),
-      acceptances = 2
+      acceptances = 2,
+      takenRoles = Seq(GameRoleId(4))
     )
     val plain = OpenChallengeSummary(
       PlainOpenChallenge(
@@ -154,9 +155,11 @@ class WireFormatSpec extends FunSuite {
         start = None,
         timeLimit = None,
         settings = "{}",
-        gameId = GameId(7)
+        gameId = GameId(7),
+        gameRoleId = GameRoleId(8)
       ),
-      acceptances = 1
+      acceptances = 1,
+      takenRoles = Seq(GameRoleId(8))
     )
 
     // The list is the response shape; decoding them singly would not notice a broken Seq codec.
@@ -182,7 +185,8 @@ class WireFormatSpec extends FunSuite {
       timeLimit = Some(Duration.ofMinutes(5)),
       settings = "{}",
       gameId = GameId(1),
-      characterId = CharacterId(9)
+      characterId = CharacterId(9),
+      gameRoleId = GameRoleId(2)
     )
 
     val decoded = read[OpenChallenge](write(challenge))

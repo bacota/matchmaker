@@ -53,13 +53,13 @@ class OpenChallengeRepo(session: Session[IO]) {
   // outside Ids.scala (see AcceptanceRepo's gameAndCharacterId comment); characterId is decoded
   // as a raw int8 here and wrapped afterward for the same reason.
   private val challengeRow: Codec[
-    (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long])
+    (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long])
   ] =
-    gameType *: gameId *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId.opt *: int8.opt
+    gameType *: gameId *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId *: int8.opt
 
   private def toChallenge(
       id: ChallengeId,
-      row: (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long])
+      row: (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long])
   ): OpenChallenge = {
     val (gameType, gameId, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue) = row
     val timeLimit = fromSeconds(timeLimitSeconds)
@@ -78,14 +78,14 @@ class OpenChallengeRepo(session: Session[IO]) {
   // is not declared unique — so both columns are required here, not challenge_id alone.
   private val selectChallenge: Query[
     (GameId, ChallengeId),
-    (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId], Option[Long])
+    (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long])
   ] =
     sql"""SELECT oc.game_type, oc.game_id, oc.challenger, oc.message, oc.number_of_players, oc.start,
                  EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, a.game_role_id, cc.character_id
           FROM open_challenge oc
           LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
-          LEFT JOIN acceptance a ON a.game_id = oc.game_id AND a.challenge_id = oc.challenge_id
-                                AND a.player_id = oc.challenger
+          JOIN acceptance a ON a.game_id = oc.game_id AND a.challenge_id = oc.challenge_id
+                           AND a.player_id = oc.challenger
           WHERE oc.game_id = $gameId AND oc.challenge_id = $challengeId"""
       .query(challengeRow)
 
@@ -191,39 +191,48 @@ class OpenChallengeRepo(session: Session[IO]) {
   // the same table would multiply the rows rather than count them.
   private val selectChallengesByGame: Query[
     GameId,
-    (ChallengeId, GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, Option[GameRoleId],
-      Option[Long], Long)
+    (ChallengeId, GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameRoleId,
+      Option[Long], Long, String)
   ] =
     sql"""SELECT oc.challenge_id, oc.game_type, oc.challenger, oc.message, oc.number_of_players, oc.start,
                  EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, a.game_role_id, cc.character_id,
                  (SELECT count(*) FROM acceptance ac
+                   WHERE ac.game_id = oc.game_id AND ac.challenge_id = oc.challenge_id),
+                 -- The roles already claimed, as a comma-separated list rather than an array:
+                 -- one more scalar subquery beside the count, decoded as text below, which keeps
+                 -- this row a flat tuple of scalars like every other query here.
+                 (SELECT coalesce(string_agg(ac.game_role_id::text, ',' ORDER BY ac.game_role_id), '')
+                    FROM acceptance ac
                    WHERE ac.game_id = oc.game_id AND ac.challenge_id = oc.challenge_id)
           FROM open_challenge oc
           LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
-          LEFT JOIN acceptance a ON a.game_id = oc.game_id AND a.challenge_id = oc.challenge_id
-                                AND a.player_id = oc.challenger
+          JOIN acceptance a ON a.game_id = oc.game_id AND a.challenge_id = oc.challenge_id
+                           AND a.player_id = oc.challenger
           WHERE oc.game_id = $gameId
           ORDER BY oc.create_date DESC"""
       .query(
         challengeId *: gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *:
-          gameRoleId.opt *: int8.opt *: int8
+          gameRoleId *: int8.opt *: int8 *: text
       )
 
   /** Every open challenge for a game, newest first, each with how many players have accepted it.
     *
-    * The count comes back with the challenge rather than from a call per challenge: the UI needs
-    * it for every row it draws, to know whether a challenge has enough acceptances to be started.
+    * The count and the claimed roles come back with the challenge rather than from a call per
+    * challenge: the UI needs both for every row it draws — the count to know whether a challenge
+    * has enough acceptances to be started, the roles to know which ones are still free to accept
+    * as, and together whether a start would be refused for a role nobody has taken.
     */
   def listByGame(id: GameId): IO[List[OpenChallengeSummary]] =
     session.execute(selectChallengesByGame)(id).map(_.map {
       case (challengeId, gt, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId,
-            characterIdValue, acceptances) =>
+            characterIdValue, acceptances, takenRoles) =>
         OpenChallengeSummary(
           toChallenge(
             challengeId,
             (gt, id, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue)
           ),
-          acceptances.toInt
+          acceptances.toInt,
+          takenRoles.split(',').filter(_.nonEmpty).map(v => GameRoleId(v.toInt)).toSeq
         )
     })
 }

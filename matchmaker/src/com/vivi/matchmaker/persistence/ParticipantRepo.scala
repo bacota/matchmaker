@@ -20,9 +20,9 @@ class ParticipantRepo(session: Session[IO]) {
   private val instant = SkunkCodecs.instant
 
   private val insertParticipant
-      : Query[(GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId]), ParticipantId] =
+      : Query[(GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId), ParticipantId] =
     sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed, due, game_role_id)
-          VALUES ($gameId, $matchId, $gameType, $playerId, $bool, $bool, ${instant.opt}, ${gameRoleId.opt})
+          VALUES ($gameId, $matchId, $gameType, $playerId, $bool, $bool, ${instant.opt}, $gameRoleId)
           RETURNING participant_id""".query(participantId)
 
   private val insertCharacterParticipant: Command[(GameId, ParticipantId, CharacterId)] =
@@ -33,12 +33,12 @@ class ParticipantRepo(session: Session[IO]) {
   // (game_id, participant_id), with no separate UNIQUE(participant_id) the way character has —
   // so both columns are required in the WHERE clause here, not participant_id alone.
   private val participantRow
-      : Codec[(GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId], Option[Long])] =
-    gameType *: matchId *: playerId *: bool *: bool *: instant.opt *: gameRoleId.opt *: int8.opt
+      : Codec[(GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])] =
+    gameType *: matchId *: playerId *: bool *: bool *: instant.opt *: gameRoleId *: int8.opt
 
   private val selectParticipant: Query[
     (GameId, ParticipantId),
-    (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId], Option[Long])
+    (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])
   ] =
     sql"""SELECT p.game_type, p.match_id, p.player_id, p.pending, p.completed, p.due, p.game_role_id,
                  cp.character_id
@@ -51,30 +51,30 @@ class ParticipantRepo(session: Session[IO]) {
   // knows a player by — it authenticates them itself and never sees matchmaker's player ids.
   private val selectParticipantsForMatch: Query[
     (GameId, MatchId),
-    (ParticipantId, GameType, PlayerId, String, Boolean, Boolean, Option[Instant], Option[GameRoleId], Option[String], Option[Long])
+    (ParticipantId, GameType, PlayerId, String, Boolean, Boolean, Option[Instant], GameRoleId, String, Option[Long])
   ] =
     sql"""SELECT p.participant_id, p.game_type, p.player_id, pl.external_id, p.pending, p.completed,
                  p.due, p.game_role_id, r.name, cp.character_id
           FROM participant p
           JOIN player pl ON pl.player_id = p.player_id
-          LEFT JOIN game_role r ON r.game_id = p.game_id AND r.game_role_id = p.game_role_id
+          JOIN game_role r ON r.game_id = p.game_id AND r.game_role_id = p.game_role_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           WHERE p.game_id = $gameId AND p.match_id = $matchId
           ORDER BY p.participant_id"""
       .query(
-        participantId *: gameType *: playerId *: text *: bool *: bool *: instant.opt *: gameRoleId.opt *: text.opt *: int8.opt
+        participantId *: gameType *: playerId *: text *: bool *: bool *: instant.opt *: gameRoleId *: text *: int8.opt
       )
 
   private val updateParticipant
-      : Command[(PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId], GameId, ParticipantId)] =
+      : Command[(PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, GameId, ParticipantId)] =
     sql"""UPDATE participant SET player_id = $playerId, pending = $bool, completed = $bool,
-          due = ${instant.opt}, game_role_id = ${gameRoleId.opt}
+          due = ${instant.opt}, game_role_id = $gameRoleId
           WHERE game_id = $gameId AND participant_id = $participantId""".command
 
   private def toParticipant(
       id: ParticipantId,
       gameId: GameId,
-      row: (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId], Option[Long])
+      row: (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])
   ): Participant = {
     val (gameType, matchId, playerId, pending, completed, due, roleId, characterIdValue) = row
     gameType match {
@@ -136,9 +136,10 @@ class ParticipantRepo(session: Session[IO]) {
   /** Everyone playing one match, together with the player's external id and role name.
     *
     * The two extra columns are there for the game-engine calls: the engine is told which Cognito
-    * identity plays which role, and knows nothing of matchmaker's own player or role ids.
+    * identity plays which role, and knows nothing of matchmaker's own player or role ids. Both are
+    * inner joins -- a participant always has a player and, since V4, always has a role.
     */
-  def listForMatch(gameId: GameId, matchId: MatchId): IO[List[(Participant, String, Option[String])]] =
+  def listForMatch(gameId: GameId, matchId: MatchId): IO[List[(Participant, String, String)]] =
     session.execute(selectParticipantsForMatch)((gameId, matchId)).map(_.map {
       case (id, gt, playerId, externalId, pending, completed, due, roleId, roleName, characterIdValue) =>
         val participant = toParticipant(id, gameId, (gt, matchId, playerId, pending, completed, due, roleId, characterIdValue))

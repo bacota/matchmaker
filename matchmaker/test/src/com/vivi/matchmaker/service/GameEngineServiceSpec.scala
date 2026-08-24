@@ -83,7 +83,13 @@ class GameEngineServiceSpec extends PropertySuite {
             "description",
             "https://engine.example.com/games",
             active = true,
-            Seq(GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false)),
+            // attacker is required, defender is not: a start waits for the first to be taken and
+            // never for the second, which is what lets these tests start a match with the
+            // challenger alone and still have a second role for a second player to accept as.
+            Seq(
+              GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false),
+              GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = true)
+            ),
             Seq.empty,
             gameExternalId,
             // One player is enough to start, which keeps these tests to a challenger and their
@@ -115,7 +121,7 @@ class GameEngineServiceSpec extends PropertySuite {
       gameId = fixture.game.gameId,
       characterId = fixture.character.characterId,
       isPublic = isPublic,
-      gameRoleId = fixture.game.roles.headOption.map(_.gameRoleId)
+      gameRoleId = fixture.game.roles.head.gameRoleId
     )
 
   private def participantsOf(m: Match): IO[List[Participant]] =
@@ -151,6 +157,55 @@ class GameEngineServiceSpec extends PropertySuite {
         remaining.forall(_.challenge.challengeId != challenge.challengeId)
       }
       result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  property("start refuses a challenge with a required role nobody has taken") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+      val services = TestServices.servicesWith(StubEngine())
+      val result = for {
+        fixture <- makeFixture(nickname, externalId, gameExternalId)
+        // The challenger takes 'defender', which is optional, leaving the required 'attacker'
+        // with nobody playing it. minPlayers is 1 and there is one acceptance, so the only thing
+        // standing between this challenge and a match is the empty role.
+        challenge <- services.challenges.create(
+          challengeFor(fixture) match {
+            case c: CharacterOpenChallenge => c.copy(gameRoleId = fixture.game.roles(1).gameRoleId)
+            case other                     => other
+          },
+          externalId
+        )
+        attempt <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
+      } yield attempt.left.exists {
+        case e: ValidationError => e.getMessage.contains("attacker")
+        case _                  => false
+      }
+      result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  property("accept refuses a role another acceptance has already taken") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val services = TestServices.servicesWith(StubEngine())
+        val result = for {
+          fixture <- makeFixture(nickname, externalId, gameExternalId)
+          other <- services.registration.register(s"other-$nickname", otherExternalId)
+          otherCharacter <- TestSession.resource.use { session =>
+            new CharacterRepo[String](session)
+              .create(Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId)))
+          }
+          // challengeFor puts the challenger on the first role, so asking for it again is asking
+          // for a seat that is taken.
+          challenge <- services.challenges.create(challengeFor(fixture), externalId)
+          attempt <- services.challenges
+            .accept(
+              fixture.game.gameId, challenge.challengeId, Some(otherCharacter.characterId),
+              fixture.game.roles.head.gameRoleId, otherExternalId
+            )
+            .attempt
+        } yield attempt.left.exists(_.isInstanceOf[ConflictError])
+        result.timeout(15.seconds).unsafeRunSync()
     }
   }
 
@@ -238,14 +293,14 @@ class GameEngineServiceSpec extends PropertySuite {
           // Accepted before the claim, so that backing out is something that would otherwise
           // succeed — the point is that the claim is what stops it, not a missing acceptance.
           _ <- services.challenges
-            .accept(fixture.game.gameId, challenge.challengeId, Some(otherCharacter.characterId), None, otherExternalId)
+            .accept(fixture.game.gameId, challenge.challengeId, Some(otherCharacter.characterId), fixture.game.roles(1).gameRoleId, otherExternalId)
           _ <- TestSession.resource.use { session =>
             new OpenChallengeRepo(session)
               .claimForStart(fixture.game.gameId, challenge.challengeId, MatchId("in-flight"))
           }
           restarted <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
           accepted <- services.challenges
-            .accept(fixture.game.gameId, challenge.challengeId, Some(fixture.character.characterId), None, externalId)
+            .accept(fixture.game.gameId, challenge.challengeId, Some(fixture.character.characterId), fixture.game.roles(1).gameRoleId, externalId)
             .attempt
           deleted <- services.challenges.delete(fixture.game.gameId, challenge.challengeId, externalId).attempt
           backedOut <- services.acceptances

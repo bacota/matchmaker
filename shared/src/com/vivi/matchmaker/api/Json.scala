@@ -120,9 +120,9 @@ object Json {
 
   // characterId is present iff the challenge being accepted belongs to a 'C'-type game; the
   // service layer checks that correspondence rather than trusting the caller to get it right.
-  // gameRoleId is the role the accepting player wants to play, and is always optional — a game
-  // need not define roles, and the ones it defines may themselves be optional.
-  case class AcceptRequest(characterId: Option[CharacterId], gameRoleId: Option[GameRoleId] = None)
+  // gameRoleId is the role the accepting player will play. Required: every acceptance names a
+  // role, and a challenge cannot be started until each of its game's required roles is taken.
+  case class AcceptRequest(characterId: Option[CharacterId], gameRoleId: GameRoleId)
 
   /** The game engine's callbacks, from `interaction-design.txt`.
     *

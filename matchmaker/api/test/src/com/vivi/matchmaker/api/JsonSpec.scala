@@ -54,7 +54,8 @@ class JsonSpec extends FunSuite {
       timeLimit = Some(Duration.ofSeconds(3600)),
       settings = "{}",
       gameId = GameId(4),
-      characterId = CharacterId(5)
+      characterId = CharacterId(5),
+      gameRoleId = GameRoleId(6)
     )
     assertEquals(read[OpenChallenge](write(challenge)), challenge)
   }
@@ -71,7 +72,8 @@ class JsonSpec extends FunSuite {
           Some(Duration.ofMinutes(2)),
           "{}",
           GameId(3),
-          CharacterId(4)
+          CharacterId(4),
+          gameRoleId = GameRoleId(5)
         )
       )
     )
@@ -95,9 +97,10 @@ class JsonSpec extends FunSuite {
         gameId = GameId(4),
         characterId = CharacterId(5),
         isPublic = true,
-        gameRoleId = Some(GameRoleId(6))
+        gameRoleId = GameRoleId(6)
       ),
-      acceptances = 2
+      acceptances = 2,
+      takenRoles = Seq(GameRoleId(6), GameRoleId(7))
     )
     val plain = OpenChallengeSummary(
       PlainOpenChallenge(
@@ -108,9 +111,11 @@ class JsonSpec extends FunSuite {
         start = None,
         timeLimit = None,
         settings = "{}",
-        gameId = GameId(9)
+        gameId = GameId(9),
+        gameRoleId = GameRoleId(10)
       ),
-      acceptances = 1
+      acceptances = 1,
+      takenRoles = Seq(GameRoleId(10))
     )
 
     assertEquals(read[OpenChallengeSummary](write(character)), character)
@@ -129,7 +134,7 @@ class JsonSpec extends FunSuite {
     val json = ujson.read(
       write(
         OpenChallengeSummary(
-          PlainOpenChallenge(ChallengeId(1), PlayerId(2), "m", 2.toShort, None, None, "{}", GameId(3)),
+          PlainOpenChallenge(ChallengeId(1), PlayerId(2), "m", 2.toShort, None, None, "{}", GameId(3), gameRoleId = GameRoleId(4)),
           acceptances = 2
         )
       )

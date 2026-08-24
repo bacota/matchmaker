@@ -23,10 +23,10 @@ class AcceptanceRepoSpec extends PropertySuite {
             createdAcceptor <- playerRepo.create(acceptor)
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
             challenge <- IO.pure(
-              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
+              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles.head.gameRoleId).sample.get
             )
             createdChallenge <- openChallengeRepo.create(challenge)
-            acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId)
+            acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles(1).gameRoleId)
             created <- acceptanceRepo.create(acceptance)
             found <- acceptanceRepo.read(createdGame.gameId, created.challengeId, created.playerId)
           } yield found == Some(created)
@@ -57,10 +57,10 @@ class AcceptanceRepoSpec extends PropertySuite {
             createdAcceptor <- playerRepo.create(acceptor)
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
             challenge <- IO.pure(
-              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
+              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles.head.gameRoleId).sample.get
             )
             createdChallenge <- openChallengeRepo.create(challenge)
-            acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId)
+            acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles(1).gameRoleId)
             _ <- acceptanceRepo.create(acceptance)
             count <- acceptanceRepo.countForChallenge(createdGame.gameId, createdChallenge.challengeId)
           } yield count == 1L
@@ -85,10 +85,18 @@ class AcceptanceRepoSpec extends PropertySuite {
             createdAcceptor <- playerRepo.create(acceptor)
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
             challenge <- IO.pure(
-              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
+              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles.head.gameRoleId).sample.get
             )
             createdChallenge <- openChallengeRepo.create(challenge)
-            acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId)
+            // The challenger's own acceptance, written with the challenge by the service and
+            // joined back in by every read of one: it is where the challenge's role lives.
+            _ <- acceptanceRepo.create(
+              CharacterAcceptance(
+                createdChallenge.challengeId, createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId,
+                createdGame.roles.head.gameRoleId
+              )
+            )
+            acceptance = CharacterAcceptance(createdChallenge.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles(1).gameRoleId)
             created <- acceptanceRepo.create(acceptance)
             found <- acceptanceRepo.readWithChallengeAndPlayers(createdGame.gameId, created.challengeId, created.playerId)
           } yield found.contains((createdChallenge, createdAcceptor, createdChallenger))
@@ -113,7 +121,7 @@ class AcceptanceRepoSpec extends PropertySuite {
             createdAcceptor <- playerRepo.create(acceptor)
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
             challenge <- IO.pure(
-              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
+              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles.head.gameRoleId).sample.get
             )
             createdChallenge <- openChallengeRepo.create(challenge)
             found <- acceptanceRepo.readWithChallengeAndPlayers(createdGame.gameId, createdChallenge.challengeId, createdAcceptor.playerId)
@@ -142,17 +150,17 @@ class AcceptanceRepoSpec extends PropertySuite {
             // Two challenges accepted by one player, so the list is exercised as a list rather
             // than as a single row that happens to come back.
             first <- openChallengeRepo.create(
-              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
+              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles.head.gameRoleId).sample.get
             )
             second <- openChallengeRepo.create(
-              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId).sample.get
+              Generators.genOpenChallenge(createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles.head.gameRoleId).sample.get
             )
-            _ <- acceptanceRepo.create(CharacterAcceptance(first.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId))
-            _ <- acceptanceRepo.create(CharacterAcceptance(second.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId))
+            _ <- acceptanceRepo.create(CharacterAcceptance(first.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles(1).gameRoleId))
+            _ <- acceptanceRepo.create(CharacterAcceptance(second.challengeId, createdAcceptor.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles(1).gameRoleId))
 
             // The challenger accepts one of them too: its row must not appear in the acceptor's
             // list, which is the whole point of scoping the query by player.
-            _ <- acceptanceRepo.create(CharacterAcceptance(first.challengeId, createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId))
+            _ <- acceptanceRepo.create(CharacterAcceptance(first.challengeId, createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles.head.gameRoleId))
 
             mine <- acceptanceRepo.listForPlayer(createdAcceptor.playerId)
           } yield mine.map(_.challengeId).toSet == Set(first.challengeId, second.challengeId) &&

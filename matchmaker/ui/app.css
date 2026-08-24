@@ -179,6 +179,12 @@ button.toggle {
   color: var(--accent);
 }
 
+/* Laminar emits no whitespace between elements, so side-by-side links (Play/Refresh
+   on a match row) would otherwise touch. */
+button.link + button.link {
+  margin-left: 0.75rem;
+}
+
 button.toggle {
   font-size: inherit;
   font-weight: inherit;

@@ -84,13 +84,13 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
                 )
               } yield ()
           }
-          // As in accept: a role must be one of this game's, checked here so a wrong one is a
-          // 400 rather than a foreign-key violation surfacing as a 500.
-          _ <- challenge.gameRoleId.traverse_ { roleId =>
-            IO.raiseUnless(game.roles.exists(_.gameRoleId == roleId))(
-              ValidationError(s"game ${game.gameId.value} has no role ${roleId.value}")
-            )
-          }
+          // As in accept: the role must be one of this game's, checked here so a wrong one is a
+          // 400 rather than a foreign-key violation surfacing as a 500. There is no "no role"
+          // case left to skip — every acceptance names one, and creating a challenge writes the
+          // challenger's acceptance.
+          _ <- IO.raiseUnless(game.roles.exists(_.gameRoleId == challenge.gameRoleId))(
+            ValidationError(s"game ${game.gameId.value} has no role ${challenge.gameRoleId.value}")
+          )
           _ <- IO.raiseUnless(
             challenge.numberOfPlayers >= game.minPlayers && challenge.numberOfPlayers <= game.maxPlayers
           )(
@@ -116,13 +116,15 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
     * and the caller accepts as themselves. The challenge row is locked (`FOR UPDATE`) before
     * counting existing acceptances, so that the capacity check (acceptances, including this one,
     * must not exceed the challenge's numberOfPlayers) is race-free against concurrent acceptance
-    * attempts.
+    * attempts. The same lock covers the role check: `gameRoleId` must be one of the game's roles
+    * and must not already be taken by another acceptance of this challenge, and two players
+    * asking for the same free role at once must not both be told yes.
     */
   def accept(
       gameId: GameId,
       challengeId: ChallengeId,
       characterId: Option[CharacterId],
-      gameRoleId: Option[GameRoleId],
+      gameRoleId: GameRoleId,
       callerExternalId: String
   ): IO[Acceptance] =
     sessionPool.use { session =>
@@ -151,13 +153,19 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
           // A role has to be one of this game's, which the schema's composite foreign key also
           // enforces — checked here so that a wrong role is a 400 naming the game rather than a
           // constraint violation surfacing as a 500.
-          _ <- gameRoleId.traverse_ { roleId =>
-            requireGame(gameRepo, gameId).flatMap { game =>
-              IO.raiseUnless(game.roles.exists(_.gameRoleId == roleId))(
-                ValidationError(s"game ${gameId.value} has no role ${roleId.value}")
-              )
-            }
+          _ <- requireGame(gameRepo, gameId).flatMap { game =>
+            IO.raiseUnless(game.roles.exists(_.gameRoleId == gameRoleId))(
+              ValidationError(s"game ${gameId.value} has no role ${gameRoleId.value}")
+            )
           }
+          // And it has to still be free. Under the challenge's lock, so two players asking for the
+          // same role at the same moment cannot both pass this. The unique index on
+          // (game_id, challenge_id, game_role_id) backs it up; this check is what makes the
+          // refusal a 409 naming the role rather than a constraint violation.
+          taken <- acceptanceRepo.rolesForChallenge(gameId, challengeId)
+          _ <- IO.raiseWhen(taken.contains(gameRoleId))(
+            ConflictError(s"role ${gameRoleId.value} is already taken in challenge ${challengeId.value}")
+          )
           acceptance <- (gameType, characterId) match {
             case (GameType.Character, Some(cid)) =>
               for {
@@ -187,8 +195,17 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
             case (GameType.Plain, Some(_)) =>
               IO.raiseError(ValidationError(s"challenge ${challengeId.value} does not accept a characterId"))
           }
-          existing <- acceptanceRepo.read(gameId, challengeId, acceptance.playerId)
-          _ <- IO.raiseWhen(existing.isDefined)(
+          // One seat per player per challenge. This check is the whole of that rule: since V5 the
+          // acceptance key is (game_id, challenge_id, game_role_id), so the database will happily
+          // hold two rows for one player, and nothing but this refuses them. It is under the
+          // challenge's FOR UPDATE lock, taken above, so two simultaneous accepts by the same
+          // player cannot both find nothing here.
+          //
+          // The rule may be relaxed one day — a player holding two seats in a six-player game is
+          // a coherent thing to want — and relaxing it means deleting these four lines and
+          // nothing else, which is why it lives here rather than in the schema.
+          already <- acceptanceRepo.hasAccepted(gameId, challengeId, acceptance.playerId)
+          _ <- IO.raiseWhen(already)(
             ConflictError(s"player ${acceptance.playerId.value} has already accepted challenge ${challengeId.value}")
           )
           count <- acceptanceRepo.countForChallenge(gameId, challengeId)
