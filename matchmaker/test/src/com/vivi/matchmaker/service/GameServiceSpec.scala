@@ -38,6 +38,71 @@ class GameServiceSpec extends PropertySuite {
     assert(result.unsafeRunSync())
   }
 
+  test("createOrUpdate stores a game's parameters, their possible values and the default among them") {
+    val result = for {
+      admin <- makeAdmin()
+      base <- IO(Generators.genGameWithRole.sample.get)
+      game = base.copy(parameters =
+        Seq(
+          GameParameter[String](
+            GameId.unassigned,
+            GameParameterId(0),
+            "board size",
+            defaultValue = Some("3x3"),
+            values = Seq("3x3", "4x4", "5x5").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
+          )
+        )
+      )
+      created <- gameService.createOrUpdate(admin.externalId, game)
+      // Read back through list rather than trusting what create returned: the ids are assigned by
+      // the inserts, and the values are what a client actually sees.
+      listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+    } yield {
+      val parameter = listed.get.parameters.head.asInstanceOf[GameParameter[String]]
+      parameter.name == "board size" &&
+      parameter.defaultValue.contains("3x3") &&
+      parameter.values.map(_.value).toSet == Set("3x3", "4x4", "5x5")
+    }
+
+    assert(result.unsafeRunSync())
+  }
+
+  test("createOrUpdate refuses a game that defines no roles") {
+    val result = for {
+      admin <- makeAdmin()
+      game <- IO(Generators.genGame().sample.get)
+      attempt <- gameService.createOrUpdate(admin.externalId, game.copy(roles = Seq.empty)).attempt
+    } yield attempt.left.exists(_.isInstanceOf[ValidationError])
+
+    assert(result.unsafeRunSync())
+  }
+
+  // The schema would refuse this too — default_value is a foreign key to game_parameter_value —
+  // but as a constraint violation, which reaches the caller as a 500 rather than an explanation.
+  test("createOrUpdate refuses a parameter whose default is not one of its values") {
+    val result = for {
+      admin <- makeAdmin()
+      base <- IO(Generators.genGameWithRole.sample.get)
+      game = base.copy(parameters =
+        Seq(
+          GameParameter[String](
+            GameId.unassigned,
+            GameParameterId(0),
+            "board size",
+            defaultValue = Some("9x9"),
+            values = Seq("3x3").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
+          )
+        )
+      )
+      attempt <- gameService.createOrUpdate(admin.externalId, game).attempt
+    } yield attempt.left.exists {
+      case e: ValidationError => e.getMessage.contains("9x9")
+      case _                  => false
+    }
+
+    assert(result.unsafeRunSync())
+  }
+
   property("createOrUpdate updates an existing game") {
     forAll(Generators.genString) { newName =>
       val result = for {
