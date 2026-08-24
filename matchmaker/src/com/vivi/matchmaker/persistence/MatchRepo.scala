@@ -11,6 +11,7 @@ import com.vivi.matchmaker.model._
 class MatchRepo(session: Session[IO]) {
   private val gameId = SkunkIdCodecs.gameId
   private val matchId = SkunkIdCodecs.matchId
+  private val challengeId = SkunkIdCodecs.challengeId
   private val instant = SkunkCodecs.instant
   private val settings: Codec[String] = SkunkCodecs.jsonb
 
@@ -18,21 +19,25 @@ class MatchRepo(session: Session[IO]) {
   private def toSeconds(d: Option[Duration]): Option[Double] = d.map(_.getSeconds.toDouble)
   private def fromSeconds(s: Option[Double]): Option[Duration] = s.map(v => Duration.ofSeconds(v.toLong))
 
-  private val insertMatch
-      : Command[(GameId, MatchId, String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String])] =
-    sql"""INSERT INTO match (game_id, match_id, description, completed, start, time_limit, settings,
-                             public, status_url, play_url, public_url)
-          VALUES ($gameId, $matchId, $text, $bool, $instant, ${float8.opt} * INTERVAL '1 second', $settings,
-                  $bool, ${text.opt}, ${text.opt}, ${text.opt})""".command
-
-  private val matchRow: Codec[(String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String])] =
-    text *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *: text.opt
-
-  private val selectMatch: Query[
-    (GameId, MatchId),
-    (String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String])
+  private val insertMatch: Command[
+    (GameId, MatchId, ChallengeId, String, Boolean, Boolean, Instant, Option[Double], String, Boolean, Option[String],
+      Option[String], Option[String])
   ] =
-    sql"""SELECT description, completed, start, EXTRACT(EPOCH FROM time_limit)::float8, settings,
+    sql"""INSERT INTO match (game_id, match_id, challenge_id, description, completed, cancelled, start, time_limit,
+                             settings, public, status_url, play_url, public_url)
+          VALUES ($gameId, $matchId, $challengeId, $text, $bool, $bool, $instant, ${float8.opt} * INTERVAL '1 second',
+                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt})""".command
+
+  private type MatchRow =
+    (ChallengeId, String, Boolean, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String],
+      Option[String])
+
+  private val matchRow: Codec[MatchRow] =
+    challengeId *: text *: bool *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *: text.opt
+
+  private val selectMatch: Query[(GameId, MatchId), MatchRow] =
+    sql"""SELECT challenge_id, description, completed, cancelled, start,
+                 EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId"""
@@ -41,20 +46,21 @@ class MatchRepo(session: Session[IO]) {
   /* As selectMatch, but holding the row until the transaction ends. Used by the game-engine
    * callbacks, which read a match, decide from it, and write it back — a concurrent callback for
    * the same match would otherwise be able to interleave between the two. */
-  private val selectMatchForUpdate: Query[
-    (GameId, MatchId),
-    (String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String])
-  ] =
-    sql"""SELECT description, completed, start, EXTRACT(EPOCH FROM time_limit)::float8, settings,
+  private val selectMatchForUpdate: Query[(GameId, MatchId), MatchRow] =
+    sql"""SELECT challenge_id, description, completed, cancelled, start,
+                 EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
       .query(matchRow)
 
+  // challenge_id is not updatable: a match is started from one challenge and stays that
+  // challenge's match. Changing it would rewrite who created the match.
   private val updateMatch: Command[
-    (String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String], GameId, MatchId)
+    (String, Boolean, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String],
+      GameId, MatchId)
   ] =
-    sql"""UPDATE match SET description = $text, completed = $bool, start = $instant,
+    sql"""UPDATE match SET description = $text, completed = $bool, cancelled = $bool, start = $instant,
           time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
           public = $bool, status_url = ${text.opt}, play_url = ${text.opt}, public_url = ${text.opt}
           WHERE game_id = $gameId AND match_id = $matchId""".command
@@ -62,18 +68,16 @@ class MatchRepo(session: Session[IO]) {
   def create(m: Match): IO[Match] =
     session
       .execute(insertMatch)(
-        (m.gameId, m.matchId, m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings,
-          m.isPublic, m.statusUrl, m.playUrl, m.publicUrl)
+        (m.gameId, m.matchId, m.challengeId, m.description, m.completed, m.cancelled, m.start, toSeconds(m.timeLimit),
+          m.settings, m.isPublic, m.statusUrl, m.playUrl, m.publicUrl)
       )
       .as(m)
 
-  private def toMatch(
-      gameId: GameId,
-      matchId: MatchId,
-      row: (String, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String])
-  ): Match = {
-    val (description, completed, start, timeLimitSeconds, settings, isPublic, statusUrl, playUrl, publicUrl) = row
-    Match(gameId, matchId, description, completed, start, fromSeconds(timeLimitSeconds), settings, isPublic, statusUrl, playUrl, publicUrl)
+  private def toMatch(gameId: GameId, matchId: MatchId, row: MatchRow): Match = {
+    val (challengeId, description, completed, cancelled, start, timeLimitSeconds, settings, isPublic, statusUrl,
+      playUrl, publicUrl) = row
+    Match(gameId, matchId, challengeId, description, completed, start, fromSeconds(timeLimitSeconds), settings,
+      isPublic, cancelled, statusUrl, playUrl, publicUrl)
   }
 
   def read(gameId: GameId, matchId: MatchId): IO[Option[Match]] =
@@ -86,7 +90,7 @@ class MatchRepo(session: Session[IO]) {
   def update(m: Match): IO[Unit] =
     session
       .execute(updateMatch)(
-        (m.description, m.completed, m.start, toSeconds(m.timeLimit), m.settings,
+        (m.description, m.completed, m.cancelled, m.start, toSeconds(m.timeLimit), m.settings,
           m.isPublic, m.statusUrl, m.playUrl, m.publicUrl, m.gameId, m.matchId)
       )
       .void
@@ -108,18 +112,22 @@ class MatchRepo(session: Session[IO]) {
   // from Tuple outside the scope that defines it. character_id is nullable: a 'P'-type game's
   // participant has no character_participant row at all.
   private val summaryColumns =
-    gameId *: matchId *: text *: text *: bool *: instant *: instant.opt *: int8 *: int8.opt *: bool
+    gameId *: matchId *: text *: text *: bool *: bool *: bool *: instant *: instant.opt *: int8 *: int8.opt *: bool
 
   private def toSummary(
-      row: (GameId, MatchId, String, String, Boolean, Instant, Option[Instant], Long, Option[Long], Boolean)
+      row: (GameId, MatchId, String, String, Boolean, Boolean, Boolean, Instant, Option[Instant], Long, Option[Long],
+        Boolean)
   ): MatchSummary = {
-    val (gameId, matchId, gameName, description, completed, start, due, participantId, characterId, pending) = row
+    val (gameId, matchId, gameName, description, completed, cancelled, isCreator, start, due, participantId,
+      characterId, pending) = row
     MatchSummary(
       gameId,
       matchId,
       gameName,
       description,
       completed,
+      cancelled,
+      isCreator,
       start,
       due,
       pending,
@@ -130,31 +138,47 @@ class MatchRepo(session: Session[IO]) {
 
   // Ordering puts the most urgent first for due lists and the most recent first for history;
   // NULLS LAST keeps matches with no deadline from crowding out ones that have a deadline.
+  // The parameter is whether the match is *over*, which a cancelled match is: it will never be
+  // played again and never gain a result, so leaving it among the active ones would make cancel
+  // do nothing a player could see. It is listed with the finished matches instead, flagged, so
+  // that calling a match off does not erase it from the creator's own history.
   private val selectForPlayer =
-    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.start,
+    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+                 oc.challenger = p.player_id, m.start,
                  p.due, p.participant_id, cp.character_id, p.pending
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
+          -- The challenge the match was started from, which is never deleted: its challenger is
+          -- the match's creator, and comparing them here is what tells this player whether the
+          -- match is theirs to cancel.
+          JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
-          WHERE p.player_id = $playerId AND m.completed = $bool
+          WHERE p.player_id = $playerId AND (m.completed OR m.cancelled) = $bool
           ORDER BY p.due ASC NULLS LAST, m.start DESC"""
       .query(summaryColumns)
 
   private val selectDueForPlayer =
-    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.start,
+    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+                 oc.challenger = p.player_id, m.start,
                  p.due, p.participant_id, cp.character_id, p.pending
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
+          -- The challenge the match was started from, which is never deleted: its challenger is
+          -- the match's creator, and comparing them here is what tells this player whether the
+          -- match is theirs to cancel.
+          JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
-          WHERE p.player_id = $playerId AND p.pending = true AND m.completed = false
+          WHERE p.player_id = $playerId AND p.pending = true AND m.completed = false AND m.cancelled = false
           ORDER BY p.due ASC NULLS LAST, m.start DESC"""
       .query(summaryColumns)
 
-  /** Every match the player is in, either still running (`completed = false`) or finished. */
-  def listForPlayer(playerId: PlayerId, completed: Boolean): IO[List[MatchSummary]] =
-    session.execute(selectForPlayer)((playerId, completed)).map(_.map(toSummary))
+  /** Every match the player is in, either still running (`over = false`) or over — where over
+    * means completed or cancelled.
+    */
+  def listForPlayer(playerId: PlayerId, over: Boolean): IO[List[MatchSummary]] =
+    session.execute(selectForPlayer)((playerId, over)).map(_.map(toSummary))
 
   /** The running matches in which it is this player's turn. */
   def listDueForPlayer(playerId: PlayerId): IO[List[MatchSummary]] =

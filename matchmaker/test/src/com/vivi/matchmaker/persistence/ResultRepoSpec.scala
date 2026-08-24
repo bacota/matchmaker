@@ -20,8 +20,9 @@ class ResultRepoSpec extends PropertySuite {
 
           for {
             createdGame <- gameRepo.create(Generators.genGameWithRole.sample.get)
+            challengeId <- Generators.challengeIn(session, createdGame)
             matchId = MatchId(matchIdStr)
-            _ <- matchRepo.create(Generators.genMatch(createdGame.gameId, matchId).sample.get)
+            _ <- matchRepo.create(Generators.genMatch(createdGame.gameId, matchId, challengeId).sample.get)
             createdPlayer <- playerRepo.create(player)
             createdCharacter <- characterRepo.create(Generators.genCharacter(createdGame.gameId, None).sample.get)
             createdParticipant <- participantRepo.create(

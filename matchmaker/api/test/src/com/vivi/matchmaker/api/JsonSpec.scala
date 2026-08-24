@@ -150,6 +150,8 @@ class JsonSpec extends FunSuite {
       "game",
       "description",
       completed = false,
+      cancelled = false,
+      isCreator = true,
       start = Instant.ofEpochSecond(1000),
       due = Some(Instant.ofEpochSecond(2000)),
       pending = true,

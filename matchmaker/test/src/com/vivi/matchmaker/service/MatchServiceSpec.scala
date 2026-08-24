@@ -8,7 +8,7 @@ import org.scalacheck.Gen
 import java.time.Instant
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, MatchRepo, ParticipantRepo, TestSession}
+import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, MatchRepo, OpenChallengeRepo, ParticipantRepo, TestSession}
 
 class MatchServiceSpec extends PropertySuite {
   TestMigration.ensure()
@@ -43,9 +43,21 @@ class MatchServiceSpec extends PropertySuite {
         character <- new CharacterRepo[String](session).create(
           Character(CharacterId(0), game.gameId, "character", "description", "", Some(player.playerId))
         )
+        // The match's creator is its challenge's challenger, and a match cannot exist without a
+        // challenge to point at — so the whole chain is built here even though most of these
+        // tests only care about the lists.
+        challenge <- new OpenChallengeRepo(session).create(
+          CharacterOpenChallenge(
+            ChallengeId(0), player.playerId, "challenge", 2, None, None, "{}", game.gameId,
+            character.characterId, isPublic = false, game.roles.head.gameRoleId
+          )
+        )
         matchId = MatchId(matchIdStr)
         _ <- new MatchRepo(session).create(
-          Match(game.gameId, matchId, "description", completed, Instant.ofEpochSecond(1000), None, "{}")
+          Match(
+            game.gameId, matchId, challenge.challengeId, "description", completed,
+            Instant.ofEpochSecond(1000), None, "{}"
+          )
         )
         _ <- new ParticipantRepo(session).create(
           CharacterParticipant(
@@ -121,6 +133,102 @@ class MatchServiceSpec extends PropertySuite {
         case Left(_: UnauthorizedError) => true
         case _                          => false
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cancelling
+  // ---------------------------------------------------------------------------
+  //
+  // `makeMatch` makes the registered player the challenger of the challenge the match is started
+  // from, so that player is the match's creator.
+
+  property("the creator can cancel their own match") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+      val result = for {
+        made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+        (_, game, matchId) = made
+        cancelled <- matchService.cancel(game.gameId, matchId, externalId)
+        due <- matchService.due(externalId)
+        active <- matchService.active(externalId)
+        over <- matchService.completed(externalId)
+      } yield cancelled.cancelled &&
+        // Gone from the lists of things still to play, and present among the ones that are over:
+        // a cancelled match is finished, not erased.
+        due.isEmpty && active.isEmpty &&
+        over.map(s => (s.matchId, s.cancelled)) == List((matchId, true))
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("a player who did not create the match may not cancel it") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, matchIdStr, otherNickname, otherExternalId) =>
+        val result = for {
+          made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+          (_, game, matchId) = made
+          _ <- registrationService.register(otherNickname, otherExternalId)
+          outcome <- matchService.cancel(game.gameId, matchId, otherExternalId).attempt
+          // And the refusal is a refusal, not a silent no-op.
+          active <- matchService.active(externalId)
+        } yield (outcome match {
+          case Left(_: UnauthorizedError) => true
+          case _                          => false
+        }) && active.map(_.matchId) == List(matchId)
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("a completed match can no longer be cancelled") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+      val result = for {
+        made <- makeMatch(nickname, externalId, matchIdStr, completed = true, pending = false)
+        (_, game, matchId) = made
+        outcome <- matchService.cancel(game.gameId, matchId, externalId).attempt
+      } yield outcome match {
+        case Left(_: ConflictError) => true
+        case _                      => false
+      }
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("cancelling twice is a conflict, not a second cancel") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+      val result = for {
+        made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+        (_, game, matchId) = made
+        _ <- matchService.cancel(game.gameId, matchId, externalId)
+        outcome <- matchService.cancel(game.gameId, matchId, externalId).attempt
+      } yield outcome match {
+        case Left(_: ConflictError) => true
+        case _                      => false
+      }
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("a match that does not exist is not found") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+      val result = for {
+        made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+        (_, game, _) = made
+        outcome <- matchService.cancel(game.gameId, MatchId("no-such-match"), externalId).attempt
+      } yield outcome match {
+        case Left(_: NotFoundError) => true
+        case _                      => false
+      }
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("the creator is told apart from a mere participant on every summary") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+      val result = for {
+        made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+        active <- matchService.active(externalId)
+      } yield active.forall(_.isCreator)
+      result.timeout(10.seconds).unsafeRunSync()
     }
   }
 }

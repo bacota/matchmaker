@@ -8,6 +8,12 @@ import java.time.Instant
   * match would be a query per row.
   *
   * @param due when the player's turn is due, if it is their turn at all
+  * @param cancelled whether the creator called the match off; a cancelled match is over but has
+  *                  no result, and is listed with the finished ones rather than the active ones
+  * @param isCreator whether this player is the one who created the match — the challenger of the
+  *                  challenge it was started from, and the only player who may cancel it. A
+  *                  property of the pair, not of the match, which is why it belongs on a read
+  *                  model that is already scoped to one player
   * @param characterId the character playing this participant's seat, if the game requires one
   */
 case class MatchSummary(
@@ -16,6 +22,8 @@ case class MatchSummary(
     gameName: String,
     description: String,
     completed: Boolean,
+    cancelled: Boolean,
+    isCreator: Boolean,
     start: Instant,
     due: Option[Instant],
     pending: Boolean,

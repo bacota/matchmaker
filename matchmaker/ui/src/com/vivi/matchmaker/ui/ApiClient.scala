@@ -93,6 +93,12 @@ object ApiClient {
   def refreshMatch(gameId: GameId, matchId: MatchId): Future[Match] =
     send[Match](HttpMethod.POST, s"/games/${gameId.value}/matches/${matchId.value}/refresh", None)
 
+  /** Calls a match off. Only its creator may, which the server checks — the button that leads
+    * here is shown only to them, but that is a courtesy, not the rule.
+    */
+  def cancelMatch(gameId: GameId, matchId: MatchId): Future[Match] =
+    send[Match](HttpMethod.POST, s"/games/${gameId.value}/matches/${matchId.value}/cancel", None)
+
   /** Backs out of a challenge already accepted. The player id is in the path because the route
     * also serves a challenger removing someone else's acceptance; the server still checks that
     * the caller is entitled to either.
