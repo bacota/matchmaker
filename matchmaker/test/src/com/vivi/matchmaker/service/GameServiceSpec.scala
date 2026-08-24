@@ -67,6 +67,69 @@ class GameServiceSpec extends PropertySuite {
     assert(result.unsafeRunSync())
   }
 
+  // The default is trimmed to the same thing one of the values is trimmed to, so this only gets
+  // past validation -- let alone past default_value's foreign key to game_parameter_value -- if
+  // both were stripped before they were compared.
+  test("createOrUpdate stores parameter values and defaults with the whitespace stripped") {
+    val result = for {
+      admin <- makeAdmin()
+      base <- IO(Generators.genGameWithRole.sample.get)
+      game = base.copy(parameters =
+        Seq(
+          GameParameter[String](
+            GameId.unassigned,
+            GameParameterId(0),
+            "board size",
+            defaultValue = Some(" 3x3"),
+            values = Seq(" 3x3 ", "4x4\n").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
+          )
+        )
+      )
+      created <- gameService.createOrUpdate(admin.externalId, game)
+      listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+    } yield {
+      val parameter = listed.get.parameters.head.asInstanceOf[GameParameter[String]]
+      parameter.values.map(_.value).toSet == Set("3x3", "4x4") && parameter.defaultValue.contains("3x3")
+    }
+
+    assert(result.unsafeRunSync())
+  }
+
+  test("createOrUpdate stores role and parameter names with the whitespace stripped") {
+    val result = for {
+      admin <- makeAdmin()
+      base <- IO(Generators.genGameWithRole.sample.get)
+      game = base.copy(
+        roles = Seq(GameRole(GameRoleId(0), GameId.unassigned, "  attacker  ", optional = false)),
+        parameters = Seq(
+          GameParameter[String](GameId.unassigned, GameParameterId(0), "\tboard size\n", defaultValue = None, values = Seq.empty)
+        )
+      )
+      created <- gameService.createOrUpdate(admin.externalId, game)
+      listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+    } yield listed.exists(g => g.roles.map(_.name) == Seq("attacker") && g.parameters.map(_.name) == Seq("board size"))
+
+    assert(result.unsafeRunSync())
+  }
+
+  // Two names that differ only in their spacing are one name, and the duplicate check has to see
+  // them that way -- which is why the trimming happens before it rather than after.
+  test("createOrUpdate refuses two roles whose names differ only in whitespace") {
+    val result = for {
+      admin <- makeAdmin()
+      base <- IO(Generators.genGameWithRole.sample.get)
+      game = base.copy(roles =
+        Seq(
+          GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false),
+          GameRole(GameRoleId(0), GameId.unassigned, "  attacker", optional = false)
+        )
+      )
+      attempt <- gameService.createOrUpdate(admin.externalId, game).attempt
+    } yield attempt.left.exists(_.isInstanceOf[ValidationError])
+
+    assert(result.unsafeRunSync())
+  }
+
   test("createOrUpdate refuses a game that defines no roles") {
     val result = for {
       admin <- makeAdmin()
