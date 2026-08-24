@@ -114,53 +114,6 @@ class ApiGatewaySpec extends FunSuite {
     assertEquals(ApiGateway.decodeRequest(event()).claims, Map.empty[String, String])
   }
 
-  /** What an AWS_IAM-authorized route adds instead, in the shape API Gateway sends it: the
-    * caller's assumed-role session, not the role itself.
-    */
-  private val iamAuthorizedEvent =
-    """{
-      |  "rawPath": "/games/1/matches/m1/results",
-      |  "requestContext": {
-      |    "http": {"method": "POST"},
-      |    "authorizer": {
-      |      "iam": {
-      |        "accessKey": "ASIAEXAMPLE",
-      |        "accountId": "123456789012",
-      |        "callerId": "AROAEXAMPLEID:engine-session",
-      |        "cognitoIdentity": null,
-      |        "principalOrgId": null,
-      |        "userArn": "arn:aws:sts::123456789012:assumed-role/game-engine/engine-session",
-      |        "userId": "AROAEXAMPLEID:engine-session"
-      |      }
-      |    }
-      |  }
-      |}""".stripMargin
-
-  test("decodes the principal an IAM authorizer put in the request context") {
-    val request = ApiGateway.decodeRequest(iamAuthorizedEvent)
-    assertEquals(request.iam.map(_.userArn), Some("arn:aws:sts::123456789012:assumed-role/game-engine/engine-session"))
-    assertEquals(request.iam.flatMap(_.accountId), Some("123456789012"))
-    assertEquals(request.claims, Map.empty[String, String])
-  }
-
-  // The session part of an assumed-role ARN changes on every assumption, so it cannot be what a
-  // game's externalId is compared against — the role is what stays put.
-  test("an assumed-role principal is normalized to the role that was assumed") {
-    assertEquals(
-      ApiGateway.decodeRequest(iamAuthorizedEvent).iam.map(_.roleArn),
-      Some("arn:aws:iam::123456789012:role/game-engine")
-    )
-  }
-
-  test("a principal that is not an assumed role is left as it arrived") {
-    val principal = ApiGateway.IamPrincipal("arn:aws:iam::123456789012:user/engine", None, None)
-    assertEquals(principal.roleArn, "arn:aws:iam::123456789012:user/engine")
-  }
-
-  test("an event with no authorizer decodes to no principal") {
-    assertEquals(ApiGateway.decodeRequest(event()).iam, None)
-  }
-
   test("splits the path into non-empty segments") {
     assertEquals(ApiGateway.decodeRequest(event(path = "/games/7/characters")).segments, List("games", "7", "characters"))
     assertEquals(ApiGateway.decodeRequest(event(path = "/")).segments, Nil)

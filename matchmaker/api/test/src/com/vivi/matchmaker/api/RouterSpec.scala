@@ -1,5 +1,7 @@
 package com.vivi.matchmaker.api
 
+import com.vivi.matchmaker.auth.ApiKeys
+
 import cats.effect.{IO, Resource}
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
@@ -178,40 +180,49 @@ class RouterSpec extends FunSuite {
     assert(response.body.contains("token has expired"), response.body)
   }
 
-  // The game engine's callbacks are AWS_IAM-authorized, so the caller is a signing principal
-  // rather than a token subject. Which one it is comes from the event — that is, from whichever
-  // authorizer the gateway actually ran — so the function cannot mistake one for the other.
-  test("the gateway authenticator takes the caller from an IAM principal when that is what ran") {
+  // The game engine's callbacks carry the key matchmaker and that engine share. The key names
+  // the engine, because matchmaker holds a different one for each — that name is the game's
+  // externalId, which is what the services authorize a game-authorized caller by.
+  private val keys = () => ApiKeys(Map("tictactoe" -> "s3cret"))
+
+  test("the gateway authenticator turns an engine's API key into that engine's name") {
     val request = ApiGateway.Request(
       "POST",
       "/games/1/matches/m1/results",
+      Map(ApiKeys.Header -> "s3cret"),
       Map.empty,
-      Map.empty,
-      "{}",
-      claims = Map.empty,
-      iam = Some(ApiGateway.IamPrincipal("arn:aws:sts::123456789012:assumed-role/game-engine/session", None, None))
+      "{}"
     )
 
-    assertEquals(Authenticator.Gateway.callerOf(request), Right("arn:aws:iam::123456789012:role/game-engine"))
+    assertEquals(Authenticator.Gateway(keys).callerOf(request), Right("tictactoe"))
+  }
+
+  test("a key nobody was issued is refused, exactly as a missing one is") {
+    def callerOf(headers: Map[String, String]) =
+      Authenticator.Gateway(keys).callerOf(ApiGateway.Request("POST", "/games/1/matches/m1/results", headers, Map.empty, "{}"))
+
+    assertEquals(callerOf(Map(ApiKeys.Header -> "guess")), Left(Errors.unauthenticated))
+    assertEquals(callerOf(Map(ApiKeys.Header -> "")), Left(Errors.unauthenticated))
   }
 
   test("the gateway authenticator prefers a verified token over anything else on the request") {
     val request = ApiGateway.Request(
       "GET",
       "/me",
-      Map(ApiGateway.ExternalIdHeader.toLowerCase -> "spoofed"),
+      // Both a spoofable identity header and a real key: neither displaces the claim, so an
+      // engine holding a valid key cannot present itself as a player.
+      Map(ApiGateway.ExternalIdHeader.toLowerCase -> "spoofed", ApiKeys.Header -> "s3cret"),
       Map.empty,
       "{}",
-      claims = Map("sub" -> "sub-from-token"),
-      iam = None
+      claims = Map("sub" -> "sub-from-token")
     )
 
-    assertEquals(Authenticator.Gateway.callerOf(request), Right("sub-from-token"))
+    assertEquals(Authenticator.Gateway(keys).callerOf(request), Right("sub-from-token"))
   }
 
   test("a request the gateway authenticated in neither way is unauthenticated") {
     val request = ApiGateway.Request("GET", "/me", Map(ApiGateway.ExternalIdHeader.toLowerCase -> "sub-1"), Map.empty, "{}")
-    assertEquals(Authenticator.Gateway.callerOf(request).map(identity), Left(Errors.unauthenticatedToken))
+    assertEquals(Authenticator.Gateway(keys).callerOf(request).map(identity), Left(Errors.unauthenticatedToken))
   }
 
   test("the gateway authenticator takes the caller from the verified sub claim") {

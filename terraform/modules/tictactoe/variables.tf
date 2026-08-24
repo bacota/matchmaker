@@ -13,43 +13,30 @@ variable "lambda_jar_path" {
   type        = string
 }
 
-variable "matchmaker_role_arns" {
+variable "matchmaker_api_key" {
   description = <<-EOT
-    ARNs of the roles allowed to create games in this engine and check their status — in practice
-    matchmaker's Lambda execution role (its `lambda_role_arn` output).
+    The secret this engine and matchmaker authenticate each other with, in both directions:
+    matchmaker presents it when it creates a game or asks for a match's status, and this engine
+    presents it on its move and result callbacks.
 
-    Empty means nobody may: the routes are AWS_IAM-authorized and an HTTP API has no resource
-    policy, so the grant is identity-based and has to be attached to the caller's role. A role in
-    another account cannot be attached to from here; use the `invoke_policy_arn` output instead.
-  EOT
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = alltrue([for arn in var.matchmaker_role_arns : can(regex("^arn:[^:]+:iam::[0-9]{12}:role/.+$", arn))])
-    error_message = "Each entry must be an IAM role ARN, e.g. arn:aws:iam::123456789012:role/matchmaker-dev-lambda."
-  }
-}
-
-variable "matchmaker_callback_policy_arn" {
-  description = <<-EOT
-    Matchmaker's `engine_callback_policy_arn`, attached to this engine's role so it may post the
-    move and result callbacks.
-
-    Optional because the pair can be wired from either side: naming this engine's role in
-    matchmaker's `game_engine_role_arns` attaches the same policy from there. Leave empty when
-    matchmaker does that, and set it when the engine is applied against a matchmaker it does not
-    control.
+    Required. A deployed engine with no key would serve game creation to anyone who found the
+    url, and the function refuses to start rather than do that — this variable has no default so
+    that the refusal happens at plan time instead.
   EOT
   type        = string
-  default     = ""
+  sensitive   = true
+
+  validation {
+    condition     = length(var.matchmaker_api_key) >= 24
+    error_message = "The API key must be at least 24 characters; it is a bearer token and the only thing protecting these routes."
+  }
 }
 
 variable "game_external_id" {
   description = <<-EOT
     Sent as `X-External-Id` on the callbacks, which only a matchmaker running in header-auth mode
-    reads — a deployed one identifies this engine by its signature instead, and the value it
-    compares against is this module's `lambda_role_arn` output.
+    reads — a deployed one identifies this engine by which API key the callback carried, and the
+    name it files that key under is the game's `external_id`.
 
     Worth setting only for an engine pointed at a local matchmaker.
   EOT

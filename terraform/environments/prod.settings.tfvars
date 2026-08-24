@@ -5,19 +5,20 @@
 lambda_memory_mb   = 2048
 log_retention_days = 90
 
-// Off: SnapStart and matchmaker's SigV4 signing cannot both work.
+// Off, though the reason it was turned off has since gone away.
 //
-// The snapshot is taken during init, ahead of any invocation, and Java fixes System.getenv at JVM
-// start — so after a restore the process still sees the environment the snapshot was taken in,
-// which has no execution-role credentials. AwsCredentials.fromEnvironment then finds nothing, the
-// create-game call goes out unsigned, and the engine's AWS_IAM route answers 403 Forbidden. There
-// is no re-reading around it: a running JVM cannot see an environment change.
+// It was turned off because SnapStart and SigV4 signing could not both work: the snapshot is taken
+// during init, ahead of any invocation, and Java fixes System.getenv at JVM start, so a restored
+// process saw an environment with no execution-role credentials — those are injected per execution
+// environment — and the create-game call went out unsigned into a 403.
 //
-// This hid for a while because a version is not optimized the moment an apply finishes. Requests
-// landing in that window run as ordinary cold starts, credentials and all, and work — which is
-// why calls succeeded minutes after a deploy and failed from then on.
+// Matchmaker no longer signs anything: the game engine is authenticated with a shared API key,
+// which arrives in an ordinary environment variable set on the function itself. That kind of
+// variable *is* in the snapshot, so the incompatibility is gone.
 //
-// Do not set this back to true while HttpGameEngineClient signs from environment credentials.
+// Turning it back on is therefore a decision that can be made again, on its merits — cold-start
+// latency against the other things a snapshot fixes in place — rather than one that is ruled out.
+// It is left off here because nothing has re-tested a restore against this function.
 lambda_snap_start = false
 
 // Real accounts: block sign-ins using credentials known to be compromised, and challenge risky

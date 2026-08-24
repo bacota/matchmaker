@@ -13,15 +13,6 @@ output "lambda_role_arn" {
   value       = aws_iam_role.lambda.arn
 }
 
-output "engine_callback_policy_arn" {
-  description = <<-EOT
-    ARN of the policy allowing the move and result callbacks. A game engine's role must have this
-    attached (or an equivalent grant) before it can call back, since an HTTP API has no resource
-    policy and the grant can only be identity-based.
-  EOT
-  value       = aws_iam_policy.engine_callbacks.arn
-}
-
 output "lambda_security_group_ids" {
   description = "Security groups attached to the Lambda, to reference from the database's ingress rules."
   value       = var.security_group_ids

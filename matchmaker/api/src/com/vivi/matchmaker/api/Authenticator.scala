@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.api
 
 import ApiGateway.{Request, Response}
+import com.vivi.matchmaker.auth.ApiKeys
 
 /** Establishes who is calling.
   *
@@ -55,42 +56,47 @@ object Authenticator {
         .toRight(Errors.unauthenticatedToken)
   }
 
-  /** Takes the caller's identity from the IAM principal API Gateway verified the signature of.
+  /** Takes the caller's identity from the API key the game engine presented.
     *
-    * This is how the game engine's callbacks are authenticated. An `AWS_IAM`-authorized route
-    * rejects an unsigned or wrongly-signed request before the function is invoked, so what
-    * arrives here is a principal the gateway has already established — the same argument
-    * [[GatewayClaims]] makes about a verified token.
+    * This is how the game engine's callbacks are authenticated. Matchmaker and each engine share
+    * one secret, configured on both sides; the key names the engine, because matchmaker holds a
+    * different key for each one (see [[com.vivi.matchmaker.auth.ApiKeys]]). The name a key is
+    * filed under is the value an administrator records as the game's `externalId`, which is what
+    * the services compare a game-authorized caller against.
     *
-    * The identity is the *role*, not the session: a role assumed twice produces two different
-    * session ARNs, so `arn:aws:sts::123:assumed-role/game-engine/i-0abc` is normalized to
-    * `arn:aws:iam::123:role/game-engine`. That is the value an administrator records as the
-    * game's `externalId`, which is what the services compare a game-authorized caller against.
+    * Unlike the other two, this one verifies the credential itself: there is no authorizer in
+    * front of these routes any more, so nothing has checked anything by the time the function
+    * runs. A wrong key and a missing key are the same 401 on purpose — telling a caller that the
+    * key it sent was well-formed but unknown tells it that guessing is worth continuing.
     */
-  object GatewayIam extends Authenticator {
+  class ApiKey(keys: () => ApiKeys) extends Authenticator {
     def callerOf(request: Request): Either[Response, String] =
-      request.iam
-        .map(_.roleArn)
+      request
+        .header(ApiKeys.Header)
+        .map(_.trim)
         .filter(_.nonEmpty)
+        .flatMap(keys().nameOf)
         .toRight(Errors.unauthenticated)
   }
 
   /** The deployed authenticator: whichever authorizer actually ran decides how the caller is
     * identified.
     *
-    * A route in API Gateway carries exactly one authorizer, so the event says unambiguously which
-    * kind of caller this is: the player routes carry the Cognito JWT authorizer and arrive with
-    * claims, and the game engine's callback routes are `AWS_IAM` and arrive with a principal.
-    * Routing on the event rather than on the path means the two cannot drift apart — the function
-    * cannot decide a request is a game callback when the gateway authenticated it as a player.
+    * The player routes carry the Cognito JWT authorizer and arrive with claims; the game
+    * engine's callback routes carry no authorizer and arrive with an API key. Claims are looked
+    * at first and are not something a caller can put there — they are written into the event by
+    * the authorizer — so an engine cannot present itself as a player, and a player's token is no
+    * use as a key.
     *
     * Neither present is still unauthenticated, which is what keeps a route accidentally left open
     * from being admitted here.
     */
-  object Gateway extends Authenticator {
+  class Gateway(keys: () => ApiKeys) extends Authenticator {
+    private val apiKey = ApiKey(keys)
+
     def callerOf(request: Request): Either[Response, String] =
       if (request.claims.nonEmpty) GatewayClaims.callerOf(request)
-      else if (request.iam.isDefined) GatewayIam.callerOf(request)
+      else if (request.header(ApiKeys.Header).isDefined) apiKey.callerOf(request)
       else Left(Errors.unauthenticatedToken)
   }
 

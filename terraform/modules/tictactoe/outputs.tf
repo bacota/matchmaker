@@ -23,28 +23,17 @@ output "auth_callback_url" {
 }
 
 output "lambda_role_arn" {
-  description = <<-EOT
-    The engine's execution role. Two things need it: matchmaker's `game_engine_role_arns`, so the
-    callbacks are granted, and the game's `external_id` column, which is what matchmaker compares
-    the callback's verified principal against (see Authenticator.GatewayIam).
-  EOT
+  description = "The engine's execution role. Nothing outside this module needs it any more; kept for `aws` CLI work."
   value       = aws_iam_role.lambda.arn
 }
 
-output "api_execution_arns" {
+output "api_host" {
   description = <<-EOT
-    The two routes matchmaker calls, as execute-api ARNs — pass these to matchmaker's
-    `game_api_execution_arns` so its own role may invoke them.
+    The host matchmaker calls this engine on. Matchmaker files an engine's API key by host, since
+    the host is all its client knows about the engine it is about to call — pass this as the key
+    of an entry in matchmaker's `game_engine_api_keys`.
   EOT
-  value = [
-    "${aws_apigatewayv2_api.engine.execution_arn}/*/POST/games",
-    "${aws_apigatewayv2_api.engine.execution_arn}/*/GET/matches/*/status",
-  ]
-}
-
-output "invoke_policy_arn" {
-  description = "Policy allowing the two matchmaker-facing routes, for a caller in another account to attach."
-  value       = aws_iam_policy.invoke.arn
+  value       = "${aws_apigatewayv2_api.engine.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
 }
 
 output "lambda_function_name" {

@@ -14,7 +14,7 @@ object Config {
       announce: TicTacToeMatch => Unit = _ => ()
   ): Routes = {
     val baseUrl = requiredBaseUrl(env, defaultBaseUrl)
-    Routes(engine(env, baseUrl, announce), playAuth(env, baseUrl))
+    Routes(engine(env, baseUrl, announce), playAuth(env, baseUrl), matchmakerKey(env))
   }
 
   private def requiredBaseUrl(env: String => Option[String], default: Option[String]): String =
@@ -22,6 +22,23 @@ object Config {
       .orElse(default)
       .getOrElse(throw IllegalStateException("BASE_URL is not set: the engine cannot guess the url matchmaker should use"))
       .stripSuffix("/")
+
+  /** The key matchmaker must present on the two routes that are its own, and that this engine
+    * presents on its callbacks — one secret shared by the pair, in both directions.
+    *
+    * Required in Lambda and optional anywhere else. `AWS_LAMBDA_FUNCTION_NAME` is set only by the
+    * runtime, so this cannot be got wrong in the safe-looking direction: a deployed engine whose
+    * variable was forgotten fails at its first cold start, where a local one started for five
+    * minutes of curl needs no setup. The same signal `playAuth` uses, for the same reason.
+    */
+  def matchmakerKey(env: String => Option[String]): Option[String] =
+    env("MATCHMAKER_API_KEY").map(_.trim).filter(_.nonEmpty) match {
+      case None if env("AWS_LAMBDA_FUNCTION_NAME").isDefined =>
+        throw IllegalStateException(
+          "MATCHMAKER_API_KEY is not set: a deployed engine would serve game creation to anyone"
+        )
+      case other => other
+    }
 
   private def region(env: String => Option[String]): String =
     env("AWS_REGION").orElse(env("AWS_DEFAULT_REGION")).getOrElse("us-east-1")
@@ -38,7 +55,9 @@ object Config {
 
     val matchmaker: Matchmaker =
       if (env("MATCHMAKER_OFFLINE").contains("true")) RecordingMatchmaker(println)
-      else HttpMatchmaker(http, env("GAME_EXTERNAL_ID"))
+      // Unsigned: matchmaker's callback routes take an API key now, not a SigV4 signature. The
+      // signed client stays for DynamoDB above, which is still AWS and still needs one.
+      else HttpMatchmaker(SignedHttp(None, region(env)), matchmakerKey(env), env("GAME_EXTERNAL_ID"))
 
     Engine(store, matchmaker, baseUrl, announce = announce)
   }

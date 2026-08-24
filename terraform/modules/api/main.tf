@@ -96,12 +96,13 @@ resource "aws_lambda_function" "api" {
    *   the same dead TCP connections, and would need `org.crac` checkpoint/restore hooks to be
    *   safe.
    *
-   * The second condition is why this is off everywhere today: the execution role's credentials
-   * are per-execution-environment and arrive as environment variables, and Java fixes
-   * System.getenv at JVM start. A restored function therefore reads the snapshot's environment
-   * rather than the live one, AwsCredentials.fromEnvironment finds nothing, and matchmaker's
-   * create-game call reaches the game engine unsigned -- answered with 403 Forbidden. See
-   * lambda_snap_start in the settings tfvars before turning this back on.
+   * The second condition is what turned this off: the execution role's credentials are
+   * per-execution-environment and arrive as environment variables, and Java fixes System.getenv
+   * at JVM start, so a restored function signed its calls to the game engine with nothing and was
+   * answered with 403. Matchmaker no longer signs anything -- the engine takes a shared API key,
+   * set on this function like any other variable and therefore present in the snapshot -- so that
+   * particular conflict is gone. It is still off everywhere; see lambda_snap_start in the
+   * settings tfvars.
    */
   dynamic "snap_start" {
     for_each = var.lambda_snap_start ? [1] : []
@@ -144,6 +145,12 @@ resource "aws_lambda_function" "api" {
       # Built from the api id rather than read off the stage: the stage's integration points at
       # this function, so taking its invoke_url here would close a dependency cycle.
       MATCHMAKER_BASE_URL = "https://${aws_apigatewayv2_api.api.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
+
+      # The shared secrets, one per game engine, in the two forms the function looks them up by:
+      # by external_id for a callback arriving (whose key says which engine sent it), and by host
+      # for a call going out (where a url is all there is to go on). Both are `name=key` lists.
+      ENGINE_API_KEYS      = join(",", [for name, key in var.engine_api_keys : "${name}=${key}"])
+      GAME_ENGINE_API_KEYS = join(",", [for host, key in var.game_engine_api_keys : "${host}=${key}"])
     }
   }
 
@@ -278,17 +285,16 @@ locals {
   /* The game engine's callbacks, which are not player actions at all: a game engine tells
    * matchmaker that a player has moved, or that a match is over.
    *
-   * These carry AWS_IAM rather than the Cognito authorizer, so the caller is an AWS principal
-   * whose SigV4 signature the gateway verifies — the mirror image of matchmaker signing its own
-   * calls to the game API. The engine has no Cognito identity of its own, and giving it one to
-   * impersonate would be a password shared between two systems.
+   * These carry no authorizer. The engine authenticates with the API key it and matchmaker
+   * share, which the function checks itself (see `Authenticator.ApiKey`) — an HTTP API has no
+   * built-in API key support, that being a REST API feature. The engine has no Cognito identity
+   * of its own, and giving it one to impersonate would be a password shared between two systems
+   * with a great deal more reach than a key scoped to two routes.
    *
-   * The function identifies the caller by the role it assumed and matches that against the
-   * game's `external_id`, so a game's external_id must be set to the engine's role ARN
-   * (arn:aws:iam::<account>:role/<role>) for its callbacks to be accepted. See
-   * `Authenticator.GatewayIam`.
+   * Matchmaker holds a different key per engine, so the key also says *which* engine is calling:
+   * it is filed under the name that must be the game's `external_id`. See `engine_api_keys`.
    */
-  iam_routes = [
+  engine_routes = [
     "POST /games/{gameId}/matches/{matchId}/moves",
     "POST /games/{gameId}/matches/{matchId}/results",
   ]
@@ -308,92 +314,18 @@ resource "aws_apigatewayv2_route" "routes" {
   authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
-resource "aws_apigatewayv2_route" "iam_routes" {
-  for_each = toset(local.iam_routes)
+resource "aws_apigatewayv2_route" "engine_routes" {
+  for_each = toset(local.engine_routes)
 
   api_id    = aws_apigatewayv2_api.api.id
   route_key = each.value
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 
-  # No authorizer_id: AWS_IAM is enforced by the gateway itself, from the request's signature.
-  authorization_type = "AWS_IAM"
-}
-
-/* Permission to call the callback routes, for a game engine's role to attach.
- *
- * A route being AWS_IAM-authorized establishes *who* is calling; it does not by itself let
- * anyone in. The caller's role also needs execute-api:Invoke on the route. An HTTP API has no
- * resource policy — that is a REST API feature — so the grant can only be identity-based, which
- * means it has to live on the engine's role.
- *
- * The engine's role belongs to whoever runs the engine and is not created here: it is named by ARN
- * in game_engine_role_arns and only granted. A role in this account is granted by attaching the
- * policy below; a role in another account cannot be attached to from here, so for those this
- * module just publishes the policy (engine_callback_policy_arn) for its owner to attach. Nothing
- * can call the callbacks until one of those happens, which is the right default: ungranted is
- * unreachable.
- */
-data "aws_iam_policy_document" "engine_callbacks" {
-  statement {
-    actions = ["execute-api:Invoke"]
-    resources = [
-      for route in local.iam_routes :
-      # execute-api ARNs address a route as <stage>/<METHOD>/<path>; a path parameter is a
-      # wildcard there rather than a name in braces, so "{gameId}" becomes "*". The second
-      # replace's pattern is slash-wrapped, which is how terraform marks a regex.
-      "${aws_apigatewayv2_api.api.execution_arn}/*/${replace("${split(" ", route)[0]}${split(" ", route)[1]}", "/{[^}]*}/", "*")}"
-    ]
-  }
-}
-
-resource "aws_iam_policy" "engine_callbacks" {
-  name        = "${local.name}-engine-callbacks"
-  description = "Allows a game engine to post move and result callbacks to matchmaker."
-  policy      = data.aws_iam_policy_document.engine_callbacks.json
-}
-
-/* Only the roles that live in this account: an attachment names a role, and a name is only
- * resolvable within the account applying it. A cross-account ARN is kept out rather than passed
- * through as a name that would either fail to apply or, worse, match a same-named local role. */
-locals {
-  local_engine_role_names = [
-    for arn in var.game_engine_role_arns :
-    # The name is everything after "role/", which keeps a role at a path (role/team/engine)
-    # intact — the attachment wants "team/engine", not "engine".
-    join("/", slice(split("/", arn), 1, length(split("/", arn))))
-    if split(":", arn)[4] == data.aws_caller_identity.current.account_id
-  ]
-}
-
-resource "aws_iam_role_policy_attachment" "engine_callbacks" {
-  for_each = toset(local.local_engine_role_names)
-
-  role       = each.value
-  policy_arn = aws_iam_policy.engine_callbacks.arn
-}
-
-/* The other direction: matchmaker calling a game engine's API.
- *
- * Same rule, mirrored — the game API's routes are AWS_IAM-authorized, so this function's own role
- * needs execute-api:Invoke on them, and every request it sends is SigV4-signed (see `SigV4` in
- * the api module). Also empty by default: a game whose API has not been named here will have its
- * create-game call rejected by that API rather than by anything in matchmaker.
- */
-data "aws_iam_policy_document" "call_game_apis" {
-  count = length(var.game_api_execution_arns) > 0 ? 1 : 0
-
-  statement {
-    actions   = ["execute-api:Invoke"]
-    resources = var.game_api_execution_arns
-  }
-}
-
-resource "aws_iam_role_policy" "call_game_apis" {
-  count = length(var.game_api_execution_arns) > 0 ? 1 : 0
-
-  name   = "${local.name}-call-game-apis"
-  role   = aws_iam_role.lambda.id
-  policy = data.aws_iam_policy_document.call_game_apis[0].json
+  # NONE at the gateway, and refused in the function when the key is missing or unknown. Weaker
+  # than the AWS_IAM authorization it replaces in one specific way — an unauthenticated call now
+  # reaches the function before it is refused — and in exchange an engine needs no AWS identity,
+  # which is what lets one run somewhere other than this account.
+  authorization_type = "NONE"
 }
 
 resource "aws_cloudwatch_log_group" "api_access" {

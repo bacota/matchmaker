@@ -178,9 +178,9 @@ step "Applying to $env"
 #
 # Matchmaker has no route that creates a game — a game is an administrative fact, not something a
 # player does — so the engine is deployed but unreachable until a `game` row points at it. The two
-# values that row needs are outputs of the apply above, and both are easy to get subtly wrong:
-# external_id must be the engine's *role* ARN, because a deployed matchmaker identifies a callback
-# by the IAM principal API Gateway verified rather than by a header.
+# values that row needs are outputs of the apply above. external_id must be the name matchmaker
+# files this engine's API key under, because that key is how a deployed matchmaker tells which
+# engine a callback came from; the terraform files it under "tictactoe".
 #
 # The database is inside the VPC, so this script cannot run the insert itself from an arbitrary
 # laptop — the same limitation deploy.sh notes around Flyway. It prints the exact command instead.
@@ -190,27 +190,27 @@ output() {
 }
 
 create_game_url=$(output tictactoe_create_game_url)
-role_arn=$(output tictactoe_role_arn)
+external_id=$(output tictactoe_external_id)
 
 step "Deployed"
 
-if [ -z "$create_game_url" ] || [ -z "$role_arn" ]; then
+if [ -z "$create_game_url" ] || [ -z "$external_id" ]; then
   echo "    the engine's outputs are not available; check the apply above" >&2
 else
   cat <<EOF
     create game   $create_game_url
-    identity      $role_arn
+    identity      $external_id
 
 To register it as a game in matchmaker — from somewhere with a route to the database:
 
     psql "\$DATABASE_URL" \\
       -v url="$create_game_url" \\
-      -v external_id="$role_arn" \\
+      -v external_id="$external_id" \\
       -f engines/tictactoe/register-game.sql
 
 Already registered? Update the existing row instead, or matchmaker will keep calling the old url:
 
-    UPDATE game SET url = '$create_game_url', external_id = '$role_arn'
+    UPDATE game SET url = '$create_game_url', external_id = '$external_id'
      WHERE name = 'Tic-tac-toe';
 EOF
 fi

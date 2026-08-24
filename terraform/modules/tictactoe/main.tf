@@ -19,7 +19,8 @@ locals {
   # would report.
   base_url = "https://${aws_apigatewayv2_api.engine.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
 
-  # Matchmaker's calls in. These are the only routes it makes, and the only ones behind AWS_IAM.
+  # Matchmaker's calls in. These are the only routes it makes, and the only ones that require
+  # the shared API key.
   matchmaker_routes = [
     "POST /games",
     "GET /matches/{matchId}/status",
@@ -53,7 +54,7 @@ locals {
 
 data "aws_region" "current" {}
 
-data "aws_caller_identity" "current" {}
+
 
 # ---------------------------------------------------------------------------
 # Matches
@@ -128,20 +129,6 @@ resource "aws_iam_role_policy" "matches" {
   policy = data.aws_iam_policy_document.matches.json
 }
 
-/* Permission to post the callbacks to matchmaker.
- *
- * Matchmaker publishes a policy for exactly this (its `engine_callback_policy_arn` output) and
- * attaches it itself when the engine's role is named in its `game_engine_role_arns`. Attaching it
- * from here as well is not a duplicate grant so much as a choice of who wires the pair together;
- * the variable is empty by default, which leaves it to matchmaker's side.
- */
-resource "aws_iam_role_policy_attachment" "matchmaker_callbacks" {
-  count = var.matchmaker_callback_policy_arn == "" ? 0 : 1
-
-  role       = aws_iam_role.lambda.name
-  policy_arn = var.matchmaker_callback_policy_arn
-}
-
 # ---------------------------------------------------------------------------
 # Function
 # ---------------------------------------------------------------------------
@@ -176,6 +163,14 @@ resource "aws_lambda_function" "engine" {
       # below. Set it in a dev environment that points at a local matchmaker.
       GAME_EXTERNAL_ID = var.game_external_id
 
+      # The secret this engine and matchmaker authenticate each other with, in both directions:
+      # matchmaker presents it on the two routes above, and this engine presents it on its move
+      # and result callbacks, where it is also what tells matchmaker which engine is calling.
+      #
+      # The function refuses to start without it when it is running in Lambda, so an empty value
+      # here is a failed cold start rather than an engine that serves game creation to anyone.
+      MATCHMAKER_API_KEY = var.matchmaker_api_key
+
       # The sign-in the board page offers, and the pool whose claims the authorizer below
       # verifies. The same three values matchmaker's own UI is configured with.
       COGNITO_ISSUER    = var.cognito_issuer
@@ -206,11 +201,17 @@ resource "aws_apigatewayv2_integration" "lambda" {
   payload_format_version = "2.0"
 }
 
-/* Matchmaker's two routes, authorized by signature.
+/* Matchmaker's two routes, authorized by the API key the pair shares.
  *
- * AWS_IAM here is what makes the engine refuse a create-game call from anyone but matchmaker's
- * own role — which is granted below. Nothing in the function checks: by the time it runs, the
- * gateway has already rejected an unsigned or unauthorized call.
+ * NONE at the gateway, and checked in the function instead (see `Routes.fromMatchmaker`). An
+ * HTTP API has no built-in API key support — that is a REST API feature — so there is nothing
+ * here to configure; what makes these routes matchmaker's is that the function refuses a request
+ * that does not carry the key in MATCHMAKER_API_KEY.
+ *
+ * This is weaker than the AWS_IAM authorization it replaces, in one specific way: an unauthorized
+ * call now reaches the function before it is refused, where the gateway used to reject it for
+ * free. What it buys is an engine that needs no AWS identity of its own, which is the point —
+ * an engine is a separate system and need not be running in this account, or on AWS at all.
  */
 resource "aws_apigatewayv2_route" "matchmaker" {
   for_each = toset(local.matchmaker_routes)
@@ -218,7 +219,7 @@ resource "aws_apigatewayv2_route" "matchmaker" {
   api_id             = aws_apigatewayv2_api.engine.id
   route_key          = each.value
   target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
-  authorization_type = "AWS_IAM"
+  authorization_type = "NONE"
 }
 
 /* Verifies the player's Cognito token before the function is invoked — signature, expiry, issuer
@@ -260,46 +261,6 @@ resource "aws_apigatewayv2_route" "open" {
   route_key          = each.value
   target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
   authorization_type = "NONE"
-}
-
-/* Matchmaker's role, allowed to call the two routes above.
- *
- * The mirror of matchmaker's own `engine_callbacks` policy, and for the same reason: an HTTP API
- * has no resource policy, so the grant has to be identity-based and therefore has to be attached
- * to the caller's role. Empty by default — an engine nobody is allowed to call is the right
- * starting point, since the alternative default is one anybody may create games in.
- */
-resource "aws_iam_policy" "invoke" {
-  name        = "${local.name}-invoke"
-  description = "Allows matchmaker to create games in this engine and to check their status."
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = "execute-api:Invoke"
-      Resource = [
-        "${aws_apigatewayv2_api.engine.execution_arn}/*/POST/games",
-        "${aws_apigatewayv2_api.engine.execution_arn}/*/GET/matches/*/status",
-      ]
-    }]
-  })
-}
-
-locals {
-  # As in matchmaker's module: only roles in this account can be attached to by name from here.
-  local_caller_role_names = [
-    for arn in var.matchmaker_role_arns :
-    join("/", slice(split("/", arn), 1, length(split("/", arn))))
-    if split(":", arn)[4] == data.aws_caller_identity.current.account_id
-  ]
-}
-
-resource "aws_iam_role_policy_attachment" "invoke" {
-  for_each = toset(local.local_caller_role_names)
-
-  role       = each.value
-  policy_arn = aws_iam_policy.invoke.arn
 }
 
 resource "aws_cloudwatch_log_group" "api_access" {

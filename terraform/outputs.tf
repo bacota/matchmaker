@@ -73,12 +73,23 @@ output "tictactoe_create_game_url" {
   value       = one(module.tictactoe[*].create_game_url)
 }
 
-output "tictactoe_role_arn" {
+output "tictactoe_external_id" {
   description = <<-EOT
-    What to record as the game's `external_id`: the engine's execution role, which is the
-    principal API Gateway verifies on its callbacks. Empty when the engine is not deployed.
+    What to record as the game's `external_id`: the name matchmaker files this engine's API key
+    under, which is the identity it attributes the engine's callbacks to. Empty when the engine
+    is not deployed.
   EOT
-  value       = one(module.tictactoe[*].lambda_role_arn)
+  value       = var.deploy_tictactoe ? "tictactoe" : ""
+}
+
+output "tictactoe_api_key" {
+  description = <<-EOT
+    The secret matchmaker and the engine authenticate each other with. Both functions are
+    configured with it automatically; this output is for reproducing a call by hand, e.g.
+    `curl -H "x-api-key: $(terraform output -raw tictactoe_api_key)" ...`.
+  EOT
+  value       = one(random_password.tictactoe_api_key[*].result)
+  sensitive   = true
 }
 
 output "tictactoe_api_endpoint" {

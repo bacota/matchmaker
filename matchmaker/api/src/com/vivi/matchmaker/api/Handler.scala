@@ -4,6 +4,7 @@ import java.io.{InputStream, OutputStream}
 import java.nio.charset.StandardCharsets
 import cats.effect.unsafe.implicits.global
 import com.amazonaws.services.lambda.runtime.{Context, RequestStreamHandler}
+import com.vivi.matchmaker.auth.ApiKeys
 import com.vivi.matchmaker.persistence.TextCodec.given
 import com.vivi.matchmaker.service.{DbConfig, Services}
 
@@ -70,17 +71,26 @@ object Handler {
 
   /** How the caller is identified, chosen by `AUTH_MODE`.
     *
-    * The terraform sets this to `gateway`, so a deployed function trusts only what an authorizer
-    * in front of it established: a claim from the Cognito JWT authorizer on the player routes, or
-    * the signing principal on the `AWS_IAM` routes the game engine calls back on. The default is deliberately the *other* way round: an unset variable
-    * means no infrastructure was involved, and a function that fell back to trusting a header
-    * would turn a terraform mistake into an open API. Failing loudly is the safe default here.
+    * The terraform sets this to `gateway`: a player is whoever the Cognito JWT authorizer in
+    * front of the function said they were, and a game engine is whichever engine's API key its
+    * callback carried. The default is deliberately the *other* way round: an unset variable means
+    * no infrastructure was involved, and a function that fell back to trusting a header would
+    * turn a terraform mistake into an open API. Failing loudly is the safe default here.
     */
   val authenticator: Authenticator = sys.env.getOrElse("AUTH_MODE", "gateway") match {
-    case "gateway" => Authenticator.Gateway
+    case "gateway" => Authenticator.Gateway(engineApiKeys)
     case "header"  => Authenticator.TrustedHeader
     case other     => throw new IllegalStateException(s"unknown AUTH_MODE '$other'; expected 'gateway' or 'header'")
   }
+
+  /** The engines allowed to post callbacks, and the key each one proves itself with.
+    *
+    * `ENGINE_API_KEYS` is `externalId=key` per engine — see `ApiKeys`. Re-read per call rather
+    * than parsed once, so that rotating a key does not need the execution environment recycled.
+    * Unset means no engine can call back, which is the right default: an engine that has not been
+    * given a key is one nobody has decided to trust yet.
+    */
+  private def engineApiKeys: () => ApiKeys = () => ApiKeys.parse(sys.env.get("ENGINE_API_KEYS"))
 
   private def poolSize: Int =
     sys.env.get("DB_POOL_SIZE").flatMap(_.toIntOption).getOrElse(Services.defaultPoolSize)
