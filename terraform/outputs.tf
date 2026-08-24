@@ -70,7 +70,7 @@ output "admin_email" {
 
 output "tictactoe_create_game_url" {
   description = "What to record as the game's `url` in matchmaker. Empty when the engine is not deployed."
-  value       = one(module.tictactoe[*].create_game_url)
+  value       = var.deploy_tictactoe ? one(module.tictactoe[*].create_game_url) : ""
 }
 
 output "tictactoe_external_id" {
