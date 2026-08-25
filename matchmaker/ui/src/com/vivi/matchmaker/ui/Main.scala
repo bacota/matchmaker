@@ -265,6 +265,9 @@ object Views {
       // `pending` marks a participation not yet settled — the player has accepted, but the match
       // has not started. `ui.txt` wants those visible in this list.
       if (summary.pending) div(cls := "pending", "awaiting other players") else emptyNode,
+      // A cancelled match is over and has no result, so it sits in the completed list; without
+      // this it would be indistinguishable from one that was played to an end.
+      if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
       // The play url lives on the match rather than the summary, and is the game engine's, not
       // matchmaker's — so it is fetched when asked for and opened directly.
       button(
@@ -287,7 +290,19 @@ object Views {
         onClick --> { _ =>
           Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId))(_ => Store.refreshMatches())
         }
-      )
+      ),
+      // Only the creator's, and only while there is still something to call off. The engine is
+      // not told — its board stays playable — so the confirmation says what actually happens.
+      if (summary.isCreator && !summary.completed && !summary.cancelled)
+        button(
+          cls := "link",
+          "Cancel",
+          onClick --> { _ =>
+            if (dom.window.confirm("Cancel this match? It will stop counting here, but the game board stays open."))
+              Store.run(ApiClient.cancelMatch(summary.gameId, summary.matchId))(_ => Store.refreshMatches())
+          }
+        )
+      else emptyNode
     )
 
   // -------------------------------------------------------------------------

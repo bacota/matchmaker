@@ -11,12 +11,12 @@ class MatchRepoSpec extends PropertySuite {
     forAll(Generators.genString) { matchIdStr =>
       TestSession.resource
         .use { session =>
-          val gameRepo = new GameRepo[String](session)
           val matchRepo = new MatchRepo(session)
           for {
-            createdGame <- gameRepo.create(Generators.genGame().sample.get)
+            gameAndChallenge <- Generators.gameWithChallenge(session)
+            (createdGame, challengeId) = gameAndChallenge
             matchId = MatchId(matchIdStr)
-            m <- IO.pure(Generators.genMatch(createdGame.gameId, matchId).sample.get)
+            m <- IO.pure(Generators.genMatch(createdGame.gameId, matchId, challengeId).sample.get)
             created <- matchRepo.create(m)
             found <- matchRepo.read(createdGame.gameId, matchId)
           } yield found == Some(created)

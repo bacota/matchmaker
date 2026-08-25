@@ -10,16 +10,28 @@ import java.time.{Duration, Instant}
   * watch, which the engine issues only for a public match. All three are empty until the engine
   * has answered, which is the state a match is in for the moment between being written and the
   * create call returning.
+  *
+  * `challengeId` is the challenge this match was started from, which is never deleted and is
+  * therefore where the match's creator comes from: the challenge's challenger. Holding the
+  * challenge rather than copying its challenger into a column of its own means the two cannot
+  * drift apart, and it keeps the settings, message and time limit the match was made under
+  * readable beside the match itself.
+  *
+  * `completed` and `cancelled` are separate rather than one status, because they answer
+  * different questions. A completed match was played to an end the engine reported; a cancelled
+  * one was called off by its creator and has no result and never will. Both are over.
   */
 case class Match(
     gameId: GameId,
     matchId: MatchId,
+    challengeId: ChallengeId,
     description: String,
     completed: Boolean,
     start: Instant,
     timeLimit: Option[Duration],
     settings: String,
     isPublic: Boolean = false,
+    cancelled: Boolean = false,
     statusUrl: Option[String] = None,
     playUrl: Option[String] = None,
     publicUrl: Option[String] = None

@@ -1,6 +1,8 @@
 package com.vivi.matchmaker.persistence
 
+import cats.effect.IO
 import org.scalacheck.Gen
+import skunk.Session
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 
@@ -75,7 +77,7 @@ object Generators {
       state <- genString
     } yield Character(CharacterId(0), gameId, name, description, state, playerId)
 
-  def genMatch(gameId: GameId, matchId: MatchId): Gen[Match] =
+  def genMatch(gameId: GameId, matchId: MatchId, challengeId: ChallengeId): Gen[Match] =
     for {
       description <- genString
       completed <- Gen.oneOf(true, false)
@@ -87,7 +89,11 @@ object Generators {
       statusUrl <- Gen.option(genString.map("https://engine.example.com/status/" + _))
       playUrl <- Gen.option(genString.map("https://engine.example.com/play/" + _))
       publicUrl <- Gen.option(genString.map("https://engine.example.com/watch/" + _))
-    } yield Match(gameId, matchId, description, completed, start, timeLimit, "{}", isPublic, statusUrl, playUrl, publicUrl)
+      cancelled <- Gen.oneOf(true, false)
+    } yield Match(
+      gameId, matchId, challengeId, description, completed, start, timeLimit, "{}", isPublic, cancelled,
+      statusUrl, playUrl, publicUrl
+    )
 
   def genParticipant(
       gameId: GameId,
@@ -137,4 +143,31 @@ object Generators {
     } yield CharacterOpenChallenge(
       ChallengeId(0), challenger, message, numberOfPlayers.toShort, start, timeLimit, "{}", gameId, characterId, isPublic, gameRoleId
     )
+
+  /** A game, and a challenge in it, ready for a match to be started from.
+    *
+    * A match now has a mandatory foreign key to the challenge it came from, so a test that wants
+    * a match needs the whole chain — player, character, challenge — before it can write one. This
+    * builds the shortest one that satisfies the constraints, and hands back the two ids a match
+    * is made of.
+    */
+  def gameWithChallenge(session: Session[IO]): IO[(Game, ChallengeId)] =
+    for {
+      game <- new GameRepo[String](session).create(genGame().sample.get)
+      challengeId <- challengeIn(session, game)
+    } yield (game, challengeId)
+
+  /** A challenge in an existing game, with the player and character it needs. */
+  def challengeIn(session: Session[IO], game: Game): IO[ChallengeId] = {
+    val playerRepo = new PlayerRepo(session)
+    val characterRepo = new CharacterRepo[String](session)
+    val challengeRepo = new OpenChallengeRepo(session)
+    for {
+      player <- playerRepo.create(genPlayer.sample.get)
+      character <- characterRepo.create(genCharacter(game.gameId, Some(player.playerId)).sample.get)
+      challenge <- challengeRepo.create(
+        genOpenChallenge(player.playerId, game.gameId, character.characterId, game.roles.head.gameRoleId).sample.get
+      )
+    } yield challenge.challengeId
+  }
 }

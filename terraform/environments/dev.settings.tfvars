@@ -19,7 +19,7 @@ log_retention_days = 7
 // Turning it back on is therefore a decision that can be made again, on its merits — cold-start
 // latency against the other things a snapshot fixes in place — rather than one that is ruled out.
 // It is left off here because nothing has re-tested a restore against this function.
-lambda_snap_start = false
+lambda_snap_start = true
 
 // Off: advanced security is billed per monthly active user, and there is nothing in dev worth
 // protecting. Set to AUDIT to see the risk findings without paying for enforcement decisions.

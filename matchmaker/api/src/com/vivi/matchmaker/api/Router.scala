@@ -125,6 +125,11 @@ object Router {
       case ("POST", "games" :: gameId :: "matches" :: matchId :: "refresh" :: Nil) =>
         withGameId(gameId)(gid => ok(services.engine.refresh(gid, MatchId(matchId), caller)))
 
+      // Calls a match off. Only its creator may — the challenger of the challenge it was started
+      // from — which is why the challenge outlives the start.
+      case ("POST", "games" :: gameId :: "matches" :: matchId :: "cancel" :: Nil) =>
+        withGameId(gameId)(gid => ok(services.matches.cancel(gid, MatchId(matchId), caller)))
+
       // The game engine's two callbacks. Authorized on behalf of the game rather than a player:
       // X-External-Id carries the game's shared secret, as on the character-state route above.
       case ("POST", "games" :: gameId :: "matches" :: matchId :: "moves" :: Nil) =>

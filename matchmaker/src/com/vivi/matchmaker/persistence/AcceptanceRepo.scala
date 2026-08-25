@@ -212,15 +212,19 @@ class AcceptanceRepo(session: Session[IO]) {
           FROM acceptance a
           LEFT JOIN character_acceptance ca
                  ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.game_role_id = a.game_role_id
-          WHERE a.player_id = $playerId
+          JOIN open_challenge oc ON oc.game_id = a.game_id AND oc.challenge_id = a.challenge_id
+          WHERE a.player_id = $playerId AND oc.started_match_id IS NULL
           ORDER BY a.challenge_id"""
       .query(challengeId *: gameType *: gameId *: gameRoleId *: int8.opt)
 
   /** Every acceptance this player has outstanding.
     *
-    * An acceptance survives until the challenge becomes a match or the player backs out, so this
-    * is what "what have I said yes to?" means — the UI needs it to offer backing out without
-    * first knowing which challenge to look under. Scoped by player_id alone rather than the full
+    * "Outstanding" means the player has not backed out and the challenge has not been started.
+    * The acceptance rows of a started challenge are kept — they are the roster the match was
+    * made from, and the challenge that owns them is kept too — but they are no longer anything
+    * the player can act on, so they are excluded here rather than lingering in the UI's list of
+    * things to back out of. This is what "what have I said yes to?" means — the UI needs it to
+    * offer backing out without first knowing which challenge to look under. Scoped by player_id alone rather than the full
     * composite key deliberately: a player may have acceptances across many games, and listing
     * "everything I've accepted" is exactly the case where the game isn't known ahead of time.
     */

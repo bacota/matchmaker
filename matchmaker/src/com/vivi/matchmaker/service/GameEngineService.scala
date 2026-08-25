@@ -35,8 +35,8 @@ class GameEngineService[T](
     callbackBaseUrl: Option[String] = None
 )(using codec: TextCodec[T]) {
 
-  /** Turns a challenge into a match: creates the game in the engine, writes the match and one
-    * participant per acceptance, and removes the challenge and its acceptances.
+  /** Turns a challenge into a match: creates the game in the engine, and writes the match and one
+    * participant per acceptance.
     *
     * Only the challenger may start their own challenge, and only once at least `minPlayers` have
     * accepted — which is why this is an explicit action rather than something that happens on the
@@ -53,10 +53,14 @@ class GameEngineService[T](
     * answer, and no database transaction can roll the engine's game back anyway.
     *
     * The order is: write the match and its participants, ask the engine to create the game, then
-    * record the urls it returns and retire the challenge. Writing first is what lets the engine
-    * be given real participant ids, which is how its callbacks name a seat. If the engine call
-    * fails, the half-made match is deleted again and the challenge is left standing, so the
-    * challenger can simply try again.
+    * record the urls it returns. Writing first is what lets the engine be given real participant
+    * ids, which is how its callbacks name a seat. If the engine call fails, the half-made match
+    * is deleted again and the claim released, so the challenger can simply try again.
+    *
+    * The challenge itself is never deleted, and its claim is never released once the start has
+    * succeeded. It is what the match points at, and its challenger is the match's creator — see
+    * `Match.challengeId`. A started challenge is excluded from the open-challenge listings and
+    * refuses further acceptances, which is what "spent" now means in place of "gone".
     */
   def start(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Match] =
     sessionPool.use { session =>
@@ -77,10 +81,11 @@ class GameEngineService[T](
             // checks below, and the challenge is what both would be reading.
             //
             // The lock is necessary but not sufficient. It is released when this transaction
-            // commits, which is well before the challenge is deleted at the end of the whole
-            // operation — so without the claim below, the second click would simply wait here,
-            // then re-read a challenge that still looked startable and make a second match.
-            // startedMatchId is the state the lock is guarding.
+            // commits, which is well before the whole operation finishes — so without the claim
+            // below, the second click would simply wait here, then re-read a challenge that
+            // still looked startable and make a second match. startedMatchId is the state the
+            // lock is guarding, and the unique index on match (game_id, challenge_id) is the
+            // database's own last word on it.
             locked <- challengeRepo.readForUpdate(gameId, challengeId).flatMap {
               case Some(l) => IO.pure(l)
               case None    => IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
@@ -118,6 +123,8 @@ class GameEngineService[T](
             newMatch = Match(
               gameId = gameId,
               matchId = matchId,
+              // The match's creator, by reference: whoever this challenge's challenger is.
+              challengeId = challengeId,
               description = challenge.message,
               completed = false,
               start = challenge.start.getOrElse(Instant.now()),
@@ -147,48 +154,21 @@ class GameEngineService[T](
           publicUrl = response.publicUrl
         )
         // Past this point the engine's game exists, so there is no undoing the start — the only
-        // way out is forward. A transient database error here must not be allowed to leave the
-        // challenge claimed forever, because a claim blocks starting, accepting, deleting and
-        // backing out alike.
-        started <- retrying(finish(session, gameId, challengeId, withUrls).as(withUrls))
-          .onError(_ => retire(session, gameId, challengeId))
+        // way out is forward. Failing here leaves the challenge claimed and the match urlless,
+        // which is the recoverable state `refresh` reports: the claim is now the permanent mark
+        // of a spent challenge rather than something that has to be cleaned up.
+        started <- retrying(finish(session, withUrls).as(withUrls))
       } yield started
     }
 
-  /* The last step of a start: record the urls the engine gave back and retire the challenge that
-   * has now become a match. One transaction, because a challenge left standing beside its own
-   * match would let a second match be started from the same acceptances. */
-  private def finish(
-      session: skunk.Session[IO],
-      gameId: GameId,
-      challengeId: ChallengeId,
-      withUrls: Match
-  ): IO[Unit] =
-    session.transaction.use { _ =>
-      for {
-        _ <- new MatchRepo(session).update(withUrls)
-        _ <- new AcceptanceRepo(session).deleteAllForChallenge(gameId, challengeId)
-        _ <- new OpenChallengeRepo(session).delete(gameId, challengeId)
-      } yield ()
-    }
-
-  /* Retires the challenge without recording the urls, when [[finish]] has failed for good.
+  /* The last step of a start: record the urls the engine gave back.
    *
-   * The challenge is spent either way — its game exists in the engine — so the one thing that
-   * must not happen is leaving it claimed, which would block starting, accepting, deleting and
-   * backing out of it for good. Releasing the claim instead would be worse than the disease: the
-   * challenge would look startable again and a second start would create a second game in the
-   * engine, which is the very thing the claim exists to prevent. So the challenge is retired,
-   * and what is left behind is an urlless match that `refresh` reports as having no status url —
-   * the same recoverable state a failed `undo` leaves. Errors are swallowed for the reason they
-   * are in `undo`: the caller is already being told the start failed. */
-  private def retire(session: skunk.Session[IO], gameId: GameId, challengeId: ChallengeId): IO[Unit] =
-    session.transaction
-      .use { _ =>
-        new AcceptanceRepo(session).deleteAllForChallenge(gameId, challengeId) *>
-          new OpenChallengeRepo(session).delete(gameId, challengeId)
-      }
-      .handleError(_ => ())
+   * One statement now. It used to delete the challenge and its acceptances as well, in a
+   * transaction, because a challenge left standing beside its own match could have been started
+   * a second time — that is now the claim's job, and keeping the challenge is what gives the
+   * match a creator. */
+  private def finish(session: skunk.Session[IO], withUrls: Match): IO[Unit] =
+    new MatchRepo(session).update(withUrls)
 
   /* Retries a database action a few times before giving up. Used only for the work after the
    * engine call, where failing is not an option that leaves a sane state behind — everywhere
@@ -246,6 +226,12 @@ class GameEngineService[T](
           _ <- IO.raiseWhen(existing.completed)(
             ValidationError(s"match ${matchId.value} is already completed")
           )
+          // The engine has not been told the match was called off — there is no exchange that
+          // would tell it — so it will go on reporting moves made on a board matchmaker no
+          // longer recognises. Refusing them is what makes a cancel stick.
+          _ <- IO.raiseWhen(existing.cancelled)(
+            ConflictError(s"match ${matchId.value} was cancelled and is no longer accepting moves")
+          )
           mover <- requireParticipant(participantRepo, gameId, matchId, moved)
           _ <- participantRepo.update(withTurn(mover, pending = false, due = None))
           _ <- next.traverse { id =>
@@ -261,6 +247,11 @@ class GameEngineService[T](
     *
     * Idempotent in the only way that matters for a callback that may be retried: a match already
     * completed is left alone rather than double-writing its results.
+    *
+    * A cancelled match is refused rather than ignored. Its creator called it off, so a result
+    * arriving afterwards is a real disagreement between the two systems — the engine let the
+    * game finish on a board matchmaker had stopped following — and saying so is more useful than
+    * silently discarding it.
     */
   def recordResults(
       gameId: GameId,
@@ -277,6 +268,9 @@ class GameEngineService[T](
         for {
           _ <- authorizeGame(gameRepo, gameId, callerExternalId)
           existing <- requireMatchForUpdate(matchRepo, gameId, matchId)
+          _ <- IO.raiseWhen(existing.cancelled)(
+            ConflictError(s"match ${matchId.value} was cancelled and can have no result")
+          )
           _ <-
             if (existing.completed) IO.unit
             else
@@ -302,6 +296,10 @@ class GameEngineService[T](
     * Open to any participant in the match — it changes nothing a player could not already see,
     * and it exists precisely because a callback can go missing. A match with no `statusUrl` has
     * not been created in the engine, and there is nothing to ask.
+    *
+    * A cancelled match is returned as it stands, without asking the engine. The engine would
+    * answer — its game is still there — and applying what it said would undo the cancel one turn
+    * at a time.
     */
   def refresh(gameId: GameId, matchId: MatchId, callerExternalId: String): IO[Match] =
     sessionPool.use { session =>
@@ -326,10 +324,10 @@ class GameEngineService[T](
         }
         (existing, statusUrl) = prepared
 
-        // Already finished: the engine has nothing left to tell us, and asking would be a network
-        // call per page view on a completed match.
+        // Already over: the engine has nothing left to tell us that matchmaker would act on, and
+        // asking would be a network call per page view.
         result <-
-          if (existing.completed) IO.pure(existing)
+          if (existing.completed || existing.cancelled) IO.pure(existing)
           else
             engine.status(statusUrl).flatMap { status =>
               session.transaction.use { _ =>

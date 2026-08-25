@@ -139,6 +139,19 @@ class OpenChallengeRepo(session: Session[IO]) {
   def readForUpdate(gameId: GameId, id: ChallengeId): IO[Option[LockedChallenge]] =
     session.option(selectChallengeForUpdate)((gameId, id)).map(_.map(LockedChallenge.apply.tupled))
 
+  private val selectChallenger: Query[(GameId, ChallengeId), PlayerId] =
+    sql"""SELECT challenger FROM open_challenge
+          WHERE game_id = $gameId AND challenge_id = $challengeId""".query(playerId)
+
+  /** Just the challenger of a challenge.
+    *
+    * Separate from [[read]] because that one joins the challenger's acceptance to read the role
+    * they are playing, and the callers of this are asking a different question: a match's
+    * creator is its challenge's challenger, and that is true whatever became of the acceptances.
+    */
+  def challengerOf(gameId: GameId, id: ChallengeId): IO[Option[PlayerId]] =
+    session.option(selectChallenger)((gameId, id))
+
   private val claimChallengeForStart: Command[(MatchId, GameId, ChallengeId)] =
     sql"""UPDATE open_challenge SET started_match_id = $matchId
           WHERE game_id = $gameId AND challenge_id = $challengeId""".command
@@ -208,14 +221,18 @@ class OpenChallengeRepo(session: Session[IO]) {
           LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
           JOIN acceptance a ON a.game_id = oc.game_id AND a.challenge_id = oc.challenge_id
                            AND a.player_id = oc.challenger
-          WHERE oc.game_id = $gameId
+          WHERE oc.game_id = $gameId AND oc.started_match_id IS NULL
           ORDER BY oc.create_date DESC"""
       .query(
         challengeId *: gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *:
           gameRoleId *: int8.opt *: int8 *: text
       )
 
-  /** Every open challenge for a game, newest first, each with how many players have accepted it.
+  /** Every *open* challenge for a game, newest first, each with how many players have accepted it.
+    *
+    * A challenge that has been started is excluded: it is no longer open, and since starting one
+    * no longer deletes it, it would otherwise sit in the list forever offering a Start that would
+    * be refused.
     *
     * The count and the claimed roles come back with the challenge rather than from a call per
     * challenge: the UI needs both for every row it draws — the count to know whether a challenge

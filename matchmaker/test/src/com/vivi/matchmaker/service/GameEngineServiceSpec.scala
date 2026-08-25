@@ -11,7 +11,7 @@ import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, OpenChallengeRepo, ParticipantRepo, ResultRepo, TestSession}
+import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, GameRepo, OpenChallengeRepo, ParticipantRepo, ResultRepo, TestSession}
 
 /** The game-engine interaction, end to end against the real database with a stubbed engine.
   *
@@ -306,13 +306,18 @@ class GameEngineServiceSpec extends PropertySuite {
           backedOut <- services.acceptances
             .delete(fixture.game.gameId, challenge.challengeId, other.playerId, otherExternalId)
             .attempt
-          // Nothing the claim refused may have taken effect.
-          roster <- services.acceptances.mine(otherExternalId)
+          // Nothing the claim refused may have taken effect. Read from the repository rather than
+          // from `mine`, which now hides a claimed challenge's acceptances: they are kept, but
+          // they are no longer anything the player can act on, so the question here is only
+          // whether the row survived the refused back-out.
+          roster <- TestSession.resource.use { session =>
+            new AcceptanceRepo(session).listForChallenge(fixture.game.gameId, challenge.challengeId)
+          }
         } yield restarted.left.exists(_.isInstanceOf[ConflictError]) &&
           accepted.left.exists(_.isInstanceOf[ConflictError]) &&
           deleted.left.exists(_.isInstanceOf[ConflictError]) &&
           backedOut.left.exists(_.isInstanceOf[ConflictError]) &&
-          roster.exists(_.challengeId == challenge.challengeId)
+          roster.exists((acceptance, _, _) => acceptance.playerId == other.playerId)
         result.timeout(15.seconds).unsafeRunSync()
     }
   }
@@ -357,11 +362,11 @@ class GameEngineServiceSpec extends PropertySuite {
     )).handleError(_ => ()))
   }
 
-  // The engine's game exists by then, so the start cannot be undone — but the claim must not
-  // outlive the failure either, or the challenge is blocked from being started, accepted, deleted
-  // or backed out of for good. The challenge is retired instead, which is the one compensation
-  // that cannot produce a second game in the engine.
-  property("a database failure after the engine call still retires the challenge, rather than stranding it") {
+  // The engine's game exists by then, so the start cannot be undone, and the claim stays: a
+  // challenge whose game exists must never be startable again, and the claim is now the permanent
+  // mark of that rather than something to be cleaned up. What is left is the documented
+  // recoverable state — a match with no urls, which `refresh` can fill in.
+  property("a database failure after the engine call leaves the challenge spent, not startable again") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
       val services = TestServices.servicesWith(StubEngine())
       val result = refusingMatchUpdates.use { _ =>
@@ -370,8 +375,9 @@ class GameEngineServiceSpec extends PropertySuite {
           // The message becomes the match's description, which is what the trigger keys on.
           challenge <- services.challenges.create(challengeFor(fixture, message = "explode"), externalId)
           attempt <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
-          // No claim left standing, because no challenge left standing.
+          // Claimed, so no longer offered as an open challenge and no longer startable.
           remaining <- services.challenges.listByGame(fixture.game.gameId, externalId)
+          restart <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
           acceptances <- services.acceptances.mine(externalId)
           matches <- services.matches.active(externalId)
           // What is left behind is the documented recoverable state: a match with no urls.
@@ -380,7 +386,10 @@ class GameEngineServiceSpec extends PropertySuite {
             case None    => IO.pure(None)
           }
         } yield attempt.isLeft &&
+          restart.isLeft &&
           remaining.forall(_.challenge.challengeId != challenge.challengeId) &&
+          // The acceptances are kept with the challenge, but stop being things the player can
+          // act on — nothing is left in their list to back out of.
           acceptances.forall(_.challengeId != challenge.challengeId) &&
           matches.size == 1 &&
           stranded.exists(_.playUrl.isEmpty)

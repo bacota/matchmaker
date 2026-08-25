@@ -280,6 +280,8 @@ locals {
     "POST /challenges/{gameId}/{challengeId}/start",
     "GET /games/{gameId}/matches/{matchId}",
     "POST /games/{gameId}/matches/{matchId}/refresh",
+    # Calling a match off, which only its creator may do.
+    "POST /games/{gameId}/matches/{matchId}/cancel",
   ]
 
   /* The game engine's callbacks, which are not player actions at all: a game engine tells
