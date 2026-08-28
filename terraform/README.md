@@ -395,13 +395,35 @@ already in `auto_verified_attributes`, so the code goes to an address Cognito ha
 Three other things have to line up, and all three are easy to miss:
 
 - **`ALLOW_USER_AUTH` in the client's `explicit_auth_flows`.** This is the choice-based flow, where
-  the client asks which factors are available and the player picks. Without it the pool accepts
-  `EMAIL_OTP` and nothing ever offers it.
+  the client names the factor to try. Without it the pool accepts `EMAIL_OTP` and nothing ever
+  offers it — and the UI's own sign-in form cannot call `InitiateAuth` at all.
 - **`managed_login_version = 2` on the domain.** The classic hosted UI has no passwordless support
-  at all, so this is required rather than cosmetic — but it does change how the sign-in pages look.
+  at all, so this is required rather than cosmetic — but it does change how the sign-up and
+  password-reset pages look.
 - **An `aws_cognito_managed_login_branding` record**, or managed login will not render. Cognito's
   own defaults are used (`use_cognito_provided_values = true`); swap in a `settings` document to
   theme it.
+
+### Why sign-in does not use the hosted pages
+
+Managed login decides between the pool's first-auth factors itself. With `EMAIL_OTP` enabled it
+puts the emailed code forward, and there is no pool setting, client setting, or branding field that
+reorders them — the order of `allowed_first_auth_factors` is not read that way.
+
+So the UI signs in on its own page, calling `InitiateAuth` with `AuthFlow = USER_AUTH` and
+`PREFERRED_CHALLENGE = PASSWORD`. The password comes first and the code stays available behind
+"Email me a code instead". **Sign-up and password reset still redirect to the hosted pages**, which
+come back through the authorization code grant above; those are several screens each and Cognito
+already has them.
+
+Two consequences worth knowing:
+
+- The UI calls `https://cognito-idp.<region>.amazonaws.com` directly, so the region is now part of
+  the generated `config.js` (`module.ui`'s `cognito_region`).
+- The password is typed into the application rather than into Cognito's page. Script running on the
+  UI's origin could read it, where before it could only steal a session. The page loads no
+  third-party script; a `Content-Security-Policy` on the distribution is what would keep that
+  guarantee from resting on review alone, and there is not one yet.
 
 Nothing changes in the application. The browser still goes to `/login`, still gets an authorization
 code back, and still exchanges it with PKCE — which factor the player chose is entirely Cognito's

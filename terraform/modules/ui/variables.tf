@@ -65,6 +65,15 @@ variable "user_pool_client_id" {
   type        = string
 }
 
+# The UI calls the user pools API itself now — the sign-in form is on the page, so that the
+# password is asked for before the emailed code — and that endpoint is per-region:
+# https://cognito-idp.<region>.amazonaws.com. Passed rather than read from a provider data source
+# so this module stays a pure function of its inputs.
+variable "cognito_region" {
+  description = "Region of the Cognito user pool, written into the generated config.js as the user pools API endpoint."
+  type        = string
+}
+
 variable "price_class" {
   description = <<-EOT
     CloudFront price class, which decides which edge locations serve the site.

@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.ui
 
 import scala.scalajs.js
+import scala.util.Try
 import org.scalajs.dom
 
 /** Where this build of the UI points: the API, and the Cognito pool in front of it.
@@ -17,6 +18,7 @@ case class Config(
     apiEndpoint: String,
     hostedLoginUrl: String,
     clientId: String,
+    region: String,
     redirectUri: String,
     authMode: String,
     localExternalId: String
@@ -76,6 +78,12 @@ object Config {
         .getOrElse("")
         .stripSuffix("/"),
       clientId = (if (mode == HeaderAuth) optional("clientId") else Some(field("clientId"))).getOrElse(""),
+      // Where the user pools API lives, for the sign-in calls this UI makes itself. Falls back to
+      // the region embedded in the hosted login URL, so a config.js written before this field
+      // existed still works rather than failing at the first sign-in.
+      region = optional("region")
+        .orElse(optional("hostedLoginUrl").flatMap(regionOf))
+        .getOrElse(if (mode == HeaderAuth) "" else throw new IllegalStateException("matchmakerConfig.region is not set")),
       // Defaults to wherever the page is served from, which is what makes a local build work
       // against the dev pool without editing anything — provided this exact URL is one of the
       // pool's callback_urls, which Cognito matches literally.
@@ -86,6 +94,16 @@ object Config {
       localExternalId = optional("localExternalId").getOrElse("local-dev-1")
     )
   }
+
+  /** The region out of `https://<prefix>.auth.<region>.amazoncognito.com`.
+    *
+    * Only the Cognito-provided domain has this shape. A pool behind a custom domain does not, so
+    * this returns `None` and `region` has to be configured explicitly.
+    */
+  private def regionOf(hostedLoginUrl: String): Option[String] =
+    Try(new dom.URL(hostedLoginUrl).host.split('.')).toOption.collect {
+      case parts if parts.length >= 4 && parts(1) == "auth" && parts.last == "com" => parts(2)
+    }
 
   private def defaultRedirectUri: String = {
     val location = dom.window.location

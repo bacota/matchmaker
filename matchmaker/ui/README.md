@@ -100,13 +100,31 @@ Two things must line up or sign-in fails with an unhelpful error:
 Serving this over plain http from any other host will not work, and `Pkce` says so rather than
 failing obscurely.
 
+## Signing in
+
+Signing in happens **on this page**, not on Cognito's. Managed login puts the emailed one-time code
+forward whenever `EMAIL_OTP` is an allowed first factor, and nothing in the pool configuration
+reorders that. `SignIn` calls `InitiateAuth` with `AuthFlow = USER_AUTH` and
+`PREFERRED_CHALLENGE = PASSWORD` instead, so the password is asked for first and "Email me a code
+instead" is a second option rather than the default.
+
+Everything else still goes to the hosted pages: **sign-up** and **password reset** redirect to
+`/signup` and `/forgotPassword`, and come back through the authorization code grant in
+`Auth.completeSignIn`. Those flows are several screens each, and Cognito already has them.
+
+The trade is that the password is typed into this application rather than into Cognito's page, so
+script on this origin could read it — not merely steal a session. This page loads no third-party
+script, which is what holds that line.
+
 ## How it is put together
 
 | File | |
 | --- | --- |
-| `Config.scala` | the three public values from terraform, read from `window.matchmakerConfig` |
-| `Pkce.scala` | verifier, S256 challenge, state |
-| `Auth.scala` | hosted-login redirect, code exchange, token storage, expiry |
+| `Config.scala` | the public values from terraform, read from `window.matchmakerConfig` |
+| `Pkce.scala` | verifier, S256 challenge, state — for the hosted sign-up and reset redirects |
+| `CognitoIdp.scala` | `InitiateAuth`, `RespondToAuthChallenge`, `RevokeToken` against the user pools API |
+| `SignIn.scala` | the sign-in form and the challenge run behind it |
+| `Auth.scala` | token storage, refresh, sign-out, and the redirects out to the hosted pages |
 | `ApiClient.scala` | one method per route, bearer token attached, non-2xx as a failed `Future` |
 | `Store.scala` | the `Var`s the views read, and the reloads |
 | `Main.scala` | entry point and every view |
@@ -121,7 +139,7 @@ beyond the standard library and `java.time`.
 
 | `ui.txt` | |
 | --- | --- |
-| login through hosted login using PKCE | `Auth`, `Pkce` |
+| login through hosted login using PKCE | `Auth`, `Pkce` — now sign-up and password reset only; signing in is `SignIn`, see below |
 | self registration triggers a player set up | `Views.registration`, shown when `GET /me` answers 403 |
 | list of matches with a turn due | `Views.dueSection` |
 | button opening matches the player is in | `Views.myMatchesSection` |
