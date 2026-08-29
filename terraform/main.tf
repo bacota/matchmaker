@@ -127,6 +127,7 @@ module "ui" {
   api_endpoint        = module.api.api_endpoint
   hosted_login_url    = module.api.hosted_login_url
   user_pool_client_id = module.api.user_pool_client_id
+  cognito_region      = var.region
 }
 
 /* A game engine to develop and test the engine interaction against: two-player tic-tac-toe.

@@ -15,8 +15,9 @@ object Main {
 
   @JSExportTopLevel("main")
   def main(): Unit = {
-    // Must run before anything reads the token: this is the page load that carries the
-    // authorization code, and until it has been redeemed there is no session.
+    // Must run before anything reads the token: this may be the page load that carries an
+    // authorization code back from the hosted sign-up or password-reset pages, and until it has
+    // been redeemed there is no session. An ordinary load has no code and falls straight through.
     if (Config.current.headerAuth) {
       // Nothing to sign in to: the identity is whatever the config says. Straight to the app.
       Store.signedIn.set(true)
@@ -81,17 +82,11 @@ object Views {
       }
     )
 
-  private def signedOutBody: HtmlElement =
-    div(
-      cls := "card",
-      p("Sign in to see your matches. New players can create an account from the same page."),
-      button(
-        "Sign in",
-        // Navigates away, so there is nothing to do on success; only a failure to *start* the
-        // flow (no crypto.subtle, say) has anywhere to be reported.
-        onClick --> (_ => Auth.signIn().failed.foreach(Store.report))
-      )
-    )
+  /** The sign-in form itself, not a button that navigates to one: signing in happens on this
+    * page now, so that the password is asked for first. Sign-up and password reset are still
+    * links out to the hosted pages, from inside `SignIn.view`.
+    */
+  private def signedOutBody: HtmlElement = SignIn.view
 
   /** Either registration or the application proper, decided by whether this Cognito identity has
     * a player. `ui.txt`: self-registration in Cognito triggers a player set-up.

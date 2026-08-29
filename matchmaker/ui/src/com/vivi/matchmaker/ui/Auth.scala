@@ -7,11 +7,26 @@ import scala.util.{Failure, Success, Try}
 import org.scalajs.dom
 import org.scalajs.dom.{HttpMethod, RequestInit, URLSearchParams}
 
-/** Cognito hosted login, authorization code grant with PKCE.
+/** Sign-in against the Cognito user pools API, with the hosted pages kept for sign-up and reset.
   *
-  * The password is typed into Cognito's own pages, never into this application — which is the
-  * reason to use hosted login rather than a form here. What comes back is an ID token, which
-  * every API call carries and which API Gateway's JWT authorizer verifies.
+  * Two ways in, and the split is deliberate:
+  *
+  *   - *Signing in* is done here, by `SignIn` driving `CognitoIdp.initiateUserAuth`. That is what
+  *     buys the thing managed login will not do: with `EMAIL_OTP` enabled on the pool, managed
+  *     login puts the emailed code forward and there is no setting that reorders it. Naming
+  *     `PREFERRED_CHALLENGE` ourselves asks for the password first and leaves the code as a
+  *     second option.
+  *   - *Signing up* and *resetting a password* still redirect to the hosted pages
+  *     (`hostedSignUp`, `hostedForgotPassword`), which come back through the authorization code
+  *     grant below. Those flows are several screens each and Cognito already has them.
+  *
+  * The cost of the first half is that the password is typed into this application rather than
+  * into Cognito's own page, so script running on this origin could read it — not merely steal a
+  * session, as before. What holds that line is that this page loads no third-party script; a CSP
+  * on the distribution is what would keep it held.
+  *
+  * What either route ends with is an ID token, which every API call carries and which API
+  * Gateway's JWT authorizer verifies.
   *
   * The tokens are kept in `sessionStorage`, not `localStorage`: they are cleared when the tab
   * closes, and are not shared with other tabs. Neither is proof against XSS — script running on
@@ -75,33 +90,27 @@ object Auth {
 
   /** Exchanges the refresh token for a new ID token.
     *
+    * Through `REFRESH_TOKEN_AUTH` on the user pools API, not the hosted UI's `/oauth2/token`: a
+    * refresh token minted by `InitiateAuth` was not issued against an OAuth grant and the token
+    * endpoint will not redeem it. Tokens obtained from the hosted sign-up flow *would* refresh at
+    * either, so using the IdP call for both is what keeps one code path here.
+    *
     * `None`, with the stored session cleared, means the session is genuinely over (see
     * `endsSession`). A failed future means this attempt did not get through and the session is
-    * still intact. Cognito does not normally return a new refresh token here; one is stored if
-    * it does.
+    * still intact. Cognito does not return a new refresh token here; one is stored if it does.
     */
-  private def refresh(token: String): Future[Option[String]] = {
-    val form = new URLSearchParams()
-    form.set("grant_type", "refresh_token")
-    form.set("client_id", Config.current.clientId)
-    form.set("refresh_token", token)
-
-    postToken(form)
-      .flatMap { body =>
-        // A 200 carrying no id_token is as much a dead end as a rejection: returning None while
-        // leaving the refresh token stored would refresh again on the next call, forever, and
-        // send every request unauthenticated in between.
-        Future.fromTry(idTokenOf(body)).map { fresh =>
-          store(body)
-          Some(fresh)
-        }
+  private def refresh(token: String): Future[Option[String]] =
+    CognitoIdp
+      .refresh(token)
+      .map { tokens =>
+        storeTokens(tokens)
+        Some(tokens.idToken)
       }
       .recoverWith {
         case error if endsSession(error) =>
           clearSession()
           Future.successful(None)
       }
-  }
 
   /** Whether a failed refresh means the session itself is over, rather than that this attempt did
     * not get through.
@@ -113,18 +122,31 @@ object Auth {
     */
   private def endsSession(error: Throwable): Boolean = error match {
     // The refresh token is expired, revoked, or signed out elsewhere. Nothing to retry with.
-    case TokenError(400, body) => Try(ujson.read(body)("error").str).toOption.contains("invalid_grant")
+    // Cognito answers all three with NotAuthorizedException, and the user pool client has
+    // `prevent_user_existence_errors`, so it is also what a deleted user comes back as.
+    case CognitoIdp.IdpError("NotAuthorizedException", _) => true
+    // Cognito understood the request and refused it for some other reason — a disabled user, say.
+    // Retrying will not change the answer.
+    case _: CognitoIdp.IdpError => true
     // A 200 with no usable token in it. Retrying would loop, so this ends the session too.
     case _: MalformedTokenResponse => true
-    case _                         => false
+    // IdpUnavailable and anything else: this attempt did not get through. The session survives.
+    case _ => false
   }
 
-  /** Sends the browser to the hosted UI. Does not return: the page navigates away.
+  /** Sends the browser to one of the hosted pages. Does not return: the page navigates away.
     *
-    * `/login` rather than `/oauth2/authorize` so the user lands on the sign-in page with a
-    * sign-up link, which is what self-registration needs.
+    * Only sign-up and password reset go through here now — signing in is `SignIn`, on this page.
+    * Both come back to `redirectUri` with an authorization code, so both need PKCE set up first,
+    * and both land in `completeSignIn` on the way back: a player who has just confirmed a sign-up
+    * or set a new password arrives already signed in, which is the point of sending them to a
+    * page that can do that rather than back to the sign-in form.
     */
-  def signIn(): Future[Unit] = {
+  def hostedSignUp(): Future[Unit] = hosted("signup")
+
+  def hostedForgotPassword(): Future[Unit] = hosted("forgotPassword")
+
+  private def hosted(page: String): Future[Unit] = {
     val verifier = Pkce.newVerifier()
     val state = Pkce.newState()
 
@@ -143,20 +165,36 @@ object Auth {
       query.set("code_challenge_method", "S256")
       query.set("state", state)
 
-      dom.window.location.href = s"${Config.current.hostedLoginUrl}/login?${query.toString}"
+      dom.window.location.href = s"${Config.current.hostedLoginUrl}/$page?${query.toString}"
     }
   }
 
+  /** Records the tokens from a completed `InitiateAuth` run. */
+  def storeTokens(tokens: CognitoIdp.Tokens): Unit = {
+    dom.window.sessionStorage.setItem(TokenKey, tokens.idToken)
+    // Absent on a refresh, where the token already stored is still the right one.
+    tokens.refreshToken.foreach(token => dom.window.sessionStorage.setItem(RefreshKey, token))
+  }
+
+  /** Ends the session, here and at Cognito.
+    *
+    * Revoking is what makes this more than clearing storage: the ID token stays valid until it
+    * expires whatever this page does, but revoking the refresh token stops the session being
+    * extended past that. It is fire-and-forget — a revoke that does not get through must not
+    * leave the user still apparently signed in on a page they asked to leave — so the local
+    * session is cleared first and the failure is swallowed.
+    *
+    * There is no redirect to the hosted `/logout` any more. That existed to end the *hosted UI's*
+    * own browser session, and signing in here never creates one. It is still worth a thought for
+    * a player who used the hosted sign-up page: that visit did leave a Cognito session cookie,
+    * and it is what `hostedSignUp` would silently reuse. It expires on its own, and reaching it
+    * requires clicking sign-up again, so it is left alone rather than redirecting every sign-out
+    * away from the page.
+    */
   def signOut(): Unit = {
+    val token = refreshToken
     clearSession()
-
-    val query = new URLSearchParams()
-    query.set("client_id", Config.current.clientId)
-    query.set("logout_uri", Config.current.redirectUri)
-
-    // Ends the Cognito session too. Clearing only this tab's storage would leave the hosted UI
-    // signed in, so the next sign-in would silently reuse the same account.
-    dom.window.location.href = s"${Config.current.hostedLoginUrl}/logout?${query.toString}"
+    token.foreach(t => CognitoIdp.revoke(t).failed.foreach(_ => ()))
   }
 
   def clearSession(): Unit = {

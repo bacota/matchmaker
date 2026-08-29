@@ -42,6 +42,10 @@ resource "aws_cognito_user_pool" "users" {
    * in. PASSWORD is kept alongside it, so this adds a way in rather than replacing one — existing
    * players keep their passwords, and a player who never sets one never needs to invent it.
    *
+   * The order here does not decide what a player is asked for first; nothing reads it that way.
+   * The UI decides, per sign-in attempt, by naming PREFERRED_CHALLENGE on InitiateAuth — see
+   * ALLOW_USER_AUTH below.
+   *
    * Suits this application specifically: email is already the sign-in identifier and is already
    * verified (`auto_verified_attributes` below), so the OTP is delivered to an address Cognito has
    * confirmed the player controls.
@@ -127,8 +131,10 @@ resource "aws_cognito_user_pool_domain" "hosted_login" {
   user_pool_id = aws_cognito_user_pool.users.id
 
   # Managed login (branding version 2) rather than the classic hosted UI. Not a cosmetic choice:
-  # the classic pages have no passwordless support at all, so EMAIL_OTP would be enabled on the
-  # pool and unreachable from the browser. This does change how the sign-in pages look.
+  # the classic pages have no passwordless support at all. Sign-in no longer goes through these
+  # pages — the UI has its own form, so that the password is asked for before the emailed code —
+  # but sign-up and password reset still do, and a player who signs up here must be able to use
+  # EMAIL_OTP afterwards.
   managed_login_version = 2
 }
 
@@ -187,13 +193,24 @@ resource "aws_cognito_user_pool_client" "app" {
   prevent_user_existence_errors = "ENABLED"
 
   explicit_auth_flows = [
+    # The UI refreshes through InitiateAuth's REFRESH_TOKEN_AUTH rather than the hosted UI's
+    # /oauth2/token: a refresh token minted by InitiateAuth was not issued against an OAuth grant,
+    # and the token endpoint will not redeem it.
     "ALLOW_REFRESH_TOKEN_AUTH",
-    # No USER_PASSWORD_AUTH: passwords are typed into the hosted UI, never into this application,
-    # which is the reason to use hosted login at all.
+    # No USER_PASSWORD_AUTH. The UI's own sign-in form uses USER_AUTH's PASSWORD factor, which
+    # this flag does not gate, so enabling it would only add a second way in that nothing uses.
     "ALLOW_USER_SRP_AUTH",
-    # The choice-based flow: the client asks which factors are available and the player picks one.
-    # This is what surfaces "email me a code" as an option — without it the pool would accept
-    # EMAIL_OTP and nothing would ever offer it.
+    /* The choice-based flow, and the one the UI actually signs in with.
+     *
+     * It lets the *client* name the factor to try first (PREFERRED_CHALLENGE). That is the whole
+     * reason the UI has a sign-in form of its own: managed login decides between the pool's
+     * first-auth factors itself, puts the emailed code forward, and offers no setting that
+     * reorders it. Asking for PASSWORD explicitly is what makes the password the default and the
+     * code the alternative.
+     *
+     * Sign-up and password reset still go to the hosted pages, so managed login is not bypassed
+     * entirely — see matchmaker/ui/src/com/vivi/matchmaker/ui/Auth.scala.
+     */
     "ALLOW_USER_AUTH",
   ]
 

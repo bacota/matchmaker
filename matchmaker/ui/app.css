@@ -203,3 +203,50 @@ button.toggle {
   padding: 0.4rem 0.75rem;
   font-size: 0.85rem;
 }
+
+/* The sign-in form.
+   Narrow on purpose: it is two short fields, and a full-width form on a wide window reads as a
+   data entry screen rather than a sign-in. */
+.sign-in {
+  max-width: 22rem;
+}
+
+/* `.card label` above lays a label and its control on one line, which is right for the checkbox
+   it was written for and wrong here — a caption beside a full-width text box wraps immediately.
+   These stack instead. */
+.sign-in label {
+  display: block;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.sign-in label input {
+  margin-top: 0.2rem;
+}
+
+.sign-in h2 {
+  margin-top: 0;
+}
+
+/* Everything that is not the primary action: the OTP route, reset, sign-up. Set apart and
+   below, so the password path stays the obvious one. */
+.sign-in .alternatives {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  margin-top: 0.9rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.sign-in .alternatives button.link {
+  padding-left: 0;
+}
+
+/* `button.link + button.link` spaces adjacent links horizontally, which is what the match rows
+   want. These are stacked, so that margin only indents the second one onwards. */
+.sign-in .alternatives button.link + button.link {
+  margin-left: 0;
+}

@@ -283,6 +283,7 @@ resource "aws_s3_object" "config" {
   apiEndpoint    = var.api_endpoint
   hostedLoginUrl = var.hosted_login_url
   clientId       = var.user_pool_client_id
+  region         = var.cognito_region
 })};
   EOT
 
