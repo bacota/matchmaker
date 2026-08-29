@@ -170,6 +170,37 @@ button:disabled {
   cursor: default;
 }
 
+/* The spinner a button shows while its request is in flight. Inline rather than an overlay so
+   that a button in a row keeps its place, and sized in `em` so it matches whatever text it sits
+   beside — the row links are smaller than the form buttons. */
+.spinner {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 0.4em;
+  vertical-align: -0.05em;
+  border: 2px solid currentColor;
+  /* One transparent side is what makes the rotation visible. */
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Respect a stated preference for less motion: the button still changes, it just does not spin. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+    border-top-color: currentColor;
+    opacity: 0.6;
+  }
+}
+
 /* Buttons that are really links: the expand toggles and the destructive secondary actions. */
 button.link,
 button.toggle {

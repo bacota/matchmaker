@@ -351,6 +351,39 @@ class OpenChallengeServiceSpec extends PropertySuite {
     }
   }
 
+  // A challenge nobody else can join is nobody else's business: an Accept offered on it would
+  // only be refused. The players already in it still see it — they are waiting on it, and the
+  // challenger is the one who has to start it.
+  property("listByGame hides a full challenge from everyone but the players in it") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, otherNickname, otherExternalId) =>
+        val bystanderExternalId = genUniqueString.sample.get
+        val result = for {
+          fixture <- makeFixture(nickname, externalId, minPlayers = 2, maxPlayers = 4)
+          otherPair <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
+          (_, otherCharacter) = otherPair
+          _ <- registrationService.register(genUniqueString.sample.get, bystanderExternalId)
+          // Room for two, one of which the challenger takes on creation.
+          created <- challengeService.create(challengeFor(fixture, 2), externalId)
+          whileOpen <- challengeService.listByGame(fixture.game.gameId, bystanderExternalId)
+          _ <- challengeService.accept(
+            fixture.game.gameId, created.challengeId, Some(otherCharacter.characterId),
+            fixture.game.roles(1).gameRoleId, otherExternalId
+          )
+          toChallenger <- challengeService.listByGame(fixture.game.gameId, externalId)
+          toAccepter <- challengeService.listByGame(fixture.game.gameId, otherExternalId)
+          toBystander <- challengeService.listByGame(fixture.game.gameId, bystanderExternalId)
+        } yield
+          // Visible to everyone while there is still a seat, which is what makes the disappearance
+          // below the filling up rather than the filter hiding it all along.
+          whileOpen.map(_.challenge.challengeId) == List(created.challengeId) &&
+            toChallenger.map(_.challenge.challengeId) == List(created.challengeId) &&
+            toAccepter.map(_.challenge.challengeId) == List(created.challengeId) &&
+            toBystander.isEmpty
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
   property("listByGame rejects an unregistered caller") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, strangerExternalId) =>
       val result = for {

@@ -2,7 +2,7 @@ package com.vivi.matchmaker.ui
 
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.util.{Failure, Success}
+import scala.util.{Failure, Success, Try}
 import com.raquo.laminar.api.L.{*, given}
 import org.scalajs.dom
 import com.vivi.matchmaker.model._
@@ -129,10 +129,24 @@ object Store {
     * like a button that does nothing.
     */
   def run[A](action: Future[A])(onSuccess: A => Unit): Unit =
-    action.onComplete {
-      case Success(value) => error.set(None); onSuccess(value)
-      case Failure(error) => report(error)
+    action.onComplete(settle(_)(onSuccess))
+
+  /** The same, holding `busy` for as long as the request is in flight, so the button that started
+    * it can show that it is waiting. The flag is cleared however the request ends — a failure
+    * re-enables the button rather than leaving it spinning on an answer that already came.
+    */
+  def run[A](action: Future[A], busy: Var[Boolean])(onSuccess: A => Unit): Unit = {
+    busy.set(true)
+    action.onComplete { outcome =>
+      busy.set(false)
+      settle(outcome)(onSuccess)
     }
+  }
+
+  private def settle[A](outcome: Try[A])(onSuccess: A => Unit): Unit = outcome match {
+    case Success(value) => error.set(None); onSuccess(value)
+    case Failure(error) => report(error)
+  }
 
   /** Loads everything the signed-in user's home screen needs.
     *

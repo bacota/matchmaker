@@ -203,7 +203,7 @@ class OpenChallengeRepo(session: Session[IO]) {
   // joins the challenger's own acceptance to read their role, and counting over a second join to
   // the same table would multiply the rows rather than count them.
   private val selectChallengesByGame: Query[
-    GameId,
+    (GameId, PlayerId),
     (ChallengeId, GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameRoleId,
       Option[Long], Long, String)
   ] =
@@ -222,25 +222,39 @@ class OpenChallengeRepo(session: Session[IO]) {
           JOIN acceptance a ON a.game_id = oc.game_id AND a.challenge_id = oc.challenge_id
                            AND a.player_id = oc.challenger
           WHERE oc.game_id = $gameId AND oc.started_match_id IS NULL
+            -- A full challenge is nobody else's business: it cannot be accepted, and the only
+            -- people it is still about are the ones already in it — who need it in order to see
+            -- what they are waiting for, and who, if the challenger, need it to start the match.
+            AND ((SELECT count(*) FROM acceptance ac
+                   WHERE ac.game_id = oc.game_id AND ac.challenge_id = oc.challenge_id) < oc.number_of_players
+                 OR EXISTS (SELECT 1 FROM acceptance ac
+                             WHERE ac.game_id = oc.game_id AND ac.challenge_id = oc.challenge_id
+                               AND ac.player_id = $playerId))
           ORDER BY oc.create_date DESC"""
       .query(
         challengeId *: gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *:
           gameRoleId *: int8.opt *: int8 *: text
       )
 
-  /** Every *open* challenge for a game, newest first, each with how many players have accepted it.
+  /** Every *open* challenge for a game that `viewer` may see, newest first, each with how many
+    * players have accepted it.
     *
     * A challenge that has been started is excluded: it is no longer open, and since starting one
     * no longer deletes it, it would otherwise sit in the list forever offering a Start that would
     * be refused.
+    *
+    * A challenge that is full but not yet started is excluded too, unless `viewer` has accepted
+    * it. It is not something anyone else can join, and listing it invites a click on an Accept
+    * the service would refuse. The challenger sees their own throughout, since creating a
+    * challenge writes their acceptance of it.
     *
     * The count and the claimed roles come back with the challenge rather than from a call per
     * challenge: the UI needs both for every row it draws — the count to know whether a challenge
     * has enough acceptances to be started, the roles to know which ones are still free to accept
     * as, and together whether a start would be refused for a role nobody has taken.
     */
-  def listByGame(id: GameId): IO[List[OpenChallengeSummary]] =
-    session.execute(selectChallengesByGame)(id).map(_.map {
+  def listByGame(id: GameId, viewer: PlayerId): IO[List[OpenChallengeSummary]] =
+    session.execute(selectChallengesByGame)((id, viewer)).map(_.map {
       case (challengeId, gt, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId,
             characterIdValue, acceptances, takenRoles) =>
         OpenChallengeSummary(

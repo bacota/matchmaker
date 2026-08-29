@@ -219,15 +219,19 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
 
   /** The open challenges for a game, which any registered player may browse in order to accept
     * one.
+    *
+    * The caller is resolved to a player rather than merely checked, because what the list holds
+    * depends on who is asking: a challenge that is full but not yet started is shown only to the
+    * players in it. See [[OpenChallengeRepo.listByGame]].
     */
   def listByGame(gameId: GameId, callerExternalId: String): IO[List[OpenChallengeSummary]] =
     sessionPool.use { session =>
       for {
-        _ <- new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+        caller <- new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
           case Some(player) => IO.pure(player)
           case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
         }
-        challenges <- new OpenChallengeRepo(session).listByGame(gameId)
+        challenges <- new OpenChallengeRepo(session).listByGame(gameId, caller.playerId)
       } yield challenges
     }
 

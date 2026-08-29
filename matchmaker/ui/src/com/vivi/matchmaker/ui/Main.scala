@@ -48,6 +48,36 @@ object Views {
       child <-- Store.signedIn.signal.map(if (_) signedInBody else signedOutBody)
     )
 
+  /** A button that starts a request, and says so while it is running.
+    *
+    * Every one of these calls the API, and some of those calls are slow enough that a click with
+    * no visible answer reads as a button that did nothing — so the button disables itself and
+    * shows a spinner until the request comes back. The handler is handed the flag to pass to
+    * `Store.run`, which clears it however the request ends: a failure re-enables the button
+    * rather than leaving it spinning on an answer that already arrived.
+    *
+    * `disabledWhen` is combined here rather than passed in as another `disabled` binding, since
+    * two bindings writing the same property would fight over it.
+    */
+  private def busyButton(
+      label: String,
+      classes: Option[String] = None,
+      disabledWhen: Signal[Boolean] = Val(false)
+  )(action: Var[Boolean] => Unit): HtmlElement = {
+    val busy = Var(false)
+
+    button(
+      classes.map(cls := _).getOrElse(emptyMod),
+      disabled <-- disabledWhen.combineWith(busy.signal).map { case (blocked, waiting) => blocked || waiting },
+      // Before the label rather than after it, so the label does not shift as the spinner appears.
+      child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
+      label,
+      // The disabled binding above already refuses a second click; this covers the instant
+      // between the click and the flag being seen.
+      onClick --> (_ => if (!busy.now()) action(busy))
+    )
+  }
+
   // -------------------------------------------------------------------------
   // Chrome
   // -------------------------------------------------------------------------
@@ -126,17 +156,13 @@ object Views {
         placeholder := "nickname",
         controlled(value <-- nickname.signal, onInput.mapToValue --> nickname)
       ),
-      button(
-        "Create player",
-        disabled <-- nickname.signal.map(_.trim.isEmpty),
-        onClick --> { _ =>
-          Store.run(ApiClient.register(nickname.now().trim)) { player =>
-            Store.player.set(Store.PlayerState.Registered(player))
-            Store.refreshMatches()
-            Store.refreshGames()
-          }
+      busyButton("Create player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
+        Store.run(ApiClient.register(nickname.now().trim), busy) { player =>
+          Store.player.set(Store.PlayerState.Registered(player))
+          Store.refreshMatches()
+          Store.refreshGames()
         }
-      )
+      }
     )
   }
 
@@ -213,18 +239,14 @@ object Views {
       child <-- currentPlayer.map {
         case None => emptyNode
         case Some(player) =>
-          button(
-            cls := "link",
-            "Back out",
-            onClick --> { _ =>
-              Store.run(ApiClient.withdraw(acceptance.gameId, acceptance.challengeId, player.playerId)) { _ =>
-                Store.refreshMatches()
-                // The challenge is open again, so the game's list is stale if it is on screen.
-                if (Store.expandedGames.now().contains(acceptance.gameId))
-                  Store.refreshChallenges(acceptance.gameId)
-              }
+          busyButton("Back out", classes = Some("link")) { busy =>
+            Store.run(ApiClient.withdraw(acceptance.gameId, acceptance.challengeId, player.playerId), busy) { _ =>
+              Store.refreshMatches()
+              // The challenge is open again, so the game's list is stale if it is on screen.
+              if (Store.expandedGames.now().contains(acceptance.gameId))
+                Store.refreshChallenges(acceptance.gameId)
             }
-          )
+          }
       }
     )
 
@@ -265,38 +287,26 @@ object Views {
       if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
       // The play url lives on the match rather than the summary, and is the game engine's, not
       // matchmaker's — so it is fetched when asked for and opened directly.
-      button(
-        cls := "link",
-        "Play",
-        onClick --> { _ =>
-          Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId)) { m =>
-            m.playUrl match {
-              case Some(url) => dom.window.open(url, "_blank", "noopener,noreferrer")
-              case None      => Store.error.set(Some("This match has no play url yet."))
-            }
+      busyButton("Play", classes = Some("link")) { busy =>
+        Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
+          m.playUrl match {
+            case Some(url) => dom.window.open(url, "_blank", "noopener,noreferrer")
+            case None      => Store.error.set(Some("This match has no play url yet."))
           }
         }
-      ),
+      },
       // Step 4 of the engine flow: any participant may ask matchmaker to re-check with the
       // engine, which is what recovers from a callback that never arrived.
-      button(
-        cls := "link",
-        "Refresh",
-        onClick --> { _ =>
-          Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId))(_ => Store.refreshMatches())
-        }
-      ),
+      busyButton("Refresh", classes = Some("link")) { busy =>
+        Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId), busy)(_ => Store.refreshMatches())
+      },
       // Only the creator's, and only while there is still something to call off. The engine is
       // not told — its board stays playable — so the confirmation says what actually happens.
       if (summary.isCreator && !summary.completed && !summary.cancelled)
-        button(
-          cls := "link",
-          "Cancel",
-          onClick --> { _ =>
-            if (dom.window.confirm("Cancel this match? It will stop counting here, but the game board stays open."))
-              Store.run(ApiClient.cancelMatch(summary.gameId, summary.matchId))(_ => Store.refreshMatches())
-          }
-        )
+        busyButton("Cancel", classes = Some("link")) { busy =>
+          if (dom.window.confirm("Cancel this match? It will stop counting here, but the game board stays open."))
+            Store.run(ApiClient.cancelMatch(summary.gameId, summary.matchId), busy)(_ => Store.refreshMatches())
+        }
       else emptyNode
     )
 
@@ -518,64 +528,63 @@ object Views {
       ),
       roleEditor(roles),
       parameterEditor(parameters),
-      button(
+      busyButton(
         if (existing.isDefined) "Save changes" else "Create game",
-        disabled <-- name.signal.combineWith(counts).map { case (n, valid) => n.trim.isEmpty || valid.isEmpty },
-        onClick --> { _ =>
-          // Safe because the button is disabled until both parse and min <= max.
-          val (low, high) = minPlayers.now().trim.toInt -> maxPlayers.now().trim.toInt
+        disabledWhen = name.signal.combineWith(counts).map { case (n, valid) => n.trim.isEmpty || valid.isEmpty }
+      ) { busy =>
+        // Safe because the button is disabled until both parse and min <= max.
+        val (low, high) = minPlayers.now().trim.toInt -> maxPlayers.now().trim.toInt
 
-          val drafted = for {
-            roleModels <- rolesOf(roles.now())
-            parameterModels <- parametersOf(parameters.now())
-          } yield (roleModels, parameterModels)
+        val drafted = for {
+          roleModels <- rolesOf(roles.now())
+          parameterModels <- parametersOf(parameters.now())
+        } yield (roleModels, parameterModels)
 
-          drafted match {
-            case Left(problem) => Store.error.set(Some(problem))
-            case Right((roleModels, parameterModels)) =>
-            val game = Game(
-              // Unassigned means create and the server assigns the real id — the same sentinel
-              // the challenge form uses; a real id means update that game.
-              gameId = existing.map(_.gameId).getOrElse(GameId.unassigned),
-              gameType = gameType.now(),
-              name = name.now().trim,
-              description = description.now().trim,
-              url = url.now().trim,
-              // A game nobody can see is not what "create a game" means, and `refreshGames` only
-              // asks for active ones — creating it inactive would look like the button did nothing.
-              // Editing leaves it as it was, since this form has no control for it.
-              active = existing.map(_.active).getOrElse(true),
-              roles = roleModels,
-              parameters = parameterModels,
-              // The game's own shared secret, used to authorize requests the game makes on its own
-              // behalf. Generated rather than typed: it is a credential, and one an admin inventing
-              // it by hand would invent badly. An edit keeps the one the game already has —
-              // regenerating it would silently lock the game engine out.
-              externalId = existing.map(_.externalId).getOrElse(Pkce.newSecret()),
-              minPlayers = low,
-              maxPlayers = high
-            )
+        drafted match {
+          case Left(problem) => Store.error.set(Some(problem))
+          case Right((roleModels, parameterModels)) =>
+          val game = Game(
+            // Unassigned means create and the server assigns the real id — the same sentinel
+            // the challenge form uses; a real id means update that game.
+            gameId = existing.map(_.gameId).getOrElse(GameId.unassigned),
+            gameType = gameType.now(),
+            name = name.now().trim,
+            description = description.now().trim,
+            url = url.now().trim,
+            // A game nobody can see is not what "create a game" means, and `refreshGames` only
+            // asks for active ones — creating it inactive would look like the button did nothing.
+            // Editing leaves it as it was, since this form has no control for it.
+            active = existing.map(_.active).getOrElse(true),
+            roles = roleModels,
+            parameters = parameterModels,
+            // The game's own shared secret, used to authorize requests the game makes on its own
+            // behalf. Generated rather than typed: it is a credential, and one an admin inventing
+            // it by hand would invent badly. An edit keeps the one the game already has —
+            // regenerating it would silently lock the game engine out.
+            externalId = existing.map(_.externalId).getOrElse(Pkce.newSecret()),
+            minPlayers = low,
+            maxPlayers = high
+          )
 
-            Store.run(ApiClient.createGame(game)) { saved =>
-              if (existing.isEmpty) {
-                name.set("")
-                description.set("")
-                url.set("")
-                roles.set(List(emptyRole))
-                parameters.set(Nil)
-                Store.showNewGame.set(false)
-              } else {
-                // Re-drafted from what came back, so that roles added by this save carry the ids
-                // the insert gave them — without which saving twice would ask to add them again.
-                roles.set(saved.roles.map(draftOf).toList)
-                parameters.set(saved.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList)
-                Store.editingGame.set(None)
-              }
-              Store.refreshGames()
+          Store.run(ApiClient.createGame(game), busy) { saved =>
+            if (existing.isEmpty) {
+              name.set("")
+              description.set("")
+              url.set("")
+              roles.set(List(emptyRole))
+              parameters.set(Nil)
+              Store.showNewGame.set(false)
+            } else {
+              // Re-drafted from what came back, so that roles added by this save carry the ids
+              // the insert gave them — without which saving twice would ask to add them again.
+              roles.set(saved.roles.map(draftOf).toList)
+              parameters.set(saved.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList)
+              Store.editingGame.set(None)
             }
+            Store.refreshGames()
           }
         }
-      )
+      }
     )
   }
 
@@ -651,15 +660,11 @@ object Views {
         placeholder := "description",
         controlled(value <-- description.signal, onInput.mapToValue --> description)
       ),
-      button(
-        "Create character",
-        disabled <-- name.signal.map(_.trim.isEmpty),
-        onClick --> { _ =>
-          val created =
-            ApiClient.createCharacter(game.gameId, name.now().trim, description.now().trim, player.externalId)
-          Store.run(created)(_ => Store.refreshCharacters(game.gameId))
-        }
-      )
+      busyButton("Create character", disabledWhen = name.signal.map(_.trim.isEmpty)) { busy =>
+        val created =
+          ApiClient.createCharacter(game.gameId, name.now().trim, description.now().trim, player.externalId)
+        Store.run(created, busy)(_ => Store.refreshCharacters(game.gameId))
+      }
     )
   }
 
@@ -703,23 +708,19 @@ object Views {
       // — so there is no point offering the button. What the challenger is waiting for is said
       // beside it instead: more players, or somebody to play the roles still going begging.
       if (summary.acceptances >= game.minPlayers && unfilledRoles(game, summary).isEmpty)
-        button(
-          "Start",
-          onClick --> { _ =>
-            Store.run(ApiClient.startChallenge(game.gameId, challenge.challengeId)) { _ =>
-              Store.refreshChallenges(game.gameId)
-              Store.refreshMatches()
-            }
+        busyButton("Start") { busy =>
+          Store.run(ApiClient.startChallenge(game.gameId, challenge.challengeId), busy) { _ =>
+            Store.refreshChallenges(game.gameId)
+            Store.refreshMatches()
           }
-        )
+        }
       else if (summary.acceptances < game.minPlayers) div(cls := "detail", s"needs ${game.minPlayers} to start")
       else div(cls := "detail", s"waiting for ${unfilledRoles(game, summary).map(_.name).mkString(", ")}"),
-      button(
-        "Delete",
-        onClick --> { _ =>
-          Store.run(ApiClient.deleteChallenge(game.gameId, challenge.challengeId))(_ => Store.refreshChallenges(game.gameId))
-        }
-      )
+      busyButton("Delete") { busy =>
+        Store.run(ApiClient.deleteChallenge(game.gameId, challenge.challengeId), busy)(_ =>
+          Store.refreshChallenges(game.gameId)
+        )
+      }
     )
   }
 
@@ -737,18 +738,15 @@ object Views {
       roleSelect(free, role),
       if (free.isEmpty) div(cls := "detail", "every role is taken")
       else
-        button(
-          "Accept",
-          onClick --> { _ =>
-            val chosen = role.now().getOrElse(free.head.gameRoleId)
-            Store.run(ApiClient.accept(game.gameId, challenge.challengeId, characterId, chosen)) { _ =>
-              // Accepting may complete the challenge into a match, which changes the match lists
-              // as well as this one, so both are reloaded.
-              Store.refreshChallenges(game.gameId)
-              Store.refreshMatches()
-            }
+        busyButton("Accept") { busy =>
+          val chosen = role.now().getOrElse(free.head.gameRoleId)
+          Store.run(ApiClient.accept(game.gameId, challenge.challengeId, characterId, chosen), busy) { _ =>
+            // Accepting may complete the challenge into a match, which changes the match lists
+            // as well as this one, so both are reloaded.
+            Store.refreshChallenges(game.gameId)
+            Store.refreshMatches()
           }
-        )
+        }
     )
   }
 
@@ -810,56 +808,55 @@ object Views {
         ),
         "anyone may watch"
       ),
-      button(
+      busyButton(
         "Create challenge",
         // A game with no roles at all has nothing an acceptance could name, so no challenge for
         // it can be created. The server refuses one; this keeps the button from offering it.
-        disabled <-- message.signal.combineWith(players.signal, role.signal).map { case (m, p, r) =>
+        disabledWhen = message.signal.combineWith(players.signal, role.signal).map { case (m, p, r) =>
           m.trim.isEmpty || !validPlayerCount(game, p) || r.isEmpty
-        },
+        }
         // `foreach` rather than a fallback role: with no role there is no challenge to make, and
         // the disabled button above is what keeps that from being reachable.
-        onClick --> { _ =>
-          role.now().foreach { chosen =>
-            // The server assigns the id; this is the same unassigned-sentinel convention the
-            // service layer uses on create.
-            val challenge: OpenChallenge = characterId match {
-              case Some(cid) =>
-                CharacterOpenChallenge(
-                  challengeId = ChallengeId(0),
-                  challenger = player.playerId,
-                  message = message.now().trim,
-                  numberOfPlayers = players.now().trim.toShort,
-                  start = None,
-                  timeLimit = None,
-                  settings = "{}",
-                  gameId = game.gameId,
-                  characterId = cid,
-                  isPublic = isPublic.now(),
-                  gameRoleId = chosen
-                )
-              case None =>
-                PlainOpenChallenge(
-                  challengeId = ChallengeId(0),
-                  challenger = player.playerId,
-                  message = message.now().trim,
-                  numberOfPlayers = players.now().trim.toShort,
-                  start = None,
-                  timeLimit = None,
-                  settings = "{}",
-                  gameId = game.gameId,
-                  isPublic = isPublic.now(),
-                  gameRoleId = chosen
-                )
-            }
+      ) { busy =>
+        role.now().foreach { chosen =>
+          // The server assigns the id; this is the same unassigned-sentinel convention the
+          // service layer uses on create.
+          val challenge: OpenChallenge = characterId match {
+            case Some(cid) =>
+              CharacterOpenChallenge(
+                challengeId = ChallengeId(0),
+                challenger = player.playerId,
+                message = message.now().trim,
+                numberOfPlayers = players.now().trim.toShort,
+                start = None,
+                timeLimit = None,
+                settings = "{}",
+                gameId = game.gameId,
+                characterId = cid,
+                isPublic = isPublic.now(),
+                gameRoleId = chosen
+              )
+            case None =>
+              PlainOpenChallenge(
+                challengeId = ChallengeId(0),
+                challenger = player.playerId,
+                message = message.now().trim,
+                numberOfPlayers = players.now().trim.toShort,
+                start = None,
+                timeLimit = None,
+                settings = "{}",
+                gameId = game.gameId,
+                isPublic = isPublic.now(),
+                gameRoleId = chosen
+              )
+          }
 
-            Store.run(ApiClient.createChallenge(challenge)) { _ =>
-              message.set("")
-              Store.refreshChallenges(game.gameId)
-            }
+          Store.run(ApiClient.createChallenge(challenge), busy) { _ =>
+            message.set("")
+            Store.refreshChallenges(game.gameId)
           }
         }
-      )
+      }
     )
   }
 

@@ -227,6 +227,18 @@ object SignIn {
   // The form
   // -------------------------------------------------------------------------
 
+  /** The button that sends the step. `busy` already disables it — this adds the spinner, since a
+    * disabled button on its own says "not now" rather than "waiting for an answer", and the round
+    * trip to Cognito is the slowest thing on this page.
+    */
+  private def submit(label: String): HtmlElement =
+    button(
+      tpe := "submit",
+      disabled <-- busy.signal,
+      child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
+      label
+    )
+
   def view: HtmlElement =
     div(
       cls := "card sign-in",
@@ -257,7 +269,7 @@ object SignIn {
           onInput.mapToValue --> password
         )
       ),
-      button(tpe := "submit", "Sign in", disabled <-- busy.signal),
+      submit("Sign in"),
       // The passwordless route, kept but not put first — which is the whole reason this form
       // exists instead of a redirect to managed login.
       div(
@@ -305,7 +317,7 @@ object SignIn {
           onInput.mapToValue --> code
         )
       ),
-      button(tpe := "submit", "Sign in", disabled <-- busy.signal),
+      submit("Sign in"),
       div(cls := "alternatives", button(tpe := "button", cls := "link", "Start again", onClick --> (_ => reset())))
     )
 
@@ -323,7 +335,7 @@ object SignIn {
           onInput.mapToValue --> newPassword
         )
       ),
-      button(tpe := "submit", "Save and sign in", disabled <-- busy.signal),
+      submit("Save and sign in"),
       div(cls := "alternatives", button(tpe := "button", cls := "link", "Start again", onClick --> (_ => reset())))
     )
 }
