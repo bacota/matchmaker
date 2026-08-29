@@ -333,30 +333,39 @@ class OpenChallengeServiceSpec extends PropertySuite {
   property("listByGame hides a full challenge from everyone but the players in it") {
     forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
       (nickname, externalId, otherNickname, otherExternalId) =>
+        val thirdExternalId = genUniqueString.sample.get
         val bystanderExternalId = genUniqueString.sample.get
         val result = for {
           fixture <- makeFixture(nickname, externalId)
           otherPair <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
           (_, otherCharacter) = otherPair
+          thirdPair <- makeCharacterInGame(fixture.game, genUniqueString.sample.get, thirdExternalId)
+          (_, thirdCharacter) = thirdPair
           _ <- registrationService.register(genUniqueString.sample.get, bystanderExternalId)
-          // Room for two, one of which the challenger takes on creation.
+          // The game has three roles, and the challenger takes the first on creation. Full means
+          // all three are gone, so it takes both of the others to get there.
           created <- challengeService.create(challengeFor(fixture), externalId)
-          whileOpen <- challengeService.listByGame(fixture.game.gameId, bystanderExternalId)
           _ <- challengeService.accept(
             fixture.game.gameId, created.challengeId, Some(otherCharacter.characterId),
             fixture.game.roles(1).gameRoleId, otherExternalId
+          )
+          // Two of three: still a seat free, so everyone can see it.
+          whileOpen <- challengeService.listByGame(fixture.game.gameId, bystanderExternalId)
+          _ <- challengeService.accept(
+            fixture.game.gameId, created.challengeId, Some(thirdCharacter.characterId),
+            fixture.game.roles(2).gameRoleId, thirdExternalId
           )
           toChallenger <- challengeService.listByGame(fixture.game.gameId, externalId)
           toAccepter <- challengeService.listByGame(fixture.game.gameId, otherExternalId)
           toBystander <- challengeService.listByGame(fixture.game.gameId, bystanderExternalId)
         } yield
-          // Visible to everyone while there is still a seat, which is what makes the disappearance
+          // Visible to everyone while a role is still free, which is what makes the disappearance
           // below the filling up rather than the filter hiding it all along.
           whileOpen.map(_.challenge.challengeId) == List(created.challengeId) &&
             toChallenger.map(_.challenge.challengeId) == List(created.challengeId) &&
             toAccepter.map(_.challenge.challengeId) == List(created.challengeId) &&
             toBystander.isEmpty
-        result.timeout(10.seconds).unsafeRunSync()
+        result.timeout(30.seconds).unsafeRunSync()
     }
   }
 
