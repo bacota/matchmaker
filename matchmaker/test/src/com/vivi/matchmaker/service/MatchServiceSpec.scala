@@ -37,7 +37,7 @@ class MatchServiceSpec extends PropertySuite {
             GameId.unassigned, GameType.Character, "game", "description", "url", active = true,
             // One role, because every participant names one.
             Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false)),
-            Seq.empty, genUniqueString.sample.get, 2, 4
+            Seq.empty, genUniqueString.sample.get
           )
         )
         character <- new CharacterRepo[String](session).create(
@@ -48,7 +48,7 @@ class MatchServiceSpec extends PropertySuite {
         // tests only care about the lists.
         challenge <- new OpenChallengeRepo(session).create(
           CharacterOpenChallenge(
-            ChallengeId(0), player.playerId, "challenge", 2, None, None, "{}", game.gameId,
+            ChallengeId(0), player.playerId, "challenge", None, None, "{}", game.gameId,
             character.characterId, isPublic = false, game.roles.head.gameRoleId
           )
         )

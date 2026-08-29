@@ -58,9 +58,7 @@ class WireFormatSpec extends FunSuite {
           Seq(GameParameterValue(GameId(7), GameParameterId(2), "10+0"))
         )
       ),
-      externalId = "secret",
-      minPlayers = 2,
-      maxPlayers = 2
+      externalId = "secret"
     )
 
     val decoded = read[Game](write(game))
@@ -85,8 +83,6 @@ class WireFormatSpec extends FunSuite {
       roles = Seq.empty,
       parameters = Seq.empty,
       externalId = "generated-secret",
-      minPlayers = 2,
-      maxPlayers = 2
     )
 
     val json = ujson.read(write(game))
@@ -138,7 +134,6 @@ class WireFormatSpec extends FunSuite {
         challengeId = ChallengeId(1),
         challenger = PlayerId(2),
         message = "anyone?",
-        numberOfPlayers = 4,
         start = Some(Instant.parse("2026-08-07T12:00:00Z")),
         timeLimit = Some(Duration.ofMinutes(5)),
         settings = "{}",
@@ -155,7 +150,6 @@ class WireFormatSpec extends FunSuite {
         challengeId = ChallengeId(5),
         challenger = PlayerId(6),
         message = "a plain game",
-        numberOfPlayers = 2,
         start = None,
         timeLimit = None,
         settings = "{}",
@@ -184,7 +178,6 @@ class WireFormatSpec extends FunSuite {
       challengeId = ChallengeId(0),
       challenger = PlayerId(1),
       message = "anyone?",
-      numberOfPlayers = 2,
       start = None,
       timeLimit = Some(Duration.ofMinutes(5)),
       settings = "{}",
@@ -197,7 +190,6 @@ class WireFormatSpec extends FunSuite {
 
     assertEquals(decoded.start, None)
     assertEquals(decoded.timeLimit, Some(Duration.ofSeconds(300)))
-    assertEquals(decoded.numberOfPlayers, 2.toShort)
   }
 }
 

@@ -38,8 +38,6 @@ object Generators {
       url <- genString
       active <- Gen.oneOf(true, false)
       externalId <- genUniqueString
-      minPlayers <- Gen.choose(1, 4)
-      maxPlayers <- Gen.choose(4, 8)
       // Two roles, always: since V4 every acceptance names one, so a game with no roles is a
       // game nothing can be offered or accepted for. Two rather than one because two players in
       // the same challenge may not share a role.
@@ -55,9 +53,7 @@ object Generators {
         GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false)
       ),
       Seq.empty,
-      externalId,
-      minPlayers,
-      maxPlayers
+      externalId
     )
 
   def genGameWithRole: Gen[Game] =
@@ -136,12 +132,11 @@ object Generators {
   def genOpenChallenge(challenger: PlayerId, gameId: GameId, characterId: CharacterId, gameRoleId: GameRoleId): Gen[OpenChallenge] =
     for {
       message <- genString
-      numberOfPlayers <- Gen.choose(1, 10)
       start <- Gen.option(genInstant)
       timeLimit <- Gen.option(genDuration)
       isPublic <- Gen.oneOf(true, false)
     } yield CharacterOpenChallenge(
-      ChallengeId(0), challenger, message, numberOfPlayers.toShort, start, timeLimit, "{}", gameId, characterId, isPublic, gameRoleId
+      ChallengeId(0), challenger, message, start, timeLimit, "{}", gameId, characterId, isPublic, gameRoleId
     )
 
   /** A game, and a challenge in it, ready for a match to be started from.

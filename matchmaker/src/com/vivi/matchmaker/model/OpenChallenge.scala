@@ -14,7 +14,6 @@ sealed trait OpenChallenge {
   def challengeId: ChallengeId
   def challenger: PlayerId
   def message: String
-  def numberOfPlayers: Short
   def start: Option[Instant]
   def timeLimit: Option[Duration]
   def settings: String
@@ -40,7 +39,6 @@ case class PlainOpenChallenge(
     challengeId: ChallengeId,
     challenger: PlayerId,
     message: String,
-    numberOfPlayers: Short,
     start: Option[Instant],
     timeLimit: Option[Duration],
     settings: String,
@@ -53,7 +51,6 @@ case class CharacterOpenChallenge(
     challengeId: ChallengeId,
     challenger: PlayerId,
     message: String,
-    numberOfPlayers: Short,
     start: Option[Instant],
     timeLimit: Option[Duration],
     settings: String,
@@ -69,9 +66,10 @@ case class CharacterOpenChallenge(
   * *sends* to create one, and how many acceptances it has is not the client's to state. It is
   * derived on read, which is the only place it means anything.
   *
-  * What it is for: a challenge cannot be started below its game's `minPlayers`, nor until every
-  * required role of its game has been taken, and the server refuses one that is not ready. Sending
-  * the count and the roles already claimed lets the UI not offer a Start that would be refused,
-  * and not offer a role somebody else has already taken.
+  * What it is for: a challenge cannot be started until every required role of its game has been
+  * taken, and the server refuses one that is not ready. Sending the roles already claimed lets
+  * the UI not offer a Start that would be refused, and not offer a role somebody else has
+  * already taken; the count is what it says beside the challenge, since a game's roles are what
+  * the seats are and `takenRoles` is which of them are gone.
   */
 case class OpenChallengeSummary(challenge: OpenChallenge, acceptances: Int, takenRoles: Seq[GameRoleId] = Seq.empty)

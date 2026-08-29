@@ -94,11 +94,11 @@ class RouterSpec extends FunSuite {
     * whether the route matched at all.
     */
   private val gameBody = write(
-    Game(GameId.unassigned, GameType.Character, "name", "description", "url", active = true, Seq.empty, Seq.empty, "secret", 2, 4)
+    Game(GameId.unassigned, GameType.Character, "name", "description", "url", active = true, Seq.empty, Seq.empty, "secret")
   )
 
   private val challengeBody = write(
-    CharacterOpenChallenge(ChallengeId(0), PlayerId(1), "message", 2.toShort, None, None, "{}", GameId(1), CharacterId(1), gameRoleId = GameRoleId(1))
+    CharacterOpenChallenge(ChallengeId(0), PlayerId(1), "message", None, None, "{}", GameId(1), CharacterId(1), gameRoleId = GameRoleId(1))
   )
 
   private val resultsBody = write(

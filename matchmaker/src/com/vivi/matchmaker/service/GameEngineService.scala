@@ -38,15 +38,15 @@ class GameEngineService[T](
   /** Turns a challenge into a match: creates the game in the engine, and writes the match and one
     * participant per acceptance.
     *
-    * Only the challenger may start their own challenge, and only once at least `minPlayers` have
-    * accepted — which is why this is an explicit action rather than something that happens on the
-    * last acceptance: a challenge for up to six players may be worth starting with three.
+    * Only the challenger may start their own challenge, and only once every one of its game's
+    * required (non-optional) roles has been taken by an acceptance. That is the whole of the
+    * readiness rule: an acceptance is a role, so the roles say both how many players a match
+    * needs and which parts they play — a headcount could not, since two acceptances of a
+    * tic-tac-toe challenge are only playable if they are X and O rather than both X.
     *
-    * A challenge is also refused until every one of its game's required (non-optional) roles has
-    * been taken by an acceptance. `minPlayers` alone cannot express that: two players have
-    * accepted a tic-tac-toe challenge whether they are X and O or both asked for X, and only one
-    * of those is a game that can be played. Optional roles are exactly the ones a match need not
-    * wait for.
+    * Optional roles are exactly the ones a match need not wait for, which is why this is an
+    * explicit action rather than something that happens on the last acceptance: a challenge with
+    * three optional seats left may still be worth starting.
     *
     * The engine call sits between two transactions rather than inside one. Holding a transaction
     * open across a call to another system would keep locks for as long as that system takes to
@@ -107,11 +107,6 @@ class GameEngineService[T](
               UnauthorizedError(s"caller '$callerExternalId' may not start challenge ${challengeId.value}")
             )
             roster <- acceptanceRepo.listForChallenge(gameId, challengeId)
-            _ <- IO.raiseUnless(roster.sizeIs >= game.minPlayers)(
-              ValidationError(
-                s"challenge ${challengeId.value} has ${roster.size} acceptance(s); game ${gameId.value} needs at least ${game.minPlayers}"
-              )
-            )
             taken = roster.map((acceptance, _, _) => acceptance.gameRoleId).toSet
             unfilled = game.roles.filterNot(_.optional).filterNot(role => taken.contains(role.gameRoleId))
             _ <- IO.raiseUnless(unfilled.isEmpty)(

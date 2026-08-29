@@ -51,19 +51,19 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     })
 
   private val withOwnerAndGameRow: Codec[
-    (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String, Int, Int)
+    (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String)
   ] =
     gameId *: text *: text *: state *: playerId *:
       text *: bool *: text *:
-      gameType *: text *: text *: text *: bool *: text *: int4 *: int4
+      gameType *: text *: text *: text *: bool *: text
 
   private val selectCharacterWithOwnerAndGame: Query[
     CharacterId,
-    (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String, Int, Int)
+    (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String)
   ] =
     sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
                  p.nickname, p.is_admin, p.external_id,
-                 g.game_type, g.name, g.description, g.url, g.active, g.external_id, g.min_players, g.max_players
+                 g.game_type, g.name, g.description, g.url, g.active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           JOIN player p ON p.player_id = c.player_id
@@ -76,11 +76,11 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
    * which this has no business doing — it is the character that is about to be written. */
   private val selectCharacterWithOwnerAndGameForUpdate: Query[
     CharacterId,
-    (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String, Int, Int)
+    (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String)
   ] =
     sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
                  p.nickname, p.is_admin, p.external_id,
-                 g.game_type, g.name, g.description, g.url, g.active, g.external_id, g.min_players, g.max_players
+                 g.game_type, g.name, g.description, g.url, g.active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           JOIN player p ON p.player_id = c.player_id
@@ -105,7 +105,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
 
   private def toCharacterWithOwnerAndGame(
       id: CharacterId,
-      row: (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String, Int, Int)
+      row: (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String)
   ): CharacterWithOwnerAndGame[T] = row match {
     case (
         charGameId,
@@ -121,26 +121,24 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         gameDescription,
         gameUrl,
         gameActive,
-        gameExternalId,
-        gameMinPlayers,
-        gameMaxPlayers
+        gameExternalId
       ) =>
       val character = Character(id, charGameId, name, description, state, Some(charPlayerId))
       val player = Player(charPlayerId, nickname, isAdmin, externalId)
-      val game = Game(charGameId, gameType, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId, gameMinPlayers, gameMaxPlayers)
+      val game = Game(charGameId, gameType, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId)
       CharacterWithOwnerAndGame(character, player, game)
   }
 
   private val withGameRow: Codec[
-    (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String, Int, Int)
-  ] = gameId *: text *: text *: state *: playerId.opt *: gameType *: text *: text *: text *: bool *: text *: int4 *: int4
+    (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String)
+  ] = gameId *: text *: text *: state *: playerId.opt *: gameType *: text *: text *: text *: bool *: text
 
   private val selectCharacterWithGame: Query[
     CharacterId,
-    (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String, Int, Int)
+    (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String)
   ] =
     sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
-                 g.game_type, g.name, g.description, g.url, g.active, g.external_id, g.min_players, g.max_players
+                 g.game_type, g.name, g.description, g.url, g.active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           WHERE c.character_id = $characterId"""
@@ -150,10 +148,10 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
    * read here, not written. */
   private val selectCharacterWithGameForUpdate: Query[
     CharacterId,
-    (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String, Int, Int)
+    (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String)
   ] =
     sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
-                 g.game_type, g.name, g.description, g.url, g.active, g.external_id, g.min_players, g.max_players
+                 g.game_type, g.name, g.description, g.url, g.active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           WHERE c.character_id = $characterId
@@ -173,11 +171,11 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
 
   private def toCharacterWithGame(
       id: CharacterId,
-      row: (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String, Int, Int)
+      row: (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String)
   ): CharacterWithGame[T] = row match {
-    case (charGameId, name, description, state, charPlayerId, gameType, gameName, gameDescription, gameUrl, gameActive, gameExternalId, gameMinPlayers, gameMaxPlayers) =>
+    case (charGameId, name, description, state, charPlayerId, gameType, gameName, gameDescription, gameUrl, gameActive, gameExternalId) =>
       val character = Character(id, charGameId, name, description, state, charPlayerId)
-      val game = Game(charGameId, gameType, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId, gameMinPlayers, gameMaxPlayers)
+      val game = Game(charGameId, gameType, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId)
       CharacterWithGame(character, game)
   }
 

@@ -477,8 +477,9 @@ object Views {
   /** The admin's game form, for creating one (`existing` is None) or editing one.
     *
     * The two are the same form because a game is the same thing either way, and every field is
-    * editable in both: name, description, url, player counts, whether characters are required,
-    * the roles and the parameters. What edit cannot do is delete a role — see [[roleEditor]].
+    * editable in both: name, description, url, whether characters are required, the roles and
+    * the parameters. There is no player count to set — a game's roles are its seats, so adding
+    * one in [[roleEditor]] is how a game gets bigger. What edit cannot do is delete a role.
     *
     * Two fields are never shown. `externalId` is the game's own credential: kept as it is when
     * editing, generated when creating, and in neither case something to type. `active` is not on
@@ -488,8 +489,6 @@ object Views {
     val name = Var(existing.map(_.name).getOrElse(""))
     val description = Var(existing.map(_.description).getOrElse(""))
     val url = Var(existing.map(_.url).getOrElse(""))
-    val minPlayers = Var(existing.map(_.minPlayers.toString).getOrElse("2"))
-    val maxPlayers = Var(existing.map(_.maxPlayers.toString).getOrElse("2"))
     // Plain by default: requiring characters is the additional commitment, so it is the box an
     // admin ticks rather than the one they have to remember to untick.
     val gameType: Var[GameType] = Var(existing.map(_.gameType).getOrElse(GameType.Plain))
@@ -500,14 +499,6 @@ object Views {
       existing.map(_.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList).getOrElse(Nil)
     )
 
-    def counts: Signal[Option[(Int, Int)]] =
-      minPlayers.signal.combineWith(maxPlayers.signal).map { case (low, high) =>
-        (low.trim.toIntOption, high.trim.toIntOption) match {
-          case (Some(l), Some(h)) if l >= 1 && h >= l => Some((l, h))
-          case _                                      => None
-        }
-      }
-
     div(
       cls := "card",
       input(placeholder := "name", controlled(value <-- name.signal, onInput.mapToValue --> name)),
@@ -516,8 +507,6 @@ object Views {
         controlled(value <-- description.signal, onInput.mapToValue --> description)
       ),
       input(placeholder := "url", controlled(value <-- url.signal, onInput.mapToValue --> url)),
-      label("Players ", input(tpe := "number", minAttr := "1", controlled(value <-- minPlayers.signal, onInput.mapToValue --> minPlayers))),
-      label(" to ", input(tpe := "number", minAttr := "1", controlled(value <-- maxPlayers.signal, onInput.mapToValue --> maxPlayers))),
       label(
         "Requires characters ",
         input(
@@ -530,11 +519,8 @@ object Views {
       parameterEditor(parameters),
       busyButton(
         if (existing.isDefined) "Save changes" else "Create game",
-        disabledWhen = name.signal.combineWith(counts).map { case (n, valid) => n.trim.isEmpty || valid.isEmpty }
+        disabledWhen = name.signal.map(_.trim.isEmpty)
       ) { busy =>
-        // Safe because the button is disabled until both parse and min <= max.
-        val (low, high) = minPlayers.now().trim.toInt -> maxPlayers.now().trim.toInt
-
         val drafted = for {
           roleModels <- rolesOf(roles.now())
           parameterModels <- parametersOf(parameters.now())
@@ -561,9 +547,7 @@ object Views {
             // behalf. Generated rather than typed: it is a credential, and one an admin inventing
             // it by hand would invent badly. An edit keeps the one the game already has —
             // regenerating it would silently lock the game engine out.
-            externalId = existing.map(_.externalId).getOrElse(Pkce.newSecret()),
-            minPlayers = low,
-            maxPlayers = high
+            externalId = existing.map(_.externalId).getOrElse(Pkce.newSecret())
           )
 
           Store.run(ApiClient.createGame(game), busy) { saved =>
@@ -700,21 +684,20 @@ object Views {
     li(
       cls := "row",
       div(cls := "title", challenge.message),
-      div(cls := "detail", s"${summary.acceptances} of ${challenge.numberOfPlayers} players"),
+      div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
       if (challenge.isPublic) div(cls := "detail", "public") else emptyNode,
       // Starting is the challenger's call rather than something that happens on the last
-      // acceptance: a challenge for up to six may be worth starting with three. But below the
-      // game's minimum, or with a required role nobody has taken, the server refuses it outright
-      // — so there is no point offering the button. What the challenger is waiting for is said
-      // beside it instead: more players, or somebody to play the roles still going begging.
-      if (summary.acceptances >= game.minPlayers && unfilledRoles(game, summary).isEmpty)
+      // acceptance: a game whose remaining roles are optional may be worth starting without
+      // them. With a required role nobody has taken the server refuses it outright — so there is
+      // no point offering the button, and what the challenger is waiting for is said beside it
+      // instead: somebody to play the roles still going begging.
+      if (unfilledRoles(game, summary).isEmpty)
         busyButton("Start") { busy =>
           Store.run(ApiClient.startChallenge(game.gameId, challenge.challengeId), busy) { _ =>
             Store.refreshChallenges(game.gameId)
             Store.refreshMatches()
           }
         }
-      else if (summary.acceptances < game.minPlayers) div(cls := "detail", s"needs ${game.minPlayers} to start")
       else div(cls := "detail", s"waiting for ${unfilledRoles(game, summary).map(_.name).mkString(", ")}"),
       busyButton("Delete") { busy =>
         Store.run(ApiClient.deleteChallenge(game.gameId, challenge.challengeId), busy)(_ =>
@@ -734,7 +717,7 @@ object Views {
     li(
       cls := "row",
       div(cls := "title", challenge.message),
-      div(cls := "detail", s"${summary.acceptances} of ${challenge.numberOfPlayers} players"),
+      div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
       roleSelect(free, role),
       if (free.isEmpty) div(cls := "detail", "every role is taken")
       else
@@ -778,7 +761,6 @@ object Views {
 
   private def newChallengeForm(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement = {
     val message = Var("")
-    val players = Var(game.minPlayers.toString)
     val isPublic = Var(false)
     // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
     // has been claimed yet, so every role of the game is on offer and the first stands selected.
@@ -790,12 +772,6 @@ object Views {
       input(
         placeholder := "message",
         controlled(value <-- message.signal, onInput.mapToValue --> message)
-      ),
-      input(
-        tpe := "number",
-        minAttr := game.minPlayers.toString,
-        maxAttr := game.maxPlayers.toString,
-        controlled(value <-- players.signal, onInput.mapToValue --> players)
       ),
       roleSelect(game.roles, role),
       // Public means anyone may watch the match, which the game engine implements by issuing a
@@ -812,9 +788,7 @@ object Views {
         "Create challenge",
         // A game with no roles at all has nothing an acceptance could name, so no challenge for
         // it can be created. The server refuses one; this keeps the button from offering it.
-        disabledWhen = message.signal.combineWith(players.signal, role.signal).map { case (m, p, r) =>
-          m.trim.isEmpty || !validPlayerCount(game, p) || r.isEmpty
-        }
+        disabledWhen = message.signal.combineWith(role.signal).map { case (m, r) => m.trim.isEmpty || r.isEmpty }
         // `foreach` rather than a fallback role: with no role there is no challenge to make, and
         // the disabled button above is what keeps that from being reachable.
       ) { busy =>
@@ -827,7 +801,6 @@ object Views {
                 challengeId = ChallengeId(0),
                 challenger = player.playerId,
                 message = message.now().trim,
-                numberOfPlayers = players.now().trim.toShort,
                 start = None,
                 timeLimit = None,
                 settings = "{}",
@@ -841,7 +814,6 @@ object Views {
                 challengeId = ChallengeId(0),
                 challenger = player.playerId,
                 message = message.now().trim,
-                numberOfPlayers = players.now().trim.toShort,
                 start = None,
                 timeLimit = None,
                 settings = "{}",
@@ -859,9 +831,6 @@ object Views {
       }
     )
   }
-
-  private def validPlayerCount(game: Game, raw: String): Boolean =
-    raw.trim.toIntOption.exists(count => count >= game.minPlayers && count <= game.maxPlayers)
 
   private def currentPlayer: Signal[Option[Player]] = Store.currentPlayer
 }

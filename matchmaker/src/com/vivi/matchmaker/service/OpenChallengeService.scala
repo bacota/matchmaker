@@ -91,13 +91,6 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
           _ <- IO.raiseUnless(game.roles.exists(_.gameRoleId == challenge.gameRoleId))(
             ValidationError(s"game ${game.gameId.value} has no role ${challenge.gameRoleId.value}")
           )
-          _ <- IO.raiseUnless(
-            challenge.numberOfPlayers >= game.minPlayers && challenge.numberOfPlayers <= game.maxPlayers
-          )(
-            ValidationError(
-              s"numberOfPlayers ${challenge.numberOfPlayers} is not in range [${game.minPlayers}, ${game.maxPlayers}]"
-            )
-          )
           created <- challengeRepo.create(challenge)
           _ <- acceptanceRepo.create(created match {
             case cc: CharacterOpenChallenge =>
@@ -113,12 +106,13 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
     * game's challenge, `characterId` must be `Some`, naming the character accepting on the
     * caller's behalf, and is authorized the same way `create` authorizes a
     * [[CharacterOpenChallenge]]. For a `'P'`-type game's challenge, `characterId` must be `None`,
-    * and the caller accepts as themselves. The challenge row is locked (`FOR UPDATE`) before
-    * counting existing acceptances, so that the capacity check (acceptances, including this one,
-    * must not exceed the challenge's numberOfPlayers) is race-free against concurrent acceptance
-    * attempts. The same lock covers the role check: `gameRoleId` must be one of the game's roles
+    * and the caller accepts as themselves. The challenge row is locked (`FOR UPDATE`) before the
+    * role check, which is what makes that check race-free against concurrent acceptance
+    * attempts: `gameRoleId` must be one of the game's roles
     * and must not already be taken by another acceptance of this challenge, and two players
-    * asking for the same free role at once must not both be told yes.
+    * asking for the same free role at once must not both be told yes. That role check is also
+    * the capacity check: a challenge holds one acceptance per role of its game and is full when
+    * every one of them is taken, so there is no separate count to compare against.
     */
   def accept(
       gameId: GameId,
@@ -149,7 +143,6 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
             )
           }
           gameType = challengeInfo.gameType
-          maxPlayers = challengeInfo.numberOfPlayers
           // A role has to be one of this game's, which the schema's composite foreign key also
           // enforces — checked here so that a wrong role is a 400 naming the game rather than a
           // constraint violation surfacing as a 500.
@@ -207,10 +200,6 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
           already <- acceptanceRepo.hasAccepted(gameId, challengeId, acceptance.playerId)
           _ <- IO.raiseWhen(already)(
             ConflictError(s"player ${acceptance.playerId.value} has already accepted challenge ${challengeId.value}")
-          )
-          count <- acceptanceRepo.countForChallenge(gameId, challengeId)
-          _ <- IO.raiseUnless(count + 1 <= maxPlayers.toLong)(
-            ValidationError(s"challenge ${challengeId.value} already has $count acceptance(s) (capacity $maxPlayers)")
           )
           created <- acceptanceRepo.create(acceptance)
         } yield created
