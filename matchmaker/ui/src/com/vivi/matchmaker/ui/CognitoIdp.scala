@@ -166,9 +166,9 @@ object CognitoIdp {
         AuthOutcome.Challenged(
           Challenge(
             name = json("ChallengeName").str,
-            // Absent only on a malformed response; every challenge carries one, and without it
-            // there is nothing to respond with.
-            session = json.obj.get("Session").map(_.str).getOrElse(""),
+            // Every challenge carries one, and without it there is nothing to respond with, so a
+            // missing `Session` is a parse failure rather than a challenge we cannot answer later.
+            session = json("Session").str,
             parameters = json.obj
               .get("ChallengeParameters")
               .map(_.obj.view.mapValues(_.str).toMap)

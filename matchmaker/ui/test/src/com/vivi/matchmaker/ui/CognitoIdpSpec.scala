@@ -66,6 +66,10 @@ class CognitoIdpSpec extends FunSuite {
     }
   }
 
+  test("a challenge with no session fails, since there is nothing to respond with") {
+    assert(CognitoIdp.outcomeOf("""{"ChallengeName":"EMAIL_OTP"}""").isFailure)
+  }
+
   test("a malformed body fails rather than being read as an empty authentication") {
     assert(CognitoIdp.outcomeOf("""{"nothing":"useful"}""").isFailure)
   }

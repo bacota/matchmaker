@@ -67,7 +67,7 @@ object Views {
             cls := "who",
             span(player.nickname),
             if (Config.current.headerAuth) emptyNode
-            else button(cls := "link", "Sign out", onClick --> (_ => Auth.signOut()))
+            else button(cls := "link", "Sign out", onClick --> (_ => Store.signOut()))
           )
         case _ => emptyNode
       },
