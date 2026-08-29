@@ -74,9 +74,7 @@ object Json {
       active: Boolean,
       roles: Seq[GameRole],
       parameters: Seq[GameParameter[String]],
-      externalId: String,
-      minPlayers: Int,
-      maxPlayers: Int
+      externalId: String
   )
 
   private given ReadWriter[GameDto] = macroRW
@@ -92,9 +90,7 @@ object Json {
         game.active,
         game.roles,
         game.parameters.map(_.asInstanceOf[GameParameter[String]]),
-        game.externalId,
-        game.minPlayers,
-        game.maxPlayers
+        game.externalId
       ),
     dto =>
       Game(
@@ -106,9 +102,7 @@ object Json {
         dto.active,
         dto.roles,
         dto.parameters,
-        dto.externalId,
-        dto.minPlayers,
-        dto.maxPlayers
+        dto.externalId
       )
   )
 

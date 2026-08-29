@@ -91,11 +91,7 @@ class GameEngineServiceSpec extends PropertySuite {
               GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = true)
             ),
             Seq.empty,
-            gameExternalId,
-            // One player is enough to start, which keeps these tests to a challenger and their
-            // own implicit acceptance unless a second player is what is being tested.
-            minPlayers = 1,
-            maxPlayers = 4
+            gameExternalId
           )
         )
         character <- new CharacterRepo[String](session).create(
@@ -114,7 +110,6 @@ class GameEngineServiceSpec extends PropertySuite {
       ChallengeId(0),
       fixture.owner.playerId,
       message,
-      numberOfPlayers = 2,
       start = None,
       timeLimit = timeLimit,
       settings = "{}",
@@ -166,8 +161,7 @@ class GameEngineServiceSpec extends PropertySuite {
       val result = for {
         fixture <- makeFixture(nickname, externalId, gameExternalId)
         // The challenger takes 'defender', which is optional, leaving the required 'attacker'
-        // with nobody playing it. minPlayers is 1 and there is one acceptance, so the only thing
-        // standing between this challenge and a match is the empty role.
+        // with nobody playing it — the only thing standing between this challenge and a match.
         challenge <- services.challenges.create(
           challengeFor(fixture) match {
             case c: CharacterOpenChallenge => c.copy(gameRoleId = fixture.game.roles(1).gameRoleId)

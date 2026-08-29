@@ -14,7 +14,7 @@ import com.vivi.matchmaker.model._
   * `startedMatchId` is non-empty once a challenge has been claimed by
   * `GameEngineService.start`; see [[OpenChallengeRepo.claimForStart]].
   */
-case class LockedChallenge(gameType: GameType, numberOfPlayers: Short, startedMatchId: Option[MatchId])
+case class LockedChallenge(gameType: GameType, startedMatchId: Option[MatchId])
 
 /** Reads and writes `open_challenge` (plus its `character_open_challenge` sibling).
   *
@@ -38,10 +38,10 @@ class OpenChallengeRepo(session: Session[IO]) {
   private def fromSeconds(s: Option[Double]): Option[Duration] = s.map(v => Duration.ofSeconds(v.toLong))
 
   private val insertChallenge
-      : Query[(GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, GameId, Boolean), ChallengeId] =
-    sql"""INSERT INTO open_challenge (game_type, challenger, message, number_of_players, start, time_limit,
+      : Query[(GameType, PlayerId, String, Option[Instant], Option[Double], String, GameId, Boolean), ChallengeId] =
+    sql"""INSERT INTO open_challenge (game_type, challenger, message, start, time_limit,
                                       settings, game_id, public)
-          VALUES ($gameType, $playerId, $text, $int2, ${instant.opt}, ${float8.opt} * INTERVAL '1 second',
+          VALUES ($gameType, $playerId, $text, ${instant.opt}, ${float8.opt} * INTERVAL '1 second',
                   $settings, $gameId, $bool)
           RETURNING challenge_id""".query(challengeId)
 
@@ -53,24 +53,24 @@ class OpenChallengeRepo(session: Session[IO]) {
   // outside Ids.scala (see AcceptanceRepo's gameAndCharacterId comment); characterId is decoded
   // as a raw int8 here and wrapped afterward for the same reason.
   private val challengeRow: Codec[
-    (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long])
+    (GameType, GameId, PlayerId, String, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long])
   ] =
-    gameType *: gameId *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId *: int8.opt
+    gameType *: gameId *: playerId *: text *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId *: int8.opt
 
   private def toChallenge(
       id: ChallengeId,
-      row: (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long])
+      row: (GameType, GameId, PlayerId, String, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long])
   ): OpenChallenge = {
-    val (gameType, gameId, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue) = row
+    val (gameType, gameId, challenger, message, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue) = row
     val timeLimit = fromSeconds(timeLimitSeconds)
     gameType match {
       case GameType.Character =>
         val cid = characterIdValue.getOrElse(
           throw new IllegalStateException(s"open_challenge ${id.value} is game_type 'C' but has no character_open_challenge row")
         )
-        CharacterOpenChallenge(id, challenger, message, numberOfPlayers, start, timeLimit, settings, gameId, CharacterId(cid), isPublic, roleId)
+        CharacterOpenChallenge(id, challenger, message, start, timeLimit, settings, gameId, CharacterId(cid), isPublic, roleId)
       case GameType.Plain =>
-        PlainOpenChallenge(id, challenger, message, numberOfPlayers, start, timeLimit, settings, gameId, isPublic, roleId)
+        PlainOpenChallenge(id, challenger, message, start, timeLimit, settings, gameId, isPublic, roleId)
     }
   }
 
@@ -78,9 +78,9 @@ class OpenChallengeRepo(session: Session[IO]) {
   // is not declared unique — so both columns are required here, not challenge_id alone.
   private val selectChallenge: Query[
     (GameId, ChallengeId),
-    (GameType, GameId, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long])
+    (GameType, GameId, PlayerId, String, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long])
   ] =
-    sql"""SELECT oc.game_type, oc.game_id, oc.challenger, oc.message, oc.number_of_players, oc.start,
+    sql"""SELECT oc.game_type, oc.game_id, oc.challenger, oc.message, oc.start,
                  EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, a.game_role_id, cc.character_id
           FROM open_challenge oc
           LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
@@ -89,16 +89,16 @@ class OpenChallengeRepo(session: Session[IO]) {
           WHERE oc.game_id = $gameId AND oc.challenge_id = $challengeId"""
       .query(challengeRow)
 
-  private val selectChallengeForUpdate: Query[(GameId, ChallengeId), (GameType, Short, Option[MatchId])] =
-    sql"""SELECT game_type, number_of_players, started_match_id FROM open_challenge
+  private val selectChallengeForUpdate: Query[(GameId, ChallengeId), (GameType, Option[MatchId])] =
+    sql"""SELECT game_type, started_match_id FROM open_challenge
           WHERE game_id = $gameId AND challenge_id = $challengeId FOR UPDATE"""
-      .query(gameType *: int2 *: matchId.opt)
+      .query(gameType *: matchId.opt)
 
   // gameRoleId is not written here: it belongs to the challenger's acceptance, and changing the
   // role they will play means updating that row (AcceptanceRepo), not this one.
   private val updateChallenge
-      : Command[(PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameId, ChallengeId)] =
-    sql"""UPDATE open_challenge SET challenger = $playerId, message = $text, number_of_players = $int2,
+      : Command[(PlayerId, String, Option[Instant], Option[Double], String, Boolean, GameId, ChallengeId)] =
+    sql"""UPDATE open_challenge SET challenger = $playerId, message = $text,
           start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
           public = $bool
           WHERE game_id = $gameId AND challenge_id = $challengeId""".command
@@ -115,7 +115,7 @@ class OpenChallengeRepo(session: Session[IO]) {
     }
     for {
       id <- session.unique(insertChallenge)(
-        (gt, c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.gameId, c.isPublic)
+        (gt, c.challenger, c.message, c.start, toSeconds(c.timeLimit), c.settings, c.gameId, c.isPublic)
       )
       _ <- c match {
         case cc: CharacterOpenChallenge => session.execute(insertCharacterChallenge)((c.gameId, id, cc.characterId)).void
@@ -130,11 +130,11 @@ class OpenChallengeRepo(session: Session[IO]) {
   def read(gameId: GameId, id: ChallengeId): IO[Option[OpenChallenge]] =
     session.option(selectChallenge)((gameId, id)).map(_.map(row => toChallenge(id, row)))
 
-  /** Reads a challenge's game_type, numberOfPlayers and start claim, taking a row lock
-    * (`FOR UPDATE`) that is held until the enclosing transaction commits or rolls back. Callers
-    * use this to serialize concurrent acceptance attempts against the same challenge's capacity
-    * check, the game_type to decide whether an acceptance must carry a characterId, and
-    * startedMatchId to refuse a challenge someone is already starting.
+  /** Reads a challenge's game_type and start claim, taking a row lock (`FOR UPDATE`) that is
+    * held until the enclosing transaction commits or rolls back. Callers use this to serialize
+    * concurrent acceptance attempts against the same challenge's roles, the game_type to decide
+    * whether an acceptance must carry a characterId, and startedMatchId to refuse a challenge
+    * someone is already starting.
     */
   def readForUpdate(gameId: GameId, id: ChallengeId): IO[Option[LockedChallenge]] =
     session.option(selectChallengeForUpdate)((gameId, id)).map(_.map(LockedChallenge.apply.tupled))
@@ -179,7 +179,7 @@ class OpenChallengeRepo(session: Session[IO]) {
   def update(c: OpenChallenge): IO[Unit] =
     session
       .execute(updateChallenge)(
-        (c.challenger, c.message, c.numberOfPlayers, c.start, toSeconds(c.timeLimit), c.settings, c.isPublic, c.gameId, c.challengeId)
+        (c.challenger, c.message, c.start, toSeconds(c.timeLimit), c.settings, c.isPublic, c.gameId, c.challengeId)
       )
       .void
 
@@ -204,10 +204,10 @@ class OpenChallengeRepo(session: Session[IO]) {
   // the same table would multiply the rows rather than count them.
   private val selectChallengesByGame: Query[
     (GameId, PlayerId),
-    (ChallengeId, GameType, PlayerId, String, Short, Option[Instant], Option[Double], String, Boolean, GameRoleId,
+    (ChallengeId, GameType, PlayerId, String, Option[Instant], Option[Double], String, Boolean, GameRoleId,
       Option[Long], Long, String)
   ] =
-    sql"""SELECT oc.challenge_id, oc.game_type, oc.challenger, oc.message, oc.number_of_players, oc.start,
+    sql"""SELECT oc.challenge_id, oc.game_type, oc.challenger, oc.message, oc.start,
                  EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, a.game_role_id, cc.character_id,
                  (SELECT count(*) FROM acceptance ac
                    WHERE ac.game_id = oc.game_id AND ac.challenge_id = oc.challenge_id),
@@ -225,14 +225,21 @@ class OpenChallengeRepo(session: Session[IO]) {
             -- A full challenge is nobody else's business: it cannot be accepted, and the only
             -- people it is still about are the ones already in it — who need it in order to see
             -- what they are waiting for, and who, if the challenger, need it to start the match.
-            AND ((SELECT count(*) FROM acceptance ac
-                   WHERE ac.game_id = oc.game_id AND ac.challenge_id = oc.challenge_id) < oc.number_of_players
+            -- Full means every one of the game's roles is spoken for, optional ones included:
+            -- those are seats a latecomer could still take, even though a start need not wait
+            -- for them.
+            AND (EXISTS (SELECT 1 FROM game_role gr
+                          WHERE gr.game_id = oc.game_id
+                            AND NOT EXISTS (SELECT 1 FROM acceptance ac
+                                             WHERE ac.game_id = oc.game_id
+                                               AND ac.challenge_id = oc.challenge_id
+                                               AND ac.game_role_id = gr.game_role_id))
                  OR EXISTS (SELECT 1 FROM acceptance ac
                              WHERE ac.game_id = oc.game_id AND ac.challenge_id = oc.challenge_id
                                AND ac.player_id = $playerId))
           ORDER BY oc.create_date DESC"""
       .query(
-        challengeId *: gameType *: playerId *: text *: int2 *: instant.opt *: float8.opt *: settings *: bool *:
+        challengeId *: gameType *: playerId *: text *: instant.opt *: float8.opt *: settings *: bool *:
           gameRoleId *: int8.opt *: int8 *: text
       )
 
@@ -243,10 +250,10 @@ class OpenChallengeRepo(session: Session[IO]) {
     * no longer deletes it, it would otherwise sit in the list forever offering a Start that would
     * be refused.
     *
-    * A challenge that is full but not yet started is excluded too, unless `viewer` has accepted
-    * it. It is not something anyone else can join, and listing it invites a click on an Accept
-    * the service would refuse. The challenger sees their own throughout, since creating a
-    * challenge writes their acceptance of it.
+    * A challenge that is full — every role of its game taken — but not yet started is excluded
+    * too, unless `viewer` has accepted it. It is not something anyone else can join, and listing
+    * it invites a click on an Accept the service would refuse. The challenger sees their own
+    * throughout, since creating a challenge writes their acceptance of it.
     *
     * The count and the claimed roles come back with the challenge rather than from a call per
     * challenge: the UI needs both for every row it draws — the count to know whether a challenge
@@ -255,12 +262,12 @@ class OpenChallengeRepo(session: Session[IO]) {
     */
   def listByGame(id: GameId, viewer: PlayerId): IO[List[OpenChallengeSummary]] =
     session.execute(selectChallengesByGame)((id, viewer)).map(_.map {
-      case (challengeId, gt, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId,
+      case (challengeId, gt, challenger, message, start, timeLimitSeconds, settings, isPublic, roleId,
             characterIdValue, acceptances, takenRoles) =>
         OpenChallengeSummary(
           toChallenge(
             challengeId,
-            (gt, id, challenger, message, numberOfPlayers, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue)
+            (gt, id, challenger, message, start, timeLimitSeconds, settings, isPublic, roleId, characterIdValue)
           ),
           acceptances.toInt,
           takenRoles.split(',').filter(_.nonEmpty).map(v => GameRoleId(v.toInt)).toSeq

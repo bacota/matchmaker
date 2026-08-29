@@ -21,7 +21,7 @@ class CharacterServiceSpec extends PropertySuite {
   private def makeCharacterGame(gameExternalId: String): IO[Game] =
     TestSession.resource.use { session =>
       new GameRepo[String](session).create(
-        Game(GameId.unassigned, GameType.Character, "game", "description", "url", active = true, Seq.empty, Seq.empty, gameExternalId, minPlayers = 2, maxPlayers = 4)
+        Game(GameId.unassigned, GameType.Character, "game", "description", "url", active = true, Seq.empty, Seq.empty, gameExternalId)
       )
     }
 

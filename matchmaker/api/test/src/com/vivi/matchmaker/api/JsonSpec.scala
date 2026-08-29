@@ -32,9 +32,7 @@ class JsonSpec extends FunSuite {
           Seq(GameParameterValue(GameId(1), GameParameterId(3), "default"))
         )
       ),
-      externalId = "secret",
-      minPlayers = 2,
-      maxPlayers = 4
+      externalId = "secret"
     )
 
     val decoded = read[Game](write(game))
@@ -44,12 +42,11 @@ class JsonSpec extends FunSuite {
     assertEquals(decoded.parameters.head.asInstanceOf[GameParameter[String]].defaultValue, Some("default"))
   }
 
-  test("an OpenChallenge round-trips its Short, Instant and Duration fields") {
+  test("an OpenChallenge round-trips its Instant and Duration fields") {
     val challenge = CharacterOpenChallenge(
       ChallengeId(1),
       PlayerId(2),
       "message",
-      numberOfPlayers = 3.toShort,
       start = Some(Instant.ofEpochSecond(1000)),
       timeLimit = Some(Duration.ofSeconds(3600)),
       settings = "{}",
@@ -67,7 +64,6 @@ class JsonSpec extends FunSuite {
           ChallengeId(1),
           PlayerId(2),
           "m",
-          1.toShort,
           Some(Instant.parse("2026-01-01T00:00:00Z")),
           Some(Duration.ofMinutes(2)),
           "{}",
@@ -90,7 +86,6 @@ class JsonSpec extends FunSuite {
         ChallengeId(1),
         PlayerId(2),
         "message",
-        numberOfPlayers = 4.toShort,
         start = Some(Instant.ofEpochSecond(1000)),
         timeLimit = Some(Duration.ofSeconds(3600)),
         settings = "{}",
@@ -107,7 +102,6 @@ class JsonSpec extends FunSuite {
         ChallengeId(7),
         PlayerId(8),
         "message",
-        numberOfPlayers = 2.toShort,
         start = None,
         timeLimit = None,
         settings = "{}",
@@ -134,7 +128,7 @@ class JsonSpec extends FunSuite {
     val json = ujson.read(
       write(
         OpenChallengeSummary(
-          PlainOpenChallenge(ChallengeId(1), PlayerId(2), "m", 2.toShort, None, None, "{}", GameId(3), gameRoleId = GameRoleId(4)),
+          PlainOpenChallenge(ChallengeId(1), PlayerId(2), "m", None, None, "{}", GameId(3), gameRoleId = GameRoleId(4)),
           acceptances = 2
         )
       )

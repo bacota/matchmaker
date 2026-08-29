@@ -17,7 +17,7 @@
 \set external_id :external_id
 
 WITH game AS (
-  INSERT INTO game (game_type, name, description, url, active, external_id, min_players, max_players)
+  INSERT INTO game (game_type, name, description, url, active, external_id)
   VALUES (
     -- 'P' — plain: a seat in tic-tac-toe is a player, not a character. The engine accepts a
     -- character-carrying seat too (it ignores the character), but nothing here needs one.
@@ -26,9 +26,7 @@ WITH game AS (
     'Two players, three in a row. A test engine for matchmaker''s game interaction.',
     :'url',
     true,
-    :'external_id',
-    2,
-    2
+    :'external_id'
   )
   RETURNING game_id
 )

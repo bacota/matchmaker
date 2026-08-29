@@ -18,20 +18,20 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   private val gameType = SkunkCodecs.gameType
   private val value: Codec[T] = SkunkCodecs.plainText[T]
 
-  private val insertGameRow: Query[(GameType, String, String, String, Boolean, String, Int, Int), GameId] =
-    sql"""INSERT INTO game (game_type, name, description, url, active, external_id, min_players, max_players)
-          VALUES ($gameType, $text, $text, $text, $bool, $text, $int4, $int4)
+  private val insertGameRow: Query[(GameType, String, String, String, Boolean, String), GameId] =
+    sql"""INSERT INTO game (game_type, name, description, url, active, external_id)
+          VALUES ($gameType, $text, $text, $text, $bool, $text)
           RETURNING game_id""".query(gameId)
 
-  private val updateGameRow: Command[(GameType, String, String, String, Boolean, String, Int, Int, GameId)] =
+  private val updateGameRow: Command[(GameType, String, String, String, Boolean, String, GameId)] =
     sql"""UPDATE game SET game_type = $gameType, name = $text, description = $text, url = $text, active = $bool,
-          external_id = $text, min_players = $int4, max_players = $int4
+          external_id = $text
           WHERE game_id = $gameId""".command
 
-  private val selectGameRow: Query[GameId, (GameType, String, String, String, Boolean, String, Int, Int)] =
-    sql"""SELECT game_type, name, description, url, active, external_id, min_players, max_players
+  private val selectGameRow: Query[GameId, (GameType, String, String, String, Boolean, String)] =
+    sql"""SELECT game_type, name, description, url, active, external_id
           FROM game
-          WHERE game_id = $gameId""".query(gameType *: text *: text *: text *: bool *: text *: int4 *: int4)
+          WHERE game_id = $gameId""".query(gameType *: text *: text *: text *: bool *: text)
 
   /* Confirms a game exists and holds it that way for the rest of the transaction.
    *
@@ -83,7 +83,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   def create(game: Game): IO[Game] =
     for {
       gameId <- session.unique(insertGameRow)(
-        (game.gameType, game.name, game.description, game.url, game.active, game.externalId, game.minPlayers, game.maxPlayers)
+        (game.gameType, game.name, game.description, game.url, game.active, game.externalId)
       )
       roles <- game.roles.toList.traverse(insertRole(gameId, _))
       parameters <- game.parameters.toList.traverse(p => insertParameter(gameId, p.asInstanceOf[GameParameter[T]]))
@@ -97,17 +97,17 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   def read(id: GameId): IO[Option[Game]] =
     session.option(selectGameRow)(id).flatMap {
       case None => IO.pure(None)
-      case Some((gameType, name, description, url, active, externalId, minPlayers, maxPlayers)) =>
+      case Some((gameType, name, description, url, active, externalId)) =>
         for {
           roles <- readRoles(id)
           parameters <- readParameters(id)
-        } yield Some(Game(id, gameType, name, description, url, active, roles, parameters, externalId, minPlayers, maxPlayers))
+        } yield Some(Game(id, gameType, name, description, url, active, roles, parameters, externalId))
     }
 
   def update(game: Game): IO[Unit] =
     for {
       _ <- session.execute(updateGameRow)(
-        (game.gameType, game.name, game.description, game.url, game.active, game.externalId, game.minPlayers, game.maxPlayers, game.gameId)
+        (game.gameType, game.name, game.description, game.url, game.active, game.externalId, game.gameId)
       )
       _ <- upsertRoles(game.gameId, game.roles)
       _ <- replaceParameters(game.gameId, game.parameters)
@@ -179,8 +179,6 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       url: String,
       active: Boolean,
       externalId: String,
-      minPlayers: Int,
-      maxPlayers: Int,
       roleId: Option[Int],
       roleName: Option[String],
       roleOptional: Option[Boolean],
@@ -197,7 +195,6 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
   // rather than its activity — but it is the reason to revisit this if they ever grow.
   private val selectGameAggregate =
     sql"""SELECT g.game_id, g.game_type, g.name, g.description, g.url, g.active, g.external_id,
-                 g.min_players, g.max_players,
                  r.game_role_id, r.name, r.optional,
                  p.game_parameter_id, p.name, p.default_value,
                  v.value
@@ -209,7 +206,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           WHERE (NOT $bool OR g.active)
           ORDER BY g.game_id"""
       .query(
-        gameId *: gameType *: text *: text *: text *: bool *: text *: int4 *: int4 *:
+        gameId *: gameType *: text *: text *: text *: bool *: text *:
           int4.opt *: text.opt *: bool.opt *:
           int4.opt *: text.opt *: value.opt *: value.opt
       )
@@ -265,9 +262,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           head.active,
           roles,
           parameters,
-          head.externalId,
-          head.minPlayers,
-          head.maxPlayers
+          head.externalId
         )
       }
         // game_id breaks ties, so games sharing a name still come back in a stable order.

@@ -34,7 +34,7 @@ class AcceptanceServiceSpec extends PropertySuite {
               GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false),
               GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false)
             ),
-            Seq.empty, genUniqueString.sample.get, 2, 4
+            Seq.empty, genUniqueString.sample.get
           )
         )
         character <- new CharacterRepo[String](session).create(
@@ -53,16 +53,16 @@ class AcceptanceServiceSpec extends PropertySuite {
       } yield (player, character)
     }
 
-  private def challengeFor(fixture: Fixture, numberOfPlayers: Int): OpenChallenge =
+  private def challengeFor(fixture: Fixture): OpenChallenge =
     CharacterOpenChallenge(
-      ChallengeId(0), fixture.owner.playerId, "message", numberOfPlayers.toShort, None, None, "{}", fixture.game.gameId,
+      ChallengeId(0), fixture.owner.playerId, "message", None, None, "{}", fixture.game.gameId,
       fixture.character.characterId, isPublic = false, gameRoleId = fixture.game.roles.head.gameRoleId
     )
 
   private def setUp(nickname: String, externalId: String, accepterNickname: String, accepterExternalId: String) =
     for {
       fixture <- makeFixture(nickname, externalId)
-      created <- challengeService.create(challengeFor(fixture, 3), externalId)
+      created <- challengeService.create(challengeFor(fixture), externalId)
       accepter <- makeCharacterInGame(fixture.game, accepterNickname, accepterExternalId)
       (accepterPlayer, accepterCharacter) = accepter
       accepted <- challengeService.accept(
@@ -120,7 +120,7 @@ class AcceptanceServiceSpec extends PropertySuite {
       (nickname, externalId, otherNickname, otherExternalId) =>
         val result = for {
           fixture <- makeFixture(nickname, externalId)
-          created <- challengeService.create(challengeFor(fixture, 3), externalId)
+          created <- challengeService.create(challengeFor(fixture), externalId)
           other <- registrationService.register(otherNickname, otherExternalId)
           attempt <- acceptanceService.delete(fixture.game.gameId, created.challengeId, other.playerId, otherExternalId).attempt
         } yield attempt match {

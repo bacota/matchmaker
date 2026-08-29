@@ -2,29 +2,19 @@ package com.vivi.matchmaker.persistence
 
 import cats.effect.{IO, Resource}
 import skunk._
-import natchez.Trace.Implicits.noop
-import org.typelevel.otel4s.trace.Tracer.Implicits.noop as noopTracer
-import org.typelevel.otel4s.metrics.Meter.Implicits.noop as noopMeter
 import com.vivi.matchmaker.TestMigration
 
-/** Connects to a local Postgres instance with user/database/password all
-  * "matchmaker", per the assumed local dev setup for these property tests.
+/** A session on the local Postgres instance with user/database/password all "matchmaker", per
+  * the assumed local dev setup for these property tests.
+  *
+  * Borrowed from the pool the services already run on rather than opened per use. A fixture
+  * takes one of these several times over — make a game, make a character, read back what a
+  * service wrote — and `Session.single` paid a TCP connect and a SCRAM handshake for every one
+  * of them, which is most of what a small property test spent its time doing.
   */
 object TestSession {
-  private val host = "localhost"
-  private val port = 5432
-  private val user = "matchmaker"
-  private val database = "matchmaker"
-  private val password = "matchmaker"
-
   def resource: Resource[IO, Session[IO]] = {
     TestMigration.ensure()
-    Session.single[IO](
-      host = host,
-      port = port,
-      user = user,
-      database = database,
-      password = Some(password)
-    )
+    com.vivi.matchmaker.service.TestServices.pool
   }
 }
