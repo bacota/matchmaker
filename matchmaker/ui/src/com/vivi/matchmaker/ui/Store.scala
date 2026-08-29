@@ -46,8 +46,8 @@ object Store {
     */
   val signedIn: Var[Boolean] = Var(Auth.isSignedIn)
 
-  /** The player asked to leave: the refresh token is revoked, then the screen is returned to the
-    * sign-in form the same way an expired session returns it.
+  /** The player asked to leave: revocation of the refresh token is triggered (best-effort), then
+    * the screen is returned to the sign-in form the same way an expired session returns it.
     */
   def signOut(): Unit = {
     Auth.signOut()
