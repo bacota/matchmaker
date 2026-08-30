@@ -340,8 +340,15 @@ object Views {
     * Both facts it selects on come from the acceptances response, so this needs nothing loaded
     * per game to draw itself.
     */
+  /** Shared by both sections drawn from the acceptances list — "Ready to Start" and "Waiting to
+    * Start" are one response split by who may act on it, so either button reloads both and both
+    * have to say so. Held at this level rather than passed down because the two sections are
+    * siblings on the main page with nothing between them to own it.
+    */
+  private val refreshingAcceptances: Var[Boolean] = Var(false)
+
   private def readyToStartSection: HtmlElement =
-    refreshableSection("Ready to Start", () => Store.reloadAcceptances())(
+    refreshableSection("Ready to Start", refreshingAcceptances, () => Store.reloadAcceptances(), subsection = false)(
       child <-- Store.acceptances.signal
         .combineWith(Store.games.signal, currentPlayer)
         .map { (acceptances, games, player) =>
@@ -411,7 +418,7 @@ object Views {
     * top of the page, and listing them twice would offer the same Start button in two places.
     */
   private def pendingAcceptances: HtmlElement =
-    refreshableSection("Waiting to Start", () => Store.reloadAcceptances(), subsection = true)(
+    refreshableSection("Waiting to Start", refreshingAcceptances, () => Store.reloadAcceptances(), subsection = true)(
       child <-- Store.acceptances.signal.combineWith(Store.games.signal, currentPlayer).map { (acceptances, games, player) =>
         val waiting = acceptances.filterNot(p => p.readyToStart && player.exists(_.playerId == p.challenger))
         if (waiting.isEmpty) p(cls := "empty", "You have not accepted anything that is still waiting.")
