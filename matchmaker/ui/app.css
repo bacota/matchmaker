@@ -20,9 +20,94 @@ body {
 }
 
 .app {
-  max-width: 44rem;
+  /* Wider than it was: there is a menu beside the content now, and 44rem was the width of the
+     content alone. */
+  max-width: 58rem;
   margin: 0 auto;
   padding: 1.5rem 1rem 4rem;
+}
+
+/* The menu and the screen it selects. The menu keeps its width whatever is beside it, so the
+   content does not shift as one game's screen replaces another's. */
+.layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.5rem;
+}
+
+.menu {
+  flex: 0 0 11rem;
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.15rem;
+  padding-top: 0.5rem;
+}
+
+/* The games between the fixed entries are wrapped in a div of their own, which would otherwise
+   collapse the gap between them. */
+.menu > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.menu-item {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+.menu-item:hover:not(:disabled) {
+  background: #eef2f8;
+}
+
+/* The screen being looked at. Marked rather than removed from the menu, so the menu does not
+   change shape as it is used. */
+.menu-item.current {
+  background: #e6ecf5;
+  color: #1a1a1a;
+  font-weight: 600;
+}
+
+/* The menu is a column beside the content on a wide window and a row above it on a narrow one,
+   where 11rem of it would leave the content nothing. */
+@media (max-width: 40rem) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .menu {
+    position: static;
+    flex: none;
+    align-self: stretch;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .menu > div {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
+/* The screen fills what the menu leaves. `min-width` because a flex item's default minimum is
+   its content, which a wide result table would push past. */
+.screen {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The first heading of a screen sits at the top of it: `h2` has a margin meant to separate one
+   section from the last, and there is nothing above this one. */
+.screen > div > h2:first-child,
+.screen > div > section:first-child > h2 {
+  margin-top: 0;
 }
 
 h1 {

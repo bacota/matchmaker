@@ -69,8 +69,8 @@ object Store {
     challengesByGame.set(Map.empty)
     charactersByGame.set(Map.empty)
     acceptances.set(Seq.empty)
-    expandedGames.set(Set.empty)
-    showNewGame.set(false)
+    page.set(Page.Home)
+    showChallengeForm.set(false)
     editingGame.set(None)
     // Closed and emptied with the rest: it holds a half-typed address and a password field, and
     // neither belongs to whoever signs in next.
@@ -102,19 +102,51 @@ object Store {
     */
   val resultsByMatch: Var[Map[MatchId, Seq[Json.ParticipantResultView]]] = Var(Map.empty)
 
-  val expandedGames: Var[Set[GameId]] = Var(Set.empty)
-  val showActive: Var[Boolean] = Var(false)
-
-  /** Whether the admin-only new-game form is open. Collapsed by default: an admin is a player
-    * first, and the form is not what they came to the page for.
+  /** Which screen the left-hand menu has selected.
+    *
+    * A field rather than a URL: there is still no router, and the browser's address bar is
+    * spoken for by the Cognito redirect. What changed is that the games are no longer a list on
+    * the home page that expands in place — a game is a screen of its own, so something has to
+    * say which one is being looked at.
     */
-  val showNewGame: Var[Boolean] = Var(false)
+  enum Page {
+    case Home
+    case OneGame(gameId: GameId)
+    case NewGame
+  }
+
+  val page: Var[Page] = Var(Page.Home)
+
+  /** Goes to a screen, loading what it needs on the way.
+    *
+    * A game's challenges and characters are fetched on arrival rather than held for every game
+    * at once: there is one request per game opened, and a game nobody looks at costs nothing.
+    * Re-selecting the game already shown reloads it, which is the only refresh this screen has.
+    */
+  def show(next: Page): Unit = {
+    page.set(next)
+    next match {
+      case Page.OneGame(gameId) =>
+        refreshChallenges(gameId)
+        refreshCharacters(gameId)
+      case _ => ()
+    }
+  }
 
   /** The game whose admin edit form is open, if any. One slot rather than a set: editing two
     * games at once is not a thing anyone does, and one open form is one place to look for it.
     */
   val editingGame: Var[Option[GameId]] = Var(None)
-  val showCompleted: Var[Boolean] = Var(false)
+
+  /** Whether the game screen's challenge form is open. Closed by default — the wire-frame asks
+    * for a "Create Challenge" button, and a form standing open is not a button.
+    */
+  val showChallengeForm: Var[Boolean] = Var(false)
+
+  /** How many finished matches the home screen shows. The whole history belongs to the game it
+    * was played in; the home screen is a glance at what happened lately.
+    */
+  val recentlyCompleted: Int = 10
 
   /** The last thing that went wrong, shown as a banner. A single slot rather than a list: the
     * user acts on the most recent failure, and a queue of stale ones is noise.
@@ -203,12 +235,4 @@ object Store {
   def refreshCharacters(gameId: GameId): Unit =
     run(ApiClient.characters(gameId))(list => charactersByGame.update(_.updated(gameId, list)))
 
-  def toggleGame(gameId: GameId): Unit = {
-    val nowExpanded = !expandedGames.now().contains(gameId)
-    expandedGames.update(current => if (nowExpanded) current + gameId else current - gameId)
-    if (nowExpanded) {
-      refreshChallenges(gameId)
-      refreshCharacters(gameId)
-    }
-  }
 }
