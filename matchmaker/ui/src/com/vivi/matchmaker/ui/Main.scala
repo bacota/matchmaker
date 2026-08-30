@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalajs.js.annotation.JSExportTopLevel
 import com.raquo.laminar.api.L.{*, given}
@@ -87,6 +88,81 @@ object Views {
     */
   private def field(caption: String, control: HtmlElement): HtmlElement =
     label(cls := "field", caption, control)
+
+  /** A section with a refresh button of its own.
+    *
+    * Every list here can go stale while it is being looked at — somebody else accepts a
+    * challenge, an engine finishes a match — and the only remedy used to be reloading the page,
+    * which throws away every other section to reload one. This re-fetches just this section's
+    * list and leaves the rest of the screen alone.
+    *
+    * The body dims and comes back while the request is in flight, so it is clear which part of
+    * the page the button acted on. A fast request would flash too briefly to register, so the
+    * dimming is held for a moment; a slow one holds it until the answer arrives.
+    */
+  private def refreshableSection(
+      heading: String,
+      reload: () => Future[Unit],
+      subsection: Boolean = false
+  )(content: Modifier[HtmlElement]*): HtmlElement =
+    refreshableSection(heading, Var(false), reload, subsection)(content*)
+
+  /** The same, over a reloading flag the caller owns.
+    *
+    * Two uses for that. One is a reload that fills more than one section — the game screen's two
+    * challenge lists come from a single request — where a flag per section would dim the one that
+    * was clicked while quietly replacing the other, which is both confusing to look at and a
+    * lie to a screen reader, since the content that changed would be outside the region marked
+    * busy. The other is a section whose element is rebuilt by its own reload: a flag created
+    * inside it is thrown away along with the element, and the dimming ends the moment the
+    * response lands rather than being seen.
+    */
+  private def refreshableSection(
+      heading: String,
+      refreshing: Var[Boolean],
+      reload: () => Future[Unit],
+      subsection: Boolean
+  )(content: Modifier[HtmlElement]*): HtmlElement =
+    sectionTag(
+      cls := "refreshable",
+      cls("refreshing") <-- refreshing.signal,
+      div(
+        cls := "section-head",
+        if (subsection) h3(heading) else h2(heading),
+        button(
+          cls := "refresh",
+          tpe := "button",
+          // The glyph is decorative; the button needs a name a screen reader can read out, and
+          // naming the section it belongs to is what distinguishes it from the others.
+          aria.label := s"Refresh $heading",
+          disabled <-- refreshing.signal,
+          span(aria.hidden := true, "\u21bb"),
+          onClick --> (_ => refresh(refreshing, reload))
+        )
+      ),
+      div(
+        cls := "section-body",
+        // Says the list is being replaced, so a screen reader does not read out half of it
+        // mid-update.
+        aria.busy <-- refreshing.signal,
+        content
+      )
+    )
+
+  /** How long the dimming is held for, whether or not the request takes that long. Short enough
+    * not to be in the way, long enough to be seen.
+    */
+  private val blinkMillis = 400L
+
+  private def refresh(refreshing: Var[Boolean], reload: () => Future[Unit]): Unit =
+    if (!refreshing.now()) {
+      refreshing.set(true)
+      val startedAt = System.currentTimeMillis()
+      reload().onComplete { _ =>
+        val remaining = math.max(0L, blinkMillis - (System.currentTimeMillis() - startedAt))
+        dom.window.setTimeout(() => refreshing.set(false), remaining.toDouble)
+      }
+    }
 
   // -------------------------------------------------------------------------
   // Chrome
@@ -246,6 +322,7 @@ object Views {
       readyToStartSection,
       dueSection,
       myMatchesSection,
+      pendingAcceptances,
       recentlyCompletedSection
     )
 
@@ -263,21 +340,28 @@ object Views {
     * Both facts it selects on come from the acceptances response, so this needs nothing loaded
     * per game to draw itself.
     */
+  /** Shared by both sections drawn from the acceptances list — "Ready to Start" and "Waiting to
+    * Start" are one response split by who may act on it, so either button reloads both and both
+    * have to say so. Held at this level rather than passed down because the two sections are
+    * siblings on the main page with nothing between them to own it.
+    */
+  private val refreshingAcceptances: Var[Boolean] = Var(false)
+
   private def readyToStartSection: HtmlElement =
-    div(
+    refreshableSection("Ready to Start", refreshingAcceptances, () => Store.reloadAcceptances(), subsection = false)(
       child <-- Store.acceptances.signal
         .combineWith(Store.games.signal, currentPlayer)
         .map { (acceptances, games, player) =>
           val mine = player.toSeq.flatMap { me =>
             acceptances.filter(p => p.readyToStart && p.challenger == me.playerId)
           }
-          if (mine.isEmpty) emptyNode
+          // Shown empty rather than absent, now that the section carries its own refresh button:
+          // a button that only appears once there is something to find is no use to someone
+          // checking whether there is.
+          if (mine.isEmpty) p(cls := "empty", "Nothing is waiting for you to start it.")
           else {
             val namesById = games.map(game => game.gameId -> game.name).toMap
-            sectionTag(
-              h2("Ready to Start"),
-              ul(mine.map(pending => readyToStartRow(pending, namesById.get(pending.acceptance.gameId))))
-            )
+            ul(mine.map(pending => readyToStartRow(pending, namesById.get(pending.acceptance.gameId))))
           }
         }
     )
@@ -304,8 +388,7 @@ object Views {
     * list shown expanded from the start, because it is the one that needs acting on.
     */
   private def dueSection: HtmlElement =
-    sectionTag(
-      h2("Your Turn"),
+    refreshableSection("Your Turn", () => Store.reloadDue())(
       child <-- Store.due.signal.map {
         case Nil     => p(cls := "empty", "Nothing is waiting on you.")
         case matches => ul(matches.map(matchRow(_, showDue = true)))
@@ -317,13 +400,11 @@ object Views {
     * find out whether it is empty is not shown.
     */
   private def myMatchesSection: HtmlElement =
-    sectionTag(
-      h2("Current Matches"),
+    refreshableSection("Current Matches", () => Store.reloadActive())(
       child <-- Store.active.signal.map {
         case Nil     => p(cls := "empty", "You are not in any matches.")
         case matches => ul(matches.map(matchRow(_, showDue = false)))
-      },
-      pendingAcceptances
+      }
     )
 
   /** "Also shows pending acceptances with option to back out."
@@ -337,8 +418,7 @@ object Views {
     * top of the page, and listing them twice would offer the same Start button in two places.
     */
   private def pendingAcceptances: HtmlElement =
-    div(
-      h3("Waiting to Start"),
+    refreshableSection("Waiting to Start", refreshingAcceptances, () => Store.reloadAcceptances(), subsection = true)(
       child <-- Store.acceptances.signal.combineWith(Store.games.signal, currentPlayer).map { (acceptances, games, player) =>
         val waiting = acceptances.filterNot(p => p.readyToStart && player.exists(_.playerId == p.challenger))
         if (waiting.isEmpty) p(cls := "empty", "You have not accepted anything that is still waiting.")
@@ -383,8 +463,7 @@ object Views {
     * the same list filtered rather than a differently ordered one.
     */
   private def recentlyCompletedSection: HtmlElement =
-    sectionTag(
-      h2("Recently Completed"),
+    refreshableSection("Recently Completed", () => Store.reloadCompleted())(
       child <-- Store.completed.signal.map(_.take(Store.recentlyCompleted)).map {
         case Nil     => p(cls := "empty", "Nothing finished yet.")
         case matches => ul(matches.map(matchRow(_, showDue = false)))
@@ -550,8 +629,7 @@ object Views {
     * the two screens to disagree.
     */
   private def gameHistory(game: Game): HtmlElement =
-    sectionTag(
-      h2("Your Completed Matches"),
+    refreshableSection("Your Completed Matches", () => Store.reloadCompleted())(
       child <-- Store.completed.signal.map(_.filter(_.gameId == game.gameId)).map {
         case Nil     => p(cls := "empty", "You have not finished a match of this yet.")
         case matches => ul(matches.map(matchRow(_, showDue = false)))
@@ -870,7 +948,11 @@ object Views {
     )
   }
 
-  private def challengePanel(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement =
+  private def challengePanel(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement = {
+    // One flag for both lists, held out here rather than inside either of them: they are two
+    // views of one request, and this element is rebuilt when that request answers.
+    val refreshingChallenges = Var(false)
+
     div(
       child <-- Store.challengesByGame.signal.combineWith(Store.acceptances.signal).map { (byGame, acceptances) =>
         byGame.get(game.gameId) match {
@@ -895,16 +977,29 @@ object Views {
               child <-- Store.showChallengeForm.signal.map {
                 if (_) newChallengeForm(game, player, characterId) else emptyNode
               },
-              h3("Your Open Challenges"),
-              if (mine.isEmpty) p(cls := "empty", "You have none open.")
-              else ul(mine.map(myChallengeRow(game, _))),
-              h3("Open Challenges"),
-              if (available.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
-              else ul(available.map(openChallengeRow(game, _, characterId)))
+              refreshableSection(
+                "Your Open Challenges",
+                refreshingChallenges,
+                () => Store.reloadChallenges(game.gameId),
+                subsection = true
+              )(
+                if (mine.isEmpty) p(cls := "empty", "You have none open.")
+                else ul(mine.map(myChallengeRow(game, _)))
+              ),
+              refreshableSection(
+                "Open Challenges",
+                refreshingChallenges,
+                () => Store.reloadChallenges(game.gameId),
+                subsection = true
+              )(
+                if (available.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
+                else ul(available.map(openChallengeRow(game, _, characterId)))
+              )
             )
         }
       }
     )
+  }
 
   private def myChallengeRow(game: Game, summary: OpenChallengeSummary): HtmlElement = {
     val challenge = summary.challenge

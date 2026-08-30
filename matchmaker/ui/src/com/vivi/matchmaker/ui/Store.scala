@@ -227,6 +227,45 @@ object Store {
     run(ApiClient.results())(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
   }
 
+  /** The same as `run`, but handing back a `Future` that says when the request has settled.
+    *
+    * Success and failure are dealt with exactly as `run` deals with them — the list is set or the
+    * error is reported — and the result is always a success, because the only caller is a section
+    * waiting to stop showing that it is reloading. A failure there is not a second thing to
+    * handle; it is a banner that has already been raised.
+    */
+  private def reload[A](action: Future[A])(onSuccess: A => Unit): Future[Unit] =
+    action.transform { outcome =>
+      try settle(outcome)(onSuccess)
+      catch { case t: Throwable => report(t) }
+      Success(())
+    }
+
+  /** One list at a time, for the refresh button each section carries.
+    *
+    * `refreshMatches` reloads all of them because an action in one list usually changes another.
+    * These exist for the other case: the user asking a single section whether it is still true,
+    * which should not cost four requests or blank out the rest of the page.
+    */
+  def reloadDue(): Future[Unit] = reload(ApiClient.dueMatches())(due.set)
+
+  def reloadActive(): Future[Unit] = reload(ApiClient.activeMatches())(active.set)
+
+  def reloadAcceptances(): Future[Unit] = reload(ApiClient.acceptances())(acceptances.set)
+
+  /** The finished matches and their results together: the completed lists show the result table
+    * under each row, so reloading one without the other would leave a match beside somebody
+    * else's outcome.
+    */
+  def reloadCompleted(): Future[Unit] = {
+    val matches = reload(ApiClient.completedMatches())(completed.set)
+    val rows = reload(ApiClient.results())(r => resultsByMatch.set(r.groupBy(_.matchId)))
+    matches.zip(rows).map(_ => ())
+  }
+
+  def reloadChallenges(gameId: GameId): Future[Unit] =
+    reload(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))
+
   def refreshGames(): Unit = run(ApiClient.games(activeOnly = true))(games.set)
 
   def refreshChallenges(gameId: GameId): Unit =

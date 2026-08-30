@@ -141,8 +141,82 @@ body {
 /* The first heading of a screen sits at the top of it: `h2` has a margin meant to separate one
    section from the last, and there is nothing above this one. */
 .screen > div > h2:first-child,
-.screen > div > section:first-child > h2 {
+.screen > div > section:first-child > h2,
+.screen > div > section:first-child > .section-head > h2 {
   margin-top: 0;
+}
+
+/* A section's heading and its refresh button share a line, with the button pushed to the right
+   edge so every section's button lands in the same column and the headings still read as a
+   column of their own. */
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.section-head > h2,
+.section-head > h3 {
+  min-width: 0;
+}
+
+/* Quiet until it is wanted: this is a button beside every heading on the page, and eight of them
+   drawn as buttons would out-shout the lists they belong to. */
+.refresh {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.refresh:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.refresh:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* A finger needs more than the glyph: the visible mark stays small, and the target around it
+   grows to something that can actually be hit. */
+@media (pointer: coarse) {
+  .refresh {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* Which part of the page the button acted on: the section's body dims and comes back, and
+   nothing else on the screen moves. */
+.refreshing > .section-body {
+  animation: section-blink 0.4s ease-in-out;
+}
+
+@keyframes section-blink {
+  0% {
+    opacity: 1;
+  }
+  35% {
+    opacity: 0.25;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Reduced motion still gets the cue — it is a fade held steady rather than a pulse. */
+@media (prefers-reduced-motion: reduce) {
+  .refreshing > .section-body {
+    animation: none;
+    opacity: 0.45;
+  }
 }
 
 h1 {
