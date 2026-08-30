@@ -11,6 +11,9 @@ import java.time.Instant
   * @param pending whether it is this player's turn. Set from what the engine reports about
   *                each participant, and the flag `due` selects on — not, despite an older
   *                reading of the name, whether the match has started yet
+  * @param completedAt when the match was played to an end, if it was — the database's clock,
+  *                    stamped once. `completed` is derived from it, as on `Match`, so a list can
+  *                    both ask whether a match is finished and say when
   * @param cancelled whether the creator called the match off; a cancelled match is over but has
   *                  no result, and is listed with the finished ones rather than the active ones
   * @param isCreator whether this player is the one who created the match — the challenger of the
@@ -24,7 +27,7 @@ case class MatchSummary(
     matchId: MatchId,
     gameName: String,
     description: String,
-    completed: Boolean,
+    completedAt: Option[Instant],
     cancelled: Boolean,
     isCreator: Boolean,
     start: Instant,
@@ -32,4 +35,8 @@ case class MatchSummary(
     pending: Boolean,
     participantId: ParticipantId,
     characterId: Option[CharacterId]
-)
+) {
+
+  /** Whether the match was played to an end. */
+  def completed: Boolean = completedAt.isDefined
+}

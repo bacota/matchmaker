@@ -130,20 +130,20 @@ class MatchRepo(session: Session[IO]) {
   // from Tuple outside the scope that defines it. character_id is nullable: a 'P'-type game's
   // participant has no character_participant row at all.
   private val summaryColumns =
-    gameId *: matchId *: text *: text *: bool *: bool *: bool *: instant *: instant.opt *: int8 *: int8.opt *: bool
+    gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: instant.opt *: int8 *: int8.opt *: bool
 
   private def toSummary(
-      row: (GameId, MatchId, String, String, Boolean, Boolean, Boolean, Instant, Option[Instant], Long, Option[Long],
-        Boolean)
+      row: (GameId, MatchId, String, String, Option[Instant], Boolean, Boolean, Instant, Option[Instant], Long,
+        Option[Long], Boolean)
   ): MatchSummary = {
-    val (gameId, matchId, gameName, description, completed, cancelled, isCreator, start, due, participantId,
+    val (gameId, matchId, gameName, description, completedAt, cancelled, isCreator, start, due, participantId,
       characterId, pending) = row
     MatchSummary(
       gameId,
       matchId,
       gameName,
       description,
-      completed,
+      completedAt,
       cancelled,
       isCreator,
       start,
@@ -154,14 +154,11 @@ class MatchRepo(session: Session[IO]) {
     )
   }
 
-  // Ordering puts the most urgent first for due lists and the most recent first for history;
-  // NULLS LAST keeps matches with no deadline from crowding out ones that have a deadline.
-  // The parameter is whether the match is *over*, which a cancelled match is: it will never be
-  // played again and never gain a result, so leaving it among the active ones would make cancel
-  // do nothing a player could see. It is listed with the finished matches instead, flagged, so
-  // that calling a match off does not erase it from the creator's own history.
-  private val selectForPlayer =
-    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed IS NOT NULL, m.cancelled,
+  // Still being played: neither completed nor called off. Ordered by the caller's own deadline,
+  // most urgent first, with NULLS LAST so matches with no deadline do not crowd out ones that
+  // have one.
+  private val selectActiveForPlayer =
+    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
                  p.due, p.participant_id, cp.character_id, p.pending
           FROM participant p
@@ -172,12 +169,33 @@ class MatchRepo(session: Session[IO]) {
           -- match is theirs to cancel.
           JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
-          WHERE p.player_id = $playerId AND ((m.completed IS NOT NULL) OR m.cancelled) = $bool
+          WHERE p.player_id = $playerId AND m.completed IS NULL AND NOT m.cancelled
           ORDER BY p.due ASC NULLS LAST, m.start DESC"""
       .query(summaryColumns)
 
+  /* Over, which a cancelled match is: it will never be played again and never gain a result, so
+   * leaving it among the active ones would make cancel do nothing a player could see. It is
+   * listed here instead, flagged, so that calling a match off does not erase it from the
+   * creator's own history.
+   *
+   * Most recently finished first — a history read from the top. A cancelled match has no
+   * completion time at all, so NULLS LAST puts those after the played-out ones rather than
+   * ahead of everything, and `start` orders them among themselves. */
+  private val selectOverForPlayer =
+    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+                 oc.challenger = p.player_id, m.start,
+                 p.due, p.participant_id, cp.character_id, p.pending
+          FROM participant p
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN game g ON g.game_id = m.game_id
+          JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
+          LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
+          WHERE p.player_id = $playerId AND (m.completed IS NOT NULL OR m.cancelled)
+          ORDER BY m.completed DESC NULLS LAST, m.start DESC"""
+      .query(summaryColumns)
+
   private val selectDueForPlayer =
-    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed IS NOT NULL, m.cancelled,
+    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
                  p.due, p.participant_id, cp.character_id, p.pending
           FROM participant p
@@ -193,10 +211,12 @@ class MatchRepo(session: Session[IO]) {
       .query(summaryColumns)
 
   /** Every match the player is in, either still running (`over = false`) or over — where over
-    * means completed or cancelled.
+    * means completed or cancelled. Two queries rather than one parameterized by `over`, because
+    * the two lists are read for different reasons and are ordered differently: what is urgent
+    * first, or what finished most recently first.
     */
   def listForPlayer(playerId: PlayerId, over: Boolean): IO[List[MatchSummary]] =
-    session.execute(selectForPlayer)((playerId, over)).map(_.map(toSummary))
+    session.execute(if (over) selectOverForPlayer else selectActiveForPlayer)(playerId).map(_.map(toSummary))
 
   /** The running matches in which it is this player's turn. */
   def listDueForPlayer(playerId: PlayerId): IO[List[MatchSummary]] =

@@ -109,7 +109,7 @@ class WireFormatSpec extends FunSuite {
       matchId = MatchId("m-1"),
       gameName = "Chess",
       description = "d",
-      completed = false,
+      completedAt = Some(Instant.parse("2026-08-09T09:30:00Z")),
       cancelled = false,
       isCreator = true,
       start = Instant.parse("2026-08-07T12:00:00Z"),
@@ -123,6 +123,7 @@ class WireFormatSpec extends FunSuite {
 
     assertEquals(decoded.start, summary.start)
     assertEquals(decoded.due, summary.due)
+    assertEquals(decoded.completedAt, summary.completedAt)
   }
 
   // The challenges page decodes this and nothing else, and the nested `challenge` goes through
