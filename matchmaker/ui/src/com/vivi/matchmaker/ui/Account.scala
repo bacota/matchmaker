@@ -254,7 +254,7 @@ object Account {
       inContext(node => onMountCallback(_ => node.ref.focus())),
       // Focusable so that focus can be moved to it, but not a tab stop of its own.
       tabIndex := -1,
-      h2(idAttr := "account-menu-heading", "Your account"),
+      h2(idAttr := "account-menu-heading", "Your Account"),
       nicknameForm,
       // Nothing to change at Cognito when there is no Cognito: local mode authenticates with a
       // header, and offering forms that could only fail would be worse than leaving them out.
@@ -298,7 +298,7 @@ object Account {
           case EmailStage.Sent(_) => confirmEmail(busy)
         }
       },
-      h3("Email address"),
+      h3("Email Address"),
       label(
         "New email address",
         input(

@@ -155,7 +155,7 @@ object Views {
   private def unavailable(reason: String): HtmlElement =
     div(
       cls := "card",
-      h2("Could not load your account"),
+      h2("Could Not Load Your Account"),
       p(reason),
       p(cls := "detail", "This is a problem reaching the server, not a problem with your sign-in."),
       button("Try again", onClick --> (_ => Store.loadAll()))
@@ -166,7 +166,7 @@ object Views {
 
     div(
       cls := "card",
-      h2("Choose a nickname"),
+      h2("Choose a Nickname"),
       p("You are signed in, but you do not have a player yet. Your nickname is what other players see."),
       field("Nickname", input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))),
       busyButton("Create player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
@@ -275,7 +275,7 @@ object Views {
           else {
             val namesById = games.map(game => game.gameId -> game.name).toMap
             sectionTag(
-              h2("Ready to start"),
+              h2("Ready to Start"),
               ul(mine.map(pending => readyToStartRow(pending, namesById.get(pending.acceptance.gameId))))
             )
           }
@@ -305,7 +305,7 @@ object Views {
     */
   private def dueSection: HtmlElement =
     sectionTag(
-      h2("Your turn"),
+      h2("Your Turn"),
       child <-- Store.due.signal.map {
         case Nil     => p(cls := "empty", "Nothing is waiting on you.")
         case matches => ul(matches.map(matchRow(_, showDue = true)))
@@ -318,7 +318,7 @@ object Views {
     */
   private def myMatchesSection: HtmlElement =
     sectionTag(
-      h2("Current matches"),
+      h2("Current Matches"),
       child <-- Store.active.signal.map {
         case Nil     => p(cls := "empty", "You are not in any matches.")
         case matches => ul(matches.map(matchRow(_, showDue = false)))
@@ -338,7 +338,7 @@ object Views {
     */
   private def pendingAcceptances: HtmlElement =
     div(
-      h3("Waiting to start"),
+      h3("Waiting to Start"),
       child <-- Store.acceptances.signal.combineWith(Store.games.signal, currentPlayer).map { (acceptances, games, player) =>
         val waiting = acceptances.filterNot(p => p.readyToStart && player.exists(_.playerId == p.challenger))
         if (waiting.isEmpty) p(cls := "empty", "You have not accepted anything that is still waiting.")
@@ -384,7 +384,7 @@ object Views {
     */
   private def recentlyCompletedSection: HtmlElement =
     sectionTag(
-      h2("Recently completed"),
+      h2("Recently Completed"),
       child <-- Store.completed.signal.map(_.take(Store.recentlyCompleted)).map {
         case Nil     => p(cls := "empty", "Nothing finished yet.")
         case matches => ul(matches.map(matchRow(_, showDue = false)))
@@ -551,7 +551,7 @@ object Views {
     */
   private def gameHistory(game: Game): HtmlElement =
     sectionTag(
-      h2("Your completed matches"),
+      h2("Your Completed Matches"),
       child <-- Store.completed.signal.map(_.filter(_.gameId == game.gameId)).map {
         case Nil     => p(cls := "empty", "You have not finished a match of this yet.")
         case matches => ul(matches.map(matchRow(_, showDue = false)))
@@ -563,7 +563,7 @@ object Views {
     */
   private def newGamePage: HtmlElement =
     div(
-      h2("Add a game"),
+      h2("Add a Game"),
       child <-- currentPlayer.map {
         case Some(player) if player.isAdmin => newGameForm
         case _ => p(cls := "empty", "Only an administrator can add a game.")
@@ -858,7 +858,7 @@ object Views {
 
     div(
       cls := "card",
-      h3(s"Create your character for ${game.name}"),
+      h3(s"Create Your Character for ${game.name}"),
       p("You need a character in this game before you can offer or accept a challenge."),
       field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
       field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
@@ -895,10 +895,10 @@ object Views {
               child <-- Store.showChallengeForm.signal.map {
                 if (_) newChallengeForm(game, player, characterId) else emptyNode
               },
-              h3("Your open challenges"),
+              h3("Your Open Challenges"),
               if (mine.isEmpty) p(cls := "empty", "You have none open.")
               else ul(mine.map(myChallengeRow(game, _))),
-              h3("Open challenges"),
+              h3("Open Challenges"),
               if (available.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
               else ul(available.map(openChallengeRow(game, _, characterId)))
             )
@@ -998,7 +998,7 @@ object Views {
 
     div(
       cls := "card",
-      h3("Offer a challenge"),
+      h3("Offer a Challenge"),
       field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
       roleSelect(game.roles, role),
       // Public means anyone may watch the match, which the game engine implements by issuing a

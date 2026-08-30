@@ -261,7 +261,7 @@ object SignIn {
       // The browser's own submit is what makes Enter work in either field, and what gets password
       // managers to offer to fill and to save. preventDefault, or the page reloads.
       onSubmit.preventDefault --> (_ => withPassword()),
-      h2("Sign in"),
+      h2("Sign In"),
       label("Email", input(tpe := "email", autoComplete := "username", value <-- email, onInput.mapToValue --> email)),
       label(
         "Password",
@@ -302,7 +302,7 @@ object SignIn {
   private def codeEntry(stageNow: Stage.Code): HtmlElement =
     form(
       onSubmit.preventDefault --> (_ => answerCode(stageNow)),
-      h2("Enter your code"),
+      h2("Enter Your Code"),
       p(
         stageNow.deliveredTo match {
           case Some(destination) => s"We sent a sign-in code to $destination."
@@ -327,7 +327,7 @@ object SignIn {
   private def newPasswordEntry(stageNow: Stage.NewPassword): HtmlElement =
     form(
       onSubmit.preventDefault --> (_ => answerNewPassword(stageNow)),
-      h2("Choose a password"),
+      h2("Choose a Password"),
       p("This account is signed in with a temporary password. Pick a permanent one to continue."),
       label(
         "New password",
