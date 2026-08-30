@@ -110,6 +110,12 @@ object Json {
   // Request bodies. Each carries only what the caller supplies; the caller's own identity always
   // comes from the X-External-Id header, never from the body.
   case class RegisterRequest(nickname: String)
+
+  /** A change of nickname, from the account menu. Separate from `RegisterRequest` despite the
+    * identical shape: they are two different requests, and one growing a field is not a reason
+    * for the other to gain it.
+    */
+  case class NicknameRequest(nickname: String)
   case class CharacterRequest(name: String, description: String, externalId: String)
   case class UpdateStateRequest(state: String)
 
@@ -162,6 +168,7 @@ object Json {
   )
 
   given ReadWriter[RegisterRequest] = macroRW
+  given ReadWriter[NicknameRequest] = macroRW
   given ReadWriter[CharacterRequest] = macroRW
   given ReadWriter[UpdateStateRequest] = macroRW
   given ReadWriter[AcceptRequest] = macroRW

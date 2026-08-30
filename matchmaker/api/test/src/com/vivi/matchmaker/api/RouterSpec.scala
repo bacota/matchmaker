@@ -111,10 +111,12 @@ class RouterSpec extends FunSuite {
   private val routed = List(
     ("POST", "/register", """{"nickname":"tester"}"""),
     ("GET", "/me", "{}"),
+    ("PUT", "/me", """{"nickname":"renamed"}"""),
     ("GET", "/me/acceptances", "{}"),
     ("GET", "/me/matches", "{}"),
     ("GET", "/me/matches/due", "{}"),
     ("GET", "/me/matches/completed", "{}"),
+    ("GET", "/me/results", "{}"),
     ("GET", "/games", "{}"),
     ("POST", "/games", gameBody),
     ("GET", "/games/1/challenges", "{}"),
@@ -146,7 +148,7 @@ class RouterSpec extends FunSuite {
   test("the routed list covers every route Router declares") {
     // A count, because the route table cannot be enumerated from Router itself. It fails loudly
     // when a route is added there without a corresponding entry above.
-    assertEquals(routed.size, 23)
+    assertEquals(routed.size, 25)
     assertEquals(routed.distinct.size, routed.size)
   }
 

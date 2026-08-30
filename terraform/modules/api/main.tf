@@ -255,6 +255,8 @@ locals {
     "POST /register",
 
     "GET /me",
+    # Renaming yourself. Email and password are changed at Cognito, not here.
+    "PUT /me",
     "GET /me/acceptances",
     "GET /me/matches",
     "GET /me/matches/due",

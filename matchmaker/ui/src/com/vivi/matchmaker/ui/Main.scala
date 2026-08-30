@@ -96,6 +96,8 @@ object Views {
           div(
             cls := "who",
             span(player.nickname),
+            // Where a page like this puts it: top right, next to who you are signed in as.
+            Account.view,
             if (Config.current.headerAuth) emptyNode
             else button(cls := "link", "Sign out", onClick --> (_ => Store.signOut()))
           )
