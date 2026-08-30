@@ -104,9 +104,25 @@ object Views {
       heading: String,
       reload: () => Future[Unit],
       subsection: Boolean = false
-  )(content: Modifier[HtmlElement]*): HtmlElement = {
-    val refreshing = Var(false)
+  )(content: Modifier[HtmlElement]*): HtmlElement =
+    refreshableSection(heading, Var(false), reload, subsection)(content*)
 
+  /** The same, over a reloading flag the caller owns.
+    *
+    * Two uses for that. One is a reload that fills more than one section — the game screen's two
+    * challenge lists come from a single request — where a flag per section would dim the one that
+    * was clicked while quietly replacing the other, which is both confusing to look at and a
+    * lie to a screen reader, since the content that changed would be outside the region marked
+    * busy. The other is a section whose element is rebuilt by its own reload: a flag created
+    * inside it is thrown away along with the element, and the dimming ends the moment the
+    * response lands rather than being seen.
+    */
+  private def refreshableSection(
+      heading: String,
+      refreshing: Var[Boolean],
+      reload: () => Future[Unit],
+      subsection: Boolean
+  )(content: Modifier[HtmlElement]*): HtmlElement =
     sectionTag(
       cls := "refreshable",
       cls("refreshing") <-- refreshing.signal,
@@ -132,7 +148,6 @@ object Views {
         content
       )
     )
-  }
 
   /** How long the dimming is held for, whether or not the request takes that long. Short enough
     * not to be in the way, long enough to be seen.
@@ -926,7 +941,11 @@ object Views {
     )
   }
 
-  private def challengePanel(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement =
+  private def challengePanel(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement = {
+    // One flag for both lists, held out here rather than inside either of them: they are two
+    // views of one request, and this element is rebuilt when that request answers.
+    val refreshingChallenges = Var(false)
+
     div(
       child <-- Store.challengesByGame.signal.combineWith(Store.acceptances.signal).map { (byGame, acceptances) =>
         byGame.get(game.gameId) match {
@@ -953,6 +972,7 @@ object Views {
               },
               refreshableSection(
                 "Your Open Challenges",
+                refreshingChallenges,
                 () => Store.reloadChallenges(game.gameId),
                 subsection = true
               )(
@@ -961,6 +981,7 @@ object Views {
               ),
               refreshableSection(
                 "Open Challenges",
+                refreshingChallenges,
                 () => Store.reloadChallenges(game.gameId),
                 subsection = true
               )(
@@ -971,6 +992,7 @@ object Views {
         }
       }
     )
+  }
 
   private def myChallengeRow(game: Game, summary: OpenChallengeSummary): HtmlElement = {
     val challenge = summary.challenge
