@@ -46,6 +46,17 @@ select {
   overflow-wrap: anywhere;
 }
 
+/* ...but not the writing on the page itself. Captions, headings and buttons are short strings
+   this UI chose, not data somebody typed, so there is nothing in them worth breaking apart —
+   and a word split across two lines reads as a bug whatever made the box narrow. */
+label,
+h1,
+h2,
+h3,
+button {
+  overflow-wrap: normal;
+}
+
 body {
   margin: 0;
   font: 15px/1.5 system-ui, sans-serif;
@@ -379,8 +390,13 @@ label.field > select {
 }
 
 /* A checkbox and its caption belong on one line: the rule above would otherwise stretch the
-   box to the card's full width and push the caption onto the next line. */
-.card label:not(.field) {
+   box to the card's full width and push the caption onto the next line.
+
+   Selected by what the label actually holds, rather than by not being a `.field`. The sign-in
+   and account captions are neither, and matching them laid a caption beside a full-width box
+   with no room left — which, with the `overflow-wrap: anywhere` inherited from `.card`, broke
+   "Email" and "Password" across two lines mid-word. */
+.card label:has(> input[type="checkbox"]) {
   display: flex;
   align-items: center;
   gap: 0.4rem;
