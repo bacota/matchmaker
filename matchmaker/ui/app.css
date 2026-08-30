@@ -310,3 +310,75 @@ button.toggle {
 .sign-in .alternatives button.link + button.link {
   margin-left: 0;
 }
+
+/* The account menu, in the header beside the nickname.
+   A panel anchored to the corner rather than a page of its own: changing a nickname is a
+   half-minute errand, and navigating away from the matches to do it would lose the place. */
+.account {
+  position: relative;
+}
+
+.account-menu {
+  position: absolute;
+  top: 1.6rem;
+  right: 0;
+  z-index: 10;
+  width: 20rem;
+  max-height: 70vh;
+  overflow-y: auto;
+  text-align: left;
+  /* `.who` is muted grey; the panel inside it is body text and should not inherit that. */
+  color: #1a1a1a;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+/* Narrow windows: an absolutely positioned 20rem panel would hang off the right edge. */
+@media (max-width: 30rem) {
+  .account-menu {
+    position: fixed;
+    left: 0.5rem;
+    right: 0.5rem;
+    width: auto;
+  }
+}
+
+.account-menu h2 {
+  margin-top: 0;
+}
+
+/* One change per section, divided so the three forms do not read as one long one. */
+.account-section {
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.account-section h3 {
+  margin: 0 0 0.4rem;
+}
+
+/* As `.sign-in label`: a caption beside a full-width text box wraps immediately, so these
+   stack instead of sharing a line the way `.card label` does. */
+.account-section label {
+  display: block;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.account-section label input {
+  display: block;
+  width: 100%;
+  margin-top: 0.2rem;
+}
+
+/* A change that worked. The error banner's counterpart: same shape, so the two read as one slot
+   reporting how it went rather than as two different things. */
+.notice {
+  background: #eef7ee;
+  border: 1px solid #2f7a2f;
+  color: #235c23;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}

@@ -52,6 +52,11 @@ object Router {
       case ("GET", "me" :: Nil) =>
         ok(services.players.me(caller))
 
+      // The only part of a player they may change here. Email and password belong to the Cognito
+      // identity and are changed against Cognito by the browser, not through this API.
+      case ("PUT", "me" :: Nil) =>
+        body[Json.NicknameRequest](request).flatMap(r => ok(services.players.updateNickname(caller, r.nickname)))
+
       case ("GET", "me" :: "acceptances" :: Nil) =>
         ok(services.acceptances.mine(caller))
 

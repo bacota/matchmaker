@@ -215,8 +215,11 @@ object SignIn {
       "That code is not right. Check it and try again."
     case CognitoIdp.IdpError("ExpiredCodeException", _) =>
       "That code has expired. Start again to have a new one sent."
-    case CognitoIdp.IdpError("InvalidPasswordException", _) =>
-      s"That password does not meet the pool's requirements: ${error.getMessage}"
+    // The message field, not getMessage: IdpError's own message prefixes the exception type,
+    // and "InvalidPasswordException: Password did not conform..." is not a sentence to show a
+    // user. Cognito's message on its own is written to be read.
+    case CognitoIdp.IdpError("InvalidPasswordException", message) =>
+      s"That password does not meet the pool's requirements: $message"
     case CognitoIdp.IdpError(_, message) => message
     case _: CognitoIdp.IdpUnavailable =>
       "Could not reach the sign-in service. Check your connection and try again."

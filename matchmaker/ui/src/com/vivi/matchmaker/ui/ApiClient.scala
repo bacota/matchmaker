@@ -32,6 +32,12 @@ object ApiClient {
   def register(nickname: String): Future[Player] =
     send[Player](HttpMethod.POST, "/register", Some(write(Json.RegisterRequest(nickname))))
 
+  /** Renames the caller. The server takes the player from the token, so there is no id to send
+    * and no way to rename anyone else.
+    */
+  def updateNickname(nickname: String): Future[Player] =
+    send[Player](HttpMethod.PUT, "/me", Some(write(Json.NicknameRequest(nickname))))
+
   def dueMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches/due")
 
   def activeMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches")

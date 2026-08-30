@@ -40,6 +40,7 @@ import org.scalajs.dom.{HttpMethod, RequestInit, URLSearchParams}
 object Auth {
 
   private val TokenKey = "matchmaker.idToken"
+  private val AccessKey = "matchmaker.accessToken"
   private val RefreshKey = "matchmaker.refreshToken"
   private val VerifierKey = "matchmaker.pkceVerifier"
   private val StateKey = "matchmaker.authState"
@@ -60,6 +61,16 @@ object Auth {
   private def refreshToken: Option[String] =
     Option(dom.window.sessionStorage.getItem(RefreshKey)).filter(_.nonEmpty)
 
+  /** The current access token, if there is one that has not expired.
+    *
+    * Distinct from the ID token, and not interchangeable with it: the API carries the ID token,
+    * and the Cognito user pools API accepts only this one for the account operations. It is
+    * stored under its own key, and a session that predates that key simply has none — which is
+    * what `freshAccessToken` refreshes to obtain.
+    */
+  private def accessToken: Option[String] =
+    Option(dom.window.sessionStorage.getItem(AccessKey)).filter(unexpired)
+
   /** At most one refresh is in flight: several requests hitting an expired token at once must
     * redeem the refresh token once between them, not race to redeem it each.
     */
@@ -75,16 +86,36 @@ object Auth {
   def freshIdToken(): Future[Option[String]] =
     idToken match {
       case Some(token) => Future.successful(Some(token))
-      case None =>
-        refreshToken match {
-          case None => Future.successful(None)
-          case Some(token) =>
-            refreshing.getOrElse {
-              val attempt = refresh(token)
-              refreshing = Some(attempt)
-              attempt.onComplete(_ => refreshing = None)
-              attempt
-            }
+      case None        => refreshed().map(_ => idToken)
+    }
+
+  /** An access token that is good to send to the Cognito user pools API, refreshing first if
+    * there is not one — which includes a session established before access tokens were stored at
+    * all, where the ID token is still perfectly good and this is simply absent.
+    *
+    * `None` means the account operations cannot be offered: there is nothing left to refresh
+    * with, or the refresh came back without one.
+    */
+  def freshAccessToken(): Future[Option[String]] =
+    accessToken match {
+      case some @ Some(_) => Future.successful(some)
+      case None           => refreshed().map(_ => accessToken)
+    }
+
+  /** Redeems the refresh token, at most one redemption at a time — several requests hitting an
+    * expired token at once must share one attempt rather than race to spend the token each.
+    * The result is read back out of storage by the caller, which is what makes this usable for
+    * either token.
+    */
+  private def refreshed(): Future[Option[String]] =
+    refreshToken match {
+      case None => Future.successful(None)
+      case Some(token) =>
+        refreshing.getOrElse {
+          val attempt = refresh(token)
+          refreshing = Some(attempt)
+          attempt.onComplete(_ => refreshing = None)
+          attempt
         }
     }
 
@@ -172,6 +203,7 @@ object Auth {
   /** Records the tokens from a completed `InitiateAuth` run. */
   def storeTokens(tokens: CognitoIdp.Tokens): Unit = {
     dom.window.sessionStorage.setItem(TokenKey, tokens.idToken)
+    tokens.accessToken.foreach(token => dom.window.sessionStorage.setItem(AccessKey, token))
     // Absent on a refresh, where the token already stored is still the right one.
     tokens.refreshToken.foreach(token => dom.window.sessionStorage.setItem(RefreshKey, token))
   }
@@ -199,6 +231,7 @@ object Auth {
 
   def clearSession(): Unit = {
     dom.window.sessionStorage.removeItem(TokenKey)
+    dom.window.sessionStorage.removeItem(AccessKey)
     dom.window.sessionStorage.removeItem(RefreshKey)
     dom.window.sessionStorage.removeItem(VerifierKey)
     dom.window.sessionStorage.removeItem(StateKey)
@@ -287,6 +320,7 @@ object Auth {
     */
   private def store(body: String): Unit = {
     idTokenOf(body).foreach(token => dom.window.sessionStorage.setItem(TokenKey, token))
+    Try(ujson.read(body)("access_token").str).foreach(token => dom.window.sessionStorage.setItem(AccessKey, token))
     Try(ujson.read(body)("refresh_token").str).foreach(token => dom.window.sessionStorage.setItem(RefreshKey, token))
   }
 

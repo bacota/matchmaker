@@ -72,6 +72,9 @@ object Store {
     expandedGames.set(Set.empty)
     showNewGame.set(false)
     editingGame.set(None)
+    // Closed and emptied with the rest: it holds a half-typed address and a password field, and
+    // neither belongs to whoever signs in next.
+    Account.close()
   }
 
   val due: Var[Seq[MatchSummary]] = Var(Seq.empty)
