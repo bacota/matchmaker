@@ -8,6 +8,9 @@ import java.time.Instant
   * match would be a query per row.
   *
   * @param due when the player's turn is due, if it is their turn at all
+  * @param pending whether it is this player's turn. Set from what the engine reports about
+  *                each participant, and the flag `due` selects on — not, despite an older
+  *                reading of the name, whether the match has started yet
   * @param cancelled whether the creator called the match off; a cancelled match is over but has
   *                  no result, and is listed with the finished ones rather than the active ones
   * @param isCreator whether this player is the one who created the match — the challenger of the

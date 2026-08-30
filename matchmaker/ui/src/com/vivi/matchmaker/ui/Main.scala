@@ -308,9 +308,12 @@ object Views {
       div(cls := "detail", summary.description),
       if (showDue) summary.due.map(when => div(cls := "due", s"due ${Format.instant(when)}")).getOrElse(emptyNode)
       else emptyNode,
-      // `pending` marks a participation not yet settled — the player has accepted, but the match
-      // has not started. `ui.txt` wants those visible in this list.
-      if (summary.pending) div(cls := "pending", "awaiting other players") else emptyNode,
+      // `pending` means it is this player's turn: it is the flag the "Your turn" list selects
+      // on, so saying it there would repeat the heading on every row. Said here only for the
+      // matches still being played — a finished match has no turn to be waiting for.
+      if (showDue || summary.completed || summary.cancelled) emptyNode
+      else if (summary.pending) div(cls := "pending", "your turn")
+      else div(cls := "detail", "waiting for the other players"),
       // A cancelled match is over and has no result, so it sits in the completed list; without
       // this it would be indistinguishable from one that was played to an end.
       if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
