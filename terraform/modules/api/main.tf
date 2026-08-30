@@ -259,6 +259,8 @@ locals {
     "GET /me/matches",
     "GET /me/matches/due",
     "GET /me/matches/completed",
+    # How the caller's finished matches ended: every seat of every one of them, in one call.
+    "GET /me/results",
 
     "GET /games",
     "POST /games",
