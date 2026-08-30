@@ -2,8 +2,8 @@ package com.vivi.matchmaker.service
 
 import cats.effect.IO
 import skunk.Session
-import com.vivi.matchmaker.model.{GameId, Match, MatchId, MatchSummary}
-import com.vivi.matchmaker.persistence.{MatchRepo, OpenChallengeRepo, PlayerRepo}
+import com.vivi.matchmaker.model.{GameId, Match, MatchId, MatchSummary, ParticipantResult}
+import com.vivi.matchmaker.persistence.{MatchRepo, OpenChallengeRepo, PlayerRepo, ResultRepo}
 
 /** Lists a player's matches, and lets the creator of one call it off.
   *
@@ -24,6 +24,20 @@ class MatchService(sessionPool: SessionPool) {
   /** Matches the caller has finished playing. */
   def completed(callerExternalId: String): IO[List[MatchSummary]] =
     forCaller(callerExternalId)((repo, playerId) => repo.listForPlayer(playerId, over = true))
+
+  /** How the caller's finished matches turned out: every seat, the winner first.
+    *
+    * Scoped to the caller's own participation like the three lists above, so it needs no
+    * authorization rule of its own — there is no parameter that could ask for anyone else's.
+    * One call covers the whole completed list; see `ResultRepo.listForPlayer`.
+    */
+  def results(callerExternalId: String): IO[List[ParticipantResult]] =
+    sessionPool.use { session =>
+      for {
+        caller <- resolveCaller(session, callerExternalId)
+        results <- new ResultRepo(session).listForPlayer(caller.playerId)
+      } yield results
+    }
 
   /** Calls a match off, at the request of the player who created it.
     *

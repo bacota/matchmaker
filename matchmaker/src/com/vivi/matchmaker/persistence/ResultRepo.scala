@@ -6,7 +6,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.{GameId, ParticipantId, Result}
+import com.vivi.matchmaker.model.{GameId, MatchId, ParticipantResult, ParticipantId, PlayerId, Result}
 
 class ResultRepo(session: Session[IO]) {
   private val gameId = SkunkIdCodecs.gameId
@@ -29,6 +29,36 @@ class ResultRepo(session: Session[IO]) {
   private val updateResult: Command[(Int, Map[String, Any], Boolean, GameId, ParticipantId)] =
     sql"""UPDATE result SET rank = $int4, scores = $scores, is_winner = $bool
           WHERE game_id = $gameId AND participant_id = $participantId""".command
+
+  // Every seat of every finished match this player is in, with its outcome.
+  //
+  // One query for the whole completed list rather than one per match: the UI shows the table on
+  // each finished row, and asking per row would be a request per row. `mine` is the caller's own
+  // seat, which is what scopes the list; `p` is everyone's, which is what fills the table.
+  //
+  // A LEFT JOIN onto result, so a participant the engine reported no result for is still a row
+  // — see ParticipantResult. Ordered by rank within a match, unreported seats last, so the
+  // winner comes first without the caller having to sort.
+  private val selectResultsForPlayer: Query[
+    PlayerId,
+    (GameId, MatchId, ParticipantId, String, String, Option[Int], Option[Map[String, Any]], Option[Boolean])
+  ] =
+    sql"""SELECT p.game_id, p.match_id, p.participant_id, pl.nickname, gr.name, r.rank, r.scores, r.is_winner
+          FROM participant mine
+          JOIN match m ON m.game_id = mine.game_id AND m.match_id = mine.match_id
+          JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
+          JOIN player pl ON pl.player_id = p.player_id
+          JOIN game_role gr ON gr.game_id = p.game_id AND gr.game_role_id = p.game_role_id
+          LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
+          WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND (m.completed OR m.cancelled)
+          ORDER BY p.match_id, r.rank ASC NULLS LAST, p.participant_id"""
+      .query(gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text *: int4.opt *: scores.opt *: bool.opt)
+
+  def listForPlayer(playerId: PlayerId): IO[List[ParticipantResult]] =
+    session.execute(selectResultsForPlayer)(playerId).map(_.map {
+      case (game, match_, id, nickname, roleName, rank, scores, isWinner) =>
+        ParticipantResult(game, match_, id, nickname, roleName, rank, scores.getOrElse(Map.empty), isWinner.getOrElse(false))
+    })
 
   def create(result: Result): IO[Result] =
     session

@@ -317,21 +317,27 @@ object Views {
       // A cancelled match is over and has no result, so it sits in the completed list; without
       // this it would be indistinguishable from one that was played to an end.
       if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
-      // The play url lives on the match rather than the summary, and is the game engine's, not
-      // matchmaker's — so it is fetched when asked for and opened directly.
-      busyButton("Play", classes = Some("link")) { busy =>
-        Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
-          m.playUrl match {
-            case Some(url) => dom.window.open(url, "_blank", "noopener,noreferrer")
-            case None      => Store.error.set(Some("This match has no play url yet."))
+      // Play and Refresh are for a match still being played. A finished one has no turn to take
+      // and nothing left for the engine to tell us, so it shows how it ended instead.
+      if (summary.completed || summary.cancelled) resultTable(summary)
+      else
+        div(
+          // The play url lives on the match rather than the summary, and is the game engine's,
+          // not matchmaker's — so it is fetched when asked for and opened directly.
+          busyButton("Play", classes = Some("link")) { busy =>
+            Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
+              m.playUrl match {
+                case Some(url) => dom.window.open(url, "_blank", "noopener,noreferrer")
+                case None      => Store.error.set(Some("This match has no play url yet."))
+              }
+            }
+          },
+          // Step 4 of the engine flow: any participant may ask matchmaker to re-check with the
+          // engine, which is what recovers from a callback that never arrived.
+          busyButton("Refresh", classes = Some("link")) { busy =>
+            Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId), busy)(_ => Store.refreshMatches())
           }
-        }
-      },
-      // Step 4 of the engine flow: any participant may ask matchmaker to re-check with the
-      // engine, which is what recovers from a callback that never arrived.
-      busyButton("Refresh", classes = Some("link")) { busy =>
-        Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId), busy)(_ => Store.refreshMatches())
-      },
+        ),
       // Only the creator's, and only while there is still something to call off. The engine is
       // not told — its board stays playable — so the confirmation says what actually happens.
       if (summary.isCreator && !summary.completed && !summary.cancelled)
@@ -340,6 +346,45 @@ object Views {
             Store.run(ApiClient.cancelMatch(summary.gameId, summary.matchId), busy)(_ => Store.refreshMatches())
         }
       else emptyNode
+    )
+
+  /** How a finished match ended: every seat, the winner first.
+    *
+    * The rows are already ordered by rank by the query, so the winner is simply the first — but
+    * winning is marked from `isWinner` rather than from position, because a game may have no
+    * winner at all (a draw, a cancelled match) and rank 1 would otherwise invent one.
+    *
+    * A cancelled match has no engine-reported result, so its rows usually have no rank/scores (rather than being absent).
+    * Saying so beats rendering an empty-looking table.
+    */
+  private def resultTable(summary: MatchSummary): HtmlElement =
+    div(
+      cls := "results",
+      child <-- Store.resultsByMatch.signal.map(_.getOrElse(summary.matchId, Seq.empty)).map {
+        case Seq() =>
+          p(cls := "empty", if (summary.cancelled) "Called off before it finished." else "No result was reported.")
+        case rows =>
+          ul(
+            cls := "result-rows",
+            rows.map { row =>
+              li(
+                cls := "result-row",
+                if (row.isWinner) span(cls := "winner", "🏆 ") else emptyNode,
+                span(cls := "who", s"${row.nickname} (${row.roleName})"),
+                row.rank.map(r => span(cls := "rank", s" — rank $r")).getOrElse(emptyNode),
+                // Whatever else the engine chose to report. Which keys exist is the game's
+                // business, so they are shown as they came rather than being named here.
+                if (row.scores.isEmpty) emptyNode
+                else
+                  span(
+                    cls := "scores",
+                    " — ",
+                    row.scores.toSeq.sortBy(_._1).map((key, value) => s"$key: ${Format.jsonValue(value)}").mkString(", ")
+                  )
+              )
+            }
+          )
+      }
     )
 
   // -------------------------------------------------------------------------
@@ -877,4 +922,20 @@ object Format {
     */
   def instant(value: java.time.Instant): String =
     value.toString.replace("T", " ").takeWhile(_ != '.').stripSuffix("Z") + " UTC"
+
+  /** A score reported by a game engine, which may be any JSON value.
+    *
+    * Strings are unquoted and whole numbers lose their `.0`, since upickle reads every JSON
+    * number as a Double and "moves: 5.0" reads as a mistake. Anything structured is rendered as
+    * the JSON it is — a game that reports a nested object is unusual, and showing it raw beats
+    * inventing a layout for a shape we cannot know.
+    */
+  def jsonValue(value: ujson.Value): String = value match {
+    case ujson.Str(s)                       => s
+    case ujson.Num(n) if n.isWhole          => n.toLong.toString
+    case ujson.Num(n)                       => n.toString
+    case ujson.Bool(b)                      => b.toString
+    case ujson.Null                         => "—"
+    case other                              => other.render()
+  }
 }
