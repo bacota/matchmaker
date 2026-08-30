@@ -32,6 +32,17 @@ object Router {
         IO(route(services, request, caller)).flatten.handleError(Errors.toResponse(_, where))
     }
 
+  /* A case added here is only half of a new endpoint.
+   *
+   * The deployed API Gateway enumerates its routes and has no `$default`, so a path with no
+   * route key is a 404 at the gateway and this function is never invoked — nothing reaches
+   * CloudWatch, which makes it look like the caller is not calling at all. The route key belongs
+   * in `local.routes` in terraform/modules/api/main.tf, or in `local.engine_routes` for a game
+   * engine callback, which carries the API key instead of the JWT authorizer.
+   *
+   * To tell the two apart from outside: curl the path with no credentials. An enumerated route
+   * answers 401, an unregistered one answers 404.
+   */
   private def route(services: Services[String], request: Request, caller: String): IO[Response] =
     (request.method.toUpperCase, request.segments) match {
 
