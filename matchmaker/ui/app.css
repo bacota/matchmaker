@@ -12,6 +12,40 @@
   box-sizing: border-box;
 }
 
+/* Every control that can be focused and typed into, at 1rem — which is 16px, because nothing
+   sets a size on `html`.
+
+   Not a matter of taste: mobile Safari zooms the page in when a field smaller than 16px takes
+   focus, and does not zoom back out when it loses it. The page text stays at 15px; it is the
+   fields that have to clear the bar. `font-family` is inherited separately, since the `font`
+   shorthand would put the size back. */
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+/* The role picker, which is the only select on the page. It sat at the browser default while
+   everything around it was styled — and, being a form control, it zoomed on focus too. */
+select {
+  max-width: 100%;
+  padding: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #fff;
+}
+
+/* A nickname with no spaces in it, or a url in a game's description, is one word as far as
+   wrapping is concerned: without this it sets the width of the card it is in, and on a phone
+   that is wider than the screen. */
+.row,
+.detail,
+.result-row,
+.card {
+  overflow-wrap: anywhere;
+}
+
 body {
   margin: 0;
   font: 15px/1.5 system-ui, sans-serif;
@@ -58,7 +92,7 @@ body {
   border: none;
   background: none;
   text-align: left;
-  padding: 0.3rem 0.5rem;
+  padding: 0.4rem 0.5rem;
   border-radius: 3px;
   color: var(--accent);
 }
@@ -75,9 +109,10 @@ body {
   font-weight: 600;
 }
 
-/* The menu is a column beside the content on a wide window and a row above it on a narrow one,
-   where 11rem of it would leave the content nothing. */
-@media (max-width: 40rem) {
+/* The menu is a column beside the content on a wide window and a row above it on a narrow one.
+   The turn is at 48rem rather than at the width where the two collide: 11rem of menu beside a
+   27rem screen is not a layout anybody wants, it is just one that fits. */
+@media (max-width: 48rem) {
   .layout {
     flex-direction: column;
   }
@@ -247,7 +282,6 @@ ul {
   padding: 0.4rem;
   border: 1px solid var(--line);
   border-radius: 3px;
-  font: inherit;
 }
 
 /* A checkbox and its caption belong on one line: the rule above would otherwise stretch the
@@ -314,12 +348,15 @@ button:disabled {
   }
 }
 
-/* Buttons that are really links: the expand toggles and the destructive secondary actions. */
+/* Buttons that are really links: the expand toggles and the destructive secondary actions.
+   Some vertical padding even with a mouse — Play, Refresh and Cancel sit side by side on a match
+   row, and zero-height targets are unkind to any pointer. Horizontally still flush, so they line
+   up with the text above them. */
 button.link,
 button.toggle {
   border: none;
   background: none;
-  padding: 0;
+  padding: 0.25rem 0;
   color: var(--accent);
 }
 
@@ -465,4 +502,47 @@ button.toggle {
   padding: 0.5rem 0.75rem;
   margin-top: 0.5rem;
   font-size: 0.9rem;
+}
+
+/* Touch pointers, which is to say phones and tablets.
+
+   A 20px-tall link is a fine mouse target and a poor thumb one, so everything that can be
+   tapped is given the room to be hit: roughly 44px, which is what both platforms' guidelines
+   ask for. Scoped to `pointer: coarse` rather than to a width, because it is the pointer and
+   not the window that decides this — a narrow window on a laptop does not need taller rows, and
+   a tablet in landscape does. */
+@media (pointer: coarse) {
+  button {
+    min-height: 2.75rem;
+  }
+
+  /* Link-buttons keep no border and no background, so they are given the height as padding —
+     `min-height` on an inline-level control with no box would not show. */
+  button.link,
+  button.toggle {
+    min-height: 2.75rem;
+    padding: 0.6rem 0;
+  }
+
+  /* Further apart as well as bigger: adjacent targets that are each big enough are still easy
+     to confuse when they touch. */
+  button.link + button.link {
+    margin-left: 1.25rem;
+  }
+
+  .menu-item {
+    min-height: 2.75rem;
+  }
+
+  /* The fields grow with the buttons, so a form does not read as a row of tall buttons between
+     short boxes. */
+  .card input:not([type="checkbox"]),
+  select {
+    min-height: 2.75rem;
+  }
+
+  /* A checkbox is hit by its caption as well, so the label is the target and gets the height. */
+  .card label {
+    min-height: 2.75rem;
+  }
 }
