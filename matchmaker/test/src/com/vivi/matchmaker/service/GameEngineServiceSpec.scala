@@ -384,7 +384,7 @@ class GameEngineServiceSpec extends PropertySuite {
           remaining.forall(_.challenge.challengeId != challenge.challengeId) &&
           // The acceptances are kept with the challenge, but stop being things the player can
           // act on — nothing is left in their list to back out of.
-          acceptances.forall(_.challengeId != challenge.challengeId) &&
+          acceptances.forall(_.acceptance.challengeId != challenge.challengeId) &&
           matches.size == 1 &&
           stranded.exists(_.playUrl.isEmpty)
       }

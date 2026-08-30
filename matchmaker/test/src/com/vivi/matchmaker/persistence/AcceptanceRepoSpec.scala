@@ -163,8 +163,8 @@ class AcceptanceRepoSpec extends PropertySuite {
             _ <- acceptanceRepo.create(CharacterAcceptance(first.challengeId, createdChallenger.playerId, createdGame.gameId, createdCharacter.characterId, createdGame.roles.head.gameRoleId))
 
             mine <- acceptanceRepo.listForPlayer(createdAcceptor.playerId)
-          } yield mine.map(_.challengeId).toSet == Set(first.challengeId, second.challengeId) &&
-            mine.forall(_.playerId == createdAcceptor.playerId)
+          } yield mine.map(_.acceptance.challengeId).toSet == Set(first.challengeId, second.challengeId) &&
+            mine.forall(_.acceptance.playerId == createdAcceptor.playerId)
         }
         .unsafeRunSync()
     }

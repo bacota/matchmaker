@@ -91,7 +91,7 @@ object Store {
   /** What the caller has accepted and that has not yet become a match — what `ui.txt` calls the
     * pending acceptances, and the list "back out" acts on.
     */
-  val acceptances: Var[Seq[Acceptance]] = Var(Seq.empty)
+  val acceptances: Var[Seq[PendingAcceptance]] = Var(Seq.empty)
 
   val expandedGames: Var[Set[GameId]] = Var(Set.empty)
   val showActive: Var[Boolean] = Var(false)
@@ -182,13 +182,7 @@ object Store {
     run(ApiClient.dueMatches())(due.set)
     run(ApiClient.activeMatches())(active.set)
     run(ApiClient.completedMatches())(completed.set)
-    run(ApiClient.acceptances()) { list =>
-      acceptances.set(list)
-      // "Waiting to start" says whether each accepted challenge is ready and offers the
-      // challenger a Start, which needs the challenge's taken roles — and challenges are
-      // otherwise only fetched when a game is expanded, which that list does not require.
-      list.map(_.gameId).distinct.foreach(refreshChallenges)
-    }
+    run(ApiClient.acceptances())(acceptances.set)
   }
 
   def refreshGames(): Unit = run(ApiClient.games(activeOnly = true))(games.set)
