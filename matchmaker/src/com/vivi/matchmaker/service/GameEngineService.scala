@@ -153,8 +153,53 @@ class GameEngineService[T](
         // which is the recoverable state `refresh` reports: the claim is now the permanent mark
         // of a spent challenge rather than something that has to be cleaned up.
         started <- retrying(finish(session, withUrls).as(withUrls))
+
+        // Whose turn it is first is the engine's to decide, and every participant was written
+        // above with `pending = false`. Without asking, nobody's list of matches waiting on them
+        // would show this one until somebody happened to press Refresh on it — so the player who
+        // moves first would never be told the game had begun.
+        //
+        // Best effort, and deliberately last: the match exists and the start has already
+        // succeeded, so failing to read the first turn is not a reason to fail the call. It
+        // leaves exactly the state this used to leave always, which `refresh` still corrects.
+        _ <- applyEngineStatus(session, gameId, matchId, response.statusUrl).attempt
       } yield started
     }
+
+  /* Asks the engine how a match stands and writes the answer onto its participants: whose turn
+   * it is, when that turn is due, and who is finished — plus the match's own completed flag.
+   *
+   * Shared by `refresh`, which is this question asked again later, and by `start`, which asks it
+   * once so that the first turn is recorded the moment the match exists. */
+  private def applyEngineStatus(
+      session: skunk.Session[IO],
+      gameId: GameId,
+      matchId: MatchId,
+      statusUrl: String
+  ): IO[Match] = {
+    val matchRepo = new MatchRepo(session)
+    val participantRepo = new ParticipantRepo(session)
+    engine.status(statusUrl).flatMap { status =>
+      session.transaction.use { _ =>
+        for {
+          current <- requireMatchForUpdate(matchRepo, gameId, matchId)
+          participants <- participantRepo.listForMatch(gameId, matchId)
+          byId = participants.map((p, _, _) => p.participantId -> p).toMap
+          _ <- status.participants.traverse { reported =>
+            byId.get(ParticipantId(reported.participantId)) match {
+              case Some(p) =>
+                participantRepo.update(withTurn(p, reported.pending, dueFrom(current, reported.prevMoveAt), reported.completed))
+              // The engine reporting a seat matchmaker does not have is the engine's
+              // problem to explain, not a reason to abandon the seats it does have.
+              case None => IO.unit
+            }
+          }
+          updated = current.copy(completed = status.completed)
+          _ <- IO.whenA(updated != current)(matchRepo.update(updated))
+        } yield updated
+      }
+    }
+  }
 
   /* The last step of a start: record the urls the engine gave back.
    *
@@ -324,26 +369,7 @@ class GameEngineService[T](
         result <-
           if (existing.completed || existing.cancelled) IO.pure(existing)
           else
-            engine.status(statusUrl).flatMap { status =>
-              session.transaction.use { _ =>
-                for {
-                  current <- requireMatchForUpdate(matchRepo, gameId, matchId)
-                  participants <- participantRepo.listForMatch(gameId, matchId)
-                  byId = participants.map((p, _, _) => p.participantId -> p).toMap
-                  _ <- status.participants.traverse { reported =>
-                    byId.get(ParticipantId(reported.participantId)) match {
-                      case Some(p) =>
-                        participantRepo.update(withTurn(p, reported.pending, dueFrom(current, reported.prevMoveAt), reported.completed))
-                      // The engine reporting a seat matchmaker does not have is the engine's
-                      // problem to explain, not a reason to abandon the seats it does have.
-                      case None => IO.unit
-                    }
-                  }
-                  updated = current.copy(completed = status.completed)
-                  _ <- IO.whenA(updated != current)(matchRepo.update(updated))
-                } yield updated
-              }
-            }
+            applyEngineStatus(session, gameId, matchId, statusUrl)
       } yield result
     }
 

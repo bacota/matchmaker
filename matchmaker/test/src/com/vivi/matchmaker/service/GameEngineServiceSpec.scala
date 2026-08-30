@@ -45,6 +45,28 @@ class GameEngineServiceSpec extends PropertySuite {
     def status(statusUrl: String): IO[GameStatusResponse] = IO.pure(status)
   }
 
+  /** An engine that answers a status call by naming the seat it was given first as the one to
+    * move, which is what a real engine says about a match that has only just begun. The stub
+    * above cannot do this: the participant ids do not exist until `start` has written them, so
+    * the answer has to be built from the create request rather than set up in advance.
+    */
+  private class FirstTurnEngine extends GameEngineClient {
+    @volatile private var firstSeat: Option[Long] = None
+
+    def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+      IO { firstSeat = request.players.headOption.map(_.participantId) }
+        .as(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+
+    def status(statusUrl: String): IO[GameStatusResponse] =
+      IO.pure(
+        GameStatusResponse(
+          completed = false,
+          participants =
+            firstSeat.toList.map(EngineParticipantStatus(_, pending = true, completed = false, prevMoveAt = None))
+        )
+      )
+  }
+
   /** An engine whose *first* createGame parks until it is released, so a test can hold a start in
     * the window between its first transaction committing and its last one running — which is
     * exactly the window a second Start used to slip through.
@@ -500,6 +522,50 @@ class GameEngineServiceSpec extends PropertySuite {
         _ <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
         after <- participantsOf(started)
       } yield after.head.pending && after.head.due.isEmpty
+      result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // The complaint this was written for: a match began and the player due to move first was never
+  // told. Whose turn it is is the engine's to decide and every participant is written with
+  // `pending = false`, so without asking, the match would sit in nobody's "waiting on you" list
+  // until somebody happened to press Refresh on it.
+  property("start records the first turn, so the player who moves first is told straight away") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+      val engine = new FirstTurnEngine
+      val services = TestServices.servicesWith(engine)
+      val result = for {
+        fixture <- makeFixture(nickname, externalId, gameExternalId)
+        challenge <- services.challenges.create(challengeFor(fixture), externalId)
+        started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+        participants <- participantsOf(started)
+        // The list the main page's "waiting on you" is drawn from, asked for with no refresh in
+        // between — this is the state a player finds when the page loads after a start.
+        due <- services.matches.due(externalId)
+      } yield participants.exists(_.pending) &&
+        due.map(_.matchId) == List(started.matchId)
+      result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // The start has already succeeded by the time the engine is asked, and the match exists either
+  // way, so an engine that cannot answer must not turn a completed start into a failure. It
+  // leaves precisely the state every start used to leave, which `refresh` still corrects.
+  property("a start still succeeds when the engine will not say whose turn it is") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+      val engine = new GameEngineClient {
+        def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+          IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+        def status(statusUrl: String): IO[GameStatusResponse] =
+          IO.raiseError(GameEngineError("status is down"))
+      }
+      val services = TestServices.servicesWith(engine)
+      val result = for {
+        fixture <- makeFixture(nickname, externalId, gameExternalId)
+        challenge <- services.challenges.create(challengeFor(fixture), externalId)
+        started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+        participants <- participantsOf(started)
+      } yield started.playUrl.contains("https://engine/play/1") && participants.forall(!_.pending)
       result.timeout(15.seconds).unsafeRunSync()
     }
   }
