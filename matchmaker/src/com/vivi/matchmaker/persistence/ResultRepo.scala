@@ -50,7 +50,7 @@ class ResultRepo(session: Session[IO]) {
           JOIN player pl ON pl.player_id = p.player_id
           JOIN game_role gr ON gr.game_id = p.game_id AND gr.game_role_id = p.game_role_id
           LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
-          WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND (m.completed OR m.cancelled)
+          WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND ((m.completed IS NOT NULL) OR m.cancelled)
           ORDER BY p.match_id, r.rank ASC NULLS LAST, p.participant_id"""
       .query(gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text *: int4.opt *: scores.opt *: bool.opt)
 

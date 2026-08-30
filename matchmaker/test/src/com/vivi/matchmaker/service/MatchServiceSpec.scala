@@ -31,42 +31,73 @@ class MatchServiceSpec extends PropertySuite {
   ): IO[(Player, Game, MatchId)] =
     TestSession.resource.use { session =>
       for {
-        player <- registrationService.register(nickname, externalId)
-        game <- new GameRepo[String](session).create(
-          Game(
-            GameId.unassigned, GameType.Character, "game", "description", "url", active = true,
-            // One role, because every participant names one.
-            Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false)),
-            Seq.empty, genUniqueString.sample.get
-          )
-        )
-        character <- new CharacterRepo[String](session).create(
-          Character(CharacterId(0), game.gameId, "character", "description", "", Some(player.playerId))
-        )
-        // The match's creator is its challenge's challenger, and a match cannot exist without a
-        // challenge to point at — so the whole chain is built here even though most of these
-        // tests only care about the lists.
-        challenge <- new OpenChallengeRepo(session).create(
-          CharacterOpenChallenge(
-            ChallengeId(0), player.playerId, "challenge", None, None, "{}", game.gameId,
-            character.characterId, isPublic = false, game.roles.head.gameRoleId
-          )
-        )
-        matchId = MatchId(matchIdStr)
-        _ <- new MatchRepo(session).create(
-          Match(
-            game.gameId, matchId, challenge.challengeId, "description", completed,
-            Instant.ofEpochSecond(1000), None, "{}"
-          )
-        )
-        _ <- new ParticipantRepo(session).create(
-          CharacterParticipant(
-            ParticipantId(0), game.gameId, matchId, player.playerId, pending, completed, Some(Instant.ofEpochSecond(2000)),
-            character.characterId, game.roles.head.gameRoleId
-          )
-        )
+        prepared <- setup(session, nickname, externalId)
+        (player, game, character) = prepared
+        matchId <- addMatch(session, player, game, character, matchIdStr,
+          Option.when(completed)(Instant.ofEpochSecond(3000)), pending)
       } yield (player, game, matchId)
     }
+
+  /** A registered player with a game to play and a character to play it with — everything a
+    * match needs except the match.
+    */
+  private def setup(
+      session: skunk.Session[IO],
+      nickname: String,
+      externalId: String
+  ): IO[(Player, Game, Character[String])] =
+    for {
+      player <- registrationService.register(nickname, externalId)
+      game <- new GameRepo[String](session).create(
+        Game(
+          GameId.unassigned, GameType.Character, "game", "description", "url", active = true,
+          // One role, because every participant names one.
+          Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false)),
+          Seq.empty, genUniqueString.sample.get
+        )
+      )
+      character <- new CharacterRepo[String](session).create(
+        Character(CharacterId(0), game.gameId, "character", "description", "", Some(player.playerId))
+      )
+    } yield (player, game, character)
+
+  /** One more match for a player who already has a game and a character, so that a test about
+    * the order of a list can put two of them in it. Every match needs a challenge of its own —
+    * it is the match's creator, by reference — so one is made here rather than shared.
+    */
+  private def addMatch(
+      session: skunk.Session[IO],
+      player: Player,
+      game: Game,
+      character: Character[String],
+      matchIdStr: String,
+      completedAt: Option[Instant],
+      pending: Boolean
+  ): IO[MatchId] =
+    for {
+      // The match's creator is its challenge's challenger, and a match cannot exist without a
+      // challenge to point at — so the whole chain is built here even though most of these
+      // tests only care about the lists.
+      challenge <- new OpenChallengeRepo(session).create(
+        CharacterOpenChallenge(
+          ChallengeId(0), player.playerId, "challenge", None, None, "{}", game.gameId,
+          character.characterId, isPublic = false, game.roles.head.gameRoleId
+        )
+      )
+      matchId = MatchId(matchIdStr)
+      _ <- new MatchRepo(session).create(
+        Match(
+          game.gameId, matchId, challenge.challengeId, "description", completedAt,
+          Instant.ofEpochSecond(1000), None, "{}"
+        )
+      )
+      _ <- new ParticipantRepo(session).create(
+        CharacterParticipant(
+          ParticipantId(0), game.gameId, matchId, player.playerId, pending, completedAt.isDefined,
+          Some(Instant.ofEpochSecond(2000)), character.characterId, game.roles.head.gameRoleId
+        )
+      )
+    } yield matchId
 
   property("due returns matches where it is the caller's turn") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
@@ -99,6 +130,30 @@ class MatchServiceSpec extends PropertySuite {
         completed <- matchService.completed(externalId)
       } yield active.map(s => (s.gameId, s.matchId)) == List((game.gameId, matchId)) && completed.isEmpty
       result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  /* The completed list is a history, so it is read from the most recent end: the order is
+   * `completed` descending. A cancelled match has no completion time and sorts after the ones
+   * that were played out, rather than ahead of them where a NULLS FIRST default would put it. */
+  property("completed matches come back most recently finished first, cancelled ones last") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, olderId, newerId, cancelledId) =>
+        val result = TestSession.resource.use { session =>
+          for {
+            prepared <- setup(session, nickname, externalId)
+            (player, game, character) = prepared
+            _ <- addMatch(session, player, game, character, olderId, Some(Instant.ofEpochSecond(5000)), pending = false)
+            _ <- addMatch(session, player, game, character, newerId, Some(Instant.ofEpochSecond(9000)), pending = false)
+            cancelled <- addMatch(session, player, game, character, cancelledId, None, pending = false)
+            _ <- new MatchRepo(session).read(game.gameId, cancelled).flatMap {
+              case Some(m) => new MatchRepo(session).update(m.copy(cancelled = true))
+              case None    => IO.raiseError(new IllegalStateException("the match just written is not there"))
+            }
+            over <- matchService.completed(externalId)
+          } yield over.map(_.matchId.value) == List(newerId, olderId, cancelledId)
+        }
+        result.timeout(10.seconds).unsafeRunSync()
     }
   }
 

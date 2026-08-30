@@ -143,7 +143,7 @@ class JsonSpec extends FunSuite {
       MatchId("m"),
       "game",
       "description",
-      completed = false,
+      completedAt = Some(Instant.ofEpochSecond(3000)),
       cancelled = false,
       isCreator = true,
       start = Instant.ofEpochSecond(1000),

@@ -351,6 +351,9 @@ object Views {
       // A cancelled match is over and has no result, so it sits in the completed list; without
       // this it would be indistinguishable from one that was played to an end.
       if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
+      // When it ended. The completed list is ordered by this, so the row says what it is sorted
+      // on; a cancelled match has no completion time and simply says nothing here.
+      summary.completedAt.map(when => div(cls := "detail", s"completed ${Format.instant(when)}")).getOrElse(emptyNode),
       // Play and Refresh are for a match still being played. A finished one has no turn to take
       // and nothing left for the engine to tell us, so it shows how it ended instead.
       if (summary.completed || summary.cancelled) resultTable(summary)
