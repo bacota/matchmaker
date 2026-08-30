@@ -354,8 +354,8 @@ object Views {
     * winning is marked from `isWinner` rather than from position, because a game may have no
     * winner at all (a draw, a cancelled match) and rank 1 would otherwise invent one.
     *
-    * A cancelled match usually has no rows: the engine never reported a result, because from its
-    * side the game is still there to be played. Saying so beats an empty table.
+    * A cancelled match has no engine-reported result, so its rows usually have no rank/scores (rather than being absent).
+    * Saying so beats rendering an empty-looking table.
     */
   private def resultTable(summary: MatchSummary): HtmlElement =
     div(
