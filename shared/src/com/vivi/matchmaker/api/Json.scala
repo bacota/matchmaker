@@ -55,6 +55,7 @@ object Json {
   given ReadWriter[CharacterAcceptance] = macroRW
   given ReadWriter[Acceptance] =
     ReadWriter.merge(summon[ReadWriter[PlainAcceptance]], summon[ReadWriter[CharacterAcceptance]])
+  given ReadWriter[PendingAcceptance] = macroRW
 
   given ReadWriter[MatchSummary] = macroRW
   given ReadWriter[Match] = macroRW

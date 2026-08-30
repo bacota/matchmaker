@@ -206,17 +206,32 @@ class AcceptanceRepo(session: Session[IO]) {
         (challengeModel, acceptor, challengerPlayer)
     })
 
-  private val selectAcceptancesForPlayer: Query[PlayerId, (ChallengeId, GameType, GameId, GameRoleId, Option[Long])] =
-    sql"""SELECT a.challenge_id, a.game_type, a.game_id, a.game_role_id, ca.character_id
+  private val selectAcceptancesForPlayer
+      : Query[PlayerId, (ChallengeId, GameType, GameId, GameRoleId, Option[Long], PlayerId, Boolean)] =
+    sql"""SELECT a.challenge_id, a.game_type, a.game_id, a.game_role_id, ca.character_id,
+                 oc.challenger,
+                 -- Ready to start: no required role of the game is still unclaimed. Computed here
+                 -- rather than by counting acceptances, because a challenge is full when its
+                 -- roles are taken, and optional roles are not ones a start waits for. This is
+                 -- the same rule GameEngineService.start enforces, asked of the row already in
+                 -- hand rather than of a second query per challenge.
+                 NOT EXISTS (SELECT 1 FROM game_role gr
+                              WHERE gr.game_id = a.game_id AND NOT gr.optional
+                                AND NOT EXISTS (SELECT 1 FROM acceptance taken
+                                                 WHERE taken.game_id = a.game_id
+                                                   AND taken.challenge_id = a.challenge_id
+                                                   AND taken.game_role_id = gr.game_role_id))
           FROM acceptance a
           LEFT JOIN character_acceptance ca
                  ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.game_role_id = a.game_role_id
           JOIN open_challenge oc ON oc.game_id = a.game_id AND oc.challenge_id = a.challenge_id
           WHERE a.player_id = $playerId AND oc.started_match_id IS NULL
           ORDER BY a.challenge_id"""
-      .query(challengeId *: gameType *: gameId *: gameRoleId *: int8.opt)
+      .query(challengeId *: gameType *: gameId *: gameRoleId *: int8.opt *: playerId *: bool)
 
-  /** Every acceptance this player has outstanding.
+  /** Every acceptance this player has outstanding, each with the two facts about its challenge
+    * that decide what the UI can offer on it: who may start it, and whether it is ready to be.
+    *
     *
     * "Outstanding" means the player has not backed out and the challenge has not been started.
     * The acceptance rows of a started challenge are kept — they are the roster the match was
@@ -227,10 +242,14 @@ class AcceptanceRepo(session: Session[IO]) {
     * composite key deliberately: a player may have acceptances across many games, and listing
     * "everything I've accepted" is exactly the case where the game isn't known ahead of time.
     */
-  def listForPlayer(playerId: PlayerId): IO[List[Acceptance]] =
+  def listForPlayer(playerId: PlayerId): IO[List[PendingAcceptance]] =
     session.execute(selectAcceptancesForPlayer)(playerId).map(_.map {
-      case (challenge, gt, gameId, roleId, characterIdValue) =>
-        toAcceptance(challenge, playerId, gameId, gt, roleId, characterIdValue)
+      case (challenge, gt, gameId, roleId, characterIdValue, challenger, ready) =>
+        PendingAcceptance(
+          toAcceptance(challenge, playerId, gameId, gt, roleId, characterIdValue),
+          challenger,
+          ready
+        )
     })
 
   // As ParticipantRepo.listForMatch: the external id and role name are what the game engine is

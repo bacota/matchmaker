@@ -138,7 +138,9 @@ class AcceptanceServiceSpec extends PropertySuite {
           set <- setUp(nickname, externalId, accepterNickname, accepterExternalId)
           (_, created, accepterPlayer, _) = set
           mine <- acceptanceService.mine(accepterExternalId)
-        } yield mine.exists(a => a.challengeId == created.challengeId && a.playerId == accepterPlayer.playerId)
+        } yield mine.exists(p =>
+          p.acceptance.challengeId == created.challengeId && p.acceptance.playerId == accepterPlayer.playerId
+        )
         result.timeout(10.seconds).unsafeRunSync()
     }
   }
@@ -155,7 +157,7 @@ class AcceptanceServiceSpec extends PropertySuite {
           // has an acceptance of their own. An uninvolved player is the one who must see nothing.
           outsider <- registrationService.register(s"$nickname-outsider", s"$externalId-outsider")
           outsiderSees <- acceptanceService.mine(outsider.externalId)
-        } yield !outsiderSees.exists(_.challengeId == created.challengeId)
+        } yield !outsiderSees.exists(_.acceptance.challengeId == created.challengeId)
         result.timeout(10.seconds).unsafeRunSync()
     }
   }
@@ -167,6 +169,46 @@ class AcceptanceServiceSpec extends PropertySuite {
         case _                          => false
       }
       result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  // What the UI's "waiting to start" list draws itself from. Both facts are the challenge's, and
+  // both are answered here so that list needs nothing loaded per game to know what to offer.
+  property("mine reports a challenge as not ready while a required role is unclaimed") {
+    forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+      val result = for {
+        fixture <- makeFixture(nickname, externalId)
+        // Only the challenger's own acceptance, written when the challenge was created. The
+        // second of the game's two required roles is still going begging.
+        created <- challengeService.create(challengeFor(fixture), externalId)
+        mine <- acceptanceService.mine(externalId)
+      } yield mine.filter(_.acceptance.challengeId == created.challengeId) match {
+        case pending :: Nil =>
+          !pending.readyToStart && pending.challenger == fixture.owner.playerId
+        case _ => false
+      }
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("mine reports a challenge as ready once every required role is taken, to both players") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, accepterNickname, accepterExternalId) =>
+        val result = for {
+          set <- setUp(nickname, externalId, accepterNickname, accepterExternalId)
+          (fixture, created, _, _) = set
+          challengerSees <- acceptanceService.mine(externalId)
+          accepterSees <- acceptanceService.mine(accepterExternalId)
+        } yield {
+          val forChallenge =
+            (challengerSees ++ accepterSees).filter(_.acceptance.challengeId == created.challengeId)
+          // Two rows, one per player, and both say ready — readiness is a fact about the
+          // challenge, not about who is asking. The challenger is the same on both, which is
+          // what tells the accepter the Start is not theirs to press.
+          forChallenge.size == 2 &&
+          forChallenge.forall(p => p.readyToStart && p.challenger == fixture.owner.playerId)
+        }
+        result.timeout(10.seconds).unsafeRunSync()
     }
   }
 }

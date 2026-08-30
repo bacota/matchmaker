@@ -91,7 +91,7 @@ object Store {
   /** What the caller has accepted and that has not yet become a match — what `ui.txt` calls the
     * pending acceptances, and the list "back out" acts on.
     */
-  val acceptances: Var[Seq[Acceptance]] = Var(Seq.empty)
+  val acceptances: Var[Seq[PendingAcceptance]] = Var(Seq.empty)
 
   val expandedGames: Var[Set[GameId]] = Var(Set.empty)
   val showActive: Var[Boolean] = Var(false)

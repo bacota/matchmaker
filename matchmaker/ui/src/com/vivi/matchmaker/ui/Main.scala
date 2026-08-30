@@ -227,15 +227,43 @@ object Views {
         case (Nil, _) => p(cls := "empty", "You have not accepted anything that is still waiting.")
         case (acceptances, games) =>
           val namesById = games.map(game => game.gameId -> game.name).toMap
-          ul(acceptances.map(acceptance => acceptanceRow(acceptance, namesById.get(acceptance.gameId))))
+          ul(acceptances.map(pending => acceptanceRow(pending, namesById.get(pending.acceptance.gameId))))
       }
     )
 
-  private def acceptanceRow(acceptance: Acceptance, gameName: Option[String]): HtmlElement =
+  private def acceptanceRow(pending: PendingAcceptance, gameName: Option[String]): HtmlElement = {
+    val acceptance = pending.acceptance
+
     li(
       cls := "row",
       div(cls := "title", gameName.getOrElse(s"game ${acceptance.gameId.value}")),
-      div(cls := "detail", "accepted, waiting for the other players"),
+      // Creating a challenge accepts it, so the challenger has a row here like everyone else —
+      // and this is where they are looking while they wait for it to fill up. Offering the Start
+      // here as well as on the game's own challenge list saves opening the game to find the same
+      // button. Starting stays the challenger's call, as it is there.
+      //
+      // Both facts come from the acceptances response: whether every required role is taken is
+      // the server's answer, not re-derived from roles here, so this list needs nothing loaded
+      // per game to draw itself.
+      child <-- currentPlayer.map {
+        case Some(player) if pending.readyToStart && pending.challenger == player.playerId =>
+          div(
+            div(cls := "detail", "every role is taken — ready to start"),
+            busyButton("Start") { busy =>
+              Store.run(ApiClient.startChallenge(acceptance.gameId, acceptance.challengeId), busy) { _ =>
+                Store.refreshMatches()
+                // The challenge is no longer open, so the game's list is stale if it is on screen.
+                if (Store.expandedGames.now().contains(acceptance.gameId))
+                  Store.refreshChallenges(acceptance.gameId)
+              }
+            }
+          )
+        // Full, but somebody else offered it: nothing for this player to do but wait, which is
+        // worth saying rather than leaving them looking for a button that is not theirs.
+        case _ if pending.readyToStart =>
+          div(cls := "detail", "every role is taken — waiting for the challenger to start it")
+        case _ => div(cls := "detail", "accepted, waiting for the other players")
+      },
       child <-- currentPlayer.map {
         case None => emptyNode
         case Some(player) =>
@@ -249,6 +277,7 @@ object Views {
           }
       }
     )
+  }
 
   private def completedSection: HtmlElement =
     sectionTag(
@@ -664,7 +693,7 @@ object Views {
             // A challenge this player has already accepted stays open until it fills up, but
             // offering it again would only produce a duplicate acceptance the service rejects —
             // so it is dropped from the list rather than shown with an Accept that cannot work.
-            val accepted = acceptances.map(a => (a.gameId, a.challengeId)).toSet
+            val accepted = acceptances.map(a => (a.acceptance.gameId, a.acceptance.challengeId)).toSet
             val available = others.filterNot(c => accepted.contains((c.challenge.gameId, c.challenge.challengeId)))
             div(
               h3("Your open challenges"),

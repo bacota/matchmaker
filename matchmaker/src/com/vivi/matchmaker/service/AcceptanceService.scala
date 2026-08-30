@@ -17,7 +17,7 @@ class AcceptanceService(sessionPool: SessionPool) {
     * Deliberately takes no player id: it lists the caller's own acceptances and nobody else's, so
     * there is no parameter that could ask for someone else's and no check needed to refuse it.
     */
-  def mine(callerExternalId: String): IO[List[Acceptance]] =
+  def mine(callerExternalId: String): IO[List[PendingAcceptance]] =
     sessionPool.use { session =>
       val playerRepo = new PlayerRepo(session)
       val acceptanceRepo = new AcceptanceRepo(session)

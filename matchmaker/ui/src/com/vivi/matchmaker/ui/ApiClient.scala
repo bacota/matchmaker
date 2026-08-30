@@ -41,7 +41,7 @@ object ApiClient {
   /** Everything the caller has said yes to and that has not yet become a match. Takes no player
     * id: the server scopes it to whoever the token says is calling.
     */
-  def acceptances(): Future[Seq[Acceptance]] = get[Seq[Acceptance]]("/me/acceptances")
+  def acceptances(): Future[Seq[PendingAcceptance]] = get[Seq[PendingAcceptance]]("/me/acceptances")
 
   def characters(gameId: GameId): Future[Seq[Character[String]]] =
     get[Seq[Character[String]]](s"/games/${gameId.value}/characters")
