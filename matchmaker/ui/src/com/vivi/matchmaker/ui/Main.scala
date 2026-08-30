@@ -78,6 +78,16 @@ object Views {
     )
   }
 
+  /** A form control with a visible caption tied to it.
+    *
+    * Wrapping rather than `for`/`id`: it needs no id to be unique across a page that renders the
+    * same form more than once. A placeholder is not a label — it is a hint that disappears at the
+    * first keystroke, and leaves a screen reader with an unnamed box — so every field that had
+    * only a placeholder gets one of these instead.
+    */
+  private def field(caption: String, control: HtmlElement): HtmlElement =
+    label(cls := "field", caption, control)
+
   // -------------------------------------------------------------------------
   // Chrome
   // -------------------------------------------------------------------------
@@ -107,6 +117,10 @@ object Views {
         case Some(message) =>
           div(
             cls := "error",
+            // Every failed request in the application reports here. Without this the banner is a
+            // silent red box: it appears with no page change to notice, so a screen reader is
+            // never given a reason to read it out.
+            role := "alert",
             span(message),
             button(cls := "link", "Dismiss", onClick --> (_ => Store.error.set(None)))
           )
@@ -154,10 +168,7 @@ object Views {
       cls := "card",
       h2("Choose a nickname"),
       p("You are signed in, but you do not have a player yet. Your nickname is what other players see."),
-      input(
-        placeholder := "nickname",
-        controlled(value <-- nickname.signal, onInput.mapToValue --> nickname)
-      ),
+      field("Nickname", input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))),
       busyButton("Create player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
         Store.run(ApiClient.register(nickname.now().trim), busy) { player =>
           Store.player.set(Store.PlayerState.Registered(player))
@@ -168,13 +179,74 @@ object Views {
     )
   }
 
+  /** The application proper: a menu down the left, a screen to the right of it.
+    *
+    * The menu is the only navigation there is — the wire-frame asks for a link to the main page
+    * and a link per game — so it is rendered once here and outlives whatever screen is showing,
+    * rather than being part of each screen and redrawn with it.
+    */
   private def home: HtmlElement =
+    div(
+      cls := "layout",
+      menu,
+      div(
+        cls := "screen",
+        child <-- Store.page.signal.map {
+          case Store.Page.Home             => mainPage
+          case Store.Page.OneGame(gameId)  => gamePage(gameId)
+          case Store.Page.NewGame          => newGamePage
+        }
+      )
+    )
+
+  /** The left-hand menu: the main page, then every game, then — for an admin — the form that
+    * adds one.
+    *
+    * The games come from the same list the home screen already loads, so opening the menu costs
+    * no request. Only the games themselves are links; the entry for the current screen is marked
+    * rather than removed, so the menu does not change shape as it is used.
+    */
+  private def menu: HtmlElement =
+    navTag(
+      cls := "menu",
+      menuItem("Main page", Store.Page.Home),
+      child <-- Store.games.signal.map {
+        case Nil => p(cls := "empty", "No games yet.")
+        case games => div(games.map(game => menuItem(game.name, Store.Page.OneGame(game.gameId))))
+      },
+      // Only for admins, because only an admin can create a game: the server answers anyone else
+      // with a 403, and a menu entry that always fails is worse than no entry.
+      child <-- currentPlayer.map {
+        case Some(player) if player.isAdmin => menuItem("Add a game", Store.Page.NewGame)
+        case _                              => emptyNode
+      }
+    )
+
+  private def menuItem(caption: String, target: Store.Page): HtmlElement = {
+    val isCurrent = Store.page.signal.map(_ == target)
+
+    button(
+      cls := "menu-item",
+      cls("current") <-- isCurrent,
+      // The tint and the heavier weight say which screen this is to anyone who can see them.
+      // This says it to everyone else, and is why the styling is not the only thing that does.
+      aria.current <-- isCurrent.map(if (_) "page" else "false"),
+      caption,
+      onClick --> (_ => Store.show(target))
+    )
+  }
+
+  /** The main page: what is waiting on this player, what they are playing, and what lately
+    * finished. No games list — the menu is the games list now — and the completed matches are
+    * trimmed to the most recent few, because the whole history of a game lives on that game's
+    * own screen.
+    */
+  private def mainPage: HtmlElement =
     div(
       readyToStartSection,
       dueSection,
       myMatchesSection,
-      gamesSection,
-      completedSection
+      recentlyCompletedSection
     )
 
   // -------------------------------------------------------------------------
@@ -221,7 +293,7 @@ object Views {
         Store.run(ApiClient.startChallenge(acceptance.gameId, acceptance.challengeId), busy) { _ =>
           Store.refreshMatches()
           // The challenge is no longer open, so the game's list is stale if it is on screen.
-          if (Store.expandedGames.now().contains(acceptance.gameId))
+          if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
             Store.refreshChallenges(acceptance.gameId)
         }
       }
@@ -240,27 +312,18 @@ object Views {
       }
     )
 
+  /** The matches still being played. Expanded rather than behind a toggle: the wire-frame lists
+    * it as one of the four things the main page shows, and a section that has to be opened to
+    * find out whether it is empty is not shown.
+    */
   private def myMatchesSection: HtmlElement =
     sectionTag(
-      h2(
-        button(
-          cls := "toggle",
-          child.text <-- Store.showActive.signal.map(if (_) "▾" else "▸"),
-          " Your matches",
-          onClick --> (_ => Store.showActive.update(!_))
-        )
-      ),
-      child <-- Store.showActive.signal.map {
-        case false => emptyNode
-        case true =>
-          div(
-            child <-- Store.active.signal.map {
-              case Nil     => p(cls := "empty", "You are not in any matches.")
-              case matches => ul(matches.map(matchRow(_, showDue = false)))
-            },
-            pendingAcceptances
-          )
-      }
+      h2("Current matches"),
+      child <-- Store.active.signal.map {
+        case Nil     => p(cls := "empty", "You are not in any matches.")
+        case matches => ul(matches.map(matchRow(_, showDue = false)))
+      },
+      pendingAcceptances
     )
 
   /** "Also shows pending acceptances with option to back out."
@@ -305,7 +368,7 @@ object Views {
             Store.run(ApiClient.withdraw(acceptance.gameId, acceptance.challengeId, player.playerId), busy) { _ =>
               Store.refreshMatches()
               // The challenge is open again, so the game's list is stale if it is on screen.
-              if (Store.expandedGames.now().contains(acceptance.gameId))
+              if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
                 Store.refreshChallenges(acceptance.gameId)
             }
           }
@@ -313,25 +376,18 @@ object Views {
     )
   }
 
-  private def completedSection: HtmlElement =
+  /** The last few finished matches, whatever game they were played in.
+    *
+    * The list arrives most recently finished first, so the most recent few are simply its first
+    * few — no sorting here, and nothing that would disagree with the game screens, which show
+    * the same list filtered rather than a differently ordered one.
+    */
+  private def recentlyCompletedSection: HtmlElement =
     sectionTag(
-      h2(
-        button(
-          cls := "toggle",
-          child.text <-- Store.showCompleted.signal.map(if (_) "▾" else "▸"),
-          " Completed matches",
-          onClick --> (_ => Store.showCompleted.update(!_))
-        )
-      ),
-      child <-- Store.showCompleted.signal.map {
-        case false => emptyNode
-        case true =>
-          div(
-            child <-- Store.completed.signal.map {
-              case Nil     => p(cls := "empty", "Nothing finished yet.")
-              case matches => ul(matches.map(matchRow(_, showDue = false)))
-            }
-          )
+      h2("Recently completed"),
+      child <-- Store.completed.signal.map(_.take(Store.recentlyCompleted)).map {
+        case Nil     => p(cls := "empty", "Nothing finished yet.")
+        case matches => ul(matches.map(matchRow(_, showDue = false)))
       }
     )
 
@@ -353,7 +409,17 @@ object Views {
       if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
       // When it ended. The completed list is ordered by this, so the row says what it is sorted
       // on; a cancelled match has no completion time and simply says nothing here.
-      summary.completedAt.map(when => div(cls := "detail", s"completed ${Format.date(when)}")).getOrElse(emptyNode),
+      summary.completedAt
+        .map(when =>
+          div(
+            cls := "detail",
+            "completed ",
+            // The rendered date is a day with no zone on it; `dateTime` carries the instant it
+            // was trimmed from, so the date is machine-readable as well as legible.
+            timeTag(htmlAttr("datetime", com.raquo.laminar.codecs.StringAsIsCodec) := when.toString, Format.date(when))
+          )
+        )
+        .getOrElse(emptyNode),
       // Play and Refresh are for a match still being played. A finished one has no turn to take
       // and nothing left for the engine to tell us, so it shows how it ended instead.
       if (summary.completed || summary.cancelled) resultTable(summary)
@@ -407,7 +473,10 @@ object Views {
             rows.map { row =>
               li(
                 cls := "result-row",
-                if (row.isWinner) span(cls := "winner", "🏆 ") else emptyNode,
+                // The emoji reads out as "trophy", which is a guess at what it means rather than
+                // a statement of it. The text says it; the emoji is decoration over the top.
+                if (row.isWinner) span(cls := "winner", aria.hidden := true, "🏆 ") else emptyNode,
+                if (row.isWinner) span(cls := "sr-only", "winner: ") else emptyNode,
                 span(cls := "who", s"${row.nickname} (${row.roleName})"),
                 // Whatever else the engine chose to report. Which keys exist is the game's
                 // business, so they are shown as they came rather than being named here.
@@ -428,18 +497,76 @@ object Views {
   // Games and challenges
   // -------------------------------------------------------------------------
 
-  private def gamesSection: HtmlElement =
+  /** One game's screen: its open challenges, a way to offer one, and this player's history in
+    * it. An admin also gets the edit form.
+    *
+    * Taken from the games list rather than fetched, so a game id the list does not know about —
+    * an inactive game, or a menu that has outlived a reload — says so instead of showing an
+    * empty screen that looks like a game with nothing in it.
+    */
+  private def gamePage(gameId: GameId): HtmlElement =
+    div(
+      child <-- Store.games.signal.map(_.find(_.gameId == gameId)).map {
+        case None => p(cls := "empty", "Loading…")
+        case Some(game) =>
+          div(
+            h2(game.name),
+            p(cls := "detail", game.description),
+            editGamePanel(game),
+            gameChallenges(game),
+            gameHistory(game)
+          )
+      }
+    )
+
+  /** The admin's edit form for a game, opened from a link on the game's own screen. Nothing for
+    * anyone else: the server answers a non-admin with a 403, so the link is not there to press.
+    */
+  private def editGamePanel(game: Game): HtmlElement =
+    div(
+      child <-- currentPlayer.combineWith(Store.editingGame.signal).map {
+        case (Some(player), editing) if player.isAdmin =>
+          div(
+            button(
+              cls := "link",
+              aria.expanded := editing.contains(game.gameId),
+              if (editing.contains(game.gameId)) "Done editing" else "Edit game",
+              onClick --> { _ =>
+                Store.editingGame.update(current => if (current.contains(game.gameId)) None else Some(game.gameId))
+              }
+            ),
+            // Keyed on the game so that the form is rebuilt when a different game is opened:
+            // its fields are initialised from `game` once, not bound to it.
+            if (editing.contains(game.gameId)) gameForm(Some(game)) else emptyNode
+          )
+        case _ => emptyNode
+      }
+    )
+
+  /** This player's finished matches in one game, most recently finished first.
+    *
+    * The same list the main page shows the top of, filtered rather than fetched again: it is
+    * already in the order this asks for, and a second request would only be a second chance for
+    * the two screens to disagree.
+    */
+  private def gameHistory(game: Game): HtmlElement =
     sectionTag(
-      h2("Games"),
-      child <-- Store.games.signal.map {
-        case Nil   => p(cls := "empty", "No games are set up yet.")
-        case games => ul(games.map(gameRow))
-      },
-      // Only for admins, because only an admin can create one — the server rejects anyone else
-      // with a 403, and offering a button that always fails would be worse than not offering it.
+      h2("Your completed matches"),
+      child <-- Store.completed.signal.map(_.filter(_.gameId == game.gameId)).map {
+        case Nil     => p(cls := "empty", "You have not finished a match of this yet.")
+        case matches => ul(matches.map(matchRow(_, showDue = false)))
+      }
+    )
+
+  /** The admin's add-a-game screen, reached from the menu. The same form the edit link opens,
+    * with nothing to start from.
+    */
+  private def newGamePage: HtmlElement =
+    div(
+      h2("Add a game"),
       child <-- currentPlayer.map {
-        case Some(player) if player.isAdmin => newGameSection
-        case _                              => emptyNode
+        case Some(player) if player.isAdmin => newGameForm
+        case _ => p(cls := "empty", "Only an administrator can add a game.")
       }
     )
 
@@ -450,19 +577,6 @@ object Views {
     * acceptance names one, so a game with none is a game nothing can be offered for, and the
     * server refuses it.
     */
-  private def newGameSection: HtmlElement =
-    div(
-      h3(
-        button(
-          cls := "toggle",
-          child.text <-- Store.showNewGame.signal.map(if (_) "▾" else "▸"),
-          " Add a game",
-          onClick --> (_ => Store.showNewGame.update(!_))
-        )
-      ),
-      child <-- Store.showNewGame.signal.map(if (_) newGameForm else emptyNode)
-    )
-
   /* One row of the role or parameter editor, held as Vars rather than plain values so that
    * typing in a row does not rebuild the list and take the cursor with it: the rendered children
    * change only when a row is added or removed. */
@@ -504,7 +618,14 @@ object Views {
       children <-- roles.signal.map(_.map { draft =>
         div(
           cls := "row",
-          input(placeholder := "role name", controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)),
+          // A caption per row would repeat "role name" down the whole editor, so these repeated
+          // rows carry their name rather than showing it. The placeholder stays as the visible
+          // hint it always was.
+          input(
+            aria.label := "role name",
+            placeholder := "role name",
+            controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)
+          ),
           label(
             input(
               tpe := "checkbox",
@@ -515,7 +636,14 @@ object Views {
           // A role that exists cannot be removed: acceptances and played matches name it. The
           // server refuses it too — this is why the button is not there to press.
           if (draft.gameRoleId == GameRoleId.unassigned)
-            button(cls := "link", "Remove", onClick --> (_ => roles.update(_.filterNot(_ eq draft))))
+            // Named for what it removes: a column of identical "Remove" links tells a screen
+          // reader nothing about which row it is on.
+          button(
+            cls := "link",
+            aria.label <-- draft.name.signal.map(n => if (n.trim.isEmpty) "Remove this role" else s"Remove role $n"),
+            "Remove",
+            onClick --> (_ => roles.update(_.filterNot(_ eq draft)))
+          )
           else emptyNode
         )
       }),
@@ -533,13 +661,27 @@ object Views {
       children <-- parameters.signal.map(_.map { draft =>
         div(
           cls := "row",
-          input(placeholder := "parameter name", controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)),
           input(
+            aria.label := "parameter name",
+            placeholder := "parameter name",
+            controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)
+          ),
+          input(
+            aria.label := "possible values, comma separated",
             placeholder := "values, comma separated",
             controlled(value <-- draft.values.signal, onInput.mapToValue --> draft.values)
           ),
-          input(placeholder := "default value", controlled(value <-- draft.default.signal, onInput.mapToValue --> draft.default)),
-          button(cls := "link", "Remove", onClick --> (_ => parameters.update(_.filterNot(_ eq draft))))
+          input(
+            aria.label := "default value",
+            placeholder := "default value",
+            controlled(value <-- draft.default.signal, onInput.mapToValue --> draft.default)
+          ),
+          button(
+            cls := "link",
+            aria.label <-- draft.name.signal.map(n => if (n.trim.isEmpty) "Remove this parameter" else s"Remove parameter $n"),
+            "Remove",
+            onClick --> (_ => parameters.update(_.filterNot(_ eq draft)))
+          )
         )
       }),
       button(cls := "link", "Add a parameter", onClick --> (_ => parameters.update(_ :+ emptyParameter)))
@@ -615,12 +757,9 @@ object Views {
 
     div(
       cls := "card",
-      input(placeholder := "name", controlled(value <-- name.signal, onInput.mapToValue --> name)),
-      input(
-        placeholder := "description",
-        controlled(value <-- description.signal, onInput.mapToValue --> description)
-      ),
-      input(placeholder := "url", controlled(value <-- url.signal, onInput.mapToValue --> url)),
+      field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
+      field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
+      field("Game engine url", input(tpe := "url", controlled(value <-- url.signal, onInput.mapToValue --> url))),
       label(
         "Requires characters ",
         input(
@@ -671,7 +810,9 @@ object Views {
               url.set("")
               roles.set(List(emptyRole))
               parameters.set(Nil)
-              Store.showNewGame.set(false)
+              // Straight to the game that was just created: it is now in the menu, and its own
+              // screen is where anything else is done with it.
+              Store.show(Store.Page.OneGame(saved.gameId))
             } else {
               // Re-drafted from what came back, so that roles added by this save carry the ids
               // the insert gave them — without which saving twice would ask to add them again.
@@ -686,46 +827,12 @@ object Views {
     )
   }
 
-  private def gameRow(game: Game): HtmlElement =
-    li(
-      cls := "row",
-      div(
-        button(
-          cls := "toggle",
-          child.text <-- Store.expandedGames.signal.map(expanded => if (expanded.contains(game.gameId)) "▾" else "▸"),
-          s" ${game.name}",
-          onClick --> (_ => Store.toggleGame(game.gameId))
-        )
-      ),
-      div(cls := "detail", game.description),
-      child <-- Store.expandedGames.signal.map { expanded =>
-        if (expanded.contains(game.gameId)) gameDetail(game) else emptyNode
-      }
-    )
-
-  private def gameDetail(game: Game): HtmlElement =
+  /** What can be played in this game right now: the open challenges, and the form that offers
+    * one. A game that needs characters needs one of this player's before either is possible, so
+    * that form stands in for both until there is one.
+    */
+  private def gameChallenges(game: Game): HtmlElement =
     div(
-      cls := "detail-panel",
-      // Only for admins, for the same reason the create form is: the server answers anyone else
-      // with a 403, and a button that always fails is worse than no button.
-      child <-- currentPlayer.combineWith(Store.editingGame.signal).map {
-        case (Some(player), editing) if player.isAdmin =>
-          div(
-            button(
-              cls := "link",
-              if (editing.contains(game.gameId)) "Done editing" else "Edit game",
-              onClick --> { _ =>
-                Store.editingGame.update(current => if (current.contains(game.gameId)) None else Some(game.gameId))
-              }
-            ),
-            // Keyed on the game so that the form is rebuilt when a different game is opened:
-            // its fields are initialised from `game` once, not bound to it.
-            if (editing.contains(game.gameId)) gameForm(Some(game)) else emptyNode
-          )
-        case _ => emptyNode
-      },
-      // A 'P'-type game never needs a character, so its challenge panel doesn't wait on
-      // Store.charactersByGame at all.
       child <-- (if (game.gameType == GameType.Plain)
                    currentPlayer.map {
                      case None         => p(cls := "empty", "Loading…")
@@ -753,11 +860,8 @@ object Views {
       cls := "card",
       h3(s"Create your character for ${game.name}"),
       p("You need a character in this game before you can offer or accept a challenge."),
-      input(placeholder := "name", controlled(value <-- name.signal, onInput.mapToValue --> name)),
-      input(
-        placeholder := "description",
-        controlled(value <-- description.signal, onInput.mapToValue --> description)
-      ),
+      field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
+      field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
       busyButton("Create character", disabledWhen = name.signal.map(_.trim.isEmpty)) { busy =>
         val created =
           ApiClient.createCharacter(game.gameId, name.now().trim, description.now().trim, player.externalId)
@@ -781,13 +885,22 @@ object Views {
             val accepted = acceptances.map(a => (a.acceptance.gameId, a.acceptance.challengeId)).toSet
             val available = others.filterNot(c => accepted.contains((c.challenge.gameId, c.challenge.challengeId)))
             div(
+              // A button rather than a form standing open: offering a challenge is one of several
+              // things to do on this screen, and a form is what the screen looks like it is for.
+              button(
+                aria.expanded <-- Store.showChallengeForm.signal,
+                child.text <-- Store.showChallengeForm.signal.map(if (_) "Close" else "Create challenge"),
+                onClick --> (_ => Store.showChallengeForm.update(!_))
+              ),
+              child <-- Store.showChallengeForm.signal.map {
+                if (_) newChallengeForm(game, player, characterId) else emptyNode
+              },
               h3("Your open challenges"),
               if (mine.isEmpty) p(cls := "empty", "You have none open.")
               else ul(mine.map(myChallengeRow(game, _))),
               h3("Open challenges"),
               if (available.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
-              else ul(available.map(openChallengeRow(game, _, characterId))),
-              newChallengeForm(game, player, characterId)
+              else ul(available.map(openChallengeRow(game, _, characterId)))
             )
         }
       }
@@ -866,6 +979,9 @@ object Views {
     if (choices.isEmpty) emptyNode
     else
       select(
+        // Named here rather than by a caption at each call site: one of the two is a control in
+        // the middle of a challenge row, where a caption would be a word on its own line.
+        aria.label := "the role you will play",
         onChange.mapToValue --> { raw =>
           selected.set(raw.toIntOption.map(GameRoleId.apply).filter(id => choices.exists(_.gameRoleId == id)))
         },
@@ -883,10 +999,7 @@ object Views {
     div(
       cls := "card",
       h3("Offer a challenge"),
-      input(
-        placeholder := "message",
-        controlled(value <-- message.signal, onInput.mapToValue --> message)
-      ),
+      field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
       roleSelect(game.roles, role),
       // Public means anyone may watch the match, which the game engine implements by issuing a
       // url that needs no sign-in. It is decided here because it is a property of the game being
@@ -939,6 +1052,8 @@ object Views {
 
           Store.run(ApiClient.createChallenge(challenge), busy) { _ =>
             message.set("")
+            // The challenge it was open for now exists and is in the list below it.
+            Store.showChallengeForm.set(false)
             Store.refreshChallenges(game.gameId)
           }
         }

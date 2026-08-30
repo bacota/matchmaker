@@ -12,6 +12,40 @@
   box-sizing: border-box;
 }
 
+/* Every control that can be focused and typed into, at 1rem — which is 16px, because nothing
+   sets a size on `html`.
+
+   Not a matter of taste: mobile Safari zooms the page in when a field smaller than 16px takes
+   focus, and does not zoom back out when it loses it. The page text stays at 15px; it is the
+   fields that have to clear the bar. `font-family` is inherited separately, since the `font`
+   shorthand would put the size back. */
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+/* The role picker, which is the only select on the page. It sat at the browser default while
+   everything around it was styled — and, being a form control, it zoomed on focus too. */
+select {
+  max-width: 100%;
+  padding: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #fff;
+}
+
+/* A nickname with no spaces in it, or a url in a game's description, is one word as far as
+   wrapping is concerned: without this it sets the width of the card it is in, and on a phone
+   that is wider than the screen. */
+.row,
+.detail,
+.result-row,
+.card {
+  overflow-wrap: anywhere;
+}
+
 body {
   margin: 0;
   font: 15px/1.5 system-ui, sans-serif;
@@ -20,9 +54,95 @@ body {
 }
 
 .app {
-  max-width: 44rem;
+  /* Wider than it was: there is a menu beside the content now, and 44rem was the width of the
+     content alone. */
+  max-width: 58rem;
   margin: 0 auto;
   padding: 1.5rem 1rem 4rem;
+}
+
+/* The menu and the screen it selects. The menu keeps its width whatever is beside it, so the
+   content does not shift as one game's screen replaces another's. */
+.layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.5rem;
+}
+
+.menu {
+  flex: 0 0 11rem;
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.15rem;
+  padding-top: 0.5rem;
+}
+
+/* The games between the fixed entries are wrapped in a div of their own, which would otherwise
+   collapse the gap between them. */
+.menu > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.menu-item {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+.menu-item:hover:not(:disabled) {
+  background: #eef2f8;
+}
+
+/* The screen being looked at. Marked rather than removed from the menu, so the menu does not
+   change shape as it is used. */
+.menu-item.current {
+  background: #e6ecf5;
+  color: #1a1a1a;
+  font-weight: 600;
+}
+
+/* The menu is a column beside the content on a wide window and a row above it on a narrow one.
+   The turn is at 48rem rather than at the width where the two collide: 11rem of menu beside a
+   27rem screen is not a layout anybody wants, it is just one that fits. */
+@media (max-width: 48rem) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .menu {
+    position: static;
+    flex: none;
+    align-self: stretch;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .menu > div {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
+/* The screen fills what the menu leaves. `min-width` because a flex item's default minimum is
+   its content, which a wide result table would push past. */
+.screen {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The first heading of a screen sits at the top of it: `h2` has a margin meant to separate one
+   section from the last, and there is nothing above this one. */
+.screen > div > h2:first-child,
+.screen > div > section:first-child > h2 {
+  margin-top: 0;
 }
 
 h1 {
@@ -162,12 +282,31 @@ ul {
   padding: 0.4rem;
   border: 1px solid var(--line);
   border-radius: 3px;
-  font: inherit;
+}
+
+/* A labelled field: the caption above its control, not beside it.
+   `.card label` below lays a label and its control on one line, which is right for the checkbox
+   it was written for and wrong here — a caption beside a full-width box wraps immediately. Same
+   shape as `.sign-in label` and `.account-section label`, which solved this first. */
+label.field {
+  display: block;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+label.field > input,
+label.field > select {
+  display: block;
+  width: 100%;
+  margin-top: 0.2rem;
+  /* The caption is small and grey; what is typed into the box is neither. */
+  color: #1a1a1a;
 }
 
 /* A checkbox and its caption belong on one line: the rule above would otherwise stretch the
    box to the card's full width and push the caption onto the next line. */
-.card label {
+.card label:not(.field) {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -229,12 +368,15 @@ button:disabled {
   }
 }
 
-/* Buttons that are really links: the expand toggles and the destructive secondary actions. */
+/* Buttons that are really links: the expand toggles and the destructive secondary actions.
+   Some vertical padding even with a mouse — Play, Refresh and Cancel sit side by side on a match
+   row, and zero-height targets are unkind to any pointer. Horizontally still flush, so they line
+   up with the text above them. */
 button.link,
 button.toggle {
   border: none;
   background: none;
-  padding: 0;
+  padding: 0.25rem 0;
   color: var(--accent);
 }
 
@@ -380,4 +522,81 @@ button.toggle {
   padding: 0.5rem 0.75rem;
   margin-top: 0.5rem;
   font-size: 0.9rem;
+}
+
+/* Touch pointers, which is to say phones and tablets.
+
+   A 20px-tall link is a fine mouse target and a poor thumb one, so everything that can be
+   tapped is given the room to be hit: roughly 44px, which is what both platforms' guidelines
+   ask for. Scoped to `pointer: coarse` rather than to a width, because it is the pointer and
+   not the window that decides this — a narrow window on a laptop does not need taller rows, and
+   a tablet in landscape does. */
+@media (pointer: coarse) {
+  button {
+    min-height: 2.75rem;
+  }
+
+  /* Link-buttons keep no border and no background, so they are given the height as padding —
+     `min-height` on an inline-level control with no box would not show. */
+  button.link,
+  button.toggle {
+    min-height: 2.75rem;
+    padding: 0.6rem 0;
+  }
+
+  /* Further apart as well as bigger: adjacent targets that are each big enough are still easy
+     to confuse when they touch. */
+  button.link + button.link {
+    margin-left: 1.25rem;
+  }
+
+  .menu-item {
+    min-height: 2.75rem;
+  }
+
+  /* The fields grow with the buttons, so a form does not read as a row of tall buttons between
+     short boxes. */
+  .card input:not([type="checkbox"]),
+  select {
+    min-height: 2.75rem;
+  }
+
+  /* A checkbox is hit by its caption as well, so the label is the target and gets the height. */
+  .card label {
+    min-height: 2.75rem;
+  }
+}
+
+/* Text for screen readers and nobody else: clipped to nothing rather than hidden, because
+   `display: none` and `visibility: hidden` take it out of the accessibility tree as well as off
+   the screen, which is the one thing it must not be taken out of. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Where the keyboard is.
+
+   The browser's own ring is the fallback, and on the link-buttons — which have no border and no
+   background to ring — it is thin and easy to lose. This is the same mark everywhere, drawn
+   outside the control so it does not move anything, and only for keyboard focus: `:focus-visible`
+   rather than `:focus` leaves a clicked button unchanged. */
+:where(button, input, select, textarea, a):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* The panel takes focus when it opens so the keyboard arrives with it. It is not a control, and
+   ringing the whole box would read as something to act on rather than somewhere to be. */
+.account-menu:focus,
+.account-menu:focus-visible {
+  outline: none;
 }
