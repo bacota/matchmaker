@@ -143,7 +143,7 @@ object Views {
     if (!refreshing.now()) {
       refreshing.set(true)
       val startedAt = System.currentTimeMillis()
-      reload().foreach { _ =>
+      reload().onComplete { _ =>
         val remaining = math.max(0L, blinkMillis - (System.currentTimeMillis() - startedAt))
         dom.window.setTimeout(() => refreshing.set(false), remaining.toDouble)
       }
