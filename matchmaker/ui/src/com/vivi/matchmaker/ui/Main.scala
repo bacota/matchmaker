@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.ui
 
+import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalajs.js.annotation.JSExportTopLevel
 import com.raquo.laminar.api.L.{*, given}
@@ -87,6 +88,66 @@ object Views {
     */
   private def field(caption: String, control: HtmlElement): HtmlElement =
     label(cls := "field", caption, control)
+
+  /** A section with a refresh button of its own.
+    *
+    * Every list here can go stale while it is being looked at — somebody else accepts a
+    * challenge, an engine finishes a match — and the only remedy used to be reloading the page,
+    * which throws away every other section to reload one. This re-fetches just this section's
+    * list and leaves the rest of the screen alone.
+    *
+    * The body dims and comes back while the request is in flight, so it is clear which part of
+    * the page the button acted on. A fast request would flash too briefly to register, so the
+    * dimming is held for a moment; a slow one holds it until the answer arrives.
+    */
+  private def refreshableSection(
+      heading: String,
+      reload: () => Future[Unit],
+      subsection: Boolean = false
+  )(content: Modifier[HtmlElement]*): HtmlElement = {
+    val refreshing = Var(false)
+
+    sectionTag(
+      cls := "refreshable",
+      cls("refreshing") <-- refreshing.signal,
+      div(
+        cls := "section-head",
+        if (subsection) h3(heading) else h2(heading),
+        button(
+          cls := "refresh",
+          tpe := "button",
+          // The glyph is decorative; the button needs a name a screen reader can read out, and
+          // naming the section it belongs to is what distinguishes it from the others.
+          aria.label := s"Refresh $heading",
+          disabled <-- refreshing.signal,
+          span(aria.hidden := true, "\u21bb"),
+          onClick --> (_ => refresh(refreshing, reload))
+        )
+      ),
+      div(
+        cls := "section-body",
+        // Says the list is being replaced, so a screen reader does not read out half of it
+        // mid-update.
+        aria.busy <-- refreshing.signal,
+        content
+      )
+    )
+  }
+
+  /** How long the dimming is held for, whether or not the request takes that long. Short enough
+    * not to be in the way, long enough to be seen.
+    */
+  private val blinkMillis = 400L
+
+  private def refresh(refreshing: Var[Boolean], reload: () => Future[Unit]): Unit =
+    if (!refreshing.now()) {
+      refreshing.set(true)
+      val startedAt = System.currentTimeMillis()
+      reload().foreach { _ =>
+        val remaining = math.max(0L, blinkMillis - (System.currentTimeMillis() - startedAt))
+        dom.window.setTimeout(() => refreshing.set(false), remaining.toDouble)
+      }
+    }
 
   // -------------------------------------------------------------------------
   // Chrome
@@ -246,6 +307,7 @@ object Views {
       readyToStartSection,
       dueSection,
       myMatchesSection,
+      pendingAcceptances,
       recentlyCompletedSection
     )
 
@@ -264,20 +326,20 @@ object Views {
     * per game to draw itself.
     */
   private def readyToStartSection: HtmlElement =
-    div(
+    refreshableSection("Ready to Start", () => Store.reloadAcceptances())(
       child <-- Store.acceptances.signal
         .combineWith(Store.games.signal, currentPlayer)
         .map { (acceptances, games, player) =>
           val mine = player.toSeq.flatMap { me =>
             acceptances.filter(p => p.readyToStart && p.challenger == me.playerId)
           }
-          if (mine.isEmpty) emptyNode
+          // Shown empty rather than absent, now that the section carries its own refresh button:
+          // a button that only appears once there is something to find is no use to someone
+          // checking whether there is.
+          if (mine.isEmpty) p(cls := "empty", "Nothing is waiting for you to start it.")
           else {
             val namesById = games.map(game => game.gameId -> game.name).toMap
-            sectionTag(
-              h2("Ready to Start"),
-              ul(mine.map(pending => readyToStartRow(pending, namesById.get(pending.acceptance.gameId))))
-            )
+            ul(mine.map(pending => readyToStartRow(pending, namesById.get(pending.acceptance.gameId))))
           }
         }
     )
@@ -304,8 +366,7 @@ object Views {
     * list shown expanded from the start, because it is the one that needs acting on.
     */
   private def dueSection: HtmlElement =
-    sectionTag(
-      h2("Your Turn"),
+    refreshableSection("Your Turn", () => Store.reloadDue())(
       child <-- Store.due.signal.map {
         case Nil     => p(cls := "empty", "Nothing is waiting on you.")
         case matches => ul(matches.map(matchRow(_, showDue = true)))
@@ -317,13 +378,11 @@ object Views {
     * find out whether it is empty is not shown.
     */
   private def myMatchesSection: HtmlElement =
-    sectionTag(
-      h2("Current Matches"),
+    refreshableSection("Current Matches", () => Store.reloadActive())(
       child <-- Store.active.signal.map {
         case Nil     => p(cls := "empty", "You are not in any matches.")
         case matches => ul(matches.map(matchRow(_, showDue = false)))
-      },
-      pendingAcceptances
+      }
     )
 
   /** "Also shows pending acceptances with option to back out."
@@ -337,8 +396,7 @@ object Views {
     * top of the page, and listing them twice would offer the same Start button in two places.
     */
   private def pendingAcceptances: HtmlElement =
-    div(
-      h3("Waiting to Start"),
+    refreshableSection("Waiting to Start", () => Store.reloadAcceptances(), subsection = true)(
       child <-- Store.acceptances.signal.combineWith(Store.games.signal, currentPlayer).map { (acceptances, games, player) =>
         val waiting = acceptances.filterNot(p => p.readyToStart && player.exists(_.playerId == p.challenger))
         if (waiting.isEmpty) p(cls := "empty", "You have not accepted anything that is still waiting.")
@@ -383,8 +441,7 @@ object Views {
     * the same list filtered rather than a differently ordered one.
     */
   private def recentlyCompletedSection: HtmlElement =
-    sectionTag(
-      h2("Recently Completed"),
+    refreshableSection("Recently Completed", () => Store.reloadCompleted())(
       child <-- Store.completed.signal.map(_.take(Store.recentlyCompleted)).map {
         case Nil     => p(cls := "empty", "Nothing finished yet.")
         case matches => ul(matches.map(matchRow(_, showDue = false)))
@@ -550,8 +607,7 @@ object Views {
     * the two screens to disagree.
     */
   private def gameHistory(game: Game): HtmlElement =
-    sectionTag(
-      h2("Your Completed Matches"),
+    refreshableSection("Your Completed Matches", () => Store.reloadCompleted())(
       child <-- Store.completed.signal.map(_.filter(_.gameId == game.gameId)).map {
         case Nil     => p(cls := "empty", "You have not finished a match of this yet.")
         case matches => ul(matches.map(matchRow(_, showDue = false)))
@@ -895,12 +951,22 @@ object Views {
               child <-- Store.showChallengeForm.signal.map {
                 if (_) newChallengeForm(game, player, characterId) else emptyNode
               },
-              h3("Your Open Challenges"),
-              if (mine.isEmpty) p(cls := "empty", "You have none open.")
-              else ul(mine.map(myChallengeRow(game, _))),
-              h3("Open Challenges"),
-              if (available.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
-              else ul(available.map(openChallengeRow(game, _, characterId)))
+              refreshableSection(
+                "Your Open Challenges",
+                () => Store.reloadChallenges(game.gameId),
+                subsection = true
+              )(
+                if (mine.isEmpty) p(cls := "empty", "You have none open.")
+                else ul(mine.map(myChallengeRow(game, _)))
+              ),
+              refreshableSection(
+                "Open Challenges",
+                () => Store.reloadChallenges(game.gameId),
+                subsection = true
+              )(
+                if (available.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
+                else ul(available.map(openChallengeRow(game, _, characterId)))
+              )
             )
         }
       }
