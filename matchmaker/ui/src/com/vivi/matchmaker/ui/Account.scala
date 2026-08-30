@@ -183,8 +183,11 @@ object Account {
       "That code has expired. Send yourself a new one."
     case CognitoIdp.IdpError("AliasExistsException", _) =>
       "There is already an account with that email address."
-    case CognitoIdp.IdpError("InvalidPasswordException", _) =>
-      s"That password does not meet the pool's requirements: ${error.getMessage}"
+    // The message field, not getMessage: IdpError's own message prefixes the exception type,
+    // and "InvalidPasswordException: Password did not conform..." is not a sentence to show a
+    // user. Cognito's message on its own is written to be read.
+    case CognitoIdp.IdpError("InvalidPasswordException", message) =>
+      s"That password does not meet the pool's requirements: $message"
     case CognitoIdp.IdpError(_, message) => message
     case _: CognitoIdp.IdpUnavailable =>
       "Could not reach the sign-in service. Check your connection and try again."
