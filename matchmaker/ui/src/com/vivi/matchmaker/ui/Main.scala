@@ -168,6 +168,7 @@ object Views {
 
   private def home: HtmlElement =
     div(
+      readyToStartSection,
       dueSection,
       myMatchesSection,
       gamesSection,
@@ -177,6 +178,53 @@ object Views {
   // -------------------------------------------------------------------------
   // Matches
   // -------------------------------------------------------------------------
+
+  /** The challenges this player offered that have filled up and are waiting on them to start.
+    *
+    * Above "Your turn" because it is the one thing here that nobody else can do and that nothing
+    * else will do on its own: a full challenge sits there until its challenger starts it. The
+    * section is absent rather than empty when there is nothing to start — an empty call to action
+    * at the top of the page is just something to scroll past.
+    *
+    * Both facts it selects on come from the acceptances response, so this needs nothing loaded
+    * per game to draw itself.
+    */
+  private def readyToStartSection: HtmlElement =
+    div(
+      child <-- Store.acceptances.signal
+        .combineWith(Store.games.signal, currentPlayer)
+        .map { (acceptances, games, player) =>
+          val mine = player.toSeq.flatMap { me =>
+            acceptances.filter(p => p.readyToStart && p.challenger == me.playerId)
+          }
+          if (mine.isEmpty) emptyNode
+          else {
+            val namesById = games.map(game => game.gameId -> game.name).toMap
+            sectionTag(
+              h2("Ready to start"),
+              ul(mine.map(pending => readyToStartRow(pending, namesById.get(pending.acceptance.gameId))))
+            )
+          }
+        }
+    )
+
+  private def readyToStartRow(pending: PendingAcceptance, gameName: Option[String]): HtmlElement = {
+    val acceptance = pending.acceptance
+
+    li(
+      cls := "row",
+      div(cls := "title", gameName.getOrElse(s"game ${acceptance.gameId.value}")),
+      div(cls := "detail", "every role is taken"),
+      busyButton("Start") { busy =>
+        Store.run(ApiClient.startChallenge(acceptance.gameId, acceptance.challengeId), busy) { _ =>
+          Store.refreshMatches()
+          // The challenge is no longer open, so the game's list is stale if it is on screen.
+          if (Store.expandedGames.now().contains(acceptance.gameId))
+            Store.refreshChallenges(acceptance.gameId)
+        }
+      }
+    )
+  }
 
   /** "List of all matches a player has a turn due" — the first thing in `ui.txt`, and the only
     * list shown expanded from the start, because it is the one that needs acting on.
@@ -219,15 +267,20 @@ object Views {
     * is why they appear beside the matches rather than in them. The game name is looked up from
     * the games list; an acceptance whose game is not in that list — an inactive game, say — still
     * shows, named by its id rather than dropped.
+    *
+    * The ones this player could start right now are left out: they have their own section at the
+    * top of the page, and listing them twice would offer the same Start button in two places.
     */
   private def pendingAcceptances: HtmlElement =
     div(
       h3("Waiting to start"),
-      child <-- Store.acceptances.signal.combineWith(Store.games.signal).map {
-        case (Nil, _) => p(cls := "empty", "You have not accepted anything that is still waiting.")
-        case (acceptances, games) =>
+      child <-- Store.acceptances.signal.combineWith(Store.games.signal, currentPlayer).map { (acceptances, games, player) =>
+        val waiting = acceptances.filterNot(p => p.readyToStart && player.exists(_.playerId == p.challenger))
+        if (waiting.isEmpty) p(cls := "empty", "You have not accepted anything that is still waiting.")
+        else {
           val namesById = games.map(game => game.gameId -> game.name).toMap
-          ul(acceptances.map(pending => acceptanceRow(pending, namesById.get(pending.acceptance.gameId))))
+          ul(waiting.map(pending => acceptanceRow(pending, namesById.get(pending.acceptance.gameId))))
+        }
       }
     )
 
@@ -237,33 +290,12 @@ object Views {
     li(
       cls := "row",
       div(cls := "title", gameName.getOrElse(s"game ${acceptance.gameId.value}")),
-      // Creating a challenge accepts it, so the challenger has a row here like everyone else —
-      // and this is where they are looking while they wait for it to fill up. Offering the Start
-      // here as well as on the game's own challenge list saves opening the game to find the same
-      // button. Starting stays the challenger's call, as it is there.
-      //
-      // Both facts come from the acceptances response: whether every required role is taken is
-      // the server's answer, not re-derived from roles here, so this list needs nothing loaded
-      // per game to draw itself.
-      child <-- currentPlayer.map {
-        case Some(player) if pending.readyToStart && pending.challenger == player.playerId =>
-          div(
-            div(cls := "detail", "every role is taken — ready to start"),
-            busyButton("Start") { busy =>
-              Store.run(ApiClient.startChallenge(acceptance.gameId, acceptance.challengeId), busy) { _ =>
-                Store.refreshMatches()
-                // The challenge is no longer open, so the game's list is stale if it is on screen.
-                if (Store.expandedGames.now().contains(acceptance.gameId))
-                  Store.refreshChallenges(acceptance.gameId)
-              }
-            }
-          )
-        // Full, but somebody else offered it: nothing for this player to do but wait, which is
-        // worth saying rather than leaving them looking for a button that is not theirs.
-        case _ if pending.readyToStart =>
-          div(cls := "detail", "every role is taken — waiting for the challenger to start it")
-        case _ => div(cls := "detail", "accepted, waiting for the other players")
-      },
+      // A challenge this player could start is not in this list at all — it is in "Ready to
+      // start" above. What is left is either still filling up, or full and somebody else's to
+      // start, which is worth saying rather than leaving them looking for a button that is not
+      // theirs.
+      if (pending.readyToStart) div(cls := "detail", "every role is taken — waiting for the challenger to start it")
+      else div(cls := "detail", "accepted, waiting for the other players"),
       child <-- currentPlayer.map {
         case None => emptyNode
         case Some(player) =>
