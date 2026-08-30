@@ -182,7 +182,13 @@ object Store {
     run(ApiClient.dueMatches())(due.set)
     run(ApiClient.activeMatches())(active.set)
     run(ApiClient.completedMatches())(completed.set)
-    run(ApiClient.acceptances())(acceptances.set)
+    run(ApiClient.acceptances()) { list =>
+      acceptances.set(list)
+      // "Waiting to start" says whether each accepted challenge is ready and offers the
+      // challenger a Start, which needs the challenge's taken roles — and challenges are
+      // otherwise only fetched when a game is expanded, which that list does not require.
+      list.map(_.gameId).distinct.foreach(refreshChallenges)
+    }
   }
 
   def refreshGames(): Unit = run(ApiClient.games(activeOnly = true))(games.set)

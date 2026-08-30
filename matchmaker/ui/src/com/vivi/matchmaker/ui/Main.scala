@@ -226,16 +226,47 @@ object Views {
       child <-- Store.acceptances.signal.combineWith(Store.games.signal).map {
         case (Nil, _) => p(cls := "empty", "You have not accepted anything that is still waiting.")
         case (acceptances, games) =>
-          val namesById = games.map(game => game.gameId -> game.name).toMap
-          ul(acceptances.map(acceptance => acceptanceRow(acceptance, namesById.get(acceptance.gameId))))
+          val gamesById = games.map(game => game.gameId -> game).toMap
+          ul(acceptances.map(acceptance => acceptanceRow(acceptance, gamesById.get(acceptance.gameId))))
       }
     )
 
-  private def acceptanceRow(acceptance: Acceptance, gameName: Option[String]): HtmlElement =
+  private def acceptanceRow(acceptance: Acceptance, game: Option[Game]): HtmlElement = {
+    // The challenge this acceptance is on, once its game's challenges have been loaded. They are
+    // fetched for every accepted game when the acceptances are, so this is normally present; it
+    // is an Option because the two arrive as separate responses.
+    val summary: Signal[Option[OpenChallengeSummary]] =
+      Store.challengesByGame.signal.map(
+        _.getOrElse(acceptance.gameId, Seq.empty).find(_.challenge.challengeId == acceptance.challengeId)
+      )
+
     li(
       cls := "row",
-      div(cls := "title", gameName.getOrElse(s"game ${acceptance.gameId.value}")),
-      div(cls := "detail", "accepted, waiting for the other players"),
+      div(cls := "title", game.map(_.name).getOrElse(s"game ${acceptance.gameId.value}")),
+      // Creating a challenge accepts it, so the challenger has a row here like everyone else —
+      // and this is where they are looking when they are waiting for it to fill up. Offering the
+      // Start here as well as on the game's own challenge list saves opening the game to find
+      // the same button. Starting stays the challenger's call, as it is there.
+      child <-- summary.combineWith(currentPlayer).map { (found, viewer) =>
+        (game, found, viewer) match {
+          case (Some(g), Some(s), Some(player))
+              if s.challenge.challenger == player.playerId && unfilledRoles(g, s).isEmpty =>
+            div(
+              div(cls := "detail", "every role is taken — ready to start"),
+              busyButton("Start") { busy =>
+                Store.run(ApiClient.startChallenge(g.gameId, s.challenge.challengeId), busy) { _ =>
+                  Store.refreshChallenges(g.gameId)
+                  Store.refreshMatches()
+                }
+              }
+            )
+          // Full, but somebody else offered it: nothing for this player to do but wait, which is
+          // worth saying rather than leaving them looking for a button that is not theirs.
+          case (Some(g), Some(s), _) if unfilledRoles(g, s).isEmpty =>
+            div(cls := "detail", "every role is taken — waiting for the challenger to start it")
+          case _ => div(cls := "detail", "accepted, waiting for the other players")
+        }
+      },
       child <-- currentPlayer.map {
         case None => emptyNode
         case Some(player) =>
@@ -249,6 +280,7 @@ object Views {
           }
       }
     )
+  }
 
   private def completedSection: HtmlElement =
     sectionTag(
