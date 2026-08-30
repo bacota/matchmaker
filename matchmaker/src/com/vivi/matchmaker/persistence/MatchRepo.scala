@@ -20,20 +20,20 @@ class MatchRepo(session: Session[IO]) {
   private def fromSeconds(s: Option[Double]): Option[Duration] = s.map(v => Duration.ofSeconds(v.toLong))
 
   private val insertMatch: Command[
-    (GameId, MatchId, ChallengeId, String, Boolean, Boolean, Instant, Option[Double], String, Boolean, Option[String],
-      Option[String], Option[String])
+    (GameId, MatchId, ChallengeId, String, Option[Instant], Boolean, Instant, Option[Double], String, Boolean,
+      Option[String], Option[String], Option[String])
   ] =
     sql"""INSERT INTO match (game_id, match_id, challenge_id, description, completed, cancelled, start, time_limit,
                              settings, public, status_url, play_url, public_url)
-          VALUES ($gameId, $matchId, $challengeId, $text, $bool, $bool, $instant, ${float8.opt} * INTERVAL '1 second',
+          VALUES ($gameId, $matchId, $challengeId, $text, ${instant.opt}, $bool, $instant, ${float8.opt} * INTERVAL '1 second',
                   $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt})""".command
 
   private type MatchRow =
-    (ChallengeId, String, Boolean, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String],
-      Option[String])
+    (ChallengeId, String, Option[Instant], Boolean, Instant, Option[Double], String, Boolean, Option[String],
+      Option[String], Option[String])
 
   private val matchRow: Codec[MatchRow] =
-    challengeId *: text *: bool *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *: text.opt
+    challengeId *: text *: instant.opt *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *: text.opt
 
   private val selectMatch: Query[(GameId, MatchId), MatchRow] =
     sql"""SELECT challenge_id, description, completed, cancelled, start,
@@ -57,10 +57,10 @@ class MatchRepo(session: Session[IO]) {
   // challenge_id is not updatable: a match is started from one challenge and stays that
   // challenge's match. Changing it would rewrite who created the match.
   private val updateMatch: Command[
-    (String, Boolean, Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String], Option[String],
-      GameId, MatchId)
+    (String, Option[Instant], Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String],
+      Option[String], GameId, MatchId)
   ] =
-    sql"""UPDATE match SET description = $text, completed = $bool, cancelled = $bool, start = $instant,
+    sql"""UPDATE match SET description = $text, completed = ${instant.opt}, cancelled = $bool, start = $instant,
           time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
           public = $bool, status_url = ${text.opt}, play_url = ${text.opt}, public_url = ${text.opt}
           WHERE game_id = $gameId AND match_id = $matchId""".command
@@ -68,15 +68,15 @@ class MatchRepo(session: Session[IO]) {
   def create(m: Match): IO[Match] =
     session
       .execute(insertMatch)(
-        (m.gameId, m.matchId, m.challengeId, m.description, m.completed, m.cancelled, m.start, toSeconds(m.timeLimit),
+        (m.gameId, m.matchId, m.challengeId, m.description, m.completedAt, m.cancelled, m.start, toSeconds(m.timeLimit),
           m.settings, m.isPublic, m.statusUrl, m.playUrl, m.publicUrl)
       )
       .as(m)
 
   private def toMatch(gameId: GameId, matchId: MatchId, row: MatchRow): Match = {
-    val (challengeId, description, completed, cancelled, start, timeLimitSeconds, settings, isPublic, statusUrl,
+    val (challengeId, description, completedAt, cancelled, start, timeLimitSeconds, settings, isPublic, statusUrl,
       playUrl, publicUrl) = row
-    Match(gameId, matchId, challengeId, description, completed, start, fromSeconds(timeLimitSeconds), settings,
+    Match(gameId, matchId, challengeId, description, completedAt, start, fromSeconds(timeLimitSeconds), settings,
       isPublic, cancelled, statusUrl, playUrl, publicUrl)
   }
 
@@ -90,7 +90,7 @@ class MatchRepo(session: Session[IO]) {
   def update(m: Match): IO[Unit] =
     session
       .execute(updateMatch)(
-        (m.description, m.completed, m.cancelled, m.start, toSeconds(m.timeLimit), m.settings,
+        (m.description, m.completedAt, m.cancelled, m.start, toSeconds(m.timeLimit), m.settings,
           m.isPublic, m.statusUrl, m.playUrl, m.publicUrl, m.gameId, m.matchId)
       )
       .void
@@ -143,7 +143,7 @@ class MatchRepo(session: Session[IO]) {
   // do nothing a player could see. It is listed with the finished matches instead, flagged, so
   // that calling a match off does not erase it from the creator's own history.
   private val selectForPlayer =
-    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed IS NOT NULL, m.cancelled,
                  oc.challenger = p.player_id, m.start,
                  p.due, p.participant_id, cp.character_id, p.pending
           FROM participant p
@@ -154,12 +154,12 @@ class MatchRepo(session: Session[IO]) {
           -- match is theirs to cancel.
           JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
-          WHERE p.player_id = $playerId AND (m.completed OR m.cancelled) = $bool
+          WHERE p.player_id = $playerId AND ((m.completed IS NOT NULL) OR m.cancelled) = $bool
           ORDER BY p.due ASC NULLS LAST, m.start DESC"""
       .query(summaryColumns)
 
   private val selectDueForPlayer =
-    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+    sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed IS NOT NULL, m.cancelled,
                  oc.challenger = p.player_id, m.start,
                  p.due, p.participant_id, cp.character_id, p.pending
           FROM participant p
@@ -170,7 +170,7 @@ class MatchRepo(session: Session[IO]) {
           -- match is theirs to cancel.
           JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
-          WHERE p.player_id = $playerId AND p.pending = true AND m.completed = false AND m.cancelled = false
+          WHERE p.player_id = $playerId AND p.pending = true AND m.completed IS NULL AND m.cancelled = false
           ORDER BY p.due ASC NULLS LAST, m.start DESC"""
       .query(summaryColumns)
 

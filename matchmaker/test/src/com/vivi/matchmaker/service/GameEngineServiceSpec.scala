@@ -452,9 +452,13 @@ class GameEngineServiceSpec extends PropertySuite {
         stored <- TestSession.resource.use(session => new ResultRepo(session).read(fixture.game.gameId, seat))
         after <- participantsOf(started)
         completed <- services.matches.completed(externalId)
+        // Not just that it is over, but when: the column is a timestamp, and a match completed
+        // by this callback is stamped as the callback runs.
+        reread <- services.engine.read(fixture.game.gameId, started.matchId, externalId)
       } yield stored.contains(model.Result(fixture.game.gameId, seat, 1, Map("points" -> 42.0), true)) &&
         after.head.completed &&
         !after.head.pending &&
+        reread.completedAt.exists(at => !at.isBefore(started.start)) &&
         completed.exists(_.matchId == started.matchId)
       result.timeout(15.seconds).unsafeRunSync()
     }

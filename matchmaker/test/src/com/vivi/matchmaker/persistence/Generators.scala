@@ -76,7 +76,7 @@ object Generators {
   def genMatch(gameId: GameId, matchId: MatchId, challengeId: ChallengeId): Gen[Match] =
     for {
       description <- genString
-      completed <- Gen.oneOf(true, false)
+      completedAt <- Gen.option(genInstant)
       start <- genInstant
       timeLimit <- Gen.option(genDuration)
       isPublic <- Gen.oneOf(true, false)
@@ -87,7 +87,7 @@ object Generators {
       publicUrl <- Gen.option(genString.map("https://engine.example.com/watch/" + _))
       cancelled <- Gen.oneOf(true, false)
     } yield Match(
-      gameId, matchId, challengeId, description, completed, start, timeLimit, "{}", isPublic, cancelled,
+      gameId, matchId, challengeId, description, completedAt, start, timeLimit, "{}", isPublic, cancelled,
       statusUrl, playUrl, publicUrl
     )
 

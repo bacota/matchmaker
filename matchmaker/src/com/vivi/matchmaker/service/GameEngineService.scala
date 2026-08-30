@@ -121,7 +121,7 @@ class GameEngineService[T](
               // The match's creator, by reference: whoever this challenge's challenger is.
               challengeId = challengeId,
               description = challenge.message,
-              completed = false,
+              completedAt = None,
               start = challenge.start.getOrElse(Instant.now()),
               timeLimit = challenge.timeLimit,
               settings = challenge.settings,
@@ -194,7 +194,10 @@ class GameEngineService[T](
               case None => IO.unit
             }
           }
-          updated = current.copy(completed = status.completed)
+          // Set once and kept: a match that is already finished keeps the time it finished,
+          // rather than being restamped by every later status the engine answers with.
+          completedAt = if (status.completed) current.completedAt.orElse(Some(Instant.now())) else None
+          updated = current.copy(completedAt = completedAt)
           _ <- IO.whenA(updated != current)(matchRepo.update(updated))
         } yield updated
       }
@@ -325,7 +328,7 @@ class GameEngineService[T](
                   participantRepo.update(withTurn(participant, pending = false, due = None, completed = true))
                 )
                 _ <- results.traverse(r => resultRepo.create(Result(gameId, r.participantId, r.rank, r.scores, r.isWinner)))
-                _ <- matchRepo.update(existing.copy(completed = true))
+                _ <- matchRepo.update(existing.copy(completedAt = Some(Instant.now())))
               } yield ()
         } yield ()
       }

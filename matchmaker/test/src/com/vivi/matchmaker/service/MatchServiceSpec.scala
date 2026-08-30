@@ -55,7 +55,8 @@ class MatchServiceSpec extends PropertySuite {
         matchId = MatchId(matchIdStr)
         _ <- new MatchRepo(session).create(
           Match(
-            game.gameId, matchId, challenge.challengeId, "description", completed,
+            game.gameId, matchId, challenge.challengeId, "description",
+            Option.when(completed)(Instant.ofEpochSecond(3000)),
             Instant.ofEpochSecond(1000), None, "{}"
           )
         )

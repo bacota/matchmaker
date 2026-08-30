@@ -24,7 +24,7 @@ class WireFormatSpec extends FunSuite {
       matchId = MatchId("6b7c-uuid"),
       challengeId = ChallengeId(3),
       description = "a friendly game",
-      completed = false,
+      completedAt = Some(Instant.parse("2030-01-01T10:42:00Z")),
       cancelled = false,
       start = Instant.parse("2030-01-01T10:00:00Z"),
       timeLimit = Some(Duration.ofMinutes(30)),
