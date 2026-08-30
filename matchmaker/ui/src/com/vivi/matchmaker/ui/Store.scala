@@ -6,6 +6,7 @@ import scala.util.{Failure, Success, Try}
 import com.raquo.laminar.api.L.{*, given}
 import org.scalajs.dom
 import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.api.Json
 
 /** What the UI knows, and how it reloads it.
   *
@@ -92,6 +93,11 @@ object Store {
     * pending acceptances, and the list "back out" acts on.
     */
   val acceptances: Var[Seq[PendingAcceptance]] = Var(Seq.empty)
+
+  /** How each finished match turned out, keyed by its match id: the rows of the result table
+    * shown under a completed match. Loaded whole with the lists, not per row.
+    */
+  val resultsByMatch: Var[Map[MatchId, Seq[Json.ParticipantResultView]]] = Var(Map.empty)
 
   val expandedGames: Var[Set[GameId]] = Var(Set.empty)
   val showActive: Var[Boolean] = Var(false)
@@ -183,6 +189,7 @@ object Store {
     run(ApiClient.activeMatches())(active.set)
     run(ApiClient.completedMatches())(completed.set)
     run(ApiClient.acceptances())(acceptances.set)
+    run(ApiClient.results())(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
   }
 
   def refreshGames(): Unit = run(ApiClient.games(activeOnly = true))(games.set)

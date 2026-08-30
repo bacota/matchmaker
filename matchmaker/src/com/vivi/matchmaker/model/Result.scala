@@ -14,3 +14,24 @@ case class Result(
     scores: Map[String, Any],
     isWinner: Boolean
 )
+
+/** One line of a finished match's result table: who played, in which role, and how they did.
+  *
+  * A read model joining result, participant, player and game_role, for the same reason
+  * [[MatchSummary]] is one — the UI needs all four and a query per row would be the alternative.
+  *
+  * `rank` is optional because a participant is listed whether or not the engine reported a result
+  * for them. An engine reports what it chose to report, and a seat it said nothing about is still
+  * someone who was in the match; leaving them out of the table would misrepresent who played.
+  * Such a row has no rank, no scores and is not a winner.
+  */
+case class ParticipantResult(
+    gameId: GameId,
+    matchId: MatchId,
+    participantId: ParticipantId,
+    nickname: String,
+    roleName: String,
+    rank: Option[Int],
+    scores: Map[String, Any],
+    isWinner: Boolean
+)

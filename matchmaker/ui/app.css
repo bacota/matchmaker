@@ -106,6 +106,35 @@ ul {
   font-style: italic;
 }
 
+/* How a finished match ended. Indented like .detail-panel, because it is the same kind of
+   thing: the row's own detail rather than a list of its own. */
+.results {
+  margin-top: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line);
+}
+
+.result-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.result-row {
+  font-size: 0.9rem;
+  padding: 0.1rem 0;
+}
+
+/* The winner's line is the one being looked for, so it is the one that is not muted. */
+.result-row .who {
+  font-weight: 600;
+}
+
+.result-row .rank,
+.result-row .scores {
+  color: var(--muted);
+}
+
 .empty,
 .loading {
   color: var(--muted);

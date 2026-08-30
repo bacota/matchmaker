@@ -8,7 +8,7 @@ import org.scalacheck.Gen
 import java.time.Instant
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, MatchRepo, OpenChallengeRepo, ParticipantRepo, TestSession}
+import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, MatchRepo, OpenChallengeRepo, ParticipantRepo, ResultRepo, TestSession}
 
 class MatchServiceSpec extends PropertySuite {
   TestMigration.ensure()
@@ -219,6 +219,72 @@ class MatchServiceSpec extends PropertySuite {
         case _                      => false
       }
       result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Results
+  // ---------------------------------------------------------------------------
+
+  /** The one participant `makeMatch` creates, which is what a result has to be written against. */
+  private def onlyParticipant(gameId: GameId, matchId: MatchId): IO[ParticipantId] =
+    TestSession.resource.use(session =>
+      new ParticipantRepo(session).listForMatch(gameId, matchId).map(_.head._1.participantId)
+    )
+
+  property("results name the player, their role, and whatever the engine scored them on") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+      val result = for {
+        made <- makeMatch(nickname, externalId, matchIdStr, completed = true, pending = false)
+        (_, game, matchId) = made
+        participantId <- onlyParticipant(game.gameId, matchId)
+        _ <- TestSession.resource.use(session =>
+          new ResultRepo(session).create(
+            com.vivi.matchmaker.model.Result(game.gameId, participantId, rank = 1, scores = Map("moves" -> 5.0), isWinner = true)
+          )
+        )
+        results <- matchService.results(externalId)
+        mine = results.filter(_.matchId == matchId)
+      } yield mine.map(r => (r.nickname, r.roleName, r.rank, r.isWinner)) ==
+        List((nickname, "only", Some(1), true)) &&
+        mine.head.scores == Map("moves" -> 5.0)
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("a seat the engine reported no result for is still listed, with no rank") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+      val result = for {
+        made <- makeMatch(nickname, externalId, matchIdStr, completed = true, pending = false)
+        (_, _, matchId) = made
+        results <- matchService.results(externalId)
+        mine = results.filter(_.matchId == matchId)
+      } yield mine.map(r => (r.nickname, r.rank, r.isWinner)) == List((nickname, None, false)) &&
+        mine.head.scores.isEmpty
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("results exclude matches still being played") {
+    forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+      val result = for {
+        made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+        (_, _, matchId) = made
+        results <- matchService.results(externalId)
+      } yield results.forall(_.matchId != matchId)
+      result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
+  property("results are scoped to the caller, so another player sees nothing of them") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, matchIdStr, otherNickname, otherExternalId) =>
+        val result = for {
+          _ <- makeMatch(nickname, externalId, matchIdStr, completed = true, pending = false)
+          _ <- registrationService.register(otherNickname, otherExternalId)
+          results <- matchService.results(otherExternalId)
+        } yield results.isEmpty
+        result.timeout(10.seconds).unsafeRunSync()
     }
   }
 

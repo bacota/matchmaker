@@ -120,6 +120,22 @@ object Router {
       case ("GET", "games" :: gameId :: "matches" :: matchId :: Nil) =>
         withGameId(gameId)(gid => ok(services.engine.read(gid, MatchId(matchId), caller)))
 
+      // How the caller's finished matches turned out. One call for the whole completed list:
+      // it is a join over five tables, and per-match would be a request per row.
+      case ("GET", "me" :: "results" :: Nil) =>
+        ok(services.matches.results(caller).map(_.map { r =>
+          Json.ParticipantResultView(
+            r.gameId,
+            r.matchId,
+            r.participantId,
+            r.nickname,
+            r.roleName,
+            r.rank,
+            r.scores.view.mapValues(JsonValues.fromScala).toMap,
+            r.isWinner
+          )
+        }))
+
       // Re-checks a running match with the game engine, for a participant who suspects the
       // state matchmaker holds has fallen behind. Player-authorized, like any other match route.
       case ("POST", "games" :: gameId :: "matches" :: matchId :: "refresh" :: Nil) =>

@@ -144,6 +144,23 @@ object Json {
 
   case class MatchResults(results: List[ResultEntry])
 
+  /** One line of a finished match's result table, on the way back out to the UI.
+    *
+    * A view rather than the model type, because `ParticipantResult.scores` holds `Any` — the
+    * model is compiled for Scala.js and may not name a JSON library, so the conversion happens
+    * at this boundary, as it does for the results coming in.
+    */
+  case class ParticipantResultView(
+      gameId: GameId,
+      matchId: MatchId,
+      participantId: ParticipantId,
+      nickname: String,
+      roleName: String,
+      rank: Option[Int],
+      scores: Map[String, ujson.Value],
+      isWinner: Boolean
+  )
+
   given ReadWriter[RegisterRequest] = macroRW
   given ReadWriter[CharacterRequest] = macroRW
   given ReadWriter[UpdateStateRequest] = macroRW
@@ -151,4 +168,5 @@ object Json {
   given ReadWriter[MoveNotification] = macroRW
   given ReadWriter[ResultEntry] = macroRW
   given ReadWriter[MatchResults] = macroRW
+  given ReadWriter[ParticipantResultView] = macroRW
 }

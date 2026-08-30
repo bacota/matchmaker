@@ -84,6 +84,10 @@ object ApiClient {
   def startChallenge(gameId: GameId, challengeId: ChallengeId): Future[Match] =
     send[Match](HttpMethod.POST, s"/challenges/${gameId.value}/${challengeId.value}/start", None)
 
+  /** How every finished match turned out, in one call — see `MatchService.results`. */
+  def results(): Future[Seq[Json.ParticipantResultView]] =
+    get[Seq[Json.ParticipantResultView]]("/me/results")
+
   def matchDetail(gameId: GameId, matchId: MatchId): Future[Match] =
     get[Match](s"/games/${gameId.value}/matches/${matchId.value}")
 
