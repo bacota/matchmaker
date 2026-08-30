@@ -4,6 +4,7 @@ import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
 import com.raquo.laminar.api.L.{*, given}
+import org.scalajs.dom
 
 /** The account menu: the three things a player can change about themselves.
   *
@@ -200,22 +201,60 @@ object Account {
   // The menu
   // -------------------------------------------------------------------------
 
-  def view: HtmlElement =
+  def view: HtmlElement = {
+    // Held so that closing the panel can put focus back where it came from. A keyboard user who
+    // presses Escape and lands at the top of the document has been sent somewhere, not returned.
+    var trigger: Option[dom.html.Element] = None
+
     div(
       cls := "account",
       button(
         cls := "link",
         "Account",
         aria.expanded <-- open.signal,
+        htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
+        onMountCallback(context => trigger = Some(context.thisNode.ref)),
         onClick --> (_ => if (open.now()) close() else open.set(true))
       ),
+      // Escape closes it from anywhere inside, and a click anywhere outside does the same. Both
+      // are listened for on the document, because the panel is not what has focus when either
+      // happens — and both are bound here rather than on the panel so they are torn down with
+      // this element rather than left behind by it.
+      documentEvents(_.onKeyDown).filter(e => open.now() && e.key == "Escape") --> { _ =>
+        close()
+        trigger.foreach(_.focus())
+      },
+      documentEvents(_.onClick).filter(_ => open.now()) --> { event =>
+        val target = event.target
+        val inside = target match {
+          case node: dom.Node => panelRoot.exists(_.contains(node)) || trigger.exists(_.contains(node))
+          case _              => false
+        }
+        if (!inside) close()
+      },
       child <-- open.signal.map(if (_) menu else emptyNode)
     )
+  }
+
+  /* The rendered panel, so the outside-click test has something to ask about. Set when the panel
+   * mounts and cleared when it unmounts, which is the only time either happens. */
+  private var panelRoot: Option[dom.Node] = None
 
   private def menu: HtmlElement =
     div(
       cls := "account-menu card",
-      h2("Your account"),
+      // A dialog by behaviour — it is over the page, and Escape closes it — so it says so, and
+      // is named by the heading it already had rather than by a label repeating it.
+      role := "dialog",
+      aria.labelledBy := "account-menu-heading",
+      onMountCallback(context => panelRoot = Some(context.thisNode.ref)),
+      onUnmountCallback(_ => panelRoot = None),
+      // Focus moves in with the panel: without this the keyboard is still on the trigger, and
+      // the fields are reached by tabbing forward through a panel that may not be next.
+      inContext(node => onMountCallback(_ => node.ref.focus())),
+      // Focusable so that focus can be moved to it, but not a tab stop of its own.
+      tabIndex := -1,
+      h2(idAttr := "account-menu-heading", "Your account"),
       nicknameForm,
       // Nothing to change at Cognito when there is no Cognito: local mode authenticates with a
       // header, and offering forms that could only fail would be worse than leaving them out.
@@ -340,11 +379,23 @@ object Account {
       label
     )
 
+  /** How a change went, said in the panel and said out loud.
+    *
+    * The container carries the live region rather than the message, because a region has to be
+    * in the document before the text appears in it — one announced when it is added, with the
+    * text already inside, is a region that has not changed and is read out by nobody. A failure
+    * is `alert` and a success is the politer `status`: one interrupts, the other waits for a
+    * pause.
+    */
   private def report(outcome: Var[Option[Outcome]]): HtmlElement =
     div(
+      aria.live <-- outcome.signal.map {
+        case Some(Outcome(true, _)) => "assertive"
+        case _                      => "polite"
+      },
       child <-- outcome.signal.map {
-        case Some(Outcome(true, message))  => div(cls := "error", message)
-        case Some(Outcome(false, message)) => div(cls := "notice", message)
+        case Some(Outcome(true, message))  => div(cls := "error", role := "alert", message)
+        case Some(Outcome(false, message)) => div(cls := "notice", role := "status", message)
         case None                          => emptyNode
       }
     )

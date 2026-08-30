@@ -284,9 +284,29 @@ ul {
   border-radius: 3px;
 }
 
+/* A labelled field: the caption above its control, not beside it.
+   `.card label` below lays a label and its control on one line, which is right for the checkbox
+   it was written for and wrong here — a caption beside a full-width box wraps immediately. Same
+   shape as `.sign-in label` and `.account-section label`, which solved this first. */
+label.field {
+  display: block;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+label.field > input,
+label.field > select {
+  display: block;
+  width: 100%;
+  margin-top: 0.2rem;
+  /* The caption is small and grey; what is typed into the box is neither. */
+  color: #1a1a1a;
+}
+
 /* A checkbox and its caption belong on one line: the rule above would otherwise stretch the
    box to the card's full width and push the caption onto the next line. */
-.card label {
+.card label:not(.field) {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -545,4 +565,38 @@ button.toggle {
   .card label {
     min-height: 2.75rem;
   }
+}
+
+/* Text for screen readers and nobody else: clipped to nothing rather than hidden, because
+   `display: none` and `visibility: hidden` take it out of the accessibility tree as well as off
+   the screen, which is the one thing it must not be taken out of. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Where the keyboard is.
+
+   The browser's own ring is the fallback, and on the link-buttons — which have no border and no
+   background to ring — it is thin and easy to lose. This is the same mark everywhere, drawn
+   outside the control so it does not move anything, and only for keyboard focus: `:focus-visible`
+   rather than `:focus` leaves a clicked button unchanged. */
+:where(button, input, select, textarea, a):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* The panel takes focus when it opens so the keyboard arrives with it. It is not a control, and
+   ringing the whole box would read as something to act on rather than somewhere to be. */
+.account-menu:focus,
+.account-menu:focus-visible {
+  outline: none;
 }

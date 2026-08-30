@@ -78,6 +78,16 @@ object Views {
     )
   }
 
+  /** A form control with a visible caption tied to it.
+    *
+    * Wrapping rather than `for`/`id`: it needs no id to be unique across a page that renders the
+    * same form more than once. A placeholder is not a label — it is a hint that disappears at the
+    * first keystroke, and leaves a screen reader with an unnamed box — so every field that had
+    * only a placeholder gets one of these instead.
+    */
+  private def field(caption: String, control: HtmlElement): HtmlElement =
+    label(cls := "field", caption, control)
+
   // -------------------------------------------------------------------------
   // Chrome
   // -------------------------------------------------------------------------
@@ -107,6 +117,10 @@ object Views {
         case Some(message) =>
           div(
             cls := "error",
+            // Every failed request in the application reports here. Without this the banner is a
+            // silent red box: it appears with no page change to notice, so a screen reader is
+            // never given a reason to read it out.
+            role := "alert",
             span(message),
             button(cls := "link", "Dismiss", onClick --> (_ => Store.error.set(None)))
           )
@@ -154,10 +168,7 @@ object Views {
       cls := "card",
       h2("Choose a nickname"),
       p("You are signed in, but you do not have a player yet. Your nickname is what other players see."),
-      input(
-        placeholder := "nickname",
-        controlled(value <-- nickname.signal, onInput.mapToValue --> nickname)
-      ),
+      field("Nickname", input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))),
       busyButton("Create player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
         Store.run(ApiClient.register(nickname.now().trim), busy) { player =>
           Store.player.set(Store.PlayerState.Registered(player))
@@ -211,13 +222,19 @@ object Views {
       }
     )
 
-  private def menuItem(label: String, target: Store.Page): HtmlElement =
+  private def menuItem(caption: String, target: Store.Page): HtmlElement = {
+    val isCurrent = Store.page.signal.map(_ == target)
+
     button(
       cls := "menu-item",
-      cls("current") <-- Store.page.signal.map(_ == target),
-      label,
+      cls("current") <-- isCurrent,
+      // The tint and the heavier weight say which screen this is to anyone who can see them.
+      // This says it to everyone else, and is why the styling is not the only thing that does.
+      aria.current <-- isCurrent.map(if (_) "page" else ""),
+      caption,
       onClick --> (_ => Store.show(target))
     )
+  }
 
   /** The main page: what is waiting on this player, what they are playing, and what lately
     * finished. No games list — the menu is the games list now — and the completed matches are
@@ -392,7 +409,17 @@ object Views {
       if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
       // When it ended. The completed list is ordered by this, so the row says what it is sorted
       // on; a cancelled match has no completion time and simply says nothing here.
-      summary.completedAt.map(when => div(cls := "detail", s"completed ${Format.date(when)}")).getOrElse(emptyNode),
+      summary.completedAt
+        .map(when =>
+          div(
+            cls := "detail",
+            "completed ",
+            // The rendered date is a day with no zone on it; `dateTime` carries the instant it
+            // was trimmed from, so the date is machine-readable as well as legible.
+            timeTag(htmlAttr("datetime", com.raquo.laminar.codecs.StringAsIsCodec) := when.toString, Format.date(when))
+          )
+        )
+        .getOrElse(emptyNode),
       // Play and Refresh are for a match still being played. A finished one has no turn to take
       // and nothing left for the engine to tell us, so it shows how it ended instead.
       if (summary.completed || summary.cancelled) resultTable(summary)
@@ -446,7 +473,10 @@ object Views {
             rows.map { row =>
               li(
                 cls := "result-row",
-                if (row.isWinner) span(cls := "winner", "🏆 ") else emptyNode,
+                // The emoji reads out as "trophy", which is a guess at what it means rather than
+                // a statement of it. The text says it; the emoji is decoration over the top.
+                if (row.isWinner) span(cls := "winner", aria.hidden := true, "🏆 ") else emptyNode,
+                if (row.isWinner) span(cls := "sr-only", "winner: ") else emptyNode,
                 span(cls := "who", s"${row.nickname} (${row.roleName})"),
                 // Whatever else the engine chose to report. Which keys exist is the game's
                 // business, so they are shown as they came rather than being named here.
@@ -499,6 +529,7 @@ object Views {
           div(
             button(
               cls := "link",
+              aria.expanded := editing.contains(game.gameId),
               if (editing.contains(game.gameId)) "Done editing" else "Edit game",
               onClick --> { _ =>
                 Store.editingGame.update(current => if (current.contains(game.gameId)) None else Some(game.gameId))
@@ -587,7 +618,14 @@ object Views {
       children <-- roles.signal.map(_.map { draft =>
         div(
           cls := "row",
-          input(placeholder := "role name", controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)),
+          // A caption per row would repeat "role name" down the whole editor, so these repeated
+          // rows carry their name rather than showing it. The placeholder stays as the visible
+          // hint it always was.
+          input(
+            aria.label := "role name",
+            placeholder := "role name",
+            controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)
+          ),
           label(
             input(
               tpe := "checkbox",
@@ -598,7 +636,14 @@ object Views {
           // A role that exists cannot be removed: acceptances and played matches name it. The
           // server refuses it too — this is why the button is not there to press.
           if (draft.gameRoleId == GameRoleId.unassigned)
-            button(cls := "link", "Remove", onClick --> (_ => roles.update(_.filterNot(_ eq draft))))
+            // Named for what it removes: a column of identical "Remove" links tells a screen
+          // reader nothing about which row it is on.
+          button(
+            cls := "link",
+            aria.label <-- draft.name.signal.map(n => if (n.trim.isEmpty) "Remove this role" else s"Remove role $n"),
+            "Remove",
+            onClick --> (_ => roles.update(_.filterNot(_ eq draft)))
+          )
           else emptyNode
         )
       }),
@@ -616,13 +661,27 @@ object Views {
       children <-- parameters.signal.map(_.map { draft =>
         div(
           cls := "row",
-          input(placeholder := "parameter name", controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)),
           input(
+            aria.label := "parameter name",
+            placeholder := "parameter name",
+            controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)
+          ),
+          input(
+            aria.label := "possible values, comma separated",
             placeholder := "values, comma separated",
             controlled(value <-- draft.values.signal, onInput.mapToValue --> draft.values)
           ),
-          input(placeholder := "default value", controlled(value <-- draft.default.signal, onInput.mapToValue --> draft.default)),
-          button(cls := "link", "Remove", onClick --> (_ => parameters.update(_.filterNot(_ eq draft))))
+          input(
+            aria.label := "default value",
+            placeholder := "default value",
+            controlled(value <-- draft.default.signal, onInput.mapToValue --> draft.default)
+          ),
+          button(
+            cls := "link",
+            aria.label <-- draft.name.signal.map(n => if (n.trim.isEmpty) "Remove this parameter" else s"Remove parameter $n"),
+            "Remove",
+            onClick --> (_ => parameters.update(_.filterNot(_ eq draft)))
+          )
         )
       }),
       button(cls := "link", "Add a parameter", onClick --> (_ => parameters.update(_ :+ emptyParameter)))
@@ -698,12 +757,9 @@ object Views {
 
     div(
       cls := "card",
-      input(placeholder := "name", controlled(value <-- name.signal, onInput.mapToValue --> name)),
-      input(
-        placeholder := "description",
-        controlled(value <-- description.signal, onInput.mapToValue --> description)
-      ),
-      input(placeholder := "url", controlled(value <-- url.signal, onInput.mapToValue --> url)),
+      field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
+      field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
+      field("Game engine url", input(tpe := "url", controlled(value <-- url.signal, onInput.mapToValue --> url))),
       label(
         "Requires characters ",
         input(
@@ -804,11 +860,8 @@ object Views {
       cls := "card",
       h3(s"Create your character for ${game.name}"),
       p("You need a character in this game before you can offer or accept a challenge."),
-      input(placeholder := "name", controlled(value <-- name.signal, onInput.mapToValue --> name)),
-      input(
-        placeholder := "description",
-        controlled(value <-- description.signal, onInput.mapToValue --> description)
-      ),
+      field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
+      field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
       busyButton("Create character", disabledWhen = name.signal.map(_.trim.isEmpty)) { busy =>
         val created =
           ApiClient.createCharacter(game.gameId, name.now().trim, description.now().trim, player.externalId)
@@ -835,6 +888,7 @@ object Views {
               // A button rather than a form standing open: offering a challenge is one of several
               // things to do on this screen, and a form is what the screen looks like it is for.
               button(
+                aria.expanded <-- Store.showChallengeForm.signal,
                 child.text <-- Store.showChallengeForm.signal.map(if (_) "Close" else "Create challenge"),
                 onClick --> (_ => Store.showChallengeForm.update(!_))
               ),
@@ -925,6 +979,9 @@ object Views {
     if (choices.isEmpty) emptyNode
     else
       select(
+        // Named here rather than by a caption at each call site: one of the two is a control in
+        // the middle of a challenge row, where a caption would be a word on its own line.
+        aria.label := "the role you will play",
         onChange.mapToValue --> { raw =>
           selected.set(raw.toIntOption.map(GameRoleId.apply).filter(id => choices.exists(_.gameRoleId == id)))
         },
@@ -942,10 +999,7 @@ object Views {
     div(
       cls := "card",
       h3("Offer a challenge"),
-      input(
-        placeholder := "message",
-        controlled(value <-- message.signal, onInput.mapToValue --> message)
-      ),
+      field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
       roleSelect(game.roles, role),
       // Public means anyone may watch the match, which the game engine implements by issuing a
       // url that needs no sign-in. It is decided here because it is a property of the game being
