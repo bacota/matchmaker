@@ -353,7 +353,7 @@ object Views {
       if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
       // When it ended. The completed list is ordered by this, so the row says what it is sorted
       // on; a cancelled match has no completion time and simply says nothing here.
-      summary.completedAt.map(when => div(cls := "detail", s"completed ${Format.instant(when)}")).getOrElse(emptyNode),
+      summary.completedAt.map(when => div(cls := "detail", s"completed ${Format.date(when)}")).getOrElse(emptyNode),
       // Play and Refresh are for a match still being played. A finished one has no turn to take
       // and nothing left for the engine to tell us, so it shows how it ended instead.
       if (summary.completed || summary.cancelled) resultTable(summary)
@@ -387,9 +387,10 @@ object Views {
 
   /** How a finished match ended: every seat, the winner first.
     *
-    * The rows are already ordered by rank by the query, so the winner is simply the first — but
-    * winning is marked from `isWinner` rather than from position, because a game may have no
-    * winner at all (a draw, a cancelled match) and rank 1 would otherwise invent one.
+    * The rows are already ordered by rank by the query, so the order of the list is the standing
+    * and the rank itself does not need saying — but winning is marked from `isWinner` rather
+    * than from position, because a game may have no winner at all (a draw, a cancelled match)
+    * and first place would otherwise invent one.
     *
     * A cancelled match has no engine-reported result, so its rows usually have no rank/scores (rather than being absent).
     * Saying so beats rendering an empty-looking table.
@@ -408,7 +409,6 @@ object Views {
                 cls := "result-row",
                 if (row.isWinner) span(cls := "winner", "🏆 ") else emptyNode,
                 span(cls := "who", s"${row.nickname} (${row.roleName})"),
-                row.rank.map(r => span(cls := "rank", s" — rank $r")).getOrElse(emptyNode),
                 // Whatever else the engine chose to report. Which keys exist is the game's
                 // business, so they are shown as they came rather than being named here.
                 if (row.scores.isEmpty) emptyNode
@@ -959,6 +959,13 @@ object Format {
     */
   def instant(value: java.time.Instant): String =
     value.toString.replace("T", " ").takeWhile(_ != '.').stripSuffix("Z") + " UTC"
+
+  /** The date alone, for a time whose hour is of no interest — when a match was completed reads
+    * as a day in a history, not as a deadline. No UTC marker: a bare date carries none of the
+    * precision that would make the zone worth mentioning.
+    */
+  def date(value: java.time.Instant): String =
+    value.toString.takeWhile(_ != 'T')
 
   /** A score reported by a game engine, which may be any JSON value.
     *

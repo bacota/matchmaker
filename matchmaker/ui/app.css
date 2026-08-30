@@ -130,7 +130,6 @@ ul {
   font-weight: 600;
 }
 
-.result-row .rank,
 .result-row .scores {
   color: var(--muted);
 }
