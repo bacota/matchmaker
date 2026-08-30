@@ -95,6 +95,24 @@ class MatchRepo(session: Session[IO]) {
       )
       .void
 
+  /* now() rather than a time bound from Scala: the completion time is a fact about when the
+   * database recorded the match as over, and the application's clock is not the same clock. It
+   * returns what was stored so the caller does not have to read the row back to find out. */
+  private val completeMatch: Query[(GameId, MatchId), Instant] =
+    sql"""UPDATE match SET completed = now()
+          WHERE game_id = $gameId AND match_id = $matchId
+          RETURNING completed"""
+      .query(instant)
+
+  /** Marks a match completed, as of the database's clock, and returns when that was.
+    *
+    * Overwrites an existing completion time, so callers that mean "complete it if it is not
+    * already" must check first — `GameEngineService` does, under the row lock `readForUpdate`
+    * takes, which is also what makes the read-then-write here safe.
+    */
+  def complete(gameId: GameId, matchId: MatchId): IO[Instant] =
+    session.unique(completeMatch)((gameId, matchId))
+
   private val deleteMatch: Command[(GameId, MatchId)] =
     sql"DELETE FROM match WHERE game_id = $gameId AND match_id = $matchId".command
 
