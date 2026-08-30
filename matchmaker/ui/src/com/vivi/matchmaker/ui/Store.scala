@@ -235,7 +235,11 @@ object Store {
     * handle; it is a banner that has already been raised.
     */
   private def reload[A](action: Future[A])(onSuccess: A => Unit): Future[Unit] =
-    action.transform { outcome => settle(outcome)(onSuccess); Success(()) }
+    action.transform { outcome =>
+      try settle(outcome)(onSuccess)
+      catch { case t: Throwable => report(t) }
+      Success(())
+    }
 
   /** One list at a time, for the refresh button each section carries.
     *
