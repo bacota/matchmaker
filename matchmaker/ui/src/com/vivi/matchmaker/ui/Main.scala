@@ -230,7 +230,7 @@ object Views {
       cls("current") <-- isCurrent,
       // The tint and the heavier weight say which screen this is to anyone who can see them.
       // This says it to everyone else, and is why the styling is not the only thing that does.
-      aria.current <-- isCurrent.map(if (_) "page" else ""),
+      aria.current <-- isCurrent.map(if (_) "page" else "false"),
       caption,
       onClick --> (_ => Store.show(target))
     )
