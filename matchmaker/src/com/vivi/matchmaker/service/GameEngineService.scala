@@ -465,10 +465,10 @@ class GameEngineService[T](
                   // Taken since: the status call moved the turn on, and there is nobody left to
                   // act against.
                   case Nil => IO.pure(checked)
-                  case overdue =>
+                  case _ =>
                     requireGame(new GameRepo[T](session), gameId).flatMap { game =>
                       game.timeoutAction match {
-                        case TimeoutAction.Forfeit => forfeit(session, gameId, matchId, overdue.map(_.participantId).toSet)
+                        case TimeoutAction.Forfeit => forfeit(session, gameId, matchId)
                       }
                     }
                 }
@@ -492,16 +492,16 @@ class GameEngineService[T](
    * `forfeit`, which is how a completed-match list can say "won by forfeit" rather than merely
    * naming a winner, and no scores: nothing was scored.
    *
-   * Under the match's row lock and re-checked inside it, so that a forfeit racing a result
-   * callback resolves one way or the other rather than both writing a result for the same seat.
-   * A match where every seat is overdue at once ends with no winner rather than with an
-   * arbitrary one. */
-  private def forfeit(
-      session: skunk.Session[IO],
-      gameId: GameId,
-      matchId: MatchId,
-      overdue: Set[ParticipantId]
-  ): IO[Match] = {
+   * Everything it acts on is read under the match's row lock, including *who* is out of time:
+   * the check `enforceTimeouts` made to get here was made outside the lock, and a move callback
+   * committing in between would leave it naming a player who has since moved. `recordMove` and
+   * `recordResults` take the same lock, so re-reading under it is what makes the two orders —
+   * move-then-forfeit and forfeit-then-move — resolve to one of them rather than to both.
+   *
+   * Finding nobody overdue at that point is therefore an ordinary outcome, not an error: the
+   * move landed first, and the match carries on. A match where every seat is overdue at once
+   * ends with no winner rather than with an arbitrary one. */
+  private def forfeit(session: skunk.Session[IO], gameId: GameId, matchId: MatchId): IO[Match] = {
     val matchRepo = new MatchRepo(session)
     val participantRepo = new ParticipantRepo(session)
     val resultRepo = new ResultRepo(session)
@@ -509,8 +509,10 @@ class GameEngineService[T](
     session.transaction.use { _ =>
       for {
         locked <- requireMatchForUpdate(matchRepo, gameId, matchId)
+        // Read under the lock, so it reflects every move that committed before it was taken.
+        overdue <- overdueIn(session, gameId, matchId).map(_.map(_.participantId).toSet)
         updated <-
-          if (locked.completed || locked.cancelled) IO.pure(locked)
+          if (locked.completed || locked.cancelled || overdue.isEmpty) IO.pure(locked)
           else
             for {
               participants <- participantRepo.listForMatch(gameId, matchId)
