@@ -470,14 +470,12 @@ class GameEngineService[T](
 
   /* The participants of a match whose turn it is and whose deadline has passed.
    *
-   * `due` is written by `recordMove` and `applyEngineStatus` from the match's time limit, so a
-   * participant only has one while it is their turn under a limited clock — which is why the
-   * comparison here needs nothing but the row and the current time. */
+   * Asked of the database, which compares `due` against its own now(). Whether a turn has run
+   * out is not the lambda's to decide: its clock is not the one the deadline was written by nor
+   * the one the completion will be stamped with, and two instances need not agree with each
+   * other. One clock decides, and it is the same clock throughout. */
   private def overdueIn(session: skunk.Session[IO], gameId: GameId, matchId: MatchId): IO[List[Participant]] =
-    for {
-      now <- IO.realTimeInstant
-      participants <- new ParticipantRepo(session).listForMatch(gameId, matchId)
-    } yield participants.map(_._1).filter(p => p.pending && !p.completed && p.due.exists(_.isBefore(now)))
+    new ParticipantRepo(session).listOverdueForMatch(gameId, matchId)
 
   /* Ends a match because somebody's clock ran out: the players who ran out lose, and everybody
    * else wins by forfeit.
