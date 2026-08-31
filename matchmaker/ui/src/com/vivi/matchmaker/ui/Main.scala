@@ -319,10 +319,10 @@ object Views {
     */
   private def mainPage: HtmlElement =
     div(
-      readyToStartSection,
-      dueSection,
-      myMatchesSection,
-      pendingAcceptances,
+      readyToStartSection(),
+      dueSection(),
+      myMatchesSection(),
+      pendingAcceptances(),
       recentlyCompletedSection
     )
 
@@ -347,18 +347,23 @@ object Views {
     */
   private val refreshingAcceptances: Var[Boolean] = Var(false)
 
-  private def readyToStartSection: HtmlElement =
+  private def readyToStartSection(game: Option[Game] = None): HtmlElement =
     refreshableSection("Ready to Start", refreshingAcceptances, () => Store.reloadAcceptances(), subsection = false)(
       child <-- Store.acceptances.signal
         .combineWith(Store.games.signal, currentPlayer)
         .map { (acceptances, games, player) =>
           val mine = player.toSeq.flatMap { me =>
-            acceptances.filter(p => p.readyToStart && p.challenger == me.playerId)
+            acceptancesIn(game)(acceptances).filter(p => p.readyToStart && p.challenger == me.playerId)
           }
           // Shown empty rather than absent, now that the section carries its own refresh button:
           // a button that only appears once there is something to find is no use to someone
           // checking whether there is.
-          if (mine.isEmpty) p(cls := "empty", "Nothing is waiting for you to start it.")
+          if (mine.isEmpty)
+            p(
+              cls := "empty",
+              if (game.isDefined) "Nothing of this is waiting for you to start it."
+              else "Nothing is waiting for you to start it."
+            )
           else {
             val namesById = games.map(game => game.gameId -> game.name).toMap
             ul(mine.map(pending => readyToStartRow(pending, namesById.get(pending.acceptance.gameId))))
@@ -387,22 +392,40 @@ object Views {
   /** "List of all matches a player has a turn due" — the first thing in `ui.txt`, and the only
     * list shown expanded from the start, because it is the one that needs acting on.
     */
-  private def dueSection: HtmlElement =
+  /** The matches it is this player's turn in.
+    *
+    * `game` narrows it to one game, which is what the game screen shows. Filtered from the list
+    * the home page already has rather than fetched per game, for the reason [[gameHistory]] is:
+    * it is the same list in the same order, and a second request would only be a second chance
+    * for the two screens to disagree about it.
+    */
+  private def dueSection(game: Option[Game] = None): HtmlElement =
     refreshableSection("Your Turn", () => Store.reloadDue())(
-      child <-- Store.due.signal.map {
-        case Nil     => p(cls := "empty", "Nothing is waiting on you.")
+      child <-- Store.due.signal.map(matchesIn(game)).map {
+        case Nil =>
+          p(cls := "empty", if (game.isDefined) "Nothing is waiting on you in this game." else "Nothing is waiting on you.")
         case matches => ul(matches.map(matchRow(_, showDue = true)))
       }
     )
+
+  /* One game's matches, or all of them. The game screens show a slice of each list rather than a
+   * list of their own, so this is the slice. */
+  private def matchesIn(game: Option[Game])(matches: Seq[MatchSummary]): Seq[MatchSummary] =
+    game.fold(matches)(g => matches.filter(_.gameId == g.gameId))
+
+  /* The same slice, over the acceptances. */
+  private def acceptancesIn(game: Option[Game])(acceptances: Seq[PendingAcceptance]): Seq[PendingAcceptance] =
+    game.fold(acceptances)(g => acceptances.filter(_.acceptance.gameId == g.gameId))
 
   /** The matches still being played. Expanded rather than behind a toggle: the wire-frame lists
     * it as one of the four things the main page shows, and a section that has to be opened to
     * find out whether it is empty is not shown.
     */
-  private def myMatchesSection: HtmlElement =
+  private def myMatchesSection(game: Option[Game] = None): HtmlElement =
     refreshableSection("Current Matches", () => Store.reloadActive())(
-      child <-- Store.active.signal.map {
-        case Nil     => p(cls := "empty", "You are not in any matches.")
+      child <-- Store.active.signal.map(matchesIn(game)).map {
+        case Nil =>
+          p(cls := "empty", if (game.isDefined) "You are not in any matches of this." else "You are not in any matches.")
         case matches => ul(matches.map(matchRow(_, showDue = false)))
       }
     )
@@ -417,11 +440,17 @@ object Views {
     * The ones this player could start right now are left out: they have their own section at the
     * top of the page, and listing them twice would offer the same Start button in two places.
     */
-  private def pendingAcceptances: HtmlElement =
+  private def pendingAcceptances(game: Option[Game] = None): HtmlElement =
     refreshableSection("Waiting to Start", refreshingAcceptances, () => Store.reloadAcceptances(), subsection = true)(
       child <-- Store.acceptances.signal.combineWith(Store.games.signal, currentPlayer).map { (acceptances, games, player) =>
-        val waiting = acceptances.filterNot(p => p.readyToStart && player.exists(_.playerId == p.challenger))
-        if (waiting.isEmpty) p(cls := "empty", "You have not accepted anything that is still waiting.")
+        val waiting =
+          acceptancesIn(game)(acceptances).filterNot(p => p.readyToStart && player.exists(_.playerId == p.challenger))
+        if (waiting.isEmpty)
+          p(
+            cls := "empty",
+            if (game.isDefined) "You have not accepted anything of this that is still waiting."
+            else "You have not accepted anything that is still waiting."
+          )
         else {
           val namesById = games.map(game => game.gameId -> game.name).toMap
           ul(waiting.map(pending => acceptanceRow(pending, namesById.get(pending.acceptance.gameId))))
@@ -605,6 +634,17 @@ object Views {
             h2(game.name),
             p(cls := "detail", game.description),
             editGamePanel(game),
+            // What is waiting on this player in this game, before what they could join: a turn
+            // they owe somebody is more urgent than a challenge they might accept.
+            //
+            // Both halves of the pending acceptances, in the order the home page puts them: the
+            // ones this player can start now, and the ones that are still waiting on somebody.
+            // Splitting them across two screens would leave a game page listing an acceptance as
+            // waiting to start with no way to start it.
+            readyToStartSection(Some(game)),
+            dueSection(Some(game)),
+            myMatchesSection(Some(game)),
+            pendingAcceptances(Some(game)),
             gameChallenges(game),
             gameHistory(game)
           )
