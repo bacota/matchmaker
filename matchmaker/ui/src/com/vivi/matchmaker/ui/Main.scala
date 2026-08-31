@@ -361,7 +361,7 @@ object Views {
           if (mine.isEmpty)
             p(
               cls := "empty",
-              if (game.isDefined) "Nothing of this is waiting for you to start it."
+              if (game.isDefined) "Nothing in this game is waiting for you to start it."
               else "Nothing is waiting for you to start it."
             )
           else {
