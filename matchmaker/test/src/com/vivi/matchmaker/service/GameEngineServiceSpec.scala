@@ -1,7 +1,7 @@
 package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
-import cats.effect.{Deferred, IO, Resource}
+import cats.effect.{Deferred, IO}
 import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import java.time.{Duration, Instant}
@@ -362,23 +362,6 @@ class GameEngineServiceSpec extends PropertySuite {
     * can fail the database work that happens *after* the engine has created its game — the one
     * step of a start that cannot simply be rolled back.
     */
-  private def refusingMatchUpdates: Resource[IO, Unit] = {
-    def exec(statement: skunk.Command[skunk.Void]): IO[Unit] =
-      TestSession.resource.use(_.execute(statement).void)
-
-    Resource.make(
-      exec(
-        sql"""CREATE OR REPLACE FUNCTION fail_match_update() RETURNS trigger LANGUAGE plpgsql
-              AS 'BEGIN RAISE EXCEPTION ''match update refused by test''; END'""".command
-      ) *> exec(
-        sql"""CREATE TRIGGER fail_match_update_trigger BEFORE UPDATE ON match
-              FOR EACH ROW WHEN (NEW.description = 'explode') EXECUTE FUNCTION fail_match_update()""".command
-      )
-    )(_ => (exec(sql"DROP TRIGGER IF EXISTS fail_match_update_trigger ON match".command) *> exec(
-      sql"DROP FUNCTION IF EXISTS fail_match_update()".command
-    )).handleError(_ => ()))
-  }
-
   // The engine's game exists by then, so the start cannot be undone, and the claim stays: a
   // challenge whose game exists must never be startable again, and the claim is now the permanent
   // mark of that rather than something to be cleaned up. What is left is the documented
@@ -386,7 +369,10 @@ class GameEngineServiceSpec extends PropertySuite {
   property("a database failure after the engine call leaves the challenge spent, not startable again") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
       val services = TestServices.servicesWith(StubEngine())
-      val result = refusingMatchUpdates.use { _ =>
+      // The trigger this leans on is installed once by `TestMigration`, not created here: DDL on
+      // `match` locks the table against every other suite sharing the pool. It fires only on a
+      // match described as 'explode', which is what the challenge below is for.
+      val result = {
         for {
           fixture <- makeFixture(nickname, externalId, gameExternalId)
           // The message becomes the match's description, which is what the trigger keys on.
