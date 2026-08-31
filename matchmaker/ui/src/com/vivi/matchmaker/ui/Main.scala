@@ -547,7 +547,14 @@ object Views {
         case Seq() =>
           p(cls := "empty", if (summary.cancelled) "Called off before it finished." else "No result was reported.")
         case rows =>
-          ul(
+          div(
+            // Said once above the table rather than on each line: a forfeit is how the match
+            // ended, which is one fact about the match, not a separate fact about each seat.
+            // The lines below still say which of the two things it meant for each player.
+            if (rows.exists(_.forfeit))
+              p(cls := "detail", "Ended by forfeit: a player ran out of time on their turn.")
+            else emptyNode,
+            ul(
             cls := "result-rows",
             rows.map { row =>
               li(
@@ -557,6 +564,11 @@ object Views {
                 if (row.isWinner) span(cls := "winner", aria.hidden := true, "🏆 ") else emptyNode,
                 if (row.isWinner) span(cls := "sr-only", "winner: ") else emptyNode,
                 span(cls := "who", s"${row.nickname} (${row.roleName})"),
+                // Which side of the forfeit this player was on. `isWinner` is what separates
+                // them, and without this a win by forfeit would read as a win on the board.
+                if (!row.forfeit) emptyNode
+                else if (row.isWinner) span(cls := "detail", " — won by forfeit")
+                else span(cls := "detail", " — forfeited on time"),
                 // Whatever else the engine chose to report. Which keys exist is the game's
                 // business, so they are shown as they came rather than being named here.
                 if (row.scores.isEmpty) emptyNode
@@ -568,6 +580,7 @@ object Views {
                   )
               )
             }
+            )
           )
       }
     )
@@ -826,6 +839,11 @@ object Views {
     // Plain by default: requiring characters is the additional commitment, so it is the box an
     // admin ticks rather than the one they have to remember to untick.
     val gameType: Var[GameType] = Var(existing.map(_.gameType).getOrElse(GameType.Plain))
+    // What happens when a player takes too long over a turn. A dropdown rather than a checkbox
+    // because Forfeit is the first of several planned actions, not the only one there will ever
+    // be — the control does not have to change when the second arrives, only the enum.
+    val timeoutAction: Var[TimeoutAction] =
+      Var(existing.map(_.timeoutAction).getOrElse(TimeoutAction.Forfeit))
     // A new game starts with one empty role, because it cannot be created without one, and no
     // parameters, because plenty of games have none. An existing one starts with what it has.
     val roles = Var(existing.map(_.roles.map(draftOf).toList).getOrElse(List(emptyRole)))
@@ -844,6 +862,14 @@ object Views {
           tpe := "checkbox",
           checked <-- gameType.signal.map(_ == GameType.Character),
           onClick --> (_ => gameType.update(gt => if (gt == GameType.Character) GameType.Plain else GameType.Character))
+        )
+      ),
+      field(
+        "When a turn runs out",
+        select(
+          onChange.mapToValue --> (code => timeoutAction.set(TimeoutAction.fromCode(code))),
+          value <-- timeoutAction.signal.map(_.code),
+          TimeoutAction.values.toSeq.map(action => option(value := action.code, action.label))
         )
       ),
       roleEditor(roles),
@@ -878,7 +904,8 @@ object Views {
             // behalf. Generated rather than typed: it is a credential, and one an admin inventing
             // it by hand would invent badly. An edit keeps the one the game already has —
             // regenerating it would silently lock the game engine out.
-            externalId = existing.map(_.externalId).getOrElse(Pkce.newSecret())
+            externalId = existing.map(_.externalId).getOrElse(Pkce.newSecret()),
+            timeoutAction = timeoutAction.now()
           )
 
           Store.run(ApiClient.createGame(game), busy) { saved =>
@@ -1087,6 +1114,14 @@ object Views {
   private def newChallengeForm(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement = {
     val message = Var("")
     val isPublic = Var(false)
+    // How long a player may take over one turn, in minutes, blank for no limit. Blank by
+    // default because an unlimited game is the one nobody can lose by walking away from their
+    // desk, and the challenger who wants a clock is the one who came here to set one.
+    //
+    // It belongs on the challenge rather than on the game: how long a turn may take is what the
+    // players agree to, where what happens when one runs out is a rule of the game — that is
+    // `Game.timeoutAction`, which an admin sets once.
+    val timeLimit = Var("")
     // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
     // has been claimed yet, so every role of the game is on offer and the first stands selected.
     val role = Var(game.roles.headOption.map(_.gameRoleId))
@@ -1096,6 +1131,19 @@ object Views {
       h3("Offer a Challenge"),
       field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
       roleSelect(game.roles, role),
+      field(
+        "Minutes per turn (blank for no limit)",
+        input(
+          tpe := "number",
+          minAttr := "1",
+          stepAttr := "1",
+          controlled(value <-- timeLimit.signal, onInput.mapToValue --> timeLimit)
+        )
+      ),
+      child <-- timeLimit.signal.map { raw =>
+        if (raw.trim.isEmpty || minutesOf(raw).isDefined) emptyNode
+        else p(cls := "empty", aria.live := "polite", "A turn limit is a whole number of minutes.")
+      },
       // Public means anyone may watch the match, which the game engine implements by issuing a
       // url that needs no sign-in. It is decided here because it is a property of the game being
       // offered, not of any one player's part in it.
@@ -1110,7 +1158,9 @@ object Views {
         "Create challenge",
         // A game with no roles at all has nothing an acceptance could name, so no challenge for
         // it can be created. The server refuses one; this keeps the button from offering it.
-        disabledWhen = message.signal.combineWith(role.signal).map { case (m, r) => m.trim.isEmpty || r.isEmpty }
+        disabledWhen = message.signal.combineWith(role.signal, timeLimit.signal).map { case (m, r, limit) =>
+          m.trim.isEmpty || r.isEmpty || (limit.trim.nonEmpty && minutesOf(limit).isEmpty)
+        }
         // `foreach` rather than a fallback role: with no role there is no challenge to make, and
         // the disabled button above is what keeps that from being reachable.
       ) { busy =>
@@ -1124,7 +1174,7 @@ object Views {
                 challenger = player.playerId,
                 message = message.now().trim,
                 start = None,
-                timeLimit = None,
+                timeLimit = minutesOf(timeLimit.now()),
                 settings = "{}",
                 gameId = game.gameId,
                 characterId = cid,
@@ -1137,7 +1187,7 @@ object Views {
                 challenger = player.playerId,
                 message = message.now().trim,
                 start = None,
-                timeLimit = None,
+                timeLimit = minutesOf(timeLimit.now()),
                 settings = "{}",
                 gameId = game.gameId,
                 isPublic = isPublic.now(),
@@ -1147,6 +1197,7 @@ object Views {
 
           Store.run(ApiClient.createChallenge(challenge), busy) { _ =>
             message.set("")
+            timeLimit.set("")
             // The challenge it was open for now exists and is in the list below it.
             Store.showChallengeForm.set(false)
             Store.refreshChallenges(game.gameId)
@@ -1155,6 +1206,16 @@ object Views {
       }
     )
   }
+
+  /** A turn limit typed as minutes, as a `Duration` — `None` for blank, and `None` for anything
+    * that is not a positive whole number of them, which the form treats as not yet a limit
+    * rather than as zero.
+    */
+  private def minutesOf(raw: String): Option[java.time.Duration] =
+    raw.trim match {
+      case "" => None
+      case text => text.toIntOption.filter(_ > 0).map(m => java.time.Duration.ofMinutes(m.toLong))
+    }
 
   private def currentPlayer: Signal[Option[Player]] = Store.currentPlayer
 }

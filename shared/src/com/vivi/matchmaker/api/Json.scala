@@ -31,6 +31,9 @@ object Json {
         }
     )
 
+  /** By its stored code, so the wire form is the column's form: 'FORFEIT'. */
+  given ReadWriter[TimeoutAction] = readwriter[String].bimap(_.code, TimeoutAction.fromCode)
+
   given ReadWriter[Instant] = readwriter[String].bimap(_.toString, Instant.parse)
 
   // Seconds, matching how the persistence layer stores time_limit.
@@ -75,7 +78,10 @@ object Json {
       active: Boolean,
       roles: Seq[GameRole],
       parameters: Seq[GameParameter[String]],
-      externalId: String
+      externalId: String,
+      // Defaulted so that a client written before turn timeouts existed still parses, and one
+      // that omits it still creates a game — with the action every existing game already has.
+      timeoutAction: TimeoutAction = TimeoutAction.Forfeit
   )
 
   private given ReadWriter[GameDto] = macroRW
@@ -91,7 +97,8 @@ object Json {
         game.active,
         game.roles,
         game.parameters.map(_.asInstanceOf[GameParameter[String]]),
-        game.externalId
+        game.externalId,
+        game.timeoutAction
       ),
     dto =>
       Game(
@@ -103,7 +110,8 @@ object Json {
         dto.active,
         dto.roles,
         dto.parameters,
-        dto.externalId
+        dto.externalId,
+        dto.timeoutAction
       )
   )
 
@@ -164,7 +172,11 @@ object Json {
       roleName: String,
       rank: Option[Int],
       scores: Map[String, ujson.Value],
-      isWinner: Boolean
+      isWinner: Boolean,
+      // Whether the match ended on a clock rather than on the board. With `isWinner` this is the
+      // difference between "won by forfeit" and "forfeited"; defaulted for the same reason the
+      // game's action is.
+      forfeit: Boolean = false
   )
 
   given ReadWriter[RegisterRequest] = macroRW

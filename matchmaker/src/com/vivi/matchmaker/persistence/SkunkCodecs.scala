@@ -4,7 +4,7 @@ import skunk._
 import skunk.codec.all._
 import skunk.data.Type
 import java.time.{Instant, OffsetDateTime, ZoneOffset}
-import com.vivi.matchmaker.model.GameType
+import com.vivi.matchmaker.model.{GameType, TimeoutAction}
 import com.vivi.matchmaker.util.JsonValues
 
 object SkunkCodecs {
@@ -17,6 +17,12 @@ object SkunkCodecs {
     * siblings).
     */
   val gameType: Codec[GameType] = bpchar(1).imap(s => GameType.fromCode(s.head))(_.code.toString)
+
+  /** `game.timeout_action`: what happens when a player's turn runs out. Text under a check
+    * constraint rather than a one-character discriminator, because the set of actions is
+    * expected to grow and 'FORFEIT' reads as itself in a query.
+    */
+  val timeoutAction: Codec[TimeoutAction] = text.imap(TimeoutAction.fromCode)(_.code)
 
   /** skunk-core ships no jsonb codec, so this declares one directly: bound and read as the
     * raw JSON text, tagged with the "jsonb" wire type so skunk's strict column-alignment

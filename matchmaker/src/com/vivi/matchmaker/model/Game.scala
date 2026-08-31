@@ -34,6 +34,30 @@ object GameType {
     values.find(_.code == c).getOrElse(throw new IllegalArgumentException(s"unknown game_type code '$c'"))
 }
 
+/** What matchmaker does when a player's turn runs out.
+  *
+  * A property of the game, set by the admin who registers it: the challenge decides how long a
+  * turn may take, and the game decides what happens when one takes longer. Stored as the `code`
+  * in `game.timeout_action`.
+  *
+  * `Forfeit` is the only action so far, and the only one the enforcement in `GameEngineService`
+  * knows how to carry out — the match ends and whoever was still playing wins. The enum exists
+  * ahead of the second value because the column, the API and the admin's dropdown all have to
+  * name the choice, and a boolean would have to be replaced the moment there was one.
+  */
+enum TimeoutAction(val code: String, val label: String) {
+
+  /** The player who ran out loses; everyone else wins by forfeit. */
+  case Forfeit extends TimeoutAction("FORFEIT", "Forfeit the match")
+}
+
+object TimeoutAction {
+  def fromCode(code: String): TimeoutAction =
+    values
+      .find(_.code == code)
+      .getOrElse(throw new IllegalArgumentException(s"unknown timeout_action '$code'"))
+}
+
 case class Game(
     gameId: GameId,
     gameType: GameType,
@@ -45,5 +69,9 @@ case class Game(
     parameters: Seq[GameParameter[_]],
     // Shared secret identifying the game itself, used to authorize requests made on the
     // game's behalf (e.g. creating or updating a character).
-    externalId: String
+    externalId: String,
+    // What happens when a player's turn runs out. Defaulted rather than required, because every
+    // game had this behaviour decided for it by the migration that added the column, and
+    // Forfeit is what it decided.
+    timeoutAction: TimeoutAction = TimeoutAction.Forfeit
 )

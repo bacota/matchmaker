@@ -2,6 +2,7 @@ package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
 import cats.effect.{Deferred, IO, Resource}
+import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import java.time.{Duration, Instant}
 import org.scalacheck.{Gen, Shrink}
@@ -534,6 +535,131 @@ class GameEngineServiceSpec extends PropertySuite {
   // told. Whose turn it is is the engine's to decide and every participant is written with
   // `pending = false`, so without asking, the match would sit in nobody's "waiting on you" list
   // until somebody happened to press Refresh on it.
+  /* A two-seat match with a turn clock, started and left with the challenger to move.
+   *
+   * Both the timeout properties below need the same thing: a real match with somebody's clock
+   * running, so that the only question the test asks is what happens when it runs out. */
+  private def startedWithClock(
+      services: Services[String],
+      engine: StubEngine,
+      nickname: String,
+      externalId: String,
+      gameExternalId: String,
+      otherExternalId: String,
+      prevMoveAt: Instant
+  ): IO[(Fixture, Match, Participant, Participant)] =
+    for {
+      fixture <- makeFixture(nickname, externalId, gameExternalId)
+      other <- services.registration.register(s"other-$nickname", otherExternalId)
+      otherCharacter <- TestSession.resource.use { session =>
+        new CharacterRepo[String](session)
+          .create(Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId)))
+      }
+      challenge <- services.challenges.create(challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(10))), externalId)
+      _ <- services.challenges.accept(
+        fixture.game.gameId, challenge.challengeId, Some(otherCharacter.characterId),
+        fixture.game.roles(1).gameRoleId, otherExternalId
+      )
+      started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+      participants <- participantsOf(started)
+      mine = participants.find(_.playerId == fixture.owner.playerId).get
+      theirs = participants.find(_.playerId == other.playerId).get
+      // The other player moved at `prevMoveAt`, so it is now the challenger's turn and their
+      // deadline is that plus the match's ten minutes. Recorded through the move callback rather
+      // than through a refresh, because a refresh is one of the two places the clock is
+      // enforced — it would decide the very thing these tests are set up to ask.
+      _ <- services.engine.recordMove(
+        fixture.game.gameId,
+        started.matchId,
+        moved = theirs.participantId,
+        next = List(mine.participantId),
+        prevMoveAt = Some(prevMoveAt),
+        callerExternalId = gameExternalId
+      )
+      // What the engine will say when it is asked: the same thing, so that by default the
+      // status call confirms the deadline rather than overturning it.
+      _ <- IO {
+        engine.status = GameStatusResponse(
+          completed = false,
+          participants = List(
+            EngineParticipantStatus(mine.participantId.value, pending = true, completed = false, prevMoveAt = Some(prevMoveAt)),
+            EngineParticipantStatus(theirs.participantId.value, pending = false, completed = false, prevMoveAt = None)
+          )
+        )
+      }
+    } yield (fixture, started, mine, theirs)
+
+  private def resultsOf(m: Match): IO[List[model.Result]] =
+    TestSession.resource.use { session =>
+      val repo = new ResultRepo(session)
+      new ParticipantRepo(session)
+        .listForMatch(m.gameId, m.matchId)
+        .flatMap(_.traverse((p, _, _) => repo.read(m.gameId, p.participantId)))
+        .map(_.flatten)
+    }
+
+  // The whole point of the feature: a clock that ran out ends the match, the player who ran out
+  // loses, and the other one wins by forfeit — recorded as such, so a completed-match list can
+  // say which kind of win it was.
+  property("a turn that has run out ends the match by forfeit") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          // An hour ago, against a ten-minute limit: fifty minutes over.
+          prepared <- IO.realTimeInstant.map(_.minusSeconds(3600)).flatMap { long_ago =>
+            startedWithClock(services, engine, nickname, externalId, gameExternalId, otherExternalId, long_ago)
+          }
+          (fixture, started, mine, theirs) = prepared
+          // Asked by the player who is *not* out of time — the clock is enforced for whoever
+          // looks, not only against the person who looks.
+          refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId)
+          results <- resultsOf(started)
+          loser = results.find(_.participantId == mine.participantId)
+          winner = results.find(_.participantId == theirs.participantId)
+          after <- participantsOf(started)
+        } yield refreshed.completed &&
+          results.forall(_.forfeit) &&
+          loser.exists(r => !r.isWinner && r.rank == 2) &&
+          winner.exists(r => r.isWinner && r.rank == 1) &&
+          after.forall(p => p.completed && !p.pending && p.due.isEmpty)
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // The verification step: matchmaker's copy of whose turn it is arrives by callback, and a
+  // callback can be lost. A turn that looks overdue here but that the engine says has been taken
+  // must not cost anybody the match.
+  property("a turn the engine says was taken is not forfeited, however overdue it looked") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          prepared <- IO.realTimeInstant.map(_.minusSeconds(3600)).flatMap { long_ago =>
+            startedWithClock(services, engine, nickname, externalId, gameExternalId, otherExternalId, long_ago)
+          }
+          (fixture, started, mine, theirs) = prepared
+          // The move landed after all: it is now the other player's turn, and their clock has
+          // only just started.
+          justNow <- IO.realTimeInstant
+          _ <- IO {
+            engine.status = GameStatusResponse(
+              completed = false,
+              participants = List(
+                EngineParticipantStatus(mine.participantId.value, pending = false, completed = false, prevMoveAt = None),
+                EngineParticipantStatus(theirs.participantId.value, pending = true, completed = false, prevMoveAt = Some(justNow))
+              )
+            )
+          }
+          refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+          results <- resultsOf(started)
+        } yield !refreshed.completed && results.isEmpty
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
   property("start records the first turn, so the player who moves first is told straight away") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
       val engine = new FirstTurnEngine
