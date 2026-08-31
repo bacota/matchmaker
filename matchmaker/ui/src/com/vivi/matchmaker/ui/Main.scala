@@ -530,7 +530,24 @@ object Views {
         .getOrElse(emptyNode),
       // Play and Refresh are for a match still being played. A finished one has no turn to take
       // and nothing left for the engine to tell us, so it shows how it ended instead.
-      if (summary.completed || summary.cancelled) resultTable(summary)
+      if (summary.completed || summary.cancelled)
+        div(
+          resultTable(summary),
+          // A finished match still has a board, and the engine keeps it: this is how a player
+          // goes and looks at how it ended. Fetched the same way "Play" fetches it — the urls
+          // live on the match, not on the summary — and `publicUrl` is the fallback for a match
+          // whose play url the engine has since stopped honouring for a game that is over.
+          if (summary.completed)
+            busyButton("View final state", classes = Some("link")) { busy =>
+              Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
+                m.playUrl.orElse(m.publicUrl) match {
+                  case Some(url) => dom.window.open(url, "_blank", "noopener,noreferrer")
+                  case None      => Store.error.set(Some("This match has no url to view."))
+                }
+              }
+            }
+          else emptyNode
+        )
       else
         div(
           // The play url lives on the match rather than the summary, and is the game engine's,
