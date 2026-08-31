@@ -646,6 +646,38 @@ class GameEngineServiceSpec extends PropertySuite {
     }
   }
 
+  // The engine is the only witness to whether a turn was actually taken, so a status call that
+  // fails is not evidence that it was not: ending somebody's match on it would be ending it on
+  // nothing. The player keeps a turn they may have run out of, which is the recoverable error of
+  // the two — the next successful check settles it either way.
+  property("a turn is not forfeited while the engine cannot be reached to confirm it") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          prepared <- IO.realTimeInstant.map(_.minusSeconds(3600)).flatMap { longAgo =>
+            startedWithClock(services, engine, nickname, externalId, gameExternalId, otherExternalId, longAgo)
+          }
+          (fixture, started, _, _) = prepared
+          // The status call now fails, with the deadline long past and matchmaker's own copy
+          // still saying it is the challenger's turn.
+          unreachable = TestServices.servicesWith(new GameEngineClient {
+            def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+              IO.raiseError(GameEngineError("engine is down"))
+            def status(statusUrl: String): IO[GameStatusResponse] = IO.raiseError(GameEngineError("engine is down"))
+          })
+          // `read` is the path that rechecks — `refresh` would fail on the status call itself.
+          seen <- unreachable.engine.read(fixture.game.gameId, started.matchId, externalId)
+          results <- resultsOf(started)
+          after <- participantsOf(started)
+        } yield !seen.completed &&
+          results.isEmpty &&
+          after.exists(p => p.pending && !p.completed)
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
   property("start records the first turn, so the player who moves first is told straight away") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
       val engine = new FirstTurnEngine

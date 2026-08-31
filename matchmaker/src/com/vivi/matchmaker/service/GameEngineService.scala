@@ -443,28 +443,35 @@ class GameEngineService[T](
       overdueIn(session, gameId, matchId).flatMap {
         case Nil => IO.pure(current)
         case _ =>
-          val verified =
-            if (!recheck) IO.pure(current)
+          // `None` means the deadline could not be confirmed with the engine, which is not the
+          // same as confirming it: nothing is enforced on a match whose state matchmaker was
+          // unable to check.
+          val verified: IO[Option[Match]] =
+            if (!recheck) IO.pure(Some(current))
             else
               current.statusUrl match {
-                case Some(url) => applyEngineStatus(session, gameId, matchId, url).attempt.map(_.getOrElse(current))
-                case None      => IO.pure(current)
+                case Some(url) => applyEngineStatus(session, gameId, matchId, url).attempt.map(_.toOption)
+                // Never created in the engine, so there is nothing to ask and no way to know
+                // whether the turn was taken.
+                case None => IO.pure(None)
               }
 
-          verified.flatMap { checked =>
-            if (checked.completed || checked.cancelled) IO.pure(checked)
-            else
-              overdueIn(session, gameId, matchId).flatMap {
-                // Taken since, or the status call could not be made: either way there is nobody
-                // to act against.
-                case Nil => IO.pure(checked)
-                case overdue =>
-                  requireGame(new GameRepo[T](session), gameId).flatMap { game =>
-                    game.timeoutAction match {
-                      case TimeoutAction.Forfeit => forfeit(session, gameId, matchId, overdue.map(_.participantId).toSet)
+          verified.flatMap {
+            case None => IO.pure(current)
+            case Some(checked) =>
+              if (checked.completed || checked.cancelled) IO.pure(checked)
+              else
+                overdueIn(session, gameId, matchId).flatMap {
+                  // Taken since: the status call moved the turn on, and there is nobody left to
+                  // act against.
+                  case Nil => IO.pure(checked)
+                  case overdue =>
+                    requireGame(new GameRepo[T](session), gameId).flatMap { game =>
+                      game.timeoutAction match {
+                        case TimeoutAction.Forfeit => forfeit(session, gameId, matchId, overdue.map(_.participantId).toSet)
+                      }
                     }
-                  }
-              }
+                }
           }
       }
 
