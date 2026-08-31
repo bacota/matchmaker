@@ -48,6 +48,50 @@ object matchmaker extends ScalaModule {
       mvn"org.flywaydb:flyway-database-postgresql:13.0.0",
       mvn"org.postgresql:postgresql:42.7.13"
     )
+
+    /** Brings the local test database up to date, once, before any test JVM starts.
+      *
+      * The specs used to do this themselves, and mill forks several JVMs per run, so Flyway ran
+      * once in each of them — every one validating the same nine migrations, and all of them
+      * starting at the same moment. Flyway's own locking makes that safe, but it is repeated
+      * work at the point where every suite is already contending for connections, and it buried
+      * the test output in migration banners.
+      *
+      * Re-run on every invocation, via the always-changing input below: the database is not one
+      * of mill's inputs, so a plain cached task would be skipped on the run after someone
+      * dropped the schema by hand — which is exactly the run that needs it. The module reused
+      * here is the same `Migrate` that `flyway-dev.sh` runs, so the tests and the deployment
+      * apply migrations one way.
+      */
+    def migrated = Task {
+      everyInvocation()
+      mill.util.Jvm.callProcess(
+        mainClass = "com.vivi.matchmaker.flyway.Migrate",
+        classPath = matchmaker.flyway.runClasspath().map(_.path),
+        env = Map(
+          "FLYWAY_PASSWORD" -> "matchmaker",
+          // Absolute, because this runs in the task's own directory: a `Task` may only write
+          // inside `Task.dest`, so it cannot be given the workspace as its working directory
+          // and cannot use `Migrate`'s workspace-relative default.
+          "MIGRATION_DIR" -> (mill.api.BuildCtx.workspaceRoot / "matchmaker" / "resources" / "db" / "migration").toString
+        ),
+        cwd = Task.dest,
+        stdout = os.Inherit
+      )
+      ()
+    }
+
+    /* Nothing about the database can be expressed as a mill input, so this stands in for it:
+     * a value that differs every time it is asked for, which is what stops the migration above
+     * from being cached and skipped. */
+    def everyInvocation = Task.Input { System.nanoTime() }
+
+    /* The migration is a dependency of the forked JVMs' environment, which is what makes it
+     * happen before they start; the variable is how `TestMigration` knows not to do it again. */
+    def forkEnv = Task {
+      migrated()
+      super.forkEnv() + ("MATCHMAKER_TEST_MIGRATED" -> "1")
+    }
   }
 
   /** The HTTP API, packaged as an AWS Lambda behind an API Gateway HTTP API.

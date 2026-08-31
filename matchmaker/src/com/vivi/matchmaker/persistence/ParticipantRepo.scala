@@ -65,6 +65,38 @@ class ParticipantRepo(session: Session[IO]) {
         participantId *: gameType *: playerId *: text *: bool *: bool *: instant.opt *: gameRoleId *: text *: int8.opt
       )
 
+  /* Whose clock has run out, decided by the database's own now().
+   *
+   * The comparison is here rather than in Scala so that one clock settles it. `due` was written
+   * from times that came out of the database, the completion it leads to is stamped by now(),
+   * and the API runs in lambdas whose clocks are not the database's and need not agree with each
+   * other — a player's turn must not end early or late because of which instance they reached.
+   *
+   * `pending AND NOT completed` is what "it is still their turn" means; `due` is only set while
+   * that is true and the match has a time limit, so a row with a past `due` is exactly a run-out
+   * turn. */
+  private val selectOverdueForMatch: Query[
+    (GameId, MatchId),
+    (ParticipantId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])
+  ] =
+    sql"""SELECT p.participant_id, p.game_type, p.player_id, p.pending, p.completed,
+                 p.due, p.game_role_id, cp.character_id
+          FROM participant p
+          LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
+          WHERE p.game_id = $gameId AND p.match_id = $matchId
+            AND p.pending AND NOT p.completed AND p.due < now()
+          ORDER BY p.participant_id"""
+      .query(participantId *: gameType *: playerId *: bool *: bool *: instant.opt *: gameRoleId *: int8.opt)
+
+  /** The participants of a match whose turn it is and whose deadline has passed, as of the
+    * database's clock.
+    */
+  def listOverdueForMatch(gameId: GameId, matchId: MatchId): IO[List[Participant]] =
+    session.execute(selectOverdueForMatch)((gameId, matchId)).map(_.map {
+      case (id, gt, playerId, pending, completed, due, roleId, characterIdValue) =>
+        toParticipant(id, gameId, (gt, matchId, playerId, pending, completed, due, roleId, characterIdValue))
+    })
+
   private val updateParticipant
       : Command[(PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, GameId, ParticipantId)] =
     sql"""UPDATE participant SET player_id = $playerId, pending = $bool, completed = $bool,

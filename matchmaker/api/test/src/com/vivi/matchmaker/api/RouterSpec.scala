@@ -39,6 +39,30 @@ class RouterSpec extends FunSuite {
   private def statusOf(method: String, path: String, headers: Map[String, String], body: String): Int =
     dispatch(request(method, path, headers, body)).statusCode
 
+  /** Runs a body whose 500s are the point of the test, without their stack traces on the console.
+    *
+    * `Errors.log` writes every 5xx to stderr so that it reaches CloudWatch, which is right in a
+    * deployed lambda and pure noise here: the tests below cause 500s deliberately — one of them
+    * twenty-five times over — and a passing run should not look like a broken one.
+    *
+    * Captured rather than discarded. If the body fails, what was written is printed before the
+    * failure is rethrown, so a trace that turns out to matter is still there to read.
+    */
+  private def quietly[A](body: => A): A = {
+    val captured = java.io.ByteArrayOutputStream()
+    val original = System.err
+    System.setErr(java.io.PrintStream(captured, true))
+    try body
+    catch {
+      case error: Throwable =>
+        original.print(captured.toString)
+        throw error
+    } finally {
+      System.err.flush()
+      System.setErr(original)
+    }
+  }
+
   test("a request without the identity header is unauthenticated") {
     assertEquals(statusOf("GET", "/me", Map.empty, "{}"), 401)
   }
@@ -140,8 +164,10 @@ class RouterSpec extends FunSuite {
     // A route that matched will hit the unusable pool and come back 500; one that did not match
     // comes back 404, and one whose body failed to parse comes back 400. So a 500 here is
     // exactly the evidence that the route is wired up and its body was understood.
-    routed.foreach { case (method, path, body) =>
-      assertEquals(statusOf(method, path, Map("x-external-id" -> "sub-1"), body), 500, s"$method $path")
+    quietly {
+      routed.foreach { case (method, path, body) =>
+        assertEquals(statusOf(method, path, Map("x-external-id" -> "sub-1"), body), 500, s"$method $path")
+      }
     }
   }
 
@@ -165,7 +191,8 @@ class RouterSpec extends FunSuite {
       def callerOf(request: Request): Either[ApiGateway.Response, String] = Right("sub-from-token")
     }
 
-    val response = Router.dispatch(services, request("GET", "/me", headers = Map.empty), fromElsewhere).unsafeRunSync()
+    val response =
+      quietly(Router.dispatch(services, request("GET", "/me", headers = Map.empty), fromElsewhere).unsafeRunSync())
 
     // No header at all, yet the request is authenticated and reaches the unusable pool.
     assertEquals(response.statusCode, 500)
@@ -259,7 +286,7 @@ class RouterSpec extends FunSuite {
   }
 
   test("an infrastructure failure does not leak its message to the caller") {
-    val response = Errors.toResponse(new RuntimeException("connection to 10.0.0.1 refused"))
+    val response = quietly(Errors.toResponse(new RuntimeException("connection to 10.0.0.1 refused")))
     assertEquals(response.statusCode, 500)
     assert(!response.body.contains("10.0.0.1"), response.body)
   }

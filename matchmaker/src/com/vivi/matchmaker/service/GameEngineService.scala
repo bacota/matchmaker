@@ -380,7 +380,10 @@ class GameEngineService[T](
         result <-
           if (existing.completed || existing.cancelled) IO.pure(existing)
           else
+            // The engine's answer first, then the clock: a turn that looks overdue in
+            // matchmaker's copy may have been taken since, and the status call is what says so.
             applyEngineStatus(session, gameId, matchId, statusUrl)
+              .flatMap(enforceTimeouts(session, gameId, matchId, _, recheck = false))
       } yield result
     }
 
@@ -399,8 +402,139 @@ class GameEngineService[T](
         _ <- IO.raiseUnless(participants.exists(_._1.playerId == player.playerId))(
           UnauthorizedError(s"caller '$callerExternalId' is not in match ${matchId.value}")
         )
-      } yield existing
+        // This is the call the UI makes when a player goes to take their turn — it is where the
+        // `playUrl` comes from — so it is one of the two moments a run-out clock is noticed. A
+        // player must not be handed a board to play on in a match that has already been
+        // forfeited, and the player whose clock ran out must not be able to outrun it by
+        // clicking Play.
+        result <- enforceTimeouts(session, gameId, matchId, existing)
+      } yield result
     }
+
+  /** Applies the game's timeout action to any participant whose turn has run out.
+    *
+    * The two moments a clock is looked at are [[read]] — the call a player makes on their way to
+    * take a turn — and [[refresh]], the one they make by pressing Refresh. There is no timer and
+    * no sweeper: a deadline that nobody is waiting on has no effect anyone can see, and the
+    * first person to look is by definition someone it matters to.
+    *
+    * The engine is asked first, because matchmaker's copy of whose turn it is arrives by
+    * callback and a callback can be lost. A turn that looks overdue here may have been taken
+    * minutes ago, and ending a match on that would be ending it on a message that went astray.
+    * `recheck` is false only for [[refresh]], which has just asked.
+    *
+    * If the engine cannot be reached, nothing is enforced and the match is returned as it
+    * stands. A player is then left able to play a turn they may have run out of, which is the
+    * lesser of the two errors: the other one ends somebody's match on evidence matchmaker could
+    * not confirm.
+    *
+    * A match with no time limit has no deadline to miss, and one already over has nothing left
+    * to decide — both are returned untouched without a query.
+    */
+  private def enforceTimeouts(
+      session: skunk.Session[IO],
+      gameId: GameId,
+      matchId: MatchId,
+      current: Match,
+      recheck: Boolean = true
+  ): IO[Match] =
+    if (current.completed || current.cancelled || current.timeLimit.isEmpty) IO.pure(current)
+    else
+      overdueIn(session, gameId, matchId).flatMap {
+        case Nil => IO.pure(current)
+        case _ =>
+          // `None` means the deadline could not be confirmed with the engine, which is not the
+          // same as confirming it: nothing is enforced on a match whose state matchmaker was
+          // unable to check.
+          val verified: IO[Option[Match]] =
+            if (!recheck) IO.pure(Some(current))
+            else
+              current.statusUrl match {
+                case Some(url) => applyEngineStatus(session, gameId, matchId, url).attempt.map(_.toOption)
+                // Never created in the engine, so there is nothing to ask and no way to know
+                // whether the turn was taken.
+                case None => IO.pure(None)
+              }
+
+          verified.flatMap {
+            case None => IO.pure(current)
+            case Some(checked) =>
+              if (checked.completed || checked.cancelled) IO.pure(checked)
+              else
+                overdueIn(session, gameId, matchId).flatMap {
+                  // Taken since: the status call moved the turn on, and there is nobody left to
+                  // act against.
+                  case Nil => IO.pure(checked)
+                  case overdue =>
+                    requireGame(new GameRepo[T](session), gameId).flatMap { game =>
+                      game.timeoutAction match {
+                        case TimeoutAction.Forfeit => forfeit(session, gameId, matchId, overdue.map(_.participantId).toSet)
+                      }
+                    }
+                }
+          }
+      }
+
+  /* The participants of a match whose turn it is and whose deadline has passed.
+   *
+   * Asked of the database, which compares `due` against its own now(). Whether a turn has run
+   * out is not the lambda's to decide: its clock is not the one the deadline was written by nor
+   * the one the completion will be stamped with, and two instances need not agree with each
+   * other. One clock decides, and it is the same clock throughout. */
+  private def overdueIn(session: skunk.Session[IO], gameId: GameId, matchId: MatchId): IO[List[Participant]] =
+    new ParticipantRepo(session).listOverdueForMatch(gameId, matchId)
+
+  /* Ends a match because somebody's clock ran out: the players who ran out lose, and everybody
+   * else wins by forfeit.
+   *
+   * The result rows are matchmaker's own, not the engine's — the engine has not reported a
+   * result and, having no notion of matchmaker's time limit, is not going to. They carry
+   * `forfeit`, which is how a completed-match list can say "won by forfeit" rather than merely
+   * naming a winner, and no scores: nothing was scored.
+   *
+   * Under the match's row lock and re-checked inside it, so that a forfeit racing a result
+   * callback resolves one way or the other rather than both writing a result for the same seat.
+   * A match where every seat is overdue at once ends with no winner rather than with an
+   * arbitrary one. */
+  private def forfeit(
+      session: skunk.Session[IO],
+      gameId: GameId,
+      matchId: MatchId,
+      overdue: Set[ParticipantId]
+  ): IO[Match] = {
+    val matchRepo = new MatchRepo(session)
+    val participantRepo = new ParticipantRepo(session)
+    val resultRepo = new ResultRepo(session)
+
+    session.transaction.use { _ =>
+      for {
+        locked <- requireMatchForUpdate(matchRepo, gameId, matchId)
+        updated <-
+          if (locked.completed || locked.cancelled) IO.pure(locked)
+          else
+            for {
+              participants <- participantRepo.listForMatch(gameId, matchId)
+              _ <- participants.traverse((p, _, _) =>
+                participantRepo.update(withTurn(p, pending = false, due = None, completed = true))
+              )
+              _ <- participants.traverse { (p, _, _) =>
+                val lost = overdue.contains(p.participantId)
+                resultRepo.create(
+                  Result(
+                    gameId = gameId,
+                    participantId = p.participantId,
+                    rank = if (lost) 2 else 1,
+                    scores = Map.empty,
+                    isWinner = !lost,
+                    forfeit = true
+                  )
+                )
+              }
+              completedAt <- matchRepo.complete(gameId, matchId)
+            } yield locked.copy(completedAt = Some(completedAt))
+      } yield updated
+    }
+  }
 
   private def createRequest(
       matchId: MatchId,

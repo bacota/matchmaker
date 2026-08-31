@@ -12,7 +12,11 @@ case class Result(
     participantId: ParticipantId,
     rank: Int,
     scores: Map[String, Any],
-    isWinner: Boolean
+    isWinner: Boolean,
+    // Whether the match was ended by a turn running out rather than by being played to an end.
+    // Recorded on every row of such a match, so that a row can say "won by forfeit" or
+    // "forfeited" — `isWinner` says which — without reading the rest of the table.
+    forfeit: Boolean = false
 )
 
 /** One line of a finished match's result table: who played, in which role, and how they did.
@@ -33,5 +37,6 @@ case class ParticipantResult(
     roleName: String,
     rank: Option[Int],
     scores: Map[String, Any],
-    isWinner: Boolean
+    isWinner: Boolean,
+    forfeit: Boolean = false
 )

@@ -148,7 +148,8 @@ object Router {
             r.roleName,
             r.rank,
             r.scores.view.mapValues(JsonValues.fromScala).toMap,
-            r.isWinner
+            r.isWinner,
+            r.forfeit
           )
         }))
 
