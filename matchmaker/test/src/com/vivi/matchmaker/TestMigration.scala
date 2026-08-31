@@ -13,15 +13,21 @@ object TestMigration {
   private val user = "matchmaker"
   private val password = "matchmaker"
 
-  // Runs once per forked test JVM (each spec class is forked by mill), guarded by Flyway's
-  // own advisory locking so concurrently-started JVMs don't race applying the same migration.
+  // Runs once per forked test JVM, guarded by Flyway's own advisory locking so concurrently
+  // started JVMs don't race applying the same migration.
+  //
+  // Normally there is nothing to do: `matchmaker.test` migrates once before it forks anything
+  // and says so through MATCHMAKER_TEST_MIGRATED, which is what this skips on. The Flyway call
+  // remains for the other way these specs are run — one spec from an IDE, or a module whose test
+  // task has no such step — where nothing has prepared the database and something must.
   private lazy val migrated: Unit = {
-    Flyway
-      .configure()
-      .dataSource(s"jdbc:postgresql://$host:$port/$database", user, password)
-      .locations("classpath:db/migration")
-      .load()
-      .migrate()
+    if (!sys.env.contains("MATCHMAKER_TEST_MIGRATED"))
+      Flyway
+        .configure()
+        .dataSource(s"jdbc:postgresql://$host:$port/$database", user, password)
+        .locations("classpath:db/migration")
+        .load()
+        .migrate()
     installTestTriggers()
     ()
   }
