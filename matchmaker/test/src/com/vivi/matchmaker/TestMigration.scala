@@ -38,23 +38,34 @@ object TestMigration {
    * Installed permanently instead, and harmless that way: it fires only on a match whose
    * description is 'explode', which is a value no other spec uses and no application code can
    * produce by itself.
+   *
+   * Under an advisory lock, for the same reason Flyway holds one over the migrations: `migrated`
+   * is one lazy val per JVM and mill runs several of them, so without it two `CREATE OR REPLACE
+   * FUNCTION` statements reach the same pg_proc row at once and one of them fails with "tuple
+   * concurrently updated" — in whichever unrelated spec happened to force this first.
    */
   private def installTestTriggers(): Unit = {
     val connection = DriverManager.getConnection(s"jdbc:postgresql://$host:$port/$database", user, password)
     try {
       val statement = connection.createStatement()
       try {
-        statement.execute(
-          """CREATE OR REPLACE FUNCTION fail_match_update() RETURNS trigger LANGUAGE plpgsql
-             AS 'BEGIN RAISE EXCEPTION ''match update refused by test''; END'"""
-        )
-        statement.execute(
-          """CREATE OR REPLACE TRIGGER fail_match_update_trigger BEFORE UPDATE ON match
-             FOR EACH ROW WHEN (NEW.description = 'explode') EXECUTE FUNCTION fail_match_update()"""
-        )
+        // An arbitrary constant, shared only with other JVMs running this same code.
+        statement.execute(s"SELECT pg_advisory_lock($installLockKey)")
+        try {
+          statement.execute(
+            """CREATE OR REPLACE FUNCTION fail_match_update() RETURNS trigger LANGUAGE plpgsql
+               AS 'BEGIN RAISE EXCEPTION ''match update refused by test''; END'"""
+          )
+          statement.execute(
+            """CREATE OR REPLACE TRIGGER fail_match_update_trigger BEFORE UPDATE ON match
+               FOR EACH ROW WHEN (NEW.description = 'explode') EXECUTE FUNCTION fail_match_update()"""
+          )
+        } finally statement.execute(s"SELECT pg_advisory_unlock($installLockKey)")
       } finally statement.close()
     } finally connection.close()
   }
+
+  private val installLockKey = 4711147114L
 
   def ensure(): Unit = migrated
 }
