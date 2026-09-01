@@ -63,7 +63,7 @@ class TurnRepo(session: Session[IO]) {
    * move every time somebody looks at it. Seconds as a float8, the same way `time_limit` is
    * read — skunk has no INTERVAL codec here either. */
   private val selectTimeUsed: Query[(GameId, MatchId), (ParticipantId, Double)] =
-    sql"""SELECT participant_id, EXTRACT(EPOCH FROM sum(taken_at - started_at))::float8
+    sql"""SELECT participant_id, EXTRACT(EPOCH FROM sum(GREATEST(taken_at - started_at, INTERVAL '0')))::float8
           FROM turn
           WHERE game_id = $gameId AND match_id = $matchId
           GROUP BY participant_id"""
