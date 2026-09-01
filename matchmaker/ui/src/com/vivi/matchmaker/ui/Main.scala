@@ -1097,6 +1097,7 @@ object Views {
       cls := "row",
       div(cls := "title", challenge.message),
       div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
+      timeLimitDetail(challenge),
       if (challenge.isPublic) div(cls := "detail", "public") else emptyNode,
       // Starting is the challenger's call rather than something that happens on the last
       // acceptance: a game whose remaining roles are optional may be worth starting without
@@ -1130,6 +1131,7 @@ object Views {
       cls := "row",
       div(cls := "title", challenge.message),
       div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
+      timeLimitDetail(challenge),
       roleSelect(free, role),
       if (free.isEmpty) div(cls := "detail", "every role is taken")
       else
@@ -1144,6 +1146,27 @@ object Views {
         }
     )
   }
+
+  /** The clock a challenge is offered under, said in full on every row of both lists.
+    *
+    * Both halves matter and neither is guessable from the other: ten minutes per turn and ten
+    * minutes for the whole match are very different games, and the challenge is the last place
+    * either can be seen — once it is started the terms are fixed and the match row shows only
+    * the deadline they produce. Said even when there is no limit, because "nothing here about a
+    * clock" and "no clock" are otherwise the same sight.
+    */
+  private def timeLimitDetail(challenge: OpenChallenge): HtmlElement =
+    div(
+      cls := "detail",
+      challenge.timeLimit match {
+        case None => "no time limit"
+        case Some(limit) =>
+          challenge.timeLimitKind match {
+            case TimeLimitKind.PerTurn => s"${Format.duration(limit)} per turn"
+            case TimeLimitKind.Total   => s"${Format.duration(limit)} each for the whole match"
+          }
+      }
+    )
 
   /** The roles of `game` that no acceptance of `summary` has claimed yet. */
   private def freeRoles(game: Game, summary: OpenChallengeSummary): Seq[GameRole] =
@@ -1323,6 +1346,21 @@ object Format {
     */
   def date(value: java.time.Instant): String =
     value.toString.takeWhile(_ != 'T')
+
+  /** A time limit, in the largest whole unit that says it without a fraction.
+    *
+    * Limits are offered in minutes, so minutes are the ordinary answer; hours are folded up
+    * only when the number divides evenly, since "90 minutes" is clearer than "1.5 hours" and
+    * seconds appear only for a limit that was not a whole minute to begin with.
+    */
+  def duration(value: java.time.Duration): String = {
+    val seconds = value.getSeconds
+    def plural(n: Long, unit: String) = s"$n $unit${if (n == 1) "" else "s"}"
+
+    if (seconds % 3600 == 0 && seconds >= 3600) plural(seconds / 3600, "hour")
+    else if (seconds % 60 == 0) plural(seconds / 60, "minute")
+    else plural(seconds, "second")
+  }
 
   /** A score reported by a game engine, which may be any JSON value.
     *
