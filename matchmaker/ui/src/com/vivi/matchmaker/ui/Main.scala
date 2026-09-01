@@ -510,7 +510,7 @@ object Views {
       cls := "row",
       div(cls := "title", summary.gameName),
       div(cls := "detail", summary.description),
-      if (showDue) summary.due.map(when => div(cls := "due", s"due ${Format.instant(when)}")).getOrElse(emptyNode)
+      if (showDue) summary.due.map(countdown).getOrElse(emptyNode)
       else emptyNode,
       // The rule behind that deadline, which the deadline itself does not give away: the same
       // "due" line comes of a per-turn limit and of a budget nearly spent, and they call for
@@ -1153,6 +1153,37 @@ object Views {
     )
   }
 
+  /** How long is left of the turn in front of this player, counting down while they look at it.
+    *
+    * On the "Your turn" list only, which is the one place a deadline is a thing to act on rather
+    * than a fact about a match. An instant on its own does not answer the question being asked
+    * there — "have I got time for this now?" — and answering it by subtracting one timestamp
+    * from another is work the page can do.
+    *
+    * The ticking text is hidden from assistive technology and the absolute deadline is given
+    * instead. A number that rewrites itself every second is either announced every second or
+    * read stale, and neither is the deadline: "due 14:32 UTC" is, and it does not move.
+    *
+    * The countdown is against the browser's clock, while the deadline was set by the database's
+    * — a device whose clock is minutes out will show a countdown that is minutes out with it.
+    * The server's own comparison is the one that decides a forfeit; this is a reading of it, and
+    * it is not what anybody is judged by.
+    */
+  private def countdown(deadline: java.time.Instant): HtmlElement = {
+    // Ticks only while the row is on screen: Laminar starts the stream when the element mounts
+    // and stops it when it goes, so a list that has been navigated away from costs nothing.
+    val remaining = EventStream.periodic(1000).toSignal(0).map(_ => deadline.toEpochMilli - System.currentTimeMillis())
+    div(
+      cls := "due",
+      cls("overdue") <-- remaining.map(_ <= 0),
+      span(
+        aria.hidden := true,
+        child.text <-- remaining.map(Format.remaining)
+      ),
+      span(cls := "sr-only", s"due ${Format.instant(deadline)}")
+    )
+  }
+
   /** The clock something is played under, for a challenge — every row of both lists has one. */
   private def timeLimitDetail(challenge: OpenChallenge): HtmlElement =
     timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind)
@@ -1359,6 +1390,24 @@ object Format {
     */
   def date(value: java.time.Instant): String =
     value.toString.takeWhile(_ != 'T')
+
+  /** What is left on a clock, as a clock reads: `4:31`, or `1:02:09` once there is an hour of
+    * it. Whole seconds, rounded up, so a countdown reaches "0:00" as the time runs out rather
+    * than a second before it.
+    *
+    * Nothing left is said in words rather than as `0:00`, which would go on being displayed
+    * however long the turn stayed unplayed and would read as time still on the clock.
+    */
+  def remaining(millis: Long): String =
+    if (millis <= 0) "time is up"
+    else {
+      val seconds = (millis + 999) / 1000
+      val (hours, minutes, secs) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+      val clock =
+        if (hours > 0) f"$hours:$minutes%02d:$secs%02d"
+        else f"$minutes:$secs%02d"
+      s"$clock left"
+    }
 
   /** A time limit, in the largest whole unit that says it without a fraction.
     *

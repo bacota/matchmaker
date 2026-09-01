@@ -303,6 +303,17 @@ ul {
 .due {
   color: var(--accent);
   font-size: 0.85rem;
+  /* The countdown rewrites itself every second, and proportional digits are different widths:
+     without this the text jitters sideways on every tick. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* A turn whose time has run out. It is still shown rather than removed, because the match is
+   not over until somebody looks at it and the server acts — this is the row saying what is
+   about to happen, not that it has. */
+.due.overdue {
+  color: var(--warn);
+  font-weight: 600;
 }
 
 .pending {
