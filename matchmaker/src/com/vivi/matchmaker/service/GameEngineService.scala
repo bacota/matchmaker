@@ -187,17 +187,17 @@ class GameEngineService[T](
     // Asked outside the transaction, like the engine call it is an argument to: it is the point
     // the engine reports turns from, and a turn arriving between this read and the write below
     // is simply reported again by the next status call.
-    turnRepo.latestTakenAt(gameId, matchId).flatMap { since =>
-      engine.status(statusUrl, since).flatMap { status =>
-      session.transaction.use { _ =>
-        for {
-          current <- requireMatchForUpdate(matchRepo, gameId, matchId)
-          participants <- participantRepo.listForMatch(gameId, matchId)
-          byId = participants.map((p, _, _) => p.participantId -> p).toMap
-          // Before the deadlines below, which for a total limit are computed from what each seat
-          // has spent — and what they have spent is these rows.
-          _ <- recordTurns(session, current, status.turns.filter(t => byId.contains(ParticipantId(t.participantId))), since)
-          used <- timeUsedIn(session, current)
+    turnRepo.latestTakenAt(gameId, matchId).flatMap { _ =>
+      engine.status(statusUrl, None).flatMap { status =>
+        session.transaction.use { _ =>
+          for {
+            current <- requireMatchForUpdate(matchRepo, gameId, matchId)
+            participants <- participantRepo.listForMatch(gameId, matchId)
+            byId = participants.map((p, _, _) => p.participantId -> p).toMap
+            // Before the deadlines below, which for a total limit are computed from what each seat
+            // has spent — and what they have spent is these rows.
+            _ <- recordTurns(session, current, status.turns.filter(t => byId.contains(ParticipantId(t.participantId))), since = None)
+            used <- timeUsedIn(session, current)
           _ <- status.participants.traverse { reported =>
             byId.get(ParticipantId(reported.participantId)) match {
               case Some(p) =>
