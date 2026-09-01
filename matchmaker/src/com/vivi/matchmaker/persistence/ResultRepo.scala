@@ -6,6 +6,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
+import java.time.Duration
 import com.vivi.matchmaker.model.{GameId, MatchId, ParticipantResult, ParticipantId, PlayerId, Result}
 
 class ResultRepo(session: Session[IO]) {
@@ -41,9 +42,16 @@ class ResultRepo(session: Session[IO]) {
   // winner comes first without the caller having to sort.
   private val selectResultsForPlayer: Query[
     PlayerId,
-    (GameId, MatchId, ParticipantId, String, String, Option[Int], Option[Map[String, Any]], Option[Boolean], Option[Boolean])
+    (GameId, MatchId, ParticipantId, String, String, Option[Int], Option[Map[String, Any]], Option[Boolean],
+      Option[Boolean], Double)
   ] =
-    sql"""SELECT p.game_id, p.match_id, p.participant_id, pl.nickname, gr.name, r.rank, r.scores, r.is_winner, r.forfeit
+    sql"""SELECT p.game_id, p.match_id, p.participant_id, pl.nickname, gr.name, r.rank, r.scores, r.is_winner, r.forfeit,
+                 -- How long this seat spent over its turns. A scalar subquery rather than a
+                 -- join onto turn: joining would multiply this seat's row by its every move and
+                 -- turn the whole table into something that has to be de-duplicated again.
+                 (SELECT coalesce(EXTRACT(EPOCH FROM sum(t.taken_at - t.started_at)), 0)::float8
+                    FROM turn t
+                   WHERE t.game_id = p.game_id AND t.participant_id = p.participant_id)
           FROM participant mine
           JOIN match m ON m.game_id = mine.game_id AND m.match_id = mine.match_id
           JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
@@ -52,11 +60,14 @@ class ResultRepo(session: Session[IO]) {
           LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
           WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND ((m.completed IS NOT NULL) OR m.cancelled)
           ORDER BY p.match_id, r.rank ASC NULLS LAST, p.participant_id"""
-      .query(gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text *: int4.opt *: scores.opt *: bool.opt *: bool.opt)
+      .query(
+        gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text *: int4.opt *: scores.opt *: bool.opt *:
+          bool.opt *: float8
+      )
 
   def listForPlayer(playerId: PlayerId): IO[List[ParticipantResult]] =
     session.execute(selectResultsForPlayer)(playerId).map(_.map {
-      case (game, match_, id, nickname, roleName, rank, scores, isWinner, forfeit) =>
+      case (game, match_, id, nickname, roleName, rank, scores, isWinner, forfeit, timeTakenSeconds) =>
         ParticipantResult(
           game,
           match_,
@@ -66,7 +77,8 @@ class ResultRepo(session: Session[IO]) {
           rank,
           scores.getOrElse(Map.empty),
           isWinner.getOrElse(false),
-          forfeit.getOrElse(false)
+          forfeit.getOrElse(false),
+          Duration.ofMillis((timeTakenSeconds * 1000).toLong)
         )
     })
 

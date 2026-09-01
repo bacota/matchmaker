@@ -641,6 +641,11 @@ object Views {
                 if (!row.forfeit) emptyNode
                 else if (row.isWinner) span(cls := "detail", " — won by forfeit")
                 else span(cls := "detail", " — forfeited on time"),
+                // How long they spent over their turns, all told. Only when the match has
+                // turns recorded against somebody: a match played before turns were recorded
+                // would otherwise report a table of zeroes as if everybody had moved instantly.
+                if (rows.forall(_.timeTaken.isZero)) emptyNode
+                else span(cls := "detail", s" — ${Format.spent(row.timeTaken)} on the clock"),
                 // Whatever else the engine chose to report. Which keys exist is the game's
                 // business, so they are shown as they came rather than being named here.
                 if (row.scores.isEmpty) emptyNode
@@ -1447,6 +1452,19 @@ object Format {
         else f"$minutes:$secs%02d"
       s"$clock left"
     }
+
+  /** Time spent, as a clock reads it — `4:31`, or `1:02:09` once there is an hour of it.
+    *
+    * The same shape as [[remaining]] without its trailing word, since a total at the end of a
+    * match is not counting towards anything and "left" would be wrong. Zero is `0:00` here
+    * rather than a phrase: in a table of times it is a time like the others, and it means the
+    * player never moved.
+    */
+  def spent(value: java.time.Duration): String = {
+    val seconds = value.getSeconds
+    val (hours, minutes, secs) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+    if (hours > 0) f"$hours:$minutes%02d:$secs%02d" else f"$minutes:$secs%02d"
+  }
 
   /** A time limit, in the largest whole unit that says it without a fraction.
     *

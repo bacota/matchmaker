@@ -1,5 +1,7 @@
 package com.vivi.matchmaker.model
 
+import java.time.Duration
+
 /** A participant's outcome in a game.
   *
   * `scores` is an open-ended map rather than a single number: a game may score on several axes
@@ -38,5 +40,10 @@ case class ParticipantResult(
     rank: Option[Int],
     scores: Map[String, Any],
     isWinner: Boolean,
-    forfeit: Boolean = false
+    forfeit: Boolean = false,
+    // How long this player spent over their turns, added up across the whole match. Zero both
+    // for a player who never moved and for a match played before turns were recorded — the two
+    // are not worth distinguishing to a reader, and a table of zeroes is one nothing is drawn
+    // from.
+    timeTaken: Duration = Duration.ZERO
 )

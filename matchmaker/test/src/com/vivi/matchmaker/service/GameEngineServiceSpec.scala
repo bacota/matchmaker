@@ -1033,6 +1033,43 @@ class GameEngineServiceSpec extends PropertySuite {
     }
   }
 
+  // What the completed list says about a match once it is over: the clocks are gone (nobody can
+  // spend them now), and what is left is what each player spent getting there.
+  property("a finished match reports how long each player spent over their turns") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          now <- IO.realTimeInstant
+          second = now.minusSeconds(60)
+          first = second.minusSeconds(180)
+          start = first.minusSeconds(240)
+          prepared <- playedTwice(
+            services, engine, nickname, externalId, gameExternalId, otherExternalId,
+            matchStart = start, timeLimit = Duration.ofMinutes(10), kind = TimeLimitKind.Total,
+            firstMoveAt = first, secondMoveAt = second
+          )
+          (fixture, started, mine, theirs) = prepared
+          // The engine ends it, the ordinary way a match finishes.
+          _ <- services.engine.recordResults(
+            fixture.game.gameId,
+            started.matchId,
+            List(
+              ReportedResult(mine.participantId, rank = 1, scores = Map.empty, isWinner = true),
+              ReportedResult(theirs.participantId, rank = 2, scores = Map.empty, isWinner = false)
+            ),
+            gameExternalId
+          )
+          rows <- services.matches.results(externalId)
+          mineRow = rows.find(_.participantId == mine.participantId).get
+          theirRow = rows.find(_.participantId == theirs.participantId).get
+        } yield mineRow.timeTaken == Duration.ofMinutes(4) &&
+          theirRow.timeTaken == Duration.ofMinutes(3)
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
   property("start records the first turn, so the player who moves first is told straight away") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
       val engine = new FirstTurnEngine

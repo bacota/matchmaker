@@ -180,7 +180,10 @@ object Json {
       // Whether the match ended on a clock rather than on the board. With `isWinner` this is the
       // difference between "won by forfeit" and "forfeited"; defaulted for the same reason the
       // game's action is.
-      forfeit: Boolean = false
+      forfeit: Boolean = false,
+      // How long this player spent over their turns across the whole match. Seconds on the wire,
+      // like every other Duration here; zero for a match played before turns were recorded.
+      timeTaken: Duration = Duration.ZERO
   )
 
   given ReadWriter[RegisterRequest] = macroRW
