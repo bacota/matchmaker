@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.service
 
 import cats.effect.IO
+import java.time.Duration
 import skunk.Session
 import com.vivi.matchmaker.model.{GameId, Match, MatchId, MatchSummary, ParticipantResult, PlayerClock, PlayerId, TimeLimitKind}
 import com.vivi.matchmaker.persistence.{MatchRepo, OpenChallengeRepo, PlayerRepo, ResultRepo}
@@ -104,14 +105,35 @@ class MatchService(sessionPool: SessionPool) {
     *
     * Scoped to the caller's own participation like the three lists above, so it needs no
     * authorization rule of its own — there is no parameter that could ask for anyone else's.
-    * One call covers the whole completed list; see `ResultRepo.listForPlayer`.
+    * Two queries for the whole completed list, not two per match: the rows of the table, and
+    * what each seat spent getting there.
     */
   def results(callerExternalId: String): IO[List[ParticipantResult]] =
     sessionPool.use { session =>
+      val resultRepo = new ResultRepo(session)
       for {
         caller <- resolveCaller(session, callerExternalId)
-        results <- new ResultRepo(session).listForPlayer(caller.playerId)
-      } yield results
+        rows <- resultRepo.listForPlayer(caller.playerId)
+        spent <- resultRepo.timeTakenForPlayer(caller.playerId)
+      } yield {
+        val byParticipant = spent.map(row => (row.gameId, row.participantId) -> row.timeTaken).toMap
+        rows.map { row =>
+          ParticipantResult(
+            row.gameId,
+            row.matchId,
+            row.participantId,
+            row.nickname,
+            row.roleName,
+            row.rank,
+            row.scores,
+            row.isWinner,
+            row.forfeit,
+            // Absent means nothing was recorded against this seat, which reads as zero — both
+            // for a player who never moved and for a match played before turns were kept.
+            byParticipant.getOrElse((row.gameId, row.participantId), Duration.ZERO)
+          )
+        }
+      }
     }
 
   /** Calls a match off, at the request of the player who created it.

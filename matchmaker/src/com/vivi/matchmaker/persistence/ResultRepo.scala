@@ -7,7 +7,8 @@ import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import java.time.Duration
-import com.vivi.matchmaker.model.{GameId, MatchId, ParticipantResult, ParticipantId, PlayerId, Result}
+import com.vivi.matchmaker.model.{GameId, MatchId, ParticipantId, PlayerId, Result}
+import ResultRepo.{ParticipantResultRow, TimeTakenRow}
 
 class ResultRepo(session: Session[IO]) {
   private val gameId = SkunkIdCodecs.gameId
@@ -43,15 +44,9 @@ class ResultRepo(session: Session[IO]) {
   private val selectResultsForPlayer: Query[
     PlayerId,
     (GameId, MatchId, ParticipantId, String, String, Option[Int], Option[Map[String, Any]], Option[Boolean],
-      Option[Boolean], Double)
+      Option[Boolean])
   ] =
-    sql"""SELECT p.game_id, p.match_id, p.participant_id, pl.nickname, gr.name, r.rank, r.scores, r.is_winner, r.forfeit,
-                 -- How long this seat spent over its turns. A scalar subquery rather than a
-                 -- join onto turn: joining would multiply this seat's row by its every move and
-                 -- turn the whole table into something that has to be de-duplicated again.
-                 (SELECT coalesce(EXTRACT(EPOCH FROM sum(GREATEST(t.taken_at - t.started_at, INTERVAL '0'))), 0)::float8
-                    FROM turn t
-                   WHERE t.game_id = p.game_id AND t.participant_id = p.participant_id)
+    sql"""SELECT p.game_id, p.match_id, p.participant_id, pl.nickname, gr.name, r.rank, r.scores, r.is_winner, r.forfeit
           FROM participant mine
           JOIN match m ON m.game_id = mine.game_id AND m.match_id = mine.match_id
           JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
@@ -62,13 +57,19 @@ class ResultRepo(session: Session[IO]) {
           ORDER BY p.match_id, r.rank ASC NULLS LAST, p.participant_id"""
       .query(
         gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text *: int4.opt *: scores.opt *: bool.opt *:
-          bool.opt *: float8
+          bool.opt
       )
 
-  def listForPlayer(playerId: PlayerId): IO[List[ParticipantResult]] =
+  /** Every seat of every finished match this player is in, with its outcome — one row per seat,
+    * the winner of each match first.
+    *
+    * What a seat *spent* is not here: see [[timeTakenForPlayer]], which is the other half of a
+    * result row and is asked for separately.
+    */
+  def listForPlayer(playerId: PlayerId): IO[List[ParticipantResultRow]] =
     session.execute(selectResultsForPlayer)(playerId).map(_.map {
-      case (game, match_, id, nickname, roleName, rank, scores, isWinner, forfeit, timeTakenSeconds) =>
-        ParticipantResult(
+      case (game, match_, id, nickname, roleName, rank, scores, isWinner, forfeit) =>
+        ParticipantResultRow(
           game,
           match_,
           id,
@@ -77,9 +78,39 @@ class ResultRepo(session: Session[IO]) {
           rank,
           scores.getOrElse(Map.empty),
           isWinner.getOrElse(false),
-          forfeit.getOrElse(false),
-          Duration.ofMillis((timeTakenSeconds * 1000).toLong)
+          forfeit.getOrElse(false)
         )
+    })
+
+  /* How long each seat spent over its turns, across the caller's finished matches.
+   *
+   * Its own query rather than a column of the one above, and an aggregate rather than a join,
+   * for the same reason `MatchRepo.clocksForPlayer` is: this is a sum over every turn a seat has
+   * taken, and joining `turn` into the result list would multiply each seat's row by its every
+   * move for the caller to add up again — a long match would cross the wire once per move, per
+   * seat, per time anybody opened their history.
+   *
+   * Seats with no turns recorded are simply absent; the caller reads it through
+   * `getOrElse(Duration.ZERO)`, which is the right answer both for a player who never moved and
+   * for a match played before turns were recorded. GREATEST clamps a turn the engine reported as
+   * taken before it started, matching `Turn.elapsed`: two clocks disagreeing is not a refund. */
+  private val selectTimeTakenForPlayer: Query[PlayerId, (GameId, ParticipantId, Double)] =
+    sql"""SELECT t.game_id, t.participant_id,
+                 EXTRACT(EPOCH FROM sum(GREATEST(t.taken_at - t.started_at, INTERVAL '0')))::float8
+          FROM turn t
+          JOIN participant p ON p.game_id = t.game_id AND p.participant_id = t.participant_id
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          WHERE ((m.completed IS NOT NULL) OR m.cancelled)
+            AND EXISTS (SELECT 1 FROM participant mine
+                         WHERE mine.game_id = m.game_id AND mine.match_id = m.match_id
+                           AND mine.player_id = ${SkunkIdCodecs.playerId})
+          GROUP BY t.game_id, t.participant_id"""
+      .query(gameId *: participantId *: float8)
+
+  /** What each seat of the caller's finished matches spent, by seat. */
+  def timeTakenForPlayer(playerId: PlayerId): IO[List[TimeTakenRow]] =
+    session.execute(selectTimeTakenForPlayer)(playerId).map(_.map { case (gameId, participantId, seconds) =>
+      TimeTakenRow(gameId, participantId, Duration.ofMillis((seconds * 1000).toLong))
     })
 
   def create(result: Result): IO[Result] =
@@ -100,4 +131,29 @@ class ResultRepo(session: Session[IO]) {
         (result.rank, result.scores, result.isWinner, result.forfeit, result.gameId, result.participantId)
       )
       .void
+}
+
+object ResultRepo {
+
+  /** One line of a finished match's result table as the join returns it: who played, in which
+    * role, and how they did.
+    *
+    * Everything here is a column of a row that exists — the reading of them, and the time each
+    * seat spent, are put together into a [[com.vivi.matchmaker.model.ParticipantResult]] by the
+    * service.
+    */
+  case class ParticipantResultRow(
+      gameId: GameId,
+      matchId: MatchId,
+      participantId: ParticipantId,
+      nickname: String,
+      roleName: String,
+      rank: Option[Int],
+      scores: Map[String, Any],
+      isWinner: Boolean,
+      forfeit: Boolean
+  )
+
+  /** What one seat spent over its turns, all told. */
+  case class TimeTakenRow(gameId: GameId, participantId: ParticipantId, timeTaken: Duration)
 }
