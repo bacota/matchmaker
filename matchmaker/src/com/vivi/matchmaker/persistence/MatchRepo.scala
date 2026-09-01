@@ -133,14 +133,15 @@ class MatchRepo(session: Session[IO]) {
   // from Tuple outside the scope that defines it. character_id is nullable: a 'P'-type game's
   // participant has no character_participant row at all.
   private val summaryColumns =
-    gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: instant.opt *: int8 *: int8.opt *: bool
+    gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: instant.opt *: int8 *: int8.opt *:
+      bool *: float8.opt *: timeLimitKind
 
   private def toSummary(
       row: (GameId, MatchId, String, String, Option[Instant], Boolean, Boolean, Instant, Option[Instant], Long,
-        Option[Long], Boolean)
+        Option[Long], Boolean, Option[Double], TimeLimitKind)
   ): MatchSummary = {
     val (gameId, matchId, gameName, description, completedAt, cancelled, isCreator, start, due, participantId,
-      characterId, pending) = row
+      characterId, pending, timeLimitSeconds, timeLimitKind) = row
     MatchSummary(
       gameId,
       matchId,
@@ -153,7 +154,9 @@ class MatchRepo(session: Session[IO]) {
       due,
       pending,
       ParticipantId(participantId),
-      characterId.map(CharacterId.apply)
+      characterId.map(CharacterId.apply),
+      fromSeconds(timeLimitSeconds),
+      timeLimitKind
     )
   }
 
@@ -163,7 +166,8 @@ class MatchRepo(session: Session[IO]) {
   private val selectActiveForPlayer =
     sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
-                 p.due, p.participant_id, cp.character_id, p.pending
+                 p.due, p.participant_id, cp.character_id, p.pending,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -187,7 +191,8 @@ class MatchRepo(session: Session[IO]) {
   private val selectOverForPlayer =
     sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
-                 p.due, p.participant_id, cp.character_id, p.pending
+                 p.due, p.participant_id, cp.character_id, p.pending,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -200,7 +205,8 @@ class MatchRepo(session: Session[IO]) {
   private val selectDueForPlayer =
     sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
-                 p.due, p.participant_id, cp.character_id, p.pending
+                 p.due, p.participant_id, cp.character_id, p.pending,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id

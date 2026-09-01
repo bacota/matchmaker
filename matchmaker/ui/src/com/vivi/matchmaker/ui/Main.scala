@@ -512,6 +512,12 @@ object Views {
       div(cls := "detail", summary.description),
       if (showDue) summary.due.map(when => div(cls := "due", s"due ${Format.instant(when)}")).getOrElse(emptyNode)
       else emptyNode,
+      // The rule behind that deadline, which the deadline itself does not give away: the same
+      // "due" line comes of a per-turn limit and of a budget nearly spent, and they call for
+      // opposite decisions. Shown only while the match is being played — the terms of a game
+      // that is over are history nobody can act on, and the result table is what that row is
+      // for.
+      if (summary.completed || summary.cancelled) emptyNode else timeLimitDetail(summary.timeLimit, summary.timeLimitKind),
       // `pending` means it is this player's turn: it is the flag the "Your turn" list selects
       // on, so saying it there would repeat the heading on every row. Said here only for the
       // matches still being played — a finished match has no turn to be waiting for.
@@ -1147,21 +1153,28 @@ object Views {
     )
   }
 
-  /** The clock a challenge is offered under, said in full on every row of both lists.
+  /** The clock something is played under, for a challenge — every row of both lists has one. */
+  private def timeLimitDetail(challenge: OpenChallenge): HtmlElement =
+    timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind)
+
+  /** The clock something is played under, said in full wherever it is said at all.
     *
     * Both halves matter and neither is guessable from the other: ten minutes per turn and ten
-    * minutes for the whole match are very different games, and the challenge is the last place
-    * either can be seen — once it is started the terms are fixed and the match row shows only
-    * the deadline they produce. Said even when there is no limit, because "nothing here about a
-    * clock" and "no clock" are otherwise the same sight.
+    * minutes for the whole match are very different games. On a challenge it is the terms being
+    * offered; on a running match it is the rule behind the deadline, which the deadline alone
+    * does not give away — the same "due" line comes of a fresh per-turn limit and of a budget
+    * with a minute left in it.
+    *
+    * Said even when there is no limit, because "nothing here about a clock" and "no clock" are
+    * otherwise the same sight.
     */
-  private def timeLimitDetail(challenge: OpenChallenge): HtmlElement =
+  private def timeLimitDetail(limit: Option[java.time.Duration], kind: TimeLimitKind): HtmlElement =
     div(
       cls := "detail",
-      challenge.timeLimit match {
+      limit match {
         case None => "no time limit"
         case Some(limit) =>
-          challenge.timeLimitKind match {
+          kind match {
             case TimeLimitKind.PerTurn => s"${Format.duration(limit)} per turn"
             case TimeLimitKind.Total   => s"${Format.duration(limit)} each for the whole match"
           }

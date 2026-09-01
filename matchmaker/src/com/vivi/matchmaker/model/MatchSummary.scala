@@ -1,6 +1,6 @@
 package com.vivi.matchmaker.model
 
-import java.time.Instant
+import java.time.{Duration, Instant}
 
 /** One row of a player's match list: the match, the game it belongs to, and the player's own
   * participation in it. This is a read model assembled by joining participant, match, and game
@@ -34,7 +34,13 @@ case class MatchSummary(
     due: Option[Instant],
     pending: Boolean,
     participantId: ParticipantId,
-    characterId: Option[CharacterId]
+    characterId: Option[CharacterId],
+    // The clock this match is being played under, carried from the challenge it was started
+    // from. `due` says when this player's current turn runs out; these say what rule produced
+    // it, which is not recoverable from the deadline alone — and they are the only statement of
+    // the terms once the challenge that set them is no longer on screen.
+    timeLimit: Option[Duration] = None,
+    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn
 ) {
 
   /** Whether the match was played to an end. */
