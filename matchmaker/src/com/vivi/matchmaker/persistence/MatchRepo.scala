@@ -269,13 +269,64 @@ class MatchRepo(session: Session[IO]) {
           ORDER BY p.due ASC NULLS LAST, m.start DESC"""
       .query(summaryColumns)
 
+  /* What each seat has left of a chess-clock budget, across the caller's running matches.
+   *
+   * A second query rather than more columns on the summary, because this is a list per match
+   * rather than another fact about one: a row of the summary is one seat's, and these are all of
+   * them. One query for the whole list either way — not one per match.
+   *
+   * The balance is the match's limit less the turns that seat has finished, which is a LEFT JOIN
+   * so a player who has not moved yet has their whole budget rather than no row. Restricted to
+   * matches under a total limit: there is no balance to run down under a per-turn one.
+   *
+   * `due` comes along so the caller can tell the player on the clock from the rest — theirs is
+   * the balance that is being spent as it is read. */
+  private val selectClocksForPlayer: Query[PlayerId, (GameId, MatchId, String, Double, Option[Instant])] =
+    sql"""SELECT p.game_id, p.match_id, pl.nickname,
+                 EXTRACT(EPOCH FROM (m.time_limit - coalesce(sum(t.taken_at - t.started_at), INTERVAL '0')))::float8,
+                 p.due
+          FROM participant p
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN player pl ON pl.player_id = p.player_id
+          LEFT JOIN turn t ON t.game_id = p.game_id AND t.participant_id = p.participant_id
+          WHERE m.completed IS NULL AND NOT m.cancelled
+            AND m.time_limit IS NOT NULL AND m.time_limit_kind = 'TOTAL'
+            AND EXISTS (SELECT 1 FROM participant mine
+                         WHERE mine.game_id = p.game_id AND mine.match_id = p.match_id
+                           AND mine.player_id = $playerId)
+          GROUP BY p.game_id, p.match_id, p.participant_id, pl.nickname, p.due, m.time_limit
+          ORDER BY p.participant_id"""
+      .query(gameId *: matchId *: text *: float8 *: instant.opt)
+
   /** Every match the player is in, either still running (`over = false`) or over — where over
     * means completed or cancelled. Two queries rather than one parameterized by `over`, because
     * the two lists are read for different reasons and are ordered differently: what is urgent
     * first, or what finished most recently first.
+    *
+    * A running match under a chess clock also carries what every seat has left. The over list
+    * does not: a finished match's clocks are not something anybody can spend.
     */
   def listForPlayer(playerId: PlayerId, over: Boolean): IO[List[MatchSummary]] =
-    session.execute(if (over) selectOverForPlayer else selectActiveForPlayer)(playerId).map(_.map(toSummary))
+    session.execute(if (over) selectOverForPlayer else selectActiveForPlayer)(playerId).map(_.map(toSummary)).flatMap {
+      summaries =>
+        // Asked for at all only when one of the matches is played under a chess clock, which
+        // most are not.
+        if (over || !summaries.exists(s => s.timeLimit.isDefined && s.timeLimitKind == TimeLimitKind.Total))
+          IO.pure(summaries)
+        else withClocks(playerId, summaries)
+    }
+
+  private def withClocks(playerId: PlayerId, summaries: List[MatchSummary]): IO[List[MatchSummary]] =
+    session.execute(selectClocksForPlayer)(playerId).map { rows =>
+      val byMatch = rows
+        .groupBy((gameId, matchId, _, _, _) => (gameId, matchId))
+        .view
+        .mapValues(_.map { case (_, _, nickname, seconds, due) =>
+          PlayerClock(nickname, Duration.ofMillis((seconds * 1000).toLong), due)
+        })
+        .toMap
+      summaries.map(s => byMatch.get((s.gameId, s.matchId)).fold(s)(clocks => s.copy(clocks = clocks)))
+    }
 
   /** The running matches in which it is this player's turn. */
   def listDueForPlayer(playerId: PlayerId): IO[List[MatchSummary]] =

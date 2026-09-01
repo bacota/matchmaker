@@ -52,7 +52,11 @@ case class MatchSummary(
     // When the turn now being taken runs out — the earliest deadline among the players named in
     // `whoseTurn`, which for a one-at-a-time game is simply that player's. Distinct from `due`,
     // which is the caller's own and is empty while it is somebody else's move.
-    turnDue: Option[Instant] = None
+    turnDue: Option[Instant] = None,
+    // What is left on each player's clock, for a match played under a total (chess clock) limit
+    // and empty for every other kind — a per-turn limit gives everyone the whole limit again on
+    // every move, so there is no balance to run down and nothing to show.
+    clocks: Seq[PlayerClock] = Nil
 ) {
 
   /** Whether the match was played to an end. */

@@ -975,6 +975,64 @@ class GameEngineServiceSpec extends PropertySuite {
     }
   }
 
+  // The chess clock made visible: what each player has left to last the rest of the match on,
+  // which the turn's deadline does not say and cannot be worked out from.
+  property("an active match under a total limit carries every player's remaining time") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          now <- IO.realTimeInstant
+          second = now.minusSeconds(60)
+          first = second.minusSeconds(180)
+          start = first.minusSeconds(240)
+          prepared <- playedTwice(
+            services, engine, nickname, externalId, gameExternalId, otherExternalId,
+            matchStart = start, timeLimit = Duration.ofMinutes(10), kind = TimeLimitKind.Total,
+            firstMoveAt = first, secondMoveAt = second
+          )
+          (_, started, mine, _) = prepared
+          rows <- services.matches.active(otherExternalId)
+          row = rows.find(_.matchId == started.matchId).get
+          byName = row.clocks.map(c => c.nickname -> c).toMap
+          participants <- participantsOf(started)
+          challengerDue = participants.find(_.participantId == mine.participantId).get.due
+        } yield row.clocks.sizeIs == 2 &&
+          // The challenger spent four minutes on the opening and is on the clock now, so their
+          // balance is six and it comes with the deadline it is being spent against.
+          byName.get(nickname).exists(c => c.remaining == Duration.ofMinutes(6) && c.deadline == challengerDue) &&
+          // The opponent took three minutes and is waiting: seven left, and no deadline, since
+          // nothing is being spent while it is not their move.
+          byName.get(s"other-$nickname").exists(c => c.remaining == Duration.ofMinutes(7) && c.deadline.isEmpty)
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // A per-turn limit hands the whole limit back on every move, so there is no balance to run
+  // down and nothing for a reader to draw.
+  property("a match under a per-turn limit carries no clocks at all") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          now <- IO.realTimeInstant
+          second = now.minusSeconds(60)
+          first = second.minusSeconds(180)
+          start = first.minusSeconds(240)
+          prepared <- playedTwice(
+            services, engine, nickname, externalId, gameExternalId, otherExternalId,
+            matchStart = start, timeLimit = Duration.ofMinutes(10), kind = TimeLimitKind.PerTurn,
+            firstMoveAt = first, secondMoveAt = second
+          )
+          (_, started, _, _) = prepared
+          rows <- services.matches.active(otherExternalId)
+        } yield rows.find(_.matchId == started.matchId).exists(_.clocks.isEmpty)
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
   property("start records the first turn, so the player who moves first is told straight away") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
       val engine = new FirstTurnEngine

@@ -322,6 +322,29 @@ ul {
   font-style: italic;
 }
 
+/* Each player's remaining time under a chess clock. A list rather than a table: it is two or
+   three name/time pairs, and a table would bring headers and a caption to say what "name" and
+   "time" mean. */
+.clocks {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+}
+
+.clock {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.85rem;
+}
+
+/* The times line up under each other whatever the names are, so two balances can be compared at
+   a glance rather than read one at a time. */
+.clock .who {
+  min-width: 8rem;
+  color: var(--muted);
+}
+
 /* How a finished match ended. Indented like .detail-panel, because it is the same kind of
    thing: the row's own detail rather than a list of its own. */
 .results {

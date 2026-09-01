@@ -533,6 +533,11 @@ object Views {
       // is the more useful thing to know about a match you cannot move in.
       if (showDue || summary.completed || summary.cancelled) emptyNode
       else summary.turnDue.map(countdown).getOrElse(emptyNode),
+      // Under a chess clock the deadline above is only half the story: it says when this turn
+      // runs out, not how much either player has to last the rest of the match on. Empty for
+      // every other kind of limit, so nothing is drawn.
+      if (showDue || summary.completed || summary.cancelled || summary.clocks.isEmpty) emptyNode
+      else clockTable(summary.clocks),
       // A cancelled match is over and has no result, so it sits in the completed list; without
       // this it would be indistinguishable from one that was played to an end.
       if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
@@ -1192,6 +1197,31 @@ object Views {
       span(cls := "sr-only", s"due ${Format.instant(deadline)}")
     )
   }
+
+  /** What every player has left of a chess-clock budget.
+    *
+    * The player on the clock is shown their deadline, counting down, because their balance is
+    * being spent as it is read; everybody else is shown a balance, which is not moving and would
+    * be a lie if it ticked. That is the same distinction `PlayerClock.deadline` draws, and it is
+    * drawn there rather than here so the server and the page cannot disagree about who is
+    * spending.
+    */
+  private def clockTable(clocks: Seq[PlayerClock]): HtmlElement =
+    ul(
+      cls := "clocks",
+      clocks.map { clock =>
+        li(
+          cls := "clock",
+          span(cls := "who", clock.nickname),
+          clock.deadline match {
+            case Some(deadline) => countdown(deadline)
+            // Said as a balance rather than as a countdown: "6:00 left" of a clock that is not
+            // running is a fact, and it stays true until this player moves again.
+            case None => span(cls := "detail", Format.remaining(clock.remaining.toMillis))
+          }
+        )
+      }
+    )
 
   /** The clock something is played under, for a challenge — every row of both lists has one. */
   private def timeLimitDetail(challenge: OpenChallenge): HtmlElement =
