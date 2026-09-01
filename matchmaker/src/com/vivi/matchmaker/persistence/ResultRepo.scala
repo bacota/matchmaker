@@ -49,7 +49,7 @@ class ResultRepo(session: Session[IO]) {
                  -- How long this seat spent over its turns. A scalar subquery rather than a
                  -- join onto turn: joining would multiply this seat's row by its every move and
                  -- turn the whole table into something that has to be de-duplicated again.
-                 (SELECT coalesce(EXTRACT(EPOCH FROM sum(t.taken_at - t.started_at)), 0)::float8
+                 (SELECT coalesce(EXTRACT(EPOCH FROM sum(GREATEST(t.taken_at - t.started_at, INTERVAL '0'))), 0)::float8
                     FROM turn t
                    WHERE t.game_id = p.game_id AND t.participant_id = p.participant_id)
           FROM participant mine
