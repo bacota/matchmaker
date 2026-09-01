@@ -16,6 +16,9 @@ sealed trait OpenChallenge {
   def message: String
   def start: Option[Instant]
   def timeLimit: Option[Duration]
+
+  /** Whether [[timeLimit]] is per turn or the player's budget for the whole match. */
+  def timeLimitKind: TimeLimitKind
   def settings: String
   def gameId: GameId
 
@@ -44,7 +47,8 @@ case class PlainOpenChallenge(
     settings: String,
     gameId: GameId,
     isPublic: Boolean = false,
-    gameRoleId: GameRoleId
+    gameRoleId: GameRoleId,
+    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn
 ) extends OpenChallenge
 
 case class CharacterOpenChallenge(
@@ -57,7 +61,8 @@ case class CharacterOpenChallenge(
     gameId: GameId,
     characterId: CharacterId,
     isPublic: Boolean = false,
-    gameRoleId: GameRoleId
+    gameRoleId: GameRoleId,
+    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn
 ) extends OpenChallenge
 
 /** An open challenge together with how many players have accepted it so far.

@@ -124,6 +124,10 @@ class GameEngineService[T](
               completedAt = None,
               start = challenge.start.getOrElse(Instant.now()),
               timeLimit = challenge.timeLimit,
+              // Carried forward with the limit itself: the terms a match is played under are the
+              // ones its challenge was offered on, and editing the challenge later must not
+              // change them.
+              timeLimitKind = challenge.timeLimitKind,
               settings = challenge.settings,
               isPublic = challenge.isPublic
             )
@@ -179,16 +183,27 @@ class GameEngineService[T](
   ): IO[Match] = {
     val matchRepo = new MatchRepo(session)
     val participantRepo = new ParticipantRepo(session)
-    engine.status(statusUrl).flatMap { status =>
+    val turnRepo = new TurnRepo(session)
+    // Asked outside the transaction, like the engine call it is an argument to: it is the point
+    // the engine reports turns from, and a turn arriving between this read and the write below
+    // is simply reported again by the next status call.
+    turnRepo.latestTakenAt(gameId, matchId).flatMap { since =>
+      engine.status(statusUrl, since).flatMap { status =>
       session.transaction.use { _ =>
         for {
           current <- requireMatchForUpdate(matchRepo, gameId, matchId)
           participants <- participantRepo.listForMatch(gameId, matchId)
           byId = participants.map((p, _, _) => p.participantId -> p).toMap
+          // Before the deadlines below, which for a total limit are computed from what each seat
+          // has spent — and what they have spent is these rows.
+          _ <- recordTurns(session, current, status.turns.filter(t => byId.contains(ParticipantId(t.participantId))), since)
+          used <- timeUsedIn(session, current)
           _ <- status.participants.traverse { reported =>
             byId.get(ParticipantId(reported.participantId)) match {
               case Some(p) =>
-                participantRepo.update(withTurn(p, reported.pending, dueFrom(current, reported.prevMoveAt), reported.completed))
+                participantRepo.update(
+                  withTurn(p, reported.pending, dueFor(current, used)(p.participantId, reported.prevMoveAt), reported.completed)
+                )
               // The engine reporting a seat matchmaker does not have is the engine's
               // problem to explain, not a reason to abandon the seats it does have.
               case None => IO.unit
@@ -207,8 +222,47 @@ class GameEngineService[T](
           updated = current.copy(completedAt = completedAt)
         } yield updated
       }
+      }
     }
   }
+
+  /* Writes the turns an engine has just reported, oldest first.
+   *
+   * A turn costs the time between its own `takenAt` and the moment that player's clock started,
+   * which is the move before it in the match. The engine may say so itself; when it does not,
+   * the previous turn is taken from this batch, or — for the first turn of all — from the
+   * match's start, which is when the first player's clock began.
+   *
+   * `since` is the latest turn already recorded, so it is the predecessor of the first turn in
+   * the batch. Every insert is idempotent, which is what makes it safe for the ordinary case:
+   * the move callback recorded this turn already, and this is the same turn arriving again. */
+  private def recordTurns(
+      session: skunk.Session[IO],
+      m: Match,
+      turns: List[EngineTurn],
+      since: Option[Instant]
+  ): IO[Unit] = {
+    val turnRepo = new TurnRepo(session)
+    turns
+      .sortBy(_.takenAt)
+      .foldLeft(IO.pure(since.getOrElse(m.start))) { (previous, reported) =>
+        previous.flatMap { prev =>
+          val startedAt = reported.startedAt.getOrElse(prev)
+          turnRepo
+            .create(Turn(m.gameId, m.matchId, ParticipantId(reported.participantId), reported.takenAt, startedAt))
+            .as(reported.takenAt)
+        }
+      }
+      .void
+  }
+
+  /* What each seat has spent on the turns it has finished — needed only by a total limit, and
+   * not asked for otherwise: a per-turn deadline does not depend on the turns before it, and a
+   * match with no limit at all has no deadline to compute. */
+  private def timeUsedIn(session: skunk.Session[IO], m: Match): IO[Map[ParticipantId, java.time.Duration]] =
+    if (m.timeLimit.isDefined && m.timeLimitKind == TimeLimitKind.Total)
+      new TurnRepo(session).timeUsed(m.gameId, m.matchId)
+    else IO.pure(Map.empty)
 
   /* The last step of a start: record the urls the engine gave back.
    *
@@ -235,7 +289,9 @@ class GameEngineService[T](
   private def undo(session: skunk.Session[IO], gameId: GameId, challengeId: ChallengeId, matchId: MatchId): IO[Unit] =
     session.transaction
       .use { _ =>
-        new ParticipantRepo(session).deleteForMatch(gameId, matchId) *>
+        // Turns first: they reference the participants, which reference the match.
+        new TurnRepo(session).deleteForMatch(gameId, matchId) *>
+          new ParticipantRepo(session).deleteForMatch(gameId, matchId) *>
           new MatchRepo(session).delete(gameId, matchId) *>
           // Releasing the claim is what makes "try again" true: the challenge is standing and
           // startable once more. If this is the part that fails, the challenge stays claimed and
@@ -268,6 +324,7 @@ class GameEngineService[T](
       val gameRepo = new GameRepo[T](session)
       val matchRepo = new MatchRepo(session)
       val participantRepo = new ParticipantRepo(session)
+      val turnRepo = new TurnRepo(session)
       session.transaction.use { _ =>
         for {
           _ <- authorizeGame(gameRepo, gameId, callerExternalId)
@@ -282,10 +339,25 @@ class GameEngineService[T](
             ConflictError(s"match ${matchId.value} was cancelled and is no longer accepting moves")
           )
           mover <- requireParticipant(participantRepo, gameId, matchId, moved)
+          // The move itself, recorded as a turn. `prevMoveAt` is when it was made, and the turn
+          // before it in the match is when this player's clock started — the match's own start
+          // for the first move of all. An engine that sends no time sends no turn: there is
+          // nothing to charge anyone for, and a status call will report it later with one.
+          _ <- prevMoveAt.traverse_ { at =>
+            turnRepo.latestTakenAt(gameId, matchId).flatMap { last =>
+              turnRepo.create(Turn(gameId, matchId, moved, at, last.filter(_.isBefore(at)).getOrElse(existing.start)))
+            }
+          }
+          // After the turn above is recorded, since under a total limit the next player's
+          // deadline is what is left of their budget — and the mover's turn has just spent some
+          // of theirs.
+          used <- timeUsedIn(session, existing)
           _ <- participantRepo.update(withTurn(mover, pending = false, due = None))
           _ <- next.traverse { id =>
             requireParticipant(participantRepo, gameId, matchId, id)
-              .flatMap(p => participantRepo.update(withTurn(p, pending = true, due = dueFrom(existing, prevMoveAt))))
+              .flatMap(p =>
+                participantRepo.update(withTurn(p, pending = true, due = dueFor(existing, used)(id, prevMoveAt)))
+              )
           }
         } yield ()
       }
@@ -611,12 +683,31 @@ class GameEngineService[T](
     * The engine says when a participant's turn began; how long they get is the match's business,
     * since the time limit came from the challenge rather than from the engine. A match with no
     * time limit has no deadline at all — there is nothing to run out.
+    *
+    * Under a per-turn limit that is the whole calculation: every turn gets the limit, and what
+    * happened before it does not matter. Under a total limit the player is spending one budget
+    * across the match, so what is left of it is the limit minus what `used` says they have
+    * already spent — which is why the deadline is still a single instant on the participant row,
+    * and why everything downstream (the overdue query, the forfeit, the database's clock
+    * deciding both) is untouched by the difference.
+    *
+    * A player with nothing left is due at the moment their turn began, i.e. already overdue.
+    * Their clock ran out while it was somebody else's move, and they are out of time whenever
+    * anybody next looks.
     */
-  private def dueFrom(m: Match, prevMoveAt: Option[Instant]): Option[Instant] =
+  private def dueFor(m: Match, used: Map[ParticipantId, java.time.Duration])(
+      participantId: ParticipantId,
+      prevMoveAt: Option[Instant]
+  ): Option[Instant] =
     for {
       at <- prevMoveAt
       limit <- m.timeLimit
-    } yield at.plus(limit)
+    } yield m.timeLimitKind match {
+      case TimeLimitKind.PerTurn => at.plus(limit)
+      case TimeLimitKind.Total =>
+        val remaining = limit.minus(used.getOrElse(participantId, java.time.Duration.ZERO))
+        if (remaining.isNegative) at else at.plus(remaining)
+    }
 
   private def withTurn(p: Participant, pending: Boolean, due: Option[Instant], completed: Boolean = false): Participant =
     p match {

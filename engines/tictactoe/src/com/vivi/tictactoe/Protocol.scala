@@ -49,7 +49,18 @@ object Protocol {
       prevMoveAt: Option[Instant]
   )
 
-  case class GameStatusResponse(completed: Boolean, participants: List[EngineParticipantStatus])
+  /** One move, as reported to a status call. `startedAt` is when that player's clock started
+    * for it — this engine knows it exactly (it is the move before) so it says so rather than
+    * leaving matchmaker to infer it.
+    */
+  case class EngineTurn(participantId: Long, takenAt: Instant, startedAt: Option[Instant] = None)
+
+  /** `turns` are the moves made after the `since` the status call asked from, oldest first. */
+  case class GameStatusResponse(
+      completed: Boolean,
+      participants: List[EngineParticipantStatus],
+      turns: List[EngineTurn] = Nil
+  )
 
   // ---- what the engine calls back with --------------------------------------------------
 
@@ -74,6 +85,7 @@ object Protocol {
   given ReadWriter[CreateGameRequest] = macroRW
   given ReadWriter[CreateGameResponse] = macroRW
   given ReadWriter[EngineParticipantStatus] = macroRW
+  given ReadWriter[EngineTurn] = macroRW
   given ReadWriter[GameStatusResponse] = macroRW
   given ReadWriter[MoveNotification] = macroRW
   given ReadWriter[ResultEntry] = macroRW

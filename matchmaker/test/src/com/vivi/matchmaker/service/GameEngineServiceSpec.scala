@@ -12,7 +12,7 @@ import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, GameRepo, OpenChallengeRepo, ParticipantRepo, ResultRepo, TestSession}
+import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, GameRepo, OpenChallengeRepo, ParticipantRepo, ResultRepo, TestSession, TurnRepo}
 
 /** The game-engine interaction, end to end against the real database with a stubbed engine.
   *
@@ -43,7 +43,7 @@ class GameEngineServiceSpec extends PropertySuite {
       if (fail) IO.raiseError(GameEngineError("engine is down"))
       else IO { lastRequest = Some(request); lastUrl = Some(gameUrl) }.as(response)
 
-    def status(statusUrl: String): IO[GameStatusResponse] = IO.pure(status)
+    def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] = IO.pure(status)
   }
 
   /** An engine that answers a status call by naming the seat it was given first as the one to
@@ -58,7 +58,7 @@ class GameEngineServiceSpec extends PropertySuite {
       IO { firstSeat = request.players.headOption.map(_.participantId) }
         .as(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
 
-    def status(statusUrl: String): IO[GameStatusResponse] =
+    def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] =
       IO.pure(
         GameStatusResponse(
           completed = false,
@@ -86,7 +86,7 @@ class GameEngineServiceSpec extends PropertySuite {
         else IO.pure(response)
       }
 
-    def status(statusUrl: String): IO[GameStatusResponse] = IO.pure(GameStatusResponse(completed = false, participants = Nil))
+    def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] = IO.pure(GameStatusResponse(completed = false, participants = Nil))
   }
 
   private def genUniqueString: Gen[String] =
@@ -127,19 +127,22 @@ class GameEngineServiceSpec extends PropertySuite {
       fixture: Fixture,
       isPublic: Boolean = false,
       timeLimit: Option[Duration] = None,
-      message: String = "message"
+      message: String = "message",
+      timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
+      start: Option[Instant] = None
   ): OpenChallenge =
     CharacterOpenChallenge(
       ChallengeId(0),
       fixture.owner.playerId,
       message,
-      start = None,
+      start = start,
       timeLimit = timeLimit,
       settings = "{}",
       gameId = fixture.game.gameId,
       characterId = fixture.character.characterId,
       isPublic = isPublic,
-      gameRoleId = fixture.game.roles.head.gameRoleId
+      gameRoleId = fixture.game.roles.head.gameRoleId,
+      timeLimitKind = timeLimitKind
     )
 
   private def participantsOf(m: Match): IO[List[Participant]] =
@@ -575,6 +578,72 @@ class GameEngineServiceSpec extends PropertySuite {
       }
     } yield (fixture, started, mine, theirs)
 
+  private def turnsOf(m: Match): IO[List[Turn]] =
+    TestSession.resource.use(session => new TurnRepo(session).listForMatch(m.gameId, m.matchId))
+
+  /* A two-seat match under a clock of a stated kind, started at a stated time, with two moves
+   * already played through the move callback.
+   *
+   * The two moves are the point: a total limit is only different from a per-turn one once
+   * somebody has spent part of their budget, so a fixture with no history behind it cannot tell
+   * the two apart. `firstMoveAt` is when the challenger moved and `secondMoveAt` when the other
+   * player replied, after which it is the challenger's turn again and their deadline is whatever
+   * the match's kind of limit makes it. */
+  private def playedTwice(
+      services: Services[String],
+      engine: StubEngine,
+      nickname: String,
+      externalId: String,
+      gameExternalId: String,
+      otherExternalId: String,
+      matchStart: Instant,
+      timeLimit: Duration,
+      kind: TimeLimitKind,
+      firstMoveAt: Instant,
+      secondMoveAt: Instant
+  ): IO[(Fixture, Match, Participant, Participant)] =
+    for {
+      fixture <- makeFixture(nickname, externalId, gameExternalId)
+      other <- services.registration.register(s"other-$nickname", otherExternalId)
+      otherCharacter <- TestSession.resource.use { session =>
+        new CharacterRepo[String](session)
+          .create(Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId)))
+      }
+      challenge <- services.challenges.create(
+        challengeFor(fixture, timeLimit = Some(timeLimit), timeLimitKind = kind, start = Some(matchStart)),
+        externalId
+      )
+      _ <- services.challenges.accept(
+        fixture.game.gameId, challenge.challengeId, Some(otherCharacter.characterId),
+        fixture.game.roles(1).gameRoleId, otherExternalId
+      )
+      started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+      participants <- participantsOf(started)
+      mine = participants.find(_.playerId == fixture.owner.playerId).get
+      theirs = participants.find(_.playerId == other.playerId).get
+      // The challenger moves first, spending firstMoveAt - matchStart of their own budget...
+      _ <- services.engine.recordMove(
+        fixture.game.gameId, started.matchId, moved = mine.participantId, next = List(theirs.participantId),
+        prevMoveAt = Some(firstMoveAt), callerExternalId = gameExternalId
+      )
+      // ...and the other player replies, which puts the challenger back on the clock.
+      _ <- services.engine.recordMove(
+        fixture.game.gameId, started.matchId, moved = theirs.participantId, next = List(mine.participantId),
+        prevMoveAt = Some(secondMoveAt), callerExternalId = gameExternalId
+      )
+      // What the engine confirms when asked: exactly this, so a recheck upholds the deadline
+      // rather than overturning it.
+      _ <- IO {
+        engine.status = GameStatusResponse(
+          completed = false,
+          participants = List(
+            EngineParticipantStatus(mine.participantId.value, pending = true, completed = false, prevMoveAt = Some(secondMoveAt)),
+            EngineParticipantStatus(theirs.participantId.value, pending = false, completed = false, prevMoveAt = None)
+          )
+        )
+      }
+    } yield (fixture, started, mine, theirs)
+
   private def resultsOf(m: Match): IO[List[model.Result]] =
     TestSession.resource.use { session =>
       val repo = new ResultRepo(session)
@@ -665,7 +734,7 @@ class GameEngineServiceSpec extends PropertySuite {
           unreachable = TestServices.servicesWith(new GameEngineClient {
             def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
               IO.raiseError(GameEngineError("engine is down"))
-            def status(statusUrl: String): IO[GameStatusResponse] = IO.raiseError(GameEngineError("engine is down"))
+            def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] = IO.raiseError(GameEngineError("engine is down"))
           })
           // `read` is the path that rechecks — `refresh` would fail on the status call itself.
           seen <- unreachable.engine.read(fixture.game.gameId, started.matchId, externalId)
@@ -674,6 +743,195 @@ class GameEngineServiceSpec extends PropertySuite {
         } yield !seen.completed &&
           results.isEmpty &&
           after.exists(p => p.pending && !p.completed)
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // The turn table is what a total limit is charged against, so a move that is not recorded is
+  // time nobody is billed for. Both moves of the fixture are checked, since the first one's cost
+  // is measured from the match's start rather than from a turn before it.
+  property("a move callback records the turn it reports, and what it cost") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          start <- IO.realTimeInstant.map(_.minusSeconds(3600))
+          first = start.plusSeconds(240)
+          second = first.plusSeconds(180)
+          prepared <- playedTwice(
+            services, engine, nickname, externalId, gameExternalId, otherExternalId,
+            matchStart = start, timeLimit = Duration.ofMinutes(10), kind = TimeLimitKind.Total,
+            firstMoveAt = first, secondMoveAt = second
+          )
+          (_, started, mine, theirs) = prepared
+          turns <- turnsOf(started)
+        } yield turns.map(t => (t.participantId, t.takenAt, t.elapsed)) == List(
+          // Four minutes from the match's start, then three from the move before.
+          (mine.participantId, first, Duration.ofMinutes(4)),
+          (theirs.participantId, second, Duration.ofMinutes(3))
+        )
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // What a chess clock is: the deadline for the turn in front of a player is what is left of
+  // their budget, so the four minutes they spent earlier are four minutes they do not get now.
+  property("under a total limit a deadline is the budget less what that player has already spent") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          start <- IO.realTimeInstant.map(_.minusSeconds(3600))
+          first = start.plusSeconds(240)
+          second = first.plusSeconds(180)
+          prepared <- playedTwice(
+            services, engine, nickname, externalId, gameExternalId, otherExternalId,
+            matchStart = start, timeLimit = Duration.ofMinutes(10), kind = TimeLimitKind.Total,
+            firstMoveAt = first, secondMoveAt = second
+          )
+          (_, started, mine, theirs) = prepared
+          after <- participantsOf(started)
+          challenger = after.find(_.participantId == mine.participantId).get
+          opponent = after.find(_.participantId == theirs.participantId).get
+        } yield challenger.pending &&
+          // Ten minutes less the four already spent, from the moment this turn began.
+          challenger.due.contains(second.plus(Duration.ofMinutes(6))) &&
+          // Not on the clock, so no deadline at all — their three minutes are spent but only
+          // count against them once it is their move again.
+          opponent.due.isEmpty
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // The same two moves under the other kind of limit, which is the control for the property
+  // above: per turn, the four minutes already spent buy nothing and cost nothing.
+  property("under a per-turn limit a deadline is the whole limit, whatever was spent before") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          start <- IO.realTimeInstant.map(_.minusSeconds(3600))
+          first = start.plusSeconds(240)
+          second = first.plusSeconds(180)
+          prepared <- playedTwice(
+            services, engine, nickname, externalId, gameExternalId, otherExternalId,
+            matchStart = start, timeLimit = Duration.ofMinutes(10), kind = TimeLimitKind.PerTurn,
+            firstMoveAt = first, secondMoveAt = second
+          )
+          (_, started, mine, _) = prepared
+          after <- participantsOf(started)
+          challenger = after.find(_.participantId == mine.participantId).get
+        } yield challenger.due.contains(second.plus(Duration.ofMinutes(10)))
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  /* The decision the whole thing exists for: a player loses on time without any single turn
+   * having been long.
+   *
+   * Nine of the ten minutes went on the first move, the reply took forty-nine, and the turn now
+   * in front of the challenger has one minute on it — which ran out a minute ago. Under a
+   * per-turn limit nothing here is overdue at all, which is the next property. */
+  property("a player whose total budget runs out forfeits, though no single turn was long") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          now <- IO.realTimeInstant
+          start = now.minusSeconds(3600)
+          first = start.plusSeconds(540)
+          second = now.minusSeconds(120)
+          prepared <- playedTwice(
+            services, engine, nickname, externalId, gameExternalId, otherExternalId,
+            matchStart = start, timeLimit = Duration.ofMinutes(10), kind = TimeLimitKind.Total,
+            firstMoveAt = first, secondMoveAt = second
+          )
+          (fixture, started, mine, theirs) = prepared
+          // Asked by the player who is not out of time, as a real opponent would.
+          refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId)
+          results <- resultsOf(started)
+        } yield refreshed.completed &&
+          results.forall(_.forfeit) &&
+          results.find(_.participantId == mine.participantId).exists(r => !r.isWinner && r.rank == 2) &&
+          results.find(_.participantId == theirs.participantId).exists(r => r.isWinner && r.rank == 1)
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  property("the same match under a per-turn limit is not forfeited at all") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          now <- IO.realTimeInstant
+          start = now.minusSeconds(3600)
+          first = start.plusSeconds(540)
+          second = now.minusSeconds(120)
+          prepared <- playedTwice(
+            services, engine, nickname, externalId, gameExternalId, otherExternalId,
+            matchStart = start, timeLimit = Duration.ofMinutes(10), kind = TimeLimitKind.PerTurn,
+            firstMoveAt = first, secondMoveAt = second
+          )
+          (fixture, started, _, _) = prepared
+          refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId)
+          results <- resultsOf(started)
+        } yield !refreshed.completed && results.isEmpty
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  // The repair path: a move whose callback never arrived is recovered from the status call, with
+  // its cost, rather than only as a corrected deadline. Without the turn the engine reports here,
+  // the challenger's budget would look untouched and they would get the whole ten minutes.
+  property("turns the engine reports on a status call are recorded, and are charged for") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          // Counted back from now, so that the deadline the last of these moves implies is
+          // still ahead of us: this property is about what was recorded and charged, and a
+          // fixture that had already run out of time would be answered by the forfeit instead.
+          now <- IO.realTimeInstant
+          fourth = now.minusSeconds(10)
+          third = fourth.minusSeconds(10)
+          second = third.minusSeconds(300)
+          first = second.minusSeconds(180)
+          start = first.minusSeconds(240)
+          prepared <- playedTwice(
+            services, engine, nickname, externalId, gameExternalId, otherExternalId,
+            matchStart = start, timeLimit = Duration.ofMinutes(10), kind = TimeLimitKind.Total,
+            firstMoveAt = first, secondMoveAt = second
+          )
+          (fixture, started, mine, theirs) = prepared
+          // A third and fourth move happened that matchmaker never heard about: the challenger
+          // spent five more minutes, and the opponent replied at once.
+          _ <- IO {
+            engine.status = GameStatusResponse(
+              completed = false,
+              participants = List(
+                EngineParticipantStatus(mine.participantId.value, pending = true, completed = false, prevMoveAt = Some(fourth)),
+                EngineParticipantStatus(theirs.participantId.value, pending = false, completed = false, prevMoveAt = None)
+              ),
+              turns = List(
+                EngineTurn(mine.participantId.value, third, Some(second)),
+                EngineTurn(theirs.participantId.value, fourth, Some(third))
+              )
+            )
+          }
+          refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId)
+          turns <- turnsOf(started)
+          after <- participantsOf(started)
+          challenger = after.find(_.participantId == mine.participantId).get
+        } yield !refreshed.completed &&
+          turns.map(_.takenAt) == List(first, second, third, fourth) &&
+          // Four minutes and then five: one minute of the ten is left.
+          challenger.due.contains(fourth.plus(Duration.ofMinutes(1)))
         result.timeout(15.seconds).unsafeRunSync()
     }
   }
@@ -704,7 +962,7 @@ class GameEngineServiceSpec extends PropertySuite {
       val engine = new GameEngineClient {
         def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
           IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
-        def status(statusUrl: String): IO[GameStatusResponse] =
+        def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] =
           IO.raiseError(GameEngineError("status is down"))
       }
       val services = TestServices.servicesWith(engine)

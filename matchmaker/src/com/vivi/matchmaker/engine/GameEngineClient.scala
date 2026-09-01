@@ -58,7 +58,27 @@ case class EngineParticipantStatus(
     prevMoveAt: Option[Instant]
 )
 
-case class GameStatusResponse(completed: Boolean, participants: List[EngineParticipantStatus])
+/** One turn the engine reports as having been taken, in answer to a status call.
+  *
+  * `takenAt` is when the move was made. `startedAt` is when that player's clock started for it,
+  * which the engine may know better than matchmaker can infer — it is optional because most
+  * engines do not track it, and matchmaker then takes the previous turn in the match (or the
+  * match's start) as the moment the clock began.
+  */
+case class EngineTurn(participantId: Long, takenAt: Instant, startedAt: Option[Instant] = None)
+
+/** The engine's answer to a status call.
+  *
+  * `turns` are the moves made since the `since` the call asked from, oldest first — empty when
+  * nothing has happened, and empty from an engine that does not report turns at all, which is
+  * why it is defaulted. Matchmaker records them, and their durations are what a total (chess
+  * clock) time limit is spent against.
+  */
+case class GameStatusResponse(
+    completed: Boolean,
+    participants: List[EngineParticipantStatus],
+    turns: List[EngineTurn] = Nil
+)
 
 object EngineJson {
   given ReadWriter[Instant] = upickle.default.readwriter[String].bimap(_.toString, Instant.parse)
@@ -66,6 +86,7 @@ object EngineJson {
   given ReadWriter[CreateGameRequest] = macroRW
   given ReadWriter[CreateGameResponse] = macroRW
   given ReadWriter[EngineParticipantStatus] = macroRW
+  given ReadWriter[EngineTurn] = macroRW
   given ReadWriter[GameStatusResponse] = macroRW
 }
 
@@ -84,8 +105,12 @@ trait GameEngineClient {
 
   /** Asks the engine how a match is going, at the `statusUrl` it returned when the game was
     * created.
+    *
+    * `since` is the most recent turn matchmaker already has recorded; the engine answers with the
+    * turns taken after it, so the reply carries what was missed rather than the whole game every
+    * time. `None` asks for all of them, which is what a match with no turns recorded wants.
     */
-  def status(statusUrl: String): IO[GameStatusResponse]
+  def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse]
 }
 
 /** Raised when the game engine cannot be reached or answers with something other than success.

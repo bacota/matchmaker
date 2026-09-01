@@ -73,6 +73,23 @@ class RoutesSpec extends FunSuite {
     assertEquals(status.participants.map(_.participantId).toSet, Set(1L, 2L))
   }
 
+  test("GET /matches/:id/status passes `since` through, and refuses one it cannot read") {
+    val (routes, _, _) = fixture()
+    routes(EngineRequest("POST", "/matches/m-9/moves", as("sub-alice"), """{"cell":0}"""))
+
+    val all = read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status").body)
+    assertEquals(all.turns.map(_.participantId), List(1L))
+
+    // From after the only move there is: nothing left to report.
+    val since = all.turns.head.takenAt.toString
+    val later = read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status", Map("since" -> since)).body)
+    assertEquals(later.turns, Nil)
+
+    // Not a time at all. Answered as a bad request rather than as "send everything", which
+    // would report turns matchmaker already has and charge them twice.
+    assertEquals(get(routes, "/matches/m-9/status", Map("since" -> "yesterday")).status, 400)
+  }
+
   test("the play page renders the board for the player whose seat it is") {
     val (routes, _, _) = fixture()
 

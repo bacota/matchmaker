@@ -89,6 +89,12 @@ object Views {
   private def field(caption: String, control: HtmlElement): HtmlElement =
     label(cls := "field", caption, control)
 
+  /** A field whose caption changes with what is selected elsewhere in the form. Still a `label`
+    * wrapping its control, so the association survives the caption being rewritten.
+    */
+  private def field(caption: Signal[String], control: HtmlElement): HtmlElement =
+    label(cls := "field", child.text <-- caption, control)
+
   /** A section with a refresh button of its own.
     *
     * Every list here can go stale while it is being looked at — somebody else accepts a
@@ -1179,6 +1185,10 @@ object Views {
     // players agree to, where what happens when one runs out is a rule of the game — that is
     // `Game.timeoutAction`, which an admin sets once.
     val timeLimit = Var("")
+    // And what that number is a limit on: each turn on its own, or the player's whole match, the
+    // way a chess clock works. Per turn by default, which is what every limit meant before the
+    // choice existed.
+    val timeLimitKind = Var(TimeLimitKind.PerTurn)
     // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
     // has been claimed yet, so every role of the game is on offer and the first stands selected.
     val role = Var(game.roles.headOption.map(_.gameRoleId))
@@ -1188,8 +1198,13 @@ object Views {
       h3("Offer a Challenge"),
       field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
       roleSelect(game.roles, role),
+      // The label says which of the two the number means, because "30 minutes" is a very
+      // different offer under each and the dropdown below it is easy to read past.
       field(
-        "Minutes per turn (blank for no limit)",
+        timeLimitKind.signal.map {
+          case TimeLimitKind.PerTurn => "Minutes per turn (blank for no limit)"
+          case TimeLimitKind.Total   => "Minutes per player for the whole match (blank for no limit)"
+        },
         input(
           tpe := "number",
           minAttr := "1",
@@ -1197,9 +1212,20 @@ object Views {
           controlled(value <-- timeLimit.signal, onInput.mapToValue --> timeLimit)
         )
       ),
+      // Offered whatever the limit says, including blank: choosing the kind first and then
+      // typing the number is at least as natural as the other order, and a kind with no limit
+      // to apply it to simply does nothing.
+      field(
+        "How that time is spent",
+        select(
+          onChange.mapToValue --> (raw => timeLimitKind.set(TimeLimitKind.fromCode(raw))),
+          value <-- timeLimitKind.signal.map(_.code),
+          TimeLimitKind.values.toSeq.map(kind => option(value := kind.code, kind.label))
+        )
+      ),
       child <-- timeLimit.signal.map { raw =>
         if (raw.trim.isEmpty || minutesOf(raw).isDefined) emptyNode
-        else p(cls := "empty", aria.live := "polite", "A turn limit is a whole number of minutes.")
+        else p(cls := "empty", aria.live := "polite", "A time limit is a whole number of minutes.")
       },
       // Public means anyone may watch the match, which the game engine implements by issuing a
       // url that needs no sign-in. It is decided here because it is a property of the game being
@@ -1236,7 +1262,8 @@ object Views {
                 gameId = game.gameId,
                 characterId = cid,
                 isPublic = isPublic.now(),
-                gameRoleId = chosen
+                gameRoleId = chosen,
+                timeLimitKind = timeLimitKind.now()
               )
             case None =>
               PlainOpenChallenge(
@@ -1248,13 +1275,15 @@ object Views {
                 settings = "{}",
                 gameId = game.gameId,
                 isPublic = isPublic.now(),
-                gameRoleId = chosen
+                gameRoleId = chosen,
+                timeLimitKind = timeLimitKind.now()
               )
           }
 
           Store.run(ApiClient.createChallenge(challenge), busy) { _ =>
             message.set("")
             timeLimit.set("")
+            timeLimitKind.set(TimeLimitKind.PerTurn)
             // The challenge it was open for now exists and is in the list below it.
             Store.showChallengeForm.set(false)
             Store.refreshChallenges(game.gameId)

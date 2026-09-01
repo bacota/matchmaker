@@ -80,8 +80,13 @@ class Engine(
     * — matchmaker turns that into a deadline using the match's own time limit. A seat that has
     * not been reached yet reports the match's creation time, so the first player's clock starts
     * when the game was created rather than never.
+    *
+    * `since` is the last turn matchmaker has recorded; the moves made after it come back in
+    * `turns`. That is how a chess-clock limit is charged — matchmaker needs every move's cost,
+    * not just the current one — and it is also how a move callback that was lost is recovered as
+    * more than a corrected deadline.
     */
-  def status(matchId: String): Either[Refusal, GameStatusResponse] =
+  def status(matchId: String, since: Option[Instant] = None): Either[Refusal, GameStatusResponse] =
     read(matchId).map { m =>
       val over = m.isOver
       GameStatusResponse(
@@ -93,7 +98,15 @@ class Engine(
             completed = over,
             prevMoveAt = Some(m.lastMoveAt.getOrElse(m.createdAt))
           )
-        }
+        },
+        // Strictly after `since`, so the turn matchmaker already has is not sent again — it
+        // would be discarded there anyway, and the point of asking is to send what was missed.
+        // No `since` means the whole game, which is what a matchmaker with nothing recorded for
+        // this match is asking for.
+        turns = m.turns
+          .filter(t => since.forall(at => t.takenAt.isAfter(at)))
+          .sortBy(_.takenAt)
+          .map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt)))
       )
     }
 
@@ -116,7 +129,11 @@ class Engine(
           _ <- Either.cond(current.turn == seat.mark, (), Refusal.Invalid(s"it is ${current.turn}'s turn, not ${seat.mark}'s"))
           board <- current.board.place(cell, seat.mark).left.map(Refusal.Invalid.apply)
         } yield {
-          val played = current.copy(board = board, turn = seat.mark.other, lastMoveAt = Some(at))
+          // The clock for this move started when the move before it was made, or when the
+          // match was created for the first move of the game.
+          val turn = TurnRecord(seat.participantId, at, current.lastMoveAt.getOrElse(current.createdAt))
+          val played =
+            current.copy(board = board, turn = seat.mark.other, lastMoveAt = Some(at), turns = current.turns :+ turn)
           val finished = played.isOver
           // `completed` is stored so a finished match stays finished even though it is also
           // derivable — it is what the results callback keys off, and it is written once.

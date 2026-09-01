@@ -34,6 +34,9 @@ object Json {
   /** By its stored code, so the wire form is the column's form: 'FORFEIT'. */
   given ReadWriter[TimeoutAction] = readwriter[String].bimap(_.code, TimeoutAction.fromCode)
 
+  /** Likewise: 'PER_TURN' or 'TOTAL'. */
+  given ReadWriter[TimeLimitKind] = readwriter[String].bimap(_.code, TimeLimitKind.fromCode)
+
   given ReadWriter[Instant] = readwriter[String].bimap(_.toString, Instant.parse)
 
   // Seconds, matching how the persistence layer stores time_limit.

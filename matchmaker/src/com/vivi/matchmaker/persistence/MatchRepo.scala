@@ -14,6 +14,7 @@ class MatchRepo(session: Session[IO]) {
   private val challengeId = SkunkIdCodecs.challengeId
   private val instant = SkunkCodecs.instant
   private val settings: Codec[String] = SkunkCodecs.jsonb
+  private val timeLimitKind = SkunkCodecs.timeLimitKind
 
   // time_limit is bound/read as a second count rather than via a custom INTERVAL codec.
   private def toSeconds(d: Option[Duration]): Option[Double] = d.map(_.getSeconds.toDouble)
@@ -21,24 +22,25 @@ class MatchRepo(session: Session[IO]) {
 
   private val insertMatch: Command[
     (GameId, MatchId, ChallengeId, String, Option[Instant], Boolean, Instant, Option[Double], String, Boolean,
-      Option[String], Option[String], Option[String])
+      Option[String], Option[String], Option[String], TimeLimitKind)
   ] =
     sql"""INSERT INTO match (game_id, match_id, challenge_id, description, completed, cancelled, start, time_limit,
-                             settings, public, status_url, play_url, public_url)
+                             settings, public, status_url, play_url, public_url, time_limit_kind)
           VALUES ($gameId, $matchId, $challengeId, $text, ${instant.opt}, $bool, $instant, ${float8.opt} * INTERVAL '1 second',
-                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt})""".command
+                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt}, $timeLimitKind)""".command
 
   private type MatchRow =
     (ChallengeId, String, Option[Instant], Boolean, Instant, Option[Double], String, Boolean, Option[String],
-      Option[String], Option[String])
+      Option[String], Option[String], TimeLimitKind)
 
   private val matchRow: Codec[MatchRow] =
-    challengeId *: text *: instant.opt *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *: text.opt
+    challengeId *: text *: instant.opt *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *:
+      text.opt *: timeLimitKind
 
   private val selectMatch: Query[(GameId, MatchId), MatchRow] =
     sql"""SELECT challenge_id, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
-                 public, status_url, play_url, public_url
+                 public, status_url, play_url, public_url, time_limit_kind
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId"""
       .query(matchRow)
@@ -49,7 +51,7 @@ class MatchRepo(session: Session[IO]) {
   private val selectMatchForUpdate: Query[(GameId, MatchId), MatchRow] =
     sql"""SELECT challenge_id, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
-                 public, status_url, play_url, public_url
+                 public, status_url, play_url, public_url, time_limit_kind
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
       .query(matchRow)
@@ -58,26 +60,27 @@ class MatchRepo(session: Session[IO]) {
   // challenge's match. Changing it would rewrite who created the match.
   private val updateMatch: Command[
     (String, Option[Instant], Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String],
-      Option[String], GameId, MatchId)
+      Option[String], TimeLimitKind, GameId, MatchId)
   ] =
     sql"""UPDATE match SET description = $text, completed = ${instant.opt}, cancelled = $bool, start = $instant,
           time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
-          public = $bool, status_url = ${text.opt}, play_url = ${text.opt}, public_url = ${text.opt}
+          public = $bool, status_url = ${text.opt}, play_url = ${text.opt}, public_url = ${text.opt},
+          time_limit_kind = $timeLimitKind
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
   def create(m: Match): IO[Match] =
     session
       .execute(insertMatch)(
         (m.gameId, m.matchId, m.challengeId, m.description, m.completedAt, m.cancelled, m.start, toSeconds(m.timeLimit),
-          m.settings, m.isPublic, m.statusUrl, m.playUrl, m.publicUrl)
+          m.settings, m.isPublic, m.statusUrl, m.playUrl, m.publicUrl, m.timeLimitKind)
       )
       .as(m)
 
   private def toMatch(gameId: GameId, matchId: MatchId, row: MatchRow): Match = {
     val (challengeId, description, completedAt, cancelled, start, timeLimitSeconds, settings, isPublic, statusUrl,
-      playUrl, publicUrl) = row
+      playUrl, publicUrl, timeLimitKind) = row
     Match(gameId, matchId, challengeId, description, completedAt, start, fromSeconds(timeLimitSeconds), settings,
-      isPublic, cancelled, statusUrl, playUrl, publicUrl)
+      isPublic, cancelled, statusUrl, playUrl, publicUrl, timeLimitKind)
   }
 
   def read(gameId: GameId, matchId: MatchId): IO[Option[Match]] =
@@ -91,7 +94,7 @@ class MatchRepo(session: Session[IO]) {
     session
       .execute(updateMatch)(
         (m.description, m.completedAt, m.cancelled, m.start, toSeconds(m.timeLimit), m.settings,
-          m.isPublic, m.statusUrl, m.playUrl, m.publicUrl, m.gameId, m.matchId)
+          m.isPublic, m.statusUrl, m.playUrl, m.publicUrl, m.timeLimitKind, m.gameId, m.matchId)
       )
       .void
 

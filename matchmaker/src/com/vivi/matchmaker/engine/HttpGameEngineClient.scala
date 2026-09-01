@@ -3,9 +3,10 @@ package com.vivi.matchmaker.engine
 import cats.effect.IO
 import com.vivi.matchmaker.auth.ApiKeys
 import upickle.default.{read, write}
-import java.net.URI
+import java.net.{URI, URLEncoder}
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.time.Duration
+import java.nio.charset.StandardCharsets
+import java.time.{Duration, Instant}
 import EngineJson.given
 
 /** The real client: JSON over HTTPS, authenticated with the engine's API key.
@@ -32,8 +33,21 @@ class HttpGameEngineClient(
   def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
     send("POST", gameUrl, Some(write(request))).map(parse[CreateGameResponse](gameUrl, _))
 
-  def status(statusUrl: String): IO[GameStatusResponse] =
-    send("GET", statusUrl, None).map(parse[GameStatusResponse](statusUrl, _))
+  def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] = {
+    val url = withSince(statusUrl, since)
+    send("GET", url, None).map(parse[GameStatusResponse](url, _))
+  }
+
+  /* `since` goes on the query string rather than in a body, because this is a GET and the engine
+   * is free to ignore it: one that does not report turns answers the same either way. Appended
+   * with the right separator, since the status url is the engine's own and may already carry a
+   * query of its own. */
+  private def withSince(statusUrl: String, since: Option[Instant]): String =
+    since.fold(statusUrl) { at =>
+      val separator = if (statusUrl.contains("?")) "&" else "?"
+      val encoded = URLEncoder.encode(at.toString, StandardCharsets.UTF_8)
+      s"$statusUrl${separator}since=$encoded"
+    }
 
   private def parse[A: upickle.default.Reader](url: String, body: String): A =
     try read[A](body)

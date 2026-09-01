@@ -96,9 +96,16 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String]) 
       case ("GET", "matches" :: matchId :: "status" :: Nil) if !fromMatchmaker(request) => unauthenticated
 
       case ("GET", "matches" :: matchId :: "status" :: Nil) =>
-        engine.status(matchId) match {
-          case Left(refusal) => error(refusal)
-          case Right(status) => EngineResponse(200, write(status))
+        // Unparseable rather than absent is answered as a bad request: matchmaker sends this to
+        // decide what a player is charged, and quietly treating a malformed time as "send
+        // everything" would double-report turns it already has.
+        parseSince(request) match {
+          case Left(why) => error(400, why)
+          case Right(since) =>
+            engine.status(matchId, since) match {
+              case Left(refusal) => error(refusal)
+              case Right(status) => EngineResponse(200, write(status))
+            }
         }
 
       /* The board page itself, which is served to anyone who asks — signed in or not.
@@ -190,6 +197,15 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String]) 
     catch { case NonFatal(e) => Left(s"unreadable request body: ${e.getMessage}") }
 
   private def unauthenticated: EngineResponse = error(401, "this route is matchmaker's; a valid API key is required")
+
+  /* The `since` of a status call: an ISO-8601 instant, or nothing at all. */
+  private def parseSince(request: EngineRequest): Either[String, Option[java.time.Instant]] =
+    request.query.get("since").map(_.trim).filter(_.nonEmpty) match {
+      case None => Right(None)
+      case Some(raw) =>
+        try Right(Some(java.time.Instant.parse(raw)))
+        catch { case _: java.time.format.DateTimeParseException => Left(s"unreadable 'since': $raw") }
+    }
 
   private def error(refusal: Refusal): EngineResponse = error(refusal.status, refusal.message)
 

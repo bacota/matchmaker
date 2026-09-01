@@ -86,9 +86,10 @@ object Generators {
       playUrl <- Gen.option(genString.map("https://engine.example.com/play/" + _))
       publicUrl <- Gen.option(genString.map("https://engine.example.com/watch/" + _))
       cancelled <- Gen.oneOf(true, false)
+      timeLimitKind <- Gen.oneOf(TimeLimitKind.values.toSeq)
     } yield Match(
       gameId, matchId, challengeId, description, completedAt, start, timeLimit, "{}", isPublic, cancelled,
-      statusUrl, playUrl, publicUrl
+      statusUrl, playUrl, publicUrl, timeLimitKind
     )
 
   def genParticipant(
@@ -135,8 +136,10 @@ object Generators {
       start <- Gen.option(genInstant)
       timeLimit <- Gen.option(genDuration)
       isPublic <- Gen.oneOf(true, false)
+      timeLimitKind <- Gen.oneOf(TimeLimitKind.values.toSeq)
     } yield CharacterOpenChallenge(
-      ChallengeId(0), challenger, message, start, timeLimit, "{}", gameId, characterId, isPublic, gameRoleId
+      ChallengeId(0), challenger, message, start, timeLimit, "{}", gameId, characterId, isPublic, gameRoleId,
+      timeLimitKind
     )
 
   /** A game, and a challenge in it, ready for a match to be started from.
