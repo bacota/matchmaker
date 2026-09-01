@@ -23,9 +23,11 @@ class TurnRepo(session: Session[IO]) {
    * the caller's: the same turn is normally reported twice, and a read-then-insert would still
    * let two of them through. */
   private val insertTurn: Command[(GameId, MatchId, ParticipantId, Instant, Instant)] =
-    sql"""INSERT INTO turn (game_id, match_id, participant_id, taken_at, started_at)
+    sql"""INSERT INTO turn AS t (game_id, match_id, participant_id, taken_at, started_at)
           VALUES ($gameId, $matchId, $participantId, $instant, $instant)
-          ON CONFLICT (game_id, participant_id, taken_at) DO NOTHING""".command
+          ON CONFLICT (game_id, participant_id, taken_at)
+          DO UPDATE SET started_at = EXCLUDED.started_at
+          WHERE EXCLUDED.started_at > t.started_at""".command
 
   /** Records a turn, or does nothing if that turn is already recorded. */
   def create(turn: Turn): IO[Unit] =
