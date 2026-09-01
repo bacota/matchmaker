@@ -249,13 +249,12 @@ class MatchRepo(session: Session[IO]) {
    * the balance that is being spent as it is read. */
   private val selectClocksForPlayer: Query[PlayerId, (GameId, MatchId, String, Double, Option[Instant])] =
     sql"""SELECT p.game_id, p.match_id, pl.nickname,
-                 EXTRACT(EPOCH FROM (m.time_limit - coalesce(sum(t.taken_at - t.started_at), INTERVAL '0')))::float8,
+                 EXTRACT(EPOCH FROM (m.time_limit - coalesce(sum(GREATEST(t.taken_at - t.started_at, INTERVAL '0')), INTERVAL '0')))::float8,
                  p.due
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN player pl ON pl.player_id = p.player_id
           LEFT JOIN turn t ON t.game_id = p.game_id AND t.participant_id = p.participant_id
-          WHERE m.completed IS NULL AND NOT m.cancelled
             AND m.time_limit IS NOT NULL AND m.time_limit_kind = 'TOTAL'
             AND EXISTS (SELECT 1 FROM participant mine
                          WHERE mine.game_id = p.game_id AND mine.match_id = p.match_id
