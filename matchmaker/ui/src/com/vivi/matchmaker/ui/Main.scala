@@ -523,7 +523,16 @@ object Views {
       // matches still being played — a finished match has no turn to be waiting for.
       if (showDue || summary.completed || summary.cancelled) emptyNode
       else if (summary.pending) div(cls := "pending", "your turn")
+      // Named, rather than "the other players": in a match of three it is the difference
+      // between knowing who to chase and knowing only that it is not you. The old wording is
+      // still the fallback for a match matchmaker has not yet heard a turn for.
+      else if (summary.whoseTurn.nonEmpty) div(cls := "detail", s"waiting for ${summary.whoseTurn.mkString(", ")}")
       else div(cls := "detail", "waiting for the other players"),
+      // The clock on the turn now being taken, whoever is taking it. On the "Your turn" list it
+      // is the caller's own and is drawn above from `due`; here it may be somebody else's, which
+      // is the more useful thing to know about a match you cannot move in.
+      if (showDue || summary.completed || summary.cancelled) emptyNode
+      else summary.turnDue.map(countdown).getOrElse(emptyNode),
       // A cancelled match is over and has no result, so it sits in the completed list; without
       // this it would be indistinguishable from one that was played to an end.
       if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,

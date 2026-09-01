@@ -936,6 +936,45 @@ class GameEngineServiceSpec extends PropertySuite {
     }
   }
 
+  // The "Current Matches" list is read by somebody who cannot move in the match: what it owes
+  // them is who it is waiting for and how long that player has, neither of which is derivable
+  // from their own seat's row.
+  property("an active match names whose turn it is, and when that turn runs out") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          now <- IO.realTimeInstant
+          second = now.minusSeconds(60)
+          first = second.minusSeconds(180)
+          start = first.minusSeconds(240)
+          prepared <- playedTwice(
+            services, engine, nickname, externalId, gameExternalId, otherExternalId,
+            matchStart = start, timeLimit = Duration.ofMinutes(10), kind = TimeLimitKind.Total,
+            firstMoveAt = first, secondMoveAt = second
+          )
+          (fixture, started, mine, _) = prepared
+          // Asked by the opponent, who has just moved and is waiting: it is the challenger's
+          // turn, and their deadline is the six minutes left of their budget from `second`.
+          theirs <- services.matches.active(otherExternalId)
+          row = theirs.find(_.matchId == started.matchId).get
+          // And by the challenger, whose own row says the same thing about the same turn — the
+          // seat it is read from differs, the answer does not.
+          ours <- services.matches.active(externalId)
+          mineRow = ours.find(_.matchId == started.matchId).get
+          participants <- participantsOf(started)
+          challengerDue = participants.find(_.participantId == mine.participantId).get.due
+        } yield row.whoseTurn == Seq(nickname) &&
+          row.turnDue == challengerDue &&
+          row.turnDue.contains(second.plus(Duration.ofMinutes(6))) &&
+          // Not this caller's turn, so their own deadline is empty while the match's is not.
+          row.due.isEmpty && !row.pending &&
+          mineRow.whoseTurn == row.whoseTurn && mineRow.turnDue == row.turnDue
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
   property("start records the first turn, so the player who moves first is told straight away") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
       val engine = new FirstTurnEngine

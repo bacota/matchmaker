@@ -40,7 +40,19 @@ case class MatchSummary(
     // it, which is not recoverable from the deadline alone — and they are the only statement of
     // the terms once the challenge that set them is no longer on screen.
     timeLimit: Option[Duration] = None,
-    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn
+    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
+    // Everyone whose turn it is, by nickname — usually one, but a game where several players
+    // move at once has several, and an empty list means the match is waiting on nobody (it is
+    // over, or matchmaker has not yet heard who moves first).
+    //
+    // `pending` says whether the caller is among them, which is what the caller's own lists are
+    // selected on; this says who the others are, which is what a match still being played is
+    // waiting for.
+    whoseTurn: Seq[String] = Nil,
+    // When the turn now being taken runs out — the earliest deadline among the players named in
+    // `whoseTurn`, which for a one-at-a-time game is simply that player's. Distinct from `due`,
+    // which is the caller's own and is empty while it is somebody else's move.
+    turnDue: Option[Instant] = None
 ) {
 
   /** Whether the match was played to an end. */

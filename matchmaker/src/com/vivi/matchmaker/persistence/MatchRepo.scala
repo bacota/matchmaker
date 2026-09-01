@@ -134,14 +134,14 @@ class MatchRepo(session: Session[IO]) {
   // participant has no character_participant row at all.
   private val summaryColumns =
     gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: instant.opt *: int8 *: int8.opt *:
-      bool *: float8.opt *: timeLimitKind
+      bool *: float8.opt *: timeLimitKind *: text *: instant.opt
 
   private def toSummary(
       row: (GameId, MatchId, String, String, Option[Instant], Boolean, Boolean, Instant, Option[Instant], Long,
-        Option[Long], Boolean, Option[Double], TimeLimitKind)
+        Option[Long], Boolean, Option[Double], TimeLimitKind, String, Option[Instant])
   ): MatchSummary = {
     val (gameId, matchId, gameName, description, completedAt, cancelled, isCreator, start, due, participantId,
-      characterId, pending, timeLimitSeconds, timeLimitKind) = row
+      characterId, pending, timeLimitSeconds, timeLimitKind, whoseTurn, turnDue) = row
     MatchSummary(
       gameId,
       matchId,
@@ -156,7 +156,12 @@ class MatchRepo(session: Session[IO]) {
       ParticipantId(participantId),
       characterId.map(CharacterId.apply),
       fromSeconds(timeLimitSeconds),
-      timeLimitKind
+      timeLimitKind,
+      // Split back out of the aggregate below. A nickname containing a newline would divide
+      // into two here; it would also be unrenderable in a one-line list, so it is a problem to
+      // refuse at registration rather than to encode around in every query that lists one.
+      whoseTurn.split('\n').filter(_.nonEmpty).toSeq,
+      turnDue
     )
   }
 
@@ -167,7 +172,22 @@ class MatchRepo(session: Session[IO]) {
     sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
                  p.due, p.participant_id, cp.character_id, p.pending,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind,
+                 -- Whose turn it is, and when that turn runs out: two scalar subqueries over
+                 -- everyone's participant row rather than a second join, which would multiply
+                 -- the rows instead of summarising them. `p` above is the caller's own seat;
+                 -- these are about the match.
+                 (SELECT coalesce(string_agg(turn_player.nickname, E'\n' ORDER BY turn_seat.participant_id), '')
+                    FROM participant turn_seat
+                    JOIN player turn_player ON turn_player.player_id = turn_seat.player_id
+                   WHERE turn_seat.game_id = m.game_id AND turn_seat.match_id = m.match_id
+                     AND turn_seat.pending AND NOT turn_seat.completed),
+                 -- The earliest, so a game where several move at once counts down to the first
+                 -- clock to run out, which is the first one anything happens on.
+                 (SELECT min(turn_seat.due)
+                    FROM participant turn_seat
+                   WHERE turn_seat.game_id = m.game_id AND turn_seat.match_id = m.match_id
+                     AND turn_seat.pending AND NOT turn_seat.completed)
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -192,7 +212,22 @@ class MatchRepo(session: Session[IO]) {
     sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
                  p.due, p.participant_id, cp.character_id, p.pending,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind,
+                 -- Whose turn it is, and when that turn runs out: two scalar subqueries over
+                 -- everyone's participant row rather than a second join, which would multiply
+                 -- the rows instead of summarising them. `p` above is the caller's own seat;
+                 -- these are about the match.
+                 (SELECT coalesce(string_agg(turn_player.nickname, E'\n' ORDER BY turn_seat.participant_id), '')
+                    FROM participant turn_seat
+                    JOIN player turn_player ON turn_player.player_id = turn_seat.player_id
+                   WHERE turn_seat.game_id = m.game_id AND turn_seat.match_id = m.match_id
+                     AND turn_seat.pending AND NOT turn_seat.completed),
+                 -- The earliest, so a game where several move at once counts down to the first
+                 -- clock to run out, which is the first one anything happens on.
+                 (SELECT min(turn_seat.due)
+                    FROM participant turn_seat
+                   WHERE turn_seat.game_id = m.game_id AND turn_seat.match_id = m.match_id
+                     AND turn_seat.pending AND NOT turn_seat.completed)
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -206,7 +241,22 @@ class MatchRepo(session: Session[IO]) {
     sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
                  p.due, p.participant_id, cp.character_id, p.pending,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind,
+                 -- Whose turn it is, and when that turn runs out: two scalar subqueries over
+                 -- everyone's participant row rather than a second join, which would multiply
+                 -- the rows instead of summarising them. `p` above is the caller's own seat;
+                 -- these are about the match.
+                 (SELECT coalesce(string_agg(turn_player.nickname, E'\n' ORDER BY turn_seat.participant_id), '')
+                    FROM participant turn_seat
+                    JOIN player turn_player ON turn_player.player_id = turn_seat.player_id
+                   WHERE turn_seat.game_id = m.game_id AND turn_seat.match_id = m.match_id
+                     AND turn_seat.pending AND NOT turn_seat.completed),
+                 -- The earliest, so a game where several move at once counts down to the first
+                 -- clock to run out, which is the first one anything happens on.
+                 (SELECT min(turn_seat.due)
+                    FROM participant turn_seat
+                   WHERE turn_seat.game_id = m.game_id AND turn_seat.match_id = m.match_id
+                     AND turn_seat.pending AND NOT turn_seat.completed)
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
