@@ -345,7 +345,7 @@ class GameEngineService[T](
           // nothing to charge anyone for, and a status call will report it later with one.
           _ <- prevMoveAt.traverse_ { at =>
             turnRepo.latestTakenAt(gameId, matchId).flatMap { last =>
-              turnRepo.create(Turn(gameId, matchId, moved, at, last.filter(_.isBefore(at)).getOrElse(existing.start)))
+              turnRepo.create(Turn(gameId, matchId, moved, at, last.filter(l => !l.isAfter(at)).getOrElse(existing.start)))
             }
           }
           // After the turn above is recorded, since under a total limit the next player's
