@@ -245,7 +245,7 @@ object Views {
       h2("Choose a Nickname"),
       p("You are signed in, but you do not have a player yet. Your nickname is what other players see."),
       field("Nickname", input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))),
-      busyButton("Create player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
+      busyButton("Create Player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
         Store.run(ApiClient.register(nickname.now().trim), busy) { player =>
           Store.player.set(Store.PlayerState.Registered(player))
           Store.refreshMatches()
@@ -293,7 +293,7 @@ object Views {
       // Only for admins, because only an admin can create a game: the server answers anyone else
       // with a 403, and a menu entry that always fails is worse than no entry.
       child <-- currentPlayer.map {
-        case Some(player) if player.isAdmin => menuItem("Add a game", Store.Page.NewGame)
+        case Some(player) if player.isAdmin => menuItem("Add a Game", Store.Page.NewGame)
         case _                              => emptyNode
       }
     )
@@ -836,7 +836,7 @@ object Views {
           else emptyNode
         )
       }),
-      button(cls := "link", "Add a role", onClick --> (_ => roles.update(_ :+ emptyRole)))
+      button(cls := "link", "Add a Role", onClick --> (_ => roles.update(_ :+ emptyRole)))
     )
 
   private def parameterEditor(parameters: Var[List[ParameterDraft]]): HtmlElement =
@@ -873,7 +873,7 @@ object Views {
           )
         )
       }),
-      button(cls := "link", "Add a parameter", onClick --> (_ => parameters.update(_ :+ emptyParameter)))
+      button(cls := "link", "Add a Parameter", onClick --> (_ => parameters.update(_ :+ emptyParameter)))
     )
 
   /** The drafted roles as the model, or the first thing wrong with them.
@@ -973,7 +973,7 @@ object Views {
       roleEditor(roles),
       parameterEditor(parameters),
       busyButton(
-        if (existing.isDefined) "Save changes" else "Create game",
+        if (existing.isDefined) "Save Changes" else "Create Game",
         disabledWhen = name.signal.map(_.trim.isEmpty)
       ) { busy =>
         val drafted = for {
@@ -1065,7 +1065,7 @@ object Views {
       p("You need a character in this game before you can offer or accept a challenge."),
       field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
       field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
-      busyButton("Create character", disabledWhen = name.signal.map(_.trim.isEmpty)) { busy =>
+      busyButton("Create Character", disabledWhen = name.signal.map(_.trim.isEmpty)) { busy =>
         val created =
           ApiClient.createCharacter(game.gameId, name.now().trim, description.now().trim, player.externalId)
         Store.run(created, busy)(_ => Store.refreshCharacters(game.gameId))
