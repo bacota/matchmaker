@@ -4,7 +4,7 @@ import skunk._
 import skunk.codec.all._
 import skunk.data.Type
 import java.time.{Instant, OffsetDateTime, ZoneOffset}
-import com.vivi.matchmaker.model.{GameType, TimeLimitKind, TimeoutAction}
+import com.vivi.matchmaker.model.{GameType, TimeLimitKind, TimeLimitUnit, TimeoutAction}
 import com.vivi.matchmaker.util.JsonValues
 
 object SkunkCodecs {
@@ -28,6 +28,9 @@ object SkunkCodecs {
     * player's budget for the whole match. Text under a check constraint, as `timeoutAction` is.
     */
   val timeLimitKind: Codec[TimeLimitKind] = text.imap(TimeLimitKind.fromCode)(_.code)
+
+  /** `time_limit_unit`: the unit a limit was offered in, and so the unit it is read back in. */
+  val timeLimitUnit: Codec[TimeLimitUnit] = text.imap(TimeLimitUnit.fromCode)(_.code)
 
   /** skunk-core ships no jsonb codec, so this declares one directly: bound and read as the
     * raw JSON text, tagged with the "jsonb" wire type so skunk's strict column-alignment

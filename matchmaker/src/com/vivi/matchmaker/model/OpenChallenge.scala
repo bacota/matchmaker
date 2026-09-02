@@ -19,6 +19,9 @@ sealed trait OpenChallenge {
 
   /** Whether [[timeLimit]] is per turn or the player's budget for the whole match. */
   def timeLimitKind: TimeLimitKind
+
+  /** The unit [[timeLimit]] was offered in, which is how it is said back. */
+  def timeLimitUnit: TimeLimitUnit
   def settings: String
   def gameId: GameId
 
@@ -48,7 +51,8 @@ case class PlainOpenChallenge(
     gameId: GameId,
     isPublic: Boolean = false,
     gameRoleId: GameRoleId,
-    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn
+    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
+    timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes
 ) extends OpenChallenge
 
 case class CharacterOpenChallenge(
@@ -62,7 +66,8 @@ case class CharacterOpenChallenge(
     characterId: CharacterId,
     isPublic: Boolean = false,
     gameRoleId: GameRoleId,
-    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn
+    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
+    timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes
 ) extends OpenChallenge
 
 /** An open challenge together with how many players have accepted it so far.

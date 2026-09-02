@@ -41,6 +41,7 @@ case class MatchSummary(
     // the terms once the challenge that set them is no longer on screen.
     timeLimit: Option[Duration] = None,
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
+    timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
     // Everyone whose turn it is, by nickname — usually one, but a game where several players
     // move at once has several, and an empty list means the match is waiting on nobody (it is
     // over, or matchmaker has not yet heard who moves first).

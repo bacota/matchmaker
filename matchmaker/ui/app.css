@@ -322,6 +322,19 @@ ul {
   font-style: italic;
 }
 
+/* Two controls that answer one question — a number and the unit it is in — sitting on the row
+   under their shared caption. The number takes what it needs and the unit takes the rest, since
+   "1440" is no wider than "5" but "minutes" and "days" are not the same word. */
+.compound {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.compound input {
+  flex: 1 1 6rem;
+  min-width: 0;
+}
+
 /* Each player's remaining time under a chess clock. A list rather than a table: it is two or
    three name/time pairs, and a table would bring headers and a caption to say what "name" and
    "time" mean. */
