@@ -347,26 +347,34 @@ object Views {
     */
   private val refreshingAcceptances: Var[Boolean] = Var(false)
 
+  /* Absent altogether when there is nothing ready to start, heading and refresh button with it.
+   *
+   * Every other list here says so when it is empty, because "no matches" is an answer to a
+   * question somebody asked. This one is not a question anybody asks: a challenge becomes
+   * startable when the last player accepts it, which is something that happens *to* the
+   * challenger rather than something they came to check. So it is a prompt, and a prompt with
+   * nothing to prompt is noise on every screen that carries it.
+   *
+   * Nothing is stranded by the button going with it: the same acceptances are what "Waiting to
+   * Start" lists, and its refresh reloads them — through the same `refreshingAcceptances` flag,
+   * so a reload from there brings this section back the moment there is one to bring back. */
   private def readyToStartSection(game: Option[Game] = None): HtmlElement =
-    refreshableSection("Ready to Start", refreshingAcceptances, () => Store.reloadAcceptances(), subsection = false)(
+    div(
       child <-- Store.acceptances.signal
         .combineWith(Store.games.signal, currentPlayer)
         .map { (acceptances, games, player) =>
           val mine = player.toSeq.flatMap { me =>
             acceptancesIn(game)(acceptances).filter(p => p.readyToStart && p.challenger == me.playerId)
           }
-          // Shown empty rather than absent, now that the section carries its own refresh button:
-          // a button that only appears once there is something to find is no use to someone
-          // checking whether there is.
-          if (mine.isEmpty)
-            p(
-              cls := "empty",
-              if (game.isDefined) "Nothing in this game is waiting for you to start it."
-              else "Nothing is waiting for you to start it."
-            )
+          if (mine.isEmpty) emptyNode
           else {
             val namesById = games.map(game => game.gameId -> game.name).toMap
-            ul(mine.map(pending => readyToStartRow(pending, namesById.get(pending.acceptance.gameId))))
+            refreshableSection(
+              "Ready to Start",
+              refreshingAcceptances,
+              () => Store.reloadAcceptances(),
+              subsection = false
+            )(ul(mine.map(pending => readyToStartRow(pending, namesById.get(pending.acceptance.gameId)))))
           }
         }
     )
@@ -440,20 +448,27 @@ object Views {
     * The ones this player could start right now are left out: they have their own section at the
     * top of the page, and listing them twice would offer the same Start button in two places.
     */
+  /* Absent when there is nothing waiting, like "Ready to Start" above and for the same reason:
+   * what a player has accepted and is waiting on is news when there is some, and a heading over
+   * a sentence saying there is none the rest of the time.
+   *
+   * This is the whole of what the section is — the Create Challenge button belongs to the
+   * challenges panel further down the game page, which is a different section and is not
+   * touched by this. */
   private def pendingAcceptances(game: Option[Game] = None): HtmlElement =
-    refreshableSection("Waiting to Start", refreshingAcceptances, () => Store.reloadAcceptances(), subsection = true)(
+    div(
       child <-- Store.acceptances.signal.combineWith(Store.games.signal, currentPlayer).map { (acceptances, games, player) =>
         val waiting =
           acceptancesIn(game)(acceptances).filterNot(p => p.readyToStart && player.exists(_.playerId == p.challenger))
-        if (waiting.isEmpty)
-          p(
-            cls := "empty",
-            if (game.isDefined) "You have not accepted anything of this that is still waiting."
-            else "You have not accepted anything that is still waiting."
-          )
+        if (waiting.isEmpty) emptyNode
         else {
           val namesById = games.map(game => game.gameId -> game.name).toMap
-          ul(waiting.map(pending => acceptanceRow(pending, namesById.get(pending.acceptance.gameId))))
+          refreshableSection(
+            "Waiting to Start",
+            refreshingAcceptances,
+            () => Store.reloadAcceptances(),
+            subsection = true
+          )(ul(waiting.map(pending => acceptanceRow(pending, namesById.get(pending.acceptance.gameId)))))
         }
       }
     )
@@ -1081,7 +1096,7 @@ object Views {
               // things to do on this screen, and a form is what the screen looks like it is for.
               button(
                 aria.expanded <-- Store.showChallengeForm.signal,
-                child.text <-- Store.showChallengeForm.signal.map(if (_) "Close" else "Create challenge"),
+                child.text <-- Store.showChallengeForm.signal.map(if (_) "Close" else "Create Challenge"),
                 onClick --> (_ => Store.showChallengeForm.update(!_))
               ),
               child <-- Store.showChallengeForm.signal.map {
@@ -1360,7 +1375,7 @@ object Views {
         "anyone may watch"
       ),
       busyButton(
-        "Create challenge",
+        "Create Challenge",
         // A game with no roles at all has nothing an acceptance could name, so no challenge for
         // it can be created. The server refuses one; this keeps the button from offering it.
         disabledWhen = message.signal.combineWith(role.signal, timeLimit.signal).map { case (m, r, limit) =>
