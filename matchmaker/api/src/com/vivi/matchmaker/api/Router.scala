@@ -149,7 +149,8 @@ object Router {
             r.rank,
             r.scores.view.mapValues(JsonValues.fromScala).toMap,
             r.isWinner,
-            r.forfeit
+            r.forfeit,
+            r.timeTaken
           )
         }))
 

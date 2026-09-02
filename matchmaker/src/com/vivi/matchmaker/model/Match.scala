@@ -39,7 +39,12 @@ case class Match(
     cancelled: Boolean = false,
     statusUrl: Option[String] = None,
     playUrl: Option[String] = None,
-    publicUrl: Option[String] = None
+    publicUrl: Option[String] = None,
+    /** What `timeLimit` is a limit on: each turn separately, or the player's whole match. Copied
+      * from the challenge along with the limit itself, so that editing the challenge afterwards
+      * cannot change the terms of a match already being played under it.
+      */
+    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn
 ) {
 
   /** Whether the match was played to an end. */

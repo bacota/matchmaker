@@ -89,6 +89,12 @@ object Views {
   private def field(caption: String, control: HtmlElement): HtmlElement =
     label(cls := "field", caption, control)
 
+  /** A field whose caption changes with what is selected elsewhere in the form. Still a `label`
+    * wrapping its control, so the association survives the caption being rewritten.
+    */
+  private def field(caption: Signal[String], control: HtmlElement): HtmlElement =
+    label(cls := "field", child.text <-- caption, control)
+
   /** A section with a refresh button of its own.
     *
     * Every list here can go stale while it is being looked at — somebody else accepts a
@@ -504,14 +510,34 @@ object Views {
       cls := "row",
       div(cls := "title", summary.gameName),
       div(cls := "detail", summary.description),
-      if (showDue) summary.due.map(when => div(cls := "due", s"due ${Format.instant(when)}")).getOrElse(emptyNode)
+      if (showDue) summary.due.map(countdown).getOrElse(emptyNode)
       else emptyNode,
+      // The rule behind that deadline, which the deadline itself does not give away: the same
+      // "due" line comes of a per-turn limit and of a budget nearly spent, and they call for
+      // opposite decisions. Shown only while the match is being played — the terms of a game
+      // that is over are history nobody can act on, and the result table is what that row is
+      // for.
+      if (summary.completed || summary.cancelled) emptyNode else timeLimitDetail(summary.timeLimit, summary.timeLimitKind),
       // `pending` means it is this player's turn: it is the flag the "Your turn" list selects
       // on, so saying it there would repeat the heading on every row. Said here only for the
       // matches still being played — a finished match has no turn to be waiting for.
       if (showDue || summary.completed || summary.cancelled) emptyNode
       else if (summary.pending) div(cls := "pending", "your turn")
+      // Named, rather than "the other players": in a match of three it is the difference
+      // between knowing who to chase and knowing only that it is not you. The old wording is
+      // still the fallback for a match matchmaker has not yet heard a turn for.
+      else if (summary.whoseTurn.nonEmpty) div(cls := "detail", s"waiting for ${summary.whoseTurn.mkString(", ")}")
       else div(cls := "detail", "waiting for the other players"),
+      // The clock on the turn now being taken, whoever is taking it. On the "Your turn" list it
+      // is the caller's own and is drawn above from `due`; here it may be somebody else's, which
+      // is the more useful thing to know about a match you cannot move in.
+      if (showDue || summary.completed || summary.cancelled) emptyNode
+      else summary.turnDue.map(countdown).getOrElse(emptyNode),
+      // Under a chess clock the deadline above is only half the story: it says when this turn
+      // runs out, not how much either player has to last the rest of the match on. Empty for
+      // every other kind of limit, so nothing is drawn.
+      if (showDue || summary.completed || summary.cancelled || summary.clocks.isEmpty) emptyNode
+      else clockTable(summary.clocks),
       // A cancelled match is over and has no result, so it sits in the completed list; without
       // this it would be indistinguishable from one that was played to an end.
       if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
@@ -615,6 +641,11 @@ object Views {
                 if (!row.forfeit) emptyNode
                 else if (row.isWinner) span(cls := "detail", " — won by forfeit")
                 else span(cls := "detail", " — forfeited on time"),
+                // How long they spent over their turns, all told. Only when the match has
+                // turns recorded against somebody: a match played before turns were recorded
+                // would otherwise report a table of zeroes as if everybody had moved instantly.
+                if (rows.forall(_.timeTaken.isZero)) emptyNode
+                else span(cls := "detail", s" — ${Format.spent(row.timeTaken)} on the clock"),
                 // Whatever else the engine chose to report. Which keys exist is the game's
                 // business, so they are shown as they came rather than being named here.
                 if (row.scores.isEmpty) emptyNode
@@ -1091,6 +1122,7 @@ object Views {
       cls := "row",
       div(cls := "title", challenge.message),
       div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
+      timeLimitDetail(challenge),
       if (challenge.isPublic) div(cls := "detail", "public") else emptyNode,
       // Starting is the challenger's call rather than something that happens on the last
       // acceptance: a game whose remaining roles are optional may be worth starting without
@@ -1124,6 +1156,7 @@ object Views {
       cls := "row",
       div(cls := "title", challenge.message),
       div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
+      timeLimitDetail(challenge),
       roleSelect(free, role),
       if (free.isEmpty) div(cls := "detail", "every role is taken")
       else
@@ -1138,6 +1171,90 @@ object Views {
         }
     )
   }
+
+  /** How long is left of the turn in front of this player, counting down while they look at it.
+    *
+    * On the "Your turn" list only, which is the one place a deadline is a thing to act on rather
+    * than a fact about a match. An instant on its own does not answer the question being asked
+    * there — "have I got time for this now?" — and answering it by subtracting one timestamp
+    * from another is work the page can do.
+    *
+    * The ticking text is hidden from assistive technology and the absolute deadline is given
+    * instead. A number that rewrites itself every second is either announced every second or
+    * read stale, and neither is the deadline: "due 14:32 UTC" is, and it does not move.
+    *
+    * The countdown is against the browser's clock, while the deadline was set by the database's
+    * — a device whose clock is minutes out will show a countdown that is minutes out with it.
+    * The server's own comparison is the one that decides a forfeit; this is a reading of it, and
+    * it is not what anybody is judged by.
+    */
+  private def countdown(deadline: java.time.Instant): HtmlElement = {
+    // Ticks only while the row is on screen: Laminar starts the stream when the element mounts
+    // and stops it when it goes, so a list that has been navigated away from costs nothing.
+    val remaining = EventStream.periodic(1000).toSignal(0).map(_ => deadline.toEpochMilli - System.currentTimeMillis())
+    div(
+      cls := "due",
+      cls("overdue") <-- remaining.map(_ <= 0),
+      span(
+        aria.hidden := true,
+        child.text <-- remaining.map(Format.remaining)
+      ),
+      span(cls := "sr-only", s"due ${Format.instant(deadline)}")
+    )
+  }
+
+  /** What every player has left of a chess-clock budget.
+    *
+    * The player on the clock is shown their deadline, counting down, because their balance is
+    * being spent as it is read; everybody else is shown a balance, which is not moving and would
+    * be a lie if it ticked. That is the same distinction `PlayerClock.deadline` draws, and it is
+    * drawn there rather than here so the server and the page cannot disagree about who is
+    * spending.
+    */
+  private def clockTable(clocks: Seq[PlayerClock]): HtmlElement =
+    ul(
+      cls := "clocks",
+      clocks.map { clock =>
+        li(
+          cls := "clock",
+          span(cls := "who", clock.nickname),
+          clock.deadline match {
+            case Some(deadline) => countdown(deadline)
+            // Said as a balance rather than as a countdown: "6:00 left" of a clock that is not
+            // running is a fact, and it stays true until this player moves again.
+            case None => span(cls := "detail", Format.remaining(clock.remaining.toMillis))
+          }
+        )
+      }
+    )
+
+  /** The clock something is played under, for a challenge — every row of both lists has one. */
+  private def timeLimitDetail(challenge: OpenChallenge): HtmlElement =
+    timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind)
+
+  /** The clock something is played under, said in full wherever it is said at all.
+    *
+    * Both halves matter and neither is guessable from the other: ten minutes per turn and ten
+    * minutes for the whole match are very different games. On a challenge it is the terms being
+    * offered; on a running match it is the rule behind the deadline, which the deadline alone
+    * does not give away — the same "due" line comes of a fresh per-turn limit and of a budget
+    * with a minute left in it.
+    *
+    * Said even when there is no limit, because "nothing here about a clock" and "no clock" are
+    * otherwise the same sight.
+    */
+  private def timeLimitDetail(limit: Option[java.time.Duration], kind: TimeLimitKind): HtmlElement =
+    div(
+      cls := "detail",
+      limit match {
+        case None => "no time limit"
+        case Some(limit) =>
+          kind match {
+            case TimeLimitKind.PerTurn => s"${Format.duration(limit)} per turn"
+            case TimeLimitKind.Total   => s"${Format.duration(limit)} each for the whole match"
+          }
+      }
+    )
 
   /** The roles of `game` that no acceptance of `summary` has claimed yet. */
   private def freeRoles(game: Game, summary: OpenChallengeSummary): Seq[GameRole] =
@@ -1179,6 +1296,10 @@ object Views {
     // players agree to, where what happens when one runs out is a rule of the game — that is
     // `Game.timeoutAction`, which an admin sets once.
     val timeLimit = Var("")
+    // And what that number is a limit on: each turn on its own, or the player's whole match, the
+    // way a chess clock works. Per turn by default, which is what every limit meant before the
+    // choice existed.
+    val timeLimitKind = Var(TimeLimitKind.PerTurn)
     // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
     // has been claimed yet, so every role of the game is on offer and the first stands selected.
     val role = Var(game.roles.headOption.map(_.gameRoleId))
@@ -1188,8 +1309,13 @@ object Views {
       h3("Offer a Challenge"),
       field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
       roleSelect(game.roles, role),
+      // The label says which of the two the number means, because "30 minutes" is a very
+      // different offer under each and the dropdown below it is easy to read past.
       field(
-        "Minutes per turn (blank for no limit)",
+        timeLimitKind.signal.map {
+          case TimeLimitKind.PerTurn => "Minutes per turn (blank for no limit)"
+          case TimeLimitKind.Total   => "Minutes per player for the whole match (blank for no limit)"
+        },
         input(
           tpe := "number",
           minAttr := "1",
@@ -1197,9 +1323,20 @@ object Views {
           controlled(value <-- timeLimit.signal, onInput.mapToValue --> timeLimit)
         )
       ),
+      // Offered whatever the limit says, including blank: choosing the kind first and then
+      // typing the number is at least as natural as the other order, and a kind with no limit
+      // to apply it to simply does nothing.
+      field(
+        "How that time is spent",
+        select(
+          onChange.mapToValue --> (raw => timeLimitKind.set(TimeLimitKind.fromCode(raw))),
+          value <-- timeLimitKind.signal.map(_.code),
+          TimeLimitKind.values.toSeq.map(kind => option(value := kind.code, kind.label))
+        )
+      ),
       child <-- timeLimit.signal.map { raw =>
         if (raw.trim.isEmpty || minutesOf(raw).isDefined) emptyNode
-        else p(cls := "empty", aria.live := "polite", "A turn limit is a whole number of minutes.")
+        else p(cls := "empty", aria.live := "polite", "A time limit is a whole number of minutes.")
       },
       // Public means anyone may watch the match, which the game engine implements by issuing a
       // url that needs no sign-in. It is decided here because it is a property of the game being
@@ -1236,7 +1373,8 @@ object Views {
                 gameId = game.gameId,
                 characterId = cid,
                 isPublic = isPublic.now(),
-                gameRoleId = chosen
+                gameRoleId = chosen,
+                timeLimitKind = timeLimitKind.now()
               )
             case None =>
               PlainOpenChallenge(
@@ -1248,13 +1386,15 @@ object Views {
                 settings = "{}",
                 gameId = game.gameId,
                 isPublic = isPublic.now(),
-                gameRoleId = chosen
+                gameRoleId = chosen,
+                timeLimitKind = timeLimitKind.now()
               )
           }
 
           Store.run(ApiClient.createChallenge(challenge), busy) { _ =>
             message.set("")
             timeLimit.set("")
+            timeLimitKind.set(TimeLimitKind.PerTurn)
             // The challenge it was open for now exists and is in the list below it.
             Store.showChallengeForm.set(false)
             Store.refreshChallenges(game.gameId)
@@ -1294,6 +1434,52 @@ object Format {
     */
   def date(value: java.time.Instant): String =
     value.toString.takeWhile(_ != 'T')
+
+  /** What is left on a clock, as a clock reads: `4:31`, or `1:02:09` once there is an hour of
+    * it. Whole seconds, rounded up, so a countdown reaches "0:00" as the time runs out rather
+    * than a second before it.
+    *
+    * Nothing left is said in words rather than as `0:00`, which would go on being displayed
+    * however long the turn stayed unplayed and would read as time still on the clock.
+    */
+  def remaining(millis: Long): String =
+    if (millis <= 0) "time is up"
+    else {
+      val seconds = (millis + 999) / 1000
+      val (hours, minutes, secs) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+      val clock =
+        if (hours > 0) f"$hours:$minutes%02d:$secs%02d"
+        else f"$minutes:$secs%02d"
+      s"$clock left"
+    }
+
+  /** Time spent, as a clock reads it — `4:31`, or `1:02:09` once there is an hour of it.
+    *
+    * The same shape as [[remaining]] without its trailing word, since a total at the end of a
+    * match is not counting towards anything and "left" would be wrong. Zero is `0:00` here
+    * rather than a phrase: in a table of times it is a time like the others, and it means the
+    * player never moved.
+    */
+  def spent(value: java.time.Duration): String = {
+    val seconds = value.getSeconds
+    val (hours, minutes, secs) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+    if (hours > 0) f"$hours:$minutes%02d:$secs%02d" else f"$minutes:$secs%02d"
+  }
+
+  /** A time limit, in the largest whole unit that says it without a fraction.
+    *
+    * Limits are offered in minutes, so minutes are the ordinary answer; hours are folded up
+    * only when the number divides evenly, since "90 minutes" is clearer than "1.5 hours" and
+    * seconds appear only for a limit that was not a whole minute to begin with.
+    */
+  def duration(value: java.time.Duration): String = {
+    val seconds = value.getSeconds
+    def plural(n: Long, unit: String) = s"$n $unit${if (n == 1) "" else "s"}"
+
+    if (seconds % 3600 == 0 && seconds >= 3600) plural(seconds / 3600, "hour")
+    else if (seconds % 60 == 0) plural(seconds / 60, "minute")
+    else plural(seconds, "second")
+  }
 
   /** A score reported by a game engine, which may be any JSON value.
     *

@@ -188,6 +188,37 @@ class EngineSpec extends FunSuite {
     assert(over.participants.forall(p => p.completed && !p.pending))
   }
 
+  test("status reports the turns taken, with what each one cost, and only those after `since`") {
+    // A clock that moves, unlike the fixture's: what is being checked here is the times on the
+    // turns, and a frozen clock would make every one of them identical.
+    val store = InMemoryMatchStore()
+    val start = Instant.parse("2026-01-01T00:00:00Z")
+    var elapsed = 0L
+    val engine = Engine(store, RecordingMatchmaker(), "http://engine.test", () => start.plusSeconds(elapsed))
+    engine.createGame(createRequest())
+    val m = store.get("m-1").get
+
+    // X takes a minute over the opening; O replies after thirty seconds more.
+    elapsed = 60
+    engine.move("m-1", playerOf(m, Mark.X), 4)
+    elapsed = 90
+    engine.move("m-1", playerOf(m, Mark.O), 0)
+
+    val all = engine.status("m-1").toOption.get.turns
+    assertEquals(all.map(_.participantId), List(11L, 22L))
+    assertEquals(all.map(_.takenAt), List(start.plusSeconds(60), start.plusSeconds(90)))
+    // The first player's clock started when the match was created; the second's when the first
+    // player moved.
+    assertEquals(all.map(_.startedAt), List(Some(start), Some(start.plusSeconds(60))))
+
+    // Asked from the first turn, only the second comes back: matchmaker already has the one it
+    // named, and `since` is exclusive.
+    val since = engine.status("m-1", Some(start.plusSeconds(60))).toOption.get
+    assertEquals(since.turns.map(_.takenAt), List(start.plusSeconds(90)))
+    // Asked from the last, nothing at all.
+    assertEquals(engine.status("m-1", Some(start.plusSeconds(90))).toOption.get.turns, Nil)
+  }
+
   test("an unknown match is a 404 to matchmaker and to a player alike") {
     val (engine, _, _, _, _) = fixture()
     assertEquals(engine.status("nope"), Left(Refusal.NotFound("no match 'nope'")))

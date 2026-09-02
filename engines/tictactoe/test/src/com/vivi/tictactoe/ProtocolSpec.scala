@@ -73,6 +73,22 @@ class ProtocolSpec extends FunSuite {
     assertEquals(asMatchmaker.participants.map(_.participantId), List(11L, 22L))
     assertEquals(asMatchmaker.participants.map(_.pending), List(true, false))
     assertEquals(asMatchmaker.participants.head.prevMoveAt, status.participants.head.prevMoveAt)
+    // No moves yet, so nothing to report — and matchmaker reads the absence the same way.
+    assertEquals(asMatchmaker.turns, Nil)
+  }
+
+  test("the turns in a status answer read as matchmaker's EngineTurn, timestamps and all") {
+    val store = InMemoryMatchStore()
+    val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
+    engine.createGame(create)
+    engine.move("m-1", "sub-alice", 0)
+
+    val status = engine.status("m-1").toOption.get
+    val asMatchmaker = read[MmGameStatusResponse](write(status))
+
+    assertEquals(asMatchmaker.turns.map(_.participantId), List(11L))
+    assertEquals(asMatchmaker.turns.head.takenAt, status.turns.head.takenAt)
+    assertEquals(asMatchmaker.turns.head.startedAt, status.turns.head.startedAt)
   }
 
   test("the engine's move callback reads as matchmaker's MoveNotification") {

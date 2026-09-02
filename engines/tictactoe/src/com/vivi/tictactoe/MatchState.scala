@@ -11,6 +11,15 @@ import java.time.Instant
   */
 case class Seat(mark: Mark, cognitoId: String, participantId: Long)
 
+/** One move that was made: who made it, when, and when their clock started for it.
+  *
+  * Kept per match rather than derived from the board, because a board says what the position is
+  * and not when it got there. Matchmaker asks for these to charge a chess-clock time limit, and
+  * asks for the ones after a time it names — so what matters is that each carries its own
+  * timestamps rather than depending on its neighbours.
+  */
+case class TurnRecord(participantId: Long, takenAt: Instant, startedAt: Instant)
+
 /** A match in progress, and everything needed to answer for it or to call matchmaker back.
   *
   * The callback urls are stored per match rather than configured once because matchmaker sends
@@ -27,7 +36,10 @@ case class TicTacToeMatch(
     createdAt: Instant,
     lastMoveAt: Option[Instant],
     moveCallbackUrl: Option[String],
-    resultsCallbackUrl: Option[String]
+    resultsCallbackUrl: Option[String],
+    // Defaulted so a match stored before turns were recorded still reads back: it simply has
+    // none, and matchmaker charges nothing for the moves made before this existed.
+    turns: List[TurnRecord] = Nil
 ) {
 
   def seatOf(mark: Mark): Option[Seat] = seats.find(_.mark == mark)
@@ -96,5 +108,6 @@ object TicTacToeMatch {
   given ReadWriter[Board] = upickle.default.readwriter[String].bimap(_.encoded, Board.decode)
   given ReadWriter[Instant] = upickle.default.readwriter[String].bimap(_.toString, Instant.parse)
   given ReadWriter[Seat] = macroRW
+  given ReadWriter[TurnRecord] = macroRW
   given ReadWriter[TicTacToeMatch] = macroRW
 }

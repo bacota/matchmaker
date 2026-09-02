@@ -34,6 +34,9 @@ object Json {
   /** By its stored code, so the wire form is the column's form: 'FORFEIT'. */
   given ReadWriter[TimeoutAction] = readwriter[String].bimap(_.code, TimeoutAction.fromCode)
 
+  /** Likewise: 'PER_TURN' or 'TOTAL'. */
+  given ReadWriter[TimeLimitKind] = readwriter[String].bimap(_.code, TimeLimitKind.fromCode)
+
   given ReadWriter[Instant] = readwriter[String].bimap(_.toString, Instant.parse)
 
   // Seconds, matching how the persistence layer stores time_limit.
@@ -60,6 +63,7 @@ object Json {
     ReadWriter.merge(summon[ReadWriter[PlainAcceptance]], summon[ReadWriter[CharacterAcceptance]])
   given ReadWriter[PendingAcceptance] = macroRW
 
+  given ReadWriter[PlayerClock] = macroRW
   given ReadWriter[MatchSummary] = macroRW
   given ReadWriter[Match] = macroRW
 
@@ -176,7 +180,10 @@ object Json {
       // Whether the match ended on a clock rather than on the board. With `isWinner` this is the
       // difference between "won by forfeit" and "forfeited"; defaulted for the same reason the
       // game's action is.
-      forfeit: Boolean = false
+      forfeit: Boolean = false,
+      // How long this player spent over their turns across the whole match. Seconds on the wire,
+      // like every other Duration here; zero for a match played before turns were recorded.
+      timeTaken: Duration = Duration.ZERO
   )
 
   given ReadWriter[RegisterRequest] = macroRW
