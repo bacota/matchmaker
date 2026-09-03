@@ -44,7 +44,9 @@ case class Match(
       * from the challenge along with the limit itself, so that editing the challenge afterwards
       * cannot change the terms of a match already being played under it.
       */
-    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn
+    timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
+    /** The unit the challenger offered `timeLimit` in, carried forward with it. */
+    timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes
 ) {
 
   /** Whether the match was played to an end. */

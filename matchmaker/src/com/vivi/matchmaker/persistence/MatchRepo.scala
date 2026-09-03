@@ -16,6 +16,7 @@ class MatchRepo(session: Session[IO]) {
   private val instant = SkunkCodecs.instant
   private val settings: Codec[String] = SkunkCodecs.jsonb
   private val timeLimitKind = SkunkCodecs.timeLimitKind
+  private val timeLimitUnit = SkunkCodecs.timeLimitUnit
 
   // time_limit is bound/read as a second count rather than via a custom INTERVAL codec.
   private def toSeconds(d: Option[Duration]): Option[Double] = d.map(_.getSeconds.toDouble)
@@ -23,25 +24,25 @@ class MatchRepo(session: Session[IO]) {
 
   private val insertMatch: Command[
     (GameId, MatchId, ChallengeId, String, Option[Instant], Boolean, Instant, Option[Double], String, Boolean,
-      Option[String], Option[String], Option[String], TimeLimitKind)
+      Option[String], Option[String], Option[String], TimeLimitKind, TimeLimitUnit)
   ] =
     sql"""INSERT INTO match (game_id, match_id, challenge_id, description, completed, cancelled, start, time_limit,
-                             settings, public, status_url, play_url, public_url, time_limit_kind)
+                             settings, public, status_url, play_url, public_url, time_limit_kind, time_limit_unit)
           VALUES ($gameId, $matchId, $challengeId, $text, ${instant.opt}, $bool, $instant, ${float8.opt} * INTERVAL '1 second',
-                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt}, $timeLimitKind)""".command
+                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt}, $timeLimitKind, $timeLimitUnit)""".command
 
   private type MatchRow =
     (ChallengeId, String, Option[Instant], Boolean, Instant, Option[Double], String, Boolean, Option[String],
-      Option[String], Option[String], TimeLimitKind)
+      Option[String], Option[String], TimeLimitKind, TimeLimitUnit)
 
   private val matchRow: Codec[MatchRow] =
     challengeId *: text *: instant.opt *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *:
-      text.opt *: timeLimitKind
+      text.opt *: timeLimitKind *: timeLimitUnit
 
   private val selectMatch: Query[(GameId, MatchId), MatchRow] =
     sql"""SELECT challenge_id, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
-                 public, status_url, play_url, public_url, time_limit_kind
+                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId"""
       .query(matchRow)
@@ -52,7 +53,7 @@ class MatchRepo(session: Session[IO]) {
   private val selectMatchForUpdate: Query[(GameId, MatchId), MatchRow] =
     sql"""SELECT challenge_id, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
-                 public, status_url, play_url, public_url, time_limit_kind
+                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
       .query(matchRow)
@@ -61,27 +62,27 @@ class MatchRepo(session: Session[IO]) {
   // challenge's match. Changing it would rewrite who created the match.
   private val updateMatch: Command[
     (String, Option[Instant], Boolean, Instant, Option[Double], String, Boolean, Option[String], Option[String],
-      Option[String], TimeLimitKind, GameId, MatchId)
+      Option[String], TimeLimitKind, TimeLimitUnit, GameId, MatchId)
   ] =
     sql"""UPDATE match SET description = $text, completed = ${instant.opt}, cancelled = $bool, start = $instant,
           time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
           public = $bool, status_url = ${text.opt}, play_url = ${text.opt}, public_url = ${text.opt},
-          time_limit_kind = $timeLimitKind
+          time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
   def create(m: Match): IO[Match] =
     session
       .execute(insertMatch)(
         (m.gameId, m.matchId, m.challengeId, m.description, m.completedAt, m.cancelled, m.start, toSeconds(m.timeLimit),
-          m.settings, m.isPublic, m.statusUrl, m.playUrl, m.publicUrl, m.timeLimitKind)
+          m.settings, m.isPublic, m.statusUrl, m.playUrl, m.publicUrl, m.timeLimitKind, m.timeLimitUnit)
       )
       .as(m)
 
   private def toMatch(gameId: GameId, matchId: MatchId, row: MatchRow): Match = {
     val (challengeId, description, completedAt, cancelled, start, timeLimitSeconds, settings, isPublic, statusUrl,
-      playUrl, publicUrl, timeLimitKind) = row
+      playUrl, publicUrl, timeLimitKind, timeLimitUnit) = row
     Match(gameId, matchId, challengeId, description, completedAt, start, fromSeconds(timeLimitSeconds), settings,
-      isPublic, cancelled, statusUrl, playUrl, publicUrl, timeLimitKind)
+      isPublic, cancelled, statusUrl, playUrl, publicUrl, timeLimitKind, timeLimitUnit)
   }
 
   def read(gameId: GameId, matchId: MatchId): IO[Option[Match]] =
@@ -95,7 +96,7 @@ class MatchRepo(session: Session[IO]) {
     session
       .execute(updateMatch)(
         (m.description, m.completedAt, m.cancelled, m.start, toSeconds(m.timeLimit), m.settings,
-          m.isPublic, m.statusUrl, m.playUrl, m.publicUrl, m.timeLimitKind, m.gameId, m.matchId)
+          m.isPublic, m.statusUrl, m.playUrl, m.publicUrl, m.timeLimitKind, m.timeLimitUnit, m.gameId, m.matchId)
       )
       .void
 
@@ -134,18 +135,19 @@ class MatchRepo(session: Session[IO]) {
   // character_id is nullable: a 'P'-type game's participant has no character_participant row.
   private val seatRow =
     gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: float8.opt *: timeLimitKind *:
-      int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt
+      timeLimitUnit *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt
 
   private def toSeatRow(
       row: (GameId, MatchId, String, String, Option[Instant], Boolean, Boolean, Instant, Option[Double],
-        TimeLimitKind, Long, Option[Long], Boolean, Option[Instant], String, Boolean, Boolean, Option[Instant])
+        TimeLimitKind, TimeLimitUnit, Long, Option[Long], Boolean, Option[Instant], String, Boolean, Boolean,
+        Option[Instant])
   ): MatchSeatRow = {
     val (gameId, matchId, gameName, description, completedAt, cancelled, isCreator, start, timeLimitSeconds,
-      timeLimitKind, callerParticipantId, callerCharacterId, callerPending, callerDue, seatNickname, seatPending,
-      seatCompleted, seatDue) = row
+      timeLimitKind, timeLimitUnit, callerParticipantId, callerCharacterId, callerPending, callerDue, seatNickname,
+      seatPending, seatCompleted, seatDue) = row
     MatchSeatRow(
       gameId, matchId, gameName, description, completedAt, cancelled, isCreator, start,
-      fromSeconds(timeLimitSeconds), timeLimitKind,
+      fromSeconds(timeLimitSeconds), timeLimitKind, timeLimitUnit,
       ParticipantId(callerParticipantId), callerCharacterId.map(CharacterId.apply), callerPending, callerDue,
       seatNickname, seatPending, seatCompleted, seatDue
     )
@@ -158,7 +160,7 @@ class MatchRepo(session: Session[IO]) {
   private val selectActiveForPlayer =
     sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed, seat.due
           FROM participant p
@@ -191,7 +193,7 @@ class MatchRepo(session: Session[IO]) {
   private val selectOverForPlayer =
     sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed, seat.due
           FROM participant p
@@ -208,7 +210,7 @@ class MatchRepo(session: Session[IO]) {
   private val selectDueForPlayer =
     sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
-                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed, seat.due
           FROM participant p
@@ -304,6 +306,7 @@ case class MatchSeatRow(
     start: Instant,
     timeLimit: Option[Duration],
     timeLimitKind: TimeLimitKind,
+    timeLimitUnit: TimeLimitUnit,
     // The caller's own seat, repeated on every row of the match.
     callerParticipantId: ParticipantId,
     callerCharacterId: Option[CharacterId],

@@ -43,7 +43,12 @@ object TestMigration {
    *
    * Installed permanently instead, and harmless that way: it fires only on a match whose
    * description is 'explode', which is a value no other spec uses and no application code can
-   * produce by itself.
+   * produce by itself — and only on a write that sets the match's urls, which is the write that
+   * spec means to break (`GameEngineService.finish`, recording what the engine handed back).
+   *
+   * Narrow on purpose. A trigger that refused *every* update of such a row also refused
+   * Flyway's: V11 backfills a column across the whole `match` table, and a leftover 'explode'
+   * row from an earlier test run was enough to fail the migration and with it every suite.
    *
    * Under an advisory lock, for the same reason Flyway holds one over the migrations: `migrated`
    * is one lazy val per JVM and mill runs several of them, so without it two `CREATE OR REPLACE
@@ -64,7 +69,9 @@ object TestMigration {
           )
           statement.execute(
             """CREATE OR REPLACE TRIGGER fail_match_update_trigger BEFORE UPDATE ON match
-               FOR EACH ROW WHEN (NEW.description = 'explode') EXECUTE FUNCTION fail_match_update()"""
+               FOR EACH ROW WHEN (NEW.description = 'explode'
+                                  AND NEW.status_url IS DISTINCT FROM OLD.status_url)
+               EXECUTE FUNCTION fail_match_update()"""
           )
         } finally statement.execute(s"SELECT pg_advisory_unlock($installLockKey)")
       } finally statement.close()

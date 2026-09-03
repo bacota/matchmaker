@@ -37,6 +37,9 @@ object Json {
   /** Likewise: 'PER_TURN' or 'TOTAL'. */
   given ReadWriter[TimeLimitKind] = readwriter[String].bimap(_.code, TimeLimitKind.fromCode)
 
+  /** And 'MINUTES' / 'HOURS' / 'DAYS'. */
+  given ReadWriter[TimeLimitUnit] = readwriter[String].bimap(_.code, TimeLimitUnit.fromCode)
+
   given ReadWriter[Instant] = readwriter[String].bimap(_.toString, Instant.parse)
 
   // Seconds, matching how the persistence layer stores time_limit.

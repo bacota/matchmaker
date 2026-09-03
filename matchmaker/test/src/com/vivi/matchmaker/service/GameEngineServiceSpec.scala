@@ -12,7 +12,7 @@ import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, GameRepo, OpenChallengeRepo, ParticipantRepo, ResultRepo, TestSession, TurnRepo}
+import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, GameRepo, MatchRepo, OpenChallengeRepo, ParticipantRepo, ResultRepo, TestSession, TurnRepo}
 
 /** The game-engine interaction, end to end against the real database with a stubbed engine.
   *
@@ -129,6 +129,7 @@ class GameEngineServiceSpec extends PropertySuite {
       timeLimit: Option[Duration] = None,
       message: String = "message",
       timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
+      timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
       start: Option[Instant] = None
   ): OpenChallenge =
     CharacterOpenChallenge(
@@ -142,7 +143,8 @@ class GameEngineServiceSpec extends PropertySuite {
       characterId = fixture.character.characterId,
       isPublic = isPublic,
       gameRoleId = fixture.game.roles.head.gameRoleId,
-      timeLimitKind = timeLimitKind
+      timeLimitKind = timeLimitKind,
+      timeLimitUnit = timeLimitUnit
     )
 
   private def participantsOf(m: Match): IO[List[Participant]] =
@@ -1066,6 +1068,56 @@ class GameEngineServiceSpec extends PropertySuite {
           theirRow = rows.find(_.participantId == theirs.participantId).get
         } yield mineRow.timeTaken == Duration.ofMinutes(4) &&
           theirRow.timeTaken == Duration.ofMinutes(3)
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  /* Every term of the clock the challenge was offered under, on the match it becomes.
+   *
+   * All three travel together and each has been forgotten at least once: the limit is what is
+   * enforced, the kind is how it is spent, and the unit is how it is said back — a challenge
+   * offered in hours whose match says "120 minutes" is quoting terms nobody agreed to. Checked
+   * on the match row and on the summary the lists are drawn from, since they are read back by
+   * different queries.
+   */
+  property("a match is started under the clock its challenge was offered with, unit and all") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          fixture <- makeFixture(nickname, externalId, gameExternalId)
+          other <- services.registration.register(s"other-$nickname", otherExternalId)
+          otherCharacter <- TestSession.resource.use { session =>
+            new CharacterRepo[String](session)
+              .create(Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId)))
+          }
+          challenge <- services.challenges.create(
+            challengeFor(
+              fixture,
+              timeLimit = Some(Duration.ofHours(2)),
+              timeLimitKind = TimeLimitKind.Total,
+              timeLimitUnit = TimeLimitUnit.Hours
+            ),
+            externalId
+          )
+          _ <- services.challenges.accept(
+            fixture.game.gameId, challenge.challengeId, Some(otherCharacter.characterId),
+            fixture.game.roles(1).gameRoleId, otherExternalId
+          )
+          started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+          // Read back rather than taken from what `start` returned, so this is what was stored.
+          stored <- TestSession.resource.use(session => new MatchRepo(session).read(started.gameId, started.matchId))
+          listed <- services.matches.active(externalId)
+          row = listed.find(_.matchId == started.matchId).get
+        } yield stored.exists(m =>
+          m.timeLimit.contains(Duration.ofHours(2)) &&
+            m.timeLimitKind == TimeLimitKind.Total &&
+            m.timeLimitUnit == TimeLimitUnit.Hours
+        ) &&
+          row.timeLimit.contains(Duration.ofHours(2)) &&
+          row.timeLimitKind == TimeLimitKind.Total &&
+          row.timeLimitUnit == TimeLimitUnit.Hours
         result.timeout(15.seconds).unsafeRunSync()
     }
   }

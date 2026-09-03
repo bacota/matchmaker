@@ -89,12 +89,6 @@ object Views {
   private def field(caption: String, control: HtmlElement): HtmlElement =
     label(cls := "field", caption, control)
 
-  /** A field whose caption changes with what is selected elsewhere in the form. Still a `label`
-    * wrapping its control, so the association survives the caption being rewritten.
-    */
-  private def field(caption: Signal[String], control: HtmlElement): HtmlElement =
-    label(cls := "field", child.text <-- caption, control)
-
   /** A section with a refresh button of its own.
     *
     * Every list here can go stale while it is being looked at — somebody else accepts a
@@ -251,7 +245,7 @@ object Views {
       h2("Choose a Nickname"),
       p("You are signed in, but you do not have a player yet. Your nickname is what other players see."),
       field("Nickname", input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))),
-      busyButton("Create player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
+      busyButton("Create Player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
         Store.run(ApiClient.register(nickname.now().trim), busy) { player =>
           Store.player.set(Store.PlayerState.Registered(player))
           Store.refreshMatches()
@@ -299,7 +293,7 @@ object Views {
       // Only for admins, because only an admin can create a game: the server answers anyone else
       // with a 403, and a menu entry that always fails is worse than no entry.
       child <-- currentPlayer.map {
-        case Some(player) if player.isAdmin => menuItem("Add a game", Store.Page.NewGame)
+        case Some(player) if player.isAdmin => menuItem("Add a Game", Store.Page.NewGame)
         case _                              => emptyNode
       }
     )
@@ -353,26 +347,34 @@ object Views {
     */
   private val refreshingAcceptances: Var[Boolean] = Var(false)
 
+  /* Absent altogether when there is nothing ready to start, heading and refresh button with it.
+   *
+   * Every other list here says so when it is empty, because "no matches" is an answer to a
+   * question somebody asked. This one is not a question anybody asks: a challenge becomes
+   * startable when the last player accepts it, which is something that happens *to* the
+   * challenger rather than something they came to check. So it is a prompt, and a prompt with
+   * nothing to prompt is noise on every screen that carries it.
+   *
+   * Nothing is stranded by the button going with it: the same acceptances are what "Waiting to
+   * Start" lists, and its refresh reloads them — through the same `refreshingAcceptances` flag,
+   * so a reload from there brings this section back the moment there is one to bring back. */
   private def readyToStartSection(game: Option[Game] = None): HtmlElement =
-    refreshableSection("Ready to Start", refreshingAcceptances, () => Store.reloadAcceptances(), subsection = false)(
+    div(
       child <-- Store.acceptances.signal
         .combineWith(Store.games.signal, currentPlayer)
         .map { (acceptances, games, player) =>
           val mine = player.toSeq.flatMap { me =>
             acceptancesIn(game)(acceptances).filter(p => p.readyToStart && p.challenger == me.playerId)
           }
-          // Shown empty rather than absent, now that the section carries its own refresh button:
-          // a button that only appears once there is something to find is no use to someone
-          // checking whether there is.
-          if (mine.isEmpty)
-            p(
-              cls := "empty",
-              if (game.isDefined) "Nothing in this game is waiting for you to start it."
-              else "Nothing is waiting for you to start it."
-            )
+          if (mine.isEmpty) emptyNode
           else {
             val namesById = games.map(game => game.gameId -> game.name).toMap
-            ul(mine.map(pending => readyToStartRow(pending, namesById.get(pending.acceptance.gameId))))
+            refreshableSection(
+              "Ready to Start",
+              refreshingAcceptances,
+              () => Store.reloadAcceptances(),
+              subsection = false
+            )(ul(mine.map(pending => readyToStartRow(pending, namesById.get(pending.acceptance.gameId)))))
           }
         }
     )
@@ -446,20 +448,27 @@ object Views {
     * The ones this player could start right now are left out: they have their own section at the
     * top of the page, and listing them twice would offer the same Start button in two places.
     */
+  /* Absent when there is nothing waiting, like "Ready to Start" above and for the same reason:
+   * what a player has accepted and is waiting on is news when there is some, and a heading over
+   * a sentence saying there is none the rest of the time.
+   *
+   * This is the whole of what the section is — the Create Challenge button belongs to the
+   * challenges panel further down the game page, which is a different section and is not
+   * touched by this. */
   private def pendingAcceptances(game: Option[Game] = None): HtmlElement =
-    refreshableSection("Waiting to Start", refreshingAcceptances, () => Store.reloadAcceptances(), subsection = true)(
+    div(
       child <-- Store.acceptances.signal.combineWith(Store.games.signal, currentPlayer).map { (acceptances, games, player) =>
         val waiting =
           acceptancesIn(game)(acceptances).filterNot(p => p.readyToStart && player.exists(_.playerId == p.challenger))
-        if (waiting.isEmpty)
-          p(
-            cls := "empty",
-            if (game.isDefined) "You have not accepted anything of this that is still waiting."
-            else "You have not accepted anything that is still waiting."
-          )
+        if (waiting.isEmpty) emptyNode
         else {
           val namesById = games.map(game => game.gameId -> game.name).toMap
-          ul(waiting.map(pending => acceptanceRow(pending, namesById.get(pending.acceptance.gameId))))
+          refreshableSection(
+            "Waiting to Start",
+            refreshingAcceptances,
+            () => Store.reloadAcceptances(),
+            subsection = true
+          )(ul(waiting.map(pending => acceptanceRow(pending, namesById.get(pending.acceptance.gameId)))))
         }
       }
     )
@@ -517,7 +526,8 @@ object Views {
       // opposite decisions. Shown only while the match is being played — the terms of a game
       // that is over are history nobody can act on, and the result table is what that row is
       // for.
-      if (summary.completed || summary.cancelled) emptyNode else timeLimitDetail(summary.timeLimit, summary.timeLimitKind),
+      if (summary.completed || summary.cancelled) emptyNode
+      else timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit),
       // `pending` means it is this player's turn: it is the flag the "Your turn" list selects
       // on, so saying it there would repeat the heading on every row. Said here only for the
       // matches still being played — a finished match has no turn to be waiting for.
@@ -826,7 +836,7 @@ object Views {
           else emptyNode
         )
       }),
-      button(cls := "link", "Add a role", onClick --> (_ => roles.update(_ :+ emptyRole)))
+      button(cls := "link", "Add a Role", onClick --> (_ => roles.update(_ :+ emptyRole)))
     )
 
   private def parameterEditor(parameters: Var[List[ParameterDraft]]): HtmlElement =
@@ -863,7 +873,7 @@ object Views {
           )
         )
       }),
-      button(cls := "link", "Add a parameter", onClick --> (_ => parameters.update(_ :+ emptyParameter)))
+      button(cls := "link", "Add a Parameter", onClick --> (_ => parameters.update(_ :+ emptyParameter)))
     )
 
   /** The drafted roles as the model, or the first thing wrong with them.
@@ -963,7 +973,7 @@ object Views {
       roleEditor(roles),
       parameterEditor(parameters),
       busyButton(
-        if (existing.isDefined) "Save changes" else "Create game",
+        if (existing.isDefined) "Save Changes" else "Create Game",
         disabledWhen = name.signal.map(_.trim.isEmpty)
       ) { busy =>
         val drafted = for {
@@ -1055,7 +1065,7 @@ object Views {
       p("You need a character in this game before you can offer or accept a challenge."),
       field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
       field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
-      busyButton("Create character", disabledWhen = name.signal.map(_.trim.isEmpty)) { busy =>
+      busyButton("Create Character", disabledWhen = name.signal.map(_.trim.isEmpty)) { busy =>
         val created =
           ApiClient.createCharacter(game.gameId, name.now().trim, description.now().trim, player.externalId)
         Store.run(created, busy)(_ => Store.refreshCharacters(game.gameId))
@@ -1086,7 +1096,7 @@ object Views {
               // things to do on this screen, and a form is what the screen looks like it is for.
               button(
                 aria.expanded <-- Store.showChallengeForm.signal,
-                child.text <-- Store.showChallengeForm.signal.map(if (_) "Close" else "Create challenge"),
+                child.text <-- Store.showChallengeForm.signal.map(if (_) "Close" else "Create Challenge"),
                 onClick --> (_ => Store.showChallengeForm.update(!_))
               ),
               child <-- Store.showChallengeForm.signal.map {
@@ -1230,7 +1240,7 @@ object Views {
 
   /** The clock something is played under, for a challenge — every row of both lists has one. */
   private def timeLimitDetail(challenge: OpenChallenge): HtmlElement =
-    timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind)
+    timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind, challenge.timeLimitUnit)
 
   /** The clock something is played under, said in full wherever it is said at all.
     *
@@ -1243,15 +1253,19 @@ object Views {
     * Said even when there is no limit, because "nothing here about a clock" and "no clock" are
     * otherwise the same sight.
     */
-  private def timeLimitDetail(limit: Option[java.time.Duration], kind: TimeLimitKind): HtmlElement =
+  private def timeLimitDetail(
+      limit: Option[java.time.Duration],
+      kind: TimeLimitKind,
+      unit: TimeLimitUnit
+  ): HtmlElement =
     div(
       cls := "detail",
       limit match {
         case None => "no time limit"
         case Some(limit) =>
           kind match {
-            case TimeLimitKind.PerTurn => s"${Format.duration(limit)} per turn"
-            case TimeLimitKind.Total   => s"${Format.duration(limit)} each for the whole match"
+            case TimeLimitKind.PerTurn => s"${Format.duration(limit, unit)} per turn"
+            case TimeLimitKind.Total   => s"${Format.duration(limit, unit)} each for the whole match"
           }
       }
     )
@@ -1288,14 +1302,18 @@ object Views {
   private def newChallengeForm(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement = {
     val message = Var("")
     val isPublic = Var(false)
-    // How long a player may take over one turn, in minutes, blank for no limit. Blank by
-    // default because an unlimited game is the one nobody can lose by walking away from their
-    // desk, and the challenger who wants a clock is the one who came here to set one.
+    // How long a player gets, blank for no limit. Blank by default because an unlimited game
+    // is the one nobody can lose by walking away from their desk, and the challenger who wants
+    // a clock is the one who came here to set one.
     //
     // It belongs on the challenge rather than on the game: how long a turn may take is what the
     // players agree to, where what happens when one runs out is a rule of the game — that is
     // `Game.timeoutAction`, which an admin sets once.
     val timeLimit = Var("")
+    // The unit that number is in. Minutes by default, which is the shortest of them and what
+    // the field meant when it was the only one — a challenger who wants days has to say so, and
+    // one who does not is not asked to.
+    val timeLimitUnit = Var(TimeLimitUnit.Minutes)
     // And what that number is a limit on: each turn on its own, or the player's whole match, the
     // way a chess clock works. Per turn by default, which is what every limit meant before the
     // choice existed.
@@ -1309,20 +1327,28 @@ object Views {
       h3("Offer a Challenge"),
       field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
       roleSelect(game.roles, role),
-      // The label says which of the two the number means, because "30 minutes" is a very
-      // different offer under each and the dropdown below it is easy to read past.
+      // The number and the unit it is in, in one field: they are one answer, and a caption
+      // over each would read as two questions.
       field(
-        timeLimitKind.signal.map {
-          case TimeLimitKind.PerTurn => "Minutes per turn (blank for no limit)"
-          case TimeLimitKind.Total   => "Minutes per player for the whole match (blank for no limit)"
-        },
-        input(
-          tpe := "number",
-          minAttr := "1",
-          stepAttr := "1",
-          controlled(value <-- timeLimit.signal, onInput.mapToValue --> timeLimit)
+        "Time Limit",
+        div(
+          cls := "compound",
+          input(
+            tpe := "number",
+            minAttr := "1",
+            stepAttr := "1",
+            aria.label := "how much time",
+            controlled(value <-- timeLimit.signal, onInput.mapToValue --> timeLimit)
+          ),
+          select(
+            aria.label := "the unit that time is in",
+            onChange.mapToValue --> (raw => timeLimitUnit.set(TimeLimitUnit.fromCode(raw))),
+            value <-- timeLimitUnit.signal.map(_.code),
+            TimeLimitUnit.values.toSeq.map(unit => option(value := unit.code, unit.label))
+          )
         )
       ),
+      p(cls := "detail", "Leave it blank for no time limit."),
       // Offered whatever the limit says, including blank: choosing the kind first and then
       // typing the number is at least as natural as the other order, and a kind with no limit
       // to apply it to simply does nothing.
@@ -1335,8 +1361,8 @@ object Views {
         )
       ),
       child <-- timeLimit.signal.map { raw =>
-        if (raw.trim.isEmpty || minutesOf(raw).isDefined) emptyNode
-        else p(cls := "empty", aria.live := "polite", "A time limit is a whole number of minutes.")
+        if (raw.trim.isEmpty || amountOf(raw).isDefined) emptyNode
+        else p(cls := "empty", aria.live := "polite", "A time limit is a whole number, more than zero.")
       },
       // Public means anyone may watch the match, which the game engine implements by issuing a
       // url that needs no sign-in. It is decided here because it is a property of the game being
@@ -1349,11 +1375,11 @@ object Views {
         "anyone may watch"
       ),
       busyButton(
-        "Create challenge",
+        "Create Challenge",
         // A game with no roles at all has nothing an acceptance could name, so no challenge for
         // it can be created. The server refuses one; this keeps the button from offering it.
         disabledWhen = message.signal.combineWith(role.signal, timeLimit.signal).map { case (m, r, limit) =>
-          m.trim.isEmpty || r.isEmpty || (limit.trim.nonEmpty && minutesOf(limit).isEmpty)
+          m.trim.isEmpty || r.isEmpty || (limit.trim.nonEmpty && amountOf(limit).isEmpty)
         }
         // `foreach` rather than a fallback role: with no role there is no challenge to make, and
         // the disabled button above is what keeps that from being reachable.
@@ -1368,13 +1394,14 @@ object Views {
                 challenger = player.playerId,
                 message = message.now().trim,
                 start = None,
-                timeLimit = minutesOf(timeLimit.now()),
+                timeLimit = durationOf(timeLimit.now(), timeLimitUnit.now()),
                 settings = "{}",
                 gameId = game.gameId,
                 characterId = cid,
                 isPublic = isPublic.now(),
                 gameRoleId = chosen,
-                timeLimitKind = timeLimitKind.now()
+                timeLimitKind = timeLimitKind.now(),
+                timeLimitUnit = timeLimitUnit.now()
               )
             case None =>
               PlainOpenChallenge(
@@ -1382,18 +1409,20 @@ object Views {
                 challenger = player.playerId,
                 message = message.now().trim,
                 start = None,
-                timeLimit = minutesOf(timeLimit.now()),
+                timeLimit = durationOf(timeLimit.now(), timeLimitUnit.now()),
                 settings = "{}",
                 gameId = game.gameId,
                 isPublic = isPublic.now(),
                 gameRoleId = chosen,
-                timeLimitKind = timeLimitKind.now()
+                timeLimitKind = timeLimitKind.now(),
+                timeLimitUnit = timeLimitUnit.now()
               )
           }
 
           Store.run(ApiClient.createChallenge(challenge), busy) { _ =>
             message.set("")
             timeLimit.set("")
+            timeLimitUnit.set(TimeLimitUnit.Minutes)
             timeLimitKind.set(TimeLimitKind.PerTurn)
             // The challenge it was open for now exists and is in the list below it.
             Store.showChallengeForm.set(false)
@@ -1404,15 +1433,25 @@ object Views {
     )
   }
 
-  /** A turn limit typed as minutes, as a `Duration` — `None` for blank, and `None` for anything
-    * that is not a positive whole number of them, which the form treats as not yet a limit
-    * rather than as zero.
+  /** A time limit as it was typed — `None` for blank, and `None` for anything that is not a
+    * positive whole number, which the form treats as not yet a limit rather than as zero.
+    *
+    * Separate from [[durationOf]] because the two are asked at different moments: whether what
+    * has been typed is a number at all is checked on every keystroke, and what it comes to is
+    * only wanted when the challenge is made.
     */
-  private def minutesOf(raw: String): Option[java.time.Duration] =
+  private def amountOf(raw: String): Option[Int] =
     raw.trim match {
-      case "" => None
-      case text => text.toIntOption.filter(_ > 0).map(m => java.time.Duration.ofMinutes(m.toLong))
+      case ""   => None
+      case text => text.toIntOption.filter(_ > 0)
     }
+
+  /** A time limit typed in some unit, as a `Duration`. The unit itself travels with the
+    * challenge, so that the limit is said back in the unit it was offered in rather than in
+    * whichever one happens to divide it.
+    */
+  private def durationOf(raw: String, unit: TimeLimitUnit): Option[java.time.Duration] =
+    amountOf(raw).map(amount => unit.perUnit.multipliedBy(amount.toLong))
 
   private def currentPlayer: Signal[Option[Player]] = Store.currentPlayer
 }
@@ -1466,19 +1505,24 @@ object Format {
     if (hours > 0) f"$hours:$minutes%02d:$secs%02d" else f"$minutes:$secs%02d"
   }
 
-  /** A time limit, in the largest whole unit that says it without a fraction.
+  /** A time limit, in the unit it was offered in.
     *
-    * Limits are offered in minutes, so minutes are the ordinary answer; hours are folded up
-    * only when the number divides evenly, since "90 minutes" is clearer than "1.5 hours" and
-    * seconds appear only for a limit that was not a whole minute to begin with.
+    * Said back the way the challenger said it: 48 hours and 2 days are the same offer, and which
+    * of them to show is not a calculation but a fact that travelled with the challenge. The unit
+    * is only ignored when it does not divide the limit evenly — an API caller can set 90 seconds
+    * and call it minutes — in which case the largest unit that does divide it is used, which is
+    * what every limit was displayed in before the unit was recorded.
     */
-  def duration(value: java.time.Duration): String = {
-    val seconds = value.getSeconds
-    def plural(n: Long, unit: String) = s"$n $unit${if (n == 1) "" else "s"}"
-
-    if (seconds % 3600 == 0 && seconds >= 3600) plural(seconds / 3600, "hour")
-    else if (seconds % 60 == 0) plural(seconds / 60, "minute")
-    else plural(seconds, "second")
+  def duration(value: java.time.Duration, unit: TimeLimitUnit): String = {
+    val perUnit = unit.perUnit.getSeconds
+    val chosen = if (perUnit > 0 && value.getSeconds % perUnit == 0) unit else TimeLimitUnit.bestFor(value)
+    val amount = value.getSeconds / chosen.perUnit.getSeconds
+    // The enum's label is plural, which is what it is nearly always read as; one of anything is
+    // the exception and drops the 's'.
+    val label = if (amount == 1) chosen.label.stripSuffix("s") else chosen.label
+    if (chosen == TimeLimitUnit.Minutes && value.getSeconds % 60 != 0)
+      s"${value.getSeconds} second${if (value.getSeconds == 1) "" else "s"}"
+    else s"$amount $label"
   }
 
   /** A score reported by a game engine, which may be any JSON value.

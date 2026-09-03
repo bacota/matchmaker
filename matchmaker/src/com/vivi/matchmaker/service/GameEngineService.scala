@@ -128,6 +128,7 @@ class GameEngineService[T](
               // ones its challenge was offered on, and editing the challenge later must not
               // change them.
               timeLimitKind = challenge.timeLimitKind,
+              timeLimitUnit = challenge.timeLimitUnit,
               settings = challenge.settings,
               isPublic = challenge.isPublic
             )

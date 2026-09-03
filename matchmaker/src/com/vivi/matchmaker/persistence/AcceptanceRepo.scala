@@ -139,10 +139,10 @@ class AcceptanceRepo(session: Session[IO]) {
   // how the row is looked up), so there's no need to round-trip it back out.
   private val acceptanceWithChallengeAndPlayersRow: Codec[
     (GameType, PlayerId, String, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long],
-      TimeLimitKind, (String, Boolean, String), String, Boolean, String)
+      TimeLimitKind, TimeLimitUnit, (String, Boolean, String), String, Boolean, String)
   ] =
     gameType *: playerId *: text *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId *: int8.opt *:
-      SkunkCodecs.timeLimitKind *: playerRow *: text *: bool *: text
+      SkunkCodecs.timeLimitKind *: SkunkCodecs.timeLimitUnit *: playerRow *: text *: bool *: text
 
   // `a` is the acceptance being read; `challenger_acceptance` is the challenger's own, which is
   // where a challenge's gameRoleId lives (there is no such column on open_challenge — see
@@ -151,7 +151,7 @@ class AcceptanceRepo(session: Session[IO]) {
   private val selectAcceptanceWithChallengeAndPlayers = sql"""
     SELECT a.game_type, oc.challenger, oc.message, oc.start,
            EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public,
-           challenger_acceptance.game_role_id, cc.character_id, oc.time_limit_kind,
+           challenger_acceptance.game_role_id, cc.character_id, oc.time_limit_kind, oc.time_limit_unit,
            acceptor.nickname, acceptor.is_admin, acceptor.external_id,
            challenger.nickname, challenger.is_admin, challenger.external_id
     FROM acceptance a
@@ -183,6 +183,7 @@ class AcceptanceRepo(session: Session[IO]) {
             challengerRoleId,
             characterIdValue,
             timeLimitKind,
+            timeLimitUnit,
             (acceptorNickname, acceptorIsAdmin, acceptorExternalId),
             challengerNickname,
             challengerIsAdmin,
@@ -196,12 +197,12 @@ class AcceptanceRepo(session: Session[IO]) {
             )
             CharacterOpenChallenge(
               challengeId, challenger, message, start, timeLimit, settings, gameId, CharacterId(cid), isPublic,
-              challengerRoleId, timeLimitKind
+              challengerRoleId, timeLimitKind, timeLimitUnit
             )
           case GameType.Plain =>
             PlainOpenChallenge(
               challengeId, challenger, message, start, timeLimit, settings, gameId, isPublic, challengerRoleId,
-              timeLimitKind
+              timeLimitKind, timeLimitUnit
             )
         }
         val acceptor = Player(playerId, acceptorNickname, acceptorIsAdmin, acceptorExternalId)
