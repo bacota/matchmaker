@@ -148,14 +148,28 @@ object Json {
     * A participant is named by its id, which the engine was given when the game was created and
     * quotes back — it never learns matchmaker's player ids.
     */
-  /** `prevMoveAt` is when this move was made, which is when the clock starts for whoever is named
-    * in `next`. The engine does not state a deadline: matchmaker derives it from the match's own
-    * `timeLimit`, which came from the challenge rather than from the engine.
+  /** `takenAt` is when this move was made, which is when the clock starts for whoever is named in
+    * `next`. `startedAt` is when the mover's *own* clock started for it, so the two together are
+    * what the move cost the player who made it.
+    *
+    * Both are required, and `startedAt` in particular is the engine's to state rather than
+    * matchmaker's to infer. In a game of alternating turns it is simply the move before, and
+    * matchmaker used to work it out that way — but in a game where several players move at once
+    * nobody was waiting for the move before, and charging the second mover from the first one's
+    * move bills them for someone else's thinking. Only the engine knows which kind of game this
+    * is, so only the engine can say.
+    *
+    * FUTURE: an engine that does not track time at all cannot report a move under this shape. If
+    * one ever needs to, make the pair optional *together* — a nested `timing` object — rather
+    * than two independent optional fields: a move with a time but no start, or the reverse, is
+    * not a thing an engine should be able to say. Matchmaker's own inference was removed with
+    * this change and is in the history if it is ever wanted back.
     */
   case class MoveNotification(
       participantId: ParticipantId,
       next: List[ParticipantId] = Nil,
-      prevMoveAt: Option[Instant] = None
+      takenAt: Instant,
+      startedAt: Instant
   )
 
   /** One participant's outcome. `scores` is an open map because what a game scores on is the

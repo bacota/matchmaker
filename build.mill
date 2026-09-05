@@ -239,4 +239,41 @@ object engines extends Module {
       )
     }
   }
+
+  /** Two-player rock-paper-scissors, implementing the same game API as `tictactoe`.
+    *
+    * The second engine, and the one that exercises what the first cannot: a game with no turn
+    * order. Both seats are pending at once, either player may move first, and the match resolves
+    * on the second throw — which is matchmaker's simultaneous-turn handling (a list of pending
+    * seats, a move callback that names nobody as next) played for real over HTTP.
+    *
+    * `mill -j 4 --ticker false engines.rps.runMain com.vivi.rps.LocalServer` runs it locally;
+    * `mill -j 4 --ticker false engines.rps.assembly` builds the Lambda jar, whose handler is
+    * `com.vivi.rps.Handler::handleRequest`.
+    */
+  object rps extends ScalaModule {
+    def scalaVersion = "3.3.8"
+
+    def mvnDeps = Seq(
+      mvn"com.lihaoyi::upickle:4.0.2",
+      mvn"com.amazonaws:aws-lambda-java-core:1.2.3",
+      // Signs the engine's calls to DynamoDB, and only those — its callbacks to matchmaker carry
+      // a shared API key instead. The signer only: a DynamoDB client would bring Netty with it.
+      mvn"software.amazon.awssdk:http-auth-aws:2.31.78",
+      mvn"org.slf4j:slf4j-nop:1.7.36"
+    )
+
+    def assemblyRules = super.assemblyRules ++ Seq(Assembly.Rule.ExcludePattern(".*\\.tasty"))
+
+    /** As in `tictactoe`: the tests, and only the tests, depend on matchmaker, so that
+      * `ProtocolSpec` can read each side's JSON with the other side's classes.
+      */
+    object test extends ScalaTests with TestModule.Munit {
+      def moduleDeps = super.moduleDeps ++ Seq(matchmaker.api)
+      def mvnDeps = Seq(
+        mvn"org.scalameta::munit:1.0.4",
+        mvn"org.scalameta::munit-scalacheck:1.0.0"
+      )
+    }
+  }
 }

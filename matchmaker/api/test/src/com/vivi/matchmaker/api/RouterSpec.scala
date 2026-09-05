@@ -156,7 +156,7 @@ class RouterSpec extends FunSuite {
     ("GET", "/games/1/matches/m1", "{}"),
     ("POST", "/games/1/matches/m1/refresh", "{}"),
     ("POST", "/games/1/matches/m1/cancel", "{}"),
-    ("POST", "/games/1/matches/m1/moves", """{"participantId":1,"next":[2],"prevMoveAt":"2030-01-01T00:00:00Z"}"""),
+    ("POST", "/games/1/matches/m1/moves", """{"participantId":1,"next":[2],"takenAt":"2030-01-01T00:00:00Z","startedAt":"2030-01-01T00:00:00Z"}"""),
     ("POST", "/games/1/matches/m1/results", resultsBody)
   )
 

@@ -12,8 +12,13 @@ enum Refusal(val status: Int, val message: String) {
   case Invalid(what: String) extends Refusal(400, what)
 }
 
-/** What a successful move produced, for the caller to answer with and for the callbacks below. */
-case class MoveApplied(state: TicTacToeMatch, moved: Seat, next: Option[Seat], finished: Boolean)
+/** What a successful move produced, for the caller to answer with and for the callbacks below.
+  *
+  * `turn` is the record the move just wrote — when it was made and when the mover's clock started
+  * for it. Carried here rather than looked up again, since the callback that reports it is the
+  * next thing that happens.
+  */
+case class MoveApplied(state: TicTacToeMatch, moved: Seat, next: Option[Seat], finished: Boolean, turn: TurnRecord)
 
 /** The game itself: the four exchanges of `interaction-design.txt` from the engine's side.
   *
@@ -138,7 +143,7 @@ class Engine(
           // `completed` is stored so a finished match stays finished even though it is also
           // derivable — it is what the results callback keys off, and it is written once.
           val settled = played.copy(completed = finished)
-          MoveApplied(settled, seat, Option.unless(finished)(settled.seatOf(settled.turn)).flatten, finished)
+          MoveApplied(settled, seat, Option.unless(finished)(settled.seatOf(settled.turn)).flatten, finished, turn)
         }
 
       decision match {
@@ -169,7 +174,8 @@ class Engine(
         MoveNotification(
           participantId = applied.moved.participantId,
           next = applied.next.map(_.participantId).toList,
-          prevMoveAt = m.lastMoveAt
+          takenAt = applied.turn.takenAt,
+          startedAt = applied.turn.startedAt
         )
       )
     }

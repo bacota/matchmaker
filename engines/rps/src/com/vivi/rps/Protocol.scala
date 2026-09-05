@@ -1,4 +1,4 @@
-package com.vivi.tictactoe
+package com.vivi.rps
 
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
@@ -72,9 +72,15 @@ object Protocol {
     * deadline, from the match's own time limit, which came from the challenge and is not the
     * engine's to know.
     *
-    * Here `startedAt` is the move before this one, or the match's creation for the opening move.
-    * That is what matchmaker would have guessed — but a guess is only right for a game of
-    * alternating turns, and `engines/rps` is not one.
+    * This engine only ever sends `next` empty. Both seats are pending from the moment the match
+    * is created, and matchmaker leaves a participant named in neither list alone — so the seat
+    * that has yet to throw stays pending without being named, and the seat that just threw is
+    * cleared by being the mover. Naming the waiting seat as `next` would restart its clock at the
+    * other player's throw, which is precisely what this game does not do.
+    *
+    * `startedAt` is the match's creation for both seats, however late either of them throws. It
+    * is the field that makes a simultaneous game chargeable at all: the move before says nothing
+    * about when a player who was never waiting began to think.
     */
   case class MoveNotification(
       participantId: Long,
@@ -84,7 +90,8 @@ object Protocol {
   )
 
   /** Step 3. `scores` is an open map — matchmaker stores whatever the game puts there. This
-    * engine reports `outcome` (win/loss/draw) and `moves` (how many marks the seat placed).
+    * engine reports `outcome` (win/loss/draw) and `throw` (what the seat threw, now that the
+    * match is over and there is nothing left to hide).
     */
   case class ResultEntry(participantId: Long, rank: Int, scores: Map[String, ujson.Value], isWinner: Boolean)
 
@@ -102,29 +109,41 @@ object Protocol {
 
   // ---- the engine's own play API --------------------------------------------------------
 
-  /** A move as the board page submits it: which cell to mark. Whose move it is comes from the
-    * seat token in the url, not from the body — a player may not name someone else's seat.
+  /** A move as the play page submits it: what to throw, by name ("rock") or initial ("r"). Whose
+    * move it is comes from who signed in, not from the body — a player may not name someone
+    * else's seat.
     */
-  case class MoveRequest(cell: Int)
+  case class MoveRequest(shape: String)
 
-  /** The state the board page renders, and what a scripted client polls.
+  /** The state the play page renders, and what a scripted client polls.
     *
-    * `you` is the mark belonging to the seat that asked; absent on the public view, which belongs
-    * to nobody.
+    * `you` is the side belonging to the seat that asked, and `yourThrow` what that seat has
+    * already thrown; both are absent on the public view, which belongs to nobody.
+    *
+    * What is deliberately *not* here is the other player's throw, until the match is over. A seat
+    * view carries `thrown` — whether that seat has moved, which both players and any watcher may
+    * know — and `shape` only once there is nothing left to decide. Hiding it in the page rather
+    * than in the answer would be no hiding at all: the page is served to the player, and the
+    * player can read the response.
+    *
+    * `waitingFor` is who has yet to throw, by side, which is this game's answer to "whose turn is
+    * it" — plural, and empty once the match is over.
     */
   case class StateResponse(
       matchId: String,
-      board: String,
-      turn: Option[String],
+      waitingFor: List[String],
       you: Option[String],
+      yourThrow: Option[String],
       completed: Boolean,
       winner: Option[String],
       draw: Boolean,
-      winningLine: Option[Seq[Int]],
       players: List[SeatView]
   )
 
-  case class SeatView(mark: String, cognitoId: String, participantId: Long, moves: Int)
+  /** One seat as a viewer may see it. `shape` is `None` until the match is over, whoever is
+    * asking — including of the viewer's own seat, which is what `yourThrow` is for.
+    */
+  case class SeatView(side: String, cognitoId: String, participantId: Long, thrown: Boolean, shape: Option[String])
 
   given ReadWriter[MoveRequest] = macroRW
   given ReadWriter[SeatView] = macroRW

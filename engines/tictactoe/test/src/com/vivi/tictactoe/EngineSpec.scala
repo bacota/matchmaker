@@ -83,8 +83,30 @@ class EngineSpec extends FunSuite {
     assertEquals(url, moveUrl)
     assertEquals(first.participantId, 11L)
     assertEquals(first.next, List(22L))
-    assertEquals(first.prevMoveAt, Some(Instant.parse("2026-01-01T00:00:00Z")))
+    assertEquals(first.takenAt, Instant.parse("2026-01-01T00:00:00Z"))
+    // The opening move, so this player's clock started when the match was created.
+    assertEquals(first.startedAt, Instant.parse("2026-01-01T00:00:00Z"))
     assertEquals(store.get("m-1").get.board.encoded, "....X....")
+  }
+
+  test("each move callback says when that player's clock started: the move before it") {
+    val store = InMemoryMatchStore()
+    val recorder = RecordingMatchmaker()
+    val start = Instant.parse("2026-01-01T00:00:00Z")
+    var elapsed = 0L
+    val engine = Engine(store, recorder, "http://engine.test", () => start.plusSeconds(elapsed))
+    engine.createGame(createRequest())
+    val m = store.get("m-1").get
+
+    elapsed = 60
+    engine.move("m-1", playerOf(m, Mark.X), 4)
+    elapsed = 90
+    engine.move("m-1", playerOf(m, Mark.O), 0)
+
+    // Matchmaker would infer exactly this for a game of alternating turns, and the point of
+    // saying it is that only the engine knows whether the inference holds.
+    assertEquals(recorder.moves.map(_._2.startedAt), List(start, start.plusSeconds(60)))
+    assertEquals(recorder.moves.map(_._2.takenAt), List(start.plusSeconds(60), start.plusSeconds(90)))
   }
 
   test("a player may not move out of turn, twice, or into a taken cell") {

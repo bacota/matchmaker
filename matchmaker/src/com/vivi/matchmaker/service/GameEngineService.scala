@@ -303,7 +303,7 @@ class GameEngineService[T](
       .handleError(_ => ())
 
   /** Step 2: a player has moved. `moved` is the participant who moved and is no longer pending;
-    * `next` are the participants whose turn it now is, whose clock starts at `prevMoveAt`.
+    * `next` are the participants whose turn it now is, whose clock starts at `takenAt`.
     *
     * The engine decides turn order, so matchmaker takes what it is told rather than inferring it.
     * A participant named in neither list is left alone — a game where several players move at
@@ -312,13 +312,19 @@ class GameEngineService[T](
     * As in [[refresh]], the engine reports when the move happened and matchmaker works out the
     * deadline from the match's `timeLimit` — the time limit came from the challenge, so it is not
     * something the engine is in a position to state.
+    *
+    * `startedAt` is when the mover's own clock started for this move, and it is the engine's to
+    * state for the same reason turn order is: only the engine knows whether this player was
+    * waiting for the move before. See `Json.MoveNotification` for why matchmaker no longer
+    * guesses at it.
     */
   def recordMove(
       gameId: GameId,
       matchId: MatchId,
       moved: ParticipantId,
       next: List[ParticipantId],
-      prevMoveAt: Option[Instant],
+      takenAt: Instant,
+      startedAt: Instant,
       callerExternalId: String
   ): IO[Unit] =
     sessionPool.use { session =>
@@ -340,15 +346,9 @@ class GameEngineService[T](
             ConflictError(s"match ${matchId.value} was cancelled and is no longer accepting moves")
           )
           mover <- requireParticipant(participantRepo, gameId, matchId, moved)
-          // The move itself, recorded as a turn. `prevMoveAt` is when it was made, and the turn
-          // before it in the match is when this player's clock started — the match's own start
-          // for the first move of all. An engine that sends no time sends no turn: there is
-          // nothing to charge anyone for, and a status call will report it later with one.
-          _ <- prevMoveAt.traverse_ { at =>
-            turnRepo.latestTakenAt(gameId, matchId).flatMap { last =>
-              turnRepo.create(Turn(gameId, matchId, moved, at, last.filter(l => !l.isAfter(at)).getOrElse(existing.start)))
-            }
-          }
+          // The move itself, recorded as a turn: when it was made and when the mover's clock
+          // started for it, both as the engine reported them.
+          _ <- turnRepo.create(Turn(gameId, matchId, moved, takenAt, startedAt))
           // After the turn above is recorded, since under a total limit the next player's
           // deadline is what is left of their budget — and the mover's turn has just spent some
           // of theirs.
@@ -357,7 +357,7 @@ class GameEngineService[T](
           _ <- next.traverse { id =>
             requireParticipant(participantRepo, gameId, matchId, id)
               .flatMap(p =>
-                participantRepo.update(withTurn(p, pending = true, due = dueFor(existing, used)(id, prevMoveAt)))
+                participantRepo.update(withTurn(p, pending = true, due = dueFor(existing, used)(id, Some(takenAt))))
               )
           }
         } yield ()

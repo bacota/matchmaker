@@ -420,8 +420,11 @@ class GameEngineServiceSpec extends PropertySuite {
         participants <- participantsOf(started)
         seat = participants.head.participantId
         // A player's own token is not a game's secret, and the callback is the game's route.
-        refused <- services.engine.recordMove(fixture.game.gameId, started.matchId, seat, Nil, None, externalId).attempt
-        _ <- services.engine.recordMove(fixture.game.gameId, started.matchId, seat, List(seat), Some(prevMoveAt), gameExternalId)
+        refused <- services.engine
+          .recordMove(fixture.game.gameId, started.matchId, seat, Nil, prevMoveAt, prevMoveAt, externalId)
+          .attempt
+        _ <- services.engine
+          .recordMove(fixture.game.gameId, started.matchId, seat, List(seat), prevMoveAt, started.start, gameExternalId)
         after <- participantsOf(started)
       } yield refused.left.exists(_.isInstanceOf[UnauthorizedError]) &&
         after.head.pending &&
@@ -564,7 +567,10 @@ class GameEngineServiceSpec extends PropertySuite {
         started.matchId,
         moved = theirs.participantId,
         next = List(mine.participantId),
-        prevMoveAt = Some(prevMoveAt),
+        takenAt = prevMoveAt,
+        // The move before, which for the first move of a match is the match's own start: this is
+        // the ordinary turn-taking engine, spelling out what it used to leave to be inferred.
+        startedAt = started.start,
         callerExternalId = gameExternalId
       )
       // What the engine will say when it is asked: the same thing, so that by default the
@@ -602,7 +608,11 @@ class GameEngineServiceSpec extends PropertySuite {
       timeLimit: Duration,
       kind: TimeLimitKind,
       firstMoveAt: Instant,
-      secondMoveAt: Instant
+      secondMoveAt: Instant,
+      // What each mover's clock started at. `None` is the turn-taking case — the match's start
+      // for the first move and the move before for the second — and a simultaneous game states
+      // the match's own start for both seats instead.
+      startedAt: Option[Instant] = None
   ): IO[(Fixture, Match, Participant, Participant)] =
     for {
       fixture <- makeFixture(nickname, externalId, gameExternalId)
@@ -626,12 +636,12 @@ class GameEngineServiceSpec extends PropertySuite {
       // The challenger moves first, spending firstMoveAt - matchStart of their own budget...
       _ <- services.engine.recordMove(
         fixture.game.gameId, started.matchId, moved = mine.participantId, next = List(theirs.participantId),
-        prevMoveAt = Some(firstMoveAt), callerExternalId = gameExternalId
+        takenAt = firstMoveAt, startedAt = startedAt.getOrElse(matchStart), callerExternalId = gameExternalId
       )
       // ...and the other player replies, which puts the challenger back on the clock.
       _ <- services.engine.recordMove(
         fixture.game.gameId, started.matchId, moved = theirs.participantId, next = List(mine.participantId),
-        prevMoveAt = Some(secondMoveAt), callerExternalId = gameExternalId
+        takenAt = secondMoveAt, startedAt = startedAt.getOrElse(firstMoveAt), callerExternalId = gameExternalId
       )
       // What the engine confirms when asked: exactly this, so a recheck upholds the deadline
       // rather than overturning it.
@@ -772,6 +782,38 @@ class GameEngineServiceSpec extends PropertySuite {
           // Four minutes from the match's start, then three from the move before.
           (mine.participantId, first, Duration.ofMinutes(4)),
           (theirs.participantId, second, Duration.ofMinutes(3))
+        )
+        result.timeout(15.seconds).unsafeRunSync()
+    }
+  }
+
+  /* The same two moves, from an engine that says when each mover's clock started.
+   *
+   * This is the shape a game with no turn order produces: both players were on the clock from
+   * the match's start, so the second to move spent all seven minutes of it rather than the three
+   * since the other player moved. Matchmaker cannot work that out — the move before is all it can
+   * see — which is why the engine is able to say so. */
+  property("a move callback that states when the mover's clock started is charged from that") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, gameExternalId, otherExternalId) =>
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+          start <- IO.realTimeInstant.map(_.minusSeconds(3600))
+          first = start.plusSeconds(240)
+          second = first.plusSeconds(180)
+          prepared <- playedTwice(
+            services, engine, nickname, externalId, gameExternalId, otherExternalId,
+            matchStart = start, timeLimit = Duration.ofMinutes(10), kind = TimeLimitKind.Total,
+            firstMoveAt = first, secondMoveAt = second, startedAt = Some(start)
+          )
+          (_, started, mine, theirs) = prepared
+          turns <- turnsOf(started)
+        } yield turns.map(t => (t.participantId, t.takenAt, t.elapsed)) == List(
+          // Four minutes for the first mover, as before — and seven for the second, who was
+          // thinking for all of them rather than for the three since the first mover finished.
+          (mine.participantId, first, Duration.ofMinutes(4)),
+          (theirs.participantId, second, Duration.ofMinutes(7))
         )
         result.timeout(15.seconds).unsafeRunSync()
     }

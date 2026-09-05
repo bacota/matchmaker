@@ -29,6 +29,11 @@ match and a url that leaks is not a seat that leaks.
 The engine sends step 2 for the last move as well, with nobody in `next`. Matchmaker clears the
 mover's pending flag from it, and the results that follow complete every seat.
 
+Step 2 carries both times a move costs: `takenAt`, when it was made, and `startedAt`, when the
+mover's own clock started — the move before it, in this game. Matchmaker used to infer that second
+one, and no longer does: only an engine knows whether the inference holds, and in `engines/rps`,
+where both players move at once, it does not.
+
 ## Playing locally
 
 Two processes and one insert. Matchmaker in header-auth mode, the engine pointed at it:
