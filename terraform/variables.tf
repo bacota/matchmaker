@@ -334,3 +334,21 @@ variable "tictactoe_jar_path" {
   type        = string
   default     = "../out/engines/tictactoe/assembly.dest/out.jar"
 }
+
+variable "deploy_rps" {
+  description = <<-EOT
+    Deploy the bundled rock-paper-scissors engine (modules/rps) alongside matchmaker, and wire the
+    two grants between them.
+
+    For development environments, like deploy_tictactoe: a test fixture with a public play url,
+    not a product. The two are independent — either, both or neither.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "rps_jar_path" {
+  description = "Path to the assembled rock-paper-scissors jar. Only read when deploy_rps is true."
+  type        = string
+  default     = "../out/engines/rps/assembly.dest/out.jar"
+}

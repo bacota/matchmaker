@@ -116,12 +116,36 @@ unset here), `MATCH_TABLE`, `GAME_EXTERNAL_ID`, `MATCHMAKER_OFFLINE`, `COGNITO_I
 
 ## Deployed
 
-Nothing yet: there is no `terraform/modules/rps` and no deploy script. The Lambda artifact builds
-(`mill -j 4 --ticker false engines.rps.assembly`, handler
-`com.vivi.rps.Handler::handleRequest`) and the DynamoDB store and gateway claim handling are the
-same code `tictactoe` deploys with, so the module would be a copy of
-`terraform/modules/tictactoe` with the names changed — but it has not been written, and this
-engine is local-only until it is.
+`terraform/modules/rps` puts it behind an API Gateway HTTP API with matches in DynamoDB and three
+kinds of route: the matchmaker-facing ones (`POST /games`, `GET /matches/{id}/status`), which
+require the API key matchmaker and this engine share, the player's (`state`, `moves`) under a JWT
+authorizer on matchmaker's user pool, and the page shells open. The root module generates that key
+and gives it to both sides, so there is nothing to copy; it also adds this engine's
+`/auth/callback` to the user pool client's callback urls.
+
+Independent of the tic-tac-toe engine in every way that matters — its own function, table, api and
+key — so either may be deployed without the other.
+
+Enable it from the root configuration:
+
+```hcl
+# environments/dev.settings.tfvars
+deploy_rps = true
+```
+
+```bash
+./deploy-rps.sh dev
+```
+
+That builds the jar (running this engine's tests first), plans just `module.rps` plus the Cognito
+app client whose callback urls the engine changes, and applies that plan. `--full` plans the whole
+environment instead, `--skip-build` reuses the jar already in `out/`, and `--yes` skips the
+confirmation.
+
+Then register the game with the outputs — `rps_create_game_url` as `url`, and `rps_external_id`
+(that is, `rps`) as `external_id`. That name is what matchmaker files this engine's API key under,
+and so is how it tells which engine a callback came from; a row whose `external_id` says anything
+else has its callbacks refused. `./deploy-rps.sh` prints the exact command at the end.
 
 ## What this engine is not
 

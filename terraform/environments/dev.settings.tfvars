@@ -28,4 +28,7 @@ advanced_security_mode = "OFF"
 // Long sessions, so testing is not interrupted by signing in again.
 refresh_token_validity_days = 30
 
+// The two bundled engines: test fixtures for the game interaction. Independent of each other —
+// tic-tac-toe is a game of alternating turns, rps one where both players move at once.
 deploy_tictactoe = true
+deploy_rps       = true

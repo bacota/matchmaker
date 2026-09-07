@@ -96,3 +96,40 @@ output "tictactoe_api_endpoint" {
   description = "Base url of the engine's API, whose /matches/<id>/play is where a player plays."
   value       = one(module.tictactoe[*].api_endpoint)
 }
+
+# ---------------------------------------------------------------------------
+# Rock-paper-scissors engine
+# ---------------------------------------------------------------------------
+#
+# As above: empty strings when deploy_rps is false, since `output -raw` on an output that does
+# not exist is an error and deploy-rps.sh reads these to print the game row that has to be
+# created by hand.
+
+output "rps_create_game_url" {
+  description = "What to record as the game's `url` in matchmaker. Empty when the engine is not deployed."
+  value       = var.deploy_rps ? one(module.rps[*].create_game_url) : ""
+}
+
+output "rps_external_id" {
+  description = <<-EOT
+    What to record as the game's `external_id`: the name matchmaker files this engine's API key
+    under, which is the identity it attributes the engine's callbacks to. Empty when the engine
+    is not deployed.
+  EOT
+  value       = var.deploy_rps ? "rps" : ""
+}
+
+output "rps_api_key" {
+  description = <<-EOT
+    The secret matchmaker and the engine authenticate each other with. Both functions are
+    configured with it automatically; this output is for reproducing a call by hand, e.g.
+    `curl -H "x-api-key: $(terraform output -raw rps_api_key)" ...`.
+  EOT
+  value       = one(random_password.rps_api_key[*].result)
+  sensitive   = true
+}
+
+output "rps_api_endpoint" {
+  description = "Base url of the engine's API, whose /matches/<id>/play is where a player plays."
+  value       = one(module.rps[*].api_endpoint)
+}

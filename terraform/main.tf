@@ -19,19 +19,22 @@ provider "aws" {
   region = var.region
 }
 
-/* The secret matchmaker and the bundled engine authenticate each other with.
+/* The secret matchmaker and each bundled engine authenticate each other with — one per engine.
  *
  * Generated rather than written into a tfvars, so that nobody has to copy the same string into
- * two places and keep them in step — the pair is only ever configured together, and a key that
+ * two places and keep them in step — a pair is only ever configured together, and a key that
  * differs between the two sides is an outage. It lands in the state file, as `db_password`
  * already does; both are also readable from the functions' configuration by anyone holding
  * lambda:GetFunction, which is the same trade this deployment already makes for the database.
  *
- * Rotating it is `terraform apply -replace='random_password.tictactoe_api_key[0]'`. Both functions are
- * updated in the same apply, so there is a window of a few seconds in which one has the new key
- * and the other the old; a create-game call in that window fails and the player retries.
+ * One key each rather than one between them, so that the engines are not a single failure:
+ * rotating one, or an engine leaking one, leaves the other alone. Rotating is
+ * `terraform apply -replace='random_password.tictactoe_api_key[0]'` (or `rps_api_key`). Both
+ * functions are updated in the same apply, so there is a window of a few seconds in which one has
+ * the new key and the other the old; a create-game call in that window fails and the player
+ * retries.
  *
- * Only for the engine deployed from this repository. An engine someone else runs has its key
+ * Only for the engines deployed from this repository. An engine someone else runs has its key
  * agreed out of band and passed in through `engine_api_keys` / `game_engine_api_keys`.
  */
 resource "random_password" "tictactoe_api_key" {
@@ -41,6 +44,13 @@ resource "random_password" "tictactoe_api_key" {
   # Alphanumeric only: the key travels in an HTTP header and is written into a `name=key` list,
   # so a comma or an equals sign in it would be a parsing problem rather than extra entropy. 48
   # characters of base62 is about 285 bits, which is plenty without them.
+  special = false
+}
+
+resource "random_password" "rps_api_key" {
+  count = var.deploy_rps ? 1 : 0
+
+  length  = 48
   special = false
 }
 
@@ -72,9 +82,14 @@ module "api" {
   # after the first apply — that copy is exactly the kind of thing that goes stale and produces a
   # sign-in that fails with an opaque error. The variables add to it: localhost in dev, a custom
   # domain in prod.
-  # The engine's sign-in redirect joins the UI's: its board page runs the same hosted-login flow,
-  # and Cognito will only redirect back to a url registered here.
-  callback_urls        = concat([module.ui.url], var.deploy_tictactoe ? [module.tictactoe[0].auth_callback_url] : [], var.callback_urls)
+  # Each engine's sign-in redirect joins the UI's: their play pages run the same hosted-login
+  # flow, and Cognito will only redirect back to a url registered here.
+  callback_urls = concat(
+    [module.ui.url],
+    var.deploy_tictactoe ? [module.tictactoe[0].auth_callback_url] : [],
+    var.deploy_rps ? [module.rps[0].auth_callback_url] : [],
+    var.callback_urls
+  )
   logout_urls          = concat([module.ui.url], var.logout_urls)
   cors_allowed_origins = concat([module.ui.origin], var.cors_allowed_origins)
 
@@ -82,16 +97,18 @@ module "api" {
   # wired here rather than inside either module because it is the one fact both halves need.
   #
   # Inbound entries are keyed by the engine's external_id and outbound by its host, which is what
-  # each side has in hand at the point it needs the key; the bundled engine contributes the same
-  # secret to both. The engine's external_id is its module name, and that string has to match the
-  # `external_id` column of its row in the `game` table — see engines/tictactoe/README.md.
+  # each side has in hand at the point it needs the key; a bundled engine contributes its own
+  # secret to both. An engine's external_id is its module name, and that string has to match the
+  # `external_id` column of its row in the `game` table — see each engine's README.
   engine_api_keys = merge(
     var.engine_api_keys,
-    var.deploy_tictactoe ? { tictactoe = random_password.tictactoe_api_key[0].result } : {}
+    var.deploy_tictactoe ? { tictactoe = random_password.tictactoe_api_key[0].result } : {},
+    var.deploy_rps ? { rps = random_password.rps_api_key[0].result } : {}
   )
   game_engine_api_keys = merge(
     var.game_engine_api_keys,
-    var.deploy_tictactoe ? { (module.tictactoe[0].api_host) = random_password.tictactoe_api_key[0].result } : {}
+    var.deploy_tictactoe ? { (module.tictactoe[0].api_host) = random_password.tictactoe_api_key[0].result } : {},
+    var.deploy_rps ? { (module.rps[0].api_host) = random_password.rps_api_key[0].result } : {}
   )
 
   # Policy, from environments/<env>.settings.tfvars.
@@ -155,6 +172,37 @@ module "tictactoe" {
   # `sub` matchmaker sent the engine as the player's cognitoId. Referencing the api module here
   # and the engine's callback url there is not a cycle: the callback url comes from the engine's
   # api id, which settles before either authorizer.
+  cognito_issuer    = module.api.jwt_issuer
+  cognito_client_id = module.api.user_pool_client_id
+  hosted_login_url  = module.api.hosted_login_url
+
+  log_retention_days = var.log_retention_days
+}
+
+
+/* The second bundled engine: two-player rock-paper-scissors.
+ *
+ * Off by default and configured exactly like the one above, because it is the same kind of thing
+ * — a test fixture rather than a product. What it adds is a game with no turn order: both seats
+ * pending at once, either player moving first, the match resolving on the second throw. That is
+ * matchmaker's simultaneous-turn handling, and this is the only deployed thing that exercises it.
+ *
+ * Independent of `tictactoe` in every way that matters: its own function, table, api and key, so
+ * either may be deployed without the other and neither's failure is the other's.
+ *
+ * A `game` row still has to be created by hand: its `url` is this module's create_game_url and
+ * its `external_id` is the name its API key is filed under above, i.e. "rps". See
+ * engines/rps/README.md.
+ */
+module "rps" {
+  count  = var.deploy_rps ? 1 : 0
+  source = "./modules/rps"
+
+  environment     = var.environment
+  lambda_jar_path = var.rps_jar_path
+
+  matchmaker_api_key = random_password.rps_api_key[0].result
+
   cognito_issuer    = module.api.jwt_issuer
   cognito_client_id = module.api.user_pool_client_id
   hosted_login_url  = module.api.hosted_login_url
