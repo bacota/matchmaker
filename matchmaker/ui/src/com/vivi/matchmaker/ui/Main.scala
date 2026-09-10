@@ -163,16 +163,39 @@ object Views {
    * disabled while its section is refreshing, so the repeated-click case it guarded against
    * cannot arise from there anyway.
    *
-   * Two overlapping reloads share the one flag, so the first to land ends the dimming while the
-   * second is still going. That is a blink cut short, not a list left stale, and it is not worth
-   * counting requests to avoid. */
+   * Two reloads can share the one flag — a cross-refresh landing while the player has the
+   * section's own button in flight, or the two challenge lists that are refreshed together — so
+   * the flag is cleared by the last of them rather than the first. The flag is not just the
+   * dimming: it also drives `aria.busy` and the refresh button's `disabled`, and clearing it
+   * early would tell a screen reader the list had settled while it was still being replaced, and
+   * offer a button for a refresh already underway. */
   private def refresh(refreshing: Var[Boolean], reload: () => Future[Unit]): Unit = {
-    val alreadyShowing = refreshing.now()
-    if (!alreadyShowing) refreshing.set(true)
+    reloadsInFlight.update(refreshing, reloadsInFlight.getOrElse(refreshing, 0) + 1)
+    refreshing.set(true)
     val startedAt = System.currentTimeMillis()
     reload().onComplete { _ =>
+      // Measured from *this* reload's start, so one that begins later keeps the section dimmed
+      // for its own full blink rather than inheriting what is left of an earlier one's.
       val remaining = math.max(0L, blinkMillis - (System.currentTimeMillis() - startedAt))
-      dom.window.setTimeout(() => refreshing.set(false), remaining.toDouble)
+      dom.window.setTimeout(() => finished(refreshing), remaining.toDouble)
+    }
+  }
+
+  /** How many reloads are dimming each flag right now.
+    *
+    * Keyed on the `Var` itself, which defines no `equals`, so this is identity-keyed — two
+    * sections that happen to be showing the same value are still two entries. Entries are
+    * removed as they reach zero, so the map holds only what is actually in flight, and a flag
+    * belonging to an element that has since been discarded leaves nothing behind.
+    */
+  private val reloadsInFlight = scala.collection.mutable.Map.empty[Var[Boolean], Int]
+
+  private def finished(refreshing: Var[Boolean]): Unit = {
+    val left = reloadsInFlight.getOrElse(refreshing, 1) - 1
+    if (left > 0) reloadsInFlight.update(refreshing, left)
+    else {
+      reloadsInFlight.remove(refreshing)
+      refreshing.set(false)
     }
   }
 
