@@ -53,6 +53,22 @@ object Auth {
   def idToken: Option[String] =
     Option(dom.window.sessionStorage.getItem(TokenKey)).filter(unexpired)
 
+  /** The signed-in player's email address, from the ID token's `email` claim.
+    *
+    * Read from the stored token whether or not it has expired, unlike `idToken`: this is a label
+    * to show the player, not a credential to send, and an expired token still names the account
+    * it was issued for. `None` when there is no session, or when the token carries no `email`
+    * claim — a pool configured without the attribute, or a scope that did not ask for it.
+    *
+    * Note that it is the token's word, not Cognito's current one: a change made in this tab is
+    * not in the token until the session refreshes, which is why `Account` updates what it shows
+    * from the address the player just confirmed.
+    */
+  def email: Option[String] = storedIdToken.flatMap(claimOf(_, "email"))
+
+  private def storedIdToken: Option[String] =
+    Option(dom.window.sessionStorage.getItem(TokenKey)).filter(_.nonEmpty)
+
   /** A session exists when there is a usable ID token, or a refresh token that can obtain one.
     * Used for rendering; `freshIdToken` is what actually establishes whether the refresh works.
     */
@@ -339,22 +355,43 @@ object Auth {
 
   /** True when the token's `exp` is still in the future, with a small margin so that a token
     * about to expire is not sent on a request that will outlive it.
-    *
-    * The signature is deliberately not checked. Nothing here could act on the result — the
-    * gateway is what decides whether a token is good, and it does verify the signature. This only
-    * decides whether to bother asking.
     */
   private def unexpired(token: String): Boolean =
-    expiryOf(token) match {
+    claimsOf(token).map(_("exp").num) match {
       case Success(expiry) => expiry - 30 > js.Date.now() / 1000
       case Failure(_)      => false
     }
 
-  private def expiryOf(token: String): Try[Double] = Try {
-    val payload = token.split('.')(1)
-    // JWTs are base64url; atob wants standard base64, and the padding is optional there.
-    val decoded = dom.window.atob(payload.replace("-", "+").replace("_", "/"))
-    ujson.read(decoded)("exp").num
+  /** One string claim of a token, or `None` if the token cannot be read or does not carry it.
+    *
+    * Non-string claims are `None` rather than stringified: every claim this reads is a string,
+    * and rendering `["a","b"]` into a sentence is worse than rendering nothing.
+    */
+  def claimOf(token: String, name: String): Option[String] =
+    claimsOf(token).toOption.collect { case ujson.Obj(obj) => obj }.flatMap(_.get(name)).collect {
+      case ujson.Str(value) => value
+    }
+
+  /** The payload of a JWT, unverified.
+    *
+    * The signature is deliberately not checked, here or in `unexpired`. Nothing on this page
+    * could act on the result — the gateway is what decides whether a token is good, and it does
+    * verify the signature. This only decides whether to bother asking, and what to call the
+    * player while it does.
+    */
+  private def claimsOf(token: String): Try[ujson.Value] = Try {
+    // Matched rather than indexed. A string with no dot in it has no element 1, and an
+    // out-of-bounds index is *undefined behaviour* in an optimized Scala.js build: it throws an
+    // Error rather than an exception, which `Try` does not catch, or gives back `undefined`. A
+    // token read from storage is not something this can assume the shape of.
+    val payload = token.split('.') match {
+      case Array(_, claims, _*) => claims
+      case _                    => throw IllegalArgumentException("not a JWT")
+    }
+    // A JWT payload is base64url with the padding dropped, which this decoder reads directly —
+    // `atob` would need it translated to standard base64 first. It is also plain Scala rather
+    // than a browser global, so the reading of a token is testable off a page.
+    ujson.read(String(java.util.Base64.getUrlDecoder.decode(payload), java.nio.charset.StandardCharsets.UTF_8))
   }
 
   /** Drops the query string without reloading, leaving the address bar clean. */
