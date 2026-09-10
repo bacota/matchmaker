@@ -154,15 +154,27 @@ object Views {
     */
   private val blinkMillis = 400L
 
-  private def refresh(refreshing: Var[Boolean], reload: () => Future[Unit]): Unit =
-    if (!refreshing.now()) {
-      refreshing.set(true)
-      val startedAt = System.currentTimeMillis()
-      reload().onComplete { _ =>
-        val remaining = math.max(0L, blinkMillis - (System.currentTimeMillis() - startedAt))
-        dom.window.setTimeout(() => refreshing.set(false), remaining.toDouble)
-      }
+  /* The reload always happens; only the dimming is conditional.
+   *
+   * It used to be skipped outright while a reload was already in flight, which was right when
+   * the only caller was the button — a second click asks the same question. It is wrong for the
+   * callers below, which reload because something *has changed*: dropping one of those would
+   * leave a match that now exists off a list until somebody asked again. The refresh button is
+   * disabled while its section is refreshing, so the repeated-click case it guarded against
+   * cannot arise from there anyway.
+   *
+   * Two overlapping reloads share the one flag, so the first to land ends the dimming while the
+   * second is still going. That is a blink cut short, not a list left stale, and it is not worth
+   * counting requests to avoid. */
+  private def refresh(refreshing: Var[Boolean], reload: () => Future[Unit]): Unit = {
+    val alreadyShowing = refreshing.now()
+    if (!alreadyShowing) refreshing.set(true)
+    val startedAt = System.currentTimeMillis()
+    reload().onComplete { _ =>
+      val remaining = math.max(0L, blinkMillis - (System.currentTimeMillis() - startedAt))
+      dom.window.setTimeout(() => refreshing.set(false), remaining.toDouble)
     }
+  }
 
   // -------------------------------------------------------------------------
   // Chrome
@@ -347,6 +359,44 @@ object Views {
     */
   private val refreshingAcceptances: Var[Boolean] = Var(false)
 
+  /* The same, for the two match lists. Shared by the home screen's copy of each section and the
+   * game screen's, which are never both on screen — and, more to the point, by the sections
+   * themselves and by the actions below that change what belongs in them. */
+  private val refreshingDue: Var[Boolean] = Var(false)
+  private val refreshingActive: Var[Boolean] = Var(false)
+
+  /** Reloads the sections a start has just changed, the way their own refresh buttons reload them.
+    *
+    * Starting a challenge is the moment a match comes into being: it belongs in "Current
+    * Matches" immediately, and in "Your Turn" as well if the engine says the first move is this
+    * player's. The challenge that became it is no longer waiting for anybody, so it leaves
+    * "Ready to Start" and "Waiting to Start" at the same time.
+    *
+    * Through each section's own flag rather than through `Store.refreshMatches`, so that the
+    * lists visibly reload — dimmed, and marked `aria-busy` while they do — instead of quietly
+    * growing a row the player has to notice for themselves. The completed list is not touched:
+    * a match that has just started has not finished.
+    */
+  private def reloadAfterStart(): Unit = {
+    refresh(refreshingDue, () => Store.reloadDue())
+    refresh(refreshingActive, () => Store.reloadActive())
+    refresh(refreshingAcceptances, () => Store.reloadAcceptances())
+  }
+
+  /** Reloads what accepting or backing out has just changed: the acceptances, which are both
+    * "Ready to Start" and "Waiting to Start".
+    *
+    * Only those. Neither action creates or ends a match — a challenge becomes one when its
+    * challenger starts it, and never on its own — so the match lists are the same lists they
+    * were, and reloading them would be three requests to be told so.
+    *
+    * Backing out is the one that most needs to be seen: the row the player just acted on
+    * disappears, and a list that silently loses a row is a list that might have lost the wrong
+    * one. Dimming it while it reloads says the section was re-read rather than edited in place.
+    */
+  private def reloadAcceptanceSections(): Unit =
+    refresh(refreshingAcceptances, () => Store.reloadAcceptances())
+
   /* Absent altogether when there is nothing ready to start, heading and refresh button with it.
    *
    * Every other list here says so when it is empty, because "no matches" is an answer to a
@@ -388,7 +438,7 @@ object Views {
       div(cls := "detail", "every role is taken"),
       busyButton("Start") { busy =>
         Store.run(ApiClient.startChallenge(acceptance.gameId, acceptance.challengeId), busy) { _ =>
-          Store.refreshMatches()
+          reloadAfterStart()
           // The challenge is no longer open, so the game's list is stale if it is on screen.
           if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
             Store.refreshChallenges(acceptance.gameId)
@@ -408,7 +458,7 @@ object Views {
     * for the two screens to disagree about it.
     */
   private def dueSection(game: Option[Game] = None): HtmlElement =
-    refreshableSection("Your Turn", () => Store.reloadDue())(
+    refreshableSection("Your Turn", refreshingDue, () => Store.reloadDue(), subsection = false)(
       child <-- Store.due.signal.map(matchesIn(game)).map {
         case Nil =>
           p(cls := "empty", if (game.isDefined) "Nothing is waiting on you in this game." else "Nothing is waiting on you.")
@@ -430,7 +480,7 @@ object Views {
     * find out whether it is empty is not shown.
     */
   private def myMatchesSection(game: Option[Game] = None): HtmlElement =
-    refreshableSection("Current Matches", () => Store.reloadActive())(
+    refreshableSection("Current Matches", refreshingActive, () => Store.reloadActive(), subsection = false)(
       child <-- Store.active.signal.map(matchesIn(game)).map {
         case Nil =>
           p(cls := "empty", if (game.isDefined) "You are not in any matches of this." else "You are not in any matches.")
@@ -490,7 +540,7 @@ object Views {
         case Some(player) =>
           busyButton("Back out", classes = Some("link")) { busy =>
             Store.run(ApiClient.withdraw(acceptance.gameId, acceptance.challengeId, player.playerId), busy) { _ =>
-              Store.refreshMatches()
+              reloadAcceptanceSections()
               // The challenge is open again, so the game's list is stale if it is on screen.
               if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
                 Store.refreshChallenges(acceptance.gameId)
@@ -1143,7 +1193,7 @@ object Views {
         busyButton("Start") { busy =>
           Store.run(ApiClient.startChallenge(game.gameId, challenge.challengeId), busy) { _ =>
             Store.refreshChallenges(game.gameId)
-            Store.refreshMatches()
+            reloadAfterStart()
           }
         }
       else div(cls := "detail", s"waiting for ${unfilledRoles(game, summary).map(_.name).mkString(", ")}"),
@@ -1173,10 +1223,11 @@ object Views {
         busyButton("Accept") { busy =>
           val chosen = role.now().getOrElse(free.head.gameRoleId)
           Store.run(ApiClient.accept(game.gameId, challenge.challengeId, characterId, chosen), busy) { _ =>
-            // Accepting may complete the challenge into a match, which changes the match lists
-            // as well as this one, so both are reloaded.
+            // Two lists change: this one, which now shows the role as taken, and the acceptances
+            // — the challenge has joined what this player is waiting on, and if they are its
+            // challenger and it is now full, what they can start.
             Store.refreshChallenges(game.gameId)
-            Store.refreshMatches()
+            reloadAcceptanceSections()
           }
         }
     )
