@@ -142,6 +142,10 @@ app client whose callback urls the engine changes, and applies that plan. `--ful
 environment instead, `--skip-build` reuses the jar already in `out/`, and `--yes` skips the
 confirmation.
 
+To deploy matchmaker and both engines together — one plan, one apply — use `./deploy-all.sh dev`
+instead; it builds every enabled engine's jar before planning, which a plain `./deploy.sh` does
+not.
+
 Then register the game with the outputs — `rps_create_game_url` as `url`, and `rps_external_id`
 (that is, `rps`) as `external_id`. That name is what matchmaker files this engine's API key under,
 and so is how it tells which engine a callback came from; a row whose `external_id` says anything

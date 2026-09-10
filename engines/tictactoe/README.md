@@ -128,6 +128,9 @@ mill -j 4 --ticker false engines.tictactoe.assembly
 ./terraform/tf.sh dev apply
 ```
 
+`./deploy-tictactoe.sh dev` does that in one step, and `./deploy-all.sh dev` deploys matchmaker
+and every enabled engine together in a single plan and apply.
+
 Then register the game with the outputs — `create_game_url` as `url`, and `tictactoe_external_id`
 (that is, `tictactoe`) as `external_id`. That name is what matchmaker files this engine's API key
 under, and so is how it tells which engine a callback came from; a row whose `external_id` says
