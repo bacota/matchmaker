@@ -33,6 +33,7 @@ object Account {
 
   private def reset(): Unit = {
     nickname.set("")
+    currentEmail.set(None)
     email.set("")
     emailCode.set("")
     emailStage.set(EmailStage.Idle)
@@ -61,6 +62,15 @@ object Account {
   private val outcomes = Seq(nicknameOutcome, emailOutcome, passwordOutcome)
 
   private val nickname: Var[String] = Var("")
+
+  /** The address the player signs in with, as the form shows it back to them.
+    *
+    * Held rather than read from `Auth` where it is rendered, for the one case where the two
+    * disagree: a change confirmed in this tab is the truth, and the ID token will not carry it
+    * until the session refreshes. Filled when the form mounts and corrected when a change
+    * completes.
+    */
+  private val currentEmail: Var[Option[String]] = Var(None)
   private val email: Var[String] = Var("")
   private val emailCode: Var[String] = Var("")
   private val emailStage: Var[EmailStage] = Var(EmailStage.Idle)
@@ -118,6 +128,7 @@ object Account {
       withAccessToken(emailOutcome, busy) { token =>
         CognitoIdp.verifyEmail(token, code).map { _ =>
           val changed = email.now().trim
+          currentEmail.set(Some(changed))
           emailStage.set(EmailStage.Idle)
           email.set("")
           emailCode.set("")
@@ -298,7 +309,18 @@ object Account {
           case EmailStage.Sent(_) => confirmEmail(busy)
         }
       },
+      // Read on mount rather than once at startup: the panel is built fresh each time it opens,
+      // so this is also how a change made earlier in the session is still shown afterwards.
+      onMountCallback(_ => currentEmail.set(Auth.email)),
       h3("Email Address"),
+      // What the nickname form says above its own field, and for the same reason: a player
+      // changing an address should be able to see which one they are changing. Nothing at all
+      // when the token does not carry it — an empty line saying "you sign in as" would be worse
+      // than no line.
+      child <-- currentEmail.signal.map {
+        case Some(address) => p(cls := "detail", s"You sign in as $address.")
+        case None          => emptyNode
+      },
       label(
         "New email address",
         input(
