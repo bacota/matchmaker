@@ -154,6 +154,7 @@ object Views {
     */
   private val blinkMillis = 400L
 
+<<<<<<< Updated upstream
   /* The reload always happens; only the dimming is conditional.
    *
    * It used to be skipped outright while a reload was already in flight, which was right when
@@ -173,6 +174,42 @@ object Views {
     reload().onComplete { _ =>
       val remaining = math.max(0L, blinkMillis - (System.currentTimeMillis() - startedAt))
       dom.window.setTimeout(() => refreshing.set(false), remaining.toDouble)
+=======
+  /** How many reloads are currently dimming each flag.
+    *
+    * A flag can be shared — by the two challenge lists, or by two actions that touch the same
+    * section — so two reloads can be in flight over one of them at once. Dropping the second
+    * would leave the section showing a stale list; letting the first one's completion clear the
+    * flag would say the section had finished refreshing while it was still being refetched,
+    * re-enabling the refresh button and clearing aria-busy over a list that is about to change
+    * again. Counting means every reload runs and the flag clears when the last of them is done.
+    *
+    * Keyed on the `Var` itself, which has no `equals` of its own, so this is identity-keyed.
+    * Entries are removed as they reach zero: the map holds only what is in flight right now.
+    * Single-threaded, like everything else in the browser, so the read-modify-write pairs below
+    * cannot interleave.
+    */
+  private val reloadsInFlight = scala.collection.mutable.Map.empty[Var[Boolean], Int]
+
+  private def refresh(refreshing: Var[Boolean], reload: () => Future[Unit]): Unit = {
+    reloadsInFlight.updateWith(refreshing)(n => Some(n.getOrElse(0) + 1))
+    refreshing.set(true)
+    val startedAt = System.currentTimeMillis()
+    reload().onComplete { _ =>
+      // Held for the blink from *this* reload's start, so a second one that arrives late does not
+      // cut short the dimming of the one already on screen.
+      val remaining = math.max(0L, blinkMillis - (System.currentTimeMillis() - startedAt))
+      dom.window.setTimeout(
+        () => {
+          val left = reloadsInFlight.getOrElse(refreshing, 1) - 1
+          if (left <= 0) {
+            reloadsInFlight.remove(refreshing)
+            refreshing.set(false)
+          } else reloadsInFlight.update(refreshing, left)
+        },
+        remaining.toDouble
+      )
+>>>>>>> Stashed changes
     }
   }
 
