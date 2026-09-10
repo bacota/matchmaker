@@ -368,7 +368,9 @@ object Auth {
     * and rendering `["a","b"]` into a sentence is worse than rendering nothing.
     */
   def claimOf(token: String, name: String): Option[String] =
-    claimsOf(token).toOption.flatMap(_.obj.get(name)).collect { case ujson.Str(value) => value }
+    claimsOf(token).toOption.collect { case ujson.Obj(obj) => obj }.flatMap(_.get(name)).collect {
+      case ujson.Str(value) => value
+    }
 
   /** The payload of a JWT, unverified.
     *
