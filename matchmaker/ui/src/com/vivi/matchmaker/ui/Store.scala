@@ -243,30 +243,23 @@ object Store {
     *     and until one succeeds the only cost is that notifications go to the older address.
     */
   private def syncEmail(stored: Player): Unit =
-    // A token issued before the player's last confirmed address change carries the address they
-    // changed *away from*, and writing that back would undo the change — on the very next reload,
-    // for as long as the token lasts. Cognito fixes the claim when it issues the token, so this is
-    // the ordinary state of affairs for a minute after a change, not an edge case. `Account` renews
-    // the session as part of confirming, and this is what covers the renewal that did not get
-    // through: no reconciliation at all until a token arrives that knows about the change.
-    if (!Auth.idTokenPredatesEmailChange)
-      Auth.email.map(_.trim).filter(_.nonEmpty).foreach { fromToken =>
-        val matches = stored.email.exists(_.equalsIgnoreCase(fromToken))
-        if (!matches)
-          ApiClient.updateEmail(fromToken).onComplete {
-            case Success(updated) =>
-              // Only if this is still the player on screen: a sign-out or a session change while
-              // the call was in flight has already put something else there, and the answer to a
-              // request about the previous session must not overwrite it.
-              val stillThere = player.now() match {
-                case PlayerState.Registered(current) => current.playerId == updated.playerId
-                case _                               => false
-              }
-              if (stillThere)
-                player.set(PlayerState.Registered(updated))
-            case Failure(_) => ()
-          }
-      }
+    Auth.email.map(_.trim).filter(_.nonEmpty).foreach { fromToken =>
+      val matches = stored.email.exists(_.equalsIgnoreCase(fromToken))
+      if (!matches)
+        ApiClient.updateEmail(fromToken).onComplete {
+          case Success(updated) =>
+            // Only if this is still the player on screen: a sign-out or a session change while
+            // the call was in flight has already put something else there, and the answer to a
+            // request about the previous session must not overwrite it.
+            val stillThere = player.now() match {
+              case PlayerState.Registered(current) => current.playerId == updated.playerId
+              case _                               => false
+            }
+            if (stillThere)
+              player.set(PlayerState.Registered(updated))
+          case Failure(_) => ()
+        }
+    }
 
   def refreshMatches(): Unit = {
     run(ApiClient.dueMatches())(due.set)
