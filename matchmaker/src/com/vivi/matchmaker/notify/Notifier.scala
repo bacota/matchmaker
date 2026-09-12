@@ -36,9 +36,7 @@ object Notifier {
   * not a mail SES will accept, and one with no link is worse than no mail, since a notification
   * whose whole purpose is to bring someone back to the game would arrive with nowhere to go.
   */
-case class MailSettings(sender: Option[String], uiBaseUrl: Option[String]) {
-  def configured: Boolean = sender.isDefined && uiBaseUrl.isDefined
-}
+case class MailSettings(sender: Option[String], uiBaseUrl: Option[String])
 
 object MailSettings {
   val none: MailSettings = MailSettings(None, None)
