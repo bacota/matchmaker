@@ -132,6 +132,11 @@ object Account {
       withAccessToken(emailOutcome, busy) { token =>
         CognitoIdp.verifyEmail(token, code).flatMap { _ =>
           val changed = email.now().trim
+          // Before anything else, and before any await: from here until a token is issued that
+          // knows about it, the session's `email` claim names the *old* address, and
+          // `Store.syncEmail` would read that claim on the next load and undo what was just
+          // confirmed. This marks the claim as the older fact of the two. See `Auth.emailConfirmed`.
+          Auth.emailConfirmed()
           // The change is now made at Cognito, and matchmaker's copy of the address — what it
           // mails notifications to — is stale until this lands. This is the only thing that
           // updates it, because the API has no way to learn of a change it was not told about.
@@ -140,29 +145,37 @@ object Account {
           // as a failure would send the player back to a form with nothing left to do. What goes
           // wrong when this call fails is narrower than that, and is what the second sentence
           // below says.
-          ApiClient.updateEmail(changed).map(Option(_)).recover { case _ => None }.map { recorded =>
-            // The header shows nothing of the address today, but the store holds the player the
-            // rest of the page reads, and leaving a known-stale one in it is how a later form
-            // comes to show the old value.
-            recorded.foreach(player => Store.player.set(Store.PlayerState.Registered(player)))
-            currentEmail.set(Some(changed))
-            emailStage.set(EmailStage.Idle)
-            email.set("")
-            emailCode.set("")
-            // Worth saying explicitly: the address is the username on this pool, so the next sign-in
-            // is with the new one, and a player who does not know that has locked themselves out as
-            // far as they can tell.
-            val signIn = s"Your email address is now $changed. Sign in with it next time."
-            emailOutcome.set(
-              Some(
-                Outcome(
-                  false,
-                  if (recorded.isDefined) signIn
-                  else s"$signIn We could not update where your notifications are sent just now, so those may go to your old address until you next sign in."
+          ApiClient
+            .updateEmail(changed)
+            .map(Option(_))
+            .recover { case _ => None }
+            // Then bring the session itself up to date, so the claim stops disagreeing within the
+            // second rather than at the end of the token's hour. Best effort: it cannot fail the
+            // change, and the marker above is what covers it not getting through.
+            .flatMap(recorded => Auth.renewTokens().map(_ => recorded))
+            .map { recorded =>
+              // The header shows nothing of the address today, but the store holds the player the
+              // rest of the page reads, and leaving a known-stale one in it is how a later form
+              // comes to show the old value.
+              recorded.foreach(player => Store.player.set(Store.PlayerState.Registered(player)))
+              currentEmail.set(Some(changed))
+              emailStage.set(EmailStage.Idle)
+              email.set("")
+              emailCode.set("")
+              // Worth saying explicitly: the address is the username on this pool, so the next sign-in
+              // is with the new one, and a player who does not know that has locked themselves out as
+              // far as they can tell.
+              val signIn = s"Your email address is now $changed. Sign in with it next time."
+              emailOutcome.set(
+                Some(
+                  Outcome(
+                    false,
+                    if (recorded.isDefined) signIn
+                    else s"$signIn We could not update where your notifications are sent just now, so those may go to your old address until you next sign in."
+                  )
                 )
               )
-            )
-          }
+            }
         }
       }
   }
