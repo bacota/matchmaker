@@ -179,7 +179,9 @@ object SignIn {
     Auth.storeTokens(tokens)
     reset()
     Store.signedIn.set(true)
-    Store.loadAll()
+    // A sign-in, so the address matchmaker has is reconciled with the token's claim — this is the
+    // only moment that happens. See Store.syncEmail.
+    Store.loadAll(justSignedIn = true)
   }
 
   /** Back to an empty form. Called on success so that the password does not sit in a `Var` for

@@ -25,12 +25,18 @@ object Main {
       Store.loadAll()
     } else
       Auth.completeSignIn() match {
+        // A code came back from the hosted pages, so this load *is* a sign-in: the token was
+        // issued seconds ago and its email claim is what Cognito currently holds, which is the one
+        // moment matchmaker's copy of the address is reconciled with it.
         case Some(signIn) =>
           signIn.onComplete { outcome =>
             outcome.failed.foreach(Store.report)
             Store.signedIn.set(Auth.isSignedIn)
-            if (Auth.isSignedIn) Store.loadAll()
+            if (Auth.isSignedIn) Store.loadAll(justSignedIn = true)
           }
+        // An ordinary load, resuming a session that may be an hour old. Deliberately not treated
+        // as a sign-in: the claims in a token that old can be out of date, and a reload is exactly
+        // when reconciling from them would undo a change made since.
         case None =>
           Store.signedIn.set(Auth.isSignedIn)
           if (Auth.isSignedIn) Store.loadAll()

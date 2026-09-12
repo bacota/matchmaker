@@ -62,7 +62,9 @@ object Auth {
     *
     * Note that it is the token's word, not Cognito's current one: a change made in this tab is
     * not in the token until the session refreshes, which is why `Account` updates what it shows
-    * from the address the player just confirmed.
+    * from the address the player just confirmed. It is also why matchmaker's own copy of the
+    * address is reconciled from this claim only at sign-in, when the token is new enough for the
+    * claim to be current — see `Store.syncEmail`.
     */
   def email: Option[String] = storedIdToken.flatMap(claimOf(_, "email"))
 
