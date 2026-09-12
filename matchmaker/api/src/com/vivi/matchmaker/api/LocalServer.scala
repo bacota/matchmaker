@@ -8,6 +8,7 @@ import scala.jdk.CollectionConverters._
 import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.persistence.TextCodec.given
+import com.vivi.matchmaker.notify.Notifier
 import com.vivi.matchmaker.service.{DbConfig, Services}
 import ApiGateway.{Request, Response}
 
@@ -34,7 +35,13 @@ object LocalServer {
     val config = dbConfig()
 
     // Unlike the Lambda, this process has a shutdown, so the pool's finalizer is kept and run.
-    val (services, release) = Services.resource[String](config, poolSize).allocated.unsafeRunSync()
+    //
+    // Notifications are printed rather than queued: there is no SQS here, and a developer who
+    // wants to see what a "your match has started" mail says should not have to deploy to read
+    // it. MAIL_SENDER and UI_BASE_URL still decide whether there is anything to print, exactly as
+    // they do deployed — see MailSettings — so an unset environment stays silent.
+    val (services, release) =
+      Services.resource[String](config, poolSize, notifier = Notifier.logging).allocated.unsafeRunSync()
 
     val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
     server.createContext("/", new Dispatcher(services, authenticator))

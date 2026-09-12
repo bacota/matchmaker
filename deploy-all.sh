@@ -2,6 +2,10 @@
 #
 # Deploys matchmaker and both bundled game engines in one apply.
 #
+# The mailer, when the environment enables it, is built and applied by deploy.sh as part of
+# matchmaker itself — it is matchmaker's second function, not a third system — so there is
+# nothing about it here.
+#
 #   ./deploy-all.sh dev
 #   ./deploy-all.sh dev --yes           # skip the confirmation between plan and apply
 #   ./deploy-all.sh dev --skip-tests    # build the engine jars without testing them first

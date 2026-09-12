@@ -111,12 +111,62 @@ module "api" {
     var.deploy_rps ? { (module.rps[0].api_host) = random_password.rps_api_key[0].result } : {}
   )
 
+  # Where notifications are queued, and what they say they are from. Empty when deploy_mail is
+  # false, which is what leaves the API with nothing to enqueue to — see modules/api's variables.
+  # The UI's own url is where a notification sends the player back to, so it is passed rather than
+  # configured: it is already known here, and a second copy in a tfvars would go stale.
+  mail_queue_url = var.deploy_mail ? module.mail[0].queue_url : ""
+  mail_queue_arn = var.deploy_mail ? module.mail[0].queue_arn : ""
+  mail_sender    = var.deploy_mail ? local.mail_sender : ""
+  ui_base_url    = module.ui.url
+
   # Policy, from environments/<env>.settings.tfvars.
   lambda_memory_mb            = var.lambda_memory_mb
   lambda_snap_start           = var.lambda_snap_start
   log_retention_days          = var.log_retention_days
   advanced_security_mode      = var.advanced_security_mode
   refresh_token_validity_days = var.refresh_token_validity_days
+}
+
+/* Notifications: a queue, and a function that drains it into SES.
+ *
+ * Separate from the api module because the two are separate systems with separate lifecycles --
+ * this one is not in the VPC, has no database, and is redeployed by replacing a different jar --
+ * and because matchmaker worked without it and still can. `deploy_mail` off means no queue, no
+ * function, and an API function with no MAIL_QUEUE_URL, which sends nothing.
+ *
+ * The sender is cognito_sender_email by default: it is already a verified SES identity, because
+ * the user pool sends its sign-in codes from it. That matters more than it sounds -- an
+ * unverified sender is refused by SES on every single mail, and while the account is in the SES
+ * sandbox an unverified *recipient* is too.
+ */
+module "mail" {
+  count  = var.deploy_mail ? 1 : 0
+  source = "./modules/mail"
+
+  environment     = var.environment
+  lambda_jar_path = var.mailer_jar_path
+
+  # Scoped to the one identity the mailer may send as. The api module derives the same arn from
+  # the same address when cognito_sender_identity_arn is not given explicitly.
+  sender_identity_arn = (
+    local.mail_sender == ""
+    ? ""
+    : (
+      var.cognito_sender_identity_arn != "" && local.mail_sender == var.cognito_sender_email
+      ? var.cognito_sender_identity_arn
+      : "arn:aws:ses:${var.region}:${data.aws_caller_identity.current.account_id}:identity/${local.mail_sender}"
+    )
+  )
+
+  log_retention_days = var.log_retention_days
+}
+
+data "aws_caller_identity" "current" {}
+
+locals {
+  # Falls back to the pool's sender, which is the address already verified with SES.
+  mail_sender = var.mail_sender != "" ? var.mail_sender : var.cognito_sender_email
 }
 
 /* The browser UI: an S3 bucket behind CloudFront.

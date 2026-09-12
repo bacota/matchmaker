@@ -352,3 +352,45 @@ variable "rps_jar_path" {
   type        = string
   default     = "../out/engines/rps/assembly.dest/out.jar"
 }
+
+# ---------------------------------------------------------------------------
+# Mail
+# ---------------------------------------------------------------------------
+
+variable "deploy_mail" {
+  description = <<-EOT
+    Deploy the mail queue and the function that drains it (modules/mail), and let the API enqueue
+    to it.
+
+    Off by default, and there are three things to have in place before turning it on:
+
+      - the API function must be able to reach SQS. It is attached to private subnets, so that
+        means a NAT gateway or a `com.amazonaws.<region>.sqs` interface endpoint. Nothing here
+        creates either; without one, every enqueue times out (harmlessly -- a start still
+        succeeds -- and silently, apart from the log line).
+      - SES must be out of the sandbox, or every recipient verified individually. In the sandbox
+        only verified addresses can be delivered to, so mail to real players lands in the
+        dead-letter queue.
+      - `mail_sender` must be a verified SES identity. cognito_sender_email already is one, which
+        is why it is the default.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "mailer_jar_path" {
+  description = "Path to the assembled mailer jar. Only read when deploy_mail is true."
+  type        = string
+  default     = "../out/matchmaker/mailer/assembly.dest/out.jar"
+}
+
+variable "mail_sender" {
+  description = <<-EOT
+    The address notifications are sent from, and the SES identity the mailer is allowed to send
+    as. Empty means cognito_sender_email, which is already verified in this account because the
+    user pool sends its sign-in codes from it -- one verified identity rather than two, and the
+    one a player already recognises mail from.
+  EOT
+  type        = string
+  default     = ""
+}

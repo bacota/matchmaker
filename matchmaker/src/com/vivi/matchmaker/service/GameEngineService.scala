@@ -6,6 +6,7 @@ import scala.concurrent.duration._
 import java.time.Instant
 import java.util.UUID
 import com.vivi.matchmaker.engine._
+import com.vivi.matchmaker.notify.{MailSettings, MatchStartedMail, Notifier}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence._
 
@@ -32,7 +33,9 @@ case class ReportedResult(participantId: ParticipantId, rank: Int, scores: Map[S
 class GameEngineService[T](
     sessionPool: SessionPool,
     engine: GameEngineClient,
-    callbackBaseUrl: Option[String] = None
+    callbackBaseUrl: Option[String] = None,
+    notifier: Notifier = Notifier.disabled,
+    mail: MailSettings = MailSettings.none
 )(using codec: TextCodec[T]) {
 
   /** Turns a challenge into a match: creates the game in the engine, and writes the match and one
@@ -168,7 +171,66 @@ class GameEngineService[T](
         // succeeded, so failing to read the first turn is not a reason to fail the call. It
         // leaves exactly the state this used to leave always, which `refresh` still corrects.
         _ <- applyEngineStatus(session, gameId, matchId, response.statusUrl).attempt
+
+        // Last, and best effort for the same reason as the status call above: the match exists
+        // and the start has succeeded, so nothing about mail is a reason to fail it. Note what
+        // that costs — an enqueue that fails is a notification nobody ever gets, because there is
+        // no record that it was owed. Making it durable means writing the mail beside the match
+        // in the transaction above and draining that table, which is a bigger change than this
+        // one and is worth making the day a missed notification matters more than a start does.
+        //
+        // After `applyEngineStatus`, not before: that is what writes whose turn it is, and "it is
+        // your turn" is most of what the mail has to say.
+        _ <- notifyStarted(session, game, challenge, started).attempt
       } yield started
+    }
+
+  /* Tells everyone in a new match that it has begun.
+   *
+   * Skipped entirely unless the environment has both a sender and a link to send people to (see
+   * `MailSettings`), which is what keeps local runs and tests silent without a special case.
+   *
+   * Two rules about who is written to:
+   *
+   *   - not the challenger. They are the one person who knows: they pressed Start, and are
+   *     looking at the answer.
+   *   - not a player with no address. `player.email` is nullable precisely so that this question
+   *     has an answer; `MatchStartedMail.compose` is where the skipping happens.
+   *
+   * The reads are outside any transaction: the match is written and committed by now, and this is
+   * reporting it rather than deciding anything. */
+  private def notifyStarted(
+      session: skunk.Session[IO],
+      game: Game,
+      challenge: OpenChallenge,
+      started: Match
+  ): IO[Unit] =
+    mail.sender.zip(mail.uiBaseUrl).traverse_ { (sender, uiBaseUrl) =>
+      val playerRepo = new PlayerRepo(session)
+      val participantRepo = new ParticipantRepo(session)
+      for {
+        seats <- participantRepo.listForMatch(started.gameId, started.matchId)
+        players <- playerRepo.listForMatch(started.gameId, started.matchId)
+        // Both lists are in seat order, so they line up; zipped rather than joined on player id,
+        // since one player may hold two seats and a map would lose one of them.
+        roster = seats.map((participant, _, _) => participant).zip(players)
+        messages = roster.flatMap { (participant, player) =>
+          if (player.playerId == challenge.challenger) None
+          else
+            MatchStartedMail.compose(
+              sender = sender,
+              uiBaseUrl = uiBaseUrl,
+              game = game,
+              description = started.description,
+              recipient = player,
+              others = roster.collect { case (_, other) if other.playerId != player.playerId => other.nickname },
+              yourTurn = participant.pending,
+              due = participant.due,
+              playUrl = started.playUrl
+            )
+        }
+        _ <- messages.traverse_(notifier.enqueue)
+      } yield ()
     }
 
   /* Asks the engine how a match stands and writes the answer onto its participants: whose turn

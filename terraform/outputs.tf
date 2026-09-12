@@ -133,3 +133,16 @@ output "rps_api_endpoint" {
   description = "Base url of the engine's API, whose /matches/<id>/play is where a player plays."
   value       = one(module.rps[*].api_endpoint)
 }
+
+output "mail_queue_url" {
+  description = "The queue notifications are put on, when deploy_mail is on."
+  value       = var.deploy_mail ? module.mail[0].queue_url : ""
+}
+
+# Where a notification ends up when SES refuses it three times. The first place to look when
+# players report that nothing arrives -- an unverified recipient while the account is in the SES
+# sandbox is the usual reason, and it leaves the mail here rather than anywhere in the logs.
+output "mail_dead_letter_queue_url" {
+  description = "Where undeliverable mail ends up, when deploy_mail is on."
+  value       = var.deploy_mail ? module.mail[0].dead_letter_queue_url : ""
+}

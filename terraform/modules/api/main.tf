@@ -58,6 +58,29 @@ resource "aws_iam_role_policy_attachment" "vpc_access" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
+/* Putting a mail on the notification queue, and nothing else about SQS.
+ *
+ * Scoped to the one queue: this function has no business reading it (the mailer does that) and no
+ * business touching any other. Absent entirely when there is no queue, so that an environment
+ * with notifications off grants nothing rather than granting a permission over an empty string.
+ */
+data "aws_iam_policy_document" "mail_queue" {
+  count = var.mail_queue_arn == "" ? 0 : 1
+
+  statement {
+    actions   = ["sqs:SendMessage"]
+    resources = [var.mail_queue_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "mail_queue" {
+  count = var.mail_queue_arn == "" ? 0 : 1
+
+  name   = "${local.name}-mail-queue"
+  role   = aws_iam_role.lambda.id
+  policy = data.aws_iam_policy_document.mail_queue[0].json
+}
+
 # ---------------------------------------------------------------------------
 # Function
 # ---------------------------------------------------------------------------
@@ -133,6 +156,13 @@ resource "aws_lambda_function" "api" {
       # In the function's configuration in plaintext, readable by anyone with lambda:GetFunction,
       # and in the terraform state. That is the trade this variable makes; see its description.
       DB_PASSWORD = var.db_password
+
+      # Notifications. All three are empty unless deploy_mail is on, and the function checks for
+      # all three: no queue, no sender or no link each mean it sends nothing rather than sending
+      # something broken. See com.vivi.matchmaker.notify.MailSettings.
+      MAIL_QUEUE_URL = var.mail_queue_url
+      MAIL_SENDER    = var.mail_sender
+      UI_BASE_URL    = var.ui_base_url
 
       # Selects how the caller is identified. "gateway" means the claims the JWT authorizer put
       # in the request context are trusted, which is only sound because the route above cannot be

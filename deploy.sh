@@ -116,6 +116,14 @@ else
   step "Building the Lambda jar and the UI bundle"
   mill -j 4 --ticker false matchmaker.api.assembly
   mill -j 4 --ticker false matchmaker.ui.fullLinkJS
+
+  # The mailer is a second function with a second jar, and terraform reads it the same way — so
+  # it has to exist before the plan, and only when the environment actually deploys it. Read from
+  # the settings file rather than from terraform, so this needs no credentials and no init.
+  if grep -Eq '^[[:space:]]*deploy_mail[[:space:]]*=[[:space:]]*true' "$TERRAFORM_DIR/environments/$env.settings.tfvars" 2>/dev/null; then
+    step "Building the mailer jar"
+    mill -j 4 --ticker false matchmaker.mailer.assembly
+  fi
 fi
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ package com.vivi.matchmaker.service
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.TestMigration
 import com.vivi.matchmaker.engine.GameEngineClient
+import com.vivi.matchmaker.notify.{MailSettings, Notifier}
 import com.vivi.matchmaker.persistence.TextCodec.given
 
 /** One set of services over one connection pool, shared by every service spec.
@@ -38,6 +39,17 @@ object TestServices {
   /** Services whose game-engine calls go to `engine` instead of over the network. A game engine
     * is a remote system no test can stand up, so the tests of the engine flow drive a stub.
     */
-  def servicesWith(engine: GameEngineClient, callbackBaseUrl: Option[String] = None): Services[String] =
-    Services.fromPool[String](pool, engine, callbackBaseUrl)
+  def servicesWith(
+      engine: GameEngineClient,
+      callbackBaseUrl: Option[String] = None,
+      notifier: Notifier = Notifier.disabled,
+      mail: MailSettings = MailSettings.none
+  ): Services[String] =
+    Services.fromPool[String](pool, engine, callbackBaseUrl, notifier, mail)
+
+  /** What a deployment that can send mail is configured with. `MailSettings.none` is the default
+    * above, so a test says nothing about notifications unless it is about them.
+    */
+  val mailSettings: MailSettings =
+    MailSettings(sender = Some("matchmaker@example.com"), uiBaseUrl = Some("https://matchmaker.example.com"))
 }
