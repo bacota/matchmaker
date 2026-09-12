@@ -23,11 +23,24 @@ cd "$(dirname "$0")"
 
 readonly TERRAFORM_DIR="terraform"
 
-# The mail module, and the two things outside it that deploying the mailer changes: the API
-# function's environment (MAIL_QUEUE_URL) and its permission to send to the queue.
+# The mail module, and the three things outside it that deploying the mailer changes: the API
+# function's environment (MAIL_QUEUE_URL), the alias that actually serves it, and its permission to
+# send to the queue.
+#
+# The alias is not optional here, and leaving it out is a silent failure rather than a loud one.
+# The API function is published on every apply, and the gateway invokes `live` rather than the
+# function itself (see modules/api) — so a plan that updates the function without moving the alias
+# leaves a brand-new version carrying MAIL_QUEUE_URL sitting unused, while every request goes on
+# reaching the version that has no queue to enqueue to. The mailer would be deployed, the queue
+# would exist, and nothing would ever arrive in it.
+#
+# Targeting the alias alone would in fact be enough — terraform includes what a target depends on,
+# and the alias depends on the function — but both are named, because the thing that must not be
+# forgotten should not be reachable only as somebody's dependency.
 readonly TARGETS=(
   -target=module.mail
   -target=module.api.aws_lambda_function.api
+  -target=module.api.aws_lambda_alias.live
   -target=module.api.aws_iam_role_policy.mail_queue
 )
 

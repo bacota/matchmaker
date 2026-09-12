@@ -136,6 +136,16 @@ resource "aws_lambda_function" "mailer" {
   memory_size = var.lambda_memory_mb
   timeout     = var.lambda_timeout_s
 
+  /* No `publish` and no alias, unlike the API function.
+   *
+   * The API has both because API Gateway must name a stable target and because SnapStart resumes
+   * a snapshot taken per published version. Neither applies here: the event source mapping below
+   * invokes this function unqualified, so $LATEST is what runs, and there is no cold-start
+   * snapshot to qualify for. An alias would be a second thing every deploy has to remember to
+   * move — which, when it is forgotten, fails silently. Rolling this one back is redeploying the
+   * previous jar.
+   */
+
   # No environment variables at all. The region comes from AWS_REGION, which the runtime sets,
   # and the credentials from the role; everything else -- who the mail is from, who it is to,
   # what it says -- is in the message. That is the point of the message carrying its own sender.
