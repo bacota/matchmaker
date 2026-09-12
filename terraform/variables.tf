@@ -50,6 +50,7 @@ variable "lambda_snap_start" {
     Per-environment because it is a trade: publishing a version takes a minute or two longer, since
     AWS runs the init phase and snapshots it before the version is usable. Worth turning off in an
     environment where deploys are frequent and cold-start latency does not matter.
+
   EOT
   type        = bool
   default     = true

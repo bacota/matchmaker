@@ -119,13 +119,16 @@ resource "aws_lambda_function" "api" {
    *   the same dead TCP connections, and would need `org.crac` checkpoint/restore hooks to be
    *   safe.
    *
-   * The second condition is what turned this off: the execution role's credentials are
-   * per-execution-environment and arrive as environment variables, and Java fixes System.getenv
-   * at JVM start, so a restored function signed its calls to the game engine with nothing and was
-   * answered with 403. Matchmaker no longer signs anything -- the engine takes a shared API key,
-   * set on this function like any other variable and therefore present in the snapshot -- so that
-   * particular conflict is gone. It is still off everywhere; see lambda_snap_start in the
-   * settings tfvars.
+   * The second condition is what turned this off once, and is now the thing to watch. The
+   * execution role's credentials are per-execution-environment and arrive as environment
+   * variables, and Java fixes System.getenv at JVM start -- so a restored function signed its
+   * calls to the game engine with nothing and was answered with 403. Engine calls no longer sign:
+   * they take a shared API key, set on this function like any other variable and therefore present
+   * in the snapshot.
+   *
+   * The one call that came back -- putting a notification on the mail queue -- is why there is an
+   * AWS SDK client in this codebase at all: its credential provider survives a restore, where a
+   * hand-signed request reading a frozen environment does not. See notify.SqsNotifier.
    */
   dynamic "snap_start" {
     for_each = var.lambda_snap_start ? [1] : []

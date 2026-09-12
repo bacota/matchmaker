@@ -36,10 +36,24 @@ object matchmaker extends ScalaModule {
     // For the jsonb columns this module reads and writes as structured data (result.scores).
     // Already inside the deployed jar by way of `api`, so this costs nothing there.
     mvn"com.lihaoyi::upickle:4.0.2",
-    // Signs the one AWS call matchmaker makes for itself: putting a notification on the mail
-    // queue. The signer only -- an SQS client would bring Netty and Apache HttpClient with it,
-    // which is the cold start this module has avoided paying everywhere else. See util/SigV4.
-    mvn"software.amazon.awssdk:http-auth-aws:2.31.78"
+    /* The one AWS call matchmaker makes for itself: putting a notification on the mail queue.
+     *
+     * A real client here, unlike everywhere else in this repository, and SnapStart is the reason.
+     * Signing by hand means reading the execution role's credentials out of the environment, and a
+     * restored JVM cannot see the environment it was restored into -- Java fixes System.getenv at
+     * startup, which under SnapStart is publish time. The client's credential provider is built to
+     * survive that; a `System.getenv` call is not. See SqsNotifier.
+     *
+     * The two HTTP clients the SDK would otherwise drag in are excluded, and the JDK's own
+     * URLConnection transport used instead: Netty and Apache are several megabytes each, for one
+     * JSON call with no streaming and no connection pooling worth the name.
+     */
+    mvn"software.amazon.awssdk:sqs:2.31.78"
+      .exclude(
+        ("software.amazon.awssdk", "netty-nio-client"),
+        ("software.amazon.awssdk", "apache-client")
+      ),
+    mvn"software.amazon.awssdk:url-connection-client:2.31.78"
   )
 
   object test extends ScalaTests with TestModule.Munit {

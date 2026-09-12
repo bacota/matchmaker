@@ -181,7 +181,13 @@ class GameEngineService[T](
         //
         // After `applyEngineStatus`, not before: that is what writes whose turn it is, and "it is
         // your turn" is most of what the mail has to say.
-        _ <- notifyStarted(session, game, challenge, started).attempt
+        _ <- notifyStarted(session, game, challenge, started).handleError { error =>
+          // Swallowed, but never silently. A start that sends no mail looks exactly like a start
+          // with nobody to write to, and the difference — a queue that is unreachable, credentials
+          // that do not sign — is invisible from anywhere else: nothing retries, and nothing
+          // records that a notification was owed.
+          System.err.println(s"could not queue notifications for match ${matchId.value}: $error")
+        }
       } yield started
     }
 
