@@ -16,8 +16,8 @@ import org.scalajs.dom
   *     copy of the password. It does keep one of the address, because that is where it sends
   *     notifications from a lambda that has no token to read one out of, so the email form has
   *     one extra step the other two do not: once Cognito confirms the change, it reports it to
-  *     the API. This form is the only thing that does, which makes it the only reason the two
-  *     sides can be in step.
+  *     the API. `Store.syncEmail` does the same check on every load, so this step is what keeps
+  *     the two sides in step *now* rather than the only thing that ever does.
   *
   * Each form reports next to itself rather than into `Store.error`. A failure here belongs to the
   * field the user is typing in, and the header banner is both far away and easy to lose behind
@@ -158,7 +158,7 @@ object Account {
                 Outcome(
                   false,
                   if (recorded.isDefined) signIn
-                  else s"$signIn We could not update where your notifications are sent, so those may still go to your old address."
+                  else s"$signIn We could not update where your notifications are sent just now, so those may go to your old address until you next sign in."
                 )
               )
             )

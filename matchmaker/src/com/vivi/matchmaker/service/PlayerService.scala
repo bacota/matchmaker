@@ -56,10 +56,12 @@ class PlayerService(sessionPool: SessionPool) {
 
   /** Records the address the caller now signs in with.
     *
-    * Called by the account form once Cognito has confirmed the change — that is, once the code
-    * mailed to the new address has come back — so what arrives here is an address Cognito has
-    * verified, reported by the browser that watched it happen. Nothing here re-verifies it,
-    * because nothing here can: matchmaker cannot mail a code and has no way to ask Cognito.
+    * Two callers, both in the browser. The account form calls it once Cognito has confirmed a
+    * change — that is, once the code mailed to the new address has come back — and the store calls
+    * it on load whenever the stored address disagrees with the `email` claim of the caller's
+    * token. Either way what arrives is an address Cognito has verified, reported by the client
+    * that saw it. Nothing here re-verifies it, because nothing here can: matchmaker cannot mail a
+    * code and has no way to ask Cognito.
     *
     * What that means is worth being plain about: the stored address is exactly as trustworthy as
     * the caller's own client. A caller who drives the API directly can record an address that is

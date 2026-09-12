@@ -9,9 +9,11 @@
 -- by external_id would be a network call per recipient on a path that is already slow; the column
 -- is the copy that makes a recipient list a query.
 --
--- The cost of a copy is that it can go stale, so the account form reports a confirmed change back
--- to `PUT /me/email`, and that is the only writer. It is assumed to be the only way the address
--- changes.
+-- The cost of a copy is that it can go stale, and two things keep it in step, both through
+-- `PUT /me/email`: the account form reports a change as it makes it, and every load compares the
+-- stored value against the `email` claim of the caller's token and corrects it if they differ. The
+-- first is the normal path; the second is what makes a missed report temporary rather than
+-- permanent, and is also how a row that predates this column acquires an address at all.
 --
 -- Nullable, because not every row has one and nothing can invent it: players who registered before
 -- this column existed, and local development, where the caller is an `X-External-Id` header with no

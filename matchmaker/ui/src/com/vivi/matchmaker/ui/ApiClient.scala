@@ -42,12 +42,13 @@ object ApiClient {
   def updateNickname(nickname: String): Future[Player] =
     send[Player](HttpMethod.PUT, "/me", Some(write(Json.NicknameRequest(nickname))))
 
-  /** Records an address change Cognito has already confirmed.
+  /** Records an address Cognito already holds, so that matchmaker's copy — what it sends
+    * notifications to — matches the one the player signs in with.
     *
-    * The change is made against Cognito by `Account`, which is also the only caller of this:
-    * matchmaker keeps a copy of the address to send notifications to, and this is what stops that
-    * copy going stale. The API cannot verify the address, so it is reported only once the mailed
-    * code has come back — never when the change is merely requested.
+    * Called from `Account` once a change it made has been confirmed, and from `Store.syncEmail`
+    * on load when the stored copy and the token's claim disagree. The API cannot verify an
+    * address, so neither caller sends one Cognito has not already accepted: never a change that
+    * is merely requested, and never anything but the claim of a token the gateway verified.
     */
   def updateEmail(email: String): Future[Player] =
     send[Player](HttpMethod.PUT, "/me/email", Some(write(Json.EmailRequest(email))))

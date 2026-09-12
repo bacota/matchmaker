@@ -201,6 +201,7 @@ object Store {
       case Success(p) =>
         error.set(None)
         player.set(PlayerState.Registered(p))
+        syncEmail(p)
         refreshMatches()
         refreshGames()
 
@@ -218,6 +219,47 @@ object Store {
         player.set(PlayerState.Unavailable(messageOf(other)))
     }
   }
+
+  /** Brings matchmaker's copy of the address back in step with the token, on every load.
+    *
+    * The account form reports a change as it makes it, and that is still the normal path. This is
+    * for the times it could not: the API call after a confirmed change failed, the address was
+    * changed from another client, or the player registered before matchmaker kept the address at
+    * all. Cognito is the authority either way — `Auth.email` is the `email` claim of a token
+    * Cognito issued and the gateway verified, so it is the address the player actually signs in
+    * with, and a stored value that disagrees is simply wrong.
+    *
+    * Three things it deliberately does not do:
+    *
+    *   - No claim, no write. `None` means this token carries no address — local development
+    *     authenticates with a header, and there is no Cognito identity behind it — which says
+    *     nothing about the stored one. Clearing a good address because this client cannot see one
+    *     would be the worst outcome available.
+    *   - Compared case-insensitively, because one address in two cases is one mailbox, and
+    *     rewriting the row on every load to restyle it would be a write per sign-in that changes
+    *     nothing anyone can receive.
+    *   - Failure is silent. Nobody asked for this, so an error banner on the home screen would
+    *     report a problem the player did not cause and cannot act on; the next load tries again,
+    *     and until one succeeds the only cost is that notifications go to the older address.
+    */
+  private def syncEmail(stored: Player): Unit =
+    Auth.email.map(_.trim).filter(_.nonEmpty).foreach { fromToken =>
+      val matches = stored.email.exists(_.equalsIgnoreCase(fromToken))
+      if (!matches)
+        ApiClient.updateEmail(fromToken).onComplete {
+          case Success(updated) =>
+            // Only if this is still the player on screen: a sign-out or a session change while
+            // the call was in flight has already put something else there, and the answer to a
+            // request about the previous session must not overwrite it.
+            val stillThere = player.now() match {
+              case PlayerState.Registered(current) => current.playerId == updated.playerId
+              case _                               => false
+            }
+            if (stillThere)
+              player.set(PlayerState.Registered(updated))
+          case Failure(_) => ()
+        }
+    }
 
   def refreshMatches(): Unit = {
     run(ApiClient.dueMatches())(due.set)
