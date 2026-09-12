@@ -1,0 +1,29 @@
+-- Where a player can be reached.
+--
+-- Until now the address lived only in Cognito: the browser changed it there directly and read it
+-- back out of the ID token, and matchmaker never saw it (PlayerService's comment said as much).
+-- That works for as long as the address is only ever shown to the person it belongs to. It stops
+-- working the moment matchmaker wants to *send* something -- a match has started, your turn has
+-- come round -- because that happens in a lambda with no session, no token and no claims, for
+-- players who are not the caller and may not be signed in at all. Looking each one up at Cognito
+-- by external_id would be a network call per recipient on a path that is already slow; the column
+-- is the copy that makes a recipient list a query.
+--
+-- The cost of a copy is that it can go stale, and two things keep it in step, both through
+-- `PUT /me/email`: the account form reports a change as it makes it, and every load compares the
+-- stored value against the `email` claim of the caller's token and corrects it if they differ. The
+-- first is the normal path; the second is what makes a missed report temporary rather than
+-- permanent, and is also how a row that predates this column acquires an address at all.
+--
+-- Nullable, because not every row has one and nothing can invent it: players who registered before
+-- this column existed, and local development, where the caller is an `X-External-Id` header with no
+-- Cognito identity behind it to have an address. Nullable is also what lets the notification code
+-- ask the honest question -- who can we reach? -- rather than assume everyone.
+--
+-- Not unique, deliberately. Nothing here needs it to be: the address is only somewhere to send to,
+-- and two players who share one are a household with one mailbox -- each still has their own
+-- identity, their own nickname and their own notifications, which happen to arrive in the same
+-- place. Cognito separately enforces what does have to hold, since the address is the username on
+-- that pool, so a constraint here could only offer a second opinion and fail a change Cognito has
+-- already accepted.
+ALTER TABLE player ADD COLUMN email TEXT;

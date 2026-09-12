@@ -194,13 +194,14 @@ object Store {
     * A 403 from `/me` is not an error: it is how the API says this Cognito identity has no player
     * yet, which is the case self-registration exists for.
     */
-  def loadAll(): Unit = {
+  def loadAll(justSignedIn: Boolean = false): Unit = {
     player.set(PlayerState.Loading)
 
     ApiClient.me().onComplete {
       case Success(p) =>
         error.set(None)
         player.set(PlayerState.Registered(p))
+        if (justSignedIn) syncEmail(p)
         refreshMatches()
         refreshGames()
 
@@ -218,6 +219,48 @@ object Store {
         player.set(PlayerState.Unavailable(messageOf(other)))
     }
   }
+
+  /** Brings matchmaker's copy of the address in step with the token, at sign-in.
+    *
+    * Sign-in is the one moment the claim can be trusted, which is why this is not done on every
+    * load. Cognito fixes the claims when it issues a token, so a session that changed its address
+    * an hour ago still carries the old one — and a reload that "corrected" the stored address from
+    * that claim would undo the change the player had just made. A token just issued by a sign-in
+    * has no such gap: whatever it says is what Cognito currently holds.
+    *
+    * Nothing is lost by waiting. The address is the username on that pool, so a player who changes
+    * it signs in with the new one next time, and that sign-in is this. Until then matchmaker has
+    * the older address, which costs a notification going to a mailbox the player still owns.
+    *
+    * Three further things it does not do:
+    *
+    *   - No claim, no write. `None` means this token carries no address — local development
+    *     authenticates with a header, and there is no Cognito identity behind it — which says
+    *     nothing about the stored one. Clearing a good address because this client cannot see one
+    *     would be the worst outcome available.
+    *   - Compared case-insensitively, because one address in two cases is one mailbox, and
+    *     rewriting the row to restyle it would be a write per sign-in that changes nothing anyone
+    *     can receive.
+    *   - Failure is silent. Nobody asked for this, so an error banner on the home screen would
+    *     report a problem the player did not cause and cannot act on; the next sign-in tries again,
+    *     and until one succeeds the only cost is notifications going to the older address.
+    */
+  private def syncEmail(stored: Player): Unit =
+    Auth.email.map(_.trim).filter(_.nonEmpty).foreach { fromToken =>
+      if (!stored.email.exists(_.equalsIgnoreCase(fromToken)))
+        ApiClient.updateEmail(fromToken).onComplete {
+          case Success(updated) =>
+            // Only if this is still the player on screen: a sign-out or a session change while the
+            // call was in flight has already put something else there, and the answer to a request
+            // about the previous session must not overwrite it.
+            val stillThere = player.now() match {
+              case PlayerState.Registered(current) => current.playerId == updated.playerId
+              case _                               => false
+            }
+            if (stillThere) player.set(PlayerState.Registered(updated))
+          case Failure(_) => ()
+        }
+    }
 
   def refreshMatches(): Unit = {
     run(ApiClient.dueMatches())(due.set)

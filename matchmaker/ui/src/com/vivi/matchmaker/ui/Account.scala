@@ -13,7 +13,12 @@ import org.scalajs.dom
   *   - the *nickname* is matchmaker's, the name other players see, and goes through the API;
   *   - the *email* and *password* belong to the Cognito identity, and are changed against
   *     Cognito directly from this page — the same reasoning as `SignIn`. Matchmaker keeps no
-  *     copy of either, so there is nothing here to keep the two sides in step.
+  *     copy of the password. It does keep one of the address, because that is where it sends
+  *     notifications from a lambda that has no token to read one out of — but this form does not
+  *     report the change to the API. It cannot usefully: the session's token still carries the old
+  *     address until Cognito issues a new one. The copy is reconciled at the next sign-in instead,
+  *     from that token's claim, which is the only account of the address either side can verify.
+  *     See `Store.syncEmail`.
   *
   * Each form reports next to itself rather than into `Store.error`. A failure here belongs to the
   * field the user is typing in, and the header banner is both far away and easy to lose behind
@@ -135,6 +140,12 @@ object Account {
           // Worth saying explicitly: the address is the username on this pool, so the next sign-in
           // is with the new one, and a player who does not know that has locked themselves out as
           // far as they can tell.
+          //
+          // Nothing is reported to the API here. Matchmaker keeps a copy of the address to send
+          // notifications to, and it is brought up to date at the next sign-in, from the claim of
+          // the token that sign-in issues — see `Store.syncEmail`. Reporting it now would mean
+          // sending an address that this session's own token still disagrees with, and the token
+          // is the only thing either side can check.
           emailOutcome.set(Some(Outcome(false, s"Your email address is now $changed. Sign in with it next time.")))
         }
       }

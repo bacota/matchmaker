@@ -51,18 +51,20 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     })
 
   private val withOwnerAndGameRow: Codec[
-    (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String)
+    (GameId, String, String, T, PlayerId, String, Boolean, String, Option[String], GameType, String, String, String,
+      Boolean, String)
   ] =
     gameId *: text *: text *: state *: playerId *:
-      text *: bool *: text *:
+      text *: bool *: text *: text.opt *:
       gameType *: text *: text *: text *: bool *: text
 
   private val selectCharacterWithOwnerAndGame: Query[
     CharacterId,
-    (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String)
+    (GameId, String, String, T, PlayerId, String, Boolean, String, Option[String], GameType, String, String, String,
+      Boolean, String)
   ] =
     sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
-                 p.nickname, p.is_admin, p.external_id,
+                 p.nickname, p.is_admin, p.external_id, p.email,
                  g.game_type, g.name, g.description, g.url, g.active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
@@ -76,10 +78,11 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
    * which this has no business doing — it is the character that is about to be written. */
   private val selectCharacterWithOwnerAndGameForUpdate: Query[
     CharacterId,
-    (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String)
+    (GameId, String, String, T, PlayerId, String, Boolean, String, Option[String], GameType, String, String, String,
+      Boolean, String)
   ] =
     sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
-                 p.nickname, p.is_admin, p.external_id,
+                 p.nickname, p.is_admin, p.external_id, p.email,
                  g.game_type, g.name, g.description, g.url, g.active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
@@ -105,7 +108,8 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
 
   private def toCharacterWithOwnerAndGame(
       id: CharacterId,
-      row: (GameId, String, String, T, PlayerId, String, Boolean, String, GameType, String, String, String, Boolean, String)
+      row: (GameId, String, String, T, PlayerId, String, Boolean, String, Option[String], GameType, String, String,
+        String, Boolean, String)
   ): CharacterWithOwnerAndGame[T] = row match {
     case (
         charGameId,
@@ -116,6 +120,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         nickname,
         isAdmin,
         externalId,
+        email,
         gameType,
         gameName,
         gameDescription,
@@ -124,7 +129,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         gameExternalId
       ) =>
       val character = Character(id, charGameId, name, description, state, Some(charPlayerId))
-      val player = Player(charPlayerId, nickname, isAdmin, externalId)
+      val player = Player(charPlayerId, nickname, isAdmin, externalId, email)
       val game = Game(charGameId, gameType, gameName, gameDescription, gameUrl, gameActive, Seq.empty, Seq.empty, gameExternalId)
       CharacterWithOwnerAndGame(character, player, game)
   }

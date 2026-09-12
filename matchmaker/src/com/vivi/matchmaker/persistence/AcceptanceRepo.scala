@@ -133,16 +133,19 @@ class AcceptanceRepo(session: Session[IO]) {
   def countForChallenge(gameId: GameId, challengeId: ChallengeId): IO[Long] =
     session.unique(countByChallenge)((gameId, challengeId))
 
-  private val playerRow: Codec[(String, Boolean, String)] = text *: bool *: text
+  // Used for both players below, so that the two halves of the join decode by the same rule and a
+  // column added to one is added to the other. Only the first stays a nested tuple in the row
+  // type; `*:` flattens the codec that comes last.
+  private val playerRow: Codec[(String, Boolean, String, Option[String])] = text *: bool *: text *: text.opt
 
   // gameId is a query parameter here, not a selected column — the caller already knows it (it's
   // how the row is looked up), so there's no need to round-trip it back out.
   private val acceptanceWithChallengeAndPlayersRow: Codec[
     (GameType, PlayerId, String, Option[Instant], Option[Double], String, Boolean, GameRoleId, Option[Long],
-      TimeLimitKind, TimeLimitUnit, (String, Boolean, String), String, Boolean, String)
+      TimeLimitKind, TimeLimitUnit, (String, Boolean, String, Option[String]), String, Boolean, String, Option[String])
   ] =
     gameType *: playerId *: text *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId *: int8.opt *:
-      SkunkCodecs.timeLimitKind *: SkunkCodecs.timeLimitUnit *: playerRow *: text *: bool *: text
+      SkunkCodecs.timeLimitKind *: SkunkCodecs.timeLimitUnit *: playerRow *: playerRow
 
   // `a` is the acceptance being read; `challenger_acceptance` is the challenger's own, which is
   // where a challenge's gameRoleId lives (there is no such column on open_challenge — see
@@ -152,8 +155,8 @@ class AcceptanceRepo(session: Session[IO]) {
     SELECT a.game_type, oc.challenger, oc.message, oc.start,
            EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public,
            challenger_acceptance.game_role_id, cc.character_id, oc.time_limit_kind, oc.time_limit_unit,
-           acceptor.nickname, acceptor.is_admin, acceptor.external_id,
-           challenger.nickname, challenger.is_admin, challenger.external_id
+           acceptor.nickname, acceptor.is_admin, acceptor.external_id, acceptor.email,
+           challenger.nickname, challenger.is_admin, challenger.external_id, challenger.email
     FROM acceptance a
     JOIN open_challenge oc ON oc.game_id = a.game_id AND oc.challenge_id = a.challenge_id
     LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
@@ -184,10 +187,11 @@ class AcceptanceRepo(session: Session[IO]) {
             characterIdValue,
             timeLimitKind,
             timeLimitUnit,
-            (acceptorNickname, acceptorIsAdmin, acceptorExternalId),
+            (acceptorNickname, acceptorIsAdmin, acceptorExternalId, acceptorEmail),
             challengerNickname,
             challengerIsAdmin,
-            challengerExternalId
+            challengerExternalId,
+            challengerEmail
           ) =>
         val timeLimit = timeLimitSeconds.map(v => Duration.ofSeconds(v.toLong))
         val challengeModel: OpenChallenge = gameType match {
@@ -205,8 +209,9 @@ class AcceptanceRepo(session: Session[IO]) {
               timeLimitKind, timeLimitUnit
             )
         }
-        val acceptor = Player(playerId, acceptorNickname, acceptorIsAdmin, acceptorExternalId)
-        val challengerPlayer = Player(challenger, challengerNickname, challengerIsAdmin, challengerExternalId)
+        val acceptor = Player(playerId, acceptorNickname, acceptorIsAdmin, acceptorExternalId, acceptorEmail)
+        val challengerPlayer =
+          Player(challenger, challengerNickname, challengerIsAdmin, challengerExternalId, challengerEmail)
         (challengeModel, acceptor, challengerPlayer)
     })
 

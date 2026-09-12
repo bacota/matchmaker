@@ -47,15 +47,26 @@ object Router {
     (request.method.toUpperCase, request.segments) match {
 
       case ("POST", "register" :: Nil) =>
-        body[Json.RegisterRequest](request).flatMap(r => created(services.registration.register(r.nickname, caller)))
+        body[Json.RegisterRequest](request).flatMap(r =>
+          created(services.registration.register(r.nickname, caller, r.email))
+        )
 
       case ("GET", "me" :: Nil) =>
         ok(services.players.me(caller))
 
-      // The only part of a player they may change here. Email and password belong to the Cognito
-      // identity and are changed against Cognito by the browser, not through this API.
+      // The password belongs to the Cognito identity and is changed against Cognito by the
+      // browser, never through this API.
       case ("PUT", "me" :: Nil) =>
         body[Json.NicknameRequest](request).flatMap(r => ok(services.players.updateNickname(caller, r.nickname)))
+
+      // So does the email address — but unlike the password, matchmaker keeps a copy of it to send
+      // notifications to, and this is how the browser reports what Cognito already holds: at
+      // sign-in, when the `email` claim of the token just issued disagrees with the stored copy.
+      // Not when the player changes their address, because at that moment no token agrees with the
+      // new one yet. Separate from `PUT /me` because it is a different event: one is the player
+      // renaming themselves here, the other is this API being told what happened elsewhere.
+      case ("PUT", "me" :: "email" :: Nil) =>
+        body[Json.EmailRequest](request).flatMap(r => ok(services.players.updateEmail(caller, r.email)))
 
       case ("GET", "me" :: "acceptances" :: Nil) =>
         ok(services.acceptances.mine(caller))
