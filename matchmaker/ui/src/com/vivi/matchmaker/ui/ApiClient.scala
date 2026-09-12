@@ -29,14 +29,28 @@ object ApiClient {
 
   def me(): Future[Player] = get[Player]("/me")
 
-  def register(nickname: String): Future[Player] =
-    send[Player](HttpMethod.POST, "/register", Some(write(Json.RegisterRequest(nickname))))
+  /** Creates the caller's player. The address is sent along with it from the ID token's `email`
+    * claim, so a new player can be written to from the moment they exist rather than only after
+    * they have changed their address once.
+    */
+  def register(nickname: String, email: Option[String]): Future[Player] =
+    send[Player](HttpMethod.POST, "/register", Some(write(Json.RegisterRequest(nickname, email))))
 
   /** Renames the caller. The server takes the player from the token, so there is no id to send
     * and no way to rename anyone else.
     */
   def updateNickname(nickname: String): Future[Player] =
     send[Player](HttpMethod.PUT, "/me", Some(write(Json.NicknameRequest(nickname))))
+
+  /** Records an address change Cognito has already confirmed.
+    *
+    * The change is made against Cognito by `Account`, which is also the only caller of this:
+    * matchmaker keeps a copy of the address to send notifications to, and this is what stops that
+    * copy going stale. The API cannot verify the address, so it is reported only once the mailed
+    * code has come back — never when the change is merely requested.
+    */
+  def updateEmail(email: String): Future[Player] =
+    send[Player](HttpMethod.PUT, "/me/email", Some(write(Json.EmailRequest(email))))
 
   def dueMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches/due")
 

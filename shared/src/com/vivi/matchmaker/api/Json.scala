@@ -124,13 +124,25 @@ object Json {
 
   // Request bodies. Each carries only what the caller supplies; the caller's own identity always
   // comes from the X-External-Id header, never from the body.
-  case class RegisterRequest(nickname: String)
+  /** @param email the address the new player signs in with, as the client read it out of its own
+    *              token. Optional: a client with no Cognito identity behind it has none to send,
+    *              and one that omits it registers a player matchmaker cannot mail until the
+    *              account form records one.
+    */
+  case class RegisterRequest(nickname: String, email: Option[String] = None)
 
   /** A change of nickname, from the account menu. Separate from `RegisterRequest` despite the
     * identical shape: they are two different requests, and one growing a field is not a reason
     * for the other to gain it.
     */
   case class NicknameRequest(nickname: String)
+
+  /** An address change that Cognito has already accepted, reported by the browser that watched
+    * it happen. Not a request to change anything at Cognito — by the time this is sent, the
+    * change is done and the code has been answered — only to record it. See
+    * `PlayerService.updateEmail`.
+    */
+  case class EmailRequest(email: String)
   case class CharacterRequest(name: String, description: String, externalId: String)
   case class UpdateStateRequest(state: String)
 
@@ -205,6 +217,7 @@ object Json {
 
   given ReadWriter[RegisterRequest] = macroRW
   given ReadWriter[NicknameRequest] = macroRW
+  given ReadWriter[EmailRequest] = macroRW
   given ReadWriter[CharacterRequest] = macroRW
   given ReadWriter[UpdateStateRequest] = macroRW
   given ReadWriter[AcceptRequest] = macroRW

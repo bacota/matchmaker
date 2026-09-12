@@ -13,7 +13,11 @@ import org.scalajs.dom
   *   - the *nickname* is matchmaker's, the name other players see, and goes through the API;
   *   - the *email* and *password* belong to the Cognito identity, and are changed against
   *     Cognito directly from this page — the same reasoning as `SignIn`. Matchmaker keeps no
-  *     copy of either, so there is nothing here to keep the two sides in step.
+  *     copy of the password. It does keep one of the address, because that is where it sends
+  *     notifications from a lambda that has no token to read one out of, so the email form has
+  *     one extra step the other two do not: once Cognito confirms the change, it reports it to
+  *     the API. This form is the only thing that does, which makes it the only reason the two
+  *     sides can be in step.
   *
   * Each form reports next to itself rather than into `Store.error`. A failure here belongs to the
   * field the user is typing in, and the header banner is both far away and easy to lose behind
@@ -126,16 +130,39 @@ object Account {
     if (code.isEmpty) emailOutcome.set(Some(Outcome(true, "Enter the code we sent.")))
     else
       withAccessToken(emailOutcome, busy) { token =>
-        CognitoIdp.verifyEmail(token, code).map { _ =>
+        CognitoIdp.verifyEmail(token, code).flatMap { _ =>
           val changed = email.now().trim
-          currentEmail.set(Some(changed))
-          emailStage.set(EmailStage.Idle)
-          email.set("")
-          emailCode.set("")
-          // Worth saying explicitly: the address is the username on this pool, so the next sign-in
-          // is with the new one, and a player who does not know that has locked themselves out as
-          // far as they can tell.
-          emailOutcome.set(Some(Outcome(false, s"Your email address is now $changed. Sign in with it next time.")))
+          // The change is now made at Cognito, and matchmaker's copy of the address — what it
+          // mails notifications to — is stale until this lands. This is the only thing that
+          // updates it, because the API has no way to learn of a change it was not told about.
+          //
+          // Recovered rather than allowed to fail: the address *has* changed, and reporting that
+          // as a failure would send the player back to a form with nothing left to do. What goes
+          // wrong when this call fails is narrower than that, and is what the second sentence
+          // below says.
+          ApiClient.updateEmail(changed).map(Option(_)).recover { case _ => None }.map { recorded =>
+            // The header shows nothing of the address today, but the store holds the player the
+            // rest of the page reads, and leaving a known-stale one in it is how a later form
+            // comes to show the old value.
+            recorded.foreach(player => Store.player.set(Store.PlayerState.Registered(player)))
+            currentEmail.set(Some(changed))
+            emailStage.set(EmailStage.Idle)
+            email.set("")
+            emailCode.set("")
+            // Worth saying explicitly: the address is the username on this pool, so the next sign-in
+            // is with the new one, and a player who does not know that has locked themselves out as
+            // far as they can tell.
+            val signIn = s"Your email address is now $changed. Sign in with it next time."
+            emailOutcome.set(
+              Some(
+                Outcome(
+                  false,
+                  if (recorded.isDefined) signIn
+                  else s"$signIn We could not update where your notifications are sent, so those may still go to your old address."
+                )
+              )
+            )
+          }
         }
       }
   }

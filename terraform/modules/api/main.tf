@@ -255,8 +255,11 @@ locals {
     "POST /register",
 
     "GET /me",
-    # Renaming yourself. Email and password are changed at Cognito, not here.
+    # Renaming yourself. The password is changed at Cognito, not here.
     "PUT /me",
+    # Recording an email change that Cognito has already confirmed, so matchmaker knows where to
+    # write to. The change itself still happens at Cognito; this only reports it.
+    "PUT /me/email",
     "GET /me/acceptances",
     "GET /me/matches",
     "GET /me/matches/due",

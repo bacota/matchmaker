@@ -281,7 +281,7 @@ object Views {
       p("You are signed in, but you do not have a player yet. Your nickname is what other players see."),
       field("Nickname", input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))),
       busyButton("Create Player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
-        Store.run(ApiClient.register(nickname.now().trim), busy) { player =>
+        Store.run(ApiClient.register(nickname.now().trim, Auth.email), busy) { player =>
           Store.player.set(Store.PlayerState.Registered(player))
           Store.refreshMatches()
           Store.refreshGames()

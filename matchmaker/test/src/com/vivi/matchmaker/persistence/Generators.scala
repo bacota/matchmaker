@@ -27,7 +27,12 @@ object Generators {
       nickname <- genUniqueString
       isAdmin <- Gen.oneOf(true, false)
       externalId <- genUniqueString
-    } yield Player(PlayerId.unassigned, nickname, isAdmin, externalId)
+      // Absent half the time, which is what a player registered before the column existed looks
+      // like. Not unique-suffixed as the two above are: nothing constrains the address, and two
+      // generated players sharing one is a case worth generating rather than avoiding.
+      local <- genString
+      email <- Gen.oneOf(Some(s"$local@example.com"), None)
+    } yield Player(PlayerId.unassigned, nickname, isAdmin, externalId, email)
 
   // Existing suites all build a character alongside the game, so Character is the default;
   // Plain-game coverage passes gameType explicitly.
