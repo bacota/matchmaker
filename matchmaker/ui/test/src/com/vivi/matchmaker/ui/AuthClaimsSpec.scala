@@ -32,25 +32,6 @@ class AuthClaimsSpec extends FunSuite {
     assertEquals(Auth.claimOf(jwt, "email"), Some("bo@x.io"))
   }
 
-  /* `iat` is read as a number, and is what decides whether a token predates a confirmed address
-   * change -- the check that stops `Store.syncEmail` writing a stale claim back over a change the
-   * player has just made. */
-
-  test("the issued-at claim is read as a number") {
-    val jwt = token("""{"sub":"s-1","iat":1893456000,"exp":1893459600}""")
-    assertEquals(Auth.numericClaimOf(jwt, "iat"), Some(1893456000d))
-  }
-
-  test("a string where a number was expected is absent rather than parsed") {
-    val jwt = token("""{"iat":"1893456000"}""")
-    assertEquals(Auth.numericClaimOf(jwt, "iat"), None)
-  }
-
-  test("a token carrying no issued-at claim is absent") {
-    val jwt = token("""{"sub":"s-1","exp":1893456000}""")
-    assertEquals(Auth.numericClaimOf(jwt, "iat"), None)
-  }
-
   test("a claim the token does not carry is absent, not empty") {
     val jwt = token("""{"sub":"s-1","exp":1893456000}""")
     assertEquals(Auth.claimOf(jwt, "email"), None)

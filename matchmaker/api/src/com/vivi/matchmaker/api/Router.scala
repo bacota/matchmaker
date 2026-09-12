@@ -59,10 +59,11 @@ object Router {
       case ("PUT", "me" :: Nil) =>
         body[Json.NicknameRequest](request).flatMap(r => ok(services.players.updateNickname(caller, r.nickname)))
 
-      // So does the email address — but unlike the password, matchmaker keeps a copy of it to
-      // send notifications to, and this is how the browser reports what Cognito already holds:
-      // after a change it has just confirmed, or on load when the token's claim and the stored
-      // copy disagree. Separate from `PUT /me` because it is a different event: one is the player
+      // So does the email address — but unlike the password, matchmaker keeps a copy of it to send
+      // notifications to, and this is how the browser reports what Cognito already holds: at
+      // sign-in, when the `email` claim of the token just issued disagrees with the stored copy.
+      // Not when the player changes their address, because at that moment no token agrees with the
+      // new one yet. Separate from `PUT /me` because it is a different event: one is the player
       // renaming themselves here, the other is this API being told what happened elsewhere.
       case ("PUT", "me" :: "email" :: Nil) =>
         body[Json.EmailRequest](request).flatMap(r => ok(services.players.updateEmail(caller, r.email)))

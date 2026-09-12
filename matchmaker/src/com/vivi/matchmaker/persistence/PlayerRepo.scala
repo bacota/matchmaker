@@ -37,9 +37,23 @@ class PlayerRepo(session: Session[IO]) {
     sql"""SELECT player_id, nickname, is_admin, email FROM player WHERE external_id = $text FOR SHARE"""
       .query(playerId *: text *: bool *: text.opt)
 
-  private val updatePlayer: Command[(String, Boolean, String, Option[String], PlayerId)] =
-    sql"""UPDATE player SET nickname = $text, is_admin = $bool, external_id = $text, email = ${text.opt}
+  /* Deliberately does not write `email`.
+   *
+   * Every caller of `update` is changing something else -- a nickname, an admin flag -- and passes
+   * a whole `Player` to do it. The address is the one field on that row whose authority lives
+   * outside matchmaker: Cognito owns it, and matchmaker's copy is only ever written from a token's
+   * verified claim at sign-in. A general update that carried it would mean every such caller
+   * quietly restating the address from whatever `Player` it happened to be holding -- a value read
+   * minutes earlier, or built by a caller that never had one -- and that is precisely how a
+   * confirmed change gets overwritten by a rename.
+   *
+   * So the column has exactly one writer, `updateEmail` below. */
+  private val updatePlayer: Command[(String, Boolean, String, PlayerId)] =
+    sql"""UPDATE player SET nickname = $text, is_admin = $bool, external_id = $text
           WHERE player_id = $playerId""".command
+
+  private val updatePlayerEmail: Command[(Option[String], PlayerId)] =
+    sql"UPDATE player SET email = ${text.opt} WHERE player_id = $playerId".command
 
   def create(player: Player): IO[Player] =
     session
@@ -97,8 +111,24 @@ class PlayerRepo(session: Session[IO]) {
       case (id, nickname, isAdmin, externalId, email) => Player(id, nickname, isAdmin, externalId, email)
     })
 
+  /** Writes everything about a player except their address. See `updatePlayer` for why the
+    * exception, and `updateEmail` for the one thing that writes it.
+    */
+
   def update(player: Player): IO[Unit] =
-    session
-      .execute(updatePlayer)((player.nickname, player.isAdmin, player.externalId, player.email, player.playerId))
-      .void
+    session.execute(updatePlayer)((player.nickname, player.isAdmin, player.externalId, player.playerId)).void
+
+  /** Records where a player can be reached, and nothing else about them.
+    *
+    * The only writer of `player.email`. Its one caller is `PlayerService.updateEmail`, which is
+    * reached only from the sign-in path -- so the address stored here always came from the `email`
+    * claim of a token Cognito had just issued, which is the only statement about an address that
+    * is worth anything: Cognito owns the address, verified it, and signs the player in with it.
+    *
+    * Takes a `PlayerId` rather than a `Player` on purpose. A whole `Player` would invite a caller
+    * to pass one it read earlier and write four stale fields to correct one, which is the mistake
+    * splitting this out exists to prevent.
+    */
+  def updateEmail(id: PlayerId, email: Option[String]): IO[Unit] =
+    session.execute(updatePlayerEmail)((email, id)).void
 }

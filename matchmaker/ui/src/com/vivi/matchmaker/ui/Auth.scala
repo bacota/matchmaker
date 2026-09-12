@@ -42,7 +42,6 @@ object Auth {
   private val TokenKey = "matchmaker.idToken"
   private val AccessKey = "matchmaker.accessToken"
   private val RefreshKey = "matchmaker.refreshToken"
-  private val ConfirmedEmailKey = "matchmaker.emailConfirmedAt"
   private val VerifierKey = "matchmaker.pkceVerifier"
   private val StateKey = "matchmaker.authState"
 
@@ -63,7 +62,9 @@ object Auth {
     *
     * Note that it is the token's word, not Cognito's current one: a change made in this tab is
     * not in the token until the session refreshes, which is why `Account` updates what it shows
-    * from the address the player just confirmed.
+    * from the address the player just confirmed. It is also why matchmaker's own copy of the
+    * address is reconciled from this claim only at sign-in, when the token is new enough for the
+    * claim to be current — see `Store.syncEmail`.
     */
   def email: Option[String] = storedIdToken.flatMap(claimOf(_, "email"))
 
@@ -117,58 +118,6 @@ object Auth {
     accessToken match {
       case some @ Some(_) => Future.successful(some)
       case None           => refreshed().map(_ => accessToken)
-    }
-
-  /** Redeems the refresh token now, whether or not the current tokens have expired.
-    *
-    * For the one case where a token that is still perfectly valid is nonetheless out of date: the
-    * player has just changed something about their Cognito identity, and the claims describing it
-    * were fixed when the token was issued. `Account` calls this after an address change so that
-    * the session stops describing the old address an hour sooner than it otherwise would.
-    *
-    * Best effort by design. The failure modes are Cognito being unreachable and the refresh token
-    * being spent, and neither is a reason to fail the change that prompted it — which is why the
-    * result is `Unit` and why `emailConfirmed` below does not depend on this succeeding.
-    */
-  def renewTokens(): Future[Unit] = refreshed().map(_ => ()).recover { case _ => () }
-
-  /** Remembers that the player just confirmed a new address, so that the stale claim in the
-    * current token cannot be mistaken for news.
-    *
-    * The problem this exists for: Cognito fixes the `email` claim when it issues a token, so
-    * immediately after a confirmed change the stored token still names the *old* address — see
-    * `email` above, which says so. `Store.syncEmail` compares that claim against what matchmaker
-    * has stored and corrects the difference, and without this it would "correct" the address the
-    * player just confirmed back to the one they just left, on the next reload.
-    *
-    * A timestamp rather than the address itself, because what makes the claim untrustworthy is
-    * that it is *older* than the change, not what it happens to say. `renewTokens` normally
-    * settles this within the second; the marker is what covers a renewal that did not get
-    * through, and it clears itself as soon as a token issued after the change arrives.
-    *
-    * Stored beside the tokens, so a reload does not lose it and the tab closing does.
-    */
-  def emailConfirmed(): Unit =
-    dom.window.sessionStorage.setItem(ConfirmedEmailKey, (js.Date.now() / 1000).toString)
-
-  /** Whether the stored token was issued before the last confirmed address change — that is,
-    * whether its `email` claim is known to be out of date.
-    *
-    * Clears the marker once a token issued after the change has arrived, which is what stops a
-    * one-off staleness from suppressing reconciliation for the rest of the session. A token with
-    * no readable `iat` is treated as stale while the marker stands: the marker is only ever set
-    * seconds earlier, so "cannot tell" is far likelier to mean "not refreshed yet" than to mean a
-    * genuine change made elsewhere.
-    */
-  def idTokenPredatesEmailChange: Boolean =
-    Option(dom.window.sessionStorage.getItem(ConfirmedEmailKey)).flatMap(_.toDoubleOption) match {
-      case None => false
-      case Some(confirmedAt) =>
-        val issuedAt = storedIdToken.flatMap(numericClaimOf(_, "iat"))
-        if (issuedAt.exists(_ >= confirmedAt)) {
-          dom.window.sessionStorage.removeItem(ConfirmedEmailKey)
-          false
-        } else true
     }
 
   /** Redeems the refresh token, at most one redemption at a time — several requests hitting an
@@ -304,9 +253,6 @@ object Auth {
     dom.window.sessionStorage.removeItem(RefreshKey)
     dom.window.sessionStorage.removeItem(VerifierKey)
     dom.window.sessionStorage.removeItem(StateKey)
-    // Meaningless without the token it qualifies, and actively wrong if it outlived one session
-    // into the next: it would suppress the first reconciliation of whoever signs in next.
-    dom.window.sessionStorage.removeItem(ConfirmedEmailKey)
   }
 
   /** Completes a sign-in if this page load is Cognito's redirect back.
@@ -418,19 +364,11 @@ object Auth {
       case Failure(_)      => false
     }
 
-  /** One numeric claim of a token, such as `iat` or `exp`. `None` if the token cannot be read,
-    * does not carry it, or carries it as something other than a number.
+  /** One string claim of a token, or `None` if the token cannot be read or does not carry it.
     *
-    * String claims are `None` rather than parsed, for the reason the string reader below gives
-    * in the other direction: every claim each of these reads has one type, and guessing across
-    * types turns a malformed token into a plausible-looking answer.
+    * Non-string claims are `None` rather than stringified: every claim this reads is a string,
+    * and rendering `["a","b"]` into a sentence is worse than rendering nothing.
     */
-  def numericClaimOf(token: String, name: String): Option[Double] =
-    claimsOf(token).toOption.collect { case ujson.Obj(obj) => obj }.flatMap(_.get(name)).collect {
-      case ujson.Num(value) => value
-    }
-
-  /** One string claim of a token, or `None` if the token cannot be read or does not carry it. */
   def claimOf(token: String, name: String): Option[String] =
     claimsOf(token).toOption.collect { case ujson.Obj(obj) => obj }.flatMap(_.get(name)).collect {
       case ujson.Str(value) => value

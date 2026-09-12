@@ -124,6 +124,21 @@ class PlayerServiceSpec extends PropertySuite {
 
   // Called after every confirmation the form sees, and a player who confirms twice has one
   // address, not an error.
+  // The reason the repo has a separate writer for the address. A rename goes through the general
+  // update, which no longer carries email -- so the address a player signed in with survives it.
+  property("renaming does not disturb the address") {
+    forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+      (nickname, externalId, local, renamed) =>
+        val address = s"$local@example.com"
+        val result = for {
+          _ <- registrationService.register(nickname, externalId, Some(address))
+          _ <- playerService.updateNickname(externalId, renamed)
+          found <- playerService.me(externalId)
+        } yield found.nickname == renamed && found.email.contains(address)
+        result.timeout(10.seconds).unsafeRunSync()
+    }
+  }
+
   property("updateEmail is idempotent") {
     forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, local) =>
       val address = s"$local@example.com"

@@ -54,30 +54,40 @@ class PlayerService(sessionPool: SessionPool) {
       }
     } yield renamed
 
-  /** Records the address the caller now signs in with.
+  /** Records the address the caller signs in with.
     *
-    * Two callers, both in the browser. The account form calls it once Cognito has confirmed a
-    * change — that is, once the code mailed to the new address has come back — and the store calls
-    * it on load whenever the stored address disagrees with the `email` claim of the caller's
-    * token. Either way what arrives is an address Cognito has verified, reported by the client
-    * that saw it. Nothing here re-verifies it, because nothing here can: matchmaker cannot mail a
-    * code and has no way to ask Cognito.
+    * One caller, and one moment: the browser, on sign-in, when the `email` claim of the token it
+    * has just been issued disagrees with what is stored. Both halves of that matter.
     *
-    * What that means is worth being plain about: the stored address is exactly as trustworthy as
-    * the caller's own client. A caller who drives the API directly can record an address that is
-    * not theirs, and would then have their own notifications delivered to it. The blast radius is
-    * their own mail, not another player's — the row updated is always the caller's. Moving this to
-    * the token's verified `email` claim would close it, and would need the claim to reach the
-    * router, which today only carries `sub`.
+    * *On sign-in* rather than when the player changes their address. Cognito fixes the claims when
+    * it issues a token, so a session that has just changed its address still carries the old one
+    * for the rest of the token's life — and a client reporting the change directly would be
+    * reporting something no token yet agrees with. Waiting until the next sign-in means the value
+    * written always came from a token Cognito issued *after* the change. Nothing is lost by
+    * waiting: the address is the username on that pool, so the next sign-in is with the new one.
     *
-    * Idempotent, since the form calls it after every confirmation and a repeat is the same row.
+    * *From the claim* rather than from anything the player typed. Nothing here can verify an
+    * address — matchmaker cannot mail a code and cannot ask Cognito — so the only statement worth
+    * storing is the one Cognito already made by issuing a token that names it.
+    *
+    * What remains, and is worth being plain about: this is still the client's word for what its
+    * token said, because the claim does not reach the router — `Authenticator` carries `sub` and
+    * nothing else. A caller driving the API directly can therefore record an address that is not
+    * theirs, and would have their own notifications sent to it. The blast radius is their own
+    * mail, since the row updated is always the caller's. Carrying the claim through the
+    * authenticator would close it.
+    *
+    * Writes the address and nothing else — `PlayerRepo.updateEmail`, not `update` — so that this
+    * cannot restate a nickname from a `Player` read before it, and a rename cannot restate an
+    * address. Idempotent: the ordinary case is that the claim and the stored value already agree,
+    * and the caller does not send anything then.
     */
   def updateEmail(callerExternalId: String, email: String): IO[Player] =
     for {
       address <- validEmail(email)
       player <- me(callerExternalId)
       changed = player.copy(email = Some(address))
-      _ <- sessionPool.use(session => new PlayerRepo(session).update(changed))
+      _ <- sessionPool.use(session => new PlayerRepo(session).updateEmail(player.playerId, Some(address)))
     } yield changed
 
   /* Enough of a check to catch a blank field or an obvious mistype, and no more.
