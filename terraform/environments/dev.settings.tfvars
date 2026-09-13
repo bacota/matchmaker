@@ -5,20 +5,24 @@
 lambda_memory_mb   = 2048
 log_retention_days = 7
 
-// Off, though the reason it was turned off has since gone away.
+// On.
 //
-// It was turned off because SnapStart and SigV4 signing could not both work: the snapshot is taken
-// during init, ahead of any invocation, and Java fixes System.getenv at JVM start, so a restored
-// process saw an environment with no execution-role credentials — those are injected per execution
-// environment — and the create-game call went out unsigned into a 403.
+// It was once off, and the history is worth keeping. SnapStart and SigV4 signing could not both
+// work: the snapshot is taken during init at *publish* time, ahead of any invocation, and Java
+// fixes System.getenv at JVM start — so a restored process saw an environment with no
+// execution-role credentials (those are injected per execution environment) and signed nothing,
+// which the game engine answered with a 403.
 //
-// Matchmaker no longer signs anything: the game engine is authenticated with a shared API key,
-// which arrives in an ordinary environment variable set on the function itself. That kind of
-// variable *is* in the snapshot, so the incompatibility is gone.
+// Both signed calls matchmaker used to make are gone. Engine calls carry a shared API key, an
+// ordinary variable set on the function itself and therefore present in the snapshot. The one that
+// came back — putting a notification on the mail queue — now goes through the AWS SDK's client,
+// whose credential provider is built to survive a restore, rather than through a hand-signed POST
+// reading a frozen environment. That is the only reason there is an SDK client in this codebase;
+// see com.vivi.matchmaker.notify.SqsNotifier.
 //
-// Turning it back on is therefore a decision that can be made again, on its merits — cold-start
-// latency against the other things a snapshot fixes in place — rather than one that is ruled out.
-// It is left off here because nothing has re-tested a restore against this function.
+// Worth verifying rather than assuming, the first time an environment runs with deploy_mail and
+// this both on: start a match and check that something reaches the queue. A failed enqueue does not
+// fail a start — it only logs, from GameEngineService.
 lambda_snap_start = true
 
 // Off: advanced security is billed per monthly active user, and there is nothing in dev worth
@@ -32,3 +36,5 @@ refresh_token_validity_days = 30
 // tic-tac-toe is a game of alternating turns, rps one where both players move at once.
 deploy_tictactoe = true
 deploy_rps       = true
+deploy_mail      = true
+mail_enabled = true

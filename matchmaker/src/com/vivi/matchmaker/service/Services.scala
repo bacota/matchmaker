@@ -2,6 +2,7 @@ package com.vivi.matchmaker.service
 
 import cats.effect.{IO, Resource}
 import com.vivi.matchmaker.engine.{GameEngineClient, HttpGameEngineClient}
+import com.vivi.matchmaker.notify.{MailSettings, Notifier, SqsNotifier}
 import com.vivi.matchmaker.persistence.TextCodec
 
 /** Every service, sharing one connection pool.
@@ -34,21 +35,26 @@ object Services {
       config: DbConfig,
       poolSize: Int = defaultPoolSize,
       engineClient: GameEngineClient = HttpGameEngineClient.fromEnvironment(),
-      callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL"))
+      callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
+      notifier: Notifier = SqsNotifier.fromEnvironment(),
+      mail: MailSettings = MailSettings.fromEnvironment()
   )(using
       codec: TextCodec[T]
   ): Resource[IO, Services[T]] =
-    DbSession.pooled(config, poolSize).map(fromPool[T](_, engineClient, callbackBaseUrl))
+    DbSession.pooled(config, poolSize).map(fromPool[T](_, engineClient, callbackBaseUrl, notifier, mail))
 
   /** Builds the services over an already-open pool.
     *
-    * `engineClient` is a parameter rather than something built here because a game engine is a
-    * remote system: tests pass a stub, and only a deployment passes the HTTP one.
+    * `engineClient` and `notifier` are parameters rather than things built here because both are
+    * remote systems: tests pass a stub and a recorder, and only a deployment passes the HTTP
+    * client and the queue.
     */
   def fromPool[T](
       pool: SessionPool,
       engineClient: GameEngineClient = HttpGameEngineClient.fromEnvironment(),
-      callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL"))
+      callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
+      notifier: Notifier = SqsNotifier.fromEnvironment(),
+      mail: MailSettings = MailSettings.fromEnvironment()
   )(using codec: TextCodec[T]): Services[T] =
     Services(
       registration = new RegistrationService(pool),
@@ -58,6 +64,6 @@ object Services {
       challenges = new OpenChallengeService[T](pool),
       acceptances = new AcceptanceService(pool),
       matches = new MatchService(pool),
-      engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl)
+      engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifier, mail)
     )
 }

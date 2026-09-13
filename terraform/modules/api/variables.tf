@@ -289,3 +289,62 @@ variable "game_engine_api_keys" {
   default     = {}
   sensitive   = true
 }
+
+# ---------------------------------------------------------------------------
+# Mail
+# ---------------------------------------------------------------------------
+
+variable "mail_enabled" {
+  description = <<-EOT
+    Whether this deployment queues notifications, and therefore whether the function is granted
+    sqs:SendMessage.
+
+    Separate from mail_queue_arn rather than derived from it, and it has to be: the arn belongs to
+    a queue that does not exist yet on the first apply, and a `count` cannot depend on a value
+    terraform will not know until apply. This one comes straight from a variable, so it is known
+    while planning.
+
+    The three mail_* values and this flag are set together by the root module from deploy_mail.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "mail_queue_url" {
+  description = <<-EOT
+    URL of the queue notifications are put on. Empty means the function enqueues nothing, which is
+    what every environment did before notifications existed and what a deployment with deploy_mail
+    off still does.
+
+    Note that this function is attached to private subnets, so reaching SQS needs a NAT gateway or
+    an interface endpoint in the VPC. Neither is created here.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "mail_queue_arn" {
+  description = "ARN of the same queue, for the sqs:SendMessage grant. Empty grants nothing."
+  type        = string
+  default     = ""
+}
+
+variable "mail_sender" {
+  description = <<-EOT
+    The address notifications are sent from. It travels in each message rather than being
+    configured on the mailer, so this is where it is decided. Empty sends nothing: a mail with no
+    From is not a mail SES will accept.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "ui_base_url" {
+  description = <<-EOT
+    Where a notification sends the player back to -- the deployed UI's own url. Empty sends
+    nothing: a mail whose whole purpose is to bring someone back to the game, arriving with
+    nowhere to go, is worse than no mail.
+  EOT
+  type        = string
+  default     = ""
+}

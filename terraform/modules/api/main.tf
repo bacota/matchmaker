@@ -58,6 +58,35 @@ resource "aws_iam_role_policy_attachment" "vpc_access" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
+/* Putting a mail on the notification queue, and nothing else about SQS.
+ *
+ * Scoped to the one queue: this function has no business reading it (the mailer does that) and no
+ * business touching any other. Absent entirely when there is no queue, so that an environment
+ * with notifications off grants nothing rather than granting a permission over an empty string.
+ */
+data "aws_iam_policy_document" "mail_queue" {
+  # Counted on the flag, never on the arn. The arn is an attribute of a queue that does not exist
+  # yet on the first apply, and terraform must know how many instances a resource has while
+  # planning -- "Invalid count argument: the count value depends on resource attributes that cannot
+  # be determined until apply" is what a count on the arn produces. The flag is a plain variable,
+  # so it is known before anything is created; the arn is only ever used for the policy's contents,
+  # where an unknown value is fine.
+  count = var.mail_enabled ? 1 : 0
+
+  statement {
+    actions   = ["sqs:SendMessage"]
+    resources = [var.mail_queue_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "mail_queue" {
+  count = var.mail_enabled ? 1 : 0
+
+  name   = "${local.name}-mail-queue"
+  role   = aws_iam_role.lambda.id
+  policy = data.aws_iam_policy_document.mail_queue[0].json
+}
+
 # ---------------------------------------------------------------------------
 # Function
 # ---------------------------------------------------------------------------
@@ -96,13 +125,16 @@ resource "aws_lambda_function" "api" {
    *   the same dead TCP connections, and would need `org.crac` checkpoint/restore hooks to be
    *   safe.
    *
-   * The second condition is what turned this off: the execution role's credentials are
-   * per-execution-environment and arrive as environment variables, and Java fixes System.getenv
-   * at JVM start, so a restored function signed its calls to the game engine with nothing and was
-   * answered with 403. Matchmaker no longer signs anything -- the engine takes a shared API key,
-   * set on this function like any other variable and therefore present in the snapshot -- so that
-   * particular conflict is gone. It is still off everywhere; see lambda_snap_start in the
-   * settings tfvars.
+   * The second condition is what turned this off once, and is now the thing to watch. The
+   * execution role's credentials are per-execution-environment and arrive as environment
+   * variables, and Java fixes System.getenv at JVM start -- so a restored function signed its
+   * calls to the game engine with nothing and was answered with 403. Engine calls no longer sign:
+   * they take a shared API key, set on this function like any other variable and therefore present
+   * in the snapshot.
+   *
+   * The one call that came back -- putting a notification on the mail queue -- is why there is an
+   * AWS SDK client in this codebase at all: its credential provider survives a restore, where a
+   * hand-signed request reading a frozen environment does not. See notify.SqsNotifier.
    */
   dynamic "snap_start" {
     for_each = var.lambda_snap_start ? [1] : []
@@ -133,6 +165,13 @@ resource "aws_lambda_function" "api" {
       # In the function's configuration in plaintext, readable by anyone with lambda:GetFunction,
       # and in the terraform state. That is the trade this variable makes; see its description.
       DB_PASSWORD = var.db_password
+
+      # Notifications. All three are empty unless deploy_mail is on, and the function checks for
+      # all three: no queue, no sender or no link each mean it sends nothing rather than sending
+      # something broken. See com.vivi.matchmaker.notify.MailSettings.
+      MAIL_QUEUE_URL = var.mail_queue_url
+      MAIL_SENDER    = var.mail_sender
+      UI_BASE_URL    = var.ui_base_url
 
       # Selects how the caller is identified. "gateway" means the claims the JWT authorizer put
       # in the request context are trusted, which is only sound because the route above cannot be
