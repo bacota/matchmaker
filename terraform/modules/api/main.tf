@@ -65,7 +65,13 @@ resource "aws_iam_role_policy_attachment" "vpc_access" {
  * with notifications off grants nothing rather than granting a permission over an empty string.
  */
 data "aws_iam_policy_document" "mail_queue" {
-  count = var.mail_queue_arn == "" ? 0 : 1
+  # Counted on the flag, never on the arn. The arn is an attribute of a queue that does not exist
+  # yet on the first apply, and terraform must know how many instances a resource has while
+  # planning -- "Invalid count argument: the count value depends on resource attributes that cannot
+  # be determined until apply" is what a count on the arn produces. The flag is a plain variable,
+  # so it is known before anything is created; the arn is only ever used for the policy's contents,
+  # where an unknown value is fine.
+  count = var.mail_enabled ? 1 : 0
 
   statement {
     actions   = ["sqs:SendMessage"]
@@ -74,7 +80,7 @@ data "aws_iam_policy_document" "mail_queue" {
 }
 
 resource "aws_iam_role_policy" "mail_queue" {
-  count = var.mail_queue_arn == "" ? 0 : 1
+  count = var.mail_enabled ? 1 : 0
 
   name   = "${local.name}-mail-queue"
   role   = aws_iam_role.lambda.id

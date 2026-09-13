@@ -115,6 +115,9 @@ module "api" {
   # false, which is what leaves the API with nothing to enqueue to — see modules/api's variables.
   # The UI's own url is where a notification sends the player back to, so it is passed rather than
   # configured: it is already known here, and a second copy in a tfvars would go stale.
+  # The flag as well as the values: the grant's `count` is decided from this, because the queue's
+  # arn is not knowable until the queue exists. See the api module's mail_enabled.
+  mail_enabled   = var.deploy_mail
   mail_queue_url = var.deploy_mail ? module.mail[0].queue_url : ""
   mail_queue_arn = var.deploy_mail ? module.mail[0].queue_arn : ""
   mail_sender    = var.deploy_mail ? local.mail_sender : ""

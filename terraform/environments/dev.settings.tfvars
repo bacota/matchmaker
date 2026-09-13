@@ -36,3 +36,5 @@ refresh_token_validity_days = 30
 // tic-tac-toe is a game of alternating turns, rps one where both players move at once.
 deploy_tictactoe = true
 deploy_rps       = true
+deploy_mail      = true
+mail_enabled = true

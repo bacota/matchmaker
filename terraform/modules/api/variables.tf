@@ -294,6 +294,22 @@ variable "game_engine_api_keys" {
 # Mail
 # ---------------------------------------------------------------------------
 
+variable "mail_enabled" {
+  description = <<-EOT
+    Whether this deployment queues notifications, and therefore whether the function is granted
+    sqs:SendMessage.
+
+    Separate from mail_queue_arn rather than derived from it, and it has to be: the arn belongs to
+    a queue that does not exist yet on the first apply, and a `count` cannot depend on a value
+    terraform will not know until apply. This one comes straight from a variable, so it is known
+    while planning.
+
+    The three mail_* values and this flag are set together by the root module from deploy_mail.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "mail_queue_url" {
   description = <<-EOT
     URL of the queue notifications are put on. Empty means the function enqueues nothing, which is
