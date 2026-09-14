@@ -181,6 +181,23 @@ object Store {
         }
     }
 
+    /** The same, with something to do about a failure beyond showing it.
+      *
+      * For the actions whose failure is itself news about state this UI is holding: a 409 does not only mean the click
+      * did not take, it means what was on screen when it was clicked had already stopped being true. `onFailure` runs
+      * after the banner has been set, so a handler that reloads the affected list corrects it in the same beat as the
+      * message explaining why — and a handler that sets `error` itself replaces that message deliberately, which is the
+      * point of running last.
+      */
+    def run[A](action: Future[A], busy: Var[Boolean], onFailure: Throwable => Unit)(onSuccess: A => Unit): Unit = {
+        busy.set(true)
+        action.onComplete { outcome =>
+            busy.set(false)
+            settle(outcome)(onSuccess)
+            outcome.failed.foreach(onFailure)
+        }
+    }
+
     private def settle[A](outcome: Try[A])(onSuccess: A => Unit): Unit = outcome match {
         case Success(value) => error.set(None); onSuccess(value)
         case Failure(error) => report(error)

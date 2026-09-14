@@ -547,6 +547,33 @@ object Views {
           }
         )
 
+    /** What to do when backing out is refused because the challenge has already been started.
+      *
+      * The server answers 409 there (see `AcceptanceService.delete`): the roster is participants in a match the engine
+      * has been told about, so there is no acceptance left to withdraw. The row that was clicked is therefore not a row
+      * at all any more — it is on screen only because the list was fetched before the challenger started the match —
+      * and leaving it there invites the player to click a button that can never succeed.
+      *
+      * So this treats the refusal as the news it is: the same reload a start does, which drops the challenge from
+      * "Waiting to Start" (`listForPlayer` excludes a started challenge) and picks the new match up in "Current
+      * Matches", and in "Your Turn" if the first move is this player's. The banner is rewritten too — the server's
+      * message names ids, where what the player needs to know is that the match exists and they are in it.
+      *
+      * Any other failure is left exactly as `Store.run` reported it: a 5xx or a dropped connection says nothing about
+      * whether the acceptance is still there, and reloading on those would replace a plain "that failed, try again"
+      * with a list that looks corrected and might not be.
+      */
+    private def alreadyStarted(acceptance: Acceptance)(failure: Throwable): Unit = failure match {
+        case ApiError(409, _) =>
+            reloadAfterStart()
+            // A started challenge is no longer offered either, so the game screen's list is as stale as
+            // this row was — the same refresh the success path does, for the same reason.
+            if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
+                Store.refreshChallenges(acceptance.gameId)
+            Store.error.set(Some("That match has already started, so there is nothing left to back out of."))
+        case _ => ()
+    }
+
     private def acceptanceRow(pending: PendingAcceptance, gameName: Option[String]): HtmlElement = {
         val acceptance = pending.acceptance
 
@@ -563,12 +590,15 @@ object Views {
               case None => emptyNode
               case Some(player) =>
                   busyButton("Back out", classes = Some("link")) { busy =>
-                      Store.run(ApiClient.withdraw(acceptance.gameId, acceptance.challengeId, player.playerId), busy) {
-                          _ =>
-                              reloadAcceptanceSections()
-                              // The challenge is open again, so the game's list is stale if it is on screen.
-                              if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
-                                  Store.refreshChallenges(acceptance.gameId)
+                      Store.run(
+                        ApiClient.withdraw(acceptance.gameId, acceptance.challengeId, player.playerId),
+                        busy,
+                        alreadyStarted(acceptance)
+                      ) { _ =>
+                          reloadAcceptanceSections()
+                          // The challenge is open again, so the game's list is stale if it is on screen.
+                          if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
+                              Store.refreshChallenges(acceptance.gameId)
                       }
                   }
           }
