@@ -45,6 +45,19 @@ object Json {
     // Seconds, matching how the persistence layer stores time_limit.
     given ReadWriter[Duration] = readwriter[Long].bimap(_.getSeconds, Duration.ofSeconds)
 
+    /** Preferences and defaults are plain objects of eight named fields, so a client reads them by name rather than by
+      * position — the one thing about this wire format that must not depend on `NotificationType.values` order, since
+      * the database binding already does.
+      *
+      * The tri-state is upickle's `Option`, which writes the value itself and omits the field entirely when there is
+      * none — so an absent field is "Use Default", exactly the absence the nullable column holds, and a client that
+      * omits a field is saying what it means rather than saying nothing.
+      */
+    given ReadWriter[NotificationPreferences] = macroRW
+    given ReadWriter[NotificationDefaults] = macroRW
+    given ReadWriter[GameNotificationPreferences] = macroRW
+    given ReadWriter[NotificationSettings] = macroRW
+
     given ReadWriter[Player] = macroRW
     given ReadWriter[GameRole] = macroRW
     given ReadWriter[GameParameterValue[String]] = macroRW
@@ -87,7 +100,13 @@ object Json {
         externalId: String,
         // Defaulted so that a client written before turn timeouts existed still parses, and one
         // that omits it still creates a game — with the action every existing game already has.
-        timeoutAction: TimeoutAction = TimeoutAction.Forfeit
+        timeoutAction: TimeoutAction = TimeoutAction.Forfeit,
+        // Which notifications this game's players get unless they say otherwise. Defaulted for the
+        // same reason, and to the same thing V13 gave every game that already existed: send them all.
+        // The form that registers a game requires an admin to choose all eight, which is a rule about
+        // the form — a client that says nothing here still creates a game, it just creates a talkative
+        // one.
+        notifications: NotificationDefaults = NotificationDefaults.all(true)
     )
 
     private given ReadWriter[GameDto] = macroRW
@@ -104,7 +123,8 @@ object Json {
             game.roles,
             game.parameters.map(_.asInstanceOf[GameParameter[String]]),
             game.externalId,
-            game.timeoutAction
+            game.timeoutAction,
+            game.notifications
           ),
       dto =>
           Game(
@@ -117,7 +137,8 @@ object Json {
             dto.roles,
             dto.parameters,
             dto.externalId,
-            dto.timeoutAction
+            dto.timeoutAction,
+            dto.notifications
           )
     )
 

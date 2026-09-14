@@ -68,6 +68,9 @@ object Store {
         challengesByGame.set(Map.empty)
         charactersByGame.set(Map.empty)
         acceptances.set(Seq.empty)
+        // Dropped with the rest: they are one player's answers, and the next player to sign in
+        // must not be shown them, let alone save them back.
+        notificationSettings.set(None)
         page.set(Page.Home)
         showChallengeForm.set(false)
         editingGame.set(None)
@@ -95,6 +98,20 @@ object Store {
       * and the list "back out" acts on.
       */
     val acceptances: Var[Seq[PendingAcceptance]] = Var(Seq.empty)
+
+    /** What the caller wants to be told about, once something has asked.
+      *
+      * `None` is "not fetched", not "nothing set": the settings form is inside the account panel, which most sessions
+      * never open, so this is loaded when that panel first opens rather than with the home screen's other five
+      * requests. A player who has set nothing still fetches a `NotificationSettings` — of `unset` answers and no games.
+      */
+    val notificationSettings: Var[Option[NotificationSettings]] = Var(None)
+
+    /** Fetches the caller's notification settings unless they are already here. Re-opening the panel shows what is held
+      * rather than asking again; a save updates it in place, so the two cannot disagree.
+      */
+    def loadNotifications(): Unit =
+        if (notificationSettings.now().isEmpty) run(ApiClient.notifications())(s => notificationSettings.set(Some(s)))
 
     /** How each finished match turned out, keyed by its match id: the rows of the result table shown under a completed
       * match. Loaded whole with the lists, not per row.

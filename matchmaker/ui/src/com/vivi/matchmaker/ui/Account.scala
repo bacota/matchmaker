@@ -5,6 +5,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
 import com.raquo.laminar.api.L.{*, given}
 import org.scalajs.dom
+import com.vivi.matchmaker.model.{GameId, NotificationPreferences, NotificationSettings}
 
 /** The account menu: the three things a player can change about themselves.
   *
@@ -273,6 +274,7 @@ object Account {
           tabIndex := -1,
           h2(idAttr := "account-menu-heading", "Your Account"),
           nicknameForm,
+          notificationForms,
           // Nothing to change at Cognito when there is no Cognito: local mode authenticates with a
           // header, and offering forms that could only fail would be worse than leaving them out.
           if (Config.current.headerAuth)
@@ -281,6 +283,86 @@ object Account {
               div(emailForm, passwordForm),
           div(cls := "alternatives", button(tpe := "button", cls := "link", "Close", onClick --> (_ => close())))
         )
+
+    /** What the player wants to be told about, in general and per game.
+      *
+      * In the account panel rather than on a screen of its own because it is a thing about the player, like their name
+      * and their address, and because the panel is where a player already goes to change one of those. The per-match
+      * level is not here: it belongs to the match, and lives on its row.
+      *
+      * Fetched when the panel opens rather than with the home screen's lists. Most sessions never open it, and five
+      * requests at sign-in is already enough of them.
+      */
+    private def notificationForms: HtmlElement =
+        div(
+          onMountCallback(_ => Store.loadNotifications()),
+          child <-- Store.notificationSettings.signal.map {
+              case Some(settings) => notificationSections(settings)
+              case None           => p(cls := "detail", "Loading your notification settings…")
+          }
+        )
+
+    /* Built from the settings as fetched, so every control starts on what the server holds.
+     *
+     * The three `Var`s are local to this element, which is rebuilt each time the panel opens -- so
+     * closing the panel on a half-changed form discards it, which is what closing a panel should do.
+     * `perGame` is kept and updated on save because the game picker comes back to games it has
+     * already saved, and a map that was not updated would show them the values it was opened with. */
+    private def notificationSections(settings: NotificationSettings): HtmlElement = {
+        val overall = Var(settings.player)
+        val perGame = Var(settings.games.map(g => g.gameId -> g.preferences).toMap)
+        val chosen: Var[Option[GameId]] = Var(None)
+
+        div(
+          Notifications.form(
+            "Notifications",
+            "What we email you about, unless you say otherwise for a particular game or match.",
+            overall,
+            saveLabel = "Save notifications"
+          )(ApiClient.updateNotifications),
+          div(
+            cls := "account-section",
+            h3("One Game"),
+            p(
+              cls := "detail",
+              "Answers for a single game, which win over the ones above. " +
+                  "Anything left on \"Use Default\" falls back to them, and then to what the game itself asks for."
+            ),
+            label(
+              cls := "field",
+              "Game",
+              select(
+                value <-- chosen.signal.map(_.map(_.value.toString).getOrElse("")),
+                onChange.mapToValue --> { raw =>
+                    chosen.set(raw.toIntOption.map(GameId.apply))
+                },
+                option(value := "", "Choose a game"),
+                children <-- Store.games.signal.map(
+                  _.map(game => option(value := game.gameId.value.toString, game.name)).toList
+                )
+              )
+            ),
+            // Rebuilt per game, which is also how the form is re-seeded: a fresh element over a fresh
+            // `Var` of that game's answers, rather than one form whose contents have to be swapped
+            // underneath it.
+            child <-- chosen.signal.map {
+                case None => emptyNode
+                case Some(gameId) =>
+                    val forGame = Var(perGame.now().getOrElse(gameId, NotificationPreferences.unset))
+                    Notifications.form(
+                      Store.games.now().find(_.gameId == gameId).map(_.name).getOrElse("This game"),
+                      "Leave a question on \"Use Default\" to answer it from your settings above.",
+                      forGame,
+                      saveLabel = "Save for this game"
+                    ) { preferences =>
+                        ApiClient
+                            .updateGameNotifications(gameId, preferences)
+                            .map(_ => perGame.update(_.updated(gameId, preferences)))
+                    }
+            }
+          )
+        )
+    }
 
     private def nicknameForm: HtmlElement = {
         val busy = Var(false)

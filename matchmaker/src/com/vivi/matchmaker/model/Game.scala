@@ -72,5 +72,14 @@ case class Game(
     // What happens when a player's turn runs out. Defaulted rather than required, because every
     // game had this behaviour decided for it by the migration that added the column, and
     // Forfeit is what it decided.
-    timeoutAction: TimeoutAction = TimeoutAction.Forfeit
+    timeoutAction: TimeoutAction = TimeoutAction.Forfeit,
+    /* Which notifications this game's players get unless they say otherwise: the end of the chain
+     * in `NotificationPolicy`, and the only level of it that must answer every kind.
+     *
+     * On the game rather than in a constant somewhere because it is a property of how the game is
+     * played -- one finished in an evening can afford to mail every move, one played over weeks
+     * cannot -- and so is the admin's to set, which is why the game form requires all eight.
+     * Defaulted here for the same reason `timeoutAction` is: V13 decided it for every game that
+     * already existed, and it decided "send it". */
+    notifications: NotificationDefaults = NotificationDefaults.all(true)
 )

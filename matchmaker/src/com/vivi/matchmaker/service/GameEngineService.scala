@@ -201,6 +201,10 @@ class GameEngineService[T](
      *     looking at the answer.
      *   - not a player with no address. `player.email` is nullable precisely so that this question
      *     has an answer; `MatchStartedMail.compose` is where the skipping happens.
+     *   - not a player who has said they do not want to hear about a match starting. That is four
+     *     levels of preference deep (see `NotificationPolicy`), but only one extra query: the seats
+     *     of a match, their players' settings for this game, and their settings in general all come
+     *     back from `levelsForMatch`, and the game's own defaults are on the `Game` already in hand.
      *
      * The reads are outside any transaction: the match is written and committed by now, and this is
      * reporting it rather than deciding anything. */
@@ -213,14 +217,24 @@ class GameEngineService[T](
         mail.sender.zip(mail.uiBaseUrl).traverse_ { (sender, uiBaseUrl) =>
             val playerRepo = new PlayerRepo(session)
             val participantRepo = new ParticipantRepo(session)
+            val notificationRepo = new NotificationRepo(session)
             for {
                 seats <- participantRepo.listForMatch(started.gameId, started.matchId)
                 players <- playerRepo.listForMatch(started.gameId, started.matchId)
+                // In seat order like the other two, so it is keyed by participant id rather than zipped:
+                // it is the one of the three that is read for a different reason, and a silent
+                // misalignment here would send a player somebody else's answer about being written to.
+                levels <- notificationRepo.levelsForMatch(started.gameId, started.matchId, game.notifications)
+                wanted = levels.collect {
+                    case seat if NotificationPolicy.wants(NotificationType.MatchStarted, seat.levels) =>
+                        seat.participantId
+                }.toSet
                 // Both lists are in seat order, so they line up; zipped rather than joined on player id,
                 // since one player may hold two seats and a map would lose one of them.
                 roster = seats.map((participant, _, _) => participant).zip(players)
                 messages = roster.flatMap { (participant, player) =>
                     if (player.playerId == challenge.challenger) None
+                    else if (!wanted.contains(participant.participantId)) None
                     else
                         MatchStartedMail.compose(
                           sender = sender,

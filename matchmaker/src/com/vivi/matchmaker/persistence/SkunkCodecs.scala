@@ -4,7 +4,14 @@ import skunk._
 import skunk.codec.all._
 import skunk.data.Type
 import java.time.{Instant, OffsetDateTime, ZoneOffset}
-import com.vivi.matchmaker.model.{GameType, TimeLimitKind, TimeLimitUnit, TimeoutAction}
+import com.vivi.matchmaker.model.{
+    GameType,
+    NotificationDefaults,
+    NotificationPreferences,
+    TimeLimitKind,
+    TimeLimitUnit,
+    TimeoutAction
+}
 import com.vivi.matchmaker.util.JsonValues
 
 object SkunkCodecs {
@@ -30,6 +37,24 @@ object SkunkCodecs {
 
     /** `time_limit_unit`: the unit a limit was offered in, and so the unit it is read back in. */
     val timeLimitUnit: Codec[TimeLimitUnit] = text.imap(TimeLimitUnit.fromCode)(_.code)
+
+    /** The eight `notify_*` columns of `player`, `participant` and `player_game`, as one value.
+      *
+      * Bound positionally, in `NotificationType.values` order: the eight fields of
+      * [[com.vivi.matchmaker.model.NotificationPreferences]] are in that order, and so is every column list that uses
+      * this codec. A kind added to the enum in the wrong place would compile and silently store answers under the wrong
+      * heading, which is why the enum's order is documented as part of it.
+      *
+      * One codec rather than eight `bool.opt` at each site so that the statements read as being about preferences
+      * rather than about eight booleans, and so that adding a kind is one change here instead of one per query.
+      */
+    val notificationPreferences: Codec[NotificationPreferences] =
+        (bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt)
+            .to[NotificationPreferences]
+
+    /** The same eight columns on `game`, where they are NOT NULL: the end of the chain has to answer. */
+    val notificationDefaults: Codec[NotificationDefaults] =
+        (bool *: bool *: bool *: bool *: bool *: bool *: bool *: bool).to[NotificationDefaults]
 
     /** skunk-core ships no jsonb codec, so this declares one directly: bound and read as the raw JSON text, tagged with
       * the "jsonb" wire type so skunk's strict column-alignment check (added in 1.0) accepts it against an actual jsonb

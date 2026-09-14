@@ -18,7 +18,8 @@ case class Services[T](
     challenges: OpenChallengeService[T],
     acceptances: AcceptanceService,
     matches: MatchService,
-    engine: GameEngineService[T]
+    engine: GameEngineService[T],
+    notifications: NotificationService
 )
 
 object Services {
@@ -63,6 +64,7 @@ object Services {
           challenges = new OpenChallengeService[T](pool),
           acceptances = new AcceptanceService(pool),
           matches = new MatchService(pool),
-          engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifier, mail)
+          engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifier, mail),
+          notifications = new NotificationService(pool)
         )
 }

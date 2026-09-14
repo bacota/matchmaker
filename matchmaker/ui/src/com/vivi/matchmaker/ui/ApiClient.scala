@@ -62,6 +62,34 @@ object ApiClient {
       */
     def acceptances(): Future[Seq[PendingAcceptance]] = get[Seq[PendingAcceptance]]("/me/acceptances")
 
+    /** What the caller wants to be told about: their answers in general, and the games they have answered differently
+      * for. Takes no player id for the same reason `acceptances` does not.
+      */
+    def notifications(): Future[NotificationSettings] = get[NotificationSettings]("/me/notifications")
+
+    def updateNotifications(preferences: NotificationPreferences): Future[Unit] =
+        sendUnit(HttpMethod.PUT, "/me/notifications", Some(write(preferences)))
+
+    def updateGameNotifications(gameId: GameId, preferences: NotificationPreferences): Future[Unit] =
+        sendUnit(HttpMethod.PUT, s"/me/notifications/games/${gameId.value}", Some(write(preferences)))
+
+    /** The caller's answers for one match — the level that overrides the other two. 404 where the caller has no seat in
+      * it, which is also the answer to asking about somebody else's match.
+      */
+    def matchNotifications(gameId: GameId, matchId: MatchId): Future[NotificationPreferences] =
+        get[NotificationPreferences](s"/games/${gameId.value}/matches/${matchId.value}/notifications")
+
+    def updateMatchNotifications(
+        gameId: GameId,
+        matchId: MatchId,
+        preferences: NotificationPreferences
+    ): Future[Unit] =
+        sendUnit(
+          HttpMethod.PUT,
+          s"/games/${gameId.value}/matches/${matchId.value}/notifications",
+          Some(write(preferences))
+        )
+
     def characters(gameId: GameId): Future[Seq[Character[String]]] =
         get[Seq[Character[String]]](s"/games/${gameId.value}/characters")
 

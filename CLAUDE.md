@@ -29,12 +29,18 @@ slow run into a flaky failure. `MatchStartedNotificationSpec.caseTimeout` is the
 `maxColumn=120`, dialect `scala3`. Run `scalafmt` rather than matching surrounding style by eye —
 running it with the defaults instead of this config reformats the entire repository.
 
-## A new API route is two changes
+## A new API route is three changes
 
-Adding a `case` to `Router.scala` is half an endpoint. The route must also be listed in
+Adding a `case` to `Router.scala` is a third of an endpoint. The route must also be listed in
 `local.routes` in `terraform/modules/api/main.tf` (or `local.engine_routes`, for the engine's own
-callbacks), or the gateway returns 404 and the handler is never reached. The comment above the
-match in `Router.scala` says the same thing at the point of the mistake.
+callbacks), or the gateway returns 404 and the handler is never reached — the comment above the
+match in `Router.scala` says the same thing at the point of the mistake. And it must be added to
+`routed` in `RouterSpec`, whose count assertion fails until it is: that list is what proves the
+route reaches a service and refuses an unauthenticated caller.
+
+A route's request body is parsed by the shared `Json` codecs, so write the test body the way
+upickle writes it — an `Option` field is the bare value, and absent when there is none, not a
+one-element array.
 
 ## Reads that lead to a write take `FOR UPDATE`
 

@@ -299,6 +299,11 @@ locals {
     # Recording an email change that Cognito has already confirmed, so matchmaker knows where to
     # write to. The change itself still happens at Cognito; this only reports it.
     "PUT /me/email",
+    # What the caller wants to be told about: their settings everywhere, and their settings for one
+    # game. The per-match level is on the match's own route below.
+    "GET /me/notifications",
+    "PUT /me/notifications",
+    "PUT /me/notifications/games/{gameId}",
     "GET /me/acceptances",
     "GET /me/matches",
     "GET /me/matches/due",
@@ -328,6 +333,9 @@ locals {
     "POST /games/{gameId}/matches/{matchId}/refresh",
     # Calling a match off, which only its creator may do.
     "POST /games/{gameId}/matches/{matchId}/cancel",
+    # Muting one match: the most specific thing a player can say about notifications.
+    "GET /games/{gameId}/matches/{matchId}/notifications",
+    "PUT /games/{gameId}/matches/{matchId}/notifications",
   ]
 
   /* The game engine's callbacks, which are not player actions at all: a game engine tells
