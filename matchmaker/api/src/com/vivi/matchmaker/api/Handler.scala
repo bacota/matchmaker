@@ -14,103 +14,100 @@ import com.vivi.matchmaker.service.{DbConfig, Services}
   */
 class Handler extends RequestStreamHandler {
 
-  // Initialized once per container and reused across invocations, which is the whole point of
-  // pooling: a Lambda handles one request at a time, but the same container serves many.
-  private lazy val services = Handler.services
+    // Initialized once per container and reused across invocations, which is the whole point of
+    // pooling: a Lambda handles one request at a time, but the same container serves many.
+    private lazy val services = Handler.services
 
-  override def handleRequest(input: InputStream, output: OutputStream, context: Context): Unit = {
-    val event = String(input.readAllBytes(), StandardCharsets.UTF_8)
-    // Falls back to stderr when there is no context (local runs, and any invocation the runtime
-    // hands a null one), so a request is never handled with its outcome going nowhere.
-    val log = (msg: String) =>
-      Option(context) match {
-        case Some(c) => c.getLogger.log(msg)
-        case None    => System.err.println(msg)
-      }
+    override def handleRequest(input: InputStream, output: OutputStream, context: Context): Unit = {
+        val event = String(input.readAllBytes(), StandardCharsets.UTF_8)
+        // Falls back to stderr when there is no context (local runs, and any invocation the runtime
+        // hands a null one), so a request is never handled with its outcome going nowhere.
+        val log = (msg: String) =>
+            Option(context) match {
+                case Some(c) => c.getLogger.log(msg)
+                case None    => System.err.println(msg)
+            }
 
-    // The request, if it could be decoded — so the catch below can still name what failed.
-    var where = "undecoded event"
+        // The request, if it could be decoded — so the catch below can still name what failed.
+        var where = "undecoded event"
 
-    val response =
-      try {
-        val request = ApiGateway.decodeRequest(event)
-        where = s"${request.method} ${request.path}"
-        val result = Router
-          .dispatch(services, request, Handler.authenticator)
-          .handleError { error =>
-            // Router maps ServiceErrors itself; reaching here means something unexpected, so
-            // the detail goes to CloudWatch and only a generic message goes to the caller.
-            Errors.toResponse(error, where)
-          }
-          .unsafeRunSync()
-        log(s"handled $where -> ${result.statusCode}")
-        result
-      } catch {
-        // Anything that escaped the IO: a decode failure, a fatal error, a container whose
-        // initialization failed. Logged with its stack trace, because a 5xx the caller cannot
-        // see the reason for has to be readable here.
-        case error: Throwable =>
-          Errors.log(error, where)
-          log(s"handled $where -> 500")
-          Errors.response(500, "internal error")
-      }
+        val response =
+            try {
+                val request = ApiGateway.decodeRequest(event)
+                where = s"${request.method} ${request.path}"
+                val result = Router
+                    .dispatch(services, request, Handler.authenticator)
+                    .handleError { error =>
+                        // Router maps ServiceErrors itself; reaching here means something unexpected, so
+                        // the detail goes to CloudWatch and only a generic message goes to the caller.
+                        Errors.toResponse(error, where)
+                    }
+                    .unsafeRunSync()
+                log(s"handled $where -> ${result.statusCode}")
+                result
+            } catch {
+                // Anything that escaped the IO: a decode failure, a fatal error, a container whose
+                // initialization failed. Logged with its stack trace, because a 5xx the caller cannot
+                // see the reason for has to be readable here.
+                case error: Throwable =>
+                    Errors.log(error, where)
+                    log(s"handled $where -> 500")
+                    Errors.response(500, "internal error")
+            }
 
-    output.write(ApiGateway.encodeResponse(response).getBytes(StandardCharsets.UTF_8))
-    output.flush()
-  }
+        output.write(ApiGateway.encodeResponse(response).getBytes(StandardCharsets.UTF_8))
+        output.flush()
+    }
 }
 
 object Handler {
 
-  /** Built once per container. The pool's finalizer is deliberately dropped: the pool should
-    * live exactly as long as the container, and there is no shutdown hook that could run it at
-    * a useful moment anyway.
-    */
-  lazy val services: Services[String] =
-    Services.resource[String](dbConfig(), poolSize).allocated.unsafeRunSync()._1
+    /** Built once per container. The pool's finalizer is deliberately dropped: the pool should live exactly as long as
+      * the container, and there is no shutdown hook that could run it at a useful moment anyway.
+      */
+    lazy val services: Services[String] =
+        Services.resource[String](dbConfig(), poolSize).allocated.unsafeRunSync()._1
 
-  /** How the caller is identified, chosen by `AUTH_MODE`.
-    *
-    * The terraform sets this to `gateway`: a player is whoever the Cognito JWT authorizer in
-    * front of the function said they were, and a game engine is whichever engine's API key its
-    * callback carried. The default is deliberately the *other* way round: an unset variable means
-    * no infrastructure was involved, and a function that fell back to trusting a header would
-    * turn a terraform mistake into an open API. Failing loudly is the safe default here.
-    */
-  val authenticator: Authenticator = sys.env.getOrElse("AUTH_MODE", "gateway") match {
-    case "gateway" => Authenticator.Gateway(engineApiKeys)
-    case "header"  => Authenticator.TrustedHeader
-    case other     => throw new IllegalStateException(s"unknown AUTH_MODE '$other'; expected 'gateway' or 'header'")
-  }
+    /** How the caller is identified, chosen by `AUTH_MODE`.
+      *
+      * The terraform sets this to `gateway`: a player is whoever the Cognito JWT authorizer in front of the function
+      * said they were, and a game engine is whichever engine's API key its callback carried. The default is
+      * deliberately the *other* way round: an unset variable means no infrastructure was involved, and a function that
+      * fell back to trusting a header would turn a terraform mistake into an open API. Failing loudly is the safe
+      * default here.
+      */
+    val authenticator: Authenticator = sys.env.getOrElse("AUTH_MODE", "gateway") match {
+        case "gateway" => Authenticator.Gateway(engineApiKeys)
+        case "header"  => Authenticator.TrustedHeader
+        case other     => throw new IllegalStateException(s"unknown AUTH_MODE '$other'; expected 'gateway' or 'header'")
+    }
 
-  /** The engines allowed to post callbacks, and the key each one proves itself with.
-    *
-    * `ENGINE_API_KEYS` is `externalId=key` per engine — see `ApiKeys`. Re-read per call rather
-    * than parsed once, so that rotating a key does not need the execution environment recycled.
-    * Unset means no engine can call back, which is the right default: an engine that has not been
-    * given a key is one nobody has decided to trust yet.
-    */
-  private def engineApiKeys: () => ApiKeys = () => ApiKeys.parse(sys.env.get("ENGINE_API_KEYS"))
+    /** The engines allowed to post callbacks, and the key each one proves itself with.
+      *
+      * `ENGINE_API_KEYS` is `externalId=key` per engine — see `ApiKeys`. Re-read per call rather than parsed once, so
+      * that rotating a key does not need the execution environment recycled. Unset means no engine can call back, which
+      * is the right default: an engine that has not been given a key is one nobody has decided to trust yet.
+      */
+    private def engineApiKeys: () => ApiKeys = () => ApiKeys.parse(sys.env.get("ENGINE_API_KEYS"))
 
-  private def poolSize: Int =
-    sys.env.get("DB_POOL_SIZE").flatMap(_.toIntOption).getOrElse(Services.defaultPoolSize)
+    private def poolSize: Int =
+        sys.env.get("DB_POOL_SIZE").flatMap(_.toIntOption).getOrElse(Services.defaultPoolSize)
 
-  private def required(name: String): String =
-    sys.env.getOrElse(name, throw new IllegalStateException(s"$name is not set"))
+    private def required(name: String): String =
+        sys.env.getOrElse(name, throw new IllegalStateException(s"$name is not set"))
 
-  /** Assembles the database configuration from the function's environment variables.
-    *
-    * The credentials arrive the same way as the host and database name. That keeps the function
-    * free of any AWS dependency — no SDK, no extension layer, no network call before the first
-    * query — at the cost of the password being readable from the function's configuration by
-    * anyone holding `lambda:GetFunction`.
-    */
-  private def dbConfig(): DbConfig =
-    DbConfig(
-      host = required("DB_HOST"),
-      port = sys.env.get("DB_PORT").flatMap(_.toIntOption).getOrElse(5432),
-      database = required("DB_NAME"),
-      user = required("DB_USER"),
-      password = Some(required("DB_PASSWORD"))
-    )
+    /** Assembles the database configuration from the function's environment variables.
+      *
+      * The credentials arrive the same way as the host and database name. That keeps the function free of any AWS
+      * dependency — no SDK, no extension layer, no network call before the first query — at the cost of the password
+      * being readable from the function's configuration by anyone holding `lambda:GetFunction`.
+      */
+    private def dbConfig(): DbConfig =
+        DbConfig(
+          host = required("DB_HOST"),
+          port = sys.env.get("DB_PORT").flatMap(_.toIntOption).getOrElse(5432),
+          database = required("DB_NAME"),
+          user = required("DB_USER"),
+          password = Some(required("DB_PASSWORD"))
+        )
 }

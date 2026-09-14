@@ -5,34 +5,34 @@ import Protocol.given
 
 /** The play page, and the page the hosted login redirects back to.
   *
-  * Self-contained documents with no assets, because the engine has no static hosting and a page
-  * that needs a second request needs somewhere to serve it from. When the viewer already has a
-  * seat, the state is inlined into the first render so the board is right before any script runs;
-  * otherwise the page is a shell that signs the player in and then fetches it.
+  * Self-contained documents with no assets, because the engine has no static hosting and a page that needs a second
+  * request needs somewhere to serve it from. When the viewer already has a seat, the state is inlined into the first
+  * render so the board is right before any script runs; otherwise the page is a shell that signs the player in and then
+  * fetches it.
   *
-  * Nothing the page is given discloses a throw the server would not disclose: what is hidden is
-  * hidden in `Engine.stateOf`, not here. A page that filtered the answer it rendered would be
-  * hiding it from the one person who can open the network tab.
+  * Nothing the page is given discloses a throw the server would not disclose: what is hidden is hidden in
+  * `Engine.stateOf`, not here. A page that filtered the answer it rendered would be hiding it from the one person who
+  * can open the network tab.
   *
   * The sign-in is the same one matchmaker's own UI uses — same user pool, same app client, same
-  * authorization-code-with-PKCE flow — so a player who is signed in to matchmaker signs in here
-  * with the same account, and the `sub` the engine sees is the `cognitoId` matchmaker sent it.
+  * authorization-code-with-PKCE flow — so a player who is signed in to matchmaker signs in here with the same account,
+  * and the `sub` the engine sees is the `cognitoId` matchmaker sent it.
   */
 object Html {
 
-  def board(
-      matchId: String,
-      state: Option[Protocol.StateResponse],
-      login: Option[LoginConfig],
-      publicView: Boolean = false
-  ): String = {
-    val heading = state match {
-      case Some(s) if s.completed => outcome(s)
-      case Some(s)                => waiting(s)
-      case None                   => "sign in to play"
-    }
+    def board(
+        matchId: String,
+        state: Option[Protocol.StateResponse],
+        login: Option[LoginConfig],
+        publicView: Boolean = false
+    ): String = {
+        val heading = state match {
+            case Some(s) if s.completed => outcome(s)
+            case Some(s)                => waiting(s)
+            case None                   => "sign in to play"
+        }
 
-    s"""<!doctype html>
+        s"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -199,17 +199,16 @@ ${authScript(login)}
 </body>
 </html>
 """
-  }
+    }
 
-  /** The page Cognito redirects back to: it redeems the code and returns the player to the board
-    * they started from.
-    *
-    * A fixed path, because Cognito matches callback urls exactly and cannot be given a pattern —
-    * one per match is not something that could be registered. Where to go afterwards is therefore
-    * this page's problem, and it is what the flow stored before leaving.
-    */
-  def authCallback(login: LoginConfig): String =
-    s"""<!doctype html>
+    /** The page Cognito redirects back to: it redeems the code and returns the player to the board they started from.
+      *
+      * A fixed path, because Cognito matches callback urls exactly and cannot be given a pattern — one per match is not
+      * something that could be registered. Where to go afterwards is therefore this page's problem, and it is what the
+      * flow stored before leaving.
+      */
+    def authCallback(login: LoginConfig): String =
+        s"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -273,16 +272,22 @@ ${authScript(Some(login))}
 </html>
 """
 
-  /* The sign-in half of both pages: hosted login, authorization code with PKCE, ID token in
-   * sessionStorage. The same flow and the same storage rules as matchmaker's UI (see Auth.scala
-   * there) — tokens die with the tab and are not shared between tabs, and the password is only
-   * ever typed into Cognito's own pages.
-   *
-   * The refresh token is deliberately not kept: a board is a page a player has open for the
-   * length of a game, and an ID token lasts an hour. Dropping it means a long-abandoned tab asks
-   * for a sign-in again instead of holding a credential that could renew itself. */
-  private def authScript(login: Option[LoginConfig]): String =
-    s"""  const login = ${login.map(l => s"""{ hostedLoginUrl: "${escapeJs(l.hostedLoginUrl)}", clientId: "${escapeJs(l.clientId)}", redirectUri: "${escapeJs(l.redirectUri)}" }""").getOrElse("null")};
+    /* The sign-in half of both pages: hosted login, authorization code with PKCE, ID token in
+     * sessionStorage. The same flow and the same storage rules as matchmaker's UI (see Auth.scala
+     * there) — tokens die with the tab and are not shared between tabs, and the password is only
+     * ever typed into Cognito's own pages.
+     *
+     * The refresh token is deliberately not kept: a board is a page a player has open for the
+     * length of a game, and an ID token lasts an hour. Dropping it means a long-abandoned tab asks
+     * for a sign-in again instead of holding a credential that could renew itself. */
+    private def authScript(login: Option[LoginConfig]): String =
+        s"""  const login = ${login
+                .map(l =>
+                    s"""{ hostedLoginUrl: "${escapeJs(l.hostedLoginUrl)}", clientId: "${escapeJs(
+                          l.clientId
+                        )}", redirectUri: "${escapeJs(l.redirectUri)}" }"""
+                )
+                .getOrElse("null")};
 
   const TokenKey = "rps.idToken";
   const VerifierKey = "rps.pkceVerifier";
@@ -345,21 +350,21 @@ ${authScript(Some(login))}
   }
 """
 
-  private def outcome(state: Protocol.StateResponse): String =
-    if (state.draw) "drawn" else state.winner.map(w => s"$w wins").getOrElse("over")
+    private def outcome(state: Protocol.StateResponse): String =
+        if (state.draw) "drawn" else state.winner.map(w => s"$w wins").getOrElse("over")
 
-  /* The heading of an unresolved match, server-rendered: "throw" while this viewer still has one
-   * to make, and otherwise who is being waited for. */
-  private def waiting(state: Protocol.StateResponse): String =
-    if (state.you.isDefined && state.yourThrow.isEmpty) "throw"
-    else s"waiting for ${state.waitingFor.mkString(" and ")}"
+    /* The heading of an unresolved match, server-rendered: "throw" while this viewer still has one
+     * to make, and otherwise who is being waited for. */
+    private def waiting(state: Protocol.StateResponse): String =
+        if (state.you.isDefined && state.yourThrow.isEmpty) "throw"
+        else s"waiting for ${state.waitingFor.mkString(" and ")}"
 
-  private def escape(s: String): String =
-    s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+    private def escape(s: String): String =
+        s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 
-  /* Inlined into a <script> block, where the one sequence that must not appear verbatim is a
-   * closing tag — a player's cognito id is not the engine's to vouch for. */
-  private def scriptSafe(json: String): String = json.replace("</", "<\\/")
+    /* Inlined into a <script> block, where the one sequence that must not appear verbatim is a
+     * closing tag — a player's cognito id is not the engine's to vouch for. */
+    private def scriptSafe(json: String): String = json.replace("</", "<\\/")
 
-  private def escapeJs(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("</", "<\\/")
+    private def escapeJs(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("</", "<\\/")
 }

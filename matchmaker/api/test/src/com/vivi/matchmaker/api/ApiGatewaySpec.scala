@@ -5,18 +5,18 @@ import munit.FunSuite
 
 class ApiGatewaySpec extends FunSuite {
 
-  /** Shaped like a real payload-v2 event, including fields the decoder ignores, so that the
-    * decoder is exercised against extra keys rather than a minimal hand-made object.
-    */
-  private def event(
-      method: String = "POST",
-      path: String = "/register",
-      headers: String = """"x-external-id": "sub-1", "content-type": "application/json"""",
-      body: String = """"{\"nickname\":\"tester\"}"""",
-      isBase64Encoded: Boolean = false,
-      query: String = """"queryStringParameters": {"activeOnly": "true"},"""
-  ): String =
-    s"""{
+    /** Shaped like a real payload-v2 event, including fields the decoder ignores, so that the decoder is exercised
+      * against extra keys rather than a minimal hand-made object.
+      */
+    private def event(
+        method: String = "POST",
+        path: String = "/register",
+        headers: String = """"x-external-id": "sub-1", "content-type": "application/json"""",
+        body: String = """"{\"nickname\":\"tester\"}"""",
+        isBase64Encoded: Boolean = false,
+        query: String = """"queryStringParameters": {"activeOnly": "true"},"""
+    ): String =
+        s"""{
        |  "version": "2.0",
        |  "routeKey": "$$default",
        |  "rawPath": "$path",
@@ -40,41 +40,41 @@ class ApiGatewaySpec extends FunSuite {
        |  "isBase64Encoded": $isBase64Encoded
        |}""".stripMargin
 
-  test("decodes method, path, body and query from a payload-v2 event") {
-    val request = ApiGateway.decodeRequest(event())
-    assertEquals(request.method, "POST")
-    assertEquals(request.path, "/register")
-    assertEquals(request.body, """{"nickname":"tester"}""")
-    assertEquals(request.query.get("activeOnly"), Some("true"))
-  }
+    test("decodes method, path, body and query from a payload-v2 event") {
+        val request = ApiGateway.decodeRequest(event())
+        assertEquals(request.method, "POST")
+        assertEquals(request.path, "/register")
+        assertEquals(request.body, """{"nickname":"tester"}""")
+        assertEquals(request.query.get("activeOnly"), Some("true"))
+    }
 
-  test("header lookup is case-insensitive, since payload v2 lowercases header names") {
-    val request = ApiGateway.decodeRequest(event())
-    assertEquals(request.header("X-External-Id"), Some("sub-1"))
-    assertEquals(request.header("x-external-id"), Some("sub-1"))
-  }
+    test("header lookup is case-insensitive, since payload v2 lowercases header names") {
+        val request = ApiGateway.decodeRequest(event())
+        assertEquals(request.header("X-External-Id"), Some("sub-1"))
+        assertEquals(request.header("x-external-id"), Some("sub-1"))
+    }
 
-  test("decodes a base64-encoded body") {
-    val encoded = Base64.getEncoder.encodeToString("""{"nickname":"tester"}""".getBytes("UTF-8"))
-    val request = ApiGateway.decodeRequest(event(body = s""""$encoded"""", isBase64Encoded = true))
-    assertEquals(request.body, """{"nickname":"tester"}""")
-  }
+    test("decodes a base64-encoded body") {
+        val encoded = Base64.getEncoder.encodeToString("""{"nickname":"tester"}""".getBytes("UTF-8"))
+        val request = ApiGateway.decodeRequest(event(body = s""""$encoded"""", isBase64Encoded = true))
+        assertEquals(request.body, """{"nickname":"tester"}""")
+    }
 
-  test("tolerates an event with no body, headers or query") {
-    val request = ApiGateway.decodeRequest(
-      """{"rawPath": "/games", "requestContext": {"http": {"method": "GET"}}}"""
-    )
-    assertEquals(request.method, "GET")
-    assertEquals(request.body, "")
-    assertEquals(request.headers, Map.empty[String, String])
-    assertEquals(request.query, Map.empty[String, String])
-  }
+    test("tolerates an event with no body, headers or query") {
+        val request = ApiGateway.decodeRequest(
+          """{"rawPath": "/games", "requestContext": {"http": {"method": "GET"}}}"""
+        )
+        assertEquals(request.method, "GET")
+        assertEquals(request.body, "")
+        assertEquals(request.headers, Map.empty[String, String])
+        assertEquals(request.query, Map.empty[String, String])
+    }
 
-  /** What a JWT authorizer adds to the request context, in the shape API Gateway sends it: every
-    * claim a string, except the array-valued ones.
-    */
-  private val authorizedEvent =
-    """{
+    /** What a JWT authorizer adds to the request context, in the shape API Gateway sends it: every claim a string,
+      * except the array-valued ones.
+      */
+    private val authorizedEvent =
+        """{
       |  "rawPath": "/me",
       |  "requestContext": {
       |    "http": {"method": "GET"},
@@ -94,36 +94,39 @@ class ApiGatewaySpec extends FunSuite {
       |  }
       |}""".stripMargin
 
-  test("decodes the claims a JWT authorizer put in the request context") {
-    val request = ApiGateway.decodeRequest(authorizedEvent)
-    assertEquals(request.claim("sub"), Some("8f14e45f-ceea-467a-9a1b-1f2c3d4e5f60"))
-    assertEquals(request.claim("email"), Some("player@example.com"))
-  }
+    test("decodes the claims a JWT authorizer put in the request context") {
+        val request = ApiGateway.decodeRequest(authorizedEvent)
+        assertEquals(request.claim("sub"), Some("8f14e45f-ceea-467a-9a1b-1f2c3d4e5f60"))
+        assertEquals(request.claim("email"), Some("player@example.com"))
+    }
 
-  test("an array-valued claim is dropped rather than mangled into a string") {
-    // cognito:groups arrives as a JSON array. Nothing reads it yet; what matters is that its
-    // presence does not fail the decode of the claims beside it.
-    val request = ApiGateway.decodeRequest(authorizedEvent)
-    assertEquals(request.claim("cognito:groups"), None)
-    assertEquals(request.claim("exp"), Some("1767225600"))
-  }
+    test("an array-valued claim is dropped rather than mangled into a string") {
+        // cognito:groups arrives as a JSON array. Nothing reads it yet; what matters is that its
+        // presence does not fail the decode of the claims beside it.
+        val request = ApiGateway.decodeRequest(authorizedEvent)
+        assertEquals(request.claim("cognito:groups"), None)
+        assertEquals(request.claim("exp"), Some("1767225600"))
+    }
 
-  test("an event with no authorizer decodes to no claims") {
-    // The local server and any unauthenticated route land here, so this must be empty rather
-    // than throwing — GatewayClaims turns it into a 401.
-    assertEquals(ApiGateway.decodeRequest(event()).claims, Map.empty[String, String])
-  }
+    test("an event with no authorizer decodes to no claims") {
+        // The local server and any unauthenticated route land here, so this must be empty rather
+        // than throwing — GatewayClaims turns it into a 401.
+        assertEquals(ApiGateway.decodeRequest(event()).claims, Map.empty[String, String])
+    }
 
-  test("splits the path into non-empty segments") {
-    assertEquals(ApiGateway.decodeRequest(event(path = "/games/7/characters")).segments, List("games", "7", "characters"))
-    assertEquals(ApiGateway.decodeRequest(event(path = "/")).segments, Nil)
-  }
+    test("splits the path into non-empty segments") {
+        assertEquals(
+          ApiGateway.decodeRequest(event(path = "/games/7/characters")).segments,
+          List("games", "7", "characters")
+        )
+        assertEquals(ApiGateway.decodeRequest(event(path = "/")).segments, Nil)
+    }
 
-  test("encodes a response as a payload-v2 result with a JSON content type") {
-    val encoded = ujson.read(ApiGateway.encodeResponse(ApiGateway.Response(201, """{"ok":true}""")))
-    assertEquals(encoded("statusCode").num.toInt, 201)
-    assertEquals(encoded("body").str, """{"ok":true}""")
-    assertEquals(encoded("headers")("content-type").str, "application/json")
-    assertEquals(encoded("isBase64Encoded").bool, false)
-  }
+    test("encodes a response as a payload-v2 result with a JSON content type") {
+        val encoded = ujson.read(ApiGateway.encodeResponse(ApiGateway.Response(201, """{"ok":true}""")))
+        assertEquals(encoded("statusCode").num.toInt, 201)
+        assertEquals(encoded("body").str, """{"ok":true}""")
+        assertEquals(encoded("headers")("content-type").str, "application/json")
+        assertEquals(encoded("isBase64Encoded").bool, false)
+    }
 }

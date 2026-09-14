@@ -7,172 +7,219 @@ import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 
 object Generators {
-  // Long enough that unique-key columns (nickname, external_id, ...) don't collide across
-  // repeated runs against a persistent local dev database that these tests never clean up.
-  def genString: Gen[String] =
-    Gen.choose(24, 40).flatMap(n => Gen.listOfN(n, Gen.alphaNumChar).map(_.mkString))
+    // Long enough that unique-key columns (nickname, external_id, ...) don't collide across
+    // repeated runs against a persistent local dev database that these tests never clean up.
+    def genString: Gen[String] =
+        Gen.choose(24, 40).flatMap(n => Gen.listOfN(n, Gen.alphaNumChar).map(_.mkString))
 
-  def genInstant: Gen[Instant] = Gen.choose(0L, 2000000000L).map(Instant.ofEpochSecond(_))
+    def genInstant: Gen[Instant] = Gen.choose(0L, 2000000000L).map(Instant.ofEpochSecond(_))
 
-  def genDuration: Gen[Duration] = Gen.choose(1L, 100000L).map(Duration.ofSeconds(_))
+    def genDuration: Gen[Duration] = Gen.choose(1L, 100000L).map(Duration.ofSeconds(_))
 
-  // ScalaCheck's default seed is deterministic, so separate suites running concurrently in
-  // separate forked JVMs can independently generate the exact same "random" sequence. That's
-  // fine for most fields, but nickname/external_id are unique-constrained, so they're
-  // suffixed with a JVM-entropy-backed UUID to guarantee uniqueness across suites/runs.
-  private def genUniqueString: Gen[String] = genString.map(s => s"$s-${java.util.UUID.randomUUID()}")
+    // ScalaCheck's default seed is deterministic, so separate suites running concurrently in
+    // separate forked JVMs can independently generate the exact same "random" sequence. That's
+    // fine for most fields, but nickname/external_id are unique-constrained, so they're
+    // suffixed with a JVM-entropy-backed UUID to guarantee uniqueness across suites/runs.
+    private def genUniqueString: Gen[String] = genString.map(s => s"$s-${java.util.UUID.randomUUID()}")
 
-  def genPlayer: Gen[Player] =
-    for {
-      nickname <- genUniqueString
-      isAdmin <- Gen.oneOf(true, false)
-      externalId <- genUniqueString
-      // Absent half the time, which is what a player registered before the column existed looks
-      // like. Not unique-suffixed as the two above are: nothing constrains the address, and two
-      // generated players sharing one is a case worth generating rather than avoiding.
-      local <- genString
-      email <- Gen.oneOf(Some(s"$local@example.com"), None)
-    } yield Player(PlayerId.unassigned, nickname, isAdmin, externalId, email)
+    def genPlayer: Gen[Player] =
+        for {
+            nickname <- genUniqueString
+            isAdmin <- Gen.oneOf(true, false)
+            externalId <- genUniqueString
+            // Absent half the time, which is what a player registered before the column existed looks
+            // like. Not unique-suffixed as the two above are: nothing constrains the address, and two
+            // generated players sharing one is a case worth generating rather than avoiding.
+            local <- genString
+            email <- Gen.oneOf(Some(s"$local@example.com"), None)
+        } yield Player(PlayerId.unassigned, nickname, isAdmin, externalId, email)
 
-  // Existing suites all build a character alongside the game, so Character is the default;
-  // Plain-game coverage passes gameType explicitly.
-  def genGame(gameType: GameType = GameType.Character): Gen[Game] =
-    for {
-      name <- genString
-      description <- genString
-      url <- genString
-      active <- Gen.oneOf(true, false)
-      externalId <- genUniqueString
-      // Two roles, always: since V4 every acceptance names one, so a game with no roles is a
-      // game nothing can be offered or accepted for. Two rather than one because two players in
-      // the same challenge may not share a role.
-    } yield Game(
-      GameId.unassigned,
-      gameType,
-      name,
-      description,
-      url,
-      active,
-      Seq(
-        GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false),
-        GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false)
-      ),
-      Seq.empty,
-      externalId
-    )
+    // Existing suites all build a character alongside the game, so Character is the default;
+    // Plain-game coverage passes gameType explicitly.
+    def genGame(gameType: GameType = GameType.Character): Gen[Game] =
+        for {
+            name <- genString
+            description <- genString
+            url <- genString
+            active <- Gen.oneOf(true, false)
+            externalId <- genUniqueString
+            // Two roles, always: since V4 every acceptance names one, so a game with no roles is a
+            // game nothing can be offered or accepted for. Two rather than one because two players in
+            // the same challenge may not share a role.
+        } yield Game(
+          GameId.unassigned,
+          gameType,
+          name,
+          description,
+          url,
+          active,
+          Seq(
+            GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false),
+            GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false)
+          ),
+          Seq.empty,
+          externalId
+        )
 
-  def genGameWithRole: Gen[Game] =
-    for {
-      base <- genGame()
-      roleName <- genString
-      optional <- Gen.oneOf(true, false)
-    } yield {
-      val role = GameRole(GameRoleId(0), GameId.unassigned, roleName, optional)
-      base.copy(roles = Seq(role))
+    def genGameWithRole: Gen[Game] =
+        for {
+            base <- genGame()
+            roleName <- genString
+            optional <- Gen.oneOf(true, false)
+        } yield {
+            val role = GameRole(GameRoleId(0), GameId.unassigned, roleName, optional)
+            base.copy(roles = Seq(role))
+        }
+
+    def genCharacter(gameId: GameId, playerId: Option[PlayerId]): Gen[Character[String]] =
+        for {
+            name <- genString
+            description <- genString
+            state <- genString
+        } yield Character(CharacterId(0), gameId, name, description, state, playerId)
+
+    def genMatch(gameId: GameId, matchId: MatchId, challengeId: ChallengeId): Gen[Match] =
+        for {
+            description <- genString
+            completedAt <- Gen.option(genInstant)
+            start <- genInstant
+            timeLimit <- Gen.option(genDuration)
+            isPublic <- Gen.oneOf(true, false)
+            // The urls are the game engine's, so they are generated as opaque strings — matchmaker
+            // stores whatever it is handed and never parses them.
+            statusUrl <- Gen.option(genString.map("https://engine.example.com/status/" + _))
+            playUrl <- Gen.option(genString.map("https://engine.example.com/play/" + _))
+            publicUrl <- Gen.option(genString.map("https://engine.example.com/watch/" + _))
+            cancelled <- Gen.oneOf(true, false)
+            timeLimitKind <- Gen.oneOf(TimeLimitKind.values.toSeq)
+            timeLimitUnit <- Gen.oneOf(TimeLimitUnit.values.toSeq)
+        } yield Match(
+          gameId,
+          matchId,
+          challengeId,
+          description,
+          completedAt,
+          start,
+          timeLimit,
+          "{}",
+          isPublic,
+          cancelled,
+          statusUrl,
+          playUrl,
+          publicUrl,
+          timeLimitKind,
+          timeLimitUnit
+        )
+
+    def genParticipant(
+        gameId: GameId,
+        matchId: MatchId,
+        playerId: PlayerId,
+        characterId: CharacterId,
+        gameRoleId: GameRoleId
+    ): Gen[Participant] =
+        for {
+            pending <- Gen.oneOf(true, false)
+            completed <- Gen.oneOf(true, false)
+            due <- Gen.option(genInstant)
+        } yield CharacterParticipant(
+          ParticipantId(0),
+          gameId,
+          matchId,
+          playerId,
+          pending,
+          completed,
+          due,
+          characterId,
+          gameRoleId
+        )
+
+    /** As `genParticipant`, for a game that has no characters. */
+    def genPlainParticipant(
+        gameId: GameId,
+        matchId: MatchId,
+        playerId: PlayerId,
+        gameRoleId: GameRoleId
+    ): Gen[Participant] =
+        for {
+            pending <- Gen.oneOf(true, false)
+            completed <- Gen.oneOf(true, false)
+            due <- Gen.option(genInstant)
+        } yield PlainParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, gameRoleId)
+
+    def genResult(gameId: GameId, participantId: ParticipantId): Gen[Result] =
+        for {
+            rank <- Gen.choose(1, 100)
+            scores <- genScores
+            isWinner <- Gen.oneOf(true, false)
+        } yield Result(gameId, participantId, rank, scores, isWinner)
+
+    /* Values are restricted to the shapes a jsonb round trip preserves exactly: a Double comes
+     * back a Double, but an Int would come back a Double too, so ints are not generated here. */
+    private def genScores: Gen[Map[String, Any]] =
+        Gen.mapOf(
+          for {
+              key <- genString
+              value <- Gen.oneOf[Any](Gen.choose(0.0, 1000.0), genString, Gen.oneOf(true, false))
+          } yield key -> value
+        )
+
+    def genOpenChallenge(
+        challenger: PlayerId,
+        gameId: GameId,
+        characterId: CharacterId,
+        gameRoleId: GameRoleId
+    ): Gen[OpenChallenge] =
+        for {
+            message <- genString
+            start <- Gen.option(genInstant)
+            timeLimit <- Gen.option(genDuration)
+            isPublic <- Gen.oneOf(true, false)
+            timeLimitKind <- Gen.oneOf(TimeLimitKind.values.toSeq)
+            timeLimitUnit <- Gen.oneOf(TimeLimitUnit.values.toSeq)
+        } yield CharacterOpenChallenge(
+          ChallengeId(0),
+          challenger,
+          message,
+          start,
+          timeLimit,
+          "{}",
+          gameId,
+          characterId,
+          isPublic,
+          gameRoleId,
+          timeLimitKind,
+          timeLimitUnit
+        )
+
+    /** A game, and a challenge in it, ready for a match to be started from.
+      *
+      * A match now has a mandatory foreign key to the challenge it came from, so a test that wants a match needs the
+      * whole chain — player, character, challenge — before it can write one. This builds the shortest one that
+      * satisfies the constraints, and hands back the two ids a match is made of.
+      */
+    def gameWithChallenge(session: Session[IO]): IO[(Game, ChallengeId)] =
+        for {
+            game <- new GameRepo[String](session).create(genGame().sample.get)
+            challengeId <- challengeIn(session, game)
+        } yield (game, challengeId)
+
+    /** A challenge in an existing game, with the player and character it needs. */
+    def challengeIn(session: Session[IO], game: Game): IO[ChallengeId] = {
+        val playerRepo = new PlayerRepo(session)
+        val characterRepo = new CharacterRepo[String](session)
+        val challengeRepo = new OpenChallengeRepo(session)
+        for {
+            player <- playerRepo.create(genPlayer.sample.get)
+            character <- characterRepo.create(genCharacter(game.gameId, Some(player.playerId)).sample.get)
+            challenge <- challengeRepo.create(
+              genOpenChallenge(
+                player.playerId,
+                game.gameId,
+                character.characterId,
+                game.roles.head.gameRoleId
+              ).sample.get
+            )
+        } yield challenge.challengeId
     }
-
-  def genCharacter(gameId: GameId, playerId: Option[PlayerId]): Gen[Character[String]] =
-    for {
-      name <- genString
-      description <- genString
-      state <- genString
-    } yield Character(CharacterId(0), gameId, name, description, state, playerId)
-
-  def genMatch(gameId: GameId, matchId: MatchId, challengeId: ChallengeId): Gen[Match] =
-    for {
-      description <- genString
-      completedAt <- Gen.option(genInstant)
-      start <- genInstant
-      timeLimit <- Gen.option(genDuration)
-      isPublic <- Gen.oneOf(true, false)
-      // The urls are the game engine's, so they are generated as opaque strings — matchmaker
-      // stores whatever it is handed and never parses them.
-      statusUrl <- Gen.option(genString.map("https://engine.example.com/status/" + _))
-      playUrl <- Gen.option(genString.map("https://engine.example.com/play/" + _))
-      publicUrl <- Gen.option(genString.map("https://engine.example.com/watch/" + _))
-      cancelled <- Gen.oneOf(true, false)
-      timeLimitKind <- Gen.oneOf(TimeLimitKind.values.toSeq)
-      timeLimitUnit <- Gen.oneOf(TimeLimitUnit.values.toSeq)
-    } yield Match(
-      gameId, matchId, challengeId, description, completedAt, start, timeLimit, "{}", isPublic, cancelled,
-      statusUrl, playUrl, publicUrl, timeLimitKind, timeLimitUnit
-    )
-
-  def genParticipant(
-      gameId: GameId,
-      matchId: MatchId,
-      playerId: PlayerId,
-      characterId: CharacterId,
-      gameRoleId: GameRoleId
-  ): Gen[Participant] =
-    for {
-      pending <- Gen.oneOf(true, false)
-      completed <- Gen.oneOf(true, false)
-      due <- Gen.option(genInstant)
-    } yield CharacterParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, characterId, gameRoleId)
-
-  /** As `genParticipant`, for a game that has no characters. */
-  def genPlainParticipant(gameId: GameId, matchId: MatchId, playerId: PlayerId, gameRoleId: GameRoleId): Gen[Participant] =
-    for {
-      pending <- Gen.oneOf(true, false)
-      completed <- Gen.oneOf(true, false)
-      due <- Gen.option(genInstant)
-    } yield PlainParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, gameRoleId)
-
-  def genResult(gameId: GameId, participantId: ParticipantId): Gen[Result] =
-    for {
-      rank <- Gen.choose(1, 100)
-      scores <- genScores
-      isWinner <- Gen.oneOf(true, false)
-    } yield Result(gameId, participantId, rank, scores, isWinner)
-
-  /* Values are restricted to the shapes a jsonb round trip preserves exactly: a Double comes
-   * back a Double, but an Int would come back a Double too, so ints are not generated here. */
-  private def genScores: Gen[Map[String, Any]] =
-    Gen.mapOf(
-      for {
-        key <- genString
-        value <- Gen.oneOf[Any](Gen.choose(0.0, 1000.0), genString, Gen.oneOf(true, false))
-      } yield key -> value
-    )
-
-  def genOpenChallenge(challenger: PlayerId, gameId: GameId, characterId: CharacterId, gameRoleId: GameRoleId): Gen[OpenChallenge] =
-    for {
-      message <- genString
-      start <- Gen.option(genInstant)
-      timeLimit <- Gen.option(genDuration)
-      isPublic <- Gen.oneOf(true, false)
-      timeLimitKind <- Gen.oneOf(TimeLimitKind.values.toSeq)
-      timeLimitUnit <- Gen.oneOf(TimeLimitUnit.values.toSeq)
-    } yield CharacterOpenChallenge(
-      ChallengeId(0), challenger, message, start, timeLimit, "{}", gameId, characterId, isPublic, gameRoleId,
-      timeLimitKind, timeLimitUnit
-    )
-
-  /** A game, and a challenge in it, ready for a match to be started from.
-    *
-    * A match now has a mandatory foreign key to the challenge it came from, so a test that wants
-    * a match needs the whole chain — player, character, challenge — before it can write one. This
-    * builds the shortest one that satisfies the constraints, and hands back the two ids a match
-    * is made of.
-    */
-  def gameWithChallenge(session: Session[IO]): IO[(Game, ChallengeId)] =
-    for {
-      game <- new GameRepo[String](session).create(genGame().sample.get)
-      challengeId <- challengeIn(session, game)
-    } yield (game, challengeId)
-
-  /** A challenge in an existing game, with the player and character it needs. */
-  def challengeIn(session: Session[IO], game: Game): IO[ChallengeId] = {
-    val playerRepo = new PlayerRepo(session)
-    val characterRepo = new CharacterRepo[String](session)
-    val challengeRepo = new OpenChallengeRepo(session)
-    for {
-      player <- playerRepo.create(genPlayer.sample.get)
-      character <- characterRepo.create(genCharacter(game.gameId, Some(player.playerId)).sample.get)
-      challenge <- challengeRepo.create(
-        genOpenChallenge(player.playerId, game.gameId, character.characterId, game.roles.head.gameRoleId).sample.get
-      )
-    } yield challenge.challengeId
-  }
 }
