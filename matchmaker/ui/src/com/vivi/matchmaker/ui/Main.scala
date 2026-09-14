@@ -275,6 +275,9 @@ object Views {
 
     private def registration: HtmlElement = {
         val nickname = Var("")
+        // As `Account.saveNickname`: this writes into the store, so it only writes if the session
+        // that asked is still the session that is here. See `Store.currentSignIn`.
+        val signIn = Store.currentSignIn
 
         div(
           cls := "card",
@@ -283,9 +286,11 @@ object Views {
           field("Nickname", input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))),
           busyButton("Create Player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
               Store.run(ApiClient.register(nickname.now().trim, Auth.email), busy) { player =>
-                  Store.player.set(Store.PlayerState.Registered(player))
-                  Store.refreshMatches()
-                  Store.refreshGames()
+                  if (Store.stillSignedInAs(signIn)) {
+                      Store.player.set(Store.PlayerState.Registered(player))
+                      Store.refreshMatches()
+                      Store.refreshGames()
+                  }
               }
           }
         )

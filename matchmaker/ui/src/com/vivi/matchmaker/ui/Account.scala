@@ -84,6 +84,9 @@ object Account {
 
     private def saveNickname(busy: Var[Boolean]): Unit = {
         val wanted = nickname.now().trim
+        // Taken before the request and checked before the store is written: a rename answered after a
+        // sign-out would put the previous player back in the header. See `Store.currentSignIn`.
+        val signIn = Store.currentSignIn
 
         if (wanted.isEmpty) nicknameOutcome.set(Some(Outcome(true, "Enter a nickname.")))
         else {
@@ -92,12 +95,15 @@ object Account {
             ApiClient.updateNickname(wanted).onComplete { result =>
                 busy.set(false)
                 result match {
-                    case Success(player) =>
+                    case Success(player) if Store.stillSignedInAs(signIn) =>
                         // The header shows the nickname, so the change has to reach the store or the menu
                         // would report a rename the rest of the page disagrees with.
                         Store.player.set(Store.PlayerState.Registered(player))
                         nickname.set("")
                         nicknameOutcome.set(Some(Outcome(false, s"You are now ${player.nickname}.")))
+                    // The rename went through, but for a session that has since ended. Nothing to say
+                    // and nobody to say it to: this panel was closed by the sign-out.
+                    case Success(_) => ()
                     case Failure(error) =>
                         nicknameOutcome.set(Some(Outcome(true, explain(error))))
                 }
@@ -320,9 +326,9 @@ object Account {
             overall,
             saveLabel = "Save notifications"
           )(preferences =>
-              ApiClient.updateNotifications(preferences).map(_ =>
-                  Store.notificationSettings.update(_.map(_.copy(player = preferences)))
-              )
+              ApiClient
+                  .updateNotifications(preferences)
+                  .map(_ => Store.notificationSettings.update(_.map(_.copy(player = preferences))))
           ),
           div(
             cls := "account-section",
@@ -365,8 +371,8 @@ object Account {
                                 perGame.update(_.updated(gameId, preferences))
                                 Store.notificationSettings.update(_.map { current =>
                                     current.copy(
-                                        games = current.games.filterNot(_.gameId == gameId) :+
-                                            com.vivi.matchmaker.model.GameNotificationPreferences(gameId, preferences)
+                                      games = current.games.filterNot(_.gameId == gameId) :+
+                                          com.vivi.matchmaker.model.GameNotificationPreferences(gameId, preferences)
                                     )
                                 })
                             }

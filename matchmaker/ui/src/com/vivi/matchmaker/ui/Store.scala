@@ -66,11 +66,16 @@ object Store {
      * are the same player: what went stale is the request, not the identity. */
     private var signIns: Int = 0
 
-    /** The session as it stands. Taken before a request whose answer will be held. */
-    private def currentSignIn: Int = signIns
+    /** The session as it stands. Taken before a request whose answer will be held.
+      *
+      * Visible to the rest of the UI, not just to this file, because a screen that writes back into the store does it
+      * from a request of its own — `Account`'s rename is the one that does — and the answer to that can outlive its
+      * session exactly as a fetch can.
+      */
+    private[ui] def currentSignIn: Int = signIns
 
     /** Whether the session that asked is still the session that is here. */
-    private def stillSignedInAs(signIn: Int): Boolean = signIn == signIns
+    private[ui] def stillSignedInAs(signIn: Int): Boolean = signIn == signIns
 
     /** The token has gone — expired, revoked, or signed out elsewhere. Everything derived from it is dropped, so no
       * stale list is left on screen behind the sign-in prompt.
@@ -131,19 +136,12 @@ object Store {
     /** Fetches the caller's notification settings unless they are already here. Re-opening the panel shows what is held
       * rather than asking again; a save updates it in place, so the two cannot disagree.
       *
-      * Committed only if the session that asked is still the session that is here. That check matters more here than
-      * for the lists above, and for the same reason the fetch is skipped when something is held: the holding is what
-      * would make a wrong answer permanent. Signing out while this is in flight would otherwise leave one player's
-      * settings in a `Var` that the next player's panel reads — and then skips its own fetch for, because something is
-      * already there. They would be shown somebody else's answers, and could save them back as their own.
+      * Through `load`, like every other fetch here — and the one where a stale answer would not merely flash. Every
+      * other list is re-fetched at the next sign-in; this one is skipped when something is held, so an answer written
+      * after a sign-out would be what the next player's panel shows them, and what they could save back as their own.
       */
     def loadNotifications(): Unit =
-        if (notificationSettings.now().isEmpty) {
-            val signIn = currentSignIn
-            run(ApiClient.notifications()) { settings =>
-                if (stillSignedInAs(signIn)) notificationSettings.set(Some(settings))
-            }
-        }
+        if (notificationSettings.now().isEmpty) load(ApiClient.notifications())(s => notificationSettings.set(Some(s)))
 
     /** How each finished match turned out, keyed by its match id: the rows of the result table shown under a completed
       * match. Loaded whole with the lists, not per row.
@@ -247,6 +245,22 @@ object Store {
         }
     }
 
+    /** Fetches something this store will hold, and drops the answer if the session that asked for it has ended.
+      *
+      * The difference between this and `run` is what the answer is for. `run` is for a button: somebody clicked it,
+      * they are waiting, and whatever comes back is about the click. This is for the lists and the settings the store
+      * keeps — an answer that arrives after a sign-out is about a session that is over, and writing it here would put
+      * one player's data in front of the next.
+      *
+      * Nothing is reported for a dead session either, which is why the check wraps `settle` rather than sitting inside
+      * it: a 401 for a request the previous session made is not news, and `ApiClient` has already ended that session
+      * over it.
+      */
+    private def load[A](action: Future[A])(commit: A => Unit): Unit = {
+        val signIn = currentSignIn
+        action.onComplete(outcome => if (stillSignedInAs(signIn)) settle(outcome)(commit))
+    }
+
     private def settle[A](outcome: Try[A])(onSuccess: A => Unit): Unit = outcome match {
         case Success(value) => error.set(None); onSuccess(value)
         case Failure(error) => report(error)
@@ -259,8 +273,13 @@ object Store {
       */
     def loadAll(justSignedIn: Boolean = false): Unit = {
         player.set(PlayerState.Loading)
+        val signIn = currentSignIn
 
         ApiClient.me().onComplete {
+            // Signed out while this was in flight. Every branch below writes `player`, and the one
+            // that succeeds goes on to fetch five more lists — all of it for a session that is over.
+            case _ if !stillSignedInAs(signIn) => ()
+
             case Success(p) =>
                 error.set(None)
                 player.set(PlayerState.Registered(p))
@@ -305,29 +324,28 @@ object Store {
       *     player did not cause and cannot act on; the next sign-in tries again, and until one succeeds the only cost
       *     is notifications going to the older address.
       */
-    private def syncEmail(stored: Player): Unit =
+    private def syncEmail(stored: Player): Unit = {
+        val signIn = currentSignIn
+
         Auth.email.map(_.trim).filter(_.nonEmpty).foreach { fromToken =>
             if (!stored.email.exists(_.equalsIgnoreCase(fromToken)))
                 ApiClient.updateEmail(fromToken).onComplete {
                     case Success(updated) =>
-                        // Only if this is still the player on screen: a sign-out or a session change while the
-                        // call was in flight has already put something else there, and the answer to a request
+                        // Only if this is still the session that asked. A sign-out while the call was in
+                        // flight has already put something else on screen, and the answer to a request
                         // about the previous session must not overwrite it.
-                        val stillThere = player.now() match {
-                            case PlayerState.Registered(current) => current.playerId == updated.playerId
-                            case _                               => false
-                        }
-                        if (stillThere) player.set(PlayerState.Registered(updated))
+                        if (stillSignedInAs(signIn)) player.set(PlayerState.Registered(updated))
                     case Failure(_) => ()
                 }
         }
+    }
 
     def refreshMatches(): Unit = {
-        run(ApiClient.dueMatches())(due.set)
-        run(ApiClient.activeMatches())(active.set)
-        run(ApiClient.completedMatches())(completed.set)
-        run(ApiClient.acceptances())(acceptances.set)
-        run(ApiClient.results())(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
+        load(ApiClient.dueMatches())(due.set)
+        load(ApiClient.activeMatches())(active.set)
+        load(ApiClient.completedMatches())(completed.set)
+        load(ApiClient.acceptances())(acceptances.set)
+        load(ApiClient.results())(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
     }
 
     /** The same as `run`, but handing back a `Future` that says when the request has settled.
@@ -336,12 +354,19 @@ object Store {
       * and the result is always a success, because the only caller is a section waiting to stop showing that it is
       * reloading. A failure there is not a second thing to handle; it is a banner that has already been raised.
       */
-    private def reload[A](action: Future[A])(onSuccess: A => Unit): Future[Unit] =
+    private def reload[A](action: Future[A])(onSuccess: A => Unit): Future[Unit] = {
+        val signIn = currentSignIn
+
         action.transform { outcome =>
-            try settle(outcome)(onSuccess)
+            // Dropped rather than committed when the session that asked has ended, as in `load`. The
+            // `Future` still completes: the section that is waiting to stop showing itself as
+            // reloading has been unmounted by the sign-out, but it must not be left hanging if it has
+            // not.
+            try { if (stillSignedInAs(signIn)) settle(outcome)(onSuccess) }
             catch { case t: Throwable => report(t) }
             Success(())
         }
+    }
 
     /** One list at a time, for the refresh button each section carries.
       *
@@ -367,12 +392,12 @@ object Store {
     def reloadChallenges(gameId: GameId): Future[Unit] =
         reload(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))
 
-    def refreshGames(): Unit = run(ApiClient.games(activeOnly = true))(games.set)
+    def refreshGames(): Unit = load(ApiClient.games(activeOnly = true))(games.set)
 
     def refreshChallenges(gameId: GameId): Unit =
-        run(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))
+        load(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))
 
     def refreshCharacters(gameId: GameId): Unit =
-        run(ApiClient.characters(gameId))(list => charactersByGame.update(_.updated(gameId, list)))
+        load(ApiClient.characters(gameId))(list => charactersByGame.update(_.updated(gameId, list)))
 
 }
