@@ -4,56 +4,61 @@ import java.time.{Instant, ZoneOffset}
 import java.time.format.DateTimeFormatter
 import com.vivi.matchmaker.model.Player
 
-/** The few things every notification says the same way.
+/** The few things every notification puts together the same way.
   *
-  * Deliberately small. What each mail says is written out in its own template, because prose shared between two
-  * notifications ends up saying neither of them well — but a deadline rendered one way in one mail and another way in
-  * the next is not style, it is a mistake, and so is a link that leads somewhere slightly different.
+  * None of the words are here — they are in `mail/messages.properties`, and this asks `MailTemplates` for them. What is
+  * here is the handful of decisions about *which* words: whether there is a game to link to, whether the challenger
+  * wrote a description, how many names are in a list. Those are the things a properties file deliberately cannot
+  * decide.
   */
 object MailText {
 
     /** One notification, laid out: who it is to, what it has to say, and where to go about it.
       *
-      * Every mail matchmaker sends has this shape, which is the argument for it being written once. It is also very
-      * little: a greeting, a blank line, whatever the template wrote, and the links. That is deliberate — these are
-      * plain-text mails whose every line is a fact, so the layout is not where the thinking is, and a template that
-      * wanted a different one would be fighting this rather than using it.
-      *
-      * The trailing newline matters more than it looks: a body that ends without one is a last line some clients render
-      * against the following chrome.
+      * Every mail matchmaker sends has this shape, which is the argument for assembling it once. It is also very little
+      * — a greeting, a blank line, whatever the template wrote, and the links — because these are plain-text mails
+      * whose every line is a fact, so the layout is not where the thinking is.
       */
     def letter(recipient: Player, body: String, uiBaseUrl: String, playUrl: Option[String] = None): String =
-        s"""Hello ${recipient.nickname},
-         |
-         |$body
-         |
-         |${links(uiBaseUrl, playUrl)}
-         |""".stripMargin
+        MailTemplates.render(
+          "mail.letter",
+          "nickname" -> recipient.nickname,
+          "body" -> body,
+          "links" -> links(uiBaseUrl, playUrl)
+        )
 
     /** To the minute and stamped UTC, matching how the UI shows every other time: a deadline quoted to the second
       * invites a precision the engine's clock does not promise, and one quoted with no zone at all is read in whichever
       * zone the reader assumes.
+      *
+      * A format rather than a phrase, which is why it is here and not in the properties file.
       */
     def at(instant: Instant): String =
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneOffset.UTC).format(instant) + " UTC"
 
-    /** Where to go. The engine's own link first when there is one: it is where the game is actually played, and the
-      * home screen is a list this match is one row of. Both, because the engine's link is not matchmaker's to guarantee
-      * and a player who cannot use it still has somewhere to go.
-      */
+    /** Where to go: both links when the engine gave one, and matchmaker's alone when it did not. */
     def links(uiBaseUrl: String, playUrl: Option[String]): String =
-        playUrl.fold(s"Open matchmaker: $uiBaseUrl")(url => s"Play: $url\nOpen matchmaker: $uiBaseUrl")
+        playUrl.fold(MailTemplates.render("mail.links", "uiBaseUrl" -> uiBaseUrl))(url =>
+            MailTemplates.render("mail.links.play", "playUrl" -> url, "uiBaseUrl" -> uiBaseUrl)
+        )
 
-    /** The challenger's own words, when they wrote any: that is what a player recognises their challenge by, and a
-      * challenge with an empty description must not produce a mail quoting nothing.
+    /** The challenger's own words, when they wrote any: that is what a player recognises their challenge by.
+      *
+      * Empty when there are none, which is how the clause disappears from the sentence it sits inside — a challenge
+      * with no description must not produce a mail quoting nothing. The space in front of it belongs to the clause and
+      * is in the properties file with it.
       */
-    def described(description: String): Option[String] =
-        Some(description.trim).filter(_.nonEmpty).map(text => s"\"$text\"")
+    def quoted(description: String): String =
+        Some(description.trim)
+            .filter(_.nonEmpty)
+            .fold("")(text => MailTemplates.render("mail.quoted", "description" -> text))
 
-    /** A list of names as a sentence: "you", "you and Ada", "you, Ada and Grace". */
+    /** A list of names as a sentence: "Ada", "Ada and Grace", "Ada, Alan and Grace". */
     def and(names: Seq[String]): String = names.toList match {
-        case Nil           => ""
-        case single :: Nil => single
-        case many          => s"${many.init.mkString(", ")} and ${many.last}"
+        case Nil                    => ""
+        case single :: Nil          => single
+        case first :: second :: Nil => MailTemplates.render("mail.list.two", "first" -> first, "second" -> second)
+        case many =>
+            MailTemplates.render("mail.list.many", "others" -> many.init.mkString(", "), "last" -> many.last)
     }
 }

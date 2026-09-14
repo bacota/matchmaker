@@ -3,16 +3,18 @@ package com.vivi.matchmaker.notify
 import java.time.Instant
 import com.vivi.matchmaker.model.NotificationType
 
-/** How a match came to an end, in the words the players are told it in.
+/** How a match came to an end.
   *
   * Three cases rather than a boolean, because a match ends in three quite different ways and the difference is the
   * whole content of the mail: the game finished, its creator called it off, or somebody's clock ran out.
+  *
+  * Each names the template that says so rather than carrying the sentence itself: what a player is told lives in
+  * `mail/messages.properties`, like every other word matchmaker mails.
   */
-enum MatchEnding(val summary: String) {
-    case Finished extends MatchEnding("The game is over.")
-    case Cancelled extends MatchEnding("Its creator has called it off. The game board itself stays open.")
-    case Forfeited
-        extends MatchEnding("A turn ran out of time, so the match ended on a forfeit — see the result for who won.")
+enum MatchEnding(val template: String) {
+    case Finished extends MatchEnding("mail.match.ended.finished")
+    case Cancelled extends MatchEnding("mail.match.ended.cancelled")
+    case Forfeited extends MatchEnding("mail.match.ended.forfeited")
 }
 
 /** What has just happened in a match, for everyone in it.
@@ -70,32 +72,41 @@ object MatchMail extends NotificationMail[MatchNews] {
      * now has to answer it. */
     protected def lines(kind: NotificationType, news: MatchNews): Option[(String, String)] = {
         val name = news.gameName
-        val which =
-            MailText.described(news.description).fold(s"your $name match")(quoted => s"your $name match $quoted")
+        // How every mail after the first refers back to the match: the challenger's own description
+        // when there is one, which is what a player recognises it by.
+        val quoted = MailText.quoted(news.description)
+        val which = MailTemplates.render("mail.match.which", "game" -> name, "quoted" -> quoted)
 
         kind match {
             // The mail that introduces a match: what started, who is in it, whether the recipient is
-            // the one everybody is waiting for, and by when. Every other mail here can assume the
-            // player knows what the match is, because this one told them.
+            // the one everybody is waiting for, and by when.
             case NotificationType.MatchStarted =>
+                val opening =
+                    if (quoted.isEmpty) MailTemplates.render("mail.match.started.opening", "game" -> name)
+                    else
+                        MailTemplates
+                            .render("mail.match.started.opening.described", "game" -> name, "quoted" -> quoted)
+
                 val opponents =
-                    if (news.others.isEmpty) "You are the only player."
-                    else s"Playing with you: ${news.others.mkString(", ")}."
+                    if (news.others.isEmpty) MailTemplates.render("mail.match.started.alone")
+                    else MailTemplates.render("mail.match.started.opponents", "others" -> news.others.mkString(", "))
 
                 val turn =
-                    if (news.yourTurn)
-                        news.due.fold("It is your turn.")(by =>
-                            s"It is your turn, and it is due by ${MailText.at(by)}."
+                    if (!news.yourTurn) MailTemplates.render("mail.match.started.turn.later")
+                    else
+                        news.due.fold(MailTemplates.render("mail.match.started.turn.now"))(by =>
+                            MailTemplates.render("mail.match.started.turn.due", "due" -> MailText.at(by))
                         )
-                    else "You will be told when it is your turn."
 
                 Some(
                   (
-                    s"Your $name match has started",
-                    s"""${started(news)}
-                     |
-                     |$opponents
-                     |$turn""".stripMargin
+                    MailTemplates.render("mail.match.started.subject", "game" -> name),
+                    MailTemplates.render(
+                      "mail.match.started.body",
+                      "opening" -> opening,
+                      "opponents" -> opponents,
+                      "turn" -> turn
+                    )
                   )
                 )
 
@@ -103,41 +114,60 @@ object MatchMail extends NotificationMail[MatchNews] {
             // else's move: it says who moved and who is holding things up now, which between them
             // are the only two facts a spectator of their own match can act on.
             case NotificationType.TurnTaken =>
-                val moved = news.mover.fold("A turn has been taken")(who => s"$who has taken a turn")
-                val waiting =
-                    if (news.nextUp.isEmpty) "Nobody is listed as being up next."
-                    else s"It is now ${MailText.and(news.nextUp)}'s turn."
-                Some(
-                  (s"${news.mover.getOrElse("Someone")} has moved in your $name match", s"$moved in $which.\n$waiting")
-                )
+                val moved = news.mover.fold(
+                  MailTemplates.render("mail.match.turn.moved.unknown", "which" -> which)
+                )(who => MailTemplates.render("mail.match.turn.moved", "mover" -> who, "which" -> which))
 
-            // The one notification in the whole set that is asking the player to do something, so it
-            // says the deadline if there is one and leads with the link to the board.
-            case NotificationType.YourTurn =>
-                val deadline = news.due.fold("")(by => s" It is due by ${MailText.at(by)}.")
-                val moved = news.mover.fold("")(who => s"$who has moved, and ")
+                val next =
+                    if (news.nextUp.isEmpty) MailTemplates.render("mail.match.turn.next.unknown")
+                    else MailTemplates.render("mail.match.turn.next", "next" -> MailText.and(news.nextUp))
+
                 Some(
                   (
-                    s"It is your turn in your $name match",
-                    s"${moved}it is your turn in $which.$deadline"
+                    MailTemplates.render(
+                      "mail.match.turn.subject",
+                      "mover" -> news.mover.getOrElse(MailTemplates.render("mail.match.turn.mover.unknown")),
+                      "game" -> name
+                    ),
+                    MailTemplates.render("mail.match.turn.body", "moved" -> moved, "next" -> next)
                   )
                 )
 
+            // The one notification in the whole set that asks the player to do something, so it says
+            // the deadline if there is one.
+            case NotificationType.YourTurn =>
+                val deadline =
+                    news.due.fold("")(by =>
+                        MailTemplates.render("mail.match.yourTurn.deadline", "due" -> MailText.at(by))
+                    )
+
+                val body = news.mover.fold(
+                  MailTemplates.render("mail.match.yourTurn.body", "which" -> which, "deadline" -> deadline)
+                )(who =>
+                    MailTemplates.render(
+                      "mail.match.yourTurn.body.moved",
+                      "mover" -> who,
+                      "which" -> which,
+                      "deadline" -> deadline
+                    )
+                )
+
+                Some((MailTemplates.render("mail.match.yourTurn.subject", "game" -> name), body))
+
             case NotificationType.MatchEnded =>
                 val how = news.ending.getOrElse(MatchEnding.Finished)
-                Some((s"Your $name match is over", s"$which has ended.\n\n${how.summary}"))
+                Some(
+                  (
+                    MailTemplates.render("mail.match.ended.subject", "game" -> name),
+                    MailTemplates.render(
+                      "mail.match.ended.body",
+                      "which" -> which,
+                      "how" -> MailTemplates.render(how.template)
+                    )
+                  )
+                )
 
             case _ => None
         }
     }
-
-    /* The challenger's own words when they wrote any, since that is what a player recognises their
-     * challenge by, and the game's name alone when they did not. Its own phrasing rather than the
-     * `which` above, because this sentence announces the match where the others refer back to it. */
-    private def started(news: MatchNews): String =
-        MailText
-            .described(news.description)
-            .fold(s"Your match of ${news.gameName} has started.")(quoted =>
-                s"Your match of ${news.gameName} has started: $quoted."
-            )
 }

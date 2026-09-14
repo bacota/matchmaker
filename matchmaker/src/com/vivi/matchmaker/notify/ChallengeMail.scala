@@ -46,25 +46,49 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
      * at. `NotificationMail.playUrl` defaults to none, which is why it is not overridden here. */
     protected def lines(kind: NotificationType, news: ChallengeNews): Option[(String, String)] = {
         val name = news.gameName
-        val what = MailText.described(news.description).fold("")(quoted => s" $quoted")
+        // Empty when the challenger wrote no description, which is how the clause disappears from
+        // whichever sentence it sits inside.
+        val quoted = MailText.quoted(news.description)
+        // The part they took, for an acceptance; a withdrawal has no row left to read one from.
+        val role = news.role.fold("")(taken => MailTemplates.render("mail.role", "role" -> taken))
+
+        // What the challenge is still waiting for, named rather than counted. The mail that says the
+        // roster is full says it in its own words, so this is only the other half.
+        val roster =
+            if (news.waitingFor.isEmpty) MailTemplates.render("mail.challenge.roster.full")
+            else MailTemplates.render("mail.challenge.roster.waiting", "roles" -> MailText.and(news.waitingFor))
 
         kind match {
             // To the challenger, about somebody else's decision. The roster line matters most here:
             // they are the one who can start it, so what they need to know is how far off that is.
             case NotificationType.ChallengeAccepted =>
-                val event =
-                    if (news.joined) s"${news.actor} has accepted your $name challenge$what${as(news)}."
-                    else s"${news.actor} has backed out of your $name challenge$what."
-                Some((s"${news.actor} has ${verb(news.joined)} your $name challenge", s"$event\n${roster(news)}"))
+                val prefix = if (news.joined) "mail.challenge.accepted" else "mail.challenge.withdrawn"
+                Some(
+                  (
+                    MailTemplates.render(s"$prefix.subject", "actor" -> news.actor, "game" -> name),
+                    MailTemplates.render(
+                      s"$prefix.body",
+                      "actor" -> news.actor,
+                      "game" -> name,
+                      "quoted" -> quoted,
+                      "role" -> role,
+                      "roster" -> roster
+                    )
+                  )
+                )
 
             // Also to the challenger, and the one mail here that asks them to do something.
             case NotificationType.ChallengeReady =>
                 Some(
                   (
-                    s"Your $name challenge is ready to start",
-                    s"""${news.actor} has accepted your $name challenge$what${as(news)}.
-                     |
-                     |Every role is now taken, so you can start the match whenever you like.""".stripMargin
+                    MailTemplates.render("mail.challenge.ready.subject", "game" -> name),
+                    MailTemplates.render(
+                      "mail.challenge.ready.body",
+                      "actor" -> news.actor,
+                      "game" -> name,
+                      "quoted" -> quoted,
+                      "role" -> role
+                    )
                   )
                 )
 
@@ -72,15 +96,26 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
             // anything, so this says who they will be playing with and what it is still waiting for.
             case NotificationType.AcceptanceChanged =>
                 val event =
-                    if (news.joined) s"${news.actor} has also accepted it${as(news)}."
-                    else s"${news.actor} has backed out of it."
+                    if (news.joined)
+                        MailTemplates
+                            .render("mail.challenge.changed.accepted.event", "actor" -> news.actor, "role" -> role)
+                    else MailTemplates.render("mail.challenge.changed.withdrawn.event", "actor" -> news.actor)
+
+                val subject =
+                    if (news.joined) "mail.challenge.changed.accepted.subject"
+                    else "mail.challenge.changed.withdrawn.subject"
+
                 Some(
                   (
-                    s"${news.actor} has ${verb(news.joined)} a $name challenge you accepted",
-                    s"""You have accepted ${news.challenger}'s $name challenge$what.
-                     |
-                     |$event
-                     |${roster(news)}""".stripMargin
+                    MailTemplates.render(subject, "actor" -> news.actor, "game" -> name),
+                    MailTemplates.render(
+                      "mail.challenge.changed.body",
+                      "challenger" -> news.challenger,
+                      "game" -> name,
+                      "quoted" -> quoted,
+                      "event" -> event,
+                      "roster" -> roster
+                    )
                   )
                 )
 
@@ -89,26 +124,17 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
             case NotificationType.AcceptedChallengeReady =>
                 Some(
                   (
-                    s"A $name challenge you accepted is ready to start",
-                    s"""Every role in ${news.challenger}'s $name challenge$what is now taken.
-                     |
-                     |${news.challenger} offered it, so it is up to them to start the match.""".stripMargin
+                    MailTemplates.render("mail.challenge.acceptedReady.subject", "game" -> name),
+                    MailTemplates.render(
+                      "mail.challenge.acceptedReady.body",
+                      "challenger" -> news.challenger,
+                      "game" -> name,
+                      "quoted" -> quoted
+                    )
                   )
                 )
 
             case _ => None
         }
     }
-
-    private def verb(joined: Boolean): String = if (joined) "accepted" else "backed out of"
-
-    /* The role somebody took, when the news is that they took one. */
-    private def as(news: ChallengeNews): String = news.role.fold("")(role => s", as $role")
-
-    /* What the challenge is still waiting for, named rather than counted: "waiting for a defender"
-     * is something a player can act on, where "one role left" is something they have to go and look
-     * up. Nothing when the roster is full, because the mail that says so says it in its own words. */
-    private def roster(news: ChallengeNews): String =
-        if (news.waitingFor.isEmpty) "Every role is now taken."
-        else s"Still waiting for: ${MailText.and(news.waitingFor)}."
 }
