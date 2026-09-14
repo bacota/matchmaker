@@ -436,6 +436,15 @@ label.field > select {
   color: #1a1a1a;
 }
 
+/* The line under a field's caption that says what the question means.
+   Inside the label, so it is read out with the control rather than left beside it, which is why it
+   is a span and needs telling to be a line of its own. */
+label.field > .hint {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.85rem;
+}
+
 /* A checkbox and its caption belong on one line: the rule above would otherwise stretch the
    box to the card's full width and push the caption onto the next line.
 

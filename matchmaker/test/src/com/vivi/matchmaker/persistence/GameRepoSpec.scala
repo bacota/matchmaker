@@ -47,6 +47,61 @@ class GameRepoSpec extends PropertySuite {
         assertEquals(parameter.values.size, 3)
     }
 
+    /* The eight notify_* columns are bound positionally by one codec, in four statements, so a
+     * column list out of step with `NotificationType.values` would store every answer under the
+     * wrong heading -- and would pass any test that set them all to the same value. Hence eight
+     * different answers, written, read, updated and listed. */
+    test("a game's notification defaults survive create, read, update and list") {
+        val distinct = NotificationDefaults(
+          challengeAccepted = true,
+          challengeReady = false,
+          acceptanceChanged = true,
+          acceptedChallengeReady = false,
+          matchStarted = true,
+          turnTaken = false,
+          yourTurn = true,
+          matchEnded = false
+        )
+        val flipped = NotificationDefaults(
+          challengeAccepted = false,
+          challengeReady = true,
+          acceptanceChanged = false,
+          acceptedChallengeReady = true,
+          matchStarted = false,
+          turnTaken = true,
+          yourTurn = false,
+          matchEnded = true
+        )
+
+        val (created, read, listed, updated) = TestSession.resource
+            .use { session =>
+                val repo = new GameRepo[String](session)
+                for {
+                    created <- repo.create(gameWithFanOut.copy(notifications = distinct))
+                    read <- repo.read(created.gameId)
+                    listed <- repo.list(activeOnly = false).map(_.find(_.gameId == created.gameId))
+                    _ <- repo.update(created.copy(notifications = flipped))
+                    updated <- repo.read(created.gameId)
+                } yield (created, read, listed, updated)
+            }
+            .unsafeRunSync()
+
+        assertEquals(created.notifications, distinct)
+        assertEquals(read.map(_.notifications), Some(distinct))
+        assertEquals(listed.map(_.notifications), Some(distinct))
+        assertEquals(updated.map(_.notifications), Some(flipped))
+    }
+
+    // What V13 gave every game that already existed, and so what a caller that says nothing gets.
+    test("a game created without an opinion is sent everything") {
+        val created = TestSession.resource
+            .use(session => new GameRepo[String](session).create(gameWithFanOut))
+            .unsafeRunSync()
+
+        assertEquals(created.notifications, NotificationDefaults.all(true))
+        assert(NotificationType.values.forall(created.notifications(_)))
+    }
+
     test("list agrees with read for the same game") {
         val (fromRead, fromList) = TestSession.resource
             .use { session =>

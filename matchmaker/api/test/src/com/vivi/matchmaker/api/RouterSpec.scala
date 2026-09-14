@@ -159,6 +159,9 @@ class RouterSpec extends FunSuite {
       ("GET", "/me", "{}"),
       ("PUT", "/me", """{"nickname":"renamed"}"""),
       ("PUT", "/me/email", """{"email":"player@example.com"}"""),
+      ("GET", "/me/notifications", "{}"),
+      ("PUT", "/me/notifications", """{"matchStarted":true,"yourTurn":false}"""),
+      ("PUT", "/me/notifications/games/1", """{"matchStarted":true,"yourTurn":false}"""),
       ("GET", "/me/acceptances", "{}"),
       ("GET", "/me/matches", "{}"),
       ("GET", "/me/matches/due", "{}"),
@@ -179,6 +182,8 @@ class RouterSpec extends FunSuite {
       ("GET", "/games/1/matches/m1", "{}"),
       ("POST", "/games/1/matches/m1/refresh", "{}"),
       ("POST", "/games/1/matches/m1/cancel", "{}"),
+      ("GET", "/games/1/matches/m1/notifications", "{}"),
+      ("PUT", "/games/1/matches/m1/notifications", """{"matchStarted":true,"yourTurn":false}"""),
       (
         "POST",
         "/games/1/matches/m1/moves",
@@ -201,7 +206,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 26)
+        assertEquals(routed.size, 31)
         assertEquals(routed.distinct.size, routed.size)
     }
 

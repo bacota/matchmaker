@@ -275,6 +275,9 @@ object Views {
 
     private def registration: HtmlElement = {
         val nickname = Var("")
+        // As `Account.saveNickname`: this writes into the store, so it only writes if the session
+        // that asked is still the session that is here. See `Store.currentSignIn`.
+        val signIn = Store.currentSignIn
 
         div(
           cls := "card",
@@ -283,9 +286,11 @@ object Views {
           field("Nickname", input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))),
           busyButton("Create Player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
               Store.run(ApiClient.register(nickname.now().trim, Auth.email), busy) { player =>
-                  Store.player.set(Store.PlayerState.Registered(player))
-                  Store.refreshMatches()
-                  Store.refreshGames()
+                  if (Store.stillSignedInAs(signIn)) {
+                      Store.player.set(Store.PlayerState.Registered(player))
+                      Store.refreshMatches()
+                      Store.refreshGames()
+                  }
               }
           }
         )
@@ -712,6 +717,9 @@ object Views {
                     )
                 }
               ),
+          // Nothing to mute about a match that is over, so this goes with Play and Refresh rather
+          // than with the result table.
+          if (summary.completed || summary.cancelled) emptyNode else matchNotifications(summary),
           // Only the creator's, and only while there is still something to call off. The engine is
           // not told — its board stays playable — so the confirmation says what actually happens.
           if (summary.isCreator && !summary.completed && !summary.cancelled)
@@ -725,6 +733,60 @@ object Views {
               }
           else emptyNode
         )
+
+    /** What this player wants to hear about this one match, on the match's own row.
+      *
+      * On the row rather than in the account panel because it is about this match: the player who wants quiet wants it
+      * from the match that has got noisy, and finding it under Account would mean naming the match in a list of forty.
+      *
+      * Fetched when the form is first opened. Every row would otherwise cost a request on every reload of the list, for
+      * a form almost nobody opens — and the preference cannot be shown from what the lists already hold, since a
+      * `MatchSummary` does not carry it.
+      *
+      * The answers live in a `Var` outside the toggle, so closing and reopening the form shows what was being typed
+      * rather than re-fetching over the top of it. Only the "Saved." line is lost, which is a message about something
+      * that has already happened.
+      */
+    private def matchNotifications(summary: MatchSummary): HtmlElement = {
+        val shown = Var(false)
+        val fetched = Var(false)
+        val preferences = Var(NotificationPreferences.unset)
+        val busy = Var(false)
+
+        div(
+          button(
+            tpe := "button",
+            cls := "link",
+            // The button is the form's control, so it says whether the form is open — both in the
+            // label, which is what a sighted user reads, and in the state, which is what is announced.
+            aria.expanded <-- shown.signal,
+            disabled <-- busy.signal,
+            child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
+            child.text <-- shown.signal.map(if (_) "Hide notifications" else "Notifications"),
+            onClick --> { _ =>
+                if (shown.now()) shown.set(false)
+                else if (fetched.now()) shown.set(true)
+                else
+                    Store.run(ApiClient.matchNotifications(summary.gameId, summary.matchId), busy) { current =>
+                        preferences.set(current)
+                        fetched.set(true)
+                        shown.set(true)
+                    }
+            }
+          ),
+          child <-- shown.signal.map {
+              case false => emptyNode
+              case true =>
+                  Notifications.form(
+                    "Notifications for this match",
+                    "These win over your settings for this game and your settings in general. " +
+                        "Anything left on \"Use Default\" falls back to them.",
+                    preferences,
+                    saveLabel = "Save for this match"
+                  )(chosen => ApiClient.updateMatchNotifications(summary.gameId, summary.matchId, chosen))
+          }
+        )
+    }
 
     /** How a finished match ended: every seat, the winner first.
       *
@@ -1064,6 +1126,14 @@ object Views {
         // be — the control does not have to change when the second arrives, only the enum.
         val timeoutAction: Var[TimeoutAction] =
             Var(existing.map(_.timeoutAction).getOrElse(TimeoutAction.Forfeit))
+        // What this game's players are emailed about unless they say otherwise. Held as
+        // preferences rather than as defaults because that is what the controls edit -- an
+        // unanswered question -- and a new game starts with all eight unanswered on purpose:
+        // these are the end of the chain every player's settings fall back to, so they are the
+        // admin's to decide rather than something to inherit from a form's initial state. The
+        // submit button stays disabled until all eight are answered.
+        val notifications: Var[NotificationPreferences] =
+            Var(existing.map(_.notifications.asPreferences).getOrElse(NotificationPreferences.unset))
         // A new game starts with one empty role, because it cannot be created without one, and no
         // parameters, because plenty of games have none. An existing one starts with what it has.
         val roles = Var(existing.map(_.roles.map(draftOf).toList).getOrElse(List(emptyRole)))
@@ -1096,18 +1166,39 @@ object Views {
           ),
           roleEditor(roles),
           parameterEditor(parameters),
+          div(
+            cls := "card",
+            h3("Notifications"),
+            p(
+              cls := "detail",
+              "What this game's players are emailed about unless they choose otherwise. " +
+                  "Every question needs an answer: these are what a player's own settings fall back to."
+            ),
+            // No "Use Default" here, because this is the default: there is nothing below a game
+            // for it to defer to.
+            Notifications.editor(notifications, withDefault = false)
+          ),
           busyButton(
             if (existing.isDefined) "Save Changes" else "Create Game",
-            disabledWhen = name.signal.map(_.trim.isEmpty)
+            disabledWhen = name.signal
+                .combineWith(notifications.signal)
+                .map { case (gameName, chosen) => gameName.trim.isEmpty || chosen.unsaid.nonEmpty }
           ) { busy =>
               val drafted = for {
                   roleModels <- rolesOf(roles.now())
                   parameterModels <- parametersOf(parameters.now())
-              } yield (roleModels, parameterModels)
+                  // The button is disabled while any is unanswered, so this is the same rule said
+                  // where it can be enforced rather than only shown -- and it is what turns eight
+                  // tri-state controls into the eight NOT NULL columns of `game`.
+                  notificationDefaults <- notifications
+                      .now()
+                      .complete
+                      .toRight("Answer every notification question before saving the game.")
+              } yield (roleModels, parameterModels, notificationDefaults)
 
               drafted match {
                   case Left(problem) => Store.error.set(Some(problem))
-                  case Right((roleModels, parameterModels)) =>
+                  case Right((roleModels, parameterModels, notificationDefaults)) =>
                       val game = Game(
                         // Unassigned means create and the server assigns the real id — the same sentinel
                         // the challenge form uses; a real id means update that game.
@@ -1127,7 +1218,8 @@ object Views {
                         // it by hand would invent badly. An edit keeps the one the game already has —
                         // regenerating it would silently lock the game engine out.
                         externalId = existing.map(_.externalId).getOrElse(Pkce.newSecret()),
-                        timeoutAction = timeoutAction.now()
+                        timeoutAction = timeoutAction.now(),
+                        notifications = notificationDefaults
                       )
 
                       Store.run(ApiClient.createGame(game), busy) { saved =>
@@ -1137,6 +1229,7 @@ object Views {
                               url.set("")
                               roles.set(List(emptyRole))
                               parameters.set(Nil)
+                              notifications.set(NotificationPreferences.unset)
                               // Straight to the game that was just created: it is now in the menu, and its own
                               // screen is where anything else is done with it.
                               Store.show(Store.Page.OneGame(saved.gameId))

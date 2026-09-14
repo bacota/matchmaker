@@ -13,6 +13,7 @@ import com.vivi.matchmaker.model.{
     PlayerId,
     TimeLimitKind
 }
+import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.persistence.{MatchRepo, OpenChallengeRepo, PlayerRepo, ResultRepo}
 
 /** Lists a player's matches, and lets the creator of one call it off.
@@ -21,7 +22,11 @@ import com.vivi.matchmaker.persistence.{MatchRepo, OpenChallengeRepo, PlayerRepo
   * authorization rule beyond identifying the caller is needed. [[cancel]] is the exception: it names a match, so it has
   * a rule of its own.
   */
-class MatchService(sessionPool: SessionPool) {
+class MatchService(
+    sessionPool: SessionPool,
+    /* Silent by default, as in the other services that send mail: see `Notifications`. */
+    notifications: Notifications = Notifications.disabled
+) {
 
     /** Matches in which it is the caller's turn. */
     def due(callerExternalId: String): IO[List[MatchSummary]] =
@@ -166,36 +171,51 @@ class MatchService(sessionPool: SessionPool) {
             val matchRepo = new MatchRepo(session)
             val challengeRepo = new OpenChallengeRepo(session)
 
-            session.transaction.use { _ =>
-                for {
-                    caller <- resolveCaller(session, callerExternalId)
-                    existing <- matchRepo.readForUpdate(gameId, matchId).flatMap {
-                        case Some(m) => IO.pure(m)
-                        case None =>
-                            IO.raiseError(NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}"))
-                    }
-                    creator <- challengeRepo.challengerOf(gameId, existing.challengeId).flatMap {
-                        case Some(playerId) => IO.pure(playerId)
-                        // The foreign key makes this unreachable; it is a NotFoundError rather than a crash
-                        // because a match whose challenge has gone is a broken row, not a bad request.
-                        case None =>
-                            IO.raiseError(
-                              NotFoundError(s"match ${matchId.value} has no challenge ${existing.challengeId.value}")
-                            )
-                    }
-                    _ <- IO.raiseUnless(creator == caller.playerId)(
-                      UnauthorizedError(
-                        s"caller '$callerExternalId' did not create match ${matchId.value} and may not cancel it"
-                      )
-                    )
-                    _ <- IO.raiseWhen(existing.completed)(
-                      ConflictError(s"match ${matchId.value} is completed and can no longer be cancelled")
-                    )
-                    _ <- IO.raiseWhen(existing.cancelled)(ConflictError(s"match ${matchId.value} is already cancelled"))
-                    cancelled = existing.copy(cancelled = true)
-                    _ <- matchRepo.update(cancelled)
-                } yield cancelled
-            }
+            session.transaction
+                .use { _ =>
+                    for {
+                        caller <- resolveCaller(session, callerExternalId)
+                        existing <- matchRepo.readForUpdate(gameId, matchId).flatMap {
+                            case Some(m) => IO.pure(m)
+                            case None =>
+                                IO.raiseError(
+                                  NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
+                                )
+                        }
+                        creator <- challengeRepo.challengerOf(gameId, existing.challengeId).flatMap {
+                            case Some(playerId) => IO.pure(playerId)
+                            // The foreign key makes this unreachable; it is a NotFoundError rather than a crash
+                            // because a match whose challenge has gone is a broken row, not a bad request.
+                            case None =>
+                                IO.raiseError(
+                                  NotFoundError(
+                                    s"match ${matchId.value} has no challenge ${existing.challengeId.value}"
+                                  )
+                                )
+                        }
+                        _ <- IO.raiseUnless(creator == caller.playerId)(
+                          UnauthorizedError(
+                            s"caller '$callerExternalId' did not create match ${matchId.value} and may not cancel it"
+                          )
+                        )
+                        _ <- IO.raiseWhen(existing.completed)(
+                          ConflictError(s"match ${matchId.value} is completed and can no longer be cancelled")
+                        )
+                        _ <- IO.raiseWhen(existing.cancelled)(
+                          ConflictError(s"match ${matchId.value} is already cancelled")
+                        )
+                        cancelled = existing.copy(cancelled = true)
+                        _ <- matchRepo.update(cancelled)
+                    } yield (cancelled, caller)
+                }
+                .flatMap { (cancelled, caller) =>
+                    /* After the commit and outside the lock, and unable to fail the cancel -- the same
+                     * terms every notification in this codebase is sent on. Everyone in the match except
+                     * the creator, who called it off and is looking at the answer. */
+                    notifications
+                        .matchEnded(session, cancelled, MatchEnding.Cancelled, except = Some(caller.playerId))
+                        .as(cancelled)
+                }
         }
 
     private def forCaller(

@@ -69,6 +69,24 @@ object Router {
             case ("PUT", "me" :: "email" :: Nil) =>
                 body[Json.EmailRequest](request).flatMap(r => ok(services.players.updateEmail(caller, r.email)))
 
+            // What the caller wants to be told about, and the two levels of it that are theirs alone:
+            // everywhere, and in one game. The per-match level is on the match's own route below,
+            // because that is where it is set from and what it is about.
+            case ("GET", "me" :: "notifications" :: Nil) =>
+                ok(services.notifications.mine(caller))
+
+            case ("PUT", "me" :: "notifications" :: Nil) =>
+                body[NotificationPreferences](request).flatMap(p =>
+                    noContent(services.notifications.updateMine(caller, p))
+                )
+
+            case ("PUT", "me" :: "notifications" :: "games" :: gameId :: Nil) =>
+                withGameId(gameId) { id =>
+                    body[NotificationPreferences](request).flatMap(p =>
+                        noContent(services.notifications.updateForGame(caller, id, p))
+                    )
+                }
+
             case ("GET", "me" :: "acceptances" :: Nil) =>
                 ok(services.acceptances.mine(caller))
 
@@ -183,6 +201,19 @@ object Router {
             // from — which is why the challenge outlives the start.
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "cancel" :: Nil) =>
                 withGameId(gameId)(gid => ok(services.matches.cancel(gid, MatchId(matchId), caller)))
+
+            // Muting one match, which is the most specific thing a player can say about notifications
+            // and the only one that is about a single thing they are playing. Player-authorized like
+            // every other match route; the service refuses a caller with no seat in it.
+            case ("GET", "games" :: gameId :: "matches" :: matchId :: "notifications" :: Nil) =>
+                withGameId(gameId)(gid => ok(services.notifications.forMatch(caller, gid, MatchId(matchId))))
+
+            case ("PUT", "games" :: gameId :: "matches" :: matchId :: "notifications" :: Nil) =>
+                withGameId(gameId) { gid =>
+                    body[NotificationPreferences](request).flatMap(p =>
+                        noContent(services.notifications.updateForMatch(caller, gid, MatchId(matchId), p))
+                    )
+                }
 
             // The game engine's two callbacks. Authorized on behalf of the game rather than a player:
             // X-External-Id carries the game's shared secret, as on the character-state route above.
