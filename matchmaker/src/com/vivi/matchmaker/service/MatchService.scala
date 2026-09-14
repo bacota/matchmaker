@@ -13,7 +13,7 @@ import com.vivi.matchmaker.model.{
     PlayerId,
     TimeLimitKind
 }
-import com.vivi.matchmaker.notify.{MailSettings, MatchEnding, NotificationSender, Notifier}
+import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.persistence.{MatchRepo, OpenChallengeRepo, PlayerRepo, ResultRepo}
 
 /** Lists a player's matches, and lets the creator of one call it off.
@@ -24,11 +24,9 @@ import com.vivi.matchmaker.persistence.{MatchRepo, OpenChallengeRepo, PlayerRepo
   */
 class MatchService(
     sessionPool: SessionPool,
-    /* Silent by default, as in the other services that send mail: see `NotificationSender`. */
-    sender: NotificationSender = new NotificationSender(Notifier.disabled, MailSettings.none)
+    /* Silent by default, as in the other services that send mail: see `Notifications`. */
+    notifications: Notifications = Notifications.disabled
 ) {
-
-    private val notifications = new MatchNotifications(sender)
 
     /** Matches in which it is the caller's turn. */
     def due(callerExternalId: String): IO[List[MatchSummary]] =
@@ -215,7 +213,7 @@ class MatchService(
                      * terms every notification in this codebase is sent on. Everyone in the match except
                      * the creator, who called it off and is looking at the answer. */
                     notifications
-                        .ended(session, cancelled, MatchEnding.Cancelled, except = Some(caller.playerId))
+                        .matchEnded(session, cancelled, MatchEnding.Cancelled, except = Some(caller.playerId))
                         .as(cancelled)
                 }
         }

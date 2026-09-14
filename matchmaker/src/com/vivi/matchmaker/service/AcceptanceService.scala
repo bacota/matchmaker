@@ -3,7 +3,7 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import cats.syntax.all._
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.notify.{MailSettings, NotificationSender, Notifier}
+import com.vivi.matchmaker.notify.Notifications
 import com.vivi.matchmaker.persistence.{AcceptanceRepo, OpenChallengeRepo, PlayerRepo}
 
 /** Lists and deletes acceptances. `delete` is authorized by `callerExternalId` matching either the player who made the
@@ -13,13 +13,9 @@ import com.vivi.matchmaker.persistence.{AcceptanceRepo, OpenChallengeRepo, Playe
   */
 class AcceptanceService(
     sessionPool: SessionPool,
-    /* Silent by default, as in `OpenChallengeService`: an environment with no queue and no sender
-     * sends nothing, and a spec with no opinion about mail constructs this exactly as it did before
-     * notifications existed. */
-    sender: NotificationSender = new NotificationSender(Notifier.disabled, MailSettings.none)
+    /* Silent by default, as in `OpenChallengeService`, and for the same reasons. */
+    notifications: Notifications = Notifications.disabled
 ) {
-
-    private val notifications = new ChallengeNotifications(sender)
 
     /** Every acceptance the caller has outstanding.
       *
@@ -91,23 +87,14 @@ class AcceptanceService(
             }
 
             /* After the commit, outside the challenge's lock, and unable to fail the withdrawal --
-             * the same three terms as `OpenChallengeService.accept`; see `NotificationSender`.
+             * the same three terms as `OpenChallengeService.accept`; see `Notifications`.
              *
-             * `except` is the caller rather than the acceptor, because these are not always the same
-             * player: a challenger may remove somebody else's acceptance, and the news then belongs to
-             * everyone except the challenger who did it. */
+             * Who did it is not always whose seat it was: a challenger may remove somebody else's
+             * acceptance. The service knows which, because authorization here turns on exactly that
+             * comparison; what `Notifications` does with it is its own business. */
             withdrawn.flatMap { (acceptor, challenger) =>
-                val actedFor =
-                    if (callerExternalId == challenger.externalId) Some(challenger.playerId)
-                    else Some(acceptor.playerId)
-                notifications.rosterChanged(
-                  session,
-                  gameId,
-                  challengeId,
-                  actor = acceptor,
-                  joined = false,
-                  except = actedFor
-                )
+                val removedBy = if (callerExternalId == challenger.externalId) challenger else acceptor
+                notifications.acceptanceWithdrawn(session, gameId, challengeId, acceptor, removedBy)
             }
         }
 }
