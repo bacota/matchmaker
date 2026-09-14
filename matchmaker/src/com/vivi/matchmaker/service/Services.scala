@@ -2,7 +2,7 @@ package com.vivi.matchmaker.service
 
 import cats.effect.{IO, Resource}
 import com.vivi.matchmaker.engine.{GameEngineClient, HttpGameEngineClient}
-import com.vivi.matchmaker.notify.{MailSettings, NotificationSender, Notifier, SqsNotifier}
+import com.vivi.matchmaker.notify.{MailSettings, Notifications, Notifier, SqsNotifier}
 import com.vivi.matchmaker.persistence.TextCodec
 
 /** Every service, sharing one connection pool.
@@ -55,19 +55,22 @@ object Services {
         callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
         notifier: Notifier = SqsNotifier.fromEnvironment(),
         mail: MailSettings = MailSettings.fromEnvironment()
-    )(using codec: TextCodec[T]): Services[T] =
+    )(using codec: TextCodec[T]): Services[T] = {
+        val notifications = new Notifications(notifier, mail)
+
         Services(
           registration = new RegistrationService(pool),
           players = new PlayerService(pool),
           games = new GameService[T](pool),
           characters = new CharacterService[T](pool),
-          // Four services send mail, because four services are where the eight kinds of thing worth
-          // an email happen. Each gets the same `NotificationSender` over the same queue and the
-          // same settings -- the terms it enforces are the same wherever a notification comes from.
-          challenges = new OpenChallengeService[T](pool, new NotificationSender(notifier, mail)),
-          acceptances = new AcceptanceService(pool, new NotificationSender(notifier, mail)),
-          matches = new MatchService(pool, new NotificationSender(notifier, mail)),
-          engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifier, mail),
+          // One `Notifications` for the four services that cause something worth an email. One
+          // rather than one each, because who is told what does not depend on which service the
+          // event came from -- that is the whole point of it being a class of its own.
+          challenges = new OpenChallengeService[T](pool, notifications),
+          acceptances = new AcceptanceService(pool, notifications),
+          matches = new MatchService(pool, notifications),
+          engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications),
           notifications = new NotificationService(pool)
         )
+    }
 }

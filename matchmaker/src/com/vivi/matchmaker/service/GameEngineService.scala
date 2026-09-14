@@ -6,7 +6,7 @@ import scala.concurrent.duration._
 import java.time.Instant
 import java.util.UUID
 import com.vivi.matchmaker.engine._
-import com.vivi.matchmaker.notify.{MailSettings, MatchEnding, MatchMail, MatchNews, NotificationSender, Notifier}
+import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence._
 
@@ -30,16 +30,11 @@ class GameEngineService[T](
     sessionPool: SessionPool,
     engine: GameEngineClient,
     callbackBaseUrl: Option[String] = None,
-    notifier: Notifier = Notifier.disabled,
-    mail: MailSettings = MailSettings.none
+    /* Four things that happen here are worth an email -- a match starting, a move, a result, a
+     * forfeit -- and which players hear about any of them is `Notifications`' business rather than
+     * this service's. Silent by default, as in the other services that send mail. */
+    notifications: Notifications = Notifications.disabled
 )(using codec: TextCodec[T]) {
-
-    /* Every notification this service sends goes through these two: the terms are the same wherever
-     * a notification comes from (see `NotificationSender`), and three of the four events here -- a
-     * move, a result, a forfeit -- are telling the players of a match the same kinds of thing that
-     * `MatchService.cancel` tells them. */
-    private val sender = new NotificationSender(notifier, mail)
-    private val notifications = new MatchNotifications(sender)
 
     /** Turns a challenge into a match: creates the game in the engine, and writes the match and one participant per
       * acceptance.
@@ -187,76 +182,11 @@ class GameEngineService[T](
                 //
                 // After `applyEngineStatus`, not before: that is what writes whose turn it is, and "it is
                 // your turn" is most of what the mail has to say.
-                // Swallowed and logged by `NotificationSender`, which is where the terms every
-                // notification is sent on are written down.
-                _ <- notifyStarted(session, game, challenge, started)
+                // Everyone in the match but the challenger, who pressed Start and is reading the
+                // answer. Swallowed and logged by `Notifications`, where the terms every notification
+                // is sent on are written down.
+                _ <- notifications.matchStarted(session, started, challenge.challenger)
             } yield started
-        }
-
-    /* Tells everyone in a new match that it has begun.
-     *
-     * Skipped entirely unless the environment has both a sender and a link to send people to (see
-     * `MailSettings`), which is what keeps local runs and tests silent without a special case.
-     *
-     * Two rules about who is written to:
-     *
-     *   - not the challenger. They are the one person who knows: they pressed Start, and are
-     *     looking at the answer.
-     *   - not a player with no address. `player.email` is nullable precisely so that this question
-     *     has an answer; `NotificationMail.compose` is where the skipping happens, for every kind at once.
-     *   - not a player who has said they do not want to hear about a match starting. That is four
-     *     levels of preference deep (see `NotificationPolicy`), but only one extra query: the seats
-     *     of a match, their players' settings for this game, and their settings in general all come
-     *     back from `levelsForMatch`, and the game's own defaults are on the `Game` already in hand.
-     *
-     * The reads are outside any transaction: the match is written and committed by now, and this is
-     * reporting it rather than deciding anything. */
-    private def notifyStarted(
-        session: skunk.Session[IO],
-        game: Game,
-        challenge: OpenChallenge,
-        started: Match
-    ): IO[Unit] =
-        sender.dispatch(s"start of match ${started.matchId.value}") { (from, uiBaseUrl) =>
-            val playerRepo = new PlayerRepo(session)
-            val participantRepo = new ParticipantRepo(session)
-            val notificationRepo = new NotificationRepo(session)
-            for {
-                seats <- participantRepo.listForMatch(started.gameId, started.matchId)
-                players <- playerRepo.listForMatch(started.gameId, started.matchId)
-                // In seat order like the other two, so it is keyed by participant id rather than zipped:
-                // it is the one of the three that is read for a different reason, and a silent
-                // misalignment here would send a player somebody else's answer about being written to.
-                levels <- notificationRepo.levelsForMatch(started.gameId, started.matchId, game.notifications)
-                wanted = levels.collect {
-                    case seat if NotificationPolicy.wants(NotificationType.MatchStarted, seat.levels) =>
-                        seat.participantId
-                }.toSet
-                // Both lists are in seat order, so they line up; zipped rather than joined on player id,
-                // since one player may hold two seats and a map would lose one of them.
-                roster = seats.map((participant, _, _) => participant).zip(players)
-                messages = roster.flatMap { (participant, player) =>
-                    if (player.playerId == challenge.challenger) None
-                    else if (!wanted.contains(participant.participantId)) None
-                    else
-                        MatchMail.compose(
-                          sender = from,
-                          uiBaseUrl = uiBaseUrl,
-                          recipient = player,
-                          kind = NotificationType.MatchStarted,
-                          news = MatchNews(
-                            gameName = game.name,
-                            description = started.description,
-                            due = participant.due,
-                            others = roster.collect {
-                                case (_, other) if other.playerId != player.playerId => other.nickname
-                            },
-                            yourTurn = participant.pending,
-                            playUrl = started.playUrl
-                          )
-                        )
-                }
-            } yield messages
         }
 
     /* Asks the engine how a match stands and writes the answer onto its participants: whose turn
@@ -336,7 +266,7 @@ class GameEngineService[T](
                  * round again. `recordResults` sends the same notification on the ordinary path, and the
                  * two cannot both fire: whichever of them completes the match leaves the other looking at
                  * a match that was already over. */
-                val told = if (endedHere) notifications.ended(session, updated, MatchEnding.Finished) else IO.unit
+                val told = if (endedHere) notifications.matchEnded(session, updated, MatchEnding.Finished) else IO.unit
                 told.as(updated)
             }
     }
@@ -548,7 +478,7 @@ class GameEngineService[T](
                 }
                 .flatMap { (played, ended) =>
                     // Everyone in it, because nobody in it did this: the engine finished the game.
-                    if (ended) notifications.ended(session, played, MatchEnding.Finished) else IO.unit
+                    if (ended) notifications.matchEnded(session, played, MatchEnding.Finished) else IO.unit
                 }
         }
 
@@ -752,7 +682,7 @@ class GameEngineService[T](
                  * who most needs telling, and unlike every other event here nobody pressed anything to
                  * cause it. After the commit and unable to fail the enforcement, as ever. */
                 val told =
-                    if (endedHere) notifications.ended(session, updated, MatchEnding.Forfeited) else IO.unit
+                    if (endedHere) notifications.matchEnded(session, updated, MatchEnding.Forfeited) else IO.unit
                 told.as(updated)
             }
     }

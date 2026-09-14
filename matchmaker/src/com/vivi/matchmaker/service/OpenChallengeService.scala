@@ -3,7 +3,7 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import cats.syntax.all._
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.notify.{MailSettings, NotificationSender, Notifier}
+import com.vivi.matchmaker.notify.Notifications
 import com.vivi.matchmaker.persistence.{
     AcceptanceRepo,
     CharacterRepo,
@@ -20,13 +20,12 @@ import com.vivi.matchmaker.persistence.{
   */
 class OpenChallengeService[T](
     sessionPool: SessionPool,
-    /* Silent by default, which is what an environment that has not been given a queue and a sender
-     * is: see `NotificationSender`. It means a spec that has no opinion about mail constructs this
-     * service exactly as it did before notifications existed. */
-    sender: NotificationSender = new NotificationSender(Notifier.disabled, MailSettings.none)
+    /* Who gets told about an acceptance is `Notifications`' business, not this service's: all this
+     * knows is that one happened. Silent by default, which is what an environment with no queue and
+     * no sender is -- so a spec with no opinion about mail constructs this exactly as it did before
+     * notifications existed. */
+    notifications: Notifications = Notifications.disabled
 )(using codec: TextCodec[T]) {
-
-    private val notifications = new ChallengeNotifications(sender)
 
     private def requireGame(gameRepo: GameRepo[T], gameId: GameId): IO[Game] =
         gameRepo.read(gameId).flatMap {
@@ -254,12 +253,12 @@ class OpenChallengeService[T](
                 } yield (created, actor)
             }
 
-            /* After the commit, and nothing about it can fail the accept -- see `NotificationSender`.
+            /* After the commit, and nothing about it can fail the accept -- see `Notifications`.
              * Outside the transaction on purpose: it holds the challenge's FOR UPDATE lock, and half a
              * dozen reads and a queue call taken inside it would keep every other player trying to
              * accept the same challenge waiting on an email. */
             accepted.flatMap { (created, actor) =>
-                notifications.rosterChanged(session, gameId, challengeId, actor, joined = true).as(created)
+                notifications.challengeAccepted(session, gameId, challengeId, actor).as(created)
             }
         }
 
