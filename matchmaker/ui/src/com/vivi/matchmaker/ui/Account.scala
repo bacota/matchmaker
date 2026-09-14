@@ -319,7 +319,11 @@ object Account {
             "What we email you about, unless you say otherwise for a particular game or match.",
             overall,
             saveLabel = "Save notifications"
-          )(ApiClient.updateNotifications),
+          )(preferences =>
+              ApiClient.updateNotifications(preferences).map(_ =>
+                  Store.notificationSettings.update(_.map(_.copy(player = preferences)))
+              )
+          ),
           div(
             cls := "account-section",
             h3("One Game"),
