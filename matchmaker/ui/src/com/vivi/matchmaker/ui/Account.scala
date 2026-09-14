@@ -361,7 +361,15 @@ object Account {
                     ) { preferences =>
                         ApiClient
                             .updateGameNotifications(gameId, preferences)
-                            .map(_ => perGame.update(_.updated(gameId, preferences)))
+                            .map { _ =>
+                                perGame.update(_.updated(gameId, preferences))
+                                Store.notificationSettings.update(_.map { current =>
+                                    current.copy(
+                                        games = current.games.filterNot(_.gameId == gameId) :+
+                                            com.vivi.matchmaker.model.GameNotificationPreferences(gameId, preferences)
+                                    )
+                                })
+                            }
                     }
             }
           )
