@@ -14,7 +14,7 @@ import com.vivi.matchmaker.persistence.{GameRepo, TestSession}
 
 /** Who is written to when a match begins, and what happens when the queue will not take it.
   *
-  * What the mail *says* is `MatchStartedMailSpec`'s business, and needs no match at all. This is the other half: a real
+  * What the mail *says* is `MatchMailSpec`'s business, and needs no match at all. This is the other half: a real
   * challenge, real acceptances and a real start, with the queue recorded rather than sent to.
   */
 class MatchStartedNotificationSpec extends PropertySuite {

@@ -17,12 +17,22 @@ enum MatchEnding(val summary: String) {
 
 /** What has just happened in a match, for everyone in it.
   *
+  * Every field is defaulted, and each kind uses a handful of them: a match beginning has a roster to introduce and no
+  * mover, a move has a mover and no roster. One case class rather than one per kind because they are all facts about
+  * the same match, and four types over nine fields would be four types to thread through the same two call sites.
+  *
   * @param mover
   *   the nickname of whoever has just moved, when that is what happened
   * @param nextUp
   *   the nicknames of whoever it is now the turn of, in seat order
   * @param due
   *   when the recipient's own turn runs out, if it is their turn and the match is played on a clock
+  * @param others
+  *   the recipient's fellow players, in seat order. For a match beginning, which is the one mail that has to introduce
+  *   who is in it — after that everyone knows.
+  * @param yourTurn
+  *   whether it is the recipient's turn. Also for a match beginning, where whose turn it is comes as part of the
+  *   introduction rather than as the news: the `YourTurn` kind *is* that news, and needs no flag to say so.
   * @param ending
   *   how the match ended, when it has
   */
@@ -32,15 +42,19 @@ case class MatchNews(
     mover: Option[String] = None,
     nextUp: Seq[String] = Seq.empty,
     due: Option[Instant] = None,
+    others: Seq[String] = Seq.empty,
+    yourTurn: Boolean = false,
     playUrl: Option[String] = None,
     ending: Option[MatchEnding] = None
 )
 
-/** What a player is told about a match they are playing, once it has started.
+/** What a player is told about a match: that it has begun, that somebody has moved, that it is their turn, that it is
+  * over.
   *
-  * The three kinds that are about play rather than about getting a match together: somebody moved, it is your turn, and
-  * it is over. The fourth, a match beginning, is [[MatchStartedMail]] — kept separate because it is the one that has to
-  * introduce the match rather than report on it.
+  * All four kinds that need a match to exist. The first of them used to be a template of its own, on the grounds that
+  * it introduces a match rather than reporting an event in one — which is true of what it says, and turned out not to
+  * be true of anything else about it: the same recipient, the same layout, the same two rules, and a caller that had
+  * already chosen a `NotificationType` to get there.
   *
   * Pure, like the other templates. Who is written to is `GameEngineService` and `MatchService`.
   */
@@ -60,6 +74,31 @@ object MatchMail extends NotificationMail[MatchNews] {
             MailText.described(news.description).fold(s"your $name match")(quoted => s"your $name match $quoted")
 
         kind match {
+            // The mail that introduces a match: what started, who is in it, whether the recipient is
+            // the one everybody is waiting for, and by when. Every other mail here can assume the
+            // player knows what the match is, because this one told them.
+            case NotificationType.MatchStarted =>
+                val opponents =
+                    if (news.others.isEmpty) "You are the only player."
+                    else s"Playing with you: ${news.others.mkString(", ")}."
+
+                val turn =
+                    if (news.yourTurn)
+                        news.due.fold("It is your turn.")(by =>
+                            s"It is your turn, and it is due by ${MailText.at(by)}."
+                        )
+                    else "You will be told when it is your turn."
+
+                Some(
+                  (
+                    s"Your $name match has started",
+                    s"""${started(news)}
+                     |
+                     |$opponents
+                     |$turn""".stripMargin
+                  )
+                )
+
             // The plainer of the two turn mails, and the one a player gets when it is somebody
             // else's move: it says who moved and who is holding things up now, which between them
             // are the only two facts a spectator of their own match can act on.
@@ -91,4 +130,14 @@ object MatchMail extends NotificationMail[MatchNews] {
             case _ => None
         }
     }
+
+    /* The challenger's own words when they wrote any, since that is what a player recognises their
+     * challenge by, and the game's name alone when they did not. Its own phrasing rather than the
+     * `which` above, because this sentence announces the match where the others refer back to it. */
+    private def started(news: MatchNews): String =
+        MailText
+            .described(news.description)
+            .fold(s"Your match of ${news.gameName} has started.")(quoted =>
+                s"Your match of ${news.gameName} has started: $quoted."
+            )
 }

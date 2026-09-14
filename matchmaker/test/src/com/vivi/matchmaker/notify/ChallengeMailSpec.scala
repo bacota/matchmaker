@@ -5,9 +5,9 @@ import com.vivi.matchmaker.model._
 
 /** What the four mails about a challenge actually say.
   *
-  * Pure, like `MatchStartedMailSpec`, and for the same reason: the decisions worth pinning down — who the mail is
-  * addressed as being about, whether it asks the player to do anything, what it says is still missing — are all made
-  * here, with no challenge and no database in sight.
+  * Pure, like `MatchMailSpec`, and for the same reason: the decisions worth pinning down — who the mail is addressed as
+  * being about, whether it asks the player to do anything, what it says is still missing — are all made here, with no
+  * challenge and no database in sight.
   */
 class ChallengeMailSpec extends FunSuite {
 

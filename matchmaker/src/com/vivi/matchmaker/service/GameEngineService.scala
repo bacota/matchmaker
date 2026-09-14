@@ -6,7 +6,7 @@ import scala.concurrent.duration._
 import java.time.Instant
 import java.util.UUID
 import com.vivi.matchmaker.engine._
-import com.vivi.matchmaker.notify.{MailSettings, MatchEnding, MatchStartedMail, NotificationSender, Notifier}
+import com.vivi.matchmaker.notify.{MailSettings, MatchEnding, MatchMail, MatchNews, NotificationSender, Notifier}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence._
 
@@ -203,7 +203,7 @@ class GameEngineService[T](
      *   - not the challenger. They are the one person who knows: they pressed Start, and are
      *     looking at the answer.
      *   - not a player with no address. `player.email` is nullable precisely so that this question
-     *     has an answer; `MatchStartedMail.compose` is where the skipping happens.
+     *     has an answer; `NotificationMail.compose` is where the skipping happens, for every kind at once.
      *   - not a player who has said they do not want to hear about a match starting. That is four
      *     levels of preference deep (see `NotificationPolicy`), but only one extra query: the seats
      *     of a match, their players' settings for this game, and their settings in general all come
@@ -239,18 +239,21 @@ class GameEngineService[T](
                     if (player.playerId == challenge.challenger) None
                     else if (!wanted.contains(participant.participantId)) None
                     else
-                        MatchStartedMail.compose(
+                        MatchMail.compose(
                           sender = from,
                           uiBaseUrl = uiBaseUrl,
-                          game = game,
-                          description = started.description,
                           recipient = player,
-                          others = roster.collect {
-                              case (_, other) if other.playerId != player.playerId => other.nickname
-                          },
-                          yourTurn = participant.pending,
-                          due = participant.due,
-                          playUrl = started.playUrl
+                          kind = NotificationType.MatchStarted,
+                          news = MatchNews(
+                            gameName = game.name,
+                            description = started.description,
+                            due = participant.due,
+                            others = roster.collect {
+                                case (_, other) if other.playerId != player.playerId => other.nickname
+                            },
+                            yourTurn = participant.pending,
+                            playUrl = started.playUrl
+                          )
                         )
                 }
             } yield messages
