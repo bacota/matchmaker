@@ -3,6 +3,7 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import cats.syntax.all._
 import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.notify.{MailSettings, NotificationSender, Notifier}
 import com.vivi.matchmaker.persistence.{
     AcceptanceRepo,
     CharacterRepo,
@@ -17,7 +18,15 @@ import com.vivi.matchmaker.persistence.{
   * before. For a `'P'`-type game (a [[PlainOpenChallenge]]) there is no character to authorize through, so
   * `callerExternalId` must match the challenger player directly.
   */
-class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
+class OpenChallengeService[T](
+    sessionPool: SessionPool,
+    /* Silent by default, which is what an environment that has not been given a queue and a sender
+     * is: see `NotificationSender`. It means a spec that has no opinion about mail constructs this
+     * service exactly as it did before notifications existed. */
+    sender: NotificationSender = new NotificationSender(Notifier.disabled, MailSettings.none)
+)(using codec: TextCodec[T]) {
+
+    private val notifications = new ChallengeNotifications(sender)
 
     private def requireGame(gameRepo: GameRepo[T], gameId: GameId): IO[Game] =
         gameRepo.read(gameId).flatMap {
@@ -140,7 +149,7 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
             val playerRepo = new PlayerRepo(session)
             val challengeRepo = new OpenChallengeRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
-            session.transaction.use { _ =>
+            val accepted = session.transaction.use { _ =>
                 for {
                     challengeInfo <- challengeRepo.readForUpdate(gameId, challengeId).flatMap {
                         case Some(t) => IO.pure(t)
@@ -239,7 +248,18 @@ class OpenChallengeService[T](sessionPool: SessionPool)(using codec: TextCodec[T
                       )
                     )
                     created <- acceptanceRepo.create(acceptance)
-                } yield created
+                    // Carried out of the transaction because it is the one thing the notification
+                    // cannot read for itself: it addresses the other players by saying who accepted.
+                    actor <- requirePlayer(playerRepo, created.playerId)
+                } yield (created, actor)
+            }
+
+            /* After the commit, and nothing about it can fail the accept -- see `NotificationSender`.
+             * Outside the transaction on purpose: it holds the challenge's FOR UPDATE lock, and half a
+             * dozen reads and a queue call taken inside it would keep every other player trying to
+             * accept the same challenge waiting on an email. */
+            accepted.flatMap { (created, actor) =>
+                notifications.rosterChanged(session, gameId, challengeId, actor, joined = true).as(created)
             }
         }
 

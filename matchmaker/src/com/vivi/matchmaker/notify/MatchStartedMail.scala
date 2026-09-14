@@ -1,7 +1,6 @@
 package com.vivi.matchmaker.notify
 
-import java.time.{Instant, ZoneOffset}
-import java.time.format.DateTimeFormatter
+import java.time.Instant
 import com.vivi.matchmaker.model.{Game, Player}
 
 /** What a player is told when a match they accepted into begins.
@@ -47,13 +46,11 @@ object MatchStartedMail {
             else s"Playing with you: ${others.mkString(", ")}."
 
         val turn =
-            if (yourTurn) due.fold("It is your turn.")(by => s"It is your turn, and it is due by ${at(by)}.")
+            if (yourTurn)
+                due.fold("It is your turn.")(by => s"It is your turn, and it is due by ${MailText.at(by)}.")
             else "You will be told when it is your turn."
 
-        // The engine's link first when there is one: it is where the game is actually played, and the
-        // home screen is a list this match is one row of. Both, because the engine's link is not
-        // matchmaker's to guarantee and a player who cannot use it still has somewhere to go.
-        val links = playUrl.fold(s"Open matchmaker: $uiBaseUrl")(url => s"Play: $url\nOpen matchmaker: $uiBaseUrl")
+        val links = MailText.links(uiBaseUrl, playUrl)
 
         MailMessage(
           sender = sender,
@@ -76,10 +73,4 @@ object MatchStartedMail {
     private def opening(game: Game, description: String): String =
         if (description.trim.isEmpty) s"Your match of ${game.name} has started."
         else s"""Your match of ${game.name} has started: "${description.trim}"."""
-
-    /* To the minute and stamped UTC, matching how the UI shows every other time: a deadline quoted
-     * to the second invites a precision the engine's clock does not promise, and one quoted with no
-     * zone at all is read in whichever zone the reader assumes. */
-    private def at(instant: Instant): String =
-        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneOffset.UTC).format(instant) + " UTC"
 }

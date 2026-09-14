@@ -235,4 +235,20 @@ object NotificationPolicy {
             .orElse(levels.playerGame(kind))
             .orElse(levels.player(kind))
             .getOrElse(levels.game(kind))
+
+    /** The one notification a recipient gets for an event that is several kinds of news at once.
+      *
+      * One thing that happens is often two reasons to write: the acceptance that fills the last role is both "somebody
+      * accepted" and "you can start it now", and a move is both "somebody moved" and "it is your turn". A player is
+      * owed one email about one event, so `kinds` is those reasons in the order of how much they say — the fullest
+      * first — and this takes the first one the player actually wants to hear.
+      *
+      * Which means a player who has turned off "it is my turn" but left "someone takes a turn" on still hears that the
+      * move happened, in the plainer mail. That is the point of asking in order rather than of picking the most
+      * specific reason and then testing it: the mail a player gets is the best one they have not refused.
+      *
+      * `None` when they have refused all of them, which is the only case that sends nothing.
+      */
+    def choose(kinds: Seq[NotificationType], levels: NotificationLevels): Option[NotificationType] =
+        kinds.find(wants(_, levels))
 }

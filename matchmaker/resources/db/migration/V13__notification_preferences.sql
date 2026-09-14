@@ -97,3 +97,7 @@ CREATE TABLE player_game (
     PRIMARY KEY (player_id, game_id)
 );
 
+-- The account form reads every row a player has, so the index that matters is the leading column
+-- of the primary key, which already serves it. This one is for the other direction: a game being
+-- deleted, or a per-game notification asking about its own players.
+CREATE INDEX ON player_game(game_id);

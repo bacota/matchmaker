@@ -126,6 +126,12 @@ class MatchStartedNotificationSpec extends PropertySuite {
               accepterId
             )
             _ <- beforeStart(services, accepter, game)
+            // The fixture above has sent mail of its own: an acceptance is news to the challenger,
+            // who is told about it (and, since this challenge is then full, told that it is ready to
+            // start). Every property here is about what the *start* sends, so the record is cleared
+            // at the moment the start begins. `ChallengeNotificationSpec` is where the accept's own
+            // mail is the subject.
+            _ <- IO(notifier.clear())
             started <- services.engine.start(game.gameId, challenge.challengeId, challengerId)
         } yield started
     }
@@ -370,6 +376,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   game.roles(1).gameRoleId,
                   accepterId
                 )
+                _ <- IO(notifier.clear())
                 _ <- services.engine.start(game.gameId, challenge.challengeId, challengerId)
             } yield notifier.messages.isEmpty
             result.timeout(caseTimeout).unsafeRunSync()

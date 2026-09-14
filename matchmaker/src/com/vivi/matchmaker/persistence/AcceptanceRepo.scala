@@ -306,6 +306,32 @@ class AcceptanceRepo(session: Session[IO]) {
     // As ParticipantRepo.listForMatch: the external id and role name are what the game engine is
     // told when the challenge becomes a match, so they are fetched in the same join rather than
     // one player lookup per acceptance.
+    /* The required roles of a challenge's game that nobody has taken yet, by name.
+     *
+     * The same rule `listForPlayer` computes as `readyToStart` and `GameEngineService.start`
+     * enforces -- no required role unclaimed -- asked the other way round, because the answer is
+     * wanted for two things at once: whether the challenge is ready (nothing here) and, when it is
+     * not, what it is still waiting for, which is what a notification about an acceptance can
+     * usefully say. Optional roles are left out: a start does not wait for them.
+     */
+    private val selectUnclaimedRoles: Query[(GameId, ChallengeId), String] =
+        sql"""SELECT gr.name
+          FROM game_role gr
+          WHERE gr.game_id = $gameId AND NOT gr.optional
+            AND NOT EXISTS (SELECT 1 FROM acceptance taken
+                             WHERE taken.game_id = gr.game_id
+                               AND taken.challenge_id = $challengeId
+                               AND taken.game_role_id = gr.game_role_id)
+          ORDER BY gr.game_role_id""".query(text)
+
+    /** The names of the required roles in this challenge that are still free, in the game's own role order.
+      *
+      * Empty means the challenge is ready to be started, which is the same question `listForPlayer` answers as
+      * `readyToStart` — asked here for one challenge, by whatever has just changed its roster.
+      */
+    def unclaimedRoles(gameId: GameId, challengeId: ChallengeId): IO[List[String]] =
+        session.execute(selectUnclaimedRoles)((gameId, challengeId))
+
     private val selectAcceptancesForChallenge: Query[
       (GameId, ChallengeId),
       (PlayerId, GameType, String, GameRoleId, String, Option[Long])

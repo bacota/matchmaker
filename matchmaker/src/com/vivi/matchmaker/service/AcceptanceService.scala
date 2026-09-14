@@ -3,6 +3,7 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import cats.syntax.all._
 import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.notify.{MailSettings, NotificationSender, Notifier}
 import com.vivi.matchmaker.persistence.{AcceptanceRepo, OpenChallengeRepo, PlayerRepo}
 
 /** Lists and deletes acceptances. `delete` is authorized by `callerExternalId` matching either the player who made the
@@ -10,7 +11,15 @@ import com.vivi.matchmaker.persistence.{AcceptanceRepo, OpenChallengeRepo, Playe
   * and so needs no further check. Backing out is refused once the challenge is being started, for the reason given in
   * `delete`.
   */
-class AcceptanceService(sessionPool: SessionPool) {
+class AcceptanceService(
+    sessionPool: SessionPool,
+    /* Silent by default, as in `OpenChallengeService`: an environment with no queue and no sender
+     * sends nothing, and a spec with no opinion about mail constructs this exactly as it did before
+     * notifications existed. */
+    sender: NotificationSender = new NotificationSender(Notifier.disabled, MailSettings.none)
+) {
+
+    private val notifications = new ChallengeNotifications(sender)
 
     /** Every acceptance the caller has outstanding.
       *
@@ -36,7 +45,7 @@ class AcceptanceService(sessionPool: SessionPool) {
             val challengeRepo = new OpenChallengeRepo(session)
             // The repo's delete removes the character_acceptance row and the acceptance row as separate
             // statements, and the authorization checked below must hold for both.
-            session.transaction.use { _ =>
+            val withdrawn = session.transaction.use { _ =>
                 for {
                     // Locked first, and for more than the read below: this is what serializes backing out
                     // against a start of the same challenge. Once a start has claimed the challenge the
@@ -75,7 +84,30 @@ class AcceptanceService(sessionPool: SessionPool) {
                       )
                     )
                     _ <- acceptanceRepo.delete(gameId, challengeId, playerId)
-                } yield ()
+                    // Carried out of the transaction because the row that knows them is about to be
+                    // gone: the mail tells the other players whose seat has opened up, and `acceptor`
+                    // is the last thing holding their nickname.
+                } yield (acceptor, challenger)
+            }
+
+            /* After the commit, outside the challenge's lock, and unable to fail the withdrawal --
+             * the same three terms as `OpenChallengeService.accept`; see `NotificationSender`.
+             *
+             * `except` is the caller rather than the acceptor, because these are not always the same
+             * player: a challenger may remove somebody else's acceptance, and the news then belongs to
+             * everyone except the challenger who did it. */
+            withdrawn.flatMap { (acceptor, challenger) =>
+                val actedFor =
+                    if (callerExternalId == challenger.externalId) Some(challenger.playerId)
+                    else Some(acceptor.playerId)
+                notifications.rosterChanged(
+                  session,
+                  gameId,
+                  challengeId,
+                  actor = acceptor,
+                  joined = false,
+                  except = actedFor
+                )
             }
         }
 }

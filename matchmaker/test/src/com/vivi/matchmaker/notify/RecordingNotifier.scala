@@ -17,4 +17,13 @@ class RecordingNotifier(fail: Boolean = false) extends Notifier {
     def messages: List[MailMessage] = synchronized(sent)
 
     def recipients: Set[String] = messages.map(_.recipient).toSet
+
+    /** Forgets everything recorded so far.
+      *
+      * For a spec that is about the mail one event sends, over a fixture whose own setting-up sends mail of its own:
+      * building a started match means accepting a challenge, and an acceptance is itself something the other players
+      * are written to about. Clearing between the two is what keeps "who was told the match started" a question about
+      * the start.
+      */
+    def clear(): Unit = synchronized { sent = Nil }
 }

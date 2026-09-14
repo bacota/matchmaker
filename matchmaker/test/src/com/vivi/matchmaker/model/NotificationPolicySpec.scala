@@ -76,6 +76,44 @@ class NotificationPolicySpec extends FunSuite {
         }
     }
 
+    /* The "one email per event" rule. Several things can be true of one event -- the acceptance that
+     * fills a roster, the move that hands over the turn -- and the recipient is owed one mail. */
+    test("choose takes the fullest reason the player has not refused") {
+        val chain = NotificationLevels(game = NotificationDefaults.all(true))
+        assertEquals(
+          NotificationPolicy.choose(Seq(NotificationType.YourTurn, NotificationType.TurnTaken), chain),
+          Some(NotificationType.YourTurn)
+        )
+    }
+
+    test("choose falls back to a plainer reason rather than sending nothing") {
+        val refusedTheFullest = NotificationLevels(
+          player = NotificationPreferences.unset.updated(NotificationType.YourTurn, Some(false)),
+          game = NotificationDefaults.all(true)
+        )
+        assertEquals(
+          NotificationPolicy.choose(Seq(NotificationType.YourTurn, NotificationType.TurnTaken), refusedTheFullest),
+          Some(NotificationType.TurnTaken)
+        )
+    }
+
+    test("choose sends nothing only when every reason has been refused") {
+        val refusedBoth = NotificationLevels(
+          player = NotificationPreferences.unset
+              .updated(NotificationType.YourTurn, Some(false))
+              .updated(NotificationType.TurnTaken, Some(false)),
+          game = NotificationDefaults.all(true)
+        )
+        assertEquals(
+          NotificationPolicy.choose(Seq(NotificationType.YourTurn, NotificationType.TurnTaken), refusedBoth),
+          None
+        )
+        assertEquals(
+          NotificationPolicy.choose(Seq.empty, NotificationLevels(game = NotificationDefaults.all(true))),
+          None
+        )
+    }
+
     test("a column name per kind, all distinct, all derived from the code") {
         assertEquals(NotificationType.MatchStarted.column, "notify_match_started")
         assertEquals(NotificationType.values.map(_.column).distinct.length, NotificationType.values.length)

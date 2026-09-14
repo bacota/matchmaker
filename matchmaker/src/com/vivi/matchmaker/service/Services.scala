@@ -2,7 +2,7 @@ package com.vivi.matchmaker.service
 
 import cats.effect.{IO, Resource}
 import com.vivi.matchmaker.engine.{GameEngineClient, HttpGameEngineClient}
-import com.vivi.matchmaker.notify.{MailSettings, Notifier, SqsNotifier}
+import com.vivi.matchmaker.notify.{MailSettings, NotificationSender, Notifier, SqsNotifier}
 import com.vivi.matchmaker.persistence.TextCodec
 
 /** Every service, sharing one connection pool.
@@ -61,9 +61,12 @@ object Services {
           players = new PlayerService(pool),
           games = new GameService[T](pool),
           characters = new CharacterService[T](pool),
-          challenges = new OpenChallengeService[T](pool),
-          acceptances = new AcceptanceService(pool),
-          matches = new MatchService(pool),
+          // Four services send mail, because four services are where the eight kinds of thing worth
+          // an email happen. Each gets the same `NotificationSender` over the same queue and the
+          // same settings -- the terms it enforces are the same wherever a notification comes from.
+          challenges = new OpenChallengeService[T](pool, new NotificationSender(notifier, mail)),
+          acceptances = new AcceptanceService(pool, new NotificationSender(notifier, mail)),
+          matches = new MatchService(pool, new NotificationSender(notifier, mail)),
           engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifier, mail),
           notifications = new NotificationService(pool)
         )
