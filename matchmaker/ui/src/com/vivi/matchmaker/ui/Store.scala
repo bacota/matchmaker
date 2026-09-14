@@ -54,10 +54,31 @@ object Store {
         sessionExpired()
     }
 
+    /* Which sign-in the UI is showing, counted rather than named.
+     *
+     * A request is made by one sign-in and answered some time later, by which point that sign-in may
+     * be over: the player signed out, or the token expired, while it was in flight. The answer then
+     * belongs to whoever was signed in when it was sent, and to nobody who is signed in now -- so
+     * anything that holds onto an answer takes this number before the request and checks it before
+     * committing, through `stillSignedInAs`.
+     *
+     * A counter rather than the player's id, because two sign-ins are two sessions even when they
+     * are the same player: what went stale is the request, not the identity. */
+    private var signIns: Int = 0
+
+    /** The session as it stands. Taken before a request whose answer will be held. */
+    private def currentSignIn: Int = signIns
+
+    /** Whether the session that asked is still the session that is here. */
+    private def stillSignedInAs(signIn: Int): Boolean = signIn == signIns
+
     /** The token has gone — expired, revoked, or signed out elsewhere. Everything derived from it is dropped, so no
       * stale list is left on screen behind the sign-in prompt.
       */
     def sessionExpired(): Unit = {
+        // First, before anything is cleared: from here on, an answer to a request this session made
+        // is an answer to a question nobody is asking any more.
+        signIns += 1
         Auth.clearSession()
         signedIn.set(false)
         player.set(PlayerState.Loading)
@@ -109,9 +130,20 @@ object Store {
 
     /** Fetches the caller's notification settings unless they are already here. Re-opening the panel shows what is held
       * rather than asking again; a save updates it in place, so the two cannot disagree.
+      *
+      * Committed only if the session that asked is still the session that is here. That check matters more here than
+      * for the lists above, and for the same reason the fetch is skipped when something is held: the holding is what
+      * would make a wrong answer permanent. Signing out while this is in flight would otherwise leave one player's
+      * settings in a `Var` that the next player's panel reads — and then skips its own fetch for, because something is
+      * already there. They would be shown somebody else's answers, and could save them back as their own.
       */
     def loadNotifications(): Unit =
-        if (notificationSettings.now().isEmpty) run(ApiClient.notifications())(s => notificationSettings.set(Some(s)))
+        if (notificationSettings.now().isEmpty) {
+            val signIn = currentSignIn
+            run(ApiClient.notifications()) { settings =>
+                if (stillSignedInAs(signIn)) notificationSettings.set(Some(settings))
+            }
+        }
 
     /** How each finished match turned out, keyed by its match id: the rows of the result table shown under a completed
       * match. Loaded whole with the lists, not per row.
