@@ -7,8 +7,8 @@ import com.vivi.matchmaker.persistence.TextCodec
 
 /** Every service, sharing one connection pool.
   *
-  * This is the entry point for anything outside the `service` package: `DbSession` is private,
-  * so callers cannot open their own sessions and are steered into reusing the pool instead.
+  * This is the entry point for anything outside the `service` package: `DbSession` is private, so callers cannot open
+  * their own sessions and are steered into reusing the pool instead.
   */
 case class Services[T](
     registration: RegistrationService,
@@ -23,47 +23,46 @@ case class Services[T](
 
 object Services {
 
-  /** Default pool size. Sized for one Lambda container, which handles a single request at a
-    * time, plus a little headroom for the concurrency within a request.
-    */
-  val defaultPoolSize: Int = 4
+    /** Default pool size. Sized for one Lambda container, which handles a single request at a time, plus a little
+      * headroom for the concurrency within a request.
+      */
+    val defaultPoolSize: Int = 4
 
-  /** Opens the connection pool and builds the services on top of it. Acquire once at startup:
-    * releasing this closes every pooled connection.
-    */
-  def resource[T](
-      config: DbConfig,
-      poolSize: Int = defaultPoolSize,
-      engineClient: GameEngineClient = HttpGameEngineClient.fromEnvironment(),
-      callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
-      notifier: Notifier = SqsNotifier.fromEnvironment(),
-      mail: MailSettings = MailSettings.fromEnvironment()
-  )(using
-      codec: TextCodec[T]
-  ): Resource[IO, Services[T]] =
-    DbSession.pooled(config, poolSize).map(fromPool[T](_, engineClient, callbackBaseUrl, notifier, mail))
+    /** Opens the connection pool and builds the services on top of it. Acquire once at startup: releasing this closes
+      * every pooled connection.
+      */
+    def resource[T](
+        config: DbConfig,
+        poolSize: Int = defaultPoolSize,
+        engineClient: GameEngineClient = HttpGameEngineClient.fromEnvironment(),
+        callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
+        notifier: Notifier = SqsNotifier.fromEnvironment(),
+        mail: MailSettings = MailSettings.fromEnvironment()
+    )(using
+        codec: TextCodec[T]
+    ): Resource[IO, Services[T]] =
+        DbSession.pooled(config, poolSize).map(fromPool[T](_, engineClient, callbackBaseUrl, notifier, mail))
 
-  /** Builds the services over an already-open pool.
-    *
-    * `engineClient` and `notifier` are parameters rather than things built here because both are
-    * remote systems: tests pass a stub and a recorder, and only a deployment passes the HTTP
-    * client and the queue.
-    */
-  def fromPool[T](
-      pool: SessionPool,
-      engineClient: GameEngineClient = HttpGameEngineClient.fromEnvironment(),
-      callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
-      notifier: Notifier = SqsNotifier.fromEnvironment(),
-      mail: MailSettings = MailSettings.fromEnvironment()
-  )(using codec: TextCodec[T]): Services[T] =
-    Services(
-      registration = new RegistrationService(pool),
-      players = new PlayerService(pool),
-      games = new GameService[T](pool),
-      characters = new CharacterService[T](pool),
-      challenges = new OpenChallengeService[T](pool),
-      acceptances = new AcceptanceService(pool),
-      matches = new MatchService(pool),
-      engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifier, mail)
-    )
+    /** Builds the services over an already-open pool.
+      *
+      * `engineClient` and `notifier` are parameters rather than things built here because both are remote systems:
+      * tests pass a stub and a recorder, and only a deployment passes the HTTP client and the queue.
+      */
+    def fromPool[T](
+        pool: SessionPool,
+        engineClient: GameEngineClient = HttpGameEngineClient.fromEnvironment(),
+        callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
+        notifier: Notifier = SqsNotifier.fromEnvironment(),
+        mail: MailSettings = MailSettings.fromEnvironment()
+    )(using codec: TextCodec[T]): Services[T] =
+        Services(
+          registration = new RegistrationService(pool),
+          players = new PlayerService(pool),
+          games = new GameService[T](pool),
+          characters = new CharacterService[T](pool),
+          challenges = new OpenChallengeService[T](pool),
+          acceptances = new AcceptanceService(pool),
+          matches = new MatchService(pool),
+          engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifier, mail)
+        )
 }

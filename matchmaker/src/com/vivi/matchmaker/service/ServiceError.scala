@@ -1,7 +1,7 @@
 package com.vivi.matchmaker.service
 
-/** Errors raised by services for conditions that are the caller's fault (as opposed to
-  * infrastructure failures, which just propagate as whatever the persistence layer throws).
+/** Errors raised by services for conditions that are the caller's fault (as opposed to infrastructure failures, which
+  * just propagate as whatever the persistence layer throws).
   */
 sealed abstract class ServiceError(message: String) extends RuntimeException(message)
 
