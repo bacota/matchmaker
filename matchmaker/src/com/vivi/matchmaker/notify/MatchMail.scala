@@ -1,7 +1,7 @@
 package com.vivi.matchmaker.notify
 
 import java.time.Instant
-import com.vivi.matchmaker.model.{NotificationType, Player}
+import com.vivi.matchmaker.model.NotificationType
 
 /** How a match came to an end, in the words the players are told it in.
   *
@@ -44,38 +44,17 @@ case class MatchNews(
   *
   * Pure, like the other templates. Who is written to is `GameEngineService` and `MatchService`.
   */
-object MatchMail {
+object MatchMail extends NotificationMail[MatchNews] {
 
-    /** The one mail this recipient gets, for the kind that was chosen for them. `None` when they have no address, or
-      * when the kind is not one of this template's three.
-      *
-      * `due` is the recipient's own deadline, so this takes one recipient at a time rather than composing for a roster:
-      * the same move produces a different sentence for the player who now has to answer it.
-      */
-    def compose(
-        sender: String,
-        uiBaseUrl: String,
-        recipient: Player,
-        kind: NotificationType,
-        news: MatchNews
-    ): Option[MailMessage] =
-        recipient.email.flatMap { address =>
-            lines(kind, news).map { case (subject, body) =>
-                MailMessage(
-                  sender = sender,
-                  recipient = address,
-                  subject = subject,
-                  body = s"""Hello ${recipient.nickname},
-                   |
-                   |$body
-                   |
-                   |${MailText.links(uiBaseUrl, news.playUrl)}
-                   |""".stripMargin
-                )
-            }
-        }
+    /* The engine's own link for the match, when the news is about one still being played. `MatchNews`
+     * carries none for an ending, which is how a mail about a finished match comes to have no "Play"
+     * line -- see `MatchNotifications.ended`. */
+    override protected def playUrl(news: MatchNews): Option[String] = news.playUrl
 
-    private def lines(kind: NotificationType, news: MatchNews): Option[(String, String)] = {
+    /* `news.due` is the recipient's own deadline, which is why a mail is composed one recipient at a
+     * time rather than for a roster: the same move produces a different sentence for the player who
+     * now has to answer it. */
+    protected def lines(kind: NotificationType, news: MatchNews): Option[(String, String)] = {
         val name = news.gameName
         val which =
             MailText.described(news.description).fold(s"your $name match")(quoted => s"your $name match $quoted")

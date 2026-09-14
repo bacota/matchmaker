@@ -1,6 +1,6 @@
 package com.vivi.matchmaker.notify
 
-import com.vivi.matchmaker.model.{NotificationType, Player}
+import com.vivi.matchmaker.model.NotificationType
 
 /** What has just happened to a challenge, from the point of view of everyone who has a stake in it.
   *
@@ -40,41 +40,11 @@ case class ChallengeNews(
   * can be tested without a challenge or a database. The deciding halves are `OpenChallengeService.accept` and
   * `AcceptanceService.delete`.
   */
-object ChallengeMail {
+object ChallengeMail extends NotificationMail[ChallengeNews] {
 
-    /** The one mail this recipient gets, for the kind that was chosen for them.
-      *
-      * `None` when the player has no address — the same rule `MatchStartedMail` applies, kept in the template rather
-      * than in each caller so that a new notification cannot forget it.
-      *
-      * The four kinds are the four this template is for. Anything else is not this template's business and produces
-      * nothing rather than guessing: a caller that has chosen `MatchStarted` here has chosen wrong, and a mail invented
-      * from the wrong facts is worse than no mail.
-      */
-    def compose(
-        sender: String,
-        uiBaseUrl: String,
-        recipient: Player,
-        kind: NotificationType,
-        news: ChallengeNews
-    ): Option[MailMessage] =
-        recipient.email.flatMap { address =>
-            lines(kind, news).map { case (subject, body) =>
-                MailMessage(
-                  sender = sender,
-                  recipient = address,
-                  subject = subject,
-                  body = s"""Hello ${recipient.nickname},
-                   |
-                   |$body
-                   |
-                   |${MailText.links(uiBaseUrl, None)}
-                   |""".stripMargin
-                )
-            }
-        }
-
-    private def lines(kind: NotificationType, news: ChallengeNews): Option[(String, String)] = {
+    /* No play link on any of these four: a challenge is not a match yet, so there is nothing to play
+     * at. `NotificationMail.playUrl` defaults to none, which is why it is not overridden here. */
+    protected def lines(kind: NotificationType, news: ChallengeNews): Option[(String, String)] = {
         val name = news.gameName
         val what = MailText.described(news.description).fold("")(quoted => s" $quoted")
 

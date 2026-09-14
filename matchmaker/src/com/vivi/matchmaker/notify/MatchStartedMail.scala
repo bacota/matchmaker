@@ -50,21 +50,23 @@ object MatchStartedMail {
                 due.fold("It is your turn.")(by => s"It is your turn, and it is due by ${MailText.at(by)}.")
             else "You will be told when it is your turn."
 
-        val links = MailText.links(uiBaseUrl, playUrl)
-
         MailMessage(
           sender = sender,
           recipient = address,
           subject = s"Your ${game.name} match has started",
-          body = s"""Hello ${recipient.nickname},
-           |
-           |${opening(game, description)}
-           |
-           |$opponents
-           |$turn
-           |
-           |$links
-           |""".stripMargin
+          // Laid out by `MailText.letter`, like every other notification. Only the layout is
+          // shared: this template keeps a `compose` of its own rather than extending
+          // `NotificationMail`, because it has no `NotificationType` to switch on and its own list
+          // of arguments — it introduces a match rather than reporting an event in one.
+          body = MailText.letter(
+            recipient,
+            s"""${opening(game, description)}
+             |
+             |$opponents
+             |$turn""".stripMargin,
+            uiBaseUrl,
+            playUrl
+          )
         )
     }
 

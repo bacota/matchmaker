@@ -2,6 +2,7 @@ package com.vivi.matchmaker.notify
 
 import java.time.{Instant, ZoneOffset}
 import java.time.format.DateTimeFormatter
+import com.vivi.matchmaker.model.Player
 
 /** The few things every notification says the same way.
   *
@@ -10,6 +11,24 @@ import java.time.format.DateTimeFormatter
   * the next is not style, it is a mistake, and so is a link that leads somewhere slightly different.
   */
 object MailText {
+
+    /** One notification, laid out: who it is to, what it has to say, and where to go about it.
+      *
+      * Every mail matchmaker sends has this shape, which is the argument for it being written once. It is also very
+      * little: a greeting, a blank line, whatever the template wrote, and the links. That is deliberate — these are
+      * plain-text mails whose every line is a fact, so the layout is not where the thinking is, and a template that
+      * wanted a different one would be fighting this rather than using it.
+      *
+      * The trailing newline matters more than it looks: a body that ends without one is a last line some clients render
+      * against the following chrome.
+      */
+    def letter(recipient: Player, body: String, uiBaseUrl: String, playUrl: Option[String] = None): String =
+        s"""Hello ${recipient.nickname},
+         |
+         |$body
+         |
+         |${links(uiBaseUrl, playUrl)}
+         |""".stripMargin
 
     /** To the minute and stamped UTC, matching how the UI shows every other time: a deadline quoted to the second
       * invites a precision the engine's clock does not promise, and one quoted with no zone at all is read in whichever
