@@ -93,6 +93,25 @@ object Views {
     private def field(caption: String, control: HtmlElement): HtmlElement =
         label(cls := "field", caption, control)
 
+    /** The body of a list: its rows, or a line saying why there are none.
+      *
+      * Three answers rather than two, because "there is nothing here" and "nobody has told us yet" are different things
+      * and only one of them is news a player can act on. Every section used to say the first while the request that
+      * would have filled it was still in flight — telling a player their turn was clear at the one moment nobody knew.
+      *
+      * A list that already holds something goes on showing it while a reload is in flight. The section dims to say so,
+      * and throwing away what is on screen to say "Loading…" would lose the rows in order to repeat what the dimming
+      * has already said.
+      */
+    private def listing[A](items: Signal[Seq[A]], fetching: Signal[Boolean])(
+        empty: => HtmlElement
+    )(rows: Seq[A] => HtmlElement): Modifier[HtmlElement] =
+        child <-- items.combineWith(fetching).map {
+            case (Seq(), true)  => p(cls := "empty", "Loading…")
+            case (Seq(), false) => empty
+            case (found, _)     => rows(found)
+        }
+
     /** A section with a refresh button of its own.
       *
       * Every list here can go stale while it is being looked at — somebody else accepts a challenge, an engine finishes
@@ -326,10 +345,9 @@ object Views {
         navTag(
           cls := "menu",
           menuItem("Main page", Store.Page.Home),
-          child <-- Store.games.signal.map {
-              case Nil   => p(cls := "empty", "No games yet.")
-              case games => div(games.map(game => menuItem(game.name, Store.Page.OneGame(game.gameId))))
-          },
+          listing(Store.games.signal, Store.loading(Store.Fetch.Games))(p(cls := "empty", "No games yet."))(games =>
+              div(games.map(game => menuItem(game.name, Store.Page.OneGame(game.gameId))))
+          ),
           // Only for admins, because only an admin can create a game: the server answers anyone else
           // with a 403, and a menu entry that always fails is worse than no entry.
           child <-- currentPlayer.map {
@@ -482,14 +500,12 @@ object Views {
       */
     private def dueSection(game: Option[Game] = None): HtmlElement =
         refreshableSection("Your Turn", refreshingDue, () => Store.reloadDue(), subsection = false)(
-          child <-- Store.due.signal.map(matchesIn(game)).map {
-              case Nil =>
-                  p(
-                    cls := "empty",
-                    if (game.isDefined) "Nothing is waiting on you in this game." else "Nothing is waiting on you."
-                  )
-              case matches => ul(matches.map(matchRow(_, showDue = true)))
-          }
+          listing(Store.due.signal.map(matchesIn(game)), Store.loading(Store.Fetch.Due))(
+            p(
+              cls := "empty",
+              if (game.isDefined) "Nothing is waiting on you in this game." else "Nothing is waiting on you."
+            )
+          )(matches => ul(matches.map(matchRow(_, showDue = true))))
         )
 
     /* One game's matches, or all of them. The game screens show a slice of each list rather than a
@@ -506,14 +522,12 @@ object Views {
       */
     private def myMatchesSection(game: Option[Game] = None): HtmlElement =
         refreshableSection("Current Matches", refreshingActive, () => Store.reloadActive(), subsection = false)(
-          child <-- Store.active.signal.map(matchesIn(game)).map {
-              case Nil =>
-                  p(
-                    cls := "empty",
-                    if (game.isDefined) "You are not in any matches of this." else "You are not in any matches."
-                  )
-              case matches => ul(matches.map(matchRow(_, showDue = false)))
-          }
+          listing(Store.active.signal.map(matchesIn(game)), Store.loading(Store.Fetch.Active))(
+            p(
+              cls := "empty",
+              if (game.isDefined) "You are not in any matches of this." else "You are not in any matches."
+            )
+          )(matches => ul(matches.map(matchRow(_, showDue = false))))
         )
 
     /** "Also shows pending acceptances with option to back out."
@@ -618,10 +632,9 @@ object Views {
       */
     private def recentlyCompletedSection: HtmlElement =
         refreshableSection("Recently Completed", () => Store.reloadCompleted())(
-          child <-- Store.completed.signal.map(_.take(Store.recentlyCompleted)).map {
-              case Nil     => p(cls := "empty", "Nothing finished yet.")
-              case matches => ul(matches.map(matchRow(_, showDue = false)))
-          }
+          listing(Store.completed.signal.map(_.take(Store.recentlyCompleted)), Store.loading(Store.Fetch.Completed))(
+            p(cls := "empty", "Nothing finished yet.")
+          )(matches => ul(matches.map(matchRow(_, showDue = false))))
         )
 
     private def matchRow(summary: MatchSummary, showDue: Boolean): HtmlElement =
@@ -800,57 +813,59 @@ object Views {
     private def resultTable(summary: MatchSummary): HtmlElement =
         div(
           cls := "results",
-          child <-- Store.resultsByMatch.signal.map(_.getOrElse(summary.matchId, Seq.empty)).map {
-              case Seq() =>
-                  p(
-                    cls := "empty",
-                    if (summary.cancelled) "Called off before it finished." else "No result was reported."
-                  )
-              case rows =>
-                  div(
-                    // Said once above the table rather than on each line: a forfeit is how the match
-                    // ended, which is one fact about the match, not a separate fact about each seat.
-                    // The lines below still say which of the two things it meant for each player.
-                    if (rows.exists(_.forfeit))
-                        p(cls := "detail", "Ended by forfeit: a player ran out of time on their turn.")
-                    else emptyNode,
-                    ul(
-                      cls := "result-rows",
-                      rows.map { row =>
-                          li(
-                            cls := "result-row",
-                            // The emoji reads out as "trophy", which is a guess at what it means rather than
-                            // a statement of it. The text says it; the emoji is decoration over the top.
-                            if (row.isWinner) span(cls := "winner", aria.hidden := true, "🏆 ") else emptyNode,
-                            if (row.isWinner) span(cls := "sr-only", "winner: ") else emptyNode,
-                            span(cls := "who", s"${row.nickname} (${row.roleName})"),
-                            // Which side of the forfeit this player was on. `isWinner` is what separates
-                            // them, and without this a win by forfeit would read as a win on the board.
-                            if (!row.forfeit) emptyNode
-                            else if (row.isWinner) span(cls := "detail", " — won by forfeit")
-                            else span(cls := "detail", " — forfeited on time"),
-                            // How long they spent over their turns, all told. Only when the match has
-                            // turns recorded against somebody: a match played before turns were recorded
-                            // would otherwise report a table of zeroes as if everybody had moved instantly.
-                            if (rows.forall(_.timeTaken.isZero)) emptyNode
-                            else span(cls := "detail", s" — ${Format.spent(row.timeTaken)} on the clock"),
-                            // Whatever else the engine chose to report. Which keys exist is the game's
-                            // business, so they are shown as they came rather than being named here.
-                            if (row.scores.isEmpty) emptyNode
-                            else
-                                span(
-                                  cls := "scores",
-                                  " — ",
-                                  row.scores.toSeq
-                                      .sortBy(_._1)
-                                      .map((key, value) => s"$key: ${Format.jsonValue(value)}")
-                                      .mkString(", ")
-                                )
-                          )
-                      }
-                    )
-                  )
-          }
+          listing(
+            Store.resultsByMatch.signal.map(_.getOrElse(summary.matchId, Seq.empty)),
+            Store.loading(Store.Fetch.Results)
+          )(
+            p(
+              cls := "empty",
+              if (summary.cancelled) "Called off before it finished." else "No result was reported."
+            )
+          )(rows =>
+              div(
+                // Said once above the table rather than on each line: a forfeit is how the match
+                // ended, which is one fact about the match, not a separate fact about each seat.
+                // The lines below still say which of the two things it meant for each player.
+                if (rows.exists(_.forfeit))
+                    p(cls := "detail", "Ended by forfeit: a player ran out of time on their turn.")
+                else emptyNode,
+                ul(
+                  cls := "result-rows",
+                  rows.map { row =>
+                      li(
+                        cls := "result-row",
+                        // The emoji reads out as "trophy", which is a guess at what it means rather than
+                        // a statement of it. The text says it; the emoji is decoration over the top.
+                        if (row.isWinner) span(cls := "winner", aria.hidden := true, "🏆 ") else emptyNode,
+                        if (row.isWinner) span(cls := "sr-only", "winner: ") else emptyNode,
+                        span(cls := "who", s"${row.nickname} (${row.roleName})"),
+                        // Which side of the forfeit this player was on. `isWinner` is what separates
+                        // them, and without this a win by forfeit would read as a win on the board.
+                        if (!row.forfeit) emptyNode
+                        else if (row.isWinner) span(cls := "detail", " — won by forfeit")
+                        else span(cls := "detail", " — forfeited on time"),
+                        // How long they spent over their turns, all told. Only when the match has
+                        // turns recorded against somebody: a match played before turns were recorded
+                        // would otherwise report a table of zeroes as if everybody had moved instantly.
+                        if (rows.forall(_.timeTaken.isZero)) emptyNode
+                        else span(cls := "detail", s" — ${Format.spent(row.timeTaken)} on the clock"),
+                        // Whatever else the engine chose to report. Which keys exist is the game's
+                        // business, so they are shown as they came rather than being named here.
+                        if (row.scores.isEmpty) emptyNode
+                        else
+                            span(
+                              cls := "scores",
+                              " — ",
+                              row.scores.toSeq
+                                  .sortBy(_._1)
+                                  .map((key, value) => s"$key: ${Format.jsonValue(value)}")
+                                  .mkString(", ")
+                            )
+                      )
+                  }
+                )
+              )
+          )
         )
 
     // -------------------------------------------------------------------------
@@ -922,10 +937,12 @@ object Views {
       */
     private def gameHistory(game: Game): HtmlElement =
         refreshableSection("Your Completed Matches", () => Store.reloadCompleted())(
-          child <-- Store.completed.signal.map(_.filter(_.gameId == game.gameId)).map {
-              case Nil     => p(cls := "empty", "You have not finished a match of this yet.")
-              case matches => ul(matches.map(matchRow(_, showDue = false)))
-          }
+          listing(
+            Store.completed.signal.map(_.filter(_.gameId == game.gameId)),
+            Store.loading(Store.Fetch.Completed)
+          )(p(cls := "empty", "You have not finished a match of this yet."))(matches =>
+              ul(matches.map(matchRow(_, showDue = false)))
+          )
         )
 
     /** The admin's add-a-game screen, reached from the menu. The same form the edit link opens, with nothing to start

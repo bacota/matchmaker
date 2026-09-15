@@ -97,6 +97,9 @@ object Store {
         // Dropped with the rest: they are one player's answers, and the next player to sign in
         // must not be shown them, let alone save them back.
         notificationSettings.set(None)
+        // Back to "nothing has answered yet", so the next player's sections say they are loading
+        // rather than reporting this player's empty lists as theirs.
+        fetched.set(Set.empty)
         page.set(Page.Home)
         showChallengeForm.set(false)
         editingGame.set(None)
@@ -104,6 +107,29 @@ object Store {
         // neither belongs to whoever signs in next.
         Account.close()
     }
+
+    /** The lists this store fetches, named so that a screen can tell "there is nothing here" from "nobody has told us
+      * yet".
+      *
+      * Every one of them starts empty, and an empty list read a moment after sign-in means the second of those, not the
+      * first — which is why a section cannot answer the question from the list alone.
+      *
+      * Not every fetch is here: the per-game challenges and characters are keyed by game in a `Map`, so a game that has
+      * not been fetched is a missing key rather than an empty list, and those screens already say "Loading…" on it.
+      */
+    enum Fetch {
+        case Due, Active, Completed, Results, Games, Acceptances
+    }
+
+    /* Which of them have been answered in this session -- however they were answered.
+     *
+     * A request that failed is not still in flight: the section it would have filled says what it
+     * knows, beside the banner that says what went wrong. Leaving it saying "Loading..." for ever
+     * would be a worse lie than the one this exists to correct. */
+    private val fetched: Var[Set[Fetch]] = Var(Set.empty)
+
+    /** Whether a list is still on its way, which is to say nothing has answered for it yet this session. */
+    def loading(what: Fetch): Signal[Boolean] = fetched.signal.map(!_.contains(what))
 
     val due: Var[Seq[MatchSummary]] = Var(Seq.empty)
     val active: Var[Seq[MatchSummary]] = Var(Seq.empty)
@@ -256,9 +282,14 @@ object Store {
       * it: a 401 for a request the previous session made is not news, and `ApiClient` has already ended that session
       * over it.
       */
-    private def load[A](action: Future[A])(commit: A => Unit): Unit = {
+    private def load[A](action: Future[A], fetches: Fetch*)(commit: A => Unit): Unit = {
         val signIn = currentSignIn
-        action.onComplete(outcome => if (stillSignedInAs(signIn)) settle(outcome)(commit))
+        action.onComplete { outcome =>
+            if (stillSignedInAs(signIn)) {
+                settle(outcome)(commit)
+                fetched.update(_ ++ fetches)
+            }
+        }
     }
 
     private def settle[A](outcome: Try[A])(onSuccess: A => Unit): Unit = outcome match {
@@ -341,11 +372,11 @@ object Store {
     }
 
     def refreshMatches(): Unit = {
-        load(ApiClient.dueMatches())(due.set)
-        load(ApiClient.activeMatches())(active.set)
-        load(ApiClient.completedMatches())(completed.set)
-        load(ApiClient.acceptances())(acceptances.set)
-        load(ApiClient.results())(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
+        load(ApiClient.dueMatches(), Fetch.Due)(due.set)
+        load(ApiClient.activeMatches(), Fetch.Active)(active.set)
+        load(ApiClient.completedMatches(), Fetch.Completed)(completed.set)
+        load(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
+        load(ApiClient.results(), Fetch.Results)(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
     }
 
     /** The same as `run`, but handing back a `Future` that says when the request has settled.
@@ -354,7 +385,7 @@ object Store {
       * and the result is always a success, because the only caller is a section waiting to stop showing that it is
       * reloading. A failure there is not a second thing to handle; it is a banner that has already been raised.
       */
-    private def reload[A](action: Future[A])(onSuccess: A => Unit): Future[Unit] = {
+    private def reload[A](action: Future[A], fetches: Fetch*)(onSuccess: A => Unit): Future[Unit] = {
         val signIn = currentSignIn
 
         action.transform { outcome =>
@@ -362,7 +393,11 @@ object Store {
             // `Future` still completes: the section that is waiting to stop showing itself as
             // reloading has been unmounted by the sign-out, but it must not be left hanging if it has
             // not.
-            try { if (stillSignedInAs(signIn)) settle(outcome)(onSuccess) }
+            try
+                if (stillSignedInAs(signIn)) {
+                    settle(outcome)(onSuccess)
+                    fetched.update(_ ++ fetches)
+                }
             catch { case t: Throwable => report(t) }
             Success(())
         }
@@ -374,25 +409,25 @@ object Store {
       * other case: the user asking a single section whether it is still true, which should not cost four requests or
       * blank out the rest of the page.
       */
-    def reloadDue(): Future[Unit] = reload(ApiClient.dueMatches())(due.set)
+    def reloadDue(): Future[Unit] = reload(ApiClient.dueMatches(), Fetch.Due)(due.set)
 
-    def reloadActive(): Future[Unit] = reload(ApiClient.activeMatches())(active.set)
+    def reloadActive(): Future[Unit] = reload(ApiClient.activeMatches(), Fetch.Active)(active.set)
 
-    def reloadAcceptances(): Future[Unit] = reload(ApiClient.acceptances())(acceptances.set)
+    def reloadAcceptances(): Future[Unit] = reload(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
 
     /** The finished matches and their results together: the completed lists show the result table under each row, so
       * reloading one without the other would leave a match beside somebody else's outcome.
       */
     def reloadCompleted(): Future[Unit] = {
-        val matches = reload(ApiClient.completedMatches())(completed.set)
-        val rows = reload(ApiClient.results())(r => resultsByMatch.set(r.groupBy(_.matchId)))
+        val matches = reload(ApiClient.completedMatches(), Fetch.Completed)(completed.set)
+        val rows = reload(ApiClient.results(), Fetch.Results)(r => resultsByMatch.set(r.groupBy(_.matchId)))
         matches.zip(rows).map(_ => ())
     }
 
     def reloadChallenges(gameId: GameId): Future[Unit] =
         reload(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))
 
-    def refreshGames(): Unit = load(ApiClient.games(activeOnly = true))(games.set)
+    def refreshGames(): Unit = load(ApiClient.games(activeOnly = true), Fetch.Games)(games.set)
 
     def refreshChallenges(gameId: GameId): Unit =
         load(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))
