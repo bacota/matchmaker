@@ -18,10 +18,13 @@ trait PlayAuth {
     def login: Option[LoginConfig]
 }
 
-/** What the board page needs to run the hosted-login flow: the same pool, the same app client and the same redirect
-  * handling as matchmaker's own UI.
+/** What the board page needs to sign a player in: the same pool, the same app client, the same region and the same
+  * redirect handling as matchmaker's own UI.
+  *
+  * `region` names the user pools API endpoint the page authenticates against directly; `hostedLoginUrl` is still wanted
+  * for sign-up and password reset, which stay on Cognito's own pages.
   */
-case class LoginConfig(hostedLoginUrl: String, clientId: String, redirectUri: String)
+case class LoginConfig(hostedLoginUrl: String, clientId: String, redirectUri: String, region: String)
 
 object PlayAuth {
 

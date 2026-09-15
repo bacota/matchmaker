@@ -9,7 +9,7 @@ import munit.FunSuite
   */
 class PlayAuthSpec extends FunSuite {
 
-    private val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback")
+    private val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1")
 
     test("the gateway mode reads the sub the authorizer verified") {
         val auth = PlayAuth.GatewayClaims(Some(login))
@@ -89,7 +89,7 @@ class PlayAuthSpec extends FunSuite {
         )
         assertEquals(
           configured,
-          Some(LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback"))
+          Some(LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1"))
         )
     }
 

@@ -59,10 +59,16 @@ instead. Useful for working on the board itself.
 
 ## Who a player is
 
-The board page signs in with **matchmaker's own user pool, app client and hosted-login flow** —
-authorization code with PKCE, ID token in `sessionStorage`, the password only ever typed into
-Cognito's pages. The engine then matches the token's `sub` against the `cognitoId` matchmaker sent
-for each seat. Signing in to the board is signing in as the same player as in matchmaker.
+The board page signs in with **matchmaker's own user pool and app client, running the same flow
+matchmaker's UI runs** — email and password on the page itself, against Cognito's `InitiateAuth`
+with `PREFERRED_CHALLENGE = PASSWORD`, an emailed code offered as the alternative, and sign-up and
+password reset redirecting to Cognito's hosted pages and back through `/auth/callback`. Tokens live
+in `sessionStorage`. The engine then matches the token's `sub` against the `cognitoId` matchmaker
+sent for each seat. Signing in to the board is signing in as the same player as in matchmaker.
+
+The code is copied from `SignIn.scala`, `Auth.scala` and `CognitoIdp.scala` in `matchmaker/ui`
+rather than shared with them: the board is a self-contained document served by a Lambda with no
+static hosting, and the UI is Scala.js. A change to the sign-in on either side belongs on both.
 
 Three ways that identity is established, chosen by the environment and overridable with
 `PLAY_AUTH`:
@@ -103,7 +109,7 @@ the redirect to come back — deployed, the terraform adds the engine's own call
 | `MATCHMAKER_OFFLINE` | `true` prints the callbacks instead of sending them. |
 | `COGNITO_ISSUER` | Token issuer of the user pool players sign in to (matchmaker's `jwt_issuer`). Unset means the trusted local mode. |
 | `COGNITO_CLIENT_ID` | App client the board page signs in with, and the audience a token must carry. |
-| `HOSTED_LOGIN_URL` | Base url of the hosted login the page sends players to. |
+| `HOSTED_LOGIN_URL` | Base url of the hosted login, used for sign-up and password reset. |
 | `PLAY_AUTH` | `gateway`, `verify` or `trusted`, overriding the choice above. |
 | `MATCHMAKER_API_KEY` | The secret shared with matchmaker: required on `POST /games` and `GET /matches/{id}/status`, and sent on the callbacks. Optional locally, required in Lambda. |
 

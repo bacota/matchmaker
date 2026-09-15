@@ -104,7 +104,7 @@ class RoutesSpec extends FunSuite {
      * fetches the state, so a player following the url from matchmaker gets somewhere to sign in
      * rather than a bare 401. It must not carry the board with it, which is what this checks. */
     test("the play page for a stranger carries no state and offers a sign-in") {
-        val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback")
+        val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1")
         val (routes, _, _) = fixture(playAuth = PlayAuth.GatewayClaims(Some(login)))
 
         val page = get(routes, "/matches/m-9/play")
@@ -147,7 +147,7 @@ class RoutesSpec extends FunSuite {
     }
 
     test("the sign-in callback page is served when a pool is configured, and not otherwise") {
-        val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback")
+        val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1")
         val (withPool, _, _) = fixture(playAuth = PlayAuth.GatewayClaims(Some(login)))
         val page = get(withPool, "/auth/callback")
         assertEquals(page.status, 200)

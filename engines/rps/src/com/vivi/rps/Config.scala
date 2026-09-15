@@ -71,7 +71,7 @@ object Config {
     def loginConfig(env: String => Option[String], baseUrl: String): Option[LoginConfig] =
         (env("HOSTED_LOGIN_URL"), env("COGNITO_CLIENT_ID")) match {
             case (Some(hostedLogin), Some(clientId)) =>
-                Some(LoginConfig(hostedLogin.stripSuffix("/"), clientId, s"$baseUrl/auth/callback"))
+                Some(LoginConfig(hostedLogin.stripSuffix("/"), clientId, s"$baseUrl/auth/callback", region(env)))
             case (None, None) => None
             case _ =>
                 throw IllegalStateException(

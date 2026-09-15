@@ -89,9 +89,10 @@ curl -s -X POST "http://localhost:8091/matches/$MATCH/moves?as=$SUB" \
 ## Who a player is
 
 Exactly as in `tictactoe`, and deliberately unchanged: the play page signs in with **matchmaker's
-own user pool, app client and hosted-login flow** — authorization code with PKCE, ID token in
-`sessionStorage` — and the engine matches the token's `sub` against the `cognitoId` matchmaker
-sent for each seat. The three modes (`gateway`, `verify`, `trusted`), what chooses between them,
+own user pool and app client, running the same flow matchmaker's UI runs** — email and password on
+the page itself, an emailed code as the alternative, the hosted pages kept for sign-up and password
+reset, ID token in `sessionStorage` — and the engine matches the token's `sub` against the
+`cognitoId` matchmaker sent for each seat. The three modes (`gateway`, `verify`, `trusted`), what chooses between them,
 and the two routes that stay open in all of them are described in `engines/tictactoe/README.md`
 under "Who a player is"; `PLAY_AUTH` overrides the choice here in the same way.
 
