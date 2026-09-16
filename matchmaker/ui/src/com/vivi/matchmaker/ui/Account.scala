@@ -349,19 +349,28 @@ object Account {
               // it goes away -- but read independently, because what the request means is what it says
               // and not what the form happened to be showing.
               val matches = allMatches.chosen.now()
+              // Taken before the request and checked before the store is written, as `saveNickname`
+              // does and for the reason `Store.currentSignIn` gives. Signing out empties
+              // `notificationSettings`, and the `_.map` below cannot refill a `None` -- but the next
+              // player may have opened this panel and fetched their own answers by the time this lands,
+              // and then it would overwrite theirs with these. `loadNotifications` holds what it has, so
+              // nothing would ever correct it and they could save it back as their own.
+              val signIn = Store.currentSignIn
               ApiClient
                   .updateNotifications(preferences, applyToGames = games, applyToMatches = matches)
                   .map { _ =>
-                      Store.notificationSettings.update(_.map { current =>
-                          // The server has just made every per-game row say this, so the panel must
-                          // too: the game picker below comes back to what is held here, and showing a
-                          // game the answers it had before the cascade would be showing what no longer
-                          // exists.
-                          val saved = current.copy(player = preferences)
-                          if (games) saved.copy(games = saved.games.map(_.copy(preferences = preferences)))
-                          else saved
-                      })
-                      if (games) perGame.update(_.view.mapValues(_ => preferences).toMap)
+                      if (Store.stillSignedInAs(signIn)) {
+                          Store.notificationSettings.update(_.map { current =>
+                              // The server has just made every per-game row say this, so the panel must
+                              // too: the game picker below comes back to what is held here, and showing
+                              // a game the answers it had before the cascade would be showing what no
+                              // longer exists.
+                              val saved = current.copy(player = preferences)
+                              if (games) saved.copy(games = saved.games.map(_.copy(preferences = preferences)))
+                              else saved
+                          })
+                          if (games) perGame.update(_.view.mapValues(_ => preferences).toMap)
+                      }
                   }
           },
           div(
@@ -404,16 +413,21 @@ object Account {
                       saveLabel = "Save for this game",
                       cascades = Seq(alsoMatches)
                     ) { preferences =>
+                        // Guarded like the save above, and for the same reason: this writes one
+                        // player's answers into a store the next player may already be reading.
+                        val signIn = Store.currentSignIn
                         ApiClient
                             .updateGameNotifications(gameId, preferences, applyToMatches = alsoMatches.chosen.now())
                             .map { _ =>
-                                perGame.update(_.updated(gameId, preferences))
-                                Store.notificationSettings.update(_.map { current =>
-                                    current.copy(
-                                      games = current.games.filterNot(_.gameId == gameId) :+
-                                          com.vivi.matchmaker.model.GameNotificationPreferences(gameId, preferences)
-                                    )
-                                })
+                                if (Store.stillSignedInAs(signIn)) {
+                                    perGame.update(_.updated(gameId, preferences))
+                                    Store.notificationSettings.update(_.map { current =>
+                                        current.copy(
+                                          games = current.games.filterNot(_.gameId == gameId) :+
+                                              com.vivi.matchmaker.model.GameNotificationPreferences(gameId, preferences)
+                                        )
+                                    })
+                                }
                             }
                     }
             }
