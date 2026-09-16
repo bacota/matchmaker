@@ -51,8 +51,10 @@ class NotificationService(sessionPool: SessionPool) {
       * has left one game answering differently on purpose has not asked for their defaults to reach that game's
       * matches. It is not refused here, though: the two are independent writes and either is a coherent thing to want.
       *
-      * All of it in one transaction, the read included: what the save changed is read and acted on under one lock, so a
-      * second save landing in between cannot make this cascade carry a question this one did not touch.
+      * All of it in one transaction, and the read takes the row's lock rather than merely sharing a transaction with
+      * the write — a plain `SELECT` would be re-readable by a second save, which would then diff against answers this
+      * one has already replaced and cascade a change that had nothing left to carry. The row and the rows beneath it
+      * would disagree about which save had happened, and no screen shows that.
       */
     def updateMine(
         callerExternalId: String,
@@ -65,7 +67,7 @@ class NotificationService(sessionPool: SessionPool) {
             callerPlayer(session, callerExternalId).flatMap { player =>
                 session.transaction.use { _ =>
                     for {
-                        before <- repo.readForPlayer(player.playerId)
+                        before <- repo.readForPlayerForUpdate(player.playerId)
                         changed = before.differences(preferences)
                         _ <- repo.updateForPlayer(player.playerId, preferences)
                         // Nothing changed is nothing to carry anywhere, whatever was ticked.
@@ -108,6 +110,10 @@ class NotificationService(sessionPool: SessionPool) {
                 _ <- IO.raiseUnless(exists)(NotFoundError(s"no game with id ${gameId.value}"))
                 _ <- session.transaction.use { _ =>
                     for {
+                        // The player's row, not this game's: the same lock every level of this service
+                        // takes, and the only one available when the `player_game` row does not exist
+                        // yet. See `NotificationRepo.lockSettings`.
+                        _ <- repo.lockSettings(player.playerId)
                         before <- repo.readForPlayerGame(player.playerId, gameId)
                         changed = before.differences(preferences)
                         _ <- repo.updateForPlayerGame(player.playerId, gameId, preferences)

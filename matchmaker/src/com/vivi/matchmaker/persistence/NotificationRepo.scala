@@ -63,6 +63,25 @@ class NotificationRepo(session: Session[IO]) {
           FROM player
           WHERE player_id = $playerId""".query(preferences)
 
+    /* The same eight columns, read under the row's own lock -- the repo-wide rule for a read whose
+     * answer decides a write, and here the read decides more than one: what this save changed is what
+     * its cascades are allowed to carry into `player_game` and `participant`. Two saves that both read
+     * the old answers would each compute a change the other had already made, and the row would end up
+     * disagreeing with the rows beneath it about which of them had happened.
+     *
+     * The `player` row is the lock for all three levels, which is why `lockSettings` exists for the
+     * paths that do not want these columns back. */
+    private val selectPlayerPreferencesForUpdate: Query[PlayerId, NotificationPreferences] =
+        sql"""SELECT notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
+                 notify_accepted_challenge_ready, notify_match_started, notify_turn_taken,
+                 notify_your_turn, notify_match_ended
+          FROM player
+          WHERE player_id = $playerId
+          FOR UPDATE""".query(preferences)
+
+    private val lockPlayer: Query[PlayerId, PlayerId] =
+        sql"SELECT player_id FROM player WHERE player_id = $playerId FOR UPDATE".query(playerId)
+
     /* As GameRepo's update: a SET list needs a placeholder per column, so the value is taken apart
      * here rather than at the call site. */
     private val updatePlayerPreferences: Command[(NotificationPreferences, PlayerId)] =
@@ -373,6 +392,27 @@ class NotificationRepo(session: Session[IO]) {
     def readForPlayer(id: PlayerId): IO[NotificationPreferences] =
         session.option(selectPlayerPreferences)(id).map(_.getOrElse(NotificationPreferences.unset))
 
+    /** The same, with the row locked for the rest of the transaction.
+      *
+      * For a save that is about to write these columns and to decide, from what they said, what its cascades may carry
+      * downwards — so the answers it diffs against cannot be changed underneath it by another save. See
+      * `selectPlayerPreferencesForUpdate`.
+      */
+    def readForPlayerForUpdate(id: PlayerId): IO[NotificationPreferences] =
+        session.option(selectPlayerPreferencesForUpdate)(id).map(_.getOrElse(NotificationPreferences.unset))
+
+    /** Takes the lock without reading the columns, for a save at one of the levels below `player`.
+      *
+      * The `player` row is the lock for everything this repo writes for one player, at every level. On the face of it a
+      * per-game save should lock its own `player_game` row instead — but that row may not exist yet, which is precisely
+      * the case two concurrent first saves for one game would race on, and `FOR UPDATE` on a row that is not there
+      * locks nothing. The player always exists; the caller has just read it.
+      *
+      * Cheap enough to take unconditionally: one indexed row, held only for the rest of a transaction that writes a
+      * handful of rows, and contended only by that same player saving twice at once.
+      */
+    def lockSettings(id: PlayerId): IO[Unit] = session.option(lockPlayer)(id).void
+
     def updateForPlayer(id: PlayerId, preferences: NotificationPreferences): IO[Unit] =
         session.execute(updatePlayerPreferences)((preferences, id)).void
 
@@ -385,7 +425,8 @@ class NotificationRepo(session: Session[IO]) {
     /** What this player has said about this one game. `unset` where they have no row, which reads the same as a row of
       * NULLs and is what a player who has never opened that game's settings has.
       *
-      * Read before a save so that the save can tell what it changed, which is all a cascade may carry down.
+      * Read before a save so that the save can tell what it changed, which is all a cascade may carry down — under
+      * `lockSettings`, which is what keeps that comparison from going stale while it is being acted on.
       */
     def readForPlayerGame(id: PlayerId, game: GameId): IO[NotificationPreferences] =
         session.option(selectPlayerGame)((id, game)).map(_.getOrElse(NotificationPreferences.unset))

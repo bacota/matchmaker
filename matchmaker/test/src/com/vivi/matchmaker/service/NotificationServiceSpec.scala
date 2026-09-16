@@ -154,6 +154,40 @@ class NotificationServiceSpec extends PropertySuite {
         }
     }
 
+    /* The lock the diffing read takes, over two real connections.
+     *
+     * Two saves at once is one player with two tabs open, or one impatient double click. Each works
+     * out what it changed by comparing against what it read, so whichever goes second has to compare
+     * against the first's result -- otherwise it computes a change that has already happened, carries
+     * that into the game row, and leaves the two levels disagreeing about which save occurred.
+     *
+     * Asserted as the invariant rather than as an interleaving: this game row has no answer of its
+     * own, so whichever save wins, the row must end up saying exactly what the player says. Which one
+     * wins is not the point and is not ours to decide.
+     *
+     * A passing run does not prove the absence of a race -- an unlocked read can serialize by luck.
+     * What it does do is fail while the lock is missing, which it did before the lock was added. */
+    property("two saves at once leave the player and their games agreeing") {
+        forAll(genUniqueString) { seed =>
+            val caller = s"racer-$seed"
+            val first = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(false))
+            val second = NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(true))
+            val result = for {
+                _ <- services.registration.register(s"racer-$seed", caller, None)
+                game <- makeGame(seed)
+                // Something for the cascade to write to: aligning deliberately creates no row for a
+                // game the player has never said anything about, so this is what makes one.
+                _ <- services.notifications.updateForGame(caller, game.gameId, NotificationPreferences.unset)
+                _ <- IO.both(
+                  services.notifications.updateMine(caller, first, applyToGames = true),
+                  services.notifications.updateMine(caller, second, applyToGames = true)
+                )
+                settings <- services.notifications.mine(caller)
+            } yield settings.games.map(_.preferences) == Seq(settings.player)
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
     // And without the box ticked, saving the defaults is saving the defaults: the game the player
     // answered separately goes on answering separately, which is what answering it separately meant.
     property("new defaults leave a game's own answers alone unless asked") {
