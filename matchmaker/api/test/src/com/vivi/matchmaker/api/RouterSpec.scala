@@ -108,6 +108,22 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request("GET", "/games/abc/challenges")).statusCode, 400)
     }
 
+    // The per-game route takes the same body as the defaults route above it, so the flag that only
+    // the defaults route can act on is something a client can send here by simply reusing that body.
+    // Refused rather than discarded: a 204 would tell them a cascade had run that had not. Answered
+    // before the service is reached, which the unusable pool proves -- reaching it would be a 500.
+    test("a cascade the per-game route cannot carry out is a bad request") {
+        val body = """{"preferences":{"matchStarted":true},"applyToGames":true}"""
+        assertEquals(dispatch(request("PUT", "/me/notifications/games/1", body = body)).statusCode, 400)
+    }
+
+    // And the flag it can act on still reaches the service, so the refusal above is about one field
+    // and has not made the route reject every cascade.
+    test("the cascade the per-game route does support reaches the service") {
+        val body = """{"preferences":{"matchStarted":true},"applyToMatches":true}"""
+        assertEquals(quietly(dispatch(request("PUT", "/me/notifications/games/1", body = body))).statusCode, 500)
+    }
+
     test("a non-numeric character id is a bad request") {
         assertEquals(dispatch(request("PUT", "/characters/abc")).statusCode, 400)
     }
@@ -160,8 +176,14 @@ class RouterSpec extends FunSuite {
       ("PUT", "/me", """{"nickname":"renamed"}"""),
       ("PUT", "/me/email", """{"email":"player@example.com"}"""),
       ("GET", "/me/notifications", "{}"),
-      ("PUT", "/me/notifications", """{"matchStarted":true,"yourTurn":false}"""),
-      ("PUT", "/me/notifications/games/1", """{"matchStarted":true,"yourTurn":false}"""),
+      // The preferences are wrapped, because how far the save reaches is part of what was said --
+      // and the cascade flags are defaulted, so a body that names only the preferences is valid too.
+      ("PUT", "/me/notifications", """{"preferences":{"matchStarted":true,"yourTurn":false}}"""),
+      (
+        "PUT",
+        "/me/notifications/games/1",
+        """{"preferences":{"matchStarted":true,"yourTurn":false},"applyToMatches":true}"""
+      ),
       ("GET", "/me/acceptances", "{}"),
       ("GET", "/me/matches", "{}"),
       ("GET", "/me/matches/due", "{}"),
@@ -183,7 +205,14 @@ class RouterSpec extends FunSuite {
       ("POST", "/games/1/matches/m1/refresh", "{}"),
       ("POST", "/games/1/matches/m1/cancel", "{}"),
       ("GET", "/games/1/matches/m1/notifications", "{}"),
-      ("PUT", "/games/1/matches/m1/notifications", """{"matchStarted":true,"yourTurn":false}"""),
+      // All eight, and not optional: a seat answers every kind, so there is nothing here to leave out.
+      (
+        "PUT",
+        "/games/1/matches/m1/notifications",
+        """{"challengeAccepted":true,"challengeReady":true,"acceptanceChanged":true,
+           "acceptedChallengeReady":true,"matchStarted":true,"turnTaken":false,
+           "yourTurn":true,"matchEnded":true}"""
+      ),
       (
         "POST",
         "/games/1/matches/m1/moves",

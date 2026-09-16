@@ -464,6 +464,30 @@ label.field > .hint {
   flex: none;
 }
 
+/* An offer to carry what is being saved down a level: the box, its caption beside it, and the line
+   saying what it will actually touch underneath the caption.
+
+   Not the single flex line above -- that rule centres a caption beside a box, and a second line
+   dropped into it would sit halfway up. A grid instead, so the explanation lines up under the
+   caption rather than under the box. Same class as the rule above matches, so this comes after it
+   and wins on order; `.card` is in the selector to match its specificity rather than beat it. */
+.card label.cascade {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.2rem 0.4rem;
+  margin: 0 0 0.75rem;
+  /* A checkbox is hit by its caption as well, so the whole label is the target. */
+  min-height: 44px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.card label.cascade > .hint {
+  grid-column: 2;
+  font-size: 0.85rem;
+}
+
 button {
   font: inherit;
   padding: 0.35rem 0.7rem;

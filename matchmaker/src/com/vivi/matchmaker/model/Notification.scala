@@ -107,6 +107,18 @@ case class NotificationPreferences(
         case NotificationType.MatchEnded             => copy(matchEnded = choice)
     }
 
+    /** The kinds this and `other` answer differently: what a save actually changed.
+      *
+      * What a cascade is allowed to touch. A player who changes one question and asks for it to reach the matches they
+      * are playing has asked about that question, not about the seven they left alone — and a seat may well be holding
+      * an answer of its own to one of those.
+      *
+      * A kind that went from an answer to unsaid counts as changed: "I no longer have a view on this" is a change like
+      * any other, and what it now falls through to is very likely not what it used to say.
+      */
+    def differences(other: NotificationPreferences): Set[NotificationType] =
+        NotificationType.values.toSet.filter(kind => apply(kind) != other(kind))
+
     /** The kinds this level has nothing to say about, i.e. the ones that fall through to the next. */
     def unsaid: Seq[NotificationType] = NotificationType.values.toSeq.filter(apply(_).isEmpty)
 
@@ -187,19 +199,47 @@ object NotificationDefaults {
         NotificationDefaults(enabled, enabled, enabled, enabled, enabled, enabled, enabled, enabled)
 }
 
-/** Every level of the chain that bears on one recipient, unresolved.
+/** The levels a new seat inherits from, unresolved.
   *
   * Carried as one value rather than resolved where it is read, so that the rule lives in exactly one place —
-  * [[NotificationPolicy]] — and can be exercised without a database. `participant` and `playerGame` are `unset` when
-  * there is no such row: a notification about a challenge concerns a player who is in no match yet, and a player who
-  * has never opened a game's settings has no `player_game` row.
+  * [[resolve]] — and can be exercised without a database. `playerGame` is `unset` when there is no such row: a player
+  * who has never opened a game's settings has none.
+  *
+  * Note what is *not* here: the participant level. Since V14 a seat's own eight answers are NOT NULL and are the whole
+  * answer for anything about a match, so a chain is only ever walked in the two places one still has to be — creating a
+  * seat, and writing to somebody about a challenge, which nobody is a participant in yet.
   */
 case class NotificationLevels(
-    participant: NotificationPreferences = NotificationPreferences.unset,
     playerGame: NotificationPreferences = NotificationPreferences.unset,
     player: NotificationPreferences = NotificationPreferences.unset,
     game: NotificationDefaults
-)
+) {
+
+    /** The chain collapsed: the most specifically stated answer for each kind, ending at the game, which always has
+      * one.
+      *
+      * Most specific first, which is also least durable first: what a player says about one game outlives their opinion
+      * of that afternoon, while what the game says outlives everyone's opinion of it.
+      *
+      * This is what a seat is stamped with when it is created, and the same expression the database writes there —
+      * `ParticipantRepo.create` does it in SQL so that a seat cannot exist unstamped. Here so that the rule can be read
+      * and tested as itself.
+      */
+    def resolve: NotificationDefaults =
+        NotificationDefaults(
+          answer(NotificationType.ChallengeAccepted),
+          answer(NotificationType.ChallengeReady),
+          answer(NotificationType.AcceptanceChanged),
+          answer(NotificationType.AcceptedChallengeReady),
+          answer(NotificationType.MatchStarted),
+          answer(NotificationType.TurnTaken),
+          answer(NotificationType.YourTurn),
+          answer(NotificationType.MatchEnded)
+        )
+
+    private def answer(kind: NotificationType): Boolean =
+        playerGame(kind).orElse(player(kind)).getOrElse(game(kind))
+}
 
 /** What one player has said about one game, as the settings screen lists it.
   *
@@ -219,22 +259,14 @@ case class NotificationSettings(
     games: Seq[GameNotificationPreferences]
 )
 
-/** Whether a particular player is to be told about a particular thing. */
+/** Whether a particular player is to be told about a particular thing.
+  *
+  * Over one recipient's answers, already resolved: a seat's own eight columns, or [[NotificationLevels.resolve]] for an
+  * audience that has no seat yet.
+  */
 object NotificationPolicy {
 
-    /** The first level that has an answer wins; the game always has one.
-      *
-      * Most specific first, which is also least durable first: a mute on one match outlives that match and nothing
-      * else, while what the game says outlives everyone's opinion of it. Note that the participant level is consulted
-      * simply by being present — a participant row exists only once a match has been started, so "check the participant
-      * row if the match has started" needs no separate test for whether it has.
-      */
-    def wants(kind: NotificationType, levels: NotificationLevels): Boolean =
-        levels
-            .participant(kind)
-            .orElse(levels.playerGame(kind))
-            .orElse(levels.player(kind))
-            .getOrElse(levels.game(kind))
+    def wants(kind: NotificationType, answers: NotificationDefaults): Boolean = answers(kind)
 
     /** The one notification a recipient gets for an event that is several kinds of news at once.
       *
@@ -249,6 +281,6 @@ object NotificationPolicy {
       *
       * `None` when they have refused all of them, which is the only case that sends nothing.
       */
-    def choose(kinds: Seq[NotificationType], levels: NotificationLevels): Option[NotificationType] =
-        kinds.find(wants(_, levels))
+    def choose(kinds: Seq[NotificationType], answers: NotificationDefaults): Option[NotificationType] =
+        kinds.find(wants(_, answers))
 }

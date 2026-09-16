@@ -14,7 +14,10 @@ import com.vivi.matchmaker.persistence.{NotificationRepo, PlayerRepo}
   * The fourth level, a game's defaults, is not here: it belongs to the game's definition, is set by the admin who
   * registers it, and travels with the rest of `Game` through `GameService`.
   *
-  * What reads all four and decides is `NotificationPolicy`, in the model. This service only records answers.
+  * The three read as a chain only when a seat is created: since V14 a seat carries its own eight answers and nothing
+  * reads past it, so changing a game's settings does not change a match already being played. What makes that sayable
+  * is the cascades below — the offers `updateMine` and `updateForGame` take, which carry a player's answers into the
+  * rows that had inherited from them.
   */
 class NotificationService(sessionPool: SessionPool) {
 
@@ -31,45 +34,109 @@ class NotificationService(sessionPool: SessionPool) {
             } yield NotificationSettings(overall, games)
         }
 
-    def updateMine(callerExternalId: String, preferences: NotificationPreferences): IO[Unit] =
+    /** Records the caller's defaults, and optionally carries them downwards.
+      *
+      * `applyToGames` copies the change into every game they have said something about, so that none of those games
+      * goes on answering that question differently. `applyToMatches` re-stamps the seats in the matches they are still
+      * playing from the chain as it then stands — which is why the order below is not arbitrary: the games are aligned
+      * first, so that the seats are stamped from what the player has just asked for rather than from what they asked
+      * for last time.
+      *
+      * Both cascades carry only what this save changed, which is what the read below is for. A player changing one
+      * question has said something about that question and nothing about the other seven — and one of those seven may
+      * be a mute they put on a single match, or an answer they gave one game on purpose. Saving the same answers twice
+      * cascades nothing the second time, because nothing changed.
+      *
+      * `applyToMatches` is only offered alongside `applyToGames` by the screen that calls this, because a player who
+      * has left one game answering differently on purpose has not asked for their defaults to reach that game's
+      * matches. It is not refused here, though: the two are independent writes and either is a coherent thing to want.
+      *
+      * All of it in one transaction, and the read takes the row's lock rather than merely sharing a transaction with
+      * the write — a plain `SELECT` would be re-readable by a second save, which would then diff against answers this
+      * one has already replaced and cascade a change that had nothing left to carry. The row and the rows beneath it
+      * would disagree about which save had happened, and no screen shows that.
+      */
+    def updateMine(
+        callerExternalId: String,
+        preferences: NotificationPreferences,
+        applyToGames: Boolean = false,
+        applyToMatches: Boolean = false
+    ): IO[Unit] =
         sessionPool.use { session =>
             val repo = new NotificationRepo(session)
-            for {
-                player <- callerPlayer(session, callerExternalId)
-                _ <- repo.updateForPlayer(player.playerId, preferences)
-            } yield ()
+            callerPlayer(session, callerExternalId).flatMap { player =>
+                session.transaction.use { _ =>
+                    for {
+                        before <- repo.readForPlayerForUpdate(player.playerId)
+                        changed = before.differences(preferences)
+                        _ <- repo.updateForPlayer(player.playerId, preferences)
+                        // Nothing changed is nothing to carry anywhere, whatever was ticked.
+                        _ <- IO.whenA(applyToGames && changed.nonEmpty)(
+                          repo.alignGamesWithPlayer(player.playerId, preferences, changed)
+                        )
+                        _ <- IO.whenA(applyToMatches && changed.nonEmpty)(
+                          repo.applyToMatches(player.playerId, None, changed)
+                        )
+                    } yield ()
+                }
+            }
         }
 
     /** Records what the caller wants to hear about one game, creating their `player_game` row if this is the first
       * thing they have said about it.
       *
+      * `applyToMatches` carries the change into the matches of that game they are still playing. Without it the change
+      * governs the matches they start from now on and leaves the ones they are in alone, which is the whole point of a
+      * seat answering for itself — so the offer is what makes "and I meant the matches I am in too" sayable.
+      *
+      * Only what this save changed reaches those seats, which is what the read below is for: a player who turns off
+      * turn-taken for a game has said nothing about the match whose results they muted last week, and re-stamping all
+      * eight columns would have unmuted it.
+      *
       * The game is checked for existence first so that a bad id is a 404 rather than a foreign key violation, which
       * would reach the caller as a 500 about something they cannot act on.
       */
-    def updateForGame(callerExternalId: String, gameId: GameId, preferences: NotificationPreferences): IO[Unit] =
+    def updateForGame(
+        callerExternalId: String,
+        gameId: GameId,
+        preferences: NotificationPreferences,
+        applyToMatches: Boolean = false
+    ): IO[Unit] =
         sessionPool.use { session =>
             val repo = new NotificationRepo(session)
             for {
                 player <- callerPlayer(session, callerExternalId)
                 exists <- repo.gameExists(gameId)
                 _ <- IO.raiseUnless(exists)(NotFoundError(s"no game with id ${gameId.value}"))
-                _ <- repo.updateForPlayerGame(player.playerId, gameId, preferences)
+                _ <- session.transaction.use { _ =>
+                    for {
+                        // The player's row, not this game's: the same lock every level of this service
+                        // takes, and the only one available when the `player_game` row does not exist
+                        // yet. See `NotificationRepo.lockSettings`.
+                        _ <- repo.lockSettings(player.playerId)
+                        before <- repo.readForPlayerGame(player.playerId, gameId)
+                        changed = before.differences(preferences)
+                        _ <- repo.updateForPlayerGame(player.playerId, gameId, preferences)
+                        _ <- IO.whenA(applyToMatches && changed.nonEmpty)(
+                          repo.applyToMatches(player.playerId, Some(gameId), changed)
+                        )
+                    } yield ()
+                }
             } yield ()
         }
 
-    /** What the caller has said about one match. `unset` when they have said nothing, which is what the form shows as
-      * "Use Default" throughout.
+    /** What the caller's seats in one match say. Every kind answered: a seat cannot leave one unsaid, so the form that
+      * shows these has no "Use Default" option and nothing to fall back to.
       *
       * Refused unless the caller is in the match: the answer would otherwise tell someone who is not playing that a
       * match exists, and there is nothing for them to set.
       */
-    def forMatch(callerExternalId: String, gameId: GameId, matchId: MatchId): IO[NotificationPreferences] =
+    def forMatch(callerExternalId: String, gameId: GameId, matchId: MatchId): IO[NotificationDefaults] =
         sessionPool.use { session =>
             val repo = new NotificationRepo(session)
             for {
                 player <- callerPlayer(session, callerExternalId)
-                // The read itself is the membership check: no seat, no row. A row of NULLs is a player
-                // who is in the match and has said nothing, which is `unset` rather than absent.
+                // The read itself is the membership check: no seat, no row.
                 preferences <- repo.readForPlayerInMatch(gameId, matchId, player.playerId).flatMap {
                     case Some(found) => IO.pure(found)
                     case None =>
@@ -91,7 +158,7 @@ class NotificationService(sessionPool: SessionPool) {
         callerExternalId: String,
         gameId: GameId,
         matchId: MatchId,
-        preferences: NotificationPreferences
+        preferences: NotificationDefaults
     ): IO[Unit] =
         sessionPool.use { session =>
             val repo = new NotificationRepo(session)

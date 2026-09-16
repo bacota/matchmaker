@@ -169,6 +169,19 @@ object Store {
     def loadNotifications(): Unit =
         if (notificationSettings.now().isEmpty) load(ApiClient.notifications())(s => notificationSettings.set(Some(s)))
 
+    /** Fetches them again whatever is held, and says when it has.
+      *
+      * For a save whose effects reach rows this panel is holding copies of: `updateNotifications` with `applyToGames`
+      * rewrites the player's per-game rows, and only for the questions that save changed. The screen could restate that
+      * rule to work out the result, and did, wrongly — so it asks instead. One request, on a deliberate action, in
+      * exchange for a copy that cannot disagree with the server.
+      *
+      * Through `reload`, so the answer is dropped if the session that asked has ended, and so a failure raises the
+      * banner rather than being handed back to a caller with nothing useful to do about it.
+      */
+    def reloadNotifications(): Future[Unit] =
+        reload(ApiClient.notifications())(s => notificationSettings.set(Some(s)))
+
     /** How each finished match turned out, keyed by its match id: the rows of the result table shown under a completed
       * match. Loaded whole with the lists, not per row.
       */

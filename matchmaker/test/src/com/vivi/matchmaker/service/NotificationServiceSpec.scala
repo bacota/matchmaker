@@ -11,8 +11,9 @@ import com.vivi.matchmaker.persistence.{GameRepo, TestSession}
 
 /** Recording what a player wants to be told about, at the two levels that are theirs to set from the account panel.
   *
-  * Which of the four levels wins is `NotificationPolicySpec`, with no database in sight; that the levels are read from
-  * the right rows is here.
+  * Which of the levels wins is `NotificationPolicySpec`, with no database in sight; that the levels are read from the
+  * right rows is here. The per-match level needs a match and so lives in `MatchStartedNotificationSpec`, along with the
+  * cascades that reach it.
   */
 class NotificationServiceSpec extends PropertySuite {
     TestMigration.ensure()
@@ -110,6 +111,103 @@ class NotificationServiceSpec extends PropertySuite {
     // Two players' answers are two players' answers. Worth stating because every level here is
     // keyed by the caller rather than by anything they send, so a query that lost the key would
     // pass every test above and fail this one.
+    // The offer the defaults form makes: a player who has answered one game differently and then asks
+    // for their defaults to be used everywhere gets one answer rather than two for the question they
+    // changed -- and keeps the game's own answer to every question they did not.
+    property("a change to the defaults can be copied into every game the player has answered") {
+        forAll(genUniqueString) { seed =>
+            val caller = s"cascader-$seed"
+            val forGame = NotificationPreferences.unset
+                .updated(NotificationType.MatchStarted, Some(false))
+                .updated(NotificationType.TurnTaken, Some(true))
+            val result = for {
+                _ <- services.registration.register(s"cascader-$seed", caller, None)
+                game <- makeGame(seed)
+                _ <- services.notifications.updateForGame(caller, game.gameId, forGame)
+                defaults = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(true))
+                _ <- services.notifications.updateMine(caller, defaults, applyToGames = true)
+                settings <- services.notifications.mine(caller)
+            } yield settings.player == defaults &&
+                // match-started was the question that changed, so the game now agrees about it;
+                // turn-taken was not, so the game still says what it said.
+                settings.games.map(_.preferences) == Seq(forGame.updated(NotificationType.MatchStarted, Some(true)))
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    // Withdrawing an answer is a change like any other, and is carried as the NULL it now is rather
+    // than leaving the game frozen on what the player used to think.
+    property("going back to unsaid is carried into the games too") {
+        forAll(genUniqueString) { seed =>
+            val caller = s"withdrawn-$seed"
+            val said = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(false))
+            val result = for {
+                _ <- services.registration.register(s"withdrawn-$seed", caller, None)
+                game <- makeGame(seed)
+                _ <- services.notifications.updateMine(caller, said, applyToGames = true)
+                _ <- services.notifications.updateForGame(caller, game.gameId, said)
+                _ <- services.notifications.updateMine(caller, NotificationPreferences.unset, applyToGames = true)
+                settings <- services.notifications.mine(caller)
+            } yield settings.player == NotificationPreferences.unset &&
+                settings.games.map(_.preferences) == Seq(NotificationPreferences.unset)
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* The lock the diffing read takes, over two real connections.
+     *
+     * Two saves at once is one player with two tabs open, or one impatient double click. Each works
+     * out what it changed by comparing against what it read, so whichever goes second has to compare
+     * against the first's result -- otherwise it computes a change that has already happened, carries
+     * that into the game row, and leaves the two levels disagreeing about which save occurred.
+     *
+     * Asserted as the invariant rather than as an interleaving: this game row has no answer of its
+     * own, so whichever save wins, the row must end up saying exactly what the player says. Which one
+     * wins is not the point and is not ours to decide.
+     *
+     * A passing run does not prove the absence of a race -- an unlocked read can serialize by luck.
+     * What it does do is fail while the lock is missing, which it did before the lock was added. */
+    property("two saves at once leave the player and their games agreeing") {
+        forAll(genUniqueString) { seed =>
+            val caller = s"racer-$seed"
+            val first = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(false))
+            val second = NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(true))
+            val result = for {
+                _ <- services.registration.register(s"racer-$seed", caller, None)
+                game <- makeGame(seed)
+                // Something for the cascade to write to: aligning deliberately creates no row for a
+                // game the player has never said anything about, so this is what makes one.
+                _ <- services.notifications.updateForGame(caller, game.gameId, NotificationPreferences.unset)
+                _ <- IO.both(
+                  services.notifications.updateMine(caller, first, applyToGames = true),
+                  services.notifications.updateMine(caller, second, applyToGames = true)
+                )
+                settings <- services.notifications.mine(caller)
+            } yield settings.games.map(_.preferences) == Seq(settings.player)
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    // And without the box ticked, saving the defaults is saving the defaults: the game the player
+    // answered separately goes on answering separately, which is what answering it separately meant.
+    property("new defaults leave a game's own answers alone unless asked") {
+        forAll(genUniqueString) { seed =>
+            val caller = s"nocascade-$seed"
+            val forGame = NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(false))
+            val result = for {
+                _ <- services.registration.register(s"nocascade-$seed", caller, None)
+                game <- makeGame(seed)
+                _ <- services.notifications.updateForGame(caller, game.gameId, forGame)
+                _ <- services.notifications.updateMine(
+                  caller,
+                  NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(true))
+                )
+                settings <- services.notifications.mine(caller)
+            } yield settings.games.map(_.preferences) == Seq(forGame)
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
     property("one player's answers are not another's") {
         forAll(genUniqueString) { seed =>
             val mine = s"mine-$seed"
@@ -155,7 +253,7 @@ class NotificationServiceSpec extends PropertySuite {
                 game <- makeGame(seed)
                 read <- services.notifications.forMatch(caller, game.gameId, MatchId(s"absent-$seed")).attempt
                 written <- services.notifications
-                    .updateForMatch(caller, game.gameId, MatchId(s"absent-$seed"), NotificationPreferences.unset)
+                    .updateForMatch(caller, game.gameId, MatchId(s"absent-$seed"), NotificationDefaults.all(true))
                     .attempt
             } yield read.left.exists(_.isInstanceOf[NotFoundError]) &&
                 written.left.exists(_.isInstanceOf[NotFoundError])

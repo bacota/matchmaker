@@ -76,15 +76,29 @@ object Router {
                 ok(services.notifications.mine(caller))
 
             case ("PUT", "me" :: "notifications" :: Nil) =>
-                body[NotificationPreferences](request).flatMap(p =>
-                    noContent(services.notifications.updateMine(caller, p))
+                body[Json.PreferencesRequest](request).flatMap(r =>
+                    noContent(
+                      services.notifications.updateMine(caller, r.preferences, r.applyToGames, r.applyToMatches)
+                    )
                 )
 
+            // Same body as the route above, and `applyToGames` refused rather than ignored: there is
+            // no level between one game and another for it to mean anything about, so a client that
+            // sends it here has asked for something this route cannot do -- and the likely way to end
+            // up doing that is to reuse the body of its sibling above, which is exactly the mistake a
+            // silent 204 would hide. Refused before the service is reached, so nothing is written.
             case ("PUT", "me" :: "notifications" :: "games" :: gameId :: Nil) =>
                 withGameId(gameId) { id =>
-                    body[NotificationPreferences](request).flatMap(p =>
-                        noContent(services.notifications.updateForGame(caller, id, p))
-                    )
+                    body[Json.PreferencesRequest](request).flatMap { r =>
+                        if (r.applyToGames)
+                            IO.pure(
+                              Errors.badRequest(
+                                "applyToGames is not supported for one game's settings; it belongs to PUT /me/notifications"
+                              )
+                            )
+                        else
+                            noContent(services.notifications.updateForGame(caller, id, r.preferences, r.applyToMatches))
+                    }
                 }
 
             case ("GET", "me" :: "acceptances" :: Nil) =>
@@ -210,7 +224,9 @@ object Router {
 
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "notifications" :: Nil) =>
                 withGameId(gameId) { gid =>
-                    body[NotificationPreferences](request).flatMap(p =>
+                    // `NotificationDefaults`, not preferences: a seat answers every kind, so there is
+                    // nothing here a caller may leave unsaid and nothing below it to fall through to.
+                    body[NotificationDefaults](request).flatMap(p =>
                         noContent(services.notifications.updateForMatch(caller, gid, MatchId(matchId), p))
                     )
                 }

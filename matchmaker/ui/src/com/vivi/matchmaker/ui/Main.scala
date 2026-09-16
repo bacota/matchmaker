@@ -749,6 +749,10 @@ object Views {
 
     /** What this player wants to hear about this one match, on the match's own row.
       *
+      * The whole answer, not an override: the seat was stamped with the player's settings as they stood when the match
+      * started, and what is saved here is what that match sends from now on regardless of what they change elsewhere —
+      * unless they later ask for a change to be carried into the matches they are in, which the account panel offers.
+      *
       * On the row rather than in the account panel because it is about this match: the player who wants quiet wants it
       * from the match that has got noisy, and finding it under Account would mean naming the match in a list of forty.
       *
@@ -781,7 +785,7 @@ object Views {
                 else if (fetched.now()) shown.set(true)
                 else
                     Store.run(ApiClient.matchNotifications(summary.gameId, summary.matchId), busy) { current =>
-                        preferences.set(current)
+                        preferences.set(current.asPreferences)
                         fetched.set(true)
                         shown.set(true)
                     }
@@ -789,14 +793,30 @@ object Views {
           ),
           child <-- shown.signal.map {
               case false => emptyNode
-              case true =>
+              case true  =>
+                  // `withDefault = false`, as on the game form and for the same reason: this match's
+                  // seat answers every kind itself and there is nothing under it to defer to. The
+                  // answers it opens with are what the seat was stamped with when the match started,
+                  // so nothing is unanswered and the button is never disabled for want of a choice.
                   Notifications.form(
                     "Notifications for this match",
-                    "These win over your settings for this game and your settings in general. " +
-                        "Anything left on \"Use Default\" falls back to them.",
+                    "What we email you about this match, whatever you change elsewhere later.",
                     preferences,
+                    withDefault = false,
                     saveLabel = "Save for this match"
-                  )(chosen => ApiClient.updateMatchNotifications(summary.gameId, summary.matchId, chosen))
+                  ) { chosen =>
+                      chosen.complete match {
+                          case Some(answers) =>
+                              ApiClient.updateMatchNotifications(summary.gameId, summary.matchId, answers)
+                          // Unreachable: the form seeds all eight and its button is disabled while any
+                          // is unanswered. A failed Future rather than a silent success, so that a hole
+                          // in that reasoning shows up beside the form instead of looking saved.
+                          case None =>
+                              scala.concurrent.Future.failed(
+                                new RuntimeException("Answer every question before saving.")
+                              )
+                      }
+                  }
           }
         )
     }

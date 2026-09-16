@@ -68,6 +68,53 @@ object Notifications {
           span(cls := "detail hint", kind.detail)
         )
 
+    /** An offer to carry what is about to be saved down to the level below it.
+      *
+      * A checkbox beside the save button rather than a separate button, because it is part of the same sentence: the
+      * player is saying "this change, and make it there too". Since a seat carries its own answers, changing a game's
+      * settings leaves the matches already being played alone — which is what makes these offers worth making rather
+      * than being how it works anyway.
+      *
+      * What travels is the change, not the form: the questions a save leaves alone are left alone at every level below
+      * it, so a mute on one match survives a change to something else. Every caption says so, because a box reading
+      * "use these everywhere" would be promising something else.
+      *
+      * `chosen` is read by whoever supplied the cascade, inside its own save; `form` only renders it. `shown` is for an
+      * offer that only makes sense once another has been taken — the account form's "and in all my matches", which
+      * follows from "in all my games" — and an offer that goes away is unchecked on the way out, so a box the player
+      * can no longer see cannot still be part of what they save.
+      */
+    case class Cascade(
+        label: String,
+        detail: String,
+        chosen: Var[Boolean] = Var(false),
+        shown: Signal[Boolean] = Val(true)
+    )
+
+    /* A cascade as a control. The caption wraps the box, so it is named without an id, for the same
+     * reason `question` gives -- a page may render this form more than once. */
+    private def offer(cascade: Cascade): HtmlElement =
+        div(
+          cascade.shown.changes.filterNot(identity) --> (_ => cascade.chosen.set(false)),
+          child <-- cascade.shown.map {
+              case false => emptyNode
+              case true =>
+                  label(
+                    cls := "cascade",
+                    input(
+                      tpe := "checkbox",
+                      checked <-- cascade.chosen.signal,
+                      onInput.mapToChecked --> cascade.chosen
+                    ),
+                    span(cascade.label),
+                    // A span inside the label for the same reason the questions' hints are: it says
+                    // what the box will actually touch, and belongs to the control rather than sitting
+                    // near it.
+                    span(cls := "detail hint", cascade.detail)
+                  )
+          }
+        )
+
     /** All eight questions, in the order a player meets the events they are about. */
     def editor(preferences: Var[NotificationPreferences], withDefault: Boolean = true): HtmlElement =
         div(NotificationType.values.toSeq.map(question(_, preferences, withDefault)))
@@ -98,13 +145,18 @@ object Notifications {
       * The save is handed the current answers and reports when it has finished. Reported here rather than through
       * `Store.error` for the reason `Account` gives: this form is inside a panel or a row, and a banner at the top of
       * the page is both far away and easily lost behind what is over it.
+      *
+      * `cascades` are rendered between the questions and the button, and are not passed to `save`: whoever offered one
+      * reads its `chosen` inside their own save, because what it means is a parameter of their request and not
+      * something this form could carry out.
       */
     def form(
         heading: String,
         explanation: String,
         preferences: Var[NotificationPreferences],
         withDefault: Boolean = true,
-        saveLabel: String = "Save"
+        saveLabel: String = "Save",
+        cascades: Seq[Cascade] = Nil
     )(save: NotificationPreferences => Future[Unit]): HtmlElement = {
         val busy = Var(false)
         val outcome: Var[Option[Outcome]] = Var(None)
@@ -114,6 +166,7 @@ object Notifications {
           h3(heading),
           p(cls := "detail", explanation),
           editor(preferences, withDefault),
+          cascades.map(offer),
           button(
             tpe := "button",
             disabled <-- busy.signal.combineWith(preferences.signal).map { case (waiting, current) =>

@@ -314,22 +314,86 @@ object Account {
      * closing the panel on a half-changed form discards it, which is what closing a panel should do.
      * `perGame` is kept and updated on save because the game picker comes back to games it has
      * already saved, and a map that was not updated would show them the values it was opened with. */
+    /* The per-game answers as held, keyed for the picker.
+     *
+     * Derived from the store rather than kept in step with it by hand. A copy that drifts is what made
+     * the cascade show answers the server had not stored -- and the game form below is seeded from
+     * this map, so a wrong answer here is not merely displayed, it is one the player can save back.
+     *
+     * Equal to `settings` at the point `notificationSections` is called, because that is the value the
+     * `child <--` above is rendering; it is read from the store so that it is still right after a
+     * reload has replaced it. */
+    private def heldPerGame: Map[GameId, NotificationPreferences] =
+        Store.notificationSettings.now().toSeq.flatMap(_.games).map(g => g.gameId -> g.preferences).toMap
+
     private def notificationSections(settings: NotificationSettings): HtmlElement = {
         val overall = Var(settings.player)
-        val perGame = Var(settings.games.map(g => g.gameId -> g.preferences).toMap)
+        val perGame = Var(heldPerGame)
         val chosen: Var[Option[GameId]] = Var(None)
+
+        /* The two offers on the defaults form, in the order they depend on each other. A player who
+         * has left one game answering differently on purpose has not asked for their defaults to
+         * reach that game's matches -- so the second is only offered once the first is taken, which
+         * is what `shown` is for.
+         *
+         * Both say "the answers you change here" rather than "these answers", because that is what
+         * they do: a question this save leaves alone is left alone all the way down. */
+        val allGames = Notifications.Cascade(
+          "Use the answers I change here for all my games too",
+          "Only the questions you change. Anything a game answers differently stays as it is."
+        )
+        val allMatches = Notifications.Cascade(
+          "And in the matches I am playing now",
+          "Only the questions you change. Matches you have already finished are left alone.",
+          shown = allGames.chosen.signal
+        )
 
         div(
           Notifications.form(
             "Notifications",
             "What we email you about, unless you say otherwise for a particular game or match.",
             overall,
-            saveLabel = "Save notifications"
-          )(preferences =>
+            saveLabel = "Save notifications",
+            cascades = Seq(allGames, allMatches)
+          ) { preferences =>
+              val games = allGames.chosen.now()
+              // Only ever true while the box above it is checked -- `Cascade.shown` unchecks it when
+              // it goes away -- but read independently, because what the request means is what it says
+              // and not what the form happened to be showing.
+              val matches = allMatches.chosen.now()
+              // Taken before the request and checked before the store is written, as `saveNickname`
+              // does and for the reason `Store.currentSignIn` gives. Signing out empties
+              // `notificationSettings`, and the `_.map` below cannot refill a `None` -- but the next
+              // player may have opened this panel and fetched their own answers by the time this lands,
+              // and then it would overwrite theirs with these. `loadNotifications` holds what it has, so
+              // nothing would ever correct it and they could save it back as their own.
+              val signIn = Store.currentSignIn
               ApiClient
-                  .updateNotifications(preferences)
-                  .map(_ => Store.notificationSettings.update(_.map(_.copy(player = preferences))))
-          ),
+                  .updateNotifications(preferences, applyToGames = games, applyToMatches = matches)
+                  .flatMap { _ =>
+                      if (games)
+                          // The cascade rewrote the per-game rows this panel holds copies of, and only
+                          // for the questions this save changed -- so what those rows now say is not
+                          // this form's answers, but this form's answers merged into each of them. That
+                          // is the server's rule, and a screen that restates it is a screen that will
+                          // one day restate it wrongly. Asked rather than guessed.
+                          //
+                          // `reloadNotifications` carries the sign-in guard itself, so this branch
+                          // needs none of its own.
+                          //
+                          // The reseed is belt and braces: writing the store normally rebuilds this
+                          // whole element (`notificationForms` renders it from that signal), which
+                          // re-derives the map from scratch. Cheap enough to not depend on that.
+                          Store.reloadNotifications().map(_ => perGame.set(heldPerGame))
+                      else {
+                          // Nothing below this level was touched, so there is nothing to ask about and
+                          // the one field that changed can be written here.
+                          if (Store.stillSignedInAs(signIn))
+                              Store.notificationSettings.update(_.map(_.copy(player = preferences)))
+                          Future.unit
+                      }
+                  }
+          },
           div(
             cls := "account-section",
             h3("One Game"),
@@ -359,22 +423,32 @@ object Account {
                 case None => emptyNode
                 case Some(gameId) =>
                     val forGame = Var(perGame.now().getOrElse(gameId, NotificationPreferences.unset))
+                    val alsoMatches = Notifications.Cascade(
+                      "Use the answers I change here in the matches of this game I am playing now",
+                      "Only the questions you change. Matches you have already finished are left alone."
+                    )
                     Notifications.form(
                       Store.games.now().find(_.gameId == gameId).map(_.name).getOrElse("This game"),
                       "Leave a question on \"Use Default\" to answer it from your settings above.",
                       forGame,
-                      saveLabel = "Save for this game"
+                      saveLabel = "Save for this game",
+                      cascades = Seq(alsoMatches)
                     ) { preferences =>
+                        // Guarded like the save above, and for the same reason: this writes one
+                        // player's answers into a store the next player may already be reading.
+                        val signIn = Store.currentSignIn
                         ApiClient
-                            .updateGameNotifications(gameId, preferences)
+                            .updateGameNotifications(gameId, preferences, applyToMatches = alsoMatches.chosen.now())
                             .map { _ =>
-                                perGame.update(_.updated(gameId, preferences))
-                                Store.notificationSettings.update(_.map { current =>
-                                    current.copy(
-                                      games = current.games.filterNot(_.gameId == gameId) :+
-                                          com.vivi.matchmaker.model.GameNotificationPreferences(gameId, preferences)
-                                    )
-                                })
+                                if (Store.stillSignedInAs(signIn)) {
+                                    perGame.update(_.updated(gameId, preferences))
+                                    Store.notificationSettings.update(_.map { current =>
+                                        current.copy(
+                                          games = current.games.filterNot(_.gameId == gameId) :+
+                                              com.vivi.matchmaker.model.GameNotificationPreferences(gameId, preferences)
+                                        )
+                                    })
+                                }
                             }
                     }
             }

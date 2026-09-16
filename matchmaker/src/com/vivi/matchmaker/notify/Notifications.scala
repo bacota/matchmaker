@@ -99,7 +99,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                 seats.filter(_.player.playerId != startedBy).flatMap { seat =>
                     val participant = byId.get(seat.participantId)
                     NotificationPolicy
-                        .choose(Seq(NotificationType.MatchStarted), seat.levels)
+                        .choose(Seq(NotificationType.MatchStarted), seat.preferences)
                         .flatMap { kind =>
                             MatchMail.compose(
                               from,
@@ -148,7 +148,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                         else Seq(NotificationType.TurnTaken)
 
                     NotificationPolicy
-                        .choose(kinds, seat.levels)
+                        .choose(kinds, seat.preferences)
                         .flatMap { kind =>
                             MatchMail.compose(
                               from,
@@ -191,7 +191,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         aboutMatch(session, played, s"end of match ${played.matchId.value}") { (from, uiBaseUrl, notice, seats, _) =>
             seats.filterNot(seat => except.contains(seat.player.playerId)).flatMap { seat =>
                 NotificationPolicy
-                    .choose(Seq(NotificationType.MatchEnded), seat.levels)
+                    .choose(Seq(NotificationType.MatchEnded), seat.preferences)
                     .flatMap { kind =>
                         MatchMail.compose(
                           from,
@@ -284,7 +284,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                 NotificationPolicy
                                     .choose(
                                       kindsFor(recipient, offered.challenger, joined, waitingFor),
-                                      recipient.levels
+                                      recipient.levels.resolve
                                     )
                                     .flatMap(ChallengeMail.compose(from, uiBaseUrl, recipient.player, _, news))
                             )
@@ -330,7 +330,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                 case None => IO.pure(Seq.empty[MailMessage])
                 case Some(notice) =>
                     for {
-                        seats <- notificationRepo.levelsForMatch(played.gameId, played.matchId, notice.notifications)
+                        seats <- notificationRepo.preferencesForMatch(played.gameId, played.matchId)
                         participants <- participantRepo
                             .listForMatch(played.gameId, played.matchId)
                             .map(_.map((participant, _, _) => participant))

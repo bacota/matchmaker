@@ -14,7 +14,7 @@ import com.vivi.matchmaker.model.{
     TimeLimitKind
 }
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
-import com.vivi.matchmaker.persistence.{MatchRepo, OpenChallengeRepo, PlayerRepo, ResultRepo}
+import com.vivi.matchmaker.persistence.{MatchRepo, OpenChallengeRepo, ParticipantRepo, PlayerRepo, ResultRepo}
 
 /** Lists a player's matches, and lets the creator of one call it off.
   *
@@ -170,6 +170,7 @@ class MatchService(
         sessionPool.use { session =>
             val matchRepo = new MatchRepo(session)
             val challengeRepo = new OpenChallengeRepo(session)
+            val participantRepo = new ParticipantRepo(session)
 
             session.transaction
                 .use { _ =>
@@ -206,6 +207,15 @@ class MatchService(
                         )
                         cancelled = existing.copy(cancelled = true)
                         _ <- matchRepo.update(cancelled)
+                        // And the seats, in the same lock: a cancelled match is over, so nobody's turn
+                        // is pending in it and no clock is still running. Completion says this seat by
+                        // seat as it records what each player scored; a cancellation has nothing to
+                        // record, so it says the one thing true of every seat at once.
+                        //
+                        // Not merely tidiness. Anything asking "is this seat still in play" could
+                        // otherwise only answer it by joining `match` for the cancelled flag, because
+                        // the seat did not know -- see `NotificationRepo.restampParticipants`.
+                        _ <- participantRepo.completeForMatch(gameId, matchId)
                     } yield (cancelled, caller)
                 }
                 .flatMap { (cancelled, caller) =>
