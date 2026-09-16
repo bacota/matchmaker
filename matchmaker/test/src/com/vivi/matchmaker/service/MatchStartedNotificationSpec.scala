@@ -542,6 +542,44 @@ class MatchStartedNotificationSpec extends PropertySuite {
         }
     }
 
+    /* A called-off match is not one of "the matches I am playing now".
+     *
+     * Which the cascade decides by reading the seat's own `completed`, so this is also what keeps
+     * `MatchService.cancel` retiring its seats honest: leave that out and the seat still reads
+     * in-play, and a cascade would rewrite the settings of a match nobody will ever hear about again. */
+    property("a cascade does not reach the seats of a cancelled match") {
+        forAll(genUniqueString) { seed =>
+            val notifier = new RecordingNotifier
+            val services = TestServices.servicesWith(
+              new StubEngine,
+              callbackBaseUrl = Some("https://matchmaker.example.com"),
+              notifier = notifier,
+              mail = TestServices.mailSettings
+            )
+            val accepterId = s"accepter-$seed"
+
+            val result = for {
+                started <- startedMatch(
+                  seed,
+                  notifier,
+                  challengerEmail = Some(s"challenger-$seed@example.com"),
+                  accepterEmail = Some(s"accepter-$seed@example.com")
+                )
+                // The challenger created the challenge the match was started from, so they are its
+                // creator and the only player who may call it off.
+                _ <- services.matches.cancel(started.gameId, started.matchId, s"challenger-$seed")
+                _ <- services.notifications.updateForGame(
+                  accepterId,
+                  started.gameId,
+                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
+                  applyToMatches = true
+                )
+                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+            } yield seat == NotificationDefaults.all(true)
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
     // An environment with no sender and no link cannot say anything useful, so it says nothing --
     // which is what keeps every other spec, and the local server, silent without a special case.
     property("an environment with no mail settings sends nothing") {

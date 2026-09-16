@@ -191,6 +191,33 @@ class ParticipantRepo(session: Session[IO]) {
             )
             .void
 
+    /* Every seat in a match, retired at once.
+     *
+     * The same three columns the results and forfeit paths write per seat -- turn given up, no
+     * deadline, finished -- because a cancelled match is over in exactly the way those are: nobody is
+     * waiting on anybody, and no clock is running. One statement rather than a read and a write per
+     * seat, since there is nothing to decide per seat.
+     *
+     * `NOT completed` keeps a repeat harmless and keeps the row count honest: the flag is sticky
+     * everywhere it is written, and a seat already retired has nothing to retire.
+     *
+     * update_date is left to `trg_participant_update_date`, as in `updateParticipant` above. */
+    private val completeParticipantsForMatch: Command[(GameId, MatchId)] =
+        sql"""UPDATE participant SET pending = false, completed = true, due = NULL
+          WHERE game_id = $gameId AND match_id = $matchId AND NOT completed""".command
+
+    /** Retires every seat in a match: nobody's turn, no deadline, finished.
+      *
+      * For cancelling, which ends a match without a result. Completion marks its seats seat by seat as it records what
+      * each of them scored; a cancellation has nothing to record, so it says the one thing that is true of all of them.
+      *
+      * Matters beyond tidiness: a seat that still reads `pending` in a called-off match is a seat that other queries
+      * have to remember to exclude by joining `match`, and `NotificationRepo.restampParticipants` is the one that
+      * stopped being able to.
+      */
+    def completeForMatch(gameId: GameId, matchId: MatchId): IO[Unit] =
+        session.execute(completeParticipantsForMatch)((gameId, matchId)).void
+
     // character_participant has a FK to participant, so its rows go first.
     private val deleteCharacterParticipantsForMatch: Command[(GameId, MatchId)] =
         sql"""DELETE FROM character_participant cp

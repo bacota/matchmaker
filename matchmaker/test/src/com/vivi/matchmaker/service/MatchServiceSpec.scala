@@ -276,6 +276,23 @@ class MatchServiceSpec extends PropertySuite {
         }
     }
 
+    // The seats, not just the match. A cancelled match is over, so nothing in it is anybody's turn and
+    // no clock in it is running -- which is what the results and forfeit paths already write, and what
+    // anything asking "is this seat still in play" now reads instead of joining `match`.
+    property("cancelling retires every seat in the match") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+            val result = for {
+                made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+                (_, game, matchId) = made
+                before <- TestSession.resource.use(new ParticipantRepo(_).listForMatch(game.gameId, matchId))
+                _ <- matchService.cancel(game.gameId, matchId, externalId)
+                after <- TestSession.resource.use(new ParticipantRepo(_).listForMatch(game.gameId, matchId))
+            } yield before.nonEmpty && before.forall((p, _, _) => p.pending && !p.completed) &&
+                after.forall((p, _, _) => !p.pending && p.completed && p.due.isEmpty)
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
     property("a player who did not create the match may not cancel it") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, matchIdStr, otherNickname, otherExternalId) =>

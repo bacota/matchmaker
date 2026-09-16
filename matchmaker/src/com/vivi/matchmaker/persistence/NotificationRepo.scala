@@ -268,10 +268,16 @@ class NotificationRepo(session: Session[IO]) {
      * player has just changed that game's settings, or every game, when they have changed their
      * defaults. A NULL there matches every game rather than none.
      *
-     * "Matches they are still playing" is the `match` join: a finished or cancelled match will not
-     * send anything again, and rewriting its seats would edit the record of what it did send.
-     * `match.completed` is the timestamp V8 made it, so "not finished" is IS NULL rather than a
-     * negated flag.
+     * "Matches they are still playing" is `NOT p.completed`, and the seat answers that itself: every
+     * way a match ends retires its seats -- results, forfeit, and (since V15) cancellation. A match
+     * that is over will not send anything again, and rewriting its seats would edit the record of what
+     * it did send.
+     *
+     * No join to `match`, which is what this needed before V15: cancelling marked the match and left
+     * the seats reading `completed = false`, so the only way to tell a called-off match from a live one
+     * was to go and look. Now that a seat knows, asking it is both cheaper and the right question --
+     * this is about seats, and `participant.completed` is per-seat, which is where an engine that
+     * retires one player from a match that carries on would say so.
      *
      * `CASE WHEN` per column, rather than eight plain assignments, is what keeps this to what the
      * player actually changed. A seat holds answers its player may have set on that one match, and
@@ -313,9 +319,7 @@ class NotificationRepo(session: Session[IO]) {
                   LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = g.game_id
               WHERE pl.player_id = $playerId AND g.game_id = COALESCE(${gameId.opt}, g.game_id)
           ) r
-          JOIN match m ON m.game_id = r.game_id
-          WHERE p.player_id = $playerId AND p.game_id = r.game_id AND p.match_id = m.match_id
-            AND m.completed IS NULL AND NOT m.cancelled""".command
+          WHERE p.player_id = $playerId AND p.game_id = r.game_id AND NOT p.completed""".command
             // Eight flags in `NotificationType.values` order, as everywhere else the eight columns are
             // bound positionally. The player is named twice in the statement -- once to resolve the
             // chain, once to pick the seats -- so it is bound twice from the one value.
