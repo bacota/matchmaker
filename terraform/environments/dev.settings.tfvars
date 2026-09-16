@@ -37,4 +37,3 @@ refresh_token_validity_days = 30
 deploy_tictactoe = true
 deploy_rps       = true
 deploy_mail      = true
-mail_enabled = true

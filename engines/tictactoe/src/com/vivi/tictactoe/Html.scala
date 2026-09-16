@@ -170,7 +170,6 @@ ${signInScript}
         if (token) clearSession();
         state = null;
         render();
-        renderSignIn();
         show(login ? "sign in to play this match" : "you have no seat in this match");
         return null;
       }
@@ -185,9 +184,15 @@ ${signInScript}
    * still showing the shell it was served. */
   function signedIn() { refresh(); }
 
+  /* Whether there is any point asking for the state. With a login configured and no session, the
+   * answer is a 401 — and asking every two seconds scrolls the console with them and, worse, kept
+   * rebuilding the sign-in form under the player's cursor. Public boards and the trusted local mode
+   * have no session to wait for and are fetched as before. */
+  function mayFetch() { return !login || publicView || isSignedIn(); }
+
   render();
-  if (!state && isSignedIn()) refresh();
-  setInterval(() => { if (!state || !state.completed) refresh(); }, 2000);
+  if (!state && mayFetch()) refresh();
+  setInterval(() => { if (mayFetch() && (!state || !state.completed)) refresh(); }, 2000);
 </script>
 </body>
 </html>
