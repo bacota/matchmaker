@@ -314,9 +314,21 @@ object Account {
      * closing the panel on a half-changed form discards it, which is what closing a panel should do.
      * `perGame` is kept and updated on save because the game picker comes back to games it has
      * already saved, and a map that was not updated would show them the values it was opened with. */
+    /* The per-game answers as held, keyed for the picker.
+     *
+     * Derived from the store rather than kept in step with it by hand. A copy that drifts is what made
+     * the cascade show answers the server had not stored -- and the game form below is seeded from
+     * this map, so a wrong answer here is not merely displayed, it is one the player can save back.
+     *
+     * Equal to `settings` at the point `notificationSections` is called, because that is the value the
+     * `child <--` above is rendering; it is read from the store so that it is still right after a
+     * reload has replaced it. */
+    private def heldPerGame: Map[GameId, NotificationPreferences] =
+        Store.notificationSettings.now().toSeq.flatMap(_.games).map(g => g.gameId -> g.preferences).toMap
+
     private def notificationSections(settings: NotificationSettings): HtmlElement = {
         val overall = Var(settings.player)
-        val perGame = Var(settings.games.map(g => g.gameId -> g.preferences).toMap)
+        val perGame = Var(heldPerGame)
         val chosen: Var[Option[GameId]] = Var(None)
 
         /* The two offers on the defaults form, in the order they depend on each other. A player who
@@ -358,18 +370,27 @@ object Account {
               val signIn = Store.currentSignIn
               ApiClient
                   .updateNotifications(preferences, applyToGames = games, applyToMatches = matches)
-                  .map { _ =>
-                      if (Store.stillSignedInAs(signIn)) {
-                          Store.notificationSettings.update(_.map { current =>
-                              // The server has just made every per-game row say this, so the panel must
-                              // too: the game picker below comes back to what is held here, and showing
-                              // a game the answers it had before the cascade would be showing what no
-                              // longer exists.
-                              val saved = current.copy(player = preferences)
-                              if (games) saved.copy(games = saved.games.map(_.copy(preferences = preferences)))
-                              else saved
-                          })
-                          if (games) perGame.update(_.view.mapValues(_ => preferences).toMap)
+                  .flatMap { _ =>
+                      if (games)
+                          // The cascade rewrote the per-game rows this panel holds copies of, and only
+                          // for the questions this save changed -- so what those rows now say is not
+                          // this form's answers, but this form's answers merged into each of them. That
+                          // is the server's rule, and a screen that restates it is a screen that will
+                          // one day restate it wrongly. Asked rather than guessed.
+                          //
+                          // `reloadNotifications` carries the sign-in guard itself, so this branch
+                          // needs none of its own.
+                          //
+                          // The reseed is belt and braces: writing the store normally rebuilds this
+                          // whole element (`notificationForms` renders it from that signal), which
+                          // re-derives the map from scratch. Cheap enough to not depend on that.
+                          Store.reloadNotifications().map(_ => perGame.set(heldPerGame))
+                      else {
+                          // Nothing below this level was touched, so there is nothing to ask about and
+                          // the one field that changed can be written here.
+                          if (Store.stillSignedInAs(signIn))
+                              Store.notificationSettings.update(_.map(_.copy(player = preferences)))
+                          Future.unit
                       }
                   }
           },
