@@ -297,9 +297,10 @@ class MatchStartedNotificationSpec extends PropertySuite {
         }
     }
 
-    // The most specific level cannot be set before the match it is about exists -- a participant row
-    // is what a start creates -- so this is what there is to check about it here: that a player in a
-    // match can say something about it, and that it is their answer that comes back.
+    // A seat cannot be set before the match it belongs to exists -- a participant row is what a start
+    // creates -- so this is what there is to check about it here: that a seat starts out saying what
+    // the chain said when it was stamped, that its player can change it, and that changing it is their
+    // answer alone.
     property("a player in a match can set and read their preferences for it") {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
@@ -309,7 +310,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
               notifier = notifier,
               mail = TestServices.mailSettings
             )
-            val muted = NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false))
+            val muted = NotificationDefaults.all(true).copy(turnTaken = false)
 
             val result = for {
                 started <- startedMatch(
@@ -326,8 +327,217 @@ class MatchStartedNotificationSpec extends PropertySuite {
                 // untouched by it.
                 challenger <- services.notifications
                     .forMatch(s"challenger-$seed", started.gameId, started.matchId)
-            } yield before == NotificationPreferences.unset && after == muted &&
-                challenger == NotificationPreferences.unset
+                // Stamped from the chain at the start, which in this fixture is the game's own
+                // defaults: every kind answered, nothing unsaid, and so nothing the form has to fill in.
+            } yield before == NotificationDefaults.all(true) && after == muted &&
+                challenger == NotificationDefaults.all(true)
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* What making the seat the answer actually buys, and the offer that gives it back.
+     *
+     * A player who changes a game's settings in March has not asked to change what the matches they
+     * are already in send them; a player who ticks the box has. Both directions are checked over real
+     * rows, because the difference between them is two SQL statements and nothing in the model. */
+    property("a later change to a game's settings leaves a running match alone") {
+        forAll(genUniqueString) { seed =>
+            val notifier = new RecordingNotifier
+            val services = TestServices.servicesWith(
+              new StubEngine,
+              callbackBaseUrl = Some("https://matchmaker.example.com"),
+              notifier = notifier,
+              mail = TestServices.mailSettings
+            )
+            val accepterId = s"accepter-$seed"
+
+            val result = for {
+                started <- startedMatch(
+                  seed,
+                  notifier,
+                  challengerEmail = Some(s"challenger-$seed@example.com"),
+                  accepterEmail = Some(s"accepter-$seed@example.com")
+                )
+                _ <- services.notifications.updateForGame(
+                  accepterId,
+                  started.gameId,
+                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false))
+                )
+                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+                // And the level they changed did take the change: this is the match not hearing it,
+                // not the write going nowhere.
+                settings <- services.notifications.mine(accepterId)
+            } yield seat == NotificationDefaults.all(true) &&
+                settings.games.exists(g => g.gameId == started.gameId && g.preferences.turnTaken.contains(false))
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    property("asking for a game's settings to reach current matches re-stamps the seat") {
+        forAll(genUniqueString) { seed =>
+            val notifier = new RecordingNotifier
+            val services = TestServices.servicesWith(
+              new StubEngine,
+              callbackBaseUrl = Some("https://matchmaker.example.com"),
+              notifier = notifier,
+              mail = TestServices.mailSettings
+            )
+            val accepterId = s"accepter-$seed"
+
+            val result = for {
+                started <- startedMatch(
+                  seed,
+                  notifier,
+                  challengerEmail = Some(s"challenger-$seed@example.com"),
+                  accepterEmail = Some(s"accepter-$seed@example.com")
+                )
+                _ <- services.notifications.updateForGame(
+                  accepterId,
+                  started.gameId,
+                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
+                  applyToMatches = true
+                )
+                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+                // The other seven come from the chain as it now stands, not from what the request
+                // named: the one question they answered is the only one that moved.
+                challenger <- services.notifications
+                    .forMatch(s"challenger-$seed", started.gameId, started.matchId)
+            } yield seat == NotificationDefaults.all(true).copy(turnTaken = false) &&
+                challenger == NotificationDefaults.all(true)
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    // The same offer from the defaults form, which reaches every game rather than one -- and reaches
+    // the seat through a `player_game` row that has just been aligned with it, which is why the
+    // service aligns the games before it re-stamps the seats. A game that had answered this very
+    // question differently is the case that tells the two orders apart: aligned first, the seat ends
+    // up on the new default; re-stamped first, it would end up back on the game's old answer.
+    property("asking for new defaults to reach every game and every current match re-stamps the seat") {
+        forAll(genUniqueString) { seed =>
+            val notifier = new RecordingNotifier
+            val services = TestServices.servicesWith(
+              new StubEngine,
+              callbackBaseUrl = Some("https://matchmaker.example.com"),
+              notifier = notifier,
+              mail = TestServices.mailSettings
+            )
+            val accepterId = s"accepter-$seed"
+
+            val result = for {
+                started <- startedMatch(
+                  seed,
+                  notifier,
+                  challengerEmail = Some(s"challenger-$seed@example.com"),
+                  accepterEmail = Some(s"accepter-$seed@example.com"),
+                  // Said before the start, so the seat is stamped with it and the game has an answer
+                  // of its own for the cascade to have to overwrite.
+                  beforeStart = (services, accepter, game) =>
+                      services.notifications.updateForGame(
+                        accepter.externalId,
+                        game.gameId,
+                        NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(true))
+                      )
+                )
+                _ <- services.notifications.updateMine(
+                  accepterId,
+                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
+                  applyToGames = true,
+                  applyToMatches = true
+                )
+                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+                settings <- services.notifications.mine(accepterId)
+            } yield seat == NotificationDefaults.all(true).copy(turnTaken = false) &&
+                settings.games.exists(g => g.gameId == started.gameId && g.preferences.turnTaken.contains(false))
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* The reason a cascade carries the change rather than the form.
+     *
+     * A player mutes one match's results, then changes something else about the game and asks for it
+     * to reach the matches they are in. The question they changed moves; the mute does not. Writing
+     * all eight columns from the chain would have unmuted it, which is what this is here to catch. */
+    property("a cascade leaves the questions it did not change alone in the seat") {
+        forAll(genUniqueString) { seed =>
+            val notifier = new RecordingNotifier
+            val services = TestServices.servicesWith(
+              new StubEngine,
+              callbackBaseUrl = Some("https://matchmaker.example.com"),
+              notifier = notifier,
+              mail = TestServices.mailSettings
+            )
+            val accepterId = s"accepter-$seed"
+
+            val result = for {
+                started <- startedMatch(
+                  seed,
+                  notifier,
+                  challengerEmail = Some(s"challenger-$seed@example.com"),
+                  accepterEmail = Some(s"accepter-$seed@example.com")
+                )
+                // Said about this one match, and about nothing else.
+                _ <- services.notifications.updateForMatch(
+                  accepterId,
+                  started.gameId,
+                  started.matchId,
+                  NotificationDefaults.all(true).copy(matchEnded = false)
+                )
+                _ <- services.notifications.updateForGame(
+                  accepterId,
+                  started.gameId,
+                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
+                  applyToMatches = true
+                )
+                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+            } yield seat == NotificationDefaults.all(true).copy(turnTaken = false, matchEnded = false)
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    // And the same for the defaults form, which cascades through `player_game` on its way down: the
+    // game's own answer to a question this save did not touch is still the game's answer, and the
+    // seat's own answer to another is still the seat's.
+    property("a cascade from the defaults leaves untouched questions alone at both levels") {
+        forAll(genUniqueString) { seed =>
+            val notifier = new RecordingNotifier
+            val services = TestServices.servicesWith(
+              new StubEngine,
+              callbackBaseUrl = Some("https://matchmaker.example.com"),
+              notifier = notifier,
+              mail = TestServices.mailSettings
+            )
+            val accepterId = s"accepter-$seed"
+
+            val result = for {
+                started <- startedMatch(
+                  seed,
+                  notifier,
+                  challengerEmail = Some(s"challenger-$seed@example.com"),
+                  accepterEmail = Some(s"accepter-$seed@example.com"),
+                  beforeStart = (services, accepter, game) =>
+                      services.notifications.updateForGame(
+                        accepter.externalId,
+                        game.gameId,
+                        NotificationPreferences.unset.updated(NotificationType.MatchEnded, Some(false))
+                      )
+                )
+                _ <- services.notifications.updateMine(
+                  accepterId,
+                  NotificationPreferences.unset.updated(NotificationType.TurnTaken, Some(false)),
+                  applyToGames = true,
+                  applyToMatches = true
+                )
+                seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
+                settings <- services.notifications.mine(accepterId)
+            } yield
+            // match-ended was never part of this save, so the game still says no to it and the seat,
+            // stamped with that same no before the start, still holds it.
+            seat == NotificationDefaults.all(true).copy(turnTaken = false, matchEnded = false) &&
+                settings.games.exists(g =>
+                    g.gameId == started.gameId && g.preferences.matchEnded.contains(false) &&
+                        g.preferences.turnTaken.contains(false)
+                )
             result.timeout(caseTimeout).unsafeRunSync()
         }
     }

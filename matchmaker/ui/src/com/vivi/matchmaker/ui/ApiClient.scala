@@ -67,22 +67,46 @@ object ApiClient {
       */
     def notifications(): Future[NotificationSettings] = get[NotificationSettings]("/me/notifications")
 
-    def updateNotifications(preferences: NotificationPreferences): Future[Unit] =
-        sendUnit(HttpMethod.PUT, "/me/notifications", Some(write(preferences)))
-
-    def updateGameNotifications(gameId: GameId, preferences: NotificationPreferences): Future[Unit] =
-        sendUnit(HttpMethod.PUT, s"/me/notifications/games/${gameId.value}", Some(write(preferences)))
-
-    /** The caller's answers for one match — the level that overrides the other two. 404 where the caller has no seat in
-      * it, which is also the answer to asking about somebody else's match.
+    /** Saves the caller's defaults. `applyToGames` copies them into every game they have answered separately;
+      * `applyToMatches` carries the result into the matches they are still playing. Both are the offers the form makes
+      * beside the save button, and both default to off — saving a level changes that level and nothing else.
       */
-    def matchNotifications(gameId: GameId, matchId: MatchId): Future[NotificationPreferences] =
-        get[NotificationPreferences](s"/games/${gameId.value}/matches/${matchId.value}/notifications")
+    def updateNotifications(
+        preferences: NotificationPreferences,
+        applyToGames: Boolean = false,
+        applyToMatches: Boolean = false
+    ): Future[Unit] =
+        sendUnit(
+          HttpMethod.PUT,
+          "/me/notifications",
+          Some(write(Json.PreferencesRequest(preferences, applyToGames, applyToMatches)))
+        )
+
+    /** Saves the caller's answers for one game. `applyToMatches` carries them into the matches of that game they are
+      * still playing, which is the only cascade this level has: there is no level between one game and another.
+      */
+    def updateGameNotifications(
+        gameId: GameId,
+        preferences: NotificationPreferences,
+        applyToMatches: Boolean = false
+    ): Future[Unit] =
+        sendUnit(
+          HttpMethod.PUT,
+          s"/me/notifications/games/${gameId.value}",
+          Some(write(Json.PreferencesRequest(preferences, applyToMatches = applyToMatches)))
+        )
+
+    /** The caller's answers for one match. Every kind answered, because a seat's own columns are what decides and they
+      * cannot be unsaid — so the form this seeds offers no "Use Default". 404 where the caller has no seat in it, which
+      * is also the answer to asking about somebody else's match.
+      */
+    def matchNotifications(gameId: GameId, matchId: MatchId): Future[NotificationDefaults] =
+        get[NotificationDefaults](s"/games/${gameId.value}/matches/${matchId.value}/notifications")
 
     def updateMatchNotifications(
         gameId: GameId,
         matchId: MatchId,
-        preferences: NotificationPreferences
+        preferences: NotificationDefaults
     ): Future[Unit] =
         sendUnit(
           HttpMethod.PUT,

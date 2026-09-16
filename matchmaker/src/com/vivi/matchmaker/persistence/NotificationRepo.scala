@@ -7,13 +7,13 @@ import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model._
 
-/** One seat's answer to "who wants to hear about this?", still unresolved.
+/** One seat's answer to "who wants to hear about this?".
   *
-  * `levels` carries the game's defaults along with the three specific levels so that a caller has everything
-  * [[com.vivi.matchmaker.model.NotificationPolicy]] needs in one value; the game itself is read once by the caller, not
-  * once per seat.
+  * Already resolved, because since V14 there is nothing to resolve: the seat's own eight columns are NOT NULL and are
+  * what it was stamped with when it was created (or what its player has said about this match since). No other level is
+  * read, and so none is carried here.
   */
-case class SeatNotifications(participantId: ParticipantId, player: Player, levels: NotificationLevels)
+case class SeatNotifications(participantId: ParticipantId, player: Player, preferences: NotificationDefaults)
 
 /** A game as the notification path needs it: what to call it, and what it says its players should hear.
   *
@@ -28,8 +28,8 @@ case class GameNotice(gameId: GameId, name: String, notifications: NotificationD
   * and the address to send to, and a challenge's roster is small enough that fetching them with the preferences costs
   * one join rather than a query per recipient.
   *
-  * `levels.participant` is `unset` throughout and cannot be otherwise — nobody is a participant in anything until the
-  * challenge is started, which is what the level is about.
+  * Two levels and the game's, which is all there is to ask: nobody is a participant in anything until the challenge is
+  * started, so the level that would otherwise answer does not exist yet.
   */
 case class AcceptorNotifications(player: Player, roleName: String, levels: NotificationLevels)
 
@@ -41,8 +41,11 @@ case class AcceptorNotifications(player: Player, roleName: String, levels: Notif
   * playing the game and would be carrying eight columns it never looks at. The game's own defaults are the exception
   * and live on `Game`: they are part of what an admin registers, so they travel with the rest of the game's definition.
   *
-  * Nothing here decides anything. It reads what each level said and writes what a player said; which of them wins is
-  * [[com.vivi.matchmaker.model.NotificationPolicy]], in the model, where it can be exercised without a database.
+  * Nothing here decides who hears about what; that is a seat's own eight columns, or
+  * [[com.vivi.matchmaker.model.NotificationLevels.resolve]] for an audience that has no seat yet. What this does hold
+  * is the two statements that carry a player's answers downwards when they ask for it — see `alignGamesWithPlayer` and
+  * `applyToMatches`, which resolve the same chain `resolve` describes, in SQL, because they resolve it for many rows at
+  * once.
   */
 class NotificationRepo(session: Session[IO]) {
     private val playerId = SkunkIdCodecs.playerId
@@ -51,6 +54,7 @@ class NotificationRepo(session: Session[IO]) {
     private val participantId = SkunkIdCodecs.participantId
     private val challengeId = SkunkIdCodecs.challengeId
     private val preferences = SkunkCodecs.notificationPreferences
+    private val defaults = SkunkCodecs.notificationDefaults
 
     private val selectPlayerPreferences: Query[PlayerId, NotificationPreferences] =
         sql"""SELECT notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
@@ -92,6 +96,13 @@ class NotificationRepo(session: Session[IO]) {
           WHERE player_id = $playerId
           ORDER BY game_id""".query(gameId *: preferences)
 
+    private val selectPlayerGame: Query[(PlayerId, GameId), NotificationPreferences] =
+        sql"""SELECT notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
+                 notify_accepted_challenge_ready, notify_match_started, notify_turn_taken,
+                 notify_your_turn, notify_match_ended
+          FROM player_game
+          WHERE player_id = $playerId AND game_id = $gameId""".query(preferences)
+
     /* One statement for both cases, because a player editing one game's settings does not know or
      * care whether they have edited them before. EXCLUDED restates nothing: it is the row this
      * insert would have written, so the eight values are bound once. */
@@ -112,54 +123,35 @@ class NotificationRepo(session: Session[IO]) {
               notify_match_ended = EXCLUDED.notify_match_ended,
               update_date = now()""".command
 
-    /* Every seat in a match with the three levels that could speak for it.
+    /* Every seat in a match with what it says about itself.
      *
-     * One query rather than three, because the answer is wanted for every seat at once and the
-     * joins are what a notification is: this seat, this player's settings for this game, this
-     * player's settings in general. The `player_game` join is outer -- a player who has said
-     * nothing about the game has no row, which decodes to `unset` and falls straight through.
+     * One table, and no COALESCE: since V14 a seat's eight columns are NOT NULL and are the answer,
+     * which is the whole point of the change -- deciding whether to write to a seat no longer depends
+     * on what its player has said since about the game in general. Carrying that into a match they
+     * are already in is something they ask for; see `applyToMatches`.
      *
      * `player` is joined rather than read per seat for the same reason it is in PlayerRepo's own
      * listForMatch: one player may hold two seats, and each seat is asked about separately. */
-    private val selectLevelsForMatch: Query[
+    private val selectSeatPreferences: Query[
       (GameId, MatchId),
-      (
-          ParticipantId,
-          PlayerId,
-          String,
-          Boolean,
-          String,
-          Option[String],
-          NotificationPreferences,
-          NotificationPreferences,
-          NotificationPreferences
-      )
+      (ParticipantId, PlayerId, String, Boolean, String, Option[String], NotificationDefaults)
     ] =
         sql"""SELECT p.participant_id, p.player_id, pl.nickname, pl.is_admin, pl.external_id, pl.email,
                  p.notify_challenge_accepted, p.notify_challenge_ready, p.notify_acceptance_changed,
                  p.notify_accepted_challenge_ready, p.notify_match_started, p.notify_turn_taken,
-                 p.notify_your_turn, p.notify_match_ended,
-                 pg.notify_challenge_accepted, pg.notify_challenge_ready, pg.notify_acceptance_changed,
-                 pg.notify_accepted_challenge_ready, pg.notify_match_started, pg.notify_turn_taken,
-                 pg.notify_your_turn, pg.notify_match_ended,
-                 pl.notify_challenge_accepted, pl.notify_challenge_ready, pl.notify_acceptance_changed,
-                 pl.notify_accepted_challenge_ready, pl.notify_match_started, pl.notify_turn_taken,
-                 pl.notify_your_turn, pl.notify_match_ended
+                 p.notify_your_turn, p.notify_match_ended
           FROM participant p
           JOIN player pl ON pl.player_id = p.player_id
-          LEFT JOIN player_game pg ON pg.player_id = p.player_id AND pg.game_id = p.game_id
           WHERE p.game_id = $gameId AND p.match_id = $matchId
           ORDER BY p.participant_id"""
-            .query(
-              participantId *: playerId *: text *: bool *: text *: text.opt *:
-                  preferences *: preferences *: preferences
-            )
+            .query(participantId *: playerId *: text *: bool *: text *: text.opt *: defaults)
 
     /* Everyone who has accepted one challenge, with the two levels that can speak for them.
      *
-     * The challenge-stage counterpart of `selectLevelsForMatch`, and two levels rather than three
+     * The challenge-stage counterpart of `selectSeatPreferences`, and a chain rather than an answer
      * for a reason that is not an omission: a participant row is what a start creates, so there is
-     * nothing more specific than the game to ask while a challenge is still a challenge.
+     * nothing more specific than the player's settings for the game to ask while a challenge is still
+     * a challenge.
      *
      * The challenger is in here too, because creating a challenge inserts their own acceptance --
      * see `OpenChallengeService.create`. So this one query is the whole audience for anything that
@@ -186,20 +178,20 @@ class NotificationRepo(session: Session[IO]) {
 
     /* The caller's own seats in one match. Plural: a player may hold two, and they are not two
      * settings -- so the read takes the first and the write covers all of them. */
-    private val selectParticipantPreferences: Query[(GameId, MatchId, PlayerId), NotificationPreferences] =
+    private val selectParticipantPreferences: Query[(GameId, MatchId, PlayerId), NotificationDefaults] =
         sql"""SELECT notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
                  notify_accepted_challenge_ready, notify_match_started, notify_turn_taken,
                  notify_your_turn, notify_match_ended
           FROM participant
           WHERE game_id = $gameId AND match_id = $matchId AND player_id = $playerId
-          ORDER BY participant_id""".query(preferences)
+          ORDER BY participant_id""".query(defaults)
 
-    private val updateParticipantPreferences: Command[(NotificationPreferences, GameId, MatchId, PlayerId)] =
+    private val updateParticipantPreferences: Command[(NotificationDefaults, GameId, MatchId, PlayerId)] =
         sql"""UPDATE participant SET
-            notify_challenge_accepted = ${bool.opt}, notify_challenge_ready = ${bool.opt},
-            notify_acceptance_changed = ${bool.opt}, notify_accepted_challenge_ready = ${bool.opt},
-            notify_match_started = ${bool.opt}, notify_turn_taken = ${bool.opt},
-            notify_your_turn = ${bool.opt}, notify_match_ended = ${bool.opt},
+            notify_challenge_accepted = $bool, notify_challenge_ready = $bool,
+            notify_acceptance_changed = $bool, notify_accepted_challenge_ready = $bool,
+            notify_match_started = $bool, notify_turn_taken = $bool,
+            notify_your_turn = $bool, notify_match_ended = $bool,
             update_date = now()
           WHERE game_id = $gameId AND match_id = $matchId AND player_id = $playerId""".command
             .contramap { case (p, game, matchId, player) =>
@@ -214,6 +206,131 @@ class NotificationRepo(session: Session[IO]) {
                   p.matchEnded,
                   game,
                   matchId,
+                  player
+                )
+            }
+
+    /* Carrying a player's answers down into the rows that inherited from them.
+     *
+     * Two statements, because the two levels below `player` are shaped differently. This one copies
+     * what the player has just changed into every game they have said something about, so that those
+     * games stop disagreeing with them about it -- including a question they have gone back to leaving
+     * unsaid, which is written as the NULL it now is rather than frozen at what it used to say.
+     *
+     * Only what they changed: the questions this save left alone are left alone here too, because a
+     * game they deliberately answered differently on some other question is still answering it. Hence
+     * the `CASE WHEN` per column, as in `restampParticipants` and for the same reason.
+     *
+     * Only the games they already have a row for. Creating one per game in existence would record an
+     * opinion about games they have never played, and a game with no row already answers from the
+     * player level, which is what they just set. */
+    private val alignPlayerGames: Command[(Set[NotificationType], NotificationPreferences, PlayerId)] =
+        sql"""UPDATE player_game SET
+            notify_challenge_accepted = CASE WHEN $bool THEN ${bool.opt} ELSE notify_challenge_accepted END,
+            notify_challenge_ready = CASE WHEN $bool THEN ${bool.opt} ELSE notify_challenge_ready END,
+            notify_acceptance_changed = CASE WHEN $bool THEN ${bool.opt} ELSE notify_acceptance_changed END,
+            notify_accepted_challenge_ready = CASE WHEN $bool THEN ${bool.opt} ELSE notify_accepted_challenge_ready END,
+            notify_match_started = CASE WHEN $bool THEN ${bool.opt} ELSE notify_match_started END,
+            notify_turn_taken = CASE WHEN $bool THEN ${bool.opt} ELSE notify_turn_taken END,
+            notify_your_turn = CASE WHEN $bool THEN ${bool.opt} ELSE notify_your_turn END,
+            notify_match_ended = CASE WHEN $bool THEN ${bool.opt} ELSE notify_match_ended END,
+            update_date = now()
+          WHERE player_id = $playerId""".command
+            // A flag and a value per column, interleaved in `NotificationType.values` order: the flag
+            // says whether this save touched that question at all, and the value is what it now says.
+            .contramap { case (changed, p, id) =>
+                (
+                  changed(NotificationType.ChallengeAccepted),
+                  p.challengeAccepted,
+                  changed(NotificationType.ChallengeReady),
+                  p.challengeReady,
+                  changed(NotificationType.AcceptanceChanged),
+                  p.acceptanceChanged,
+                  changed(NotificationType.AcceptedChallengeReady),
+                  p.acceptedChallengeReady,
+                  changed(NotificationType.MatchStarted),
+                  p.matchStarted,
+                  changed(NotificationType.TurnTaken),
+                  p.turnTaken,
+                  changed(NotificationType.YourTurn),
+                  p.yourTurn,
+                  changed(NotificationType.MatchEnded),
+                  p.matchEnded,
+                  id
+                )
+            }
+
+    /* And this one re-stamps the player's seats in the matches they are still playing, from the chain
+     * as it now stands -- the same expression `ParticipantRepo.create` stamps a new seat with, which
+     * is why it is SQL in both places rather than a resolve in Scala and a second one here.
+     *
+     * `COALESCE($gameId.opt, g.game_id)` is how one statement serves both offers: one game, when the
+     * player has just changed that game's settings, or every game, when they have changed their
+     * defaults. A NULL there matches every game rather than none.
+     *
+     * "Matches they are still playing" is the `match` join: a finished or cancelled match will not
+     * send anything again, and rewriting its seats would edit the record of what it did send.
+     * `match.completed` is the timestamp V8 made it, so "not finished" is IS NULL rather than a
+     * negated flag.
+     *
+     * `CASE WHEN` per column, rather than eight plain assignments, is what keeps this to what the
+     * player actually changed. A seat holds answers its player may have set on that one match, and
+     * nothing distinguishes those from what the seat was stamped with at creation -- that is what
+     * making the columns NOT NULL costs. So the request says which kinds it changed, and every other
+     * column is assigned from itself and left exactly as it was: changing what a game says about
+     * turns does not undo a mute somebody put on one match's results. */
+    private val restampParticipants: Command[(Set[NotificationType], PlayerId, Option[GameId])] =
+        sql"""UPDATE participant p SET
+            notify_challenge_accepted = CASE WHEN $bool THEN r.notify_challenge_accepted ELSE p.notify_challenge_accepted END,
+            notify_challenge_ready = CASE WHEN $bool THEN r.notify_challenge_ready ELSE p.notify_challenge_ready END,
+            notify_acceptance_changed = CASE WHEN $bool THEN r.notify_acceptance_changed ELSE p.notify_acceptance_changed END,
+            notify_accepted_challenge_ready = CASE WHEN $bool THEN r.notify_accepted_challenge_ready ELSE p.notify_accepted_challenge_ready END,
+            notify_match_started = CASE WHEN $bool THEN r.notify_match_started ELSE p.notify_match_started END,
+            notify_turn_taken = CASE WHEN $bool THEN r.notify_turn_taken ELSE p.notify_turn_taken END,
+            notify_your_turn = CASE WHEN $bool THEN r.notify_your_turn ELSE p.notify_your_turn END,
+            notify_match_ended = CASE WHEN $bool THEN r.notify_match_ended ELSE p.notify_match_ended END,
+            update_date = now()
+          FROM (
+              SELECT g.game_id,
+                     COALESCE(pg.notify_challenge_accepted, pl.notify_challenge_accepted,
+                              g.notify_challenge_accepted) AS notify_challenge_accepted,
+                     COALESCE(pg.notify_challenge_ready, pl.notify_challenge_ready,
+                              g.notify_challenge_ready) AS notify_challenge_ready,
+                     COALESCE(pg.notify_acceptance_changed, pl.notify_acceptance_changed,
+                              g.notify_acceptance_changed) AS notify_acceptance_changed,
+                     COALESCE(pg.notify_accepted_challenge_ready, pl.notify_accepted_challenge_ready,
+                              g.notify_accepted_challenge_ready) AS notify_accepted_challenge_ready,
+                     COALESCE(pg.notify_match_started, pl.notify_match_started,
+                              g.notify_match_started) AS notify_match_started,
+                     COALESCE(pg.notify_turn_taken, pl.notify_turn_taken,
+                              g.notify_turn_taken) AS notify_turn_taken,
+                     COALESCE(pg.notify_your_turn, pl.notify_your_turn,
+                              g.notify_your_turn) AS notify_your_turn,
+                     COALESCE(pg.notify_match_ended, pl.notify_match_ended,
+                              g.notify_match_ended) AS notify_match_ended
+              FROM player pl
+                  CROSS JOIN game g
+                  LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = g.game_id
+              WHERE pl.player_id = $playerId AND g.game_id = COALESCE(${gameId.opt}, g.game_id)
+          ) r
+          JOIN match m ON m.game_id = r.game_id
+          WHERE p.player_id = $playerId AND p.game_id = r.game_id AND p.match_id = m.match_id
+            AND m.completed IS NULL AND NOT m.cancelled""".command
+            // Eight flags in `NotificationType.values` order, as everywhere else the eight columns are
+            // bound positionally. The player is named twice in the statement -- once to resolve the
+            // chain, once to pick the seats -- so it is bound twice from the one value.
+            .contramap { case (changed, player, game) =>
+                (
+                  changed(NotificationType.ChallengeAccepted),
+                  changed(NotificationType.ChallengeReady),
+                  changed(NotificationType.AcceptanceChanged),
+                  changed(NotificationType.AcceptedChallengeReady),
+                  changed(NotificationType.MatchStarted),
+                  changed(NotificationType.TurnTaken),
+                  changed(NotificationType.YourTurn),
+                  changed(NotificationType.MatchEnded),
+                  player,
+                  game,
                   player
                 )
             }
@@ -261,13 +378,21 @@ class NotificationRepo(session: Session[IO]) {
             .execute(selectPlayerGames)(id)
             .map(_.map { case (game, prefs) => GameNotificationPreferences(game, prefs) })
 
+    /** What this player has said about this one game. `unset` where they have no row, which reads the same as a row of
+      * NULLs and is what a player who has never opened that game's settings has.
+      *
+      * Read before a save so that the save can tell what it changed, which is all a cascade may carry down.
+      */
+    def readForPlayerGame(id: PlayerId, game: GameId): IO[NotificationPreferences] =
+        session.option(selectPlayerGame)((id, game)).map(_.getOrElse(NotificationPreferences.unset))
+
     def updateForPlayerGame(id: PlayerId, game: GameId, preferences: NotificationPreferences): IO[Unit] =
         session.execute(upsertPlayerGame)((id, game, preferences)).void
 
-    /** What this player has said about this one match, or `None` if they have no seat in it.
+    /** What this player's seats in this match say, or `None` if they have no seat in it.
       *
-      * `Some(unset)` and `None` are different answers and the caller needs both: the first is a player in the match who
-      * has said nothing, the second is somebody who is not playing it. A row of NULLs is the former.
+      * Every kind answered, because a seat cannot leave one unsaid. `None` means they are not playing this match, which
+      * is a different answer from "they are playing it and want nothing", and the caller needs both.
       *
       * The first of their seats, where a player holding two has both written together by `updateForPlayerInMatch` — so
       * the two always agree and reading either is reading the answer.
@@ -276,13 +401,13 @@ class NotificationRepo(session: Session[IO]) {
         gameId: GameId,
         matchId: MatchId,
         playerId: PlayerId
-    ): IO[Option[NotificationPreferences]] =
+    ): IO[Option[NotificationDefaults]] =
         session.execute(selectParticipantPreferences)((gameId, matchId, playerId)).map(_.headOption)
 
     /** Records what this player wants to hear about this match, on every seat they hold in it.
       *
       * Every seat, because the preference is about the match: a player with two seats muted one match, not one half of
-      * one, and leaving the other seat unset would keep mailing them from it.
+      * one, and leaving the other seat as it was would keep mailing them from it.
       *
       * @return
       *   whether the player has any seat in the match at all, which is how the service tells "saved" from "you are not
@@ -292,7 +417,7 @@ class NotificationRepo(session: Session[IO]) {
         gameId: GameId,
         matchId: MatchId,
         playerId: PlayerId,
-        preferences: NotificationPreferences
+        preferences: NotificationDefaults
     ): IO[Boolean] =
         session
             .execute(updateParticipantPreferences)((preferences, gameId, matchId, playerId))
@@ -304,9 +429,38 @@ class NotificationRepo(session: Session[IO]) {
                 case _ => false
             }
 
+    /** Copies what this save changed about the player's own answers into every game they have said anything about, so
+      * that those games stop answering that question differently.
+      *
+      * The offer a player accepts when they save their defaults and ask for them to be used everywhere. `changed` is
+      * the questions the save actually changed, and the only columns this touches: a game answering some other question
+      * differently goes on answering it. Games they have no row for need no write — those already answer from the
+      * player level.
+      */
+    def alignGamesWithPlayer(
+        id: PlayerId,
+        preferences: NotificationPreferences,
+        changed: Set[NotificationType]
+    ): IO[Unit] =
+        session.execute(alignPlayerGames)((changed, preferences, id)).void
+
+    /** Re-stamps this player's seats in the matches they are still playing, from the chain as it now stands.
+      *
+      * `game` narrows it to the one game whose settings they have just changed; `None` covers every game, which is what
+      * a change to their defaults offers. Either way it is the matches that are still running: a finished one will send
+      * nothing more, and rewriting its seats would rewrite the record of what it did send.
+      *
+      * `changed` is the questions the save actually changed, and the only columns this touches — so an answer a player
+      * set on one match in particular survives a change to something else. See `restampParticipants`. An empty set
+      * would write nothing, so the caller does not call at all.
+      */
+    def applyToMatches(id: PlayerId, game: Option[GameId], changed: Set[NotificationType]): IO[Unit] =
+        session.execute(restampParticipants)((changed, id, game)).void
+
     /** Everyone who has accepted a challenge, with what each of them wants to hear about it.
       *
-      * Takes the game's defaults for the reason `levelsForMatch` does: the caller is holding the `Game` already.
+      * Takes the game's defaults rather than reading them, because the caller has the `Game` in hand — it needed it to
+      * compose the mail.
       */
     def levelsForChallenge(
         gameId: GameId,
@@ -323,19 +477,15 @@ class NotificationRepo(session: Session[IO]) {
                 )
             })
 
-    /** Every seat in a match with everything that bears on whether its player hears about it.
+    /** Every seat in a match with what it says about whether its player hears about it.
       *
-      * Takes the game's defaults rather than reading them, because the caller has the `Game` in hand — it needed it to
-      * compose the mail — and reading it again per match would be a query for a value it is already holding.
+      * Takes no defaults and joins no other level: a seat's own eight columns are the answer, which is what V14 made
+      * them for.
       */
-    def levelsForMatch(gameId: GameId, matchId: MatchId, defaults: NotificationDefaults): IO[List[SeatNotifications]] =
+    def preferencesForMatch(gameId: GameId, matchId: MatchId): IO[List[SeatNotifications]] =
         session
-            .execute(selectLevelsForMatch)((gameId, matchId))
-            .map(_.map { case (participant, id, nickname, isAdmin, externalId, email, seat, perGame, overall) =>
-                SeatNotifications(
-                  participant,
-                  Player(id, nickname, isAdmin, externalId, email),
-                  NotificationLevels(seat, perGame, overall, defaults)
-                )
+            .execute(selectSeatPreferences)((gameId, matchId))
+            .map(_.map { case (participant, id, nickname, isAdmin, externalId, email, seat) =>
+                SeatNotifications(participant, Player(id, nickname, isAdmin, externalId, email), seat)
             })
 }

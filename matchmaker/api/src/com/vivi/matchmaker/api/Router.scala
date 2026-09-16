@@ -76,14 +76,19 @@ object Router {
                 ok(services.notifications.mine(caller))
 
             case ("PUT", "me" :: "notifications" :: Nil) =>
-                body[NotificationPreferences](request).flatMap(p =>
-                    noContent(services.notifications.updateMine(caller, p))
+                body[Json.PreferencesRequest](request).flatMap(r =>
+                    noContent(
+                      services.notifications.updateMine(caller, r.preferences, r.applyToGames, r.applyToMatches)
+                    )
                 )
 
+            // `applyToGames` is ignored here rather than refused: there is no level between one game
+            // and another for it to mean anything about, and a client that sends it has said something
+            // this route has no way to carry out.
             case ("PUT", "me" :: "notifications" :: "games" :: gameId :: Nil) =>
                 withGameId(gameId) { id =>
-                    body[NotificationPreferences](request).flatMap(p =>
-                        noContent(services.notifications.updateForGame(caller, id, p))
+                    body[Json.PreferencesRequest](request).flatMap(r =>
+                        noContent(services.notifications.updateForGame(caller, id, r.preferences, r.applyToMatches))
                     )
                 }
 
@@ -210,7 +215,9 @@ object Router {
 
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "notifications" :: Nil) =>
                 withGameId(gameId) { gid =>
-                    body[NotificationPreferences](request).flatMap(p =>
+                    // `NotificationDefaults`, not preferences: a seat answers every kind, so there is
+                    // nothing here a caller may leave unsaid and nothing below it to fall through to.
+                    body[NotificationDefaults](request).flatMap(p =>
                         noContent(services.notifications.updateForMatch(caller, gid, MatchId(matchId), p))
                     )
                 }

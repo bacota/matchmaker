@@ -19,11 +19,50 @@ class ParticipantRepo(session: Session[IO]) {
     private val gameRoleId = SkunkIdCodecs.gameRoleId
     private val instant = SkunkCodecs.instant
 
+    /* A seat, stamped on creation with what its player wants to hear about it.
+     *
+     * INSERT ... SELECT rather than VALUES, because the eight `notify_*` columns are NOT NULL (V14)
+     * and what goes in them is the chain resolved at this moment: what the player has said about this
+     * game, else what they have said in general, else what the game asks for. That is the same rule as
+     * `NotificationLevels.resolve`, done here instead of read and passed in, so that a seat cannot be
+     * created unstamped and the resolution cannot happen a query earlier than the row it describes.
+     *
+     * The LEFT JOIN is the "else what they have said in general": a player who has never opened this
+     * game's settings has no `player_game` row, and NULLs from the outer join fall through the
+     * COALESCE exactly as an unanswered question does.
+     *
+     * The player is named twice -- once as the seat's own column, once to resolve the chain -- so the
+     * value is bound twice; `game` likewise. */
     private val insertParticipant
         : Query[(GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId), ParticipantId] =
-        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed, due, game_role_id)
-          VALUES ($gameId, $matchId, $gameType, $playerId, $bool, $bool, ${instant.opt}, $gameRoleId)
-          RETURNING participant_id""".query(participantId)
+        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed, due, game_role_id,
+              notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
+              notify_accepted_challenge_ready, notify_match_started, notify_turn_taken,
+              notify_your_turn, notify_match_ended)
+          SELECT $gameId, $matchId, $gameType, $playerId, $bool, $bool, ${instant.opt}, $gameRoleId,
+                 COALESCE(pg.notify_challenge_accepted, pl.notify_challenge_accepted,
+                          g.notify_challenge_accepted),
+                 COALESCE(pg.notify_challenge_ready, pl.notify_challenge_ready,
+                          g.notify_challenge_ready),
+                 COALESCE(pg.notify_acceptance_changed, pl.notify_acceptance_changed,
+                          g.notify_acceptance_changed),
+                 COALESCE(pg.notify_accepted_challenge_ready, pl.notify_accepted_challenge_ready,
+                          g.notify_accepted_challenge_ready),
+                 COALESCE(pg.notify_match_started, pl.notify_match_started,
+                          g.notify_match_started),
+                 COALESCE(pg.notify_turn_taken, pl.notify_turn_taken,
+                          g.notify_turn_taken),
+                 COALESCE(pg.notify_your_turn, pl.notify_your_turn,
+                          g.notify_your_turn),
+                 COALESCE(pg.notify_match_ended, pl.notify_match_ended,
+                          g.notify_match_ended)
+          FROM player pl
+              CROSS JOIN game g
+              LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = g.game_id
+          WHERE pl.player_id = $playerId AND g.game_id = $gameId
+          RETURNING participant_id"""
+            .query(participantId)
+            .contramap { case t @ (game, _, _, player, _, _, _, _) => t ++ (player, game) }
 
     private val insertCharacterParticipant: Command[(GameId, ParticipantId, CharacterId)] =
         sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id)

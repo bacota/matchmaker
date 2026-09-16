@@ -170,13 +170,18 @@ class MatchNotificationSpec extends PropertySuite {
 
     // Turning off "it is my turn" is not turning off "somebody moved": the player still hears that
     // the match has moved on, in the plainer mail. This is `NotificationPolicy.choose` end to end.
+    //
+    // Said after the match had started, so `applyToMatches` is what carries it into the seat -- the
+    // seat holds its own answers now, and a change to the player's defaults reaches a match already
+    // being played only because they asked for it to. Which makes this the cascade end to end as well.
     property("refusing your-turn still gets the plainer move notification") {
         forAll(genUniqueString) { seed =>
             val result = fixture(seed).flatMap { f =>
                 for {
                     _ <- f.services.notifications.updateMine(
                       f.accepter.externalId,
-                      NotificationPreferences.unset.updated(NotificationType.YourTurn, Some(false))
+                      NotificationPreferences.unset.updated(NotificationType.YourTurn, Some(false)),
+                      applyToMatches = true
                     )
                     _ <- move(f, f.seatOf(f.challenger), List(f.seatOf(f.accepter)))
                 } yield {
@@ -200,9 +205,7 @@ class MatchNotificationSpec extends PropertySuite {
                       f.accepter.externalId,
                       f.game.gameId,
                       f.played.matchId,
-                      NotificationPreferences.unset
-                          .updated(NotificationType.YourTurn, Some(false))
-                          .updated(NotificationType.TurnTaken, Some(false))
+                      NotificationDefaults.all(true).copy(yourTurn = false, turnTaken = false)
                     )
                     _ <- move(f, f.seatOf(f.challenger), List(f.seatOf(f.accepter)))
                 } yield f.notifier.messages.isEmpty

@@ -160,8 +160,14 @@ class RouterSpec extends FunSuite {
       ("PUT", "/me", """{"nickname":"renamed"}"""),
       ("PUT", "/me/email", """{"email":"player@example.com"}"""),
       ("GET", "/me/notifications", "{}"),
-      ("PUT", "/me/notifications", """{"matchStarted":true,"yourTurn":false}"""),
-      ("PUT", "/me/notifications/games/1", """{"matchStarted":true,"yourTurn":false}"""),
+      // The preferences are wrapped, because how far the save reaches is part of what was said --
+      // and the cascade flags are defaulted, so a body that names only the preferences is valid too.
+      ("PUT", "/me/notifications", """{"preferences":{"matchStarted":true,"yourTurn":false}}"""),
+      (
+        "PUT",
+        "/me/notifications/games/1",
+        """{"preferences":{"matchStarted":true,"yourTurn":false},"applyToMatches":true}"""
+      ),
       ("GET", "/me/acceptances", "{}"),
       ("GET", "/me/matches", "{}"),
       ("GET", "/me/matches/due", "{}"),
@@ -183,7 +189,14 @@ class RouterSpec extends FunSuite {
       ("POST", "/games/1/matches/m1/refresh", "{}"),
       ("POST", "/games/1/matches/m1/cancel", "{}"),
       ("GET", "/games/1/matches/m1/notifications", "{}"),
-      ("PUT", "/games/1/matches/m1/notifications", """{"matchStarted":true,"yourTurn":false}"""),
+      // All eight, and not optional: a seat answers every kind, so there is nothing here to leave out.
+      (
+        "PUT",
+        "/games/1/matches/m1/notifications",
+        """{"challengeAccepted":true,"challengeReady":true,"acceptanceChanged":true,
+           "acceptedChallengeReady":true,"matchStarted":true,"turnTaken":false,
+           "yourTurn":true,"matchEnded":true}"""
+      ),
       (
         "POST",
         "/games/1/matches/m1/moves",

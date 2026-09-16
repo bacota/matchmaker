@@ -319,17 +319,51 @@ object Account {
         val perGame = Var(settings.games.map(g => g.gameId -> g.preferences).toMap)
         val chosen: Var[Option[GameId]] = Var(None)
 
+        /* The two offers on the defaults form, in the order they depend on each other. A player who
+         * has left one game answering differently on purpose has not asked for their defaults to
+         * reach that game's matches -- so the second is only offered once the first is taken, which
+         * is what `shown` is for.
+         *
+         * Both say "the answers you change here" rather than "these answers", because that is what
+         * they do: a question this save leaves alone is left alone all the way down. */
+        val allGames = Notifications.Cascade(
+          "Use the answers I change here for all my games too",
+          "Only the questions you change. Anything a game answers differently stays as it is."
+        )
+        val allMatches = Notifications.Cascade(
+          "And in the matches I am playing now",
+          "Only the questions you change. Matches you have already finished are left alone.",
+          shown = allGames.chosen.signal
+        )
+
         div(
           Notifications.form(
             "Notifications",
             "What we email you about, unless you say otherwise for a particular game or match.",
             overall,
-            saveLabel = "Save notifications"
-          )(preferences =>
+            saveLabel = "Save notifications",
+            cascades = Seq(allGames, allMatches)
+          ) { preferences =>
+              val games = allGames.chosen.now()
+              // Only ever true while the box above it is checked -- `Cascade.shown` unchecks it when
+              // it goes away -- but read independently, because what the request means is what it says
+              // and not what the form happened to be showing.
+              val matches = allMatches.chosen.now()
               ApiClient
-                  .updateNotifications(preferences)
-                  .map(_ => Store.notificationSettings.update(_.map(_.copy(player = preferences))))
-          ),
+                  .updateNotifications(preferences, applyToGames = games, applyToMatches = matches)
+                  .map { _ =>
+                      Store.notificationSettings.update(_.map { current =>
+                          // The server has just made every per-game row say this, so the panel must
+                          // too: the game picker below comes back to what is held here, and showing a
+                          // game the answers it had before the cascade would be showing what no longer
+                          // exists.
+                          val saved = current.copy(player = preferences)
+                          if (games) saved.copy(games = saved.games.map(_.copy(preferences = preferences)))
+                          else saved
+                      })
+                      if (games) perGame.update(_.view.mapValues(_ => preferences).toMap)
+                  }
+          },
           div(
             cls := "account-section",
             h3("One Game"),
@@ -359,14 +393,19 @@ object Account {
                 case None => emptyNode
                 case Some(gameId) =>
                     val forGame = Var(perGame.now().getOrElse(gameId, NotificationPreferences.unset))
+                    val alsoMatches = Notifications.Cascade(
+                      "Use the answers I change here in the matches of this game I am playing now",
+                      "Only the questions you change. Matches you have already finished are left alone."
+                    )
                     Notifications.form(
                       Store.games.now().find(_.gameId == gameId).map(_.name).getOrElse("This game"),
                       "Leave a question on \"Use Default\" to answer it from your settings above.",
                       forGame,
-                      saveLabel = "Save for this game"
+                      saveLabel = "Save for this game",
+                      cascades = Seq(alsoMatches)
                     ) { preferences =>
                         ApiClient
-                            .updateGameNotifications(gameId, preferences)
+                            .updateGameNotifications(gameId, preferences, applyToMatches = alsoMatches.chosen.now())
                             .map { _ =>
                                 perGame.update(_.updated(gameId, preferences))
                                 Store.notificationSettings.update(_.map { current =>

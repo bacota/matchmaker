@@ -200,6 +200,25 @@ object Json {
         startedAt: Instant
     )
 
+    /** A player saving one level of their notification settings, and how far down they want it to reach.
+      *
+      * A wrapper rather than the bare preferences, because "and use these everywhere" is part of what the player said
+      * when they pressed Save: sending it as a query parameter would put half of one answer in the url and half in the
+      * body. Both flags default to false, so a client that knows nothing about the cascades saves the one level it
+      * named and changes nothing else.
+      *
+      * @param applyToGames
+      *   copy these answers into every game the player has said something about. Only meaningful for their defaults —
+      *   there is no level between one game and another — so the per-game request below does not offer it.
+      * @param applyToMatches
+      *   re-stamp the seats in the matches they are still playing, from the chain as it then stands.
+      */
+    case class PreferencesRequest(
+        preferences: NotificationPreferences,
+        applyToGames: Boolean = false,
+        applyToMatches: Boolean = false
+    )
+
     /** One participant's outcome. `scores` is an open map because what a game scores on is the game's business: it is
       * stored as-is in `result.scores`.
       */
@@ -237,6 +256,7 @@ object Json {
     given ReadWriter[CharacterRequest] = macroRW
     given ReadWriter[UpdateStateRequest] = macroRW
     given ReadWriter[AcceptRequest] = macroRW
+    given ReadWriter[PreferencesRequest] = macroRW
     given ReadWriter[MoveNotification] = macroRW
     given ReadWriter[ResultEntry] = macroRW
     given ReadWriter[MatchResults] = macroRW
