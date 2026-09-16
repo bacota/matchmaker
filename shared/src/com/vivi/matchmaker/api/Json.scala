@@ -208,10 +208,12 @@ object Json {
       * named and changes nothing else.
       *
       * @param applyToGames
-      *   copy these answers into every game the player has said something about. Only meaningful for their defaults —
-      *   there is no level between one game and another — so the per-game request below does not offer it.
+      *   copy the questions this save changed into every game the player has said something about. Only meaningful for
+      *   their defaults — there is no level between one game and another — so `PUT /me/notifications/games/{id}` takes
+      *   the same body but refuses this flag rather than discarding it.
       * @param applyToMatches
-      *   re-stamp the seats in the matches they are still playing, from the chain as it then stands.
+      *   re-stamp the seats in the matches they are still playing, for the questions this save changed, from the chain
+      *   as it then stands.
       */
     case class PreferencesRequest(
         preferences: NotificationPreferences,

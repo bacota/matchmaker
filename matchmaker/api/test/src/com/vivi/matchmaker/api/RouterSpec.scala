@@ -108,6 +108,22 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request("GET", "/games/abc/challenges")).statusCode, 400)
     }
 
+    // The per-game route takes the same body as the defaults route above it, so the flag that only
+    // the defaults route can act on is something a client can send here by simply reusing that body.
+    // Refused rather than discarded: a 204 would tell them a cascade had run that had not. Answered
+    // before the service is reached, which the unusable pool proves -- reaching it would be a 500.
+    test("a cascade the per-game route cannot carry out is a bad request") {
+        val body = """{"preferences":{"matchStarted":true},"applyToGames":true}"""
+        assertEquals(dispatch(request("PUT", "/me/notifications/games/1", body = body)).statusCode, 400)
+    }
+
+    // And the flag it can act on still reaches the service, so the refusal above is about one field
+    // and has not made the route reject every cascade.
+    test("the cascade the per-game route does support reaches the service") {
+        val body = """{"preferences":{"matchStarted":true},"applyToMatches":true}"""
+        assertEquals(quietly(dispatch(request("PUT", "/me/notifications/games/1", body = body))).statusCode, 500)
+    }
+
     test("a non-numeric character id is a bad request") {
         assertEquals(dispatch(request("PUT", "/characters/abc")).statusCode, 400)
     }

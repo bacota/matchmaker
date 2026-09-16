@@ -82,14 +82,23 @@ object Router {
                     )
                 )
 
-            // `applyToGames` is ignored here rather than refused: there is no level between one game
-            // and another for it to mean anything about, and a client that sends it has said something
-            // this route has no way to carry out.
+            // Same body as the route above, and `applyToGames` refused rather than ignored: there is
+            // no level between one game and another for it to mean anything about, so a client that
+            // sends it here has asked for something this route cannot do -- and the likely way to end
+            // up doing that is to reuse the body of its sibling above, which is exactly the mistake a
+            // silent 204 would hide. Refused before the service is reached, so nothing is written.
             case ("PUT", "me" :: "notifications" :: "games" :: gameId :: Nil) =>
                 withGameId(gameId) { id =>
-                    body[Json.PreferencesRequest](request).flatMap(r =>
-                        noContent(services.notifications.updateForGame(caller, id, r.preferences, r.applyToMatches))
-                    )
+                    body[Json.PreferencesRequest](request).flatMap { r =>
+                        if (r.applyToGames)
+                            IO.pure(
+                              Errors.badRequest(
+                                "applyToGames is not supported for one game's settings; it belongs to PUT /me/notifications"
+                              )
+                            )
+                        else
+                            noContent(services.notifications.updateForGame(caller, id, r.preferences, r.applyToMatches))
+                    }
                 }
 
             case ("GET", "me" :: "acceptances" :: Nil) =>
