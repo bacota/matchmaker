@@ -488,6 +488,19 @@ label.field > .hint {
   font-size: 0.85rem;
 }
 
+/* The box stays a box. These offers appear inside `.account-section`, whose `label input` rule is a
+   full-width block -- written for the text boxes on that panel, and later in this file than the
+   checkbox rule above, so it was winning the tie and stretching the checkbox across the grid's first
+   column. That left the caption crushed into whatever was left at the right-hand edge.
+
+   Named specifically enough to beat that rule wherever either sits, rather than relying on order. */
+.account-section label.cascade > input[type="checkbox"],
+.card label.cascade > input[type="checkbox"] {
+  display: inline-block;
+  width: auto;
+  margin: 0;
+}
+
 button {
   font: inherit;
   padding: 0.35rem 0.7rem;
