@@ -64,6 +64,31 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
       * code rather than stated twice, so the two cannot drift.
       */
     def column: String = s"notify_${code.toLowerCase}"
+
+    /** Whether this kind of news can still arrive about a match that has already started.
+      *
+      * The first five are all about a challenge, or about the start itself: by the time there is a match to have an
+      * opinion about, every one of them has either happened or can no longer happen. Only playing and finishing are
+      * still ahead.
+      *
+      * A seat still carries an answer for all eight — they are NOT NULL and are stamped from the chain when the seat is
+      * created, and none of them is a lie — but a form over one match has no business asking about the five, because
+      * changing them cannot change what anybody is sent. [[NotificationType.duringMatch]] is the list that form uses.
+      */
+    def inProgress: Boolean = this match {
+        case NotificationType.TurnTaken | NotificationType.YourTurn | NotificationType.MatchEnded => true
+        case _                                                                                    => false
+    }
+}
+
+object NotificationType {
+
+    /** The kinds a match already under way can still produce, in the order [[NotificationType.values]] gives them.
+      *
+      * What the per-match form asks about. Derived from [[NotificationType.inProgress]] rather than written out, so a
+      * kind added to the enum has to say for itself which side of the start it falls on.
+      */
+    val duringMatch: Seq[NotificationType] = values.toSeq.filter(_.inProgress)
 }
 
 /** What a player has said about each kind of notification, at one level of the chain.

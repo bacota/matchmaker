@@ -115,9 +115,19 @@ object Notifications {
           }
         )
 
-    /** All eight questions, in the order a player meets the events they are about. */
-    def editor(preferences: Var[NotificationPreferences], withDefault: Boolean = true): HtmlElement =
-        div(NotificationType.values.toSeq.map(question(_, preferences, withDefault)))
+    /** The questions, in the order a player meets the events they are about.
+      *
+      * All eight unless a screen says otherwise. `kinds` is for a form that cannot act on some of them — the per-match
+      * one, where the five questions about challenges and about the start are all about things that have already
+      * happened. A question left out is not answered differently; the answer the form was seeded with travels back
+      * untouched.
+      */
+    def editor(
+        preferences: Var[NotificationPreferences],
+        withDefault: Boolean = true,
+        kinds: Seq[NotificationType] = NotificationType.values.toSeq
+    ): HtmlElement =
+        div(kinds.map(question(_, preferences, withDefault)))
 
     /** What one form has to say for itself. As `Account.Outcome`, and for the same reason: these forms live inside
       * other screens, and a failure saving one belongs beside it rather than in the banner at the top of the page.
@@ -156,7 +166,8 @@ object Notifications {
         preferences: Var[NotificationPreferences],
         withDefault: Boolean = true,
         saveLabel: String = "Save",
-        cascades: Seq[Cascade] = Nil
+        cascades: Seq[Cascade] = Nil,
+        kinds: Seq[NotificationType] = NotificationType.values.toSeq
     )(save: NotificationPreferences => Future[Unit]): HtmlElement = {
         val busy = Var(false)
         val outcome: Var[Option[Outcome]] = Var(None)
@@ -165,14 +176,16 @@ object Notifications {
           cls := "account-section",
           h3(heading),
           p(cls := "detail", explanation),
-          editor(preferences, withDefault),
+          editor(preferences, withDefault, kinds),
           cascades.map(offer),
           button(
             tpe := "button",
             disabled <-- busy.signal.combineWith(preferences.signal).map { case (waiting, current) =>
                 // On the game form every question must be answered before there is anything to save;
                 // elsewhere "unanswered" is itself an answer, so only the request blocks the button.
-                waiting || (!withDefault && current.unsaid.nonEmpty)
+                // Only the questions being asked can hold the button: one that is not on screen cannot
+                // be answered, so waiting for it would disable the button with nothing to click.
+                waiting || (!withDefault && current.unsaid.exists(kinds.contains))
             },
             child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
             saveLabel,

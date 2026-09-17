@@ -130,6 +130,27 @@ class NotificationPolicySpec extends FunSuite {
         assertEquals(before.differences(before), Set.empty[NotificationType])
     }
 
+    /* What the per-match form asks about. Stated as the two lists rather than as a count, because the
+     * mistake to catch is a kind on the wrong side of the start -- a form that asks about "my challenge
+     * is ready" for a match already being played offers a choice that cannot change anything, and one
+     * that stops asking about "it is my turn" takes away the setting the form exists for. */
+    test("only playing and finishing can still happen to a match under way") {
+        assertEquals(
+          NotificationType.duringMatch,
+          Seq(NotificationType.TurnTaken, NotificationType.YourTurn, NotificationType.MatchEnded)
+        )
+        assert(
+          NotificationType.values.toSeq.filterNot(_.inProgress) == Seq(
+            NotificationType.ChallengeAccepted,
+            NotificationType.ChallengeReady,
+            NotificationType.AcceptanceChanged,
+            NotificationType.AcceptedChallengeReady,
+            NotificationType.MatchStarted
+          ),
+          "every other kind is about a challenge, or about the start itself"
+        )
+    }
+
     test("a column name per kind, all distinct, all derived from the code") {
         assertEquals(NotificationType.MatchStarted.column, "notify_match_started")
         assertEquals(NotificationType.values.map(_.column).distinct.length, NotificationType.values.length)

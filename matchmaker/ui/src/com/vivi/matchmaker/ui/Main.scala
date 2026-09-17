@@ -798,12 +798,19 @@ object Views {
                   // seat answers every kind itself and there is nothing under it to defer to. The
                   // answers it opens with are what the seat was stamped with when the match started,
                   // so nothing is unanswered and the button is never disabled for want of a choice.
+                  //
+                  // Only `duringMatch` is asked about: the other five are about a challenge, or about
+                  // the start, and none of them can happen again to a match that has started, so
+                  // offering them would be offering a choice that changes nothing. The seat still
+                  // holds an answer for all eight and the save still carries all eight -- what is
+                  // saved for the five is what was fetched, unchanged.
                   Notifications.form(
                     "Notifications for this match",
                     "What we email you about this match, whatever you change elsewhere later.",
                     preferences,
                     withDefault = false,
-                    saveLabel = "Save for this match"
+                    saveLabel = "Save for this match",
+                    kinds = NotificationType.duringMatch
                   ) { chosen =>
                       chosen.complete match {
                           case Some(answers) =>
