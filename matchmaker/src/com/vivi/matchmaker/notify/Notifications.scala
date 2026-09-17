@@ -345,7 +345,25 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         mail.sender
             .zip(mail.uiBaseUrl)
             .traverse_ { (sender, uiBaseUrl) =>
-                compose(sender, uiBaseUrl).flatMap(_.traverse_(notifier.enqueue))
+                /* `parTraverse_`, not `traverse_`: one event is one mail per recipient, and each is an
+                 * independent round trip to SQS. Sent one after another, a four-player match start put
+                 * four sequential network calls on the request path for no reason -- none of them is
+                 * waiting on any other.
+                 *
+                 * Concurrent, not detached. The `IO` this returns is not complete until every send is,
+                 * which is the whole point: the caller is a lambda, and a lambda that has returned is a
+                 * lambda that may be frozen mid-send. `parTraverse_` joins; `start` without a join, or
+                 * an unawaited `Future`, would be a notification that arrives only if the container
+                 * happens to survive long enough. The request waits for these sends either way -- it
+                 * now waits once rather than n times.
+                 *
+                 * The failure of one is still the failure of the batch, as it was when this was
+                 * sequential: `parTraverse_` cancels its siblings and `handleError` below reports one
+                 * line. A blocking send in flight cannot actually be interrupted, so those complete
+                 * regardless; what is lost is the same thing sequential order lost, which is any send
+                 * that had not started. Making delivery survive a single bad send is the durable-outbox
+                 * change the class comment describes, not this one. */
+                compose(sender, uiBaseUrl).flatMap(_.parTraverse_(notifier.enqueue))
             }
             .handleError(error => System.err.println(s"could not queue notifications for $about: $error"))
 }

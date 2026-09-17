@@ -57,6 +57,11 @@ object SqsNotifier {
       *
       * Not per call either: a client sets up a connection pool and a credential provider, and doing that for every
       * notification would put a fresh handshake in front of each one.
+      *
+      * Shared across concurrent sends, since `Notifications.dispatch` now sends one event's mails at the same time.
+      * Both halves of that are safe and neither is accidental: `lazy val` initialization is synchronized, so a race to
+      * be first builds one client rather than two, and the SDK's synchronous clients are documented as thread-safe and
+      * intended to be shared.
       */
     private def lazily(build: () => SqsClient): () => SqsClient = {
         lazy val instance = build()
@@ -64,8 +69,13 @@ object SqsNotifier {
     }
 
     /* The JDK's URLConnection transport rather than Netty or Apache: this makes one small JSON call
-     * per notification, with nothing to stream and no concurrency to pool for, and the other two are
-     * megabytes of jar apiece on a function whose cold start a player waits through. */
+     * per notification, with nothing to stream, and the other two are megabytes of jar apiece on a
+     * function whose cold start a player waits through.
+     *
+     * One event's mails do now go out at once, so there is a little concurrency to pool for -- but it
+     * is a handful of connections for the length of one request, which is what this transport's
+     * per-request connections cost about the same as. It would be the wrong transport for sustained
+     * parallel traffic, and that is not what a notification is. */
     private def client(region: String): SqsClient =
         SqsClient
             .builder()
