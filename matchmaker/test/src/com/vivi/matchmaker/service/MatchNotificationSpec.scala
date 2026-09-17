@@ -9,7 +9,7 @@ import org.scalacheck.Prop._
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.notify.RecordingNotifier
+import com.vivi.matchmaker.notify.{ConcurrentNotifier, RecordingNotifier}
 import com.vivi.matchmaker.persistence.{GameRepo, ParticipantRepo, TestSession}
 
 /** Who is written to while a match is being played, and when it stops.
@@ -80,9 +80,11 @@ class MatchNotificationSpec extends PropertySuite {
     private def fixture(
         seed: String,
         engine: GameEngineClient = new StubEngine(),
-        timeLimit: Option[java.time.Duration] = None
+        timeLimit: Option[java.time.Duration] = None,
+        // Supplied by the one property that cares how the sends are scheduled rather than what they
+        // say; everything else wants the plain recorder.
+        notifier: RecordingNotifier = new RecordingNotifier
     ): IO[Fixture] = {
-        val notifier = new RecordingNotifier
         val services = TestServices.servicesWith(
           engine,
           callbackBaseUrl = Some("https://matchmaker.example.com"),
@@ -209,6 +211,39 @@ class MatchNotificationSpec extends PropertySuite {
                     )
                     _ <- move(f, f.seatOf(f.challenger), List(f.seatOf(f.accepter)))
                 } yield f.notifier.messages.isEmpty
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* That the mails for one event are sent at the same time -- and that the event still waits for
+     * all of them.
+     *
+     * Both halves matter and they pull opposite ways. Concurrency is the optimization: a result writes
+     * to everyone in the match, and each mail is its own round trip to SQS that has nothing to wait
+     * for. Joining is the constraint: the caller is a lambda, and a lambda that has returned may be
+     * frozen mid-send, so a detached send is a notification that arrives only by luck.
+     *
+     * The notifier answers only when two sends are in flight together, which is what proves the
+     * first. `arrived` being 2 by the time `recordResults` has returned is what proves the second: a
+     * send nobody waited for would still be sitting at the barrier.
+     */
+    property("the mails for one event are sent at the same time, and waited for") {
+        forAll(genUniqueString) { seed =>
+            val notifier = new ConcurrentNotifier(expected = 2, timeout = 5.seconds)
+            val result = fixture(seed, notifier = notifier).flatMap { f =>
+                IO(notifier.arm()) *>
+                    f.services.engine
+                        .recordResults(
+                          f.game.gameId,
+                          f.played.matchId,
+                          List(
+                            ReportedResult(f.seatOf(f.challenger), 1, Map.empty, isWinner = true),
+                            ReportedResult(f.seatOf(f.accepter), 2, Map.empty, isWinner = false)
+                          ),
+                          f.game.externalId
+                        )
+                        .map(_ => notifier.arrived == 2 && notifier.messages.size == 2)
             }
             result.timeout(caseTimeout).unsafeRunSync()
         }
