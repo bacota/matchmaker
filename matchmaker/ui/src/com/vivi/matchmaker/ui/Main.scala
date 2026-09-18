@@ -409,6 +409,11 @@ object Views {
     private val refreshingDue: Var[Boolean] = Var(false)
     private val refreshingActive: Var[Boolean] = Var(false)
 
+    /* And for the completed list, which a refresh can move a row *into*. Shared by the home screen's
+     * "Recently Completed" and the game screen's "Your Completed Matches": they are two views of the
+     * one list, only one of them is ever on screen, and `reloadCompleted` fills both. */
+    private val refreshingCompleted: Var[Boolean] = Var(false)
+
     /** Reloads the sections a start has just changed, the way their own refresh buttons reload them.
       *
       * Starting a challenge is the moment a match comes into being: it belongs in "Current Matches" immediately, and in
@@ -423,6 +428,27 @@ object Views {
         refresh(refreshingDue, () => Store.reloadDue())
         refresh(refreshingActive, () => Store.reloadActive())
         refresh(refreshingAcceptances, () => Store.reloadAcceptances())
+    }
+
+    /** Reloads the sections a re-check with the engine may have changed.
+      *
+      * Asking the engine is how a finish that never reached matchmaker — a callback that was lost, a game that simply
+      * ends without saying so — is discovered, so the answer can be that the match is over. When it is, the row the
+      * player clicked belongs in "Recently Completed" and nowhere else, and leaving it in "Current Matches" with a Play
+      * button on it is worse than stale: it offers a turn in a match that has none.
+      *
+      * The completed list is reloaded only when the match actually finished. Every refresh could reload it, but the
+      * usual answer is "still being played" — that is the whole point of the button — and two extra requests to be told
+      * nothing changed is what the per-section reloads exist to avoid. `reloadCompleted` brings the result rows with
+      * it, which the completed rows are drawn from.
+      *
+      * Due and active are reloaded either way: the news may be that the match is over, but it may equally be that the
+      * turn has moved, which is what moves a row between those two.
+      */
+    private def reloadAfterMatchRefresh(refreshed: Match): Unit = {
+        refresh(refreshingDue, () => Store.reloadDue())
+        refresh(refreshingActive, () => Store.reloadActive())
+        if (refreshed.completed || refreshed.cancelled) refresh(refreshingCompleted, () => Store.reloadCompleted())
     }
 
     /** Reloads what accepting or backing out has just changed: the acceptances, which are both "Ready to Start" and
@@ -631,7 +657,12 @@ object Views {
       * differently ordered one.
       */
     private def recentlyCompletedSection: HtmlElement =
-        refreshableSection("Recently Completed", () => Store.reloadCompleted())(
+        refreshableSection(
+          "Recently Completed",
+          refreshingCompleted,
+          () => Store.reloadCompleted(),
+          subsection = false
+        )(
           listing(Store.completed.signal.map(_.take(Store.recentlyCompleted)), Store.loading(Store.Fetch.Completed))(
             p(cls := "empty", "Nothing finished yet.")
           )(matches => ul(matches.map(matchRow(_, showDue = false))))
@@ -725,8 +756,8 @@ object Views {
                 // Step 4 of the engine flow: any participant may ask matchmaker to re-check with the
                 // engine, which is what recovers from a callback that never arrived.
                 busyButton("Refresh", classes = Some("link")) { busy =>
-                    Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId), busy)(_ =>
-                        Store.refreshMatches()
+                    Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId), busy)(
+                      reloadAfterMatchRefresh
                     )
                 }
               ),
@@ -963,7 +994,12 @@ object Views {
       * this asks for, and a second request would only be a second chance for the two screens to disagree.
       */
     private def gameHistory(game: Game): HtmlElement =
-        refreshableSection("Your Completed Matches", () => Store.reloadCompleted())(
+        refreshableSection(
+          "Your Completed Matches",
+          refreshingCompleted,
+          () => Store.reloadCompleted(),
+          subsection = false
+        )(
           listing(
             Store.completed.signal.map(_.filter(_.gameId == game.gameId)),
             Store.loading(Store.Fetch.Completed)
