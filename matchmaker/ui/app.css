@@ -666,6 +666,22 @@ button.toggle {
   }
 }
 
+/* Room to breathe where there is room. 20rem is the width a phone can spare, and it is what the
+   panel is sized for; on a browser window it makes four stacked forms -- nickname, email,
+   password, and the notification preferences with their cascades -- into a very tall column of
+   very short lines, and the checkbox rows wrap onto two.
+
+   Widened rather than made a page of its own, which would lose the matches behind it; that is the
+   trade the panel exists to make. The ceiling on the viewport is what keeps it a panel: an
+   absolutely positioned box cannot be told to stay inside the window, so the width is whichever
+   is smaller, and the 3rem leaves the corner it is anchored to visible. */
+@media (min-width: 48rem) {
+  .account-menu {
+    width: min(34rem, calc(100vw - 3rem));
+    max-height: 80vh;
+  }
+}
+
 .account-menu h2 {
   margin-top: 0;
 }
