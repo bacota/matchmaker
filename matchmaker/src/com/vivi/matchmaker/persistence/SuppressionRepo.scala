@@ -56,10 +56,13 @@ class SuppressionRepo(session: Session[IO]) {
               VALUES (lower($text), $reason, $bool, ${text.opt}, now(), now(), 1, NULL)
               ON CONFLICT (email) DO UPDATE SET
                   reason = CASE
-                      WHEN email_suppression.reason = 'complaint' AND email_suppression.released_at IS NULL
+                      WHEN email_suppression.released_at IS NULL
+                          AND (
+                            email_suppression.reason = 'complaint'
+                            OR (email_suppression.reason = 'bounce' AND EXCLUDED.reason = 'delay')
+                          )
                           THEN email_suppression.reason
                       ELSE EXCLUDED.reason
-                  END,
                   permanent = EXCLUDED.permanent
                       OR (email_suppression.permanent AND email_suppression.released_at IS NULL),
                   diagnostic = COALESCE(EXCLUDED.diagnostic, email_suppression.diagnostic),
