@@ -551,4 +551,26 @@ resource "aws_lambda_event_source_mapping" "bounce" {
   batch_size                         = 10
   function_response_types            = ["ReportBatchItemFailures"]
   maximum_batching_window_in_seconds = 20
+
+  /* A ceiling on how many of these may run at once, which is about the database and not about
+   * Lambda.
+   *
+   * Without it an event source mapping scales out on queue depth alone: five instances after a
+   * minute, then more, up to the account's concurrency limit. Every one of them is a container in
+   * the VPC with a pool of up to bounce_db_pool_size connections to the same RDS instance the api
+   * function uses -- so a burst of SES feedback, which is exactly what a bad send looks like, would
+   * spend the database's connections on recording bounces while players' requests wait for one.
+   * The ordering is the wrong way round: nobody is waiting on a bounce, and a player is waiting on
+   * every API call.
+   *
+   * So the consumer is deliberately slow and bounded. The arithmetic is
+   * bounce_max_concurrency * bounce_db_pool_size connections at worst -- 4 by default -- against a
+   * database this module does not create and cannot ask about, which is why the numbers are small
+   * and explicit rather than derived. Depth is absorbed by the queue, whose fourteen-day retention
+   * is there for precisely this: an event recorded a few minutes late is worth the same as one
+   * recorded at once.
+   */
+  scaling_config {
+    maximum_concurrency = var.bounce_max_concurrency
+  }
 }

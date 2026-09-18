@@ -383,9 +383,39 @@ variable "bounce_db_pool_size" {
     buys nothing -- so one connection is the working set, and the second is headroom.
 
     Worth keeping small for a reason beyond thrift: this function and the api function draw from
-    the same database, and a consumer that scaled out under a burst of bounces could take
-    connections a player's request needs.
+    the same database, so connections spent recording bounces are connections a player's request
+    cannot have. What stops that from being unbounded is bounce_max_concurrency below -- this
+    number alone would not, since an event source mapping scales out on queue depth and every
+    container it starts brings a pool of this size.
   EOT
   type        = number
   default     = 2
+}
+
+variable "bounce_max_concurrency" {
+  description = <<-EOT
+    The most bounce consumers Lambda may run at once.
+
+    This is the setting that bounds the consumer's demand on the database: without it the event
+    source mapping scales out on queue depth to the account's concurrency limit, and each instance
+    holds up to bounce_db_pool_size connections to the same RDS instance the API uses. A burst of
+    SES feedback -- which is what a bad send produces -- would then starve players' requests of
+    connections to record bounces nobody is waiting for.
+
+    Two by default, for at most bounce_max_concurrency * bounce_db_pool_size = 4 connections. Small
+    on purpose: the database is not created here and its max_connections cannot be read from here,
+    so the default has to be one any instance can spare. Raising it is safe only against a known
+    connection budget, and the queue absorbs the delay in the meantime -- its retention is fourteen
+    days, and a bounce recorded minutes late is worth the same as one recorded at once.
+
+    AWS requires at least 2; there is no way to say "one at a time" here. Use reserved concurrency
+    on the function for that, at the cost of it applying to every invocation path.
+  EOT
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.bounce_max_concurrency >= 2 && var.bounce_max_concurrency <= 1000
+    error_message = "maximum_concurrency for an SQS event source must be between 2 and 1000."
+  }
 }
