@@ -1,7 +1,7 @@
 package com.vivi.matchmaker.bounce
 
 import munit.FunSuite
-import com.vivi.matchmaker.model.SuppressionReason
+import com.vivi.matchmaker.model.{EmailSuppression, SuppressionReason}
 
 /** Reading SES's notifications, against documents shaped like the ones AWS documents.
   *
@@ -80,7 +80,22 @@ class SesEventSpec extends FunSuite {
       "mail": { "messageId": "0100017b-1234-4abc-8def-0123456789ab-000000" }
     }"""
 
-    private def read(document: String) = SesEvent.suppressions(ujson.read(document))
+    /* Understood documents, which is most of this suite. A document that cannot be read is a
+     * different outcome entirely -- it is failed to the dead-letter queue rather than acknowledged
+     * -- so it is asserted on by name below rather than arriving here as an empty list. */
+    private def read(document: String): Seq[EmailSuppression.Event] =
+        SesEvent.suppressions(ujson.read(document)) match {
+            case SesEvent.Reading.Understood(events) => events
+            case SesEvent.Reading.Unreadable(why)    => fail(s"expected a readable notification, got: $why")
+        }
+
+    private def reading(document: String): SesEvent.Reading = SesEvent.suppressions(ujson.read(document))
+
+    private def unreadable(document: String, clue: String): Unit =
+        reading(document) match {
+            case SesEvent.Reading.Unreadable(_)      => ()
+            case SesEvent.Reading.Understood(events) => fail(s"$clue: expected unreadable, got $events")
+        }
 
     test("a permanent bounce is permanent, and keeps what SES said about it") {
         val events = read(permanentBounce)
@@ -146,16 +161,6 @@ class SesEventSpec extends FunSuite {
         assertEquals(events.map(_.reason), Seq(SuppressionReason.Bounce))
     }
 
-    test("the kinds that say nothing about the address say nothing here") {
-        val ignored = Seq("Send", "Delivery", "Open", "Click", "Reject", "RenderingFailure", "Subscription")
-        ignored.foreach { kind =>
-            val document =
-                s"""{ "eventType": "$kind", "mail": { "messageId": "x" },
-                      "delivery": { "recipients": ["player@example.invalid"] } }"""
-            assertEquals(read(document), Seq.empty, s"$kind should be ignored")
-        }
-    }
-
     /* The identity that keeps the transient threshold honest. SQS is at-least-once, so the same
      * notification arrives more than once as a matter of course; an id that differed between
      * receives would let two real delays plus one redelivery suppress a reachable player. */
@@ -204,17 +209,50 @@ class SesEventSpec extends FunSuite {
         assertNotEquals(read(again).map(_.eventId), read(permanentBounce).map(_.eventId))
     }
 
-    test("a document that is not one of these is no events, not an error") {
-        assertEquals(read("""{}"""), Seq.empty)
-        assertEquals(read("""{ "eventType": "Bounce" }"""), Seq.empty)
-        assertEquals(read("""{ "eventType": "Bounce", "bounce": { "bounceType": "Permanent" } }"""), Seq.empty)
-        assertEquals(read("""{ "eventType": "Bounce", "bounce": { "bouncedRecipients": [{}] } }"""), Seq.empty)
-        assertEquals(read("""[]"""), Seq.empty)
-        assertEquals(read("""4"""), Seq.empty)
+    /* The distinction the dead-letter queue depends on: a kind we do not act on is understood and
+     * acknowledged, where a document we cannot read is failed. Both used to be an empty list, which
+     * meant a bounce whose shape had moved was acknowledged and lost with only a log line. */
+    test("a recognised kind whose payload cannot be read is unreadable, not empty") {
+        unreadable("""{ "eventType": "Bounce" }""", "a bounce with no bounce object")
+        unreadable("""{ "eventType": "Bounce", "bounce": { "bounceType": "Permanent" } }""", "no recipients key")
+        unreadable("""{ "eventType": "Bounce", "bounce": { "bouncedRecipients": [] } }""", "an empty recipients list")
+        unreadable(
+          """{ "eventType": "Bounce", "bounce": { "bouncedRecipients": [{}] } }""",
+          "a recipient with no address"
+        )
+        unreadable("""{ "eventType": "Complaint", "complaint": {} }""", "a complaint naming nobody")
+        unreadable("""{ "eventType": "DeliveryDelay", "deliveryDelay": {} }""", "a delay naming nobody")
     }
 
-    test("a recipient with a blank address is skipped, since there is nothing to key a row by") {
+    /* Which is also what a renamed key in a future SES payload looks like from here. The point of
+     * failing it is that the consequence is a pile of messages in a queue somebody can see, rather
+     * than matchmaker quietly going on mailing every address that bounces. */
+    test("a bounce whose recipients key has moved is unreadable") {
+        unreadable(permanentBounce.replace("bouncedRecipients", "recipientsThatBounced"), "renamed key")
+        unreadable(permanentBounce.replace(""""bounce":""", """"bounceDetail":"""), "renamed payload")
+    }
+
+    test("a recipient with a blank address leaves the bounce unattributed, and so unreadable") {
         val blank = permanentBounce.replace(""""emailAddress": "player@example.invalid"""", """"emailAddress": "   """")
-        assertEquals(read(blank), Seq.empty)
+        unreadable(blank, "a blank address")
+    }
+
+    test("a document that is not an SES notification at all is unreadable") {
+        unreadable("{}", "no eventType")
+        unreadable("""{ "mail": { "messageId": "x" } }""", "a mail and nothing else")
+        unreadable("[]", "an array")
+        unreadable("4", "a number")
+    }
+
+    /* Understood, and acknowledged with nothing recorded. These are the kinds a configuration set
+     * may publish beyond the three asked for, and a kind AWS adds later: filling the dead-letter
+     * queue with things that are working as intended is the fastest way to make a full one mean
+     * nothing. */
+    test("a kind we do not act on is understood, not unreadable") {
+        (Seq("Send", "Delivery", "Open", "Click", "Reject", "RenderingFailure", "Subscription") :+ "SomethingNew")
+            .foreach { kind =>
+                val document = s"""{ "eventType": "$kind", "mail": { "messageId": "x" } }"""
+                assertEquals(read(document), Seq.empty, s"$kind should be understood and ignored")
+            }
     }
 }

@@ -35,29 +35,44 @@ class Handler extends RequestStreamHandler {
                 case None    => System.err.println(message)
             }
 
-        val failures = Handler.records(event).flatMap { record =>
-            try {
-                if (record.events.isEmpty) log(s"nothing to record for ${record.messageId}")
-                else {
-                    val counted = suppression.record(record.events).unsafeRunSync()
-                    // "2 of 2" and "0 of 2" are different facts: the second is a redelivery, which
-                    // the queue produces routinely and which deliberately advances nothing.
-                    log(
-                      s"recorded $counted of ${record.events.size} for ${record.messageId}: " +
-                          record.events.map(e => s"${e.reason.code} ${e.email}").mkString(", ")
-                    )
+        val failures = Handler.records(event).flatMap {
+            /* Failed on purpose, so it is redelivered and then reaches the dead-letter queue.
+             *
+             * Retrying will not make it parse -- that much of the old argument for dropping it was
+             * true -- but the DLQ is not a retry mechanism here, it is where a lost suppression
+             * becomes visible: a queue depth to alarm on, a terraform output naming it, and a
+             * message that can be replayed once the reader is fixed. The thing being lost is not a
+             * message, it is matchmaker going on mailing an address SES told us to stop mailing,
+             * and for a complaint that is worse than a nuisance. Three wasted receives is a cheap
+             * price for that being noticed. */
+            case Handler.Record.Unreadable(messageId, why) =>
+                log(s"could not read $messageId ($why); failing it to the dead-letter queue")
+                Some(messageId)
+
+            case Handler.Record.Understood(messageId, events) =>
+                try {
+                    if (events.isEmpty) log(s"nothing to record for $messageId")
+                    else {
+                        val counted = suppression.record(events).unsafeRunSync()
+                        // "2 of 2" and "0 of 2" are different facts: the second is a redelivery,
+                        // which the queue produces routinely and which advances nothing by design.
+                        log(
+                          s"recorded $counted of ${events.size} for $messageId: " +
+                              events.map(e => s"${e.reason.code} ${e.email}").mkString(", ")
+                        )
+                    }
+                    None
+                } catch {
+                    // This message alone, reported through the partial-batch response: the write
+                    // failed -- a database that is not reachable, a constraint nothing anticipated
+                    // -- and unlike an unreadable document it is worth retrying. Without the
+                    // partial response the whole batch would come back, and the addresses already
+                    // recorded would be claimed again -- harmless now that an event id is what
+                    // advances the count, but still a write per address for nothing.
+                    case NonFatal(error) =>
+                        log(s"failed $messageId: ${error.getMessage}")
+                        Some(messageId)
                 }
-                None
-            } catch {
-                // This message alone, reported through the partial-batch response: the write failed
-                // -- a database that is not reachable, a constraint nothing anticipated -- and it is
-                // worth retrying, which is the difference between this and a document that will not
-                // parse. Without the partial response the whole batch would come back, so the
-                // addresses already recorded would be recorded twice and counted twice.
-                case NonFatal(error) =>
-                    log(s"failed ${record.messageId}: ${error.getMessage}")
-                    Some(record.messageId)
-            }
         }
 
         output.write(Handler.response(failures).getBytes(StandardCharsets.UTF_8))
@@ -67,23 +82,47 @@ class Handler extends RequestStreamHandler {
 
 object Handler {
 
-    /** One queue message: the id the batch response names it by, and what SES said in it. */
-    case class Record(messageId: String, events: Seq[EmailSuppression.Event])
-
-    /** The suppressions in an SQS event, one entry per message.
+    /** One queue message, read or not.
       *
-      * A message that cannot be read yields an empty `Record` rather than being dropped from the list, so that it is
-      * still deleted from the queue: a document we cannot parse is one we will not parse on the next receive either,
-      * and the only alternative to accepting it is three more receives and a message in the dead-letter queue. The body
-      * is logged where it can be read.
+      * An ADT rather than a `Record` with an empty event list, because the two outcomes get opposite treatment: an
+      * understood message is acknowledged whether or not it had anything to record, and an unreadable one is failed so
+      * that it is redelivered and then lands in the dead-letter queue. Collapsing them — which this did — acknowledged
+      * a bounce nobody could read, and the only trace was a log line.
+      */
+    enum Record {
+        case Understood(id: String, events: Seq[EmailSuppression.Event])
+        case Unreadable(id: String, why: String)
+
+        /** The id `batchItemFailures` names a message by, whichever it turned out to be. */
+        def messageId: String = this match {
+            case Understood(id, _) => id
+            case Unreadable(id, _) => id
+        }
+    }
+
+    /** The messages in an SQS event, each read as far as it can be.
+      *
+      * A message with no id is skipped entirely and not reported: `batchItemFailures` names messages by id, so there is
+      * nothing to say about one that has none, and SQS always sends it — a record without one is not a record this was
+      * given.
       */
     def records(event: String): Seq[Record] =
         ujson.read(event).objOpt.flatMap(_.get("Records")).flatMap(_.arrOpt).toSeq.flatten.flatMap { record =>
             for {
                 obj <- record.objOpt
                 messageId <- obj.get("messageId").flatMap(_.strOpt)
-                body <- obj.get("body").flatMap(_.strOpt)
-            } yield Record(messageId, notification(messageId, body).map(SesEvent.suppressions).getOrElse(Nil))
+            } yield obj.get("body").flatMap(_.strOpt) match {
+                case None => Record.Unreadable(messageId, "no body")
+                case Some(body) =>
+                    notification(body) match {
+                        case Left(why) => Record.Unreadable(messageId, why)
+                        case Right(notification) =>
+                            SesEvent.suppressions(notification) match {
+                                case SesEvent.Reading.Understood(events) => Record.Understood(messageId, events)
+                                case SesEvent.Reading.Unreadable(why)    => Record.Unreadable(messageId, why)
+                            }
+                    }
+            }
         }
 
     /* The SES notification inside the body, through either shape SNS delivers.
@@ -93,18 +132,19 @@ object Handler {
      * on there is no envelope and the body is the notification itself. Both are accepted rather than
      * one being assumed, because which of them arrives is a checkbox on the subscription -- a
      * checkbox someone could reasonably change, and whose effect would otherwise be that every
-     * bounce is silently unreadable. */
-    private def notification(messageId: String, body: String): Option[ujson.Value] =
+     * bounce is silently unreadable.
+     *
+     * `Left` rather than `None`, so the reason travels with the failure into the log beside the
+     * message id that will appear in the dead-letter queue. */
+    private def notification(body: String): Either[String, ujson.Value] =
         try {
             val parsed = ujson.read(body)
             parsed.objOpt.flatMap(_.get("Message")).flatMap(_.strOpt) match {
-                case Some(inner) => Some(ujson.read(inner))
-                case None        => Some(parsed)
+                case Some(inner) => Right(ujson.read(inner))
+                case None        => Right(parsed)
             }
         } catch {
-            case NonFatal(error) =>
-                System.err.println(s"bounce: message $messageId is not an SES notification ($error): $body")
-                None
+            case NonFatal(error) => Left(s"not JSON: $error")
         }
 
     /** The partial-batch response Lambda expects when the event source mapping is configured with

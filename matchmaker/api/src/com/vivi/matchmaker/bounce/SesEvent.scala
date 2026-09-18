@@ -14,22 +14,55 @@ import com.vivi.matchmaker.model.{EmailSuppression, SuppressionReason}
   * case classes: matchmaker cares about four facts per recipient, and a decoder that insisted on the rest of the
   * document would fail on the parts of it AWS is free to add to.
   *
-  * Anything that cannot be read is no events rather than an error. A notification we cannot parse is one we will not
-  * parse on the next attempt either, so failing it would only send it round the queue to its dead-letter queue three
-  * receives later — see the same argument in the mailer's `Handler.records`.
+  * A notification is either understood or unreadable, and the difference is deliberate rather than incidental. A
+  * `Delivery` event we have no use for is understood: it says nothing about an address, and acknowledging it is
+  * correct. A document whose shape we do not recognise is unreadable, and the consumer fails it so that it reaches the
+  * bounce queue's dead-letter queue instead of being acknowledged and forgotten.
+  *
+  * That asymmetry is the whole point. A lost suppression is not a lost message: it is an address matchmaker goes on
+  * mailing after SES told us to stop, which costs sending reputation and, for a complaint, rather more than that. The
+  * DLQ is where such a thing is visible — it has a queue-depth metric and a terraform output naming it, and its
+  * messages can be replayed once the reader is fixed — where a log line is where it is not. If SES ever changes one of
+  * these payloads, the failure should be a pile of messages in a queue, not a silence.
   */
 object SesEvent {
+
+    /** What one notification turned out to be. */
+    enum Reading {
+
+        /** Read successfully. `events` is empty for a kind that says nothing about an address, which is the ordinary
+          * answer for anything the configuration set publishes beyond the three asked for.
+          */
+        case Understood(events: Seq[EmailSuppression.Event])
+
+        /** Not read. Either the document is not an SES notification at all, or it is one whose shape has moved — and
+          * either way somebody has to look at it, which is what the dead-letter queue is for.
+          */
+        case Unreadable(why: String)
+    }
+
+    /** The kinds that are about us or about good news, and so are correctly ignored.
+      *
+      * Named rather than matched by `case _`, because "a kind we do not act on" and "a document we cannot read" must
+      * not be the same answer: the first is acknowledged, the second is failed. Listed from SES's own event types.
+      */
+    private val ignored =
+        Set("Send", "Delivery", "Open", "Click", "Reject", "RenderingFailure", "Rendering Failure", "Subscription")
 
     /** Every address one notification says something about.
       *
       * Several, because one mail can have several recipients and SES reports the ones that failed. Matchmaker sends to
       * one address per mail today, so this is in practice one — but the field is a list in the document, and reading
       * only its head is the kind of shortcut that quietly drops a suppression the day that changes.
+      *
+      * A recognised kind whose payload cannot be read is [[Reading.Unreadable]] rather than an empty list, and that is
+      * the case worth caring about: it is what a changed SES payload looks like from here, and the version of this that
+      * returned `Nil` would have discarded every bounce in the account without anything failing to say so.
       */
-    def suppressions(notification: ujson.Value): Seq[EmailSuppression.Event] =
+    def suppressions(notification: ujson.Value): Reading =
         try {
             val obj = notification.obj
-            val kind = obj.get("eventType").orElse(obj.get("notificationType")).flatMap(_.strOpt).getOrElse("")
+            val kind = obj.get("eventType").orElse(obj.get("notificationType")).flatMap(_.strOpt)
 
             /* The mail's own id, which is SES's and is the same across every receive of this
              * notification. Part of the identity below rather than the whole of it: one mail can
@@ -37,19 +70,36 @@ object SesEvent {
             val messageId = obj.get("mail").flatMap(_.objOpt).flatMap(_.get("messageId")).flatMap(_.strOpt)
 
             kind match {
-                case "Bounce"        => bounces(kind, messageId, obj.get("bounce"))
-                case "Complaint"     => complaints(kind, messageId, obj.get("complaint"))
-                case "DeliveryDelay" => delays(kind, messageId, obj.get("deliveryDelay"))
+                case Some("Bounce")        => attributed(kind, bounces(messageId, obj.get("bounce")))
+                case Some("Complaint")     => attributed(kind, complaints(messageId, obj.get("complaint")))
+                case Some("DeliveryDelay") => attributed(kind, delays(messageId, obj.get("deliveryDelay")))
 
-                // Send, Delivery, Open, Click, Reject, Rendering Failure, Subscription: all either
-                // good news or news about us rather than about the address. None of them is a reason
-                // to stop writing to somebody, and a configuration set that is subscribed to more
-                // than we asked for should be ignored rather than misread.
-                case _ => Nil
+                // Understood and not acted on. A configuration set subscribed to more than we asked
+                // for is a configuration choice, not a corruption.
+                case Some(other) if ignored.contains(other) => Reading.Understood(Nil)
+
+                /* A kind nobody here has heard of. Also understood, deliberately: AWS adds event
+                 * types, and an event destination can be pointed at this queue by someone changing
+                 * terraform. Failing those would fill the dead-letter queue with things that are
+                 * working as intended, which is the fastest way to make a full DLQ mean nothing. */
+                case Some(_) => Reading.Understood(Nil)
+
+                // No eventType and no notificationType: whatever this is, it is not one of these.
+                case None => Reading.Unreadable("no eventType or notificationType")
             }
         } catch {
-            case NonFatal(_) => Nil
+            case NonFatal(error) => Reading.Unreadable(s"could not be read as a notification: $error")
         }
+
+    /* A recognised kind has to yield at least one address, or we have read the wrong document.
+     *
+     * This is the check that catches a payload whose shape has moved -- a renamed recipients key, a
+     * bounce nested one level deeper -- which is otherwise indistinguishable from a bounce about
+     * nobody. There is no such thing as a bounce about nobody: SES reports a bounce because a
+     * recipient did not receive it. */
+    private def attributed(kind: Option[String], events: Seq[EmailSuppression.Event]): Reading =
+        if (events.nonEmpty) Reading.Understood(events)
+        else Reading.Unreadable(s"a ${kind.getOrElse("?")} naming no readable recipient")
 
     /* `bounceType` is Permanent, Transient or Undetermined, and only the first means the mailbox is
      * gone for good.
@@ -59,17 +109,13 @@ object SesEvent {
      * dead address -- and the cost of guessing wrong in this direction is two more bounces before
      * the threshold suppresses it anyway, where guessing wrong in the other direction is a playing
      * player who silently stops hearing from us. */
-    private def bounces(
-        kind: String,
-        messageId: Option[String],
-        bounce: Option[ujson.Value]
-    ): Seq[EmailSuppression.Event] =
+    private def bounces(messageId: Option[String], bounce: Option[ujson.Value]): Seq[EmailSuppression.Event] =
         bounce.flatMap(_.objOpt).toSeq.flatMap { obj =>
             val permanent = obj.get("bounceType").flatMap(_.strOpt).contains("Permanent")
             recipients(obj.get("bouncedRecipients"), "diagnosticCode").map { (address, diagnostic) =>
                 val subType = obj.get("bounceSubType").flatMap(_.strOpt)
                 EmailSuppression.Event(
-                  identity(kind, messageId, obj, address),
+                  identity("Bounce", messageId, obj, address),
                   address,
                   SuppressionReason.Bounce,
                   permanent,
@@ -82,16 +128,12 @@ object SesEvent {
 
     /* Always permanent. A complaint is the person, not the mailbox: there is nothing to retry and
      * nothing that expires. */
-    private def complaints(
-        kind: String,
-        messageId: Option[String],
-        complaint: Option[ujson.Value]
-    ): Seq[EmailSuppression.Event] =
+    private def complaints(messageId: Option[String], complaint: Option[ujson.Value]): Seq[EmailSuppression.Event] =
         complaint.flatMap(_.objOpt).toSeq.flatMap { obj =>
             val feedback = obj.get("complaintFeedbackType").flatMap(_.strOpt)
             recipients(obj.get("complainedRecipients"), "diagnosticCode").map { (address, diagnostic) =>
                 EmailSuppression.Event(
-                  identity(kind, messageId, obj, address),
+                  identity("Complaint", messageId, obj, address),
                   address,
                   SuppressionReason.Complaint,
                   true,
@@ -102,16 +144,12 @@ object SesEvent {
 
     /* Never permanent, and not even a failure yet: SES is still trying. Counted because three of
      * them in a week is a mailbox that is not accepting our mail, whatever the reason given. */
-    private def delays(
-        kind: String,
-        messageId: Option[String],
-        delay: Option[ujson.Value]
-    ): Seq[EmailSuppression.Event] =
+    private def delays(messageId: Option[String], delay: Option[ujson.Value]): Seq[EmailSuppression.Event] =
         delay.flatMap(_.objOpt).toSeq.flatMap { obj =>
             val reason = obj.get("delayType").flatMap(_.strOpt)
             recipients(obj.get("delayedRecipients"), "diagnosticCode").map { (address, diagnostic) =>
                 EmailSuppression.Event(
-                  identity(kind, messageId, obj, address),
+                  identity("DeliveryDelay", messageId, obj, address),
                   address,
                   SuppressionReason.Delay,
                   false,

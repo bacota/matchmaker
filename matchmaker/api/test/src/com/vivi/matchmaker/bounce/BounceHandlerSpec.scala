@@ -1,7 +1,7 @@
 package com.vivi.matchmaker.bounce
 
 import munit.FunSuite
-import com.vivi.matchmaker.model.SuppressionReason
+import com.vivi.matchmaker.model.{EmailSuppression, SuppressionReason}
 
 /** Getting from an SQS batch to a list of suppressions: the envelopes, and what happens to a message that has none.
   *
@@ -51,19 +51,25 @@ class BounceHandlerSpec extends FunSuite {
           )
         )
 
+    private def eventsOf(record: Handler.Record): Seq[EmailSuppression.Event] =
+        record match {
+            case Handler.Record.Understood(_, events) => events
+            case Handler.Record.Unreadable(id, why)   => fail(s"$id was unreadable: $why")
+        }
+
     test("an SNS envelope is unwrapped, and its notification read") {
         val records = Handler.records(sqsEvent("m-1" -> snsEnvelope(notification)))
         assertEquals(records.map(_.messageId), Seq("m-1"))
-        assertEquals(records.head.events.map(_.email), Seq("player@example.invalid"))
-        assertEquals(records.head.events.map(_.reason), Seq(SuppressionReason.Complaint))
+        assertEquals(eventsOf(records.head).map(_.email), Seq("player@example.invalid"))
+        assertEquals(eventsOf(records.head).map(_.reason), Seq(SuppressionReason.Complaint))
     }
 
     /* Raw message delivery is a checkbox on the subscription. Both shapes are read because the
-     * effect of someone changing it would otherwise be that every bounce becomes unreadable, with
-     * nothing failing to say so. */
+     * effect of someone changing it would otherwise be every bounce failing to the dead-letter
+     * queue -- visible, now, but still every bounce. */
     test("a raw notification, with no envelope, is read the same way") {
         val records = Handler.records(sqsEvent("m-2" -> notification))
-        assertEquals(records.head.events.map(_.email), Seq("player@example.invalid"))
+        assertEquals(eventsOf(records.head).map(_.email), Seq("player@example.invalid"))
     }
 
     test("every message in a batch is read, and each keeps its own id") {
@@ -71,24 +77,39 @@ class BounceHandlerSpec extends FunSuite {
           sqsEvent("m-1" -> snsEnvelope(notification), "m-2" -> notification, "m-3" -> snsEnvelope("{}"))
         )
         assertEquals(records.map(_.messageId), Seq("m-1", "m-2", "m-3"))
-        assertEquals(records.map(_.events.size), Seq(1, 1, 0))
+        assertEquals(eventsOf(records(0)).size, 1)
+        assertEquals(eventsOf(records(1)).size, 1)
+        // The third is not a notification at all, and is a failure rather than an empty success.
+        assert(records(2).isInstanceOf[Handler.Record.Unreadable], records(2).toString)
     }
 
-    /* Accepted with nothing to record, rather than failed. A body that will not parse will not
-     * parse on the next receive either, so failing it buys three more receives and a message in the
-     * dead-letter queue; the body is logged where it can be read instead. */
-    test("a body that is not JSON at all is a message with no events") {
+    /* Failed, not acknowledged, which is the correction to how this started out.
+     *
+     * Retrying will not make it parse. The dead-letter queue is not a retry mechanism here: it is
+     * where a suppression that was lost becomes something with a queue depth and a terraform output
+     * naming it, rather than a line in CloudWatch. What is at stake is not a message -- it is
+     * matchmaker going on mailing an address SES told us to stop mailing. */
+    test("a body that is not JSON at all is failed to the dead-letter queue") {
         val records = Handler.records(sqsEvent("m-4" -> "not json"))
         assertEquals(records.map(_.messageId), Seq("m-4"))
-        assertEquals(records.head.events, Seq.empty)
+        assert(records.head.isInstanceOf[Handler.Record.Unreadable], records.head.toString)
     }
 
-    test("a record with no id or no body is not a record") {
+    test("a record with no body is unreadable rather than absent") {
+        val event = ujson.write(ujson.Obj("Records" -> ujson.Arr(ujson.Obj("messageId" -> "m-5"))))
+        val records = Handler.records(event)
+        assertEquals(records.map(_.messageId), Seq("m-5"))
+        assert(records.head.isInstanceOf[Handler.Record.Unreadable], records.head.toString)
+    }
+
+    /* The one thing that is still skipped rather than failed: `batchItemFailures` names a message by
+     * its id, so a record without one cannot be reported as a failure -- there is nothing to name.
+     * SQS always sends it, so this is a record we were not given rather than one we are dropping. */
+    test("a record with no id is not a record, since a failure could not name it") {
         val event = ujson.write(
           ujson.Obj(
             "Records" -> ujson.Arr(
               ujson.Obj("body" -> notification),
-              ujson.Obj("messageId" -> "m-5"),
               ujson.Obj("messageId" -> "m-6", "body" -> notification)
             )
           )
@@ -100,6 +121,15 @@ class BounceHandlerSpec extends FunSuite {
         assertEquals(Handler.records("{}"), Seq.empty)
         assertEquals(Handler.records("""{ "Records": {} }"""), Seq.empty)
         assertEquals(Handler.records("[]"), Seq.empty)
+    }
+
+    /* A kind we do not act on is acknowledged with nothing recorded -- the distinction that makes
+     * failing the unreadable ones affordable. Asserted here as well as in `SesEventSpec` because it
+     * is the handler that decides what is acknowledged. */
+    test("a valid event we have no use for is understood, and not failed") {
+        val delivery = """{ "eventType": "Delivery", "mail": { "messageId": "x" }, "delivery": {} }"""
+        val records = Handler.records(sqsEvent("m-7" -> snsEnvelope(delivery)))
+        assertEquals(eventsOf(records.head), Seq.empty)
     }
 
     test("the batch response names the failures, and is empty when there are none") {
