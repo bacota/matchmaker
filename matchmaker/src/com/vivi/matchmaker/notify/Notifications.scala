@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.notify
 
+import cats.data.OptionT
 import cats.effect.IO
 import cats.syntax.all._
 import skunk.Session
@@ -213,6 +214,86 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
             }
         }
 
+    /** Who would be written to about this challenge, read while the rows still exist.
+      *
+      * The one read this class cannot do for itself. Every other method here is called after its caller's transaction
+      * has committed and reads what it needs then — but a challenge that has been deleted has no acceptances left to
+      * read, and the audience for "it has been called off" is exactly the list the delete destroys. So the caller takes
+      * this inside its own transaction, before the delete, and hands it back afterwards.
+      *
+      * Nothing when there is no challenge, no game behind it, or nothing to send with: the last of those is what keeps
+      * the cost of this honest, since an environment with no sender does no reads here either, exactly as [[dispatch]]
+      * does none there.
+      */
+    def audienceForChallenge(
+        session: Session[IO],
+        gameId: GameId,
+        challengeId: ChallengeId
+    ): IO[Option[Notifications.ChallengeAudience]] =
+        if (mail.sender.isEmpty || mail.uiBaseUrl.isEmpty) IO.pure(None)
+        else {
+            val notificationRepo = new NotificationRepo(session)
+            (for {
+                notice <- OptionT(notificationRepo.gameNotice(gameId))
+                challenge <- OptionT(new OpenChallengeRepo(session).read(gameId, challengeId))
+                acceptors <- OptionT.liftF(
+                  notificationRepo.levelsForChallenge(gameId, challengeId, notice.notifications)
+                )
+            } yield Notifications.ChallengeAudience(notice, challenge, acceptors)).value
+        }
+
+    /** The challenger has called the whole challenge off. Told to everyone who had accepted it, except them.
+      *
+      * The same kind as an acceptance coming and going ([[NotificationType.AcceptanceChanged]]), because to an acceptor
+      * that is what this is: the roster of something they had said yes to has changed under them, and this is the
+      * change that leaves nothing of it. A ninth kind would be a column on four tables, a question on three forms and a
+      * migration, for a distinction nobody has asked to be able to make separately — and a player who has turned off
+      * "someone backs out of a challenge I accepted" has said what they think about this too.
+      *
+      * `except` is the challenger, who is reading the answer to their own click, as with a cancelled match.
+      *
+      * The audience is passed rather than read for the reason [[audienceForChallenge]] gives. Everything else about
+      * this is the ordinary path: after the commit, unable to fail the delete, and silent about an address that has
+      * stopped working.
+      */
+    def challengeCalledOff(
+        session: Session[IO],
+        audience: Notifications.ChallengeAudience,
+        except: PlayerId
+    ): IO[Unit] =
+        dispatch(session, s"deletion of challenge ${audience.challenge.challengeId.value}") { (from, uiBaseUrl) =>
+            IO.pure(
+              audience.acceptors
+                  .filter(_.player.playerId != except)
+                  .flatMap { recipient =>
+                      NotificationPolicy
+                          .choose(Seq(NotificationType.AcceptanceChanged), recipient.levels.resolve)
+                          .flatMap(
+                            ChallengeMail.compose(
+                              from,
+                              uiBaseUrl,
+                              recipient.player,
+                              _,
+                              ChallengeNews(
+                                gameName = audience.notice.name,
+                                description = audience.challenge.message,
+                                // Nobody in particular did this to the challenge: it is gone, so the
+                                // sentence is about the challenger and the mail names them below.
+                                actor = audience.challengerNickname,
+                                role = None,
+                                joined = false,
+                                challenger = audience.challengerNickname,
+                                // Nothing is waiting for anything any more, and the mail for this says
+                                // so in its own words rather than with a roster line.
+                                waitingFor = Nil,
+                                calledOff = true
+                              )
+                            )
+                          )
+                  }
+            )
+        }
+
     // -------------------------------------------------------------------------
     // The two shapes those five events come in
     // -------------------------------------------------------------------------
@@ -420,4 +501,27 @@ object Notifications {
       * the local server that has no queue — the same thing `Notifier.disabled` is for, one layer up.
       */
     val disabled: Notifications = new Notifications(Notifier.disabled, MailSettings.none)
+
+    /** A challenge and everyone who had accepted it, as they stood before whatever destroyed them.
+      *
+      * Held as one value rather than three parameters because it travels: `OpenChallengeService.delete` reads it inside
+      * its transaction and passes it back after the commit, and a caller carrying three loose pieces of one moment is a
+      * caller that can pass them from two different ones.
+      */
+    case class ChallengeAudience(
+        notice: GameNotice,
+        challenge: OpenChallenge,
+        acceptors: List[AcceptorNotifications]
+    ) {
+
+        /** What to call the challenger. Creating a challenge creates their own acceptance, so they are in this list;
+          * the fallback is a phrase rather than a crash for the reason `rosterChanged` gives — a notification is not
+          * the place to discover a broken row.
+          */
+        def challengerNickname: String =
+            acceptors
+                .find(_.player.playerId == challenge.challenger)
+                .map(_.player.nickname)
+                .getOrElse("Whoever offered it")
+    }
 }

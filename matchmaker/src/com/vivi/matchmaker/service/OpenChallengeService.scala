@@ -285,58 +285,79 @@ class OpenChallengeService[T](
             val playerRepo = new PlayerRepo(session)
             val challengeRepo = new OpenChallengeRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
-            session.transaction.use { _ =>
-                for {
-                    // Locked before anything else, for the same reason accept locks: the delete below must
-                    // not race a start of the same challenge. Without the lock a delete could land between
-                    // a start's first and last transactions and pull the challenge out from under it,
-                    // leaving the match already handed to the engine with no challenge to retire.
-                    locked <- challengeRepo.readForUpdate(gameId, challengeId).flatMap {
-                        case Some(l) => IO.pure(l)
-                        case None =>
+            session.transaction
+                .use { _ =>
+                    for {
+                        // Locked before anything else, for the same reason accept locks: the delete below must
+                        // not race a start of the same challenge. Without the lock a delete could land between
+                        // a start's first and last transactions and pull the challenge out from under it,
+                        // leaving the match already handed to the engine with no challenge to retire.
+                        locked <- challengeRepo.readForUpdate(gameId, challengeId).flatMap {
+                            case Some(l) => IO.pure(l)
+                            case None =>
+                                IO.raiseError(
+                                  NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
+                                )
+                        }
+                        _ <- locked.startedMatchId.traverse_ { existing =>
                             IO.raiseError(
-                              NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
+                              ConflictError(
+                                s"challenge ${challengeId.value} is being started as match ${existing.value} and can no longer be deleted"
+                              )
                             )
-                    }
-                    _ <- locked.startedMatchId.traverse_ { existing =>
-                        IO.raiseError(
-                          ConflictError(
-                            s"challenge ${challengeId.value} is being started as match ${existing.value} and can no longer be deleted"
-                          )
-                        )
-                    }
-                    challenge <- challengeRepo.read(gameId, challengeId).flatMap {
-                        case Some(c) => IO.pure(c)
-                        case None =>
-                            IO.raiseError(
-                              NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
-                            )
-                    }
-                    _ <- challenge match {
-                        case cc: CharacterOpenChallenge =>
-                            // Locked: the owner read here is the only thing authorizing the delete below.
-                            characterRepo.readWithOwnerAndGameForUpdate(cc.characterId).flatMap {
-                                case Some(joined) =>
-                                    IO.raiseUnless(callerExternalId == joined.owner.externalId)(
+                        }
+                        challenge <- challengeRepo.read(gameId, challengeId).flatMap {
+                            case Some(c) => IO.pure(c)
+                            case None =>
+                                IO.raiseError(
+                                  NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
+                                )
+                        }
+                        _ <- challenge match {
+                            case cc: CharacterOpenChallenge =>
+                                // Locked: the owner read here is the only thing authorizing the delete below.
+                                characterRepo.readWithOwnerAndGameForUpdate(cc.characterId).flatMap {
+                                    case Some(joined) =>
+                                        IO.raiseUnless(callerExternalId == joined.owner.externalId)(
+                                          UnauthorizedError(
+                                            s"caller '$callerExternalId' may not delete challenge ${challengeId.value}"
+                                          )
+                                        )
+                                    case None =>
+                                        IO.raiseError(NotFoundError(s"no character with id ${cc.characterId.value}"))
+                                }
+                            case pc: PlainOpenChallenge =>
+                                requirePlayer(playerRepo, pc.challenger).flatMap { challenger =>
+                                    IO.raiseUnless(callerExternalId == challenger.externalId)(
                                       UnauthorizedError(
                                         s"caller '$callerExternalId' may not delete challenge ${challengeId.value}"
                                       )
                                     )
-                                case None =>
-                                    IO.raiseError(NotFoundError(s"no character with id ${cc.characterId.value}"))
-                            }
-                        case pc: PlainOpenChallenge =>
-                            requirePlayer(playerRepo, pc.challenger).flatMap { challenger =>
-                                IO.raiseUnless(callerExternalId == challenger.externalId)(
-                                  UnauthorizedError(
-                                    s"caller '$callerExternalId' may not delete challenge ${challengeId.value}"
-                                  )
-                                )
-                            }
-                    }
-                    _ <- acceptanceRepo.deleteAllForChallenge(gameId, challengeId)
-                    _ <- challengeRepo.delete(gameId, challengeId)
-                } yield ()
-            }
+                                }
+                        }
+                        /* Read before the rows it describes are gone, which is the one thing about this
+                         * that is not like the other notifications: every other event here happens *to*
+                         * something that is still there afterwards, so `Notifications` does its own reads
+                         * after the commit. The audience for "this challenge has been called off" is the
+                         * list of acceptances the next two statements delete.
+                         *
+                         * Inside the lock as well as inside the transaction, so what is written to is the
+                         * roster this delete actually removed rather than one an acceptance could still
+                         * join after it was read. It costs nothing in an environment with no sender, which
+                         * does no reads here at all. */
+                        audience <- notifications.audienceForChallenge(session, gameId, challengeId)
+                        _ <- acceptanceRepo.deleteAllForChallenge(gameId, challengeId)
+                        _ <- challengeRepo.delete(gameId, challengeId)
+                    } yield audience
+                }
+                .flatMap { audience =>
+                    /* After the commit and outside the lock, and unable to fail the delete -- the same
+                     * terms as every other notification. The challenger is the one person not written to:
+                     * they pressed the button and are reading the answer to their own click, as with a
+                     * cancelled match. Authorization above is what makes them the caller. */
+                    audience.traverse_(told =>
+                        notifications.challengeCalledOff(session, told, told.challenge.challenger)
+                    )
+                }
         }
 }
