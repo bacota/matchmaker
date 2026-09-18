@@ -87,6 +87,24 @@ object EmailSuppression {
     /** [[transientWindow]] as `make_interval(secs => ...)` wants it, since that is the one place SQL needs it. */
     val windowSeconds: Double = transientWindow.getSeconds.toDouble
 
+    /** Why a player is hearing nothing, as their own settings screen is told it.
+      *
+      * Not the row. The row carries SES's diagnostic code, which is for the log and for support and says nothing a
+      * player can act on — "smtp; 550 5.1.1 user unknown" is not an instruction. What the screen needs is which of two
+      * messages to show, the address it is about, and whether there is a button.
+      *
+      * `canRetry` is the server's answer rather than the screen's inference, so the button and the route agree about
+      * who may press it: a bounce can be tried again, and a complaint cannot — see `SuppressionService.retryMine`,
+      * which refuses it there too.
+      */
+    case class Notice(address: String, reason: SuppressionReason, since: Instant, canRetry: Boolean)
+
+    object Notice {
+
+        def of(row: EmailSuppression): Notice =
+            Notice(row.email, row.reason, row.lastSeenAt, canRetry = row.reason != SuppressionReason.Complaint)
+    }
+
     /** What one SES event says, as the bounce handler hands it over. `permanent` is the handler's reading of the event,
       * not a property of the reason: a bounce is permanent or transient depending on what SES called it.
       */

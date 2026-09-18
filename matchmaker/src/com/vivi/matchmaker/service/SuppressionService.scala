@@ -33,9 +33,12 @@ class SuppressionService(sessionPool: SessionPool) {
 
     /** Whether mail to the caller is being held back, and why. `None` means nothing has gone wrong with it.
       *
-      * Returns the row rather than a boolean: the screen says something different for a complaint than for a bounce,
-      * and offers a button for one and not the other. A row that exists but is not [[EmailSuppression.active]] — one
-      * transient delay, a released row — is not news, and is answered as `None` so that nothing is shown for it.
+      * Returns the row rather than a boolean: what the screen says differs between a bounce and a complaint, and one of
+      * them has a button. A row that exists but is not [[EmailSuppression.active]] — one transient delay, a released
+      * row — is not news, and is answered as `None` so that nothing is shown for it.
+      *
+      * The notifications screen gets the same fact from `NotificationService.mine`, in the same fetch as the form. This
+      * is here for a caller that wants it alone, and for `retryMine` below to be readable beside.
       */
     def mine(callerExternalId: String): IO[Option[EmailSuppression]] =
         sessionPool.use { session =>

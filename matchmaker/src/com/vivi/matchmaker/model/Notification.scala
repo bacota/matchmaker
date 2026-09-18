@@ -281,7 +281,18 @@ case class GameNotificationPreferences(gameId: GameId, preferences: Notification
   */
 case class NotificationSettings(
     player: NotificationPreferences,
-    games: Seq[GameNotificationPreferences]
+    games: Seq[GameNotificationPreferences],
+    /* Why mail to this player is being held back, when it is.
+     *
+     * On this object rather than behind a route of its own because it is the same screen and the
+     * same moment: the form that says what a player wants to hear about is exactly where "we have
+     * stopped writing to you" belongs, and a second fetch would let the screen render the form
+     * before it knew the form was moot.
+     *
+     * `None` is the ordinary answer, and also the answer for a failure that has been recorded and
+     * not acted on -- one transient delay is not news. Defaulted, so the many places that build
+     * settings without a database do not have to mention it. */
+    suppressed: Option[EmailSuppression.Notice] = None
 )
 
 /** Whether a particular player is to be told about a particular thing.

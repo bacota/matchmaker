@@ -303,6 +303,9 @@ locals {
     # game. The per-match level is on the match's own route below.
     "GET /me/notifications",
     "PUT /me/notifications",
+    # Try my address again, after a bounce. See the comment in Router.scala: the row is released
+    # rather than deleted, so this is a POST and not a DELETE.
+    "POST /me/notifications/retry",
     "PUT /me/notifications/games/{gameId}",
     "GET /me/acceptances",
     "GET /me/matches",

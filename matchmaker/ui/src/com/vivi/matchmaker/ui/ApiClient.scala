@@ -67,6 +67,15 @@ object ApiClient {
       */
     def notifications(): Future[NotificationSettings] = get[NotificationSettings]("/me/notifications")
 
+    /** Asks for the caller's own address to be tried again, after mail to it bounced.
+      *
+      * No arguments: the address is whichever one the server holds for them, which is the one their mail is being sent
+      * to. Refused by the server for a complaint — a spam report is not undone by a button — so a caller that offers
+      * the button when [[com.vivi.matchmaker.model.EmailSuppression.Notice.canRetry]] is false gets a 400 rather than a
+      * surprise.
+      */
+    def retryNotifications(): Future[Unit] = sendUnit(HttpMethod.POST, "/me/notifications/retry", None)
+
     /** Saves the caller's defaults. `applyToGames` copies them into every game they have answered separately;
       * `applyToMatches` carries the result into the matches they are still playing. Both are the offers the form makes
       * beside the save button, and both default to off — saving a level changes that level and nothing else.

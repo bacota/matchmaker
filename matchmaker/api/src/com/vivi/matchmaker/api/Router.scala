@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.api
 
 import cats.effect.IO
+import cats.syntax.all._
 import upickle.default.{ReadWriter, read, write}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.service._
@@ -74,6 +75,22 @@ object Router {
             // because that is where it is set from and what it is about.
             case ("GET", "me" :: "notifications" :: Nil) =>
                 ok(services.notifications.mine(caller))
+
+            /* Try my address again: clears the suppression a bounce left behind, so the next
+             * notification is sent rather than held back.
+             *
+             * POST rather than DELETE on a suppression resource, because the player is not deleting
+             * a record -- the row survives, released, so that a second failure reads as a second
+             * failure. What they are asking for is an attempt.
+             *
+             * Refused for a complaint, in the service rather than only in the browser: a one-click
+             * undo of a spam report is exactly what the report exists to prevent, and a button is
+             * not authority to grant one. Answers 204 either way it succeeds -- whether there was a
+             * suppression to clear or not -- because the screen re-fetches its settings afterwards
+             * and that answer is the one worth having.
+             */
+            case ("POST", "me" :: "notifications" :: "retry" :: Nil) =>
+                noContent(services.suppression.retryMine(caller).void)
 
             case ("PUT", "me" :: "notifications" :: Nil) =>
                 body[Json.PreferencesRequest](request).flatMap(r =>

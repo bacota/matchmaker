@@ -176,6 +176,8 @@ class RouterSpec extends FunSuite {
       ("PUT", "/me", """{"nickname":"renamed"}"""),
       ("PUT", "/me/email", """{"email":"player@example.com"}"""),
       ("GET", "/me/notifications", "{}"),
+      // No body: the address is the caller's own, and which suppression is theirs is not theirs to say.
+      ("POST", "/me/notifications/retry", "{}"),
       // The preferences are wrapped, because how far the save reaches is part of what was said --
       // and the cascade flags are defaulted, so a body that names only the preferences is valid too.
       ("PUT", "/me/notifications", """{"preferences":{"matchStarted":true,"yourTurn":false}}"""),
@@ -235,7 +237,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 31)
+        assertEquals(routed.size, 32)
         assertEquals(routed.distinct.size, routed.size)
     }
 
