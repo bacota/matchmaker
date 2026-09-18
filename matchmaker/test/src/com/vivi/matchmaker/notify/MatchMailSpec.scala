@@ -22,10 +22,22 @@ class MatchMailSpec extends FunSuite {
         others: Seq[String] = Seq("bob"),
         yourTurn: Boolean = false,
         playUrl: Option[String] = Some("https://engine/play/1"),
+        acceptedBy: Option[String] = None,
         ending: Option[MatchEnding] = None,
         description: String = "friendly game"
     ) =
-        MatchNews("Tic-Tac-Toe", description, mover, nextUp, due, others, yourTurn, playUrl, ending)
+        MatchNews(
+          "Tic-Tac-Toe",
+          description,
+          mover,
+          nextUp,
+          due,
+          others,
+          yourTurn,
+          playUrl,
+          acceptedBy,
+          ending
+        )
 
     private def compose(kind: NotificationType, news: MatchNews, recipient: Player = player("alice")) =
         MatchMail.compose("matchmaker@example.com", "https://matchmaker.example.com", recipient, kind, news)
@@ -53,6 +65,29 @@ class MatchMailSpec extends FunSuite {
         val mail = compose(NotificationType.MatchStarted, news(description = "   ")).get
 
         assert(mail.body.contains("Your match of Tic-Tac-Toe has started."))
+        assert(!mail.body.contains("\"\""))
+    }
+
+    /* The one mail that is about two things, for a challenge that was offered as starting itself:
+     * the acceptance that filled the roster is not mailed separately on that path, so this mail
+     * says who joined before it says the match is under way. */
+    test("a match that an acceptance started says who accepted, then that it has started") {
+        val mail = compose(NotificationType.MatchStarted, news(acceptedBy = Some("carol"))).get
+
+        assertEquals(mail.subject, "carol has accepted the Tic-Tac-Toe challenge, and the match has started")
+        assert(
+          mail.body.contains(
+            """carol has accepted the Tic-Tac-Toe challenge, so your match has started: "friendly game"."""
+          )
+        )
+        // Everything after that first sentence is the ordinary start mail.
+        assert(mail.body.contains("Playing with you: bob."))
+    }
+
+    test("an acceptance that started a match with no challenge message still names the game") {
+        val mail = compose(NotificationType.MatchStarted, news(acceptedBy = Some("carol"), description = "  ")).get
+
+        assert(mail.body.contains("carol has accepted the Tic-Tac-Toe challenge, so your match has started."))
         assert(!mail.body.contains("\"\""))
     }
 

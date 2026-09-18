@@ -3,6 +3,7 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import cats.syntax.all._
 import com.vivi.matchmaker.model._
+import skunk.Session
 import com.vivi.matchmaker.notify.Notifications
 import com.vivi.matchmaker.persistence.{
     AcceptanceRepo,
@@ -24,7 +25,34 @@ class OpenChallengeService[T](
      * knows is that one happened. Silent by default, which is what an environment with no queue and
      * no sender is -- so a spec with no opinion about mail constructs this exactly as it did before
      * notifications existed. */
-    notifications: Notifications = Notifications.disabled
+    notifications: Notifications = Notifications.disabled,
+    /* How a challenge whose required roles have just filled up gets started, for the challenges
+     * offered on those terms (`OpenChallenge.autoStart`), and whether the challenge is now a match.
+     *
+     * A match rather than "did this start one", which is not the same question and is the wrong one:
+     * a start that lost a race to another acceptance filling the same last seat, or to the challenger
+     * pressing Start, started nothing and yet leaves a match. See `GameEngineService.AutoStart`.
+     *
+     * A function
+     * rather than a `GameEngineService`, because what this service knows is that a challenge has
+     * been accepted: whether that is also the moment a match begins, and everything involved in
+     * beginning one, belongs to the service that starts matches.
+     *
+     * The answer is what decides whether an acceptance is news in its own right -- see `accept` --
+     * and the player is who accepted, which is what the mail about the match then opens with.
+     *
+     * Handed the session this service is already holding, as every `Notifications` method is and for
+     * the same reason: a start needs a connection, and borrowing a second one while the first is
+     * still held is how a bounded pool deadlocks -- `Services.defaultPoolSize` concurrent accepts
+     * would each hold one and wait for one only another holder can give back. Not the transaction,
+     * which has committed by then and could not have covered a start anyway: a start talks to the
+     * game engine between two transactions of its own, and one transaction across that would hold
+     * the challenge's row lock for as long as another system takes to answer -- and would undo a
+     * recorded acceptance when that system failed.
+     *
+     * Starts nothing by default, which is what an environment with no engine is -- so a spec with no
+     * opinion about starting constructs this exactly as it did before. */
+    autoStart: (Session[IO], GameId, ChallengeId, Player) => IO[Boolean] = (_, _, _, _) => IO.pure(false)
 )(using codec: TextCodec[T]) {
 
     private def requireGame(gameRepo: GameRepo[T], gameId: GameId): IO[Game] =
@@ -258,7 +286,35 @@ class OpenChallengeService[T](
              * dozen reads and a queue call taken inside it would keep every other player trying to
              * accept the same challenge waiting on an email. */
             accepted.flatMap { (created, actor) =>
-                notifications.challengeAccepted(session, gameId, challengeId, actor).as(created)
+                for {
+                    /* The start first, because whether it happened is what this acceptance *is*.
+                     *
+                     * On a challenge offered as starting itself, the acceptance that fills the last
+                     * required role is not news about a challenge -- it is the match beginning, and
+                     * `matchStarted` tells everyone so, the challenger included. Sending both would
+                     * write to them twice about one event, and the first of the two would be about a
+                     * challenge that no longer exists to be accepted or started.
+                     *
+                     * The same holds when the match was started by something else in the same moment
+                     * -- the acceptance that filled the other last seat, or the challenger pressing
+                     * Start -- which is why the question asked is "is this a match now" and not "did I
+                     * start one". Both answer true, and in both this acceptance has been overtaken:
+                     * telling the players their challenge is ready to start, after they have been told
+                     * the match began, describes something that is over.
+                     *
+                     * `false` covers every other case and they all want the ordinary mail: an
+                     * acceptance that leaves a role unfilled, a challenge that was not offered on these
+                     * terms, and a start that was meant to happen and failed -- that last one
+                     * especially, since the challenge is then still there to be started by hand and the
+                     * mail is what says so.
+                     *
+                     * Neither can fail this accept: the acceptance is recorded, `startIfReady` swallows
+                     * and logs whatever it runs into, and `Notifications` does the same. */
+                    isMatch <- autoStart(session, gameId, challengeId, actor)
+                    _ <- IO.unlessA(isMatch)(
+                      notifications.challengeAccepted(session, gameId, challengeId, actor)
+                    )
+                } yield created
             }
         }
 

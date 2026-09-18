@@ -1605,6 +1605,11 @@ object Views {
     private def newChallengeForm(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement = {
         val message = Var("")
         val isPublic = Var(false)
+        // Whether the match begins on its own once every required role is taken, instead of waiting
+        // for this challenger to press Start. Off by default: a challenge that starts without being
+        // asked to is the more surprising of the two, and it is the challenger holding a seat open
+        // for somebody in particular who would be surprised by it.
+        val autoStart = Var(false)
         // How long a player gets, blank for no limit. Blank by default because an unlimited game
         // is the one nobody can lose by walking away from their desk, and the challenger who wants
         // a clock is the one who came here to set one.
@@ -1677,6 +1682,22 @@ object Views {
             ),
             "anyone may watch"
           ),
+          // `cascade` rather than the plain checkbox label above: that shape is a box and a caption
+          // on one line, and this needs a second line under the caption saying what it means for the
+          // optional roles -- which is the difference nobody would guess.
+          label(
+            cls := "cascade",
+            input(
+              tpe := "checkbox",
+              controlled(checked <-- autoStart.signal, onClick.mapToChecked --> autoStart)
+            ),
+            span("start the match as soon as it can be started"),
+            span(
+              cls := "detail hint",
+              "You will not have to press Start. Optional roles are not waited for, " +
+                  "so leave this off if you want those seats filled first."
+            )
+          ),
           busyButton(
             "Create Challenge",
             // A game with no roles at all has nothing an acceptance could name, so no challenge for
@@ -1704,7 +1725,8 @@ object Views {
                             isPublic = isPublic.now(),
                             gameRoleId = chosen,
                             timeLimitKind = timeLimitKind.now(),
-                            timeLimitUnit = timeLimitUnit.now()
+                            timeLimitUnit = timeLimitUnit.now(),
+                            autoStart = autoStart.now()
                           )
                       case None =>
                           PlainOpenChallenge(
@@ -1718,7 +1740,8 @@ object Views {
                             isPublic = isPublic.now(),
                             gameRoleId = chosen,
                             timeLimitKind = timeLimitKind.now(),
-                            timeLimitUnit = timeLimitUnit.now()
+                            timeLimitUnit = timeLimitUnit.now(),
+                            autoStart = autoStart.now()
                           )
                   }
 
@@ -1727,6 +1750,7 @@ object Views {
                       timeLimit.set("")
                       timeLimitUnit.set(TimeLimitUnit.Minutes)
                       timeLimitKind.set(TimeLimitKind.PerTurn)
+                      autoStart.set(false)
                       // The challenge it was open for now exists and is in the list below it.
                       Store.showChallengeForm.set(false)
                       Store.refreshChallenges(game.gameId)

@@ -5,6 +5,7 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 import java.time.Instant
 import java.util.UUID
+import skunk.Session
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.model._
@@ -63,131 +64,255 @@ class GameEngineService[T](
       * place of "gone".
       */
     def start(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Match] =
-        sessionPool.use { session =>
-            val gameRepo = new GameRepo[T](session)
-            val playerRepo = new PlayerRepo(session)
-            val challengeRepo = new OpenChallengeRepo(session)
-            val acceptanceRepo = new AcceptanceRepo(session)
-            val characterRepo = new CharacterRepo[T](session)
-            val matchRepo = new MatchRepo(session)
-            val participantRepo = new ParticipantRepo(session)
+        sessionPool.use(started(_, gameId, challengeId, Some(callerExternalId), acceptedBy = None))
 
-            val matchId = MatchId(UUID.randomUUID().toString)
+    /** Starts a challenge because the challenger said to start it as soon as it could be, rather than because anybody
+      * asked now.
+      *
+      * `OpenChallenge.autoStart` is the setting, and "could be" is the rule a manual start already enforces: every
+      * non-optional role taken. Called after an acceptance has committed — see `OpenChallengeService.accept` — so the
+      * acceptance that fills the last required role is what starts the match. Not called when a challenge is created,
+      * even though a challenge whose only required role is the challenger's own is startable the moment it exists: a
+      * challenge that started itself before anybody could see it would not have been a challenge.
+      *
+      * Three answers, because the caller has something different to say for each — see [[GameEngineService.AutoStart]].
+      * The distinction that matters is between a challenge that is still open and one that is already a match: both
+      * leave this call having started nothing, and only the first of them is still an open challenge for an acceptance
+      * to be news about.
+      *
+      * A start that fails is reported by what it left behind rather than by the fact that it failed. One that failed at
+      * or before the engine call undid itself and is the third answer: the acceptance stands, the challenge is still
+      * there, the challenger can still press Start, and an acceptance that has been recorded must not be failed by a
+      * game engine that will not answer. One that failed after the engine made its game could not undo itself, and
+      * leaves the claimed, urlless match `start` documents — which is the second answer, because a challenge in that
+      * state is not one anybody can accept or start either. The failure is printed for the reason `Notifications`
+      * prints one: nobody is owed an error, but somebody may go looking for an explanation.
+      *
+      * The claim `start` takes is what makes a race harmless. Two acceptances landing together may both find the roster
+      * full, and the second start then fails on the challenge's `startedMatchId` — or on the unique index behind it —
+      * rather than making a second match.
+      *
+      * @param acceptor
+      *   whoever has just accepted. Passed rather than read, for the reason `Notifications` gives about every event's
+      *   actor: the caller has just had them in hand, and they are what the mail about this match opens with — on this
+      *   path the acceptance is not mailed separately, so it is this mail that has to say who joined.
+      * @param session
+      *   the caller's own, rather than one borrowed here. The caller is inside a `sessionPool.use` of its own when it
+      *   asks — it has just written the acceptance — and borrowing a second connection while holding the first is how a
+      *   bounded pool deadlocks: with `Services.defaultPoolSize` connections, that many concurrent accepts would each
+      *   hold one and wait for one that only another holder can give back. Everything below therefore runs on the
+      *   connection that is already in hand.
+      *
+      * Not in the caller's *transaction*, and it cannot be: [[started]] talks to the game engine between two
+      * transactions of its own, and a transaction spanning that would hold the challenge's row lock for as long as
+      * another system takes to answer — and would undo a recorded acceptance when that system failed. The acceptance is
+      * committed before any of this runs, which is what makes a failed start merely a start that did not happen.
+      */
+    def startIfReady(
+        session: Session[IO],
+        gameId: GameId,
+        challengeId: ChallengeId,
+        acceptor: Player
+    ): IO[GameEngineService.AutoStart] = {
+        val challengeRepo = new OpenChallengeRepo(session)
 
-            for {
-                prepared <- session.transaction.use { _ =>
-                    for {
-                        // Locked first: two clicks of Start on the same challenge must not both get past the
-                        // checks below, and the challenge is what both would be reading.
-                        //
-                        // The lock is necessary but not sufficient. It is released when this transaction
-                        // commits, which is well before the whole operation finishes — so without the claim
-                        // below, the second click would simply wait here, then re-read a challenge that
-                        // still looked startable and make a second match. startedMatchId is the state the
-                        // lock is guarding, and the unique index on match (game_id, challenge_id) is the
-                        // database's own last word on it.
-                        locked <- challengeRepo.readForUpdate(gameId, challengeId).flatMap {
-                            case Some(l) => IO.pure(l)
-                            case None =>
-                                IO.raiseError(
-                                  NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
-                                )
+        (for {
+            claimed <- challengeRepo.startedMatch(gameId, challengeId)
+            challenge <- challengeRepo.read(gameId, challengeId)
+            unfilled <- new AcceptanceRepo(session).unclaimedRoles(gameId, challengeId)
+        } yield
+            if (claimed.isDefined) GameEngineService.AutoStart.AlreadyStarted
+            else if (challenge.exists(_.autoStart) && unfilled.isEmpty) GameEngineService.AutoStart.Ready
+            else GameEngineService.AutoStart.NotReady)
+            .flatMap {
+                case GameEngineService.AutoStart.Ready =>
+                    started(session, gameId, challengeId, None, Some(acceptor.nickname))
+                        .map(m => GameEngineService.AutoStart.Started(m.matchId))
+                        .recover {
+                            // Somebody got there between the read above and the claim below it: another
+                            // acceptance filling the same last seat, or the challenger pressing Start.
+                            // There is a match, it was not this call that made it, and the one thing
+                            // that must not follow is a mail about a challenge still waiting to start.
+                            case _: ConflictError => GameEngineService.AutoStart.AlreadyStarted
                         }
-                        _ <- locked.startedMatchId.traverse_ { existing =>
+                case decided => IO.pure(decided)
+            }
+            .handleErrorWith { error =>
+                System.err.println(s"could not start challenge ${challengeId.value} automatically: $error")
+
+                /* What the failure left behind, asked of the database rather than guessed at from where
+                 * the exception came from.
+                 *
+                 * The two outcomes are not alike. A failure at or before the engine call undoes itself
+                 * -- the half-made match is deleted and the claim released -- and leaves an open
+                 * challenge that its challenger can still start by hand, which is exactly what the
+                 * ordinary acceptance mail says. A failure *after* the engine has made its game cannot
+                 * be undone (see `start`), and leaves the documented urlless, permanently claimed
+                 * state: there is a match, Start would be refused, and a mail saying the challenge is
+                 * ready to start would be false twice over -- about the challenge, and about the action
+                 * it invites.
+                 *
+                 * So the claim is the question, and it answers every version of this rather than the
+                 * ones anybody thought to enumerate. If even that read fails there is nothing left to
+                 * ask with, and `NotReady` is the honest answer: an acceptance that goes unannounced is
+                 * a smaller wrong than one announced falsely, but a session too broken to answer is
+                 * also one too broken to have claimed anything. */
+                challengeRepo
+                    .startedMatch(gameId, challengeId)
+                    .map {
+                        case Some(_) => GameEngineService.AutoStart.AlreadyStarted
+                        case None    => GameEngineService.AutoStart.NotReady
+                    }
+                    .handleError(_ => GameEngineService.AutoStart.NotReady)
+            }
+    }
+
+    /* The start itself, for both of the things that can ask for one.
+     *
+     * `caller` is the external id to authorize against the challenger, and `None` is an automatic
+     * start: there is nobody to check, because nobody asked. It is also what decides who is left out
+     * of the mail about the match -- see the `matchStarted` call at the end. */
+    private def started(
+        session: Session[IO],
+        gameId: GameId,
+        challengeId: ChallengeId,
+        caller: Option[String],
+        acceptedBy: Option[String]
+    ): IO[Match] = {
+        val gameRepo = new GameRepo[T](session)
+        val playerRepo = new PlayerRepo(session)
+        val challengeRepo = new OpenChallengeRepo(session)
+        val acceptanceRepo = new AcceptanceRepo(session)
+        val characterRepo = new CharacterRepo[T](session)
+        val matchRepo = new MatchRepo(session)
+        val participantRepo = new ParticipantRepo(session)
+
+        val matchId = MatchId(UUID.randomUUID().toString)
+
+        for {
+            prepared <- session.transaction.use { _ =>
+                for {
+                    // Locked first: two clicks of Start on the same challenge must not both get past the
+                    // checks below, and the challenge is what both would be reading.
+                    //
+                    // The lock is necessary but not sufficient. It is released when this transaction
+                    // commits, which is well before the whole operation finishes — so without the claim
+                    // below, the second click would simply wait here, then re-read a challenge that
+                    // still looked startable and make a second match. startedMatchId is the state the
+                    // lock is guarding, and the unique index on match (game_id, challenge_id) is the
+                    // database's own last word on it.
+                    locked <- challengeRepo.readForUpdate(gameId, challengeId).flatMap {
+                        case Some(l) => IO.pure(l)
+                        case None =>
                             IO.raiseError(
-                              ConflictError(
-                                s"challenge ${challengeId.value} is already being started as match ${existing.value}"
-                              )
+                              NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
                             )
-                        }
-                        challenge <- requireChallenge(challengeRepo, gameId, challengeId)
-                        game <- requireGame(gameRepo, gameId)
-                        challenger <- playerRepo.read(challenge.challenger).flatMap {
-                            case Some(p) => IO.pure(p)
-                            case None =>
-                                IO.raiseError(NotFoundError(s"no player with id ${challenge.challenger.value}"))
-                        }
-                        _ <- IO.raiseUnless(callerExternalId == challenger.externalId)(
-                          UnauthorizedError(s"caller '$callerExternalId' may not start challenge ${challengeId.value}")
-                        )
-                        roster <- acceptanceRepo.listForChallenge(gameId, challengeId)
-                        taken = roster.map((acceptance, _, _) => acceptance.gameRoleId).toSet
-                        unfilled = game.roles.filterNot(_.optional).filterNot(role => taken.contains(role.gameRoleId))
-                        _ <- IO.raiseUnless(unfilled.isEmpty)(
-                          ValidationError(
-                            s"challenge ${challengeId.value} cannot start until every role is filled; nobody is playing " +
-                                unfilled.map(_.name).mkString(", ")
+                    }
+                    _ <- locked.startedMatchId.traverse_ { existing =>
+                        IO.raiseError(
+                          ConflictError(
+                            s"challenge ${challengeId.value} is already being started as match ${existing.value}"
                           )
                         )
-                        newMatch = Match(
-                          gameId = gameId,
-                          matchId = matchId,
-                          // The match's creator, by reference: whoever this challenge's challenger is.
-                          challengeId = challengeId,
-                          description = challenge.message,
-                          completedAt = None,
-                          start = challenge.start.getOrElse(Instant.now()),
-                          timeLimit = challenge.timeLimit,
-                          // Carried forward with the limit itself: the terms a match is played under are the
-                          // ones its challenge was offered on, and editing the challenge later must not
-                          // change them.
-                          timeLimitKind = challenge.timeLimitKind,
-                          timeLimitUnit = challenge.timeLimitUnit,
-                          settings = challenge.settings,
-                          isPublic = challenge.isPublic
+                    }
+                    challenge <- requireChallenge(challengeRepo, gameId, challengeId)
+                    game <- requireGame(gameRepo, gameId)
+                    challenger <- playerRepo.read(challenge.challenger).flatMap {
+                        case Some(p) => IO.pure(p)
+                        case None =>
+                            IO.raiseError(NotFoundError(s"no player with id ${challenge.challenger.value}"))
+                    }
+                    _ <- caller.traverse_ { callerExternalId =>
+                        IO.raiseUnless(callerExternalId == challenger.externalId)(
+                          UnauthorizedError(
+                            s"caller '$callerExternalId' may not start challenge ${challengeId.value}"
+                          )
                         )
-                        saved <- matchRepo.create(newMatch)
-                        // Under the lock taken above, so the next start of this challenge sees the claim.
-                        _ <- challengeRepo.claimForStart(gameId, challengeId, matchId)
-                        participants <- roster.traverse { case (acceptance, externalId, roleName) =>
-                            participantRepo
-                                .create(toParticipant(matchId, acceptance))
-                                .flatMap(p => enginePlayer(characterRepo)(p, acceptance, externalId, roleName))
-                        }
-                    } yield (saved, game, challenge, participants)
-                }
-                (saved, game, challenge, players) = prepared
+                    }
+                    roster <- acceptanceRepo.listForChallenge(gameId, challengeId)
+                    taken = roster.map((acceptance, _, _) => acceptance.gameRoleId).toSet
+                    unfilled = game.roles.filterNot(_.optional).filterNot(role => taken.contains(role.gameRoleId))
+                    _ <- IO.raiseUnless(unfilled.isEmpty)(
+                      ValidationError(
+                        s"challenge ${challengeId.value} cannot start until every role is filled; nobody is playing " +
+                            unfilled.map(_.name).mkString(", ")
+                      )
+                    )
+                    newMatch = Match(
+                      gameId = gameId,
+                      matchId = matchId,
+                      // The match's creator, by reference: whoever this challenge's challenger is.
+                      challengeId = challengeId,
+                      description = challenge.message,
+                      completedAt = None,
+                      start = challenge.start.getOrElse(Instant.now()),
+                      timeLimit = challenge.timeLimit,
+                      // Carried forward with the limit itself: the terms a match is played under are the
+                      // ones its challenge was offered on, and editing the challenge later must not
+                      // change them.
+                      timeLimitKind = challenge.timeLimitKind,
+                      timeLimitUnit = challenge.timeLimitUnit,
+                      settings = challenge.settings,
+                      isPublic = challenge.isPublic
+                    )
+                    saved <- matchRepo.create(newMatch)
+                    // Under the lock taken above, so the next start of this challenge sees the claim.
+                    _ <- challengeRepo.claimForStart(gameId, challengeId, matchId)
+                    participants <- roster.traverse { case (acceptance, externalId, roleName) =>
+                        participantRepo
+                            .create(toParticipant(matchId, acceptance))
+                            .flatMap(p => enginePlayer(characterRepo)(p, acceptance, externalId, roleName))
+                    }
+                } yield (saved, game, challenge, participants)
+            }
+            (saved, game, challenge, players) = prepared
 
-                response <- engine
-                    .createGame(game.url, createRequest(matchId, game, challenge, players))
-                    .onError(_ => undo(session, gameId, challengeId, matchId))
+            response <- engine
+                .createGame(game.url, createRequest(matchId, game, challenge, players))
+                .onError(_ => undo(session, gameId, challengeId, matchId))
 
-                withUrls = saved.copy(
-                  statusUrl = Some(response.statusUrl),
-                  playUrl = Some(response.playUrl),
-                  publicUrl = response.publicUrl
-                )
-                // Past this point the engine's game exists, so there is no undoing the start — the only
-                // way out is forward. Failing here leaves the challenge claimed and the match urlless,
-                // which is the recoverable state `refresh` reports: the claim is now the permanent mark
-                // of a spent challenge rather than something that has to be cleaned up.
-                started <- retrying(finish(session, withUrls).as(withUrls))
+            withUrls = saved.copy(
+              statusUrl = Some(response.statusUrl),
+              playUrl = Some(response.playUrl),
+              publicUrl = response.publicUrl
+            )
+            // Past this point the engine's game exists, so there is no undoing the start — the only
+            // way out is forward. Failing here leaves the challenge claimed and the match urlless,
+            // which is the recoverable state `refresh` reports: the claim is now the permanent mark
+            // of a spent challenge rather than something that has to be cleaned up.
+            started <- retrying(finish(session, withUrls).as(withUrls))
 
-                // Whose turn it is first is the engine's to decide, and every participant was written
-                // above with `pending = false`. Without asking, nobody's list of matches waiting on them
-                // would show this one until somebody happened to press Refresh on it — so the player who
-                // moves first would never be told the game had begun.
-                //
-                // Best effort, and deliberately last: the match exists and the start has already
-                // succeeded, so failing to read the first turn is not a reason to fail the call. It
-                // leaves exactly the state this used to leave always, which `refresh` still corrects.
-                _ <- applyEngineStatus(session, gameId, matchId, response.statusUrl).attempt
+            // Whose turn it is first is the engine's to decide, and every participant was written
+            // above with `pending = false`. Without asking, nobody's list of matches waiting on them
+            // would show this one until somebody happened to press Refresh on it — so the player who
+            // moves first would never be told the game had begun.
+            //
+            // Best effort, and deliberately last: the match exists and the start has already
+            // succeeded, so failing to read the first turn is not a reason to fail the call. It
+            // leaves exactly the state this used to leave always, which `refresh` still corrects.
+            _ <- applyEngineStatus(session, gameId, matchId, response.statusUrl).attempt
 
-                // Last, and best effort for the same reason as the status call above: the match exists
-                // and the start has succeeded, so nothing about mail is a reason to fail it. Note what
-                // that costs — an enqueue that fails is a notification nobody ever gets, because there is
-                // no record that it was owed. Making it durable means writing the mail beside the match
-                // in the transaction above and draining that table, which is a bigger change than this
-                // one and is worth making the day a missed notification matters more than a start does.
-                //
-                // After `applyEngineStatus`, not before: that is what writes whose turn it is, and "it is
-                // your turn" is most of what the mail has to say.
-                // Everyone in the match but the challenger, who pressed Start and is reading the
-                // answer. Swallowed and logged by `Notifications`, where the terms every notification
-                // is sent on are written down.
-                _ <- notifications.matchStarted(session, started, challenge.challenger)
-            } yield started
-        }
+            // Last, and best effort for the same reason as the status call above: the match exists
+            // and the start has succeeded, so nothing about mail is a reason to fail it. Note what
+            // that costs — an enqueue that fails is a notification nobody ever gets, because there is
+            // no record that it was owed. Making it durable means writing the mail beside the match
+            // in the transaction above and draining that table, which is a bigger change than this
+            // one and is worth making the day a missed notification matters more than a start does.
+            //
+            // After `applyEngineStatus`, not before: that is what writes whose turn it is, and "it is
+            // your turn" is most of what the mail has to say.
+            // Everyone in the match but the challenger, who pressed Start and is reading the
+            // answer -- and everyone including them when nobody pressed anything, which is what an
+            // automatic start is. Swallowed and logged by `Notifications`, where the terms every
+            // notification is sent on are written down.
+            _ <- notifications.matchStarted(
+              session,
+              started,
+              caller.map(_ => challenge.challenger),
+              acceptedBy
+            )
+        } yield started
+    }
 
     /* Asks the engine how a match stands and writes the answer onto its participants: whose turn
      * it is, when that turn is due, and who is finished — plus the match's own completed flag.
@@ -848,4 +973,45 @@ class GameEngineService[T](
             case Some(p) if p.matchId == matchId => IO.pure(p)
             case _ => IO.raiseError(NotFoundError(s"no participant ${participantId.value} in match '${matchId.value}'"))
         }
+}
+
+object GameEngineService {
+
+    /** What became of an automatic start: the three things that can be true after [[GameEngineService.startIfReady]]
+      * has looked at a challenge.
+      *
+      * Three rather than a boolean because the caller is deciding what to *tell* people, and "nothing started" is two
+      * quite different pieces of news. An acceptance of a challenge that is still open is news about that challenge —
+      * who joined, what it is still waiting for, whether it can be started. The same acceptance, once the challenge has
+      * become a match, is not: the players have been told the match began, and a mail arriving afterwards to say their
+      * challenge is ready to start describes something that is over.
+      */
+    enum AutoStart {
+
+        /** This call started it, as the match named here. */
+        case Started(matchId: MatchId)
+
+        /** The challenge is claimed and this call did not deliver the match: another acceptance filled the last seat at
+          * the same moment, the challenger pressed Start, or this call's own start claimed the challenge and then
+          * failed past the point where anything could be undone. Whichever it was, there is nothing further to say
+          * about the challenge — it is not one anybody can still accept or start.
+          */
+        case AlreadyStarted
+
+        /** Still an open challenge: not offered as starting itself, still waiting for a role, or a start that was meant
+          * to happen and failed. Whatever an acceptance of it would ordinarily be told, it still is.
+          */
+        case NotReady
+
+        /* Only used between the check and the start, and never answered with. A fourth case rather than
+         * a second type, because it is the same question one step earlier: this is what "ready" looks
+         * like before anything has been tried. */
+        private[service] case Ready
+
+        /** Whether this challenge is now a match, however it became one. What the acceptance path asks. */
+        def isMatch: Boolean = this match {
+            case AutoStart.Started(_) | AutoStart.AlreadyStarted => true
+            case _                                               => false
+        }
+    }
 }

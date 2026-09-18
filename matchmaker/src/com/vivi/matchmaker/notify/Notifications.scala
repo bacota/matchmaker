@@ -94,14 +94,25 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * @param startedBy
       *   the challenger, and the one person not written to: they pressed Start and are reading the answer to their own
       *   click. Passed rather than read, for the same reason `matchEnded` is told who cancelled — who caused an event
-      *   is something its caller knows and nothing here could work out.
+      *   is something its caller knows and nothing here could work out. `None` when nobody pressed anything: a
+      *   challenge that starts itself has no such person, and the challenger is then owed this mail like everyone else
+      *   — it is the only thing that tells them their challenge has become a match.
+      * @param acceptedBy
+      *   the nickname of whoever's acceptance started it, on that same path. It goes into the mail, which then says
+      *   both things that happened rather than only the second: see `MatchNews.acceptedBy`. `None` for a match somebody
+      *   pressed Start on, where the acceptance was mailed as news of its own.
       */
-    def matchStarted(session: Session[IO], started: Match, startedBy: PlayerId): IO[Unit] =
+    def matchStarted(
+        session: Session[IO],
+        started: Match,
+        startedBy: Option[PlayerId],
+        acceptedBy: Option[String] = None
+    ): IO[Unit] =
         aboutMatch(session, started, s"start of match ${started.matchId.value}") {
             (from, uiBaseUrl, notice, seats, participants) =>
                 val byId = participants.map(participant => participant.participantId -> participant).toMap
 
-                seats.filter(_.player.playerId != startedBy).flatMap { seat =>
+                seats.filterNot(seat => startedBy.contains(seat.player.playerId)).flatMap { seat =>
                     val participant = byId.get(seat.participantId)
                     NotificationPolicy
                         .choose(Seq(NotificationType.MatchStarted), seat.preferences)
@@ -116,6 +127,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                 description = started.description,
                                 due = participant.flatMap(_.due),
                                 // In seat order, which is the order the game was dealt in.
+                                acceptedBy = acceptedBy,
                                 others = seats
                                     .filter(_.player.playerId != seat.player.playerId)
                                     .map(_.player.nickname),
@@ -288,7 +300,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                             .flatMap(recipient =>
                                 NotificationPolicy
                                     .choose(
-                                      kindsFor(recipient, offered.challenger, joined, waitingFor),
+                                      kindsFor(recipient, offered, joined, waitingFor),
                                       recipient.levels.resolve
                                     )
                                     .flatMap(ChallengeMail.compose(from, uiBaseUrl, recipient.player, _, news))
@@ -302,15 +314,23 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
      * The "ready" kinds are offered only for an acceptance. A withdrawal can leave a roster still
      * full -- an optional role freed -- but "you can start it now" is not the news when somebody has
      * just left, and telling a challenger their challenge is ready because a player walked out of it
-     * would be actively misleading. */
+     * would be actively misleading.
+     *
+     * Nothing here is conditioned on the challenge starting itself, and deliberately not: on that
+     * path this notification is not sent at all, because the acceptance that filled the roster was
+     * the match beginning rather than news about a challenge -- `OpenChallengeService.accept` is
+     * where that is decided, and it decides it by asking whether a match was actually started. Which
+     * leaves one case here that looks like it should be quiet and must not be: an auto-start that
+     * failed. The challenge is still there, still startable by hand, and "every role is taken, you
+     * can start it" is then the only mail that says so. */
     private def kindsFor(
         recipient: AcceptorNotifications,
-        challenger: PlayerId,
+        challenge: OpenChallenge,
         joined: Boolean,
         waitingFor: Seq[String]
     ): Seq[NotificationType] = {
         val ready = joined && waitingFor.isEmpty
-        if (recipient.player.playerId == challenger)
+        if (recipient.player.playerId == challenge.challenger)
             if (ready) Seq(NotificationType.ChallengeReady, NotificationType.ChallengeAccepted)
             else Seq(NotificationType.ChallengeAccepted)
         else if (ready) Seq(NotificationType.AcceptedChallengeReady, NotificationType.AcceptanceChanged)

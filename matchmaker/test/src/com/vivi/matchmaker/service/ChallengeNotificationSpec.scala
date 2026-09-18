@@ -22,9 +22,10 @@ class ChallengeNotificationSpec extends PropertySuite {
 
     private val caseTimeout = 60.seconds
 
-    private class StubEngine extends GameEngineClient {
+    private class StubEngine(fail: Boolean = false) extends GameEngineClient {
         def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
-            IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+            if (fail) IO.raiseError(new RuntimeException("engine says no"))
+            else IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
 
         def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] =
             IO.pure(GameStatusResponse(completed = false, participants = Nil))
@@ -75,10 +76,15 @@ class ChallengeNotificationSpec extends PropertySuite {
         def address(player: Player): String = player.email.get
     }
 
-    private def fixture(seed: String): IO[Fixture] = {
+    private def fixture(
+        seed: String,
+        autoStart: Boolean = false,
+        engineFails: Boolean = false,
+        message: String = "friendly game"
+    ): IO[Fixture] = {
         val notifier = new RecordingNotifier
         val services = TestServices.servicesWith(
-          new StubEngine,
+          new StubEngine(engineFails),
           callbackBaseUrl = Some("https://matchmaker.example.com"),
           notifier = notifier,
           mail = TestServices.mailSettings
@@ -96,7 +102,7 @@ class ChallengeNotificationSpec extends PropertySuite {
               PlainOpenChallenge(
                 ChallengeId(0),
                 challenger.playerId,
-                "friendly game",
+                message,
                 start = None,
                 timeLimit = None,
                 settings = "{}",
@@ -104,7 +110,8 @@ class ChallengeNotificationSpec extends PropertySuite {
                 isPublic = true,
                 gameRoleId = game.roles.head.gameRoleId,
                 timeLimitKind = TimeLimitKind.PerTurn,
-                timeLimitUnit = TimeLimitUnit.Minutes
+                timeLimitUnit = TimeLimitUnit.Minutes,
+                autoStart = autoStart
               ),
               s"challenger-$seed"
             )
@@ -274,6 +281,146 @@ class ChallengeNotificationSpec extends PropertySuite {
                 _ <- IO(f.notifier.clear())
                 _ <- accept(f, f.second, 1)
             } yield f.notifier.messages.isEmpty
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* A challenge offered as starting itself, which changes both halves of this: the acceptance
+     * that fills the roster is also the start, and what its players are told is about a match rather
+     * than about a challenge somebody could choose to start. */
+    property("a challenge that starts itself turns the last acceptance into a match") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed, autoStart = true).flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- IO(f.notifier.clear())
+                    _ <- accept(f, f.third, 2)
+                    claimed <- TestSession.resource.use(session =>
+                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                            .readForUpdate(f.game.gameId, f.challenge.challengeId)
+                    )
+                } yield {
+                    val sent = f.notifier.messages
+                    // The challenge is spent: something started it, and nobody pressed Start.
+                    claimed.flatMap(_.startedMatchId).isDefined &&
+                    // One mail each and no more. Counted rather than looked up by recipient, because
+                    // the fault this is here to catch is a second mail to the same player: the
+                    // acceptance that fills the roster is the match beginning, not two events.
+                    sent.size == 3 &&
+                    // Everyone in it, the challenger included -- on this path they are not the person
+                    // who did it, so the mail about the match is theirs like anybody's.
+                    sent.map(_.recipient).toSet ==
+                        Set(f.address(f.challenger), f.address(f.second), f.address(f.third)) &&
+                        // One mail saying both things, in the order they happened: who accepted, and then
+                        // that the match is under way. The plain match-started wording would leave a
+                        // player to work out who they are suddenly playing.
+                        sent.forall(m =>
+                            m.subject ==
+                                s"third-$seed has accepted the Tic-Tac-Toe challenge, and the match has started" &&
+                                m.body.contains(
+                                  s"third-$seed has accepted the Tic-Tac-Toe challenge, so your match has"
+                                ) &&
+                                m.body.contains("Playing with you:")
+                        )
+                }
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* An auto-start that does not happen, which is the case the ordinary mail must survive: the
+     * challenge is still there and still startable by hand, so the challenger is owed the one
+     * notification that says so. */
+    property("an auto-start that fails leaves the acceptance to be notified as usual") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed, autoStart = true, engineFails = true).flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- IO(f.notifier.clear())
+                    _ <- accept(f, f.third, 2)
+                    claimed <- TestSession.resource.use(session =>
+                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                            .readForUpdate(f.game.gameId, f.challenge.challengeId)
+                    )
+                } yield {
+                    val bySubject = f.notifier.messages.map(m => m.recipient -> m.subject).toMap
+                    // The failed start released its claim, so the challenge is startable again.
+                    claimed.flatMap(_.startedMatchId).isEmpty &&
+                    bySubject(f.address(f.challenger)) == "Your Tic-Tac-Toe challenge is ready to start" &&
+                    bySubject(f.address(f.second)) == "A Tic-Tac-Toe challenge you accepted is ready to start"
+                }
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* The race the answer's three cases exist for: a second call finds the challenge already claimed,
+     * and must say so rather than saying "not started".
+     *
+     * Asked of `startIfReady` directly because that is where the two are told apart, and because the
+     * race itself -- two acceptances filling the last two seats at the same instant -- cannot be
+     * staged reliably. What it pins is the consequence: the second answer counts as a match, so the
+     * acceptance that produced it sends no mail about a challenge that is waiting to start. */
+    property("a start that loses to an existing claim is a match, not a challenge still open") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed, autoStart = true).flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- accept(f, f.third, 2)
+                    // The acceptance above has already started it; this is the loser of the race.
+                    again <- TestSession.resource.use(session =>
+                        f.services.engine.startIfReady(session, f.game.gameId, f.challenge.challengeId, f.third)
+                    )
+                } yield again == GameEngineService.AutoStart.AlreadyStarted && again.isMatch
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* The other way a start can leave a match without returning one: it got past the engine, which
+     * cannot be undone, and then failed. `start` documents what that leaves -- a claimed challenge and
+     * a match with no urls -- and the point here is what is *not* said about it. "Your challenge is
+     * ready to start" would be false about the challenge and false about the action it invites, since
+     * Start is refused on a claimed one.
+     *
+     * The failure is forced by the trigger `TestMigration` installs, which refuses the write that
+     * records the engine's urls for a match described as 'explode'. */
+    property("a start that fails after the engine has its game sends no mail about the challenge") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed, autoStart = true, message = "explode").flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- IO(f.notifier.clear())
+                    _ <- accept(f, f.third, 2)
+                    claimed <- TestSession.resource.use(session =>
+                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                            .startedMatch(f.game.gameId, f.challenge.challengeId)
+                    )
+                } yield
+                // The claim stands: this is the state that cannot be undone.
+                claimed.isDefined &&
+                    // And nothing was said. The match mail never got as far as being sent, and the
+                    // acceptance mail would have described a challenge that is no longer one.
+                    f.notifier.messages.isEmpty
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    // The default, stated as a test rather than left to the column's DEFAULT: filling the roster of
+    // an ordinary challenge starts nothing, and its challenger is asked to.
+    property("an ordinary challenge leaves the start to its challenger") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed).flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- accept(f, f.third, 2)
+                    claimed <- TestSession.resource.use(session =>
+                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                            .readForUpdate(f.game.gameId, f.challenge.challengeId)
+                    )
+                } yield claimed.flatMap(_.startedMatchId).isEmpty
+            }
             result.timeout(caseTimeout).unsafeRunSync()
         }
     }

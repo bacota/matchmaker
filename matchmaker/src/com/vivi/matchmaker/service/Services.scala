@@ -69,6 +69,13 @@ object Services {
     )(using codec: TextCodec[T]): Services[T] = {
         val notifications = new Notifications(notifier, mail)
 
+        /* Built before the services it is given to, because it is given to one of them: a challenge
+         * offered as starting itself turns an acceptance into a start, and the acceptance is
+         * `challenges`' to record while the start is this one's to carry out. Only the function is
+         * shared, so neither service has to know about the other -- see
+         * `OpenChallengeService.autoStart`. */
+        val engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications)
+
         Services(
           registration = new RegistrationService(pool),
           players = new PlayerService(pool),
@@ -77,10 +84,10 @@ object Services {
           // One `Notifications` for the four services that cause something worth an email. One
           // rather than one each, because who is told what does not depend on which service the
           // event came from -- that is the whole point of it being a class of its own.
-          challenges = new OpenChallengeService[T](pool, notifications),
+          challenges = new OpenChallengeService[T](pool, notifications, engine.startIfReady(_, _, _, _).map(_.isMatch)),
           acceptances = new AcceptanceService(pool, notifications),
           matches = new MatchService(pool, notifications),
-          engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications),
+          engine = engine,
           notifications = new NotificationService(pool),
           suppression = new SuppressionService(pool)
         )
