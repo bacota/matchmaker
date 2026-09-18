@@ -278,6 +278,51 @@ class ChallengeNotificationSpec extends PropertySuite {
         }
     }
 
+    /* Deleting the whole challenge, which is the one event whose audience has to be read before the
+     * action rather than after it: the acceptances this writes to are the rows the delete removes. */
+    property("calling the challenge off tells everyone who had accepted it") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed).flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- accept(f, f.third, 2)
+                    _ <- IO(f.notifier.clear())
+                    _ <- f.services.challenges.delete(f.game.gameId, f.challenge.challengeId, f.challenger.externalId)
+                } yield {
+                    // Both acceptors, and not the challenger: they pressed the button.
+                    f.notifier.recipients == Set(f.address(f.second), f.address(f.third)) &&
+                    f.notifier.messages.forall(m =>
+                        m.subject == s"challenger-$seed has called off the Tic-Tac-Toe challenge you accepted" &&
+                            // No roster line: there is no longer a roster to be waiting on.
+                            !m.body.contains("Still waiting for")
+                    )
+                }
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* The kind it is sent under, tested through the preference rather than asserted in a comment: an
+     * acceptor who does not want to hear about a roster changing under them does not hear about the
+     * change that leaves nothing of it either. */
+    property("an acceptor who refuses roster news is not told the challenge was called off") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed).flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- accept(f, f.third, 2)
+                    _ <- f.services.notifications.updateMine(
+                      f.second.externalId,
+                      NotificationPreferences.unset.updated(NotificationType.AcceptanceChanged, Some(false))
+                    )
+                    _ <- IO(f.notifier.clear())
+                    _ <- f.services.challenges.delete(f.game.gameId, f.challenge.challengeId, f.challenger.externalId)
+                } yield f.notifier.recipients == Set(f.address(f.third))
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
     /* Editing the game needs an admin, and the fixture's players are not. Registered here rather
      * than in the fixture because only one property needs one. */
     private def adminOf(f: Fixture): String = {

@@ -19,6 +19,10 @@ import com.vivi.matchmaker.model.NotificationType
   *   the nickname of whoever offered the challenge, for the mails that are not addressed to them
   * @param waitingFor
   *   the required roles still unclaimed, in the game's role order. Empty means the challenge is ready to start.
+  * @param calledOff
+  *   the challenge itself is gone, deleted by whoever offered it. The one event here that is not about one player
+  *   arriving or leaving, which is why it is a flag of its own rather than a value of `joined`: there is no actor and
+  *   no roster left, and the mail says something else entirely.
   */
 case class ChallengeNews(
     gameName: String,
@@ -27,7 +31,8 @@ case class ChallengeNews(
     role: Option[String],
     joined: Boolean,
     challenger: String,
-    waitingFor: Seq[String]
+    waitingFor: Seq[String],
+    calledOff: Boolean = false
 )
 
 /** What a player is told when a challenge they are in changes.
@@ -37,8 +42,8 @@ case class ChallengeNews(
   * to the players who accepted it, because those are different pieces of news — one of them can press Start.
   *
   * Rendering is separated from deciding who to write to, and is a pure function of its arguments, so what the mail says
-  * can be tested without a challenge or a database. The deciding halves are `OpenChallengeService.accept` and
-  * `AcceptanceService.delete`.
+  * can be tested without a challenge or a database. The deciding halves are `OpenChallengeService.accept`,
+  * `OpenChallengeService.delete` and `AcceptanceService.delete`.
   */
 object ChallengeMail extends NotificationMail[ChallengeNews] {
 
@@ -88,6 +93,24 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
                       "game" -> name,
                       "quoted" -> quoted,
                       "role" -> role
+                    )
+                  )
+                )
+
+            // Also to the players who accepted, and the one message among theirs that is not about
+            // somebody joining or leaving: the challenge itself is gone. No roster line, because there
+            // is nothing left for one to describe -- `Notifications.challengeCalledOff` says the same
+            // thing from the other end.
+            case NotificationType.AcceptanceChanged if news.calledOff =>
+                Some(
+                  (
+                    MailTemplates
+                        .render("mail.challenge.calledOff.subject", "challenger" -> news.challenger, "game" -> name),
+                    MailTemplates.render(
+                      "mail.challenge.calledOff.body",
+                      "challenger" -> news.challenger,
+                      "game" -> name,
+                      "quoted" -> quoted
                     )
                   )
                 )
