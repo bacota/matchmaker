@@ -97,8 +97,17 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       *   is something its caller knows and nothing here could work out. `None` when nobody pressed anything: a
       *   challenge that starts itself has no such person, and the challenger is then owed this mail like everyone else
       *   — it is the only thing that tells them their challenge has become a match.
+      * @param acceptedBy
+      *   the nickname of whoever's acceptance started it, on that same path. It goes into the mail, which then says
+      *   both things that happened rather than only the second: see `MatchNews.acceptedBy`. `None` for a match somebody
+      *   pressed Start on, where the acceptance was mailed as news of its own.
       */
-    def matchStarted(session: Session[IO], started: Match, startedBy: Option[PlayerId]): IO[Unit] =
+    def matchStarted(
+        session: Session[IO],
+        started: Match,
+        startedBy: Option[PlayerId],
+        acceptedBy: Option[String] = None
+    ): IO[Unit] =
         aboutMatch(session, started, s"start of match ${started.matchId.value}") {
             (from, uiBaseUrl, notice, seats, participants) =>
                 val byId = participants.map(participant => participant.participantId -> participant).toMap
@@ -118,6 +127,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                 description = started.description,
                                 due = participant.flatMap(_.due),
                                 // In seat order, which is the order the game was dealt in.
+                                acceptedBy = acceptedBy,
                                 others = seats
                                     .filter(_.player.playerId != seat.player.playerId)
                                     .map(_.player.nickname),

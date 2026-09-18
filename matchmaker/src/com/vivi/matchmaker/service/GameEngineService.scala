@@ -63,7 +63,7 @@ class GameEngineService[T](
       * place of "gone".
       */
     def start(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Match] =
-        started(gameId, challengeId, Some(callerExternalId))
+        started(gameId, challengeId, Some(callerExternalId), acceptedBy = None)
 
     /** Starts a challenge because the challenger said to start it as soon as it could be, rather than because anybody
       * asked now.
@@ -84,8 +84,13 @@ class GameEngineService[T](
       * The claim `start` takes is what makes a race harmless. Two acceptances landing together may both find the roster
       * full, and the second start then fails on the challenge's `startedMatchId` — or on the unique index behind it —
       * rather than making a second match.
+      *
+      * @param acceptor
+      *   whoever has just accepted. Passed rather than read, for the reason `Notifications` gives about every event's
+      *   actor: the caller has just had them in hand, and they are what the mail about this match opens with — on this
+      *   path the acceptance is not mailed separately, so it is this mail that has to say who joined.
       */
-    def startIfReady(gameId: GameId, challengeId: ChallengeId): IO[Option[Match]] =
+    def startIfReady(gameId: GameId, challengeId: ChallengeId, acceptor: Player): IO[Option[Match]] =
         sessionPool
             .use { session =>
                 for {
@@ -95,7 +100,7 @@ class GameEngineService[T](
             }
             .flatMap {
                 case false => IO.pure(None)
-                case true  => started(gameId, challengeId, None).map(Some(_))
+                case true  => started(gameId, challengeId, None, Some(acceptor.nickname)).map(Some(_))
             }
             .handleError { error =>
                 System.err.println(s"could not start challenge ${challengeId.value} automatically: $error")
@@ -107,7 +112,12 @@ class GameEngineService[T](
      * `caller` is the external id to authorize against the challenger, and `None` is an automatic
      * start: there is nobody to check, because nobody asked. It is also what decides who is left out
      * of the mail about the match -- see the `matchStarted` call at the end. */
-    private def started(gameId: GameId, challengeId: ChallengeId, caller: Option[String]): IO[Match] =
+    private def started(
+        gameId: GameId,
+        challengeId: ChallengeId,
+        caller: Option[String],
+        acceptedBy: Option[String]
+    ): IO[Match] =
         sessionPool.use { session =>
             val gameRepo = new GameRepo[T](session)
             val playerRepo = new PlayerRepo(session)
@@ -235,7 +245,12 @@ class GameEngineService[T](
                 // answer -- and everyone including them when nobody pressed anything, which is what an
                 // automatic start is. Swallowed and logged by `Notifications`, where the terms every
                 // notification is sent on are written down.
-                _ <- notifications.matchStarted(session, started, caller.map(_ => challenge.challenger))
+                _ <- notifications.matchStarted(
+                  session,
+                  started,
+                  caller.map(_ => challenge.challenger),
+                  acceptedBy
+                )
             } yield started
         }
 

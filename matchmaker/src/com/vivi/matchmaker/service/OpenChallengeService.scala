@@ -31,11 +31,12 @@ class OpenChallengeService[T](
      * been accepted: whether that is also the moment a match begins, and everything involved in
      * beginning one, belongs to the service that starts matches.
      *
-     * The answer is what decides whether an acceptance is news in its own right -- see `accept`.
+     * The answer is what decides whether an acceptance is news in its own right -- see `accept` --
+     * and the player is who accepted, which is what the mail about the match then opens with.
      *
      * Starts nothing by default, which is what an environment with no engine is -- so a spec with no
      * opinion about starting constructs this exactly as it did before. */
-    autoStart: (GameId, ChallengeId) => IO[Boolean] = (_, _) => IO.pure(false)
+    autoStart: (GameId, ChallengeId, Player) => IO[Boolean] = (_, _, _) => IO.pure(false)
 )(using codec: TextCodec[T]) {
 
     private def requireGame(gameRepo: GameRepo[T], gameId: GameId): IO[Game] =
@@ -286,7 +287,7 @@ class OpenChallengeService[T](
                      *
                      * Neither can fail this accept: the acceptance is recorded, `startIfReady` swallows
                      * and logs whatever it runs into, and `Notifications` does the same. */
-                    startedMatch <- autoStart(gameId, challengeId)
+                    startedMatch <- autoStart(gameId, challengeId, actor)
                     _ <- IO.unlessA(startedMatch)(
                       notifications.challengeAccepted(session, gameId, challengeId, actor)
                     )

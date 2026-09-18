@@ -306,7 +306,17 @@ class ChallengeNotificationSpec extends PropertySuite {
                     // who did it, so the mail about the match is theirs like anybody's.
                     sent.map(_.recipient).toSet ==
                         Set(f.address(f.challenger), f.address(f.second), f.address(f.third)) &&
-                        sent.forall(_.subject == "Your Tic-Tac-Toe match has started")
+                        // One mail saying both things, in the order they happened: who accepted, and then
+                        // that the match is under way. The plain match-started wording would leave a
+                        // player to work out who they are suddenly playing.
+                        sent.forall(m =>
+                            m.subject ==
+                                s"third-$seed has accepted the Tic-Tac-Toe challenge, and the match has started" &&
+                                m.body.contains(
+                                  s"third-$seed has accepted the Tic-Tac-Toe challenge, so your match has"
+                                ) &&
+                                m.body.contains("Playing with you:")
+                        )
                 }
             }
             result.timeout(caseTimeout).unsafeRunSync()
