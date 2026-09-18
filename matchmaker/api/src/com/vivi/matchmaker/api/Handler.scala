@@ -93,21 +93,8 @@ object Handler {
     private def poolSize: Int =
         sys.env.get("DB_POOL_SIZE").flatMap(_.toIntOption).getOrElse(Services.defaultPoolSize)
 
-    private def required(name: String): String =
-        sys.env.getOrElse(name, throw new IllegalStateException(s"$name is not set"))
-
-    /** Assembles the database configuration from the function's environment variables.
-      *
-      * The credentials arrive the same way as the host and database name. That keeps the function free of any AWS
-      * dependency — no SDK, no extension layer, no network call before the first query — at the cost of the password
-      * being readable from the function's configuration by anyone holding `lambda:GetFunction`.
+    /** The five database variables, read by `DbConfig` because the bounce consumer is built from this same jar and
+      * reads them too.
       */
-    private def dbConfig(): DbConfig =
-        DbConfig(
-          host = required("DB_HOST"),
-          port = sys.env.get("DB_PORT").flatMap(_.toIntOption).getOrElse(5432),
-          database = required("DB_NAME"),
-          user = required("DB_USER"),
-          password = Some(required("DB_PASSWORD"))
-        )
+    private def dbConfig(): DbConfig = DbConfig.fromEnvironment()
 }
