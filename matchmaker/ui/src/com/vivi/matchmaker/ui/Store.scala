@@ -104,8 +104,10 @@ object Store {
         showChallengeForm.set(false)
         editingGame.set(None)
         // Closed and emptied with the rest: it holds a half-typed address and a password field, and
-        // neither belongs to whoever signs in next.
-        Account.close()
+        // neither belongs to whoever signs in next. `forget` rather than `close`, which deliberately
+        // keeps an email change that is waiting for its code -- a sign-out is where that stops being
+        // something to come back to.
+        Account.forget()
     }
 
     /** The lists this store fetches, named so that a screen can tell "there is nothing here" from "nobody has told us

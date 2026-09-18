@@ -35,20 +35,41 @@ object Account {
       */
     val open: Var[Boolean] = Var(false)
 
+    /** Closes the panel and empties it, except for an email change that is still waiting for its code.
+      *
+      * Everything else in here is either re-read when the panel next opens or a half-typed field nobody meant to keep.
+      * An outstanding code is neither: Cognito is already holding the change, the code was mailed to the new address,
+      * and going to read it is exactly what makes a player close this panel — a click anywhere outside is enough. A
+      * code in hand and no box to type it in is the pet peeve this preserves the stage for.
+      */
     def close(): Unit = {
         open.set(false)
-        reset()
+        reset(keepPendingEmail = emailStage.now() != EmailStage.Idle)
     }
 
-    private def reset(): Unit = {
+    /** Empties the panel completely, for the sign-out after which there is no "next time this player opens it".
+      *
+      * A pending change belongs to the session that started it — it is held against one Cognito identity, and the
+      * access token that would confirm it is gone — so this is the one exit that does drop it.
+      */
+    private[ui] def forget(): Unit = {
+        open.set(false)
+        reset(keepPendingEmail = false)
+    }
+
+    private def reset(keepPendingEmail: Boolean): Unit = {
         nickname.set("")
         currentEmail.set(None)
-        email.set("")
-        emailCode.set("")
-        emailStage.set(EmailStage.Idle)
         currentPassword.set("")
         newPassword.set("")
-        outcomes.foreach(_.set(None))
+        nicknameOutcome.set(None)
+        passwordOutcome.set(None)
+        if (!keepPendingEmail) {
+            email.set("")
+            emailCode.set("")
+            emailStage.set(EmailStage.Idle)
+            emailOutcome.set(None)
+        }
     }
 
     /** How far an email change has got. Cognito does not change the address on the first call: the pool auto-verifies
@@ -67,7 +88,6 @@ object Account {
     private val nicknameOutcome: Var[Option[Outcome]] = Var(None)
     private val emailOutcome: Var[Option[Outcome]] = Var(None)
     private val passwordOutcome: Var[Option[Outcome]] = Var(None)
-    private val outcomes = Seq(nicknameOutcome, emailOutcome, passwordOutcome)
 
     private val nickname: Var[String] = Var("")
 
@@ -154,6 +174,18 @@ object Account {
                     )
                 }
             }
+    }
+
+    /** Gives up on the code that is outstanding and puts the address field back in the player's hands.
+      *
+      * Nothing is said to Cognito, because there is nothing it needs told: the pending change stays held against the
+      * address the code was mailed to, and the next [[sendEmailCode]] replaces it — whether the player edits the
+      * address or sends themselves another code for the same one.
+      */
+    private def restartEmailChange(): Unit = {
+        emailCode.set("")
+        emailStage.set(EmailStage.Idle)
+        emailOutcome.set(None)
     }
 
     /** Tells matchmaker about the address Cognito now holds, having first obtained a token that says so.
@@ -564,6 +596,28 @@ object Account {
                         autoComplete := "one-time-code",
                         inputMode := "numeric",
                         controlled(value <-- emailCode.signal, onInput.mapToValue --> emailCode)
+                      )
+                    ),
+                    // The two ways out that are not "type the code". Both are needed and they are not
+                    // the same: a code that never arrived wants another one at the same address, and a
+                    // code that arrived somewhere unintended wants the address changed. Without these
+                    // the only way back to an editable address field is to close the panel and reopen
+                    // it, which is the very thing that used to lose the code box.
+                    div(
+                      cls := "alternatives",
+                      button(
+                        tpe := "button",
+                        cls := "link",
+                        "Send a new code",
+                        disabled <-- busy.signal,
+                        onClick --> (_ => if (!busy.now()) sendEmailCode(busy))
+                      ),
+                      button(
+                        tpe := "button",
+                        cls := "link",
+                        "Use a different address",
+                        disabled <-- busy.signal,
+                        onClick --> (_ => if (!busy.now()) restartEmailChange())
                       )
                     )
                   )
