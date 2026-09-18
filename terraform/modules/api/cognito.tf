@@ -27,6 +27,24 @@ resource "aws_cognito_user_pool" "users" {
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
 
+  /* A change of address does not take effect until the new one answers a code.
+   *
+   * Not a default, and its absence is a real fault rather than a preference: without this block
+   * `UpdateUserAttributes` writes the new address straight onto the user and sets
+   * `email_verified = false`. The pool auto-verifies email, so Cognito still mails a code — to the
+   * address it has just adopted. A player who mistypes their address therefore signs in with an
+   * address they do not own, learns nothing about it because the code went there, and receives no
+   * mail from us either; and since the address is also the sign-in identifier, the account is now
+   * reached by a name its owner cannot read.
+   *
+   * With it, the old address keeps signing in and keeps receiving mail until `VerifyUserAttribute`
+   * succeeds, which is the sequence `Account.scala`'s email form is written against: it holds a
+   * `Sent` stage precisely because the change is supposed to be pending at this point.
+   */
+  user_attribute_update_settings {
+    attributes_require_verification_before_update = ["email"]
+  }
+
   password_policy {
     minimum_length                   = var.password_minimum_length
     require_lowercase                = false
