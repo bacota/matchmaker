@@ -268,6 +268,24 @@ class OpenChallengeRepo(session: Session[IO]) {
     def readForUpdate(gameId: GameId, id: ChallengeId): IO[Option[LockedChallenge]] =
         session.option(selectChallengeForUpdate)((gameId, id)).map(_.map(LockedChallenge.apply.tupled))
 
+    /* The claim on its own, without the lock [[readForUpdate]] takes.
+     *
+     * No FOR UPDATE, which is not an oversight about the rule in CLAUDE.md: nothing is written on the
+     * strength of this answer. It is asked by a caller deciding what to *say* -- whether an acceptance
+     * is still news about an open challenge, or news that has been overtaken by the match beginning --
+     * and locking a row to decide what to put in an email would make every start wait on a mail. */
+    private val selectStartedMatch: Query[(GameId, ChallengeId), Option[MatchId]] =
+        sql"""SELECT started_match_id FROM open_challenge
+          WHERE game_id = $gameId AND challenge_id = $challengeId"""
+            .query(matchId.opt)
+
+    /** The match this challenge has been claimed for, if it has been. `None` for a challenge that is still open, and
+      * for one that is not there at all — which read the same to every caller of this, since neither is a challenge
+      * anybody can still start.
+      */
+    def startedMatch(gameId: GameId, id: ChallengeId): IO[Option[MatchId]] =
+        session.option(selectStartedMatch)((gameId, id)).map(_.flatten)
+
     private val selectChallenger: Query[(GameId, ChallengeId), PlayerId] =
         sql"""SELECT challenger FROM open_challenge
           WHERE game_id = $gameId AND challenge_id = $challengeId""".query(playerId)

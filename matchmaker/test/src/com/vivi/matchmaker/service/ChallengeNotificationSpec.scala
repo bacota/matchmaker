@@ -349,6 +349,29 @@ class ChallengeNotificationSpec extends PropertySuite {
         }
     }
 
+    /* The race the answer's three cases exist for: a second call finds the challenge already claimed,
+     * and must say so rather than saying "not started".
+     *
+     * Asked of `startIfReady` directly because that is where the two are told apart, and because the
+     * race itself -- two acceptances filling the last two seats at the same instant -- cannot be
+     * staged reliably. What it pins is the consequence: the second answer counts as a match, so the
+     * acceptance that produced it sends no mail about a challenge that is waiting to start. */
+    property("a start that loses to an existing claim is a match, not a challenge still open") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed, autoStart = true).flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- accept(f, f.third, 2)
+                    // The acceptance above has already started it; this is the loser of the race.
+                    again <- TestSession.resource.use(session =>
+                        f.services.engine.startIfReady(session, f.game.gameId, f.challenge.challengeId, f.third)
+                    )
+                } yield again == GameEngineService.AutoStart.AlreadyStarted && again.isMatch
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
     // The default, stated as a test rather than left to the column's DEFAULT: filling the roster of
     // an ordinary challenge starts nothing, and its challenger is asked to.
     property("an ordinary challenge leaves the start to its challenger") {

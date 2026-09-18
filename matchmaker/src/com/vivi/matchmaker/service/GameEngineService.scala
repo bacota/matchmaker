@@ -75,12 +75,15 @@ class GameEngineService[T](
       * even though a challenge whose only required role is the challenger's own is startable the moment it exists: a
       * challenge that started itself before anybody could see it would not have been a challenge.
       *
-      * `None` for every reason not to have started, and they are not told apart because the caller can do nothing about
-      * any of them: the challenge does not auto-start, the roster is not full yet, it has been started already, or the
-      * start itself failed. That last one is why this swallows — an acceptance that has been recorded must not be
-      * failed by a game engine that will not answer, and the challenger can still press Start. The failure is printed
-      * for the reason `Notifications` prints one: nobody is owed an error, but somebody may go looking for an
-      * explanation.
+      * Three answers, because the caller has something different to say for each — see [[GameEngineService.AutoStart]].
+      * The distinction that matters is between a challenge that is still open and one that is already a match: both
+      * leave this call having started nothing, and only the first of them is still an open challenge for an acceptance
+      * to be news about.
+      *
+      * A start that simply fails is the third, and is reported as "not started" on purpose: an acceptance that has been
+      * recorded must not be failed by a game engine that will not answer, the challenge is still there, and the
+      * challenger can still press Start. The failure is printed for the reason `Notifications` prints one — nobody is
+      * owed an error, but somebody may go looking for an explanation.
       *
       * The claim `start` takes is what makes a race harmless. Two acceptances landing together may both find the roster
       * full, and the second start then fails on the challenge's `startedMatchId` — or on the unique index behind it —
@@ -107,19 +110,38 @@ class GameEngineService[T](
         gameId: GameId,
         challengeId: ChallengeId,
         acceptor: Player
-    ): IO[Option[Match]] =
+    ): IO[GameEngineService.AutoStart] = {
+        val challengeRepo = new OpenChallengeRepo(session)
+
         (for {
-            challenge <- new OpenChallengeRepo(session).read(gameId, challengeId)
+            claimed <- challengeRepo.startedMatch(gameId, challengeId)
+            challenge <- challengeRepo.read(gameId, challengeId)
             unfilled <- new AcceptanceRepo(session).unclaimedRoles(gameId, challengeId)
-        } yield challenge.exists(_.autoStart) && unfilled.isEmpty)
+        } yield
+            if (claimed.isDefined) GameEngineService.AutoStart.AlreadyStarted
+            else if (challenge.exists(_.autoStart) && unfilled.isEmpty) GameEngineService.AutoStart.Ready
+            else GameEngineService.AutoStart.NotReady)
             .flatMap {
-                case false => IO.pure(None)
-                case true  => started(session, gameId, challengeId, None, Some(acceptor.nickname)).map(Some(_))
+                case GameEngineService.AutoStart.Ready =>
+                    started(session, gameId, challengeId, None, Some(acceptor.nickname))
+                        .map(m => GameEngineService.AutoStart.Started(m.matchId))
+                        .recover {
+                            // Somebody got there between the read above and the claim below it: another
+                            // acceptance filling the same last seat, or the challenger pressing Start.
+                            // There is a match, it was not this call that made it, and the one thing
+                            // that must not follow is a mail about a challenge still waiting to start.
+                            case _: ConflictError => GameEngineService.AutoStart.AlreadyStarted
+                        }
+                case decided => IO.pure(decided)
             }
             .handleError { error =>
+                // A real failure, as against a race: the challenge is still open and still startable by
+                // hand, so it is reported as the "not started" it is and the ordinary acceptance mail
+                // goes out saying so.
                 System.err.println(s"could not start challenge ${challengeId.value} automatically: $error")
-                None
+                GameEngineService.AutoStart.NotReady
             }
+    }
 
     /* The start itself, for both of the things that can ask for one.
      *
@@ -927,4 +949,43 @@ class GameEngineService[T](
             case Some(p) if p.matchId == matchId => IO.pure(p)
             case _ => IO.raiseError(NotFoundError(s"no participant ${participantId.value} in match '${matchId.value}'"))
         }
+}
+
+object GameEngineService {
+
+    /** What became of an automatic start: the three things that can be true after [[GameEngineService.startIfReady]]
+      * has looked at a challenge.
+      *
+      * Three rather than a boolean because the caller is deciding what to *tell* people, and "nothing started" is two
+      * quite different pieces of news. An acceptance of a challenge that is still open is news about that challenge —
+      * who joined, what it is still waiting for, whether it can be started. The same acceptance, once the challenge has
+      * become a match, is not: the players have been told the match began, and a mail arriving afterwards to say their
+      * challenge is ready to start describes something that is over.
+      */
+    enum AutoStart {
+
+        /** This call started it, as the match named here. */
+        case Started(matchId: MatchId)
+
+        /** There is a match, and this call did not make it: another acceptance filled the last seat at the same moment,
+          * or the challenger pressed Start. Nothing to do, and nothing further to say about the challenge.
+          */
+        case AlreadyStarted
+
+        /** Still an open challenge: not offered as starting itself, still waiting for a role, or a start that was meant
+          * to happen and failed. Whatever an acceptance of it would ordinarily be told, it still is.
+          */
+        case NotReady
+
+        /* Only used between the check and the start, and never answered with. A fourth case rather than
+         * a second type, because it is the same question one step earlier: this is what "ready" looks
+         * like before anything has been tried. */
+        private[service] case Ready
+
+        /** Whether this challenge is now a match, however it became one. What the acceptance path asks. */
+        def isMatch: Boolean = this match {
+            case AutoStart.Started(_) | AutoStart.AlreadyStarted => true
+            case _                                               => false
+        }
+    }
 }

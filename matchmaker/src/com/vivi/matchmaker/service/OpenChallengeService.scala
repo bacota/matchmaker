@@ -27,7 +27,13 @@ class OpenChallengeService[T](
      * notifications existed. */
     notifications: Notifications = Notifications.disabled,
     /* How a challenge whose required roles have just filled up gets started, for the challenges
-     * offered on those terms (`OpenChallenge.autoStart`), and whether it started one. A function
+     * offered on those terms (`OpenChallenge.autoStart`), and whether the challenge is now a match.
+     *
+     * A match rather than "did this start one", which is not the same question and is the wrong one:
+     * a start that lost a race to another acceptance filling the same last seat, or to the challenger
+     * pressing Start, started nothing and yet leaves a match. See `GameEngineService.AutoStart`.
+     *
+     * A function
      * rather than a `GameEngineService`, because what this service knows is that a challenge has
      * been accepted: whether that is also the moment a match begins, and everything involved in
      * beginning one, belongs to the service that starts matches.
@@ -289,6 +295,13 @@ class OpenChallengeService[T](
                      * write to them twice about one event, and the first of the two would be about a
                      * challenge that no longer exists to be accepted or started.
                      *
+                     * The same holds when the match was started by something else in the same moment
+                     * -- the acceptance that filled the other last seat, or the challenger pressing
+                     * Start -- which is why the question asked is "is this a match now" and not "did I
+                     * start one". Both answer true, and in both this acceptance has been overtaken:
+                     * telling the players their challenge is ready to start, after they have been told
+                     * the match began, describes something that is over.
+                     *
                      * `false` covers every other case and they all want the ordinary mail: an
                      * acceptance that leaves a role unfilled, a challenge that was not offered on these
                      * terms, and a start that was meant to happen and failed -- that last one
@@ -297,8 +310,8 @@ class OpenChallengeService[T](
                      *
                      * Neither can fail this accept: the acceptance is recorded, `startIfReady` swallows
                      * and logs whatever it runs into, and `Notifications` does the same. */
-                    startedMatch <- autoStart(session, gameId, challengeId, actor)
-                    _ <- IO.unlessA(startedMatch)(
+                    isMatch <- autoStart(session, gameId, challengeId, actor)
+                    _ <- IO.unlessA(isMatch)(
                       notifications.challengeAccepted(session, gameId, challengeId, actor)
                     )
                 } yield created
