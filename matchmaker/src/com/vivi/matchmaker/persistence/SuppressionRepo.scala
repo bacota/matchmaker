@@ -4,6 +4,7 @@ import cats.effect.IO
 import skunk._
 import skunk.implicits._
 import skunk.codec.all._
+import skunk.data.Completion
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model.{EmailSuppression, SuppressionReason}
 
@@ -63,6 +64,7 @@ class SuppressionRepo(session: Session[IO]) {
                           )
                           THEN email_suppression.reason
                       ELSE EXCLUDED.reason
+                  END,
                   permanent = EXCLUDED.permanent
                       OR (email_suppression.permanent AND email_suppression.released_at IS NULL),
                   diagnostic = COALESCE(EXCLUDED.diagnostic, email_suppression.diagnostic),
@@ -98,25 +100,50 @@ class SuppressionRepo(session: Session[IO]) {
     private val release: Command[String] =
         sql"UPDATE email_suppression SET released_at = now() WHERE email = lower($text) AND released_at IS NULL AND reason <> 'complaint'".command
 
-    /** Records one SES event against its address, creating the row or adding to it.
+    /* The event's own identity, claimed before it is counted (V17).
+     *
+     * `ON CONFLICT DO NOTHING` reports `Insert(0)` when the id is already there, which is the whole
+     * deduplication mechanism: a redelivered notification loses the race to claim its id, and the
+     * count below is then skipped. */
+    private val claimEvent: Command[(String, String)] =
+        sql"""INSERT INTO email_suppression_event (event_id, email, recorded_at)
+              VALUES ($text, lower($text), now())
+              ON CONFLICT (event_id) DO NOTHING""".command
+
+    /** Records one SES event against its address, creating the row or adding to it, and says whether it counted.
       *
-      * Idempotent in the sense that matters and not in the sense that does not: sending the same event twice counts it
-      * twice, because SQS is at-least-once and the alternative is an event id column and a uniqueness constraint to
-      * make it exact. Two counted delays instead of one brings a threshold forward by one event, which is the same
-      * error as SES having reported one more delay than it did — well inside what a threshold of three tolerates.
+      * `false` means this event had already been recorded and nothing changed. That is not an anomaly: SQS is
+      * at-least-once, so a visibility timeout that expires mid-write, a function that times out, or a retry after a
+      * partial-batch failure all deliver a notification whose effects are already here.
+      *
+      * Counting such a redelivery would be a real fault rather than a rounding error. The transient threshold is three,
+      * so a single duplicate suppresses an address after two genuine failures — and the player it silences is
+      * reachable. Hence the event id, derived from what SES generated (`SesEvent.identity`) and never from the SQS
+      * message id: a redelivery *is* a new receipt of the same message, and a partial-batch retry carries the same
+      * message id as the attempt that already succeeded for its siblings.
+      *
+      * Both statements in one transaction, which is what makes the pair honest in either direction: a crash between
+      * them cannot leave an event claimed but uncounted (the suppression would never arrive) nor counted but unclaimed
+      * (the next redelivery would count it again).
       */
-    def record(event: EmailSuppression.Event): IO[Unit] =
-        session
-            .execute(upsert)(
-              (
-                event.email.trim,
-                event.reason,
-                event.permanent,
-                event.diagnostic.map(_.trim).filter(_.nonEmpty),
-                EmailSuppression.windowSeconds
-              )
-            )
-            .void
+    def record(event: EmailSuppression.Event): IO[Boolean] =
+        session.transaction.use { _ =>
+            session.execute(claimEvent)((event.eventId, event.email.trim)).flatMap {
+                case Completion.Insert(0) => IO.pure(false)
+                case _ =>
+                    session
+                        .execute(upsert)(
+                          (
+                            event.email.trim,
+                            event.reason,
+                            event.permanent,
+                            event.diagnostic.map(_.trim).filter(_.nonEmpty),
+                            EmailSuppression.windowSeconds
+                          )
+                        )
+                        .as(true)
+            }
+        }
 
     /** Everything known about one address, suppressed or merely counted. `None` means nothing has ever gone wrong. */
     def read(email: String): IO[Option[EmailSuppression]] =
@@ -146,7 +173,7 @@ class SuppressionRepo(session: Session[IO]) {
       */
     def releaseFor(email: String): IO[Boolean] =
         session.execute(release)(email.trim).map {
-            case skunk.data.Completion.Update(count) => count > 0
-            case _                                   => false
+            case Completion.Update(count) => count > 0
+            case _                        => false
         }
 }

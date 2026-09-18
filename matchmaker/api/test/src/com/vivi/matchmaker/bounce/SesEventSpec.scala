@@ -156,6 +156,54 @@ class SesEventSpec extends FunSuite {
         }
     }
 
+    /* The identity that keeps the transient threshold honest. SQS is at-least-once, so the same
+     * notification arrives more than once as a matter of course; an id that differed between
+     * receives would let two real delays plus one redelivery suppress a reachable player. */
+    test("the same notification read twice yields the same event id") {
+        assertEquals(read(permanentBounce).map(_.eventId), read(permanentBounce).map(_.eventId))
+        assertEquals(read(complaint).map(_.eventId), read(complaint).map(_.eventId))
+        assertEquals(read(delay).map(_.eventId), read(delay).map(_.eventId))
+    }
+
+    test("every id is a fixed-width hash, so no component can smuggle a separator into it") {
+        val ids = (read(permanentBounce) ++ read(complaint) ++ read(delay)).map(_.eventId)
+        assertEquals(ids.size, 3)
+        assert(ids.forall(id => id.length == 64 && id.forall(c => c.isDigit || ('a' to 'f').contains(c))), ids.toString)
+    }
+
+    test("two recipients of one notification are two events") {
+        val two = permanentBounce.replace(
+          "\"emailAddress\": \"player@example.invalid\"",
+          "\"emailAddress\": \"one@example.invalid\" }, { \"emailAddress\": \"two@example.invalid\""
+        )
+        assertEquals(read(two).map(_.eventId).distinct.size, 2)
+    }
+
+    /* The things that must *not* collapse into one id: a different kind of event about the same
+     * mail, a different mail, and a second genuine delay about the same mail. The last is why a
+     * delivery delay's identity uses its timestamp -- it is the only discriminator such a document
+     * has. */
+    test("different events are different ids") {
+        val bounceId = read(permanentBounce).map(_.eventId)
+        assertNotEquals(bounceId, read(complaint).map(_.eventId), "same mail and recipient, different kind")
+
+        val otherMail = permanentBounce.replace(
+          "0100017b-1234-4abc-8def-0123456789ab-000000",
+          "0100017b-9999-4abc-8def-0123456789ab-000000"
+        )
+        assertNotEquals(read(otherMail).map(_.eventId), bounceId, "a different mail")
+
+        val laterDelay = delay.replace("2026-09-17T18:00:03.000Z", "2026-09-17T19:30:00.000Z")
+        assertNotEquals(read(laterDelay).map(_.eventId), read(delay).map(_.eventId), "a second real delay")
+    }
+
+    /* A bounce and a complaint carry a feedbackId, which is SES's own identifier for the event and is
+     * preferred over the timestamp: it is the field guaranteed not to repeat. */
+    test("a bounce with a new feedback id is a new event, even at the same timestamp") {
+        val again = permanentBounce.replace("0100017b-aaaa-bbbb-cccc-0123456789ab-000000", "0100017b-bbbb-aaaa")
+        assertNotEquals(read(again).map(_.eventId), read(permanentBounce).map(_.eventId))
+    }
+
     test("a document that is not one of these is no events, not an error") {
         assertEquals(read("""{}"""), Seq.empty)
         assertEquals(read("""{ "eventType": "Bounce" }"""), Seq.empty)

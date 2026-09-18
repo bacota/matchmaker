@@ -39,9 +39,11 @@ class Handler extends RequestStreamHandler {
             try {
                 if (record.events.isEmpty) log(s"nothing to record for ${record.messageId}")
                 else {
-                    suppression.record(record.events).unsafeRunSync()
+                    val counted = suppression.record(record.events).unsafeRunSync()
+                    // "2 of 2" and "0 of 2" are different facts: the second is a redelivery, which
+                    // the queue produces routinely and which deliberately advances nothing.
                     log(
-                      s"recorded ${record.messageId}: " +
+                      s"recorded $counted of ${record.events.size} for ${record.messageId}: " +
                           record.events.map(e => s"${e.reason.code} ${e.email}").mkString(", ")
                     )
                 }

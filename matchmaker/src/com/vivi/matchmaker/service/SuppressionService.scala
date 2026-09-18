@@ -20,16 +20,25 @@ import com.vivi.matchmaker.persistence.{PlayerRepo, SuppressionRepo}
   */
 class SuppressionService(sessionPool: SessionPool) {
 
-    /** Records what SES reported, one row per address.
+    /** Records what SES reported, and answers with how many of them were news.
       *
       * Takes a batch because a batch is what arrives: one SQS receive carries several events, and one event may name
       * several recipients. Sequential rather than concurrent, unlike the send path — these are writes to one table
       * keyed by address, and two events about the same address in the same batch are exactly the case where doing them
       * at once buys nothing and interleaves two upserts on one row.
+      *
+      * The count is how many advanced anything. The rest were redeliveries, which SQS produces as a matter of course
+      * and which must not advance the transient threshold — see `SuppressionRepo.record`. Returned rather than
+      * swallowed so the consumer's log distinguishes "recorded" from "already knew", which is the difference between a
+      * bounce arriving twice and a bounce arriving twice as often as it should.
       */
-    def record(events: Seq[EmailSuppression.Event]): IO[Unit] =
-        if (events.isEmpty) IO.unit
-        else sessionPool.use(session => events.toList.traverse_(new SuppressionRepo(session).record))
+    def record(events: Seq[EmailSuppression.Event]): IO[Int] =
+        if (events.isEmpty) IO.pure(0)
+        else
+            sessionPool.use { session =>
+                val repo = new SuppressionRepo(session)
+                events.toList.traverse(repo.record).map(_.count(identity))
+            }
 
     /** Whether mail to the caller is being held back, and why. `None` means nothing has gone wrong with it.
       *

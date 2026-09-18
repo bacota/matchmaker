@@ -284,7 +284,18 @@ class MatchNotificationSpec extends PropertySuite {
      * which is the point -- there is nothing in the queue to retry and no sending reputation spent
      * on a mail SES would discard. */
     private def suppress(event: EmailSuppression.Event): IO[Unit] =
-        TestSession.resource.use(session => new SuppressionRepo(session).record(event))
+        TestSession.resource.use(session => new SuppressionRepo(session).record(event).void)
+
+    /* A distinct event id per call, because a repeated one is deliberately a no-op: the threshold
+     * must not be advanced by a redelivery. `SuppressionRepoSpec` is where that rule is asserted;
+     * here it only has to be respected. */
+    private def event(
+        address: String,
+        reason: SuppressionReason,
+        permanent: Boolean,
+        diagnostic: Option[String] = None
+    ): EmailSuppression.Event =
+        EmailSuppression.Event(java.util.UUID.randomUUID().toString, address, reason, permanent, diagnostic)
 
     private def endMatch(f: Fixture): IO[Unit] =
         f.services.engine
@@ -304,7 +315,7 @@ class MatchNotificationSpec extends PropertySuite {
             val result = fixture(seed).flatMap { f =>
                 for {
                     _ <- suppress(
-                      EmailSuppression.Event(
+                      event(
                         f.address(f.accepter),
                         SuppressionReason.Bounce,
                         permanent = true,
@@ -322,9 +333,7 @@ class MatchNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val result = fixture(seed).flatMap { f =>
                 for {
-                    _ <- suppress(
-                      EmailSuppression.Event(f.address(f.accepter), SuppressionReason.Complaint, true, Some("abuse"))
-                    )
+                    _ <- suppress(event(f.address(f.accepter), SuppressionReason.Complaint, true, Some("abuse")))
                     _ <- endMatch(f)
                 } yield f.notifier.recipients == Set(f.address(f.challenger))
             }
@@ -339,10 +348,10 @@ class MatchNotificationSpec extends PropertySuite {
     property("a single transient failure is counted, not acted on") {
         forAll(genUniqueString) { seed =>
             val result = fixture(seed).flatMap { f =>
-                val delay = EmailSuppression.Event(f.address(f.accepter), SuppressionReason.Delay, false, None)
+                val delayed = () => event(f.address(f.accepter), SuppressionReason.Delay, false)
                 for {
-                    _ <- suppress(delay)
-                    _ <- suppress(delay)
+                    _ <- suppress(delayed())
+                    _ <- suppress(delayed())
                     _ <- endMatch(f)
                 } yield f.notifier.recipients == Set(f.address(f.challenger), f.address(f.accepter))
             }
@@ -356,9 +365,7 @@ class MatchNotificationSpec extends PropertySuite {
         forAll(genUniqueString) { seed =>
             val result = fixture(seed).flatMap { f =>
                 for {
-                    _ <- suppress(
-                      EmailSuppression.Event(f.address(f.accepter), SuppressionReason.Bounce, true, None)
-                    )
+                    _ <- suppress(event(f.address(f.accepter), SuppressionReason.Bounce, true))
                     _ <- f.services.suppression.retryMine(f.accepter.externalId)
                     _ <- endMatch(f)
                 } yield f.notifier.recipients == Set(f.address(f.challenger), f.address(f.accepter))
