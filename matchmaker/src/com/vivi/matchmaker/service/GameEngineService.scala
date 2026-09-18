@@ -216,6 +216,10 @@ class GameEngineService[T](
                         )
                     }
                     challenge <- requireChallenge(challengeRepo, gameId, challengeId)
+                    // Unlocked inside a transaction that writes, which is the reference-table
+                    // exception `requireGame` explains: the roster written below is `participant`
+                    // rows, and an admin editing the game's roles mid-start is not a race this
+                    // queues every start behind a catalogue row to avoid.
                     game <- requireGame(gameRepo, gameId)
                     challenger <- playerRepo.read(challenge.challenger).flatMap {
                         case Some(p) => IO.pure(p)
@@ -338,50 +342,61 @@ class GameEngineService[T](
                     session.transaction.use { _ =>
                         for {
                             current <- requireMatchForUpdate(matchRepo, gameId, matchId)
-                            participants <- participantRepo.listForMatch(gameId, matchId)
-                            byId = participants.map((p, _, _) => p.participantId -> p).toMap
-                            // Before the deadlines below, which for a total limit are computed from what each seat
-                            // has spent — and what they have spent is these rows.
-                            _ <- recordTurns(
-                              session,
-                              current,
-                              status.turns.filter(t => byId.contains(ParticipantId(t.participantId))),
-                              since = None
-                            )
-                            used <- timeUsedIn(session, current)
-                            _ <- status.participants.traverse { reported =>
-                                byId.get(ParticipantId(reported.participantId)) match {
-                                    case Some(p) =>
-                                        participantRepo.update(
-                                          withTurn(
-                                            p,
-                                            reported.pending,
-                                            dueFor(current, used)(p.participantId, reported.prevMoveAt),
-                                            reported.completed
-                                          )
+                            // Re-read under the lock, and checked here rather than only by the callers:
+                            // their check was made before the status call, and a cancel committing while
+                            // the engine was answering must not be undone by the answer. Writing what the
+                            // engine said would restamp the seats this match's cancel had finished and
+                            // could complete a match its creator had called off.
+                            outcome <-
+                                if (current.cancelled) IO.pure((current, false))
+                                else
+                                    for {
+                                        participants <- participantRepo.listForMatch(gameId, matchId)
+                                        byId = participants.map((p, _, _) => p.participantId -> p).toMap
+                                        // Before the deadlines below, which for a total limit are computed from what each seat
+                                        // has spent — and what they have spent is these rows.
+                                        _ <- recordTurns(
+                                          session,
+                                          current,
+                                          status.turns.filter(t => byId.contains(ParticipantId(t.participantId))),
+                                          since = None
                                         )
-                                    // The engine reporting a seat matchmaker does not have is the engine's
-                                    // problem to explain, not a reason to abandon the seats it does have.
-                                    case None => IO.unit
-                                }
-                            }
-                            // Set once by the database's clock and kept: a match that is already finished keeps
-                            // the time it finished, rather than being restamped by every later status the engine
-                            // answers with. Nothing else about the match changes here, so completion is the only
-                            // reason to write at all.
-                            completedAt <- (status.completed, current.completedAt) match {
-                                case (true, None)     => matchRepo.complete(gameId, matchId).map(Some(_))
-                                case (true, already)  => IO.pure(already)
-                                case (false, None)    => IO.pure(None)
-                                case (false, Some(_)) => matchRepo.update(current.copy(completedAt = None)).as(None)
-                            }
-                            updated = current.copy(completedAt = completedAt)
-                            // The first of those four cases, which is the one where this call is what ended
-                            // the match: the engine says it is over and matchmaker had not heard. It happens
-                            // when the results callback went astray and somebody pressed Refresh, and it is
-                            // the only way a player would ever learn their match had finished.
-                            endedHere = status.completed && current.completedAt.isEmpty
-                        } yield (updated, endedHere)
+                                        used <- timeUsedIn(session, current)
+                                        _ <- status.participants.traverse { reported =>
+                                            byId.get(ParticipantId(reported.participantId)) match {
+                                                case Some(p) =>
+                                                    participantRepo.update(
+                                                      withTurn(
+                                                        p,
+                                                        reported.pending,
+                                                        dueFor(current, used)(p.participantId, reported.prevMoveAt),
+                                                        reported.completed
+                                                      )
+                                                    )
+                                                // The engine reporting a seat matchmaker does not have is the engine's
+                                                // problem to explain, not a reason to abandon the seats it does have.
+                                                case None => IO.unit
+                                            }
+                                        }
+                                        // Set once by the database's clock and kept: a match that is already finished keeps
+                                        // the time it finished, rather than being restamped by every later status the engine
+                                        // answers with. Nothing else about the match changes here, so completion is the only
+                                        // reason to write at all.
+                                        completedAt <- (status.completed, current.completedAt) match {
+                                            case (true, None)    => matchRepo.complete(gameId, matchId).map(Some(_))
+                                            case (true, already) => IO.pure(already)
+                                            case (false, None)   => IO.pure(None)
+                                            case (false, Some(_)) =>
+                                                matchRepo.update(current.copy(completedAt = None)).as(None)
+                                        }
+                                        updated = current.copy(completedAt = completedAt)
+                                        // The first of those four cases, which is the one where this call is what ended
+                                        // the match: the engine says it is over and matchmaker had not heard. It happens
+                                        // when the results callback went astray and somebody pressed Refresh, and it is
+                                        // the only way a player would ever learn their match had finished.
+                                        endedHere = status.completed && current.completedAt.isEmpty
+                                    } yield (updated, endedHere)
+                        } yield outcome
                     }
                 }
             }
@@ -504,6 +519,8 @@ class GameEngineService[T](
             session.transaction
                 .use { _ =>
                     for {
+                        // Reads the game unlocked; see `requireGame` for why a catalogue row is
+                        // not locked on the way to writing `match` and `participant`.
                         _ <- authorizeGame(gameRepo, gameId, callerExternalId)
                         existing <- requireMatchForUpdate(matchRepo, gameId, matchId)
                         _ <- IO.raiseWhen(existing.completed)(
@@ -567,6 +584,8 @@ class GameEngineService[T](
             session.transaction
                 .use { _ =>
                     for {
+                        // Reads the game unlocked; see `requireGame` for why a catalogue row is
+                        // not locked on the way to writing `match` and `participant`.
                         _ <- authorizeGame(gameRepo, gameId, callerExternalId)
                         existing <- requireMatchForUpdate(matchRepo, gameId, matchId)
                         _ <- IO.raiseWhen(existing.cancelled)(
@@ -726,7 +745,10 @@ class GameEngineService[T](
                                     // Taken since: the status call moved the turn on, and there is nobody left to
                                     // act against.
                                     case Nil => IO.pure(checked)
-                                    case _ =>
+                                    case _   =>
+                                        // The timeout action, read unlocked -- see `requireGame`.
+                                        // What is written from it is the match and its seats, and an
+                                        // admin changing it while a clock runs out is not a race.
                                         requireGame(new GameRepo[T](session), gameId).flatMap { game =>
                                             game.timeoutAction match {
                                                 case TimeoutAction.Forfeit => forfeit(session, gameId, matchId)
@@ -932,6 +954,15 @@ class GameEngineService[T](
             )
         }
 
+    /* The game, read plainly even inside a transaction that writes -- the reference-table exception
+     * in CLAUDE.md. The catalogue is small and changes only when an admin edits it, while what is
+     * written from it here is `match`, `participant` and `result`; taking the game's row lock on
+     * every call would queue a whole game's traffic behind one row for a race nobody runs.
+     *
+     * The exception is about that asymmetry, not about being a read that does not matter: a caller
+     * reading a game in order to rewrite *it* locks it (`GameService.createOrUpdate`). Where an
+     * existence check has to outlive the insert that relies on it, `GameRepo.lockForShare` is the
+     * middle course -- see `CharacterService.create`. */
     private def requireGame(gameRepo: GameRepo[T], gameId: GameId): IO[Game] =
         gameRepo.read(gameId).flatMap {
             case Some(g) => IO.pure(g)

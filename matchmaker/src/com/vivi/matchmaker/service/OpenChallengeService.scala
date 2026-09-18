@@ -55,6 +55,15 @@ class OpenChallengeService[T](
     autoStart: (Session[IO], GameId, ChallengeId, Player) => IO[Boolean] = (_, _, _, _) => IO.pure(false)
 )(using codec: TextCodec[T]) {
 
+    /* The game, read plainly even inside a transaction that writes -- the reference-table exception
+     * in CLAUDE.md. The catalogue is small and changes only when an admin edits it, while what is
+     * written from it here is `match`, `participant` and `result`; taking the game's row lock on
+     * every call would queue a whole game's traffic behind one row for a race nobody runs.
+     *
+     * The exception is about that asymmetry, not about being a read that does not matter: a caller
+     * reading a game in order to rewrite *it* locks it (`GameService.createOrUpdate`). Where an
+     * existence check has to outlive the insert that relies on it, `GameRepo.lockForShare` is the
+     * middle course -- see `CharacterService.create`. */
     private def requireGame(gameRepo: GameRepo[T], gameId: GameId): IO[Game] =
         gameRepo.read(gameId).flatMap {
             case Some(g) => IO.pure(g)
@@ -82,6 +91,8 @@ class OpenChallengeService[T](
             // missing from its own acceptances.
             session.transaction.use { _ =>
                 for {
+                    // Unlocked, per the note on `requireGame`: what this decides is the challenge
+                    // and acceptance rows written below, not anything about the game itself.
                     game <- requireGame(gameRepo, challenge.gameId)
                     _ <- challenge match {
                         case cc: CharacterOpenChallenge =>
@@ -200,6 +211,9 @@ class OpenChallengeService[T](
                     // A role has to be one of this game's, which the schema's composite foreign key also
                     // enforces — checked here so that a wrong role is a 400 naming the game rather than a
                     // constraint violation surfacing as a 500.
+                    // Unlocked, per the note on `requireGame`. The race that matters here is two
+                    // players taking the same role, and the challenge's own lock above settles it;
+                    // an admin adding a role to the game meanwhile is not one.
                     _ <- requireGame(gameRepo, gameId).flatMap { game =>
                         IO.raiseUnless(game.roles.exists(_.gameRoleId == gameRoleId))(
                           ValidationError(s"game ${gameId.value} has no role ${gameRoleId.value}")

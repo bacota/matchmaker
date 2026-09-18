@@ -67,6 +67,11 @@ class SuppressionService(sessionPool: SessionPool) {
       */
     def retryMine(callerExternalId: String): IO[Boolean] =
         sessionPool.use { session =>
+            /* The one updating call in this codebase that is not wrapped in a transaction here, and
+             * deliberately: `SuppressionRepo.releaseFor` already is one, taking the row's lock and
+             * deciding inside it, and skunk refuses a nested `begin`. The read below only says which
+             * address to act on, and the write is scoped by that address rather than derived from
+             * anything else this read saw. */
             callerAddress(session, callerExternalId).flatMap {
                 case None          => IO.pure(false)
                 case Some(address) =>

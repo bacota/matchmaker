@@ -1,7 +1,7 @@
 package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
-import cats.effect.{Deferred, IO}
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import java.time.{Duration, Instant}
@@ -44,7 +44,10 @@ class GameEngineServiceSpec extends PropertySuite {
     private class StubEngine(
         response: CreateGameResponse = CreateGameResponse("https://engine/status/1", "https://engine/play/1", None),
         var status: GameStatusResponse = GameStatusResponse(completed = false, participants = Nil),
-        fail: Boolean = false
+        fail: Boolean = false,
+        // Run in the middle of a status call, which is the only way a test can reach the window
+        // between matchmaker's last read before the engine and its first write after one.
+        beforeStatus: IO[Unit] = IO.unit
     ) extends GameEngineClient {
         @volatile var lastRequest: Option[CreateGameRequest] = None
         @volatile var lastUrl: Option[String] = None
@@ -53,7 +56,8 @@ class GameEngineServiceSpec extends PropertySuite {
             if (fail) IO.raiseError(GameEngineError("engine is down"))
             else IO { lastRequest = Some(request); lastUrl = Some(gameUrl) }.as(response)
 
-        def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] = IO.pure(status)
+        def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] =
+            beforeStatus.as(status)
     }
 
     /** An engine that answers a status call by naming the seat it was given first as the one to move, which is what a
@@ -164,6 +168,9 @@ class GameEngineServiceSpec extends PropertySuite {
         TestSession.resource.use(session =>
             new ParticipantRepo(session).listForMatch(m.gameId, m.matchId).map(_.map(_._1))
         )
+
+    private def matchOf(gameId: GameId, matchId: MatchId): IO[Option[Match]] =
+        TestSession.resource.use(session => new MatchRepo(session).read(gameId, matchId))
 
     property("start creates the match from the engine's answer, with one participant per acceptance") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
@@ -565,6 +572,35 @@ class GameEngineServiceSpec extends PropertySuite {
                     after.head.pending &&
                     after.head.due.contains(due)
                 result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    /* The gap around an external call, from CLAUDE.md: `refresh` decides the match is live, asks the
+     * engine, and writes the answer -- and the cancel that lands while the engine is answering must
+     * survive it. `applyEngineStatus` re-reads under the lock for exactly this. */
+    property("a cancel committed while the engine is answering is not undone by the answer") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            // Set up after the fixture, because cancelling needs the match it does not have yet.
+            val cancelling: Ref[IO, IO[Unit]] = Ref.unsafe(IO.unit)
+            val engine = StubEngine(beforeStatus = cancelling.get.flatten)
+            val services = TestServices.servicesWith(engine)
+            val result = for {
+                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                challenge <- services.challenges.create(challengeFor(fixture), externalId)
+                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                // The engine will claim the match is over, which is the answer that would do the most
+                // damage if it were applied: it completes the match and writes it a finish time.
+                _ <- IO {
+                    engine.status = GameStatusResponse(completed = true, participants = Nil)
+                }
+                _ <- cancelling.set(
+                  services.matches.cancel(fixture.game.gameId, started.matchId, externalId).void
+                )
+                refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                reread <- matchOf(fixture.game.gameId, started.matchId)
+            } yield refreshed.cancelled && !refreshed.completed &&
+                reread.exists(m => m.cancelled && !m.completed)
+            result.timeout(15.seconds).unsafeRunSync()
         }
     }
 
