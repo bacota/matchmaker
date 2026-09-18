@@ -96,7 +96,7 @@ class SuppressionRepo(session: Session[IO]) {
             .query(text)
 
     private val release: Command[String] =
-        sql"UPDATE email_suppression SET released_at = now() WHERE email = lower($text) AND released_at IS NULL".command
+        sql"UPDATE email_suppression SET released_at = now() WHERE email = lower($text) AND released_at IS NULL AND reason <> 'complaint'".command
 
     /** Records one SES event against its address, creating the row or adding to it.
       *
