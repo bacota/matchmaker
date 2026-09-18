@@ -19,7 +19,8 @@ case class Services[T](
     acceptances: AcceptanceService,
     matches: MatchService,
     engine: GameEngineService[T],
-    notifications: NotificationService
+    notifications: NotificationService,
+    suppression: SuppressionService
 )
 
 object Services {
@@ -28,6 +29,16 @@ object Services {
       * headroom for the concurrency within a request.
       */
     val defaultPoolSize: Int = 4
+
+    /** Opens a connection pool and nothing else, for a process that wants one but not the services.
+      *
+      * The one caller is the bounce consumer, which is a separate function built from the same jar: it records what SES
+      * reported and touches one table, and building the whole graph would have it construct an engine client and a
+      * queue notifier it will never call. That it needs its own pool rather than sharing one is not a loophole in
+      * `DbSession` being private — it is a different process, with its own container and its own connections.
+      */
+    def poolResource(config: DbConfig, poolSize: Int = defaultPoolSize): Resource[IO, SessionPool] =
+        DbSession.pooled(config, poolSize)
 
     /** Opens the connection pool and builds the services on top of it. Acquire once at startup: releasing this closes
       * every pooled connection.
@@ -70,7 +81,8 @@ object Services {
           acceptances = new AcceptanceService(pool, notifications),
           matches = new MatchService(pool, notifications),
           engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications),
-          notifications = new NotificationService(pool)
+          notifications = new NotificationService(pool),
+          suppression = new SuppressionService(pool)
         )
     }
 }

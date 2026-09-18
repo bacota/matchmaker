@@ -5,7 +5,13 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
 import com.raquo.laminar.api.L.{*, given}
 import org.scalajs.dom
-import com.vivi.matchmaker.model.{GameId, NotificationPreferences, NotificationSettings}
+import com.vivi.matchmaker.model.{
+    EmailSuppression,
+    GameId,
+    NotificationPreferences,
+    NotificationSettings,
+    SuppressionReason
+}
 
 /** The account menu: the three things a player can change about themselves.
   *
@@ -349,6 +355,7 @@ object Account {
         )
 
         div(
+          suppressionNotice(settings.suppressed),
           Notifications.form(
             "Notifications",
             "What we email you about, unless you say otherwise for a particular game or match.",
@@ -570,6 +577,86 @@ object Account {
           ),
           submit("Change password", busy),
           report(passwordOutcome)
+        )
+    }
+
+    /** Why none of the form below is reaching this player, when that is the case.
+      *
+      * Above the form, not below it: a player who has come here to change what they are emailed about needs to know
+      * before they change anything that nothing is being emailed at all. Absent entirely the rest of the time — a
+      * permanent banner about a hypothetical is a banner people learn to skip.
+      *
+      * Two messages, because there are two situations and only one of them is ours to fix:
+      *
+      *   - A *bounce* is the mailbox. It might be full, it might be misspelt, it might not exist. There are two
+      *     remedies and both are offered: change the address, which the form further up this panel does, or press the
+      *     button, which clears the suppression and lets the next notification go out.
+      *   - A *complaint* is the person. Somebody reported our mail as spam, and no button here is going to talk them
+      *     out of it — a one-click undo is exactly what that report exists to prevent. So the notice explains and
+      *     stops, and the address form remains the honest way through.
+      *
+      * `canRetry` comes from the server rather than being worked out here, so the button and the route it calls cannot
+      * disagree about who may press it.
+      */
+    private def suppressionNotice(suppressed: Option[EmailSuppression.Notice]): HtmlElement =
+        div(
+          // The region is the container and is always in the document, for the reason `report` gives: a live region
+          // announced with its text already inside has not changed, and is read out by nobody.
+          aria.live := "polite",
+          child <-- Signal.fromValue(suppressed).map {
+              case None => emptyNode
+              case Some(notice) if notice.reason == SuppressionReason.Complaint =>
+                  div(
+                    cls := "mail-stopped",
+                    role := "status",
+                    p(
+                      strong("We have stopped emailing you."),
+                      s" Mail to ${notice.address} was reported as spam, so we are no longer sending to it. ",
+                      "If that was not deliberate, change your email address above — we will start again at the new one."
+                    )
+                  )
+              case Some(notice) =>
+                  div(
+                    cls := "mail-stopped",
+                    role := "status",
+                    p(
+                      strong("Your email is bouncing."),
+                      s" Mail to ${notice.address} is not being delivered, so we have stopped sending it. ",
+                      "Fix the mailbox and try again, or change your address above."
+                    ),
+                    // Signing out and in again is not a detail we can spare them: matchmaker's copy of the address is
+                    // only refreshed from the token at sign-in, so a player who changes it and stays signed in is
+                    // still being mailed at the old one -- and this button, which releases the address we hold, would
+                    // release the wrong one.
+                    p(
+                      cls := "hint",
+                      "If you have just changed your address, sign out and back in so we pick up the new one."
+                    ),
+                    retryButton(notice)
+                  )
+          }
+        )
+
+    /* Releases the suppression, then re-fetches the settings rather than assuming what they became.
+     *
+     * `reloadNotifications` rather than editing the held copy: whether the release actually cleared
+     * anything is the server's to say, and a screen that cleared its own banner would claim success
+     * for a release that found nothing to release. */
+    private def retryButton(notice: EmailSuppression.Notice): HtmlElement = {
+        val busy = Var(false)
+
+        button(
+          tpe := "button",
+          disabled <-- busy.signal,
+          child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
+          "Try sending to this address again",
+          onClick --> { _ =>
+              if (!busy.now()) {
+                  busy.set(true)
+                  Store
+                      .run(ApiClient.retryNotifications(), busy)(_ => Store.reloadNotifications())
+              }
+          }
         )
     }
 

@@ -10,7 +10,7 @@ import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.notify.{ConcurrentNotifier, RecordingNotifier}
-import com.vivi.matchmaker.persistence.{GameRepo, ParticipantRepo, TestSession}
+import com.vivi.matchmaker.persistence.{GameRepo, ParticipantRepo, SuppressionRepo, TestSession}
 
 /** Who is written to while a match is being played, and when it stops.
   *
@@ -268,6 +268,107 @@ class MatchNotificationSpec extends PropertySuite {
                         f.notifier.messages.forall(_.subject == "Your Tic-Tac-Toe match is over") &&
                         f.notifier.messages.forall(_.body.contains("The game is over."))
                     }
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* Mail is held back from an address SES has told us does not work -- and only from that one.
+     *
+     * The event is a result rather than a move because a result writes to everybody in the match,
+     * which is what makes "the other player still got theirs" an assertion rather than an absence.
+     * The suppression is written straight to the table: what puts it there is the bounce consumer,
+     * which has its own specs and no business being started up here.
+     *
+     * `Notifications.dispatch` is the choke point being exercised. The mail is never queued at all,
+     * which is the point -- there is nothing in the queue to retry and no sending reputation spent
+     * on a mail SES would discard. */
+    private def suppress(event: EmailSuppression.Event): IO[Unit] =
+        TestSession.resource.use(session => new SuppressionRepo(session).record(event).void)
+
+    /* A distinct event id per call, because a repeated one is deliberately a no-op: the threshold
+     * must not be advanced by a redelivery. `SuppressionRepoSpec` is where that rule is asserted;
+     * here it only has to be respected. */
+    private def event(
+        address: String,
+        reason: SuppressionReason,
+        permanent: Boolean,
+        diagnostic: Option[String] = None
+    ): EmailSuppression.Event =
+        EmailSuppression.Event(java.util.UUID.randomUUID().toString, address, reason, permanent, diagnostic)
+
+    private def endMatch(f: Fixture): IO[Unit] =
+        f.services.engine
+            .recordResults(
+              f.game.gameId,
+              f.played.matchId,
+              List(
+                ReportedResult(f.seatOf(f.challenger), 1, Map.empty, isWinner = true),
+                ReportedResult(f.seatOf(f.accepter), 2, Map.empty, isWinner = false)
+              ),
+              f.game.externalId
+            )
+            .void
+
+    property("a bounced address is dropped from the recipients, and nobody else is") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed).flatMap { f =>
+                for {
+                    _ <- suppress(
+                      event(
+                        f.address(f.accepter),
+                        SuppressionReason.Bounce,
+                        permanent = true,
+                        Some("smtp; 550 5.1.1 user unknown")
+                      )
+                    )
+                    _ <- endMatch(f)
+                } yield f.notifier.recipients == Set(f.address(f.challenger))
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    property("a complaint is dropped too, and needs no threshold") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed).flatMap { f =>
+                for {
+                    _ <- suppress(event(f.address(f.accepter), SuppressionReason.Complaint, true, Some("abuse")))
+                    _ <- endMatch(f)
+                } yield f.notifier.recipients == Set(f.address(f.challenger))
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* A mailbox that was briefly full is not a player who has stopped being reachable. Two delays
+     * are recorded and not acted on; the third is the threshold, and `SuppressionRepoSpec` counts
+     * to it. What this says is that being counted is not the same as being suppressed, which is the
+     * half of that rule the send path is responsible for. */
+    property("a single transient failure is counted, not acted on") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed).flatMap { f =>
+                val delayed = () => event(f.address(f.accepter), SuppressionReason.Delay, false)
+                for {
+                    _ <- suppress(delayed())
+                    _ <- suppress(delayed())
+                    _ <- endMatch(f)
+                } yield f.notifier.recipients == Set(f.address(f.challenger), f.address(f.accepter))
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    // The button on the notifications screen, end to end from the send path's side: a released row
+    // stops holding anything back.
+    property("a released address is written to again") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed).flatMap { f =>
+                for {
+                    _ <- suppress(event(f.address(f.accepter), SuppressionReason.Bounce, true))
+                    _ <- f.services.suppression.retryMine(f.accepter.externalId)
+                    _ <- endMatch(f)
+                } yield f.notifier.recipients == Set(f.address(f.challenger), f.address(f.accepter))
             }
             result.timeout(caseTimeout).unsafeRunSync()
         }

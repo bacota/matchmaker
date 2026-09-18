@@ -107,8 +107,13 @@ data "aws_iam_policy_document" "mailer" {
   dynamic "statement" {
     for_each = var.sender_identity_arn == "" ? [] : [var.sender_identity_arn]
     content {
-      actions   = ["ses:SendEmail"]
-      resources = [statement.value]
+      actions = ["ses:SendEmail"]
+
+      # Both resources, and both are required. A SendEmail that names a configuration set is
+      # authorized against the identity *and* against the set, so a policy listing only the
+      # identity fails every send the moment MAIL_CONFIG_SET is set -- with an AccessDenied that
+      # reads as though the sender were unverified.
+      resources = [statement.value, aws_sesv2_configuration_set.mail.arn]
     }
   }
 }
@@ -146,9 +151,23 @@ resource "aws_lambda_function" "mailer" {
    * previous jar.
    */
 
-  # No environment variables at all. The region comes from AWS_REGION, which the runtime sets,
-  # and the credentials from the role; everything else -- who the mail is from, who it is to,
-  # what it says -- is in the message. That is the point of the message carrying its own sender.
+  /* One environment variable, where there used to be none.
+   *
+   * The region still comes from AWS_REGION, which the runtime sets, and the credentials from the
+   * role; who the mail is from, who it is to and what it says are all still in the message, which
+   * is the point of the message carrying its own sender.
+   *
+   * MAIL_CONFIG_SET is not about one mail, which is why it is here rather than in the message: it
+   * names the SES configuration set every send is attributed to, and so is a property of the
+   * deployment. It is also what makes SES report a bounce back at all -- see the configuration set
+   * below. Unset means sends are not attributed and nothing is reported, which is what every
+   * environment did before this existed.
+   */
+  environment {
+    variables = {
+      MAIL_CONFIG_SET = aws_sesv2_configuration_set.mail.configuration_set_name
+    }
+  }
 
   depends_on = [
     aws_iam_role_policy_attachment.basic_execution,
@@ -170,3 +189,172 @@ resource "aws_lambda_event_source_mapping" "mail" {
   function_response_types            = ["ReportBatchItemFailures"]
   maximum_batching_window_in_seconds = 5
 }
+
+# ---------------------------------------------------------------------------
+# What SES says afterwards
+# ---------------------------------------------------------------------------
+
+/* Sending is otherwise one-way. A mail goes on the queue, the function calls SES, and whatever SES
+ * learns next -- that the mailbox does not exist, that the person marked it as spam -- is reported
+ * to nobody: the send has already succeeded from the function's point of view, because SES
+ * accepted it. So a dead address costs three redeliveries and a message in the DLQ above, and then
+ * the next event mails it again, forever.
+ *
+ * A configuration set is what makes SES report back. Every send names it (the mailer passes
+ * MAIL_CONFIG_SET as ConfigurationSetName), and SES publishes the events below to the set's event
+ * destinations. It is the one line the whole of bounce handling hangs from: a send with no
+ * configuration set is delivered identically and says nothing afterwards.
+ */
+resource "aws_sesv2_configuration_set" "mail" {
+  configuration_set_name = local.name
+
+  # No reputation_options and no suppression_options block: the account-level defaults are what is
+  # wanted. SES's own suppression list already stops *delivery* to an address that bounced or
+  # complained, which is a useful backstop and not a substitute -- it cannot stop matchmaker
+  # queueing, cannot explain the silence to the player, and cannot treat a complaint as the opt-out
+  # it plainly is. The table this feeds is the record matchmaker acts on.
+  delivery_options {
+    tls_policy = "OPTIONAL"
+  }
+}
+
+/* SNS in the middle, which is not a fan-out and not a preference: an SES v2 event destination can
+ * name a Kinesis stream, a CloudWatch namespace, an EventBridge bus or an SNS topic, and cannot
+ * name a queue. So the topic exists to reach the queue, and has exactly one subscription.
+ *
+ * The queue, rather than the consuming function directly, for the same reason the mail queue is
+ * there at all: a bounce arrives whether or not the function is healthy, and a retry and a
+ * dead-letter queue are the difference between a suppression that is delayed and one that is lost.
+ */
+resource "aws_sns_topic" "mail_events" {
+  name = "${local.name}-events"
+}
+
+data "aws_iam_policy_document" "mail_events_topic" {
+  statement {
+    actions   = ["SNS:Publish"]
+    resources = [aws_sns_topic.mail_events.arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ses.amazonaws.com"]
+    }
+
+    # Only this account's SES, and only this configuration set. Without the condition the policy
+    # would let any account's SES publish to the topic, and a suppression written from somebody
+    # else's bounce is a player who stops hearing from us for no reason.
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_sesv2_configuration_set.mail.arn]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "mail_events" {
+  arn    = aws_sns_topic.mail_events.arn
+  policy = data.aws_iam_policy_document.mail_events_topic.json
+}
+
+/* Bounces, complaints and delivery delays, and nothing else.
+ *
+ * Not SEND or DELIVERY: those are the good news, they are the overwhelming majority of the volume,
+ * and recording them would be paying SNS and SQS to learn what we already assumed. Not OPEN or
+ * CLICK either -- matchmaker's mail carries no tracking pixel and no rewritten links, and asking
+ * for those events would mean SES adding both.
+ *
+ * DELIVERY_DELAY is the one that is arguably optional. It is not a failure yet: SES is still
+ * trying, and most delays are followed by a delivery. It is here because three of them inside a
+ * week is a mailbox that is not taking our mail whatever the reason given, and because a delay
+ * that is never resolved otherwise produces no event at all.
+ */
+resource "aws_sesv2_configuration_set_event_destination" "mail_events" {
+  configuration_set_name = aws_sesv2_configuration_set.mail.configuration_set_name
+  event_destination_name = "${local.name}-events"
+
+  event_destination {
+    enabled              = true
+    matching_event_types = ["BOUNCE", "COMPLAINT", "DELIVERY_DELAY"]
+
+    sns_destination {
+      topic_arn = aws_sns_topic.mail_events.arn
+    }
+  }
+}
+
+/* Where an event waits for the consumer, which lives in the api module because it needs the
+ * database and therefore the VPC. This module owns the queue for the same reason it owns the mail
+ * queue: it is the thing that produces the messages.
+ *
+ * Retention is the default fourteen days rather than the mail queue's shorter window. Nobody is
+ * waiting on a bounce, and an event that arrives late is still worth recording -- where a
+ * notification that arrives late is worth less than nothing.
+ */
+resource "aws_sqs_queue" "bounce" {
+  name = "${local.name}-bounce"
+
+  visibility_timeout_seconds = var.bounce_timeout_s * 6
+  message_retention_seconds  = 1209600
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.bounce_dead_letter.arn
+    maxReceiveCount     = var.max_receive_count
+  })
+}
+
+/* An event that could not be recorded three times. Worth keeping and worth noticing: these are the
+ * suppressions that did not happen, so an address in here is one matchmaker is still mailing.
+ */
+resource "aws_sqs_queue" "bounce_dead_letter" {
+  name                      = "${local.name}-bounce-dlq"
+  message_retention_seconds = 1209600
+}
+
+data "aws_iam_policy_document" "bounce_queue" {
+  statement {
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.bounce.arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["sns.amazonaws.com"]
+    }
+
+    # This topic and no other, which is what stops the queue being an open drop box for anything in
+    # the account that can find its url.
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_sns_topic.mail_events.arn]
+    }
+  }
+}
+
+resource "aws_sqs_queue_policy" "bounce" {
+  queue_url = aws_sqs_queue.bounce.id
+  policy    = data.aws_iam_policy_document.bounce_queue.json
+}
+
+/* Raw message delivery on, so the queue holds the SES notification itself rather than the
+ * notification as a string inside an SNS envelope.
+ *
+ * The consumer reads both shapes, deliberately -- this is a checkbox, and the failure mode of
+ * someone changing it is otherwise that every bounce becomes silently unreadable. Raw is the
+ * default here because the envelope adds nothing the consumer uses: it does not verify the SNS
+ * signature (the queue policy above is what says the message came from this topic) and it does not
+ * care about the topic arn, having only ever been subscribed to one.
+ */
+resource "aws_sns_topic_subscription" "bounce" {
+  topic_arn            = aws_sns_topic.mail_events.arn
+  protocol             = "sqs"
+  endpoint             = aws_sqs_queue.bounce.arn
+  raw_message_delivery = true
+}
+
+data "aws_caller_identity" "current" {}

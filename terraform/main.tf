@@ -120,8 +120,12 @@ module "api" {
   mail_enabled   = var.deploy_mail
   mail_queue_url = var.deploy_mail ? module.mail[0].queue_url : ""
   mail_queue_arn = var.deploy_mail ? module.mail[0].queue_arn : ""
-  mail_sender    = var.deploy_mail ? local.mail_sender : ""
-  ui_base_url    = module.ui.url
+
+  # The other direction: the mail module produces the bounce events, and the consumer that records
+  # them lives in the api module because it writes to the database and so must be in the VPC.
+  bounce_queue_arn = var.deploy_mail ? module.mail[0].bounce_queue_arn : ""
+  mail_sender      = var.deploy_mail ? local.mail_sender : ""
+  ui_base_url      = module.ui.url
 
   # Policy, from environments/<env>.settings.tfvars.
   lambda_memory_mb            = var.lambda_memory_mb

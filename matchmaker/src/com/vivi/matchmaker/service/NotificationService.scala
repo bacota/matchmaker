@@ -1,8 +1,9 @@
 package com.vivi.matchmaker.service
 
+import java.time.Instant
 import cats.effect.IO
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{NotificationRepo, PlayerRepo}
+import com.vivi.matchmaker.persistence.{NotificationRepo, PlayerRepo, SuppressionRepo}
 
 /** What each player wants to be told about.
   *
@@ -31,7 +32,25 @@ class NotificationService(sessionPool: SessionPool) {
                 player <- callerPlayer(session, callerExternalId)
                 overall <- repo.readForPlayer(player.playerId)
                 games <- repo.listForPlayer(player.playerId)
-            } yield NotificationSettings(overall, games)
+                /* And whether any of it is reaching them.
+                 *
+                 * Read here rather than from a route of its own because a screen that showed the
+                 * form before it knew the form was moot would be showing eight settings that change
+                 * nothing. Read against the player's *stored* address, which is the one the send path
+                 * writes to -- a player who has just changed their address in Cognito and not signed
+                 * in again still has the old one here, and is correctly still told about the old
+                 * one's bounce, because that is still where their mail is going.
+                 *
+                 * A row that exists but is not acted on -- one transient delay, or a released row --
+                 * is not news, and is filtered out here rather than shown as a warning about nothing. */
+                suppressed <- player.email.map(_.trim).filter(_.nonEmpty) match {
+                    case None => IO.pure(None)
+                    case Some(address) =>
+                        new SuppressionRepo(session)
+                            .read(address)
+                            .map(_.filter(_.active(Instant.now())).map(EmailSuppression.Notice.of))
+                }
+            } yield NotificationSettings(overall, games, suppressed)
         }
 
     /** Records the caller's defaults, and optionally carries them downwards.

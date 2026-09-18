@@ -348,3 +348,74 @@ variable "ui_base_url" {
   type        = string
   default     = ""
 }
+
+variable "bounce_queue_arn" {
+  description = <<-EOT
+    The mail module's bounce queue: where SES's bounce, complaint and delivery-delay events wait.
+    Drained by the bounce consumer in this module, which is here rather than there because it
+    writes to the database and so has to be in the VPC.
+
+    Empty when deploy_mail is off, in which case no consumer, no log group and no policy is
+    created. Everything counts on mail_enabled rather than on this value, which is not known
+    until apply.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "bounce_timeout_s" {
+  description = <<-EOT
+    Timeout for the bounce consumer. Recording a batch is one upsert per address; the value is
+    really about the first invocation of a cold container, which pays for a JVM and a connection
+    pool first.
+
+    Kept in step with the mail module's bounce_timeout_s, which derives its queue's visibility
+    timeout from the same number.
+  EOT
+  type        = number
+  default     = 30
+}
+
+variable "bounce_db_pool_size" {
+  description = <<-EOT
+    Connections the bounce consumer's pool may open. Smaller than the api function's: a batch is
+    recorded sequentially -- two events about one address are exactly the case where concurrency
+    buys nothing -- so one connection is the working set, and the second is headroom.
+
+    Worth keeping small for a reason beyond thrift: this function and the api function draw from
+    the same database, so connections spent recording bounces are connections a player's request
+    cannot have. What stops that from being unbounded is bounce_max_concurrency below -- this
+    number alone would not, since an event source mapping scales out on queue depth and every
+    container it starts brings a pool of this size.
+  EOT
+  type        = number
+  default     = 2
+}
+
+variable "bounce_max_concurrency" {
+  description = <<-EOT
+    The most bounce consumers Lambda may run at once.
+
+    This is the setting that bounds the consumer's demand on the database: without it the event
+    source mapping scales out on queue depth to the account's concurrency limit, and each instance
+    holds up to bounce_db_pool_size connections to the same RDS instance the API uses. A burst of
+    SES feedback -- which is what a bad send produces -- would then starve players' requests of
+    connections to record bounces nobody is waiting for.
+
+    Two by default, for at most bounce_max_concurrency * bounce_db_pool_size = 4 connections. Small
+    on purpose: the database is not created here and its max_connections cannot be read from here,
+    so the default has to be one any instance can spare. Raising it is safe only against a known
+    connection budget, and the queue absorbs the delay in the meantime -- its retention is fourteen
+    days, and a bounce recorded minutes late is worth the same as one recorded at once.
+
+    AWS requires at least 2; there is no way to say "one at a time" here. Use reserved concurrency
+    on the function for that, at the cost of it applying to every invocation path.
+  EOT
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.bounce_max_concurrency >= 2 && var.bounce_max_concurrency <= 1000
+    error_message = "maximum_concurrency for an SQS event source must be between 2 and 1000."
+  }
+}

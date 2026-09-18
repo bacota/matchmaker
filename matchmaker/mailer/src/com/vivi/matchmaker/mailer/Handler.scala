@@ -83,9 +83,15 @@ object Handler {
 
     /** Built once per container. The region is the one the function runs in; the credentials are the execution role's,
       * from the variables the runtime sets.
+      *
+      * `MAIL_CONFIG_SET` is the one variable this function is given, and the module comment in the terraform used to
+      * say there were none. It names the SES configuration set every send is attributed to, which is how a bounce or a
+      * complaint finds its way back to the queue the bounce consumer drains. Unset -- an environment with no bounce
+      * handling, and the local server -- means the send omits it and behaves exactly as it did before.
       */
     lazy val sender: MailSender = {
         val region = sys.env.get("AWS_REGION").orElse(sys.env.get("AWS_DEFAULT_REGION")).getOrElse("us-east-1")
-        new SesSender(region, new SigV4(AwsCredentials.fromEnvironment(), region))
+        val configurationSet = sys.env.get("MAIL_CONFIG_SET").map(_.trim).filter(_.nonEmpty)
+        new SesSender(region, new SigV4(AwsCredentials.fromEnvironment(), region), configurationSet)
     }
 }

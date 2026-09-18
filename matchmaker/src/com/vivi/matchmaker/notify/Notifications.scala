@@ -24,7 +24,7 @@ import com.vivi.matchmaker.persistence._
   * [[com.vivi.matchmaker.model.NotificationPolicy.choose]]). A `NotificationType` parameter would put that decision
   * back in the services, which is the entanglement this class exists to undo.
   *
-  * Three terms hold for every method here, and are enforced once in [[dispatch]]:
+  * Four terms hold for every method here, and are enforced once in [[dispatch]]:
   *
   *   - *Nothing without a sender and a link.* An environment given neither cannot say anything useful — a mail with no
   *     `From` is not one SES will accept, and one with no link is worse than no mail — so it says nothing, and does not
@@ -33,6 +33,11 @@ import com.vivi.matchmaker.persistence._
   *   - *Never fails the caller.* A notification reports something that has already happened. The match exists, the
   *     acceptance is recorded, the turn is taken; failing the request that did it because a queue would not take a mail
   *     would undo nothing and help nobody.
+  *   - *Nothing to an address that has stopped working.* An address SES has told us is dead, or whose owner reported us
+  *     as spam, is dropped from the recipients of every event — see `email_suppression` (V16) and the bounce consumer
+  *     that writes it. Dropped here rather than earlier because this is where every mail passes, and rather than in the
+  *     mailer because the mailer has no database and is deliberately outside the VPC. The mail is not queued at all, so
+  *     there is nothing to retry and no reputation spent on a send SES would discard.
   *   - *Never silently, either.* A failure is printed with what it was about, because a queue that cannot be reached
   *     and an event nobody was owed a mail for look identical from everywhere else: nothing retries, and nothing
   *     records that a notification was owed. That is a real cost of this design, written down rather than hidden —
@@ -235,7 +240,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         joined: Boolean,
         except: Option[PlayerId]
     ): IO[Unit] =
-        dispatch(s"challenge ${challengeId.value} of game ${gameId.value}") { (from, uiBaseUrl) =>
+        dispatch(session, s"challenge ${challengeId.value} of game ${gameId.value}") { (from, uiBaseUrl) =>
             val notificationRepo = new NotificationRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
             val challengeRepo = new OpenChallengeRepo(session)
@@ -323,7 +328,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
     private def aboutMatch(session: Session[IO], played: Match, about: String)(
         compose: (String, String, GameNotice, List[SeatNotifications], List[Participant]) => Seq[MailMessage]
     ): IO[Unit] =
-        dispatch(about) { (from, uiBaseUrl) =>
+        dispatch(session, about) { (from, uiBaseUrl) =>
             val notificationRepo = new NotificationRepo(session)
             val participantRepo = new ParticipantRepo(session)
             notificationRepo.gameNotice(played.gameId).flatMap {
@@ -338,10 +343,12 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
             }
         }
 
-    /* The three terms in the class comment, in the order they apply: no settings, no reads and no
-     * mail; otherwise compose, enqueue, and swallow whatever comes back with a line saying what it
-     * was about. */
-    private def dispatch(about: String)(compose: (String, String) => IO[Seq[MailMessage]]): IO[Unit] =
+    /* The four terms in the class comment, in the order they apply: no settings, no reads and no
+     * mail; otherwise compose, drop whatever is addressed to somewhere that has stopped working,
+     * enqueue the rest, and swallow whatever comes back with a line saying what it was about. */
+    private def dispatch(session: Session[IO], about: String)(
+        compose: (String, String) => IO[Seq[MailMessage]]
+    ): IO[Unit] =
         mail.sender
             .zip(mail.uiBaseUrl)
             .traverse_ { (sender, uiBaseUrl) =>
@@ -363,9 +370,46 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                  * regardless; what is lost is the same thing sequential order lost, which is any send
                  * that had not started. Making delivery survive a single bad send is the durable-outbox
                  * change the class comment describes, not this one. */
-                compose(sender, uiBaseUrl).flatMap(_.parTraverse_(notifier.enqueue))
+                compose(sender, uiBaseUrl)
+                    .flatMap(deliverable(session, about, _))
+                    .flatMap(_.parTraverse_(notifier.enqueue))
             }
             .handleError(error => System.err.println(s"could not queue notifications for $about: $error"))
+
+    /* The one choke point every mail passes through, which is why the suppression check is here
+     * and not in the eight places that compose one.
+     *
+     * Here rather than in the mailer for a reason that is not about tidiness: the mailer has no
+     * database, and giving it one would put it in the VPC and undo the argument its own module
+     * comment rests on -- no NAT gateway, no interface endpoint, nothing in there to reach. This
+     * side already has the session the caller opened.
+     *
+     * Asked of the database rather than of a value read earlier, because the answer has to include
+     * a row written a moment ago: a bounce recorded by the consumer while a match was being played
+     * must stop the next mail in that match, not the one after it.
+     *
+     * One query for the whole event, not one per recipient. `dispatch` went to some trouble to stop
+     * doing n sequential round trips to SQS on a path a player is waiting on, and replacing them
+     * with n round trips to Postgres would be a poor trade.
+     *
+     * A held-back mail is logged, for the same reason a failed one is: a notification nobody was
+     * owed and a notification we chose not to send look identical from everywhere else. */
+    private def deliverable(session: Session[IO], about: String, messages: Seq[MailMessage]): IO[Seq[MailMessage]] =
+        if (messages.isEmpty) IO.pure(messages)
+        else
+            new SuppressionRepo(session).activeFor(messages.map(_.recipient).toSet).map { suppressed =>
+                if (suppressed.isEmpty) messages
+                else {
+                    val (held, sending) =
+                        messages.partition(message => suppressed.contains(message.recipient.trim.toLowerCase))
+                    held.foreach(message =>
+                        System.err.println(
+                          s"held back a notification for $about: mail to ${message.recipient} is suppressed"
+                        )
+                    )
+                    sending
+                }
+            }
 }
 
 object Notifications {

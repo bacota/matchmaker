@@ -707,6 +707,40 @@ button.toggle {
   font-size: 0.9rem;
 }
 
+/* "We have stopped emailing you": why the notification form above is not reaching this player.
+  
+   The error banner's colours, because it is the same kind of news, but stacked rather than laid
+   out in a row -- `.error` is a flex row with baseline alignment, which is right for one line of
+   text beside a control and wrong for two paragraphs and a button. Its own class rather than a
+   modifier on `.error` so that a later change to the inline banner cannot rearrange this one.
+  
+   Above the notification form, and only present when there is something to say. */
+.mail-stopped {
+  background: #fdf0f0;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  border-radius: 4px;
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.mail-stopped p {
+  margin: 0;
+}
+
+/* Quieter than the warning it sits under: the first paragraph is the problem, this one is a
+   detail about how matchmaker learns the address, which matters to the player who has just
+   changed theirs and to nobody else. */
+.mail-stopped .hint {
+  color: inherit;
+  opacity: 0.8;
+  font-size: 0.9rem;
+}
+
 /* Touch pointers, which is to say phones and tablets.
 
    A 20px-tall link is a fine mouse target and a poor thumb one, so everything that can be

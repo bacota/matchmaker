@@ -146,3 +146,18 @@ output "mail_dead_letter_queue_url" {
   description = "Where undeliverable mail ends up, when deploy_mail is on."
   value       = var.deploy_mail ? module.mail[0].dead_letter_queue_url : ""
 }
+
+# The other side of mail: what SES says after it has accepted a send. An address that bounces or
+# is reported as spam ends up in `email_suppression`, and matchmaker stops writing to it.
+output "mail_configuration_set_name" {
+  description = "The SES configuration set sends are attributed to, and so the reason bounces come back."
+  value       = var.deploy_mail ? module.mail[0].configuration_set_name : ""
+}
+
+# The second place to look when players report that nothing arrives, after the mail DLQ above: an
+# event in here is a suppression that did not get written, so the address is one matchmaker is
+# still mailing when it should have stopped.
+output "bounce_dead_letter_queue_url" {
+  description = "Where unrecordable bounce and complaint events end up, when deploy_mail is on."
+  value       = var.deploy_mail ? module.mail[0].bounce_dead_letter_queue_url : ""
+}

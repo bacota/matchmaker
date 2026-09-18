@@ -303,6 +303,9 @@ locals {
     # game. The per-match level is on the match's own route below.
     "GET /me/notifications",
     "PUT /me/notifications",
+    # Try my address again, after a bounce. See the comment in Router.scala: the row is released
+    # rather than deleted, so this is a POST and not a DELETE.
+    "POST /me/notifications/retry",
     "PUT /me/notifications/games/{gameId}",
     "GET /me/acceptances",
     "GET /me/matches",
@@ -418,4 +421,156 @@ resource "aws_lambda_permission" "api_gateway" {
   # qualified one, so without this every request would come back as 500 with an
   # AccessDeniedException in the gateway's access log and nothing at all in the function's.
   qualifier = aws_lambda_alias.live.name
+}
+
+# ---------------------------------------------------------------------------
+# The bounce consumer
+# ---------------------------------------------------------------------------
+
+/* A second function from the same jar, recording what SES says happened to the mail we sent.
+ *
+ * In this module rather than in the mail module, which is the one decision worth explaining. The
+ * mail module is deliberately outside the VPC: it has nothing in there to reach, so it needs
+ * neither a NAT gateway nor an interface endpoint, and its own comment says so. This function
+ * writes to the database, so it has to be inside -- which means it belongs beside the other
+ * function that is, sharing this module's subnets, security groups and database configuration.
+ *
+ * The queue it drains is still the mail module's, because that module is what produces the events.
+ * Only the arn crosses over.
+ *
+ * Counted on mail_enabled, not on the arn: an unknown-until-apply value cannot decide how many
+ * instances a resource has. Same reasoning as the mail_queue policy above, and the same failure if
+ * it were otherwise.
+ */
+resource "aws_cloudwatch_log_group" "bounce" {
+  count = var.mail_enabled ? 1 : 0
+
+  name              = "/aws/lambda/${local.name}-bounce"
+  retention_in_days = var.log_retention_days
+}
+
+data "aws_iam_policy_document" "bounce_queue" {
+  count = var.mail_enabled ? 1 : 0
+
+  # Reading the bounce queue. The event source mapping polls as this role, so these three are what
+  # make the trigger work at all rather than what the function's own code calls -- exactly as the
+  # mailer's policy does for the mail queue.
+  statement {
+    actions = [
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+    ]
+    resources = [var.bounce_queue_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "bounce_queue" {
+  count = var.mail_enabled ? 1 : 0
+
+  name   = "${local.name}-bounce-queue"
+  role   = aws_iam_role.lambda.id
+  policy = data.aws_iam_policy_document.bounce_queue[0].json
+}
+
+resource "aws_lambda_function" "bounce" {
+  count = var.mail_enabled ? 1 : 0
+
+  function_name = "${local.name}-bounce"
+  role          = aws_iam_role.lambda.arn
+  runtime       = "java21"
+  handler       = "com.vivi.matchmaker.bounce.Handler::handleRequest"
+
+  # The same jar as the api function, and so the same source_code_hash: one build, two handlers.
+  # A deploy that replaced one and not the other would be two versions of the model reading the
+  # same tables.
+  filename         = var.lambda_jar_path
+  source_code_hash = filebase64sha256(var.lambda_jar_path)
+
+  memory_size = var.lambda_memory_mb
+  timeout     = var.bounce_timeout_s
+
+  /* The same execution role as the api function.
+   *
+   * A role of its own would be tighter -- this one can send mail and call the engines, neither of
+   * which it does. It shares anyway because the expensive permission is the database, which is not
+   * an IAM permission at all: the password is in the environment, so a separate role would confer
+   * no separation over the one thing worth separating, while doubling the number of places the
+   * VPC and log-group attachments have to be got right.
+   */
+
+  /* No SnapStart, no publish and no alias, unlike the api function.
+   *
+   * Nothing invokes this by name: the event source mapping below points at the unqualified
+   * function, so $LATEST is what runs. An alias would be a second thing every deploy has to
+   * remember to move, and the cold start it would accelerate is one a queue absorbs -- nobody is
+   * waiting on a bounce. Rolling this one back is redeploying the previous jar.
+   */
+
+  vpc_config {
+    subnet_ids         = var.subnet_ids
+    security_group_ids = var.security_group_ids
+  }
+
+  environment {
+    variables = {
+      DB_HOST      = local.db_host
+      DB_PORT      = local.db_port
+      DB_NAME      = var.db_name
+      DB_USER      = var.db_user
+      DB_PASSWORD  = var.db_password
+      DB_POOL_SIZE = tostring(var.bounce_db_pool_size)
+    }
+  }
+
+  # Six variables, where the api function has a dozen. Nothing else is set because nothing else is
+  # read: this function has no gateway in front of it to authenticate a caller for, no engines to
+  # call, and no mail to send. AUTH_MODE in particular is absent on purpose -- there is no request
+  # and so nobody to identify, and the handler never builds an Authenticator.
+
+  depends_on = [
+    aws_iam_role_policy_attachment.basic_execution,
+    aws_iam_role_policy_attachment.vpc_access,
+    aws_cloudwatch_log_group.bounce,
+  ]
+}
+
+/* The poller. Lambda long-polls the bounce queue as the role above and invokes with a batch.
+ *
+ * `ReportBatchItemFailures`, as the mailer has: the handler answers with the ids it could not
+ * record, so one unwritable event costs one redelivery rather than redelivering nine that were
+ * already written -- which, for an upsert that counts occurrences, would count them twice and
+ * bring a threshold forward.
+ */
+resource "aws_lambda_event_source_mapping" "bounce" {
+  count = var.mail_enabled ? 1 : 0
+
+  event_source_arn = var.bounce_queue_arn
+  function_name    = aws_lambda_function.bounce[0].arn
+
+  batch_size                         = 10
+  function_response_types            = ["ReportBatchItemFailures"]
+  maximum_batching_window_in_seconds = 20
+
+  /* A ceiling on how many of these may run at once, which is about the database and not about
+   * Lambda.
+   *
+   * Without it an event source mapping scales out on queue depth alone: five instances after a
+   * minute, then more, up to the account's concurrency limit. Every one of them is a container in
+   * the VPC with a pool of up to bounce_db_pool_size connections to the same RDS instance the api
+   * function uses -- so a burst of SES feedback, which is exactly what a bad send looks like, would
+   * spend the database's connections on recording bounces while players' requests wait for one.
+   * The ordering is the wrong way round: nobody is waiting on a bounce, and a player is waiting on
+   * every API call.
+   *
+   * So the consumer is deliberately slow and bounded. The arithmetic is
+   * bounce_max_concurrency * bounce_db_pool_size connections at worst -- 4 by default -- against a
+   * database this module does not create and cannot ask about, which is why the numbers are small
+   * and explicit rather than derived. Depth is absorbed by the queue, whose fourteen-day retention
+   * is there for precisely this: an event recorded a few minutes late is worth the same as one
+   * recorded at once.
+   */
+  scaling_config {
+    maximum_concurrency = var.bounce_max_concurrency
+  }
 }
