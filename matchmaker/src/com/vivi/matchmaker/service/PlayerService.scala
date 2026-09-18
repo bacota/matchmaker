@@ -40,16 +40,23 @@ class PlayerService(sessionPool: SessionPool) {
       * unregistered caller gets the same `UnauthorizedError` `me` gives.
       */
     def updateNickname(callerExternalId: String, nickname: String): IO[Player] =
-        for {
-            _ <- IO.raiseWhen(nickname.trim.isEmpty)(ValidationError("nickname must not be blank"))
-            player <- me(callerExternalId)
-            renamed = player.copy(nickname = nickname.trim)
-            _ <- sessionPool.use { session =>
-                new PlayerRepo(session).update(renamed).recoverWith { case SqlState.UniqueViolation(_) =>
-                    IO.raiseError(ConflictError(s"nickname '${renamed.nickname}' is already taken"))
+        IO.raiseWhen(nickname.trim.isEmpty)(ValidationError("nickname must not be blank")) *>
+            sessionPool.use { session =>
+                val repo = new PlayerRepo(session)
+                /* Read and write in one transaction, and the read takes the row's lock: `update`
+                 * writes the whole row, so the values it carries through -- `isAdmin`, `externalId`
+                 * -- are whatever this read saw. Outside the lock a change committing in the gap
+                 * would be restated back to its old value by this rename. */
+                session.transaction.use { _ =>
+                    for {
+                        player <- requireCaller(repo, callerExternalId)
+                        renamed = player.copy(nickname = nickname.trim)
+                        _ <- repo.update(renamed).recoverWith { case SqlState.UniqueViolation(_) =>
+                            IO.raiseError(ConflictError(s"nickname '${renamed.nickname}' is already taken"))
+                        }
+                    } yield renamed
                 }
             }
-        } yield renamed
 
     /** Records the address the caller signs in with.
       *
@@ -77,12 +84,27 @@ class PlayerService(sessionPool: SessionPool) {
       * is that the claim and the stored value already agree, and the caller does not send anything then.
       */
     def updateEmail(callerExternalId: String, email: String): IO[Player] =
-        for {
-            address <- validEmail(email)
-            player <- me(callerExternalId)
-            changed = player.copy(email = Some(address))
-            _ <- sessionPool.use(session => new PlayerRepo(session).updateEmail(player.playerId, Some(address)))
-        } yield changed
+        validEmail(email).flatMap { address =>
+            sessionPool.use { session =>
+                val repo = new PlayerRepo(session)
+                // One transaction, and the read locks: the row written is the row read, so a caller
+                // deregistering or renaming in between cannot be written around.
+                session.transaction.use { _ =>
+                    for {
+                        player <- requireCaller(repo, callerExternalId)
+                        _ <- repo.updateEmail(player.playerId, Some(address))
+                    } yield player.copy(email = Some(address))
+                }
+            }
+        }
+
+    /* The caller's own row, locked, for the two calls that rewrite it. Unauthorized rather than
+     * NotFound for the reason `me` gives. */
+    private def requireCaller(repo: PlayerRepo, callerExternalId: String): IO[Player] =
+        repo.readByExternalIdForUpdate(callerExternalId).flatMap {
+            case Some(player) => IO.pure(player)
+            case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+        }
 
     /* Enough of a check to catch a blank field or an obvious mistype, and no more.
      *

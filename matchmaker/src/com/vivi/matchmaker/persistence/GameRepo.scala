@@ -86,6 +86,13 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private val lockGameRow: Query[GameId, GameId] =
         sql"SELECT game_id FROM game WHERE game_id = $gameId FOR SHARE".query(gameId)
 
+    /* And the exclusive form, for the caller that is about to rewrite the game itself. A game is
+     * its row plus its roles, parameters and values, and an edit reads all of that to decide what
+     * to write -- so two admins saving the same game at once must queue here rather than both
+     * diffing against the state before either of them wrote. */
+    private val lockGameRowForUpdate: Query[GameId, GameId] =
+        sql"SELECT game_id FROM game WHERE game_id = $gameId FOR UPDATE".query(gameId)
+
     private val insertRoleStmt: Query[(GameId, String, Boolean), GameRoleId] =
         sql"""INSERT INTO game_role (game_id, name, optional) VALUES ($gameId, $text, $bool)
           RETURNING game_role_id""".query(gameRoleId)
@@ -149,6 +156,11 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       * roles and parameters that a caller checking existence never looks at.
       */
     def lockForShare(id: GameId): IO[Option[GameId]] = session.option(lockGameRow)(id)
+
+    /** As [[lockForShare]], but exclusively: for a caller that is about to modify the game, and whose decision about
+      * what to write comes from reading it. Nothing else may read it for modification until the transaction ends.
+      */
+    def lockForUpdate(id: GameId): IO[Option[GameId]] = session.option(lockGameRowForUpdate)(id)
 
     def read(id: GameId): IO[Option[Game]] =
         session.option(selectGameRow)(id).flatMap {

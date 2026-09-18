@@ -37,6 +37,13 @@ class PlayerRepo(session: Session[IO]) {
         sql"""SELECT player_id, nickname, is_admin, email FROM player WHERE external_id = $text FOR SHARE"""
             .query(playerId *: text *: bool *: text.opt)
 
+    /* FOR UPDATE, unlike the two above: for a caller modifying the player row itself rather than
+     * referencing it. `PlayerService` reads the row to build the row it writes back, and two such
+     * calls at once must queue rather than both diffing against the state before either wrote. */
+    private val selectPlayerByExternalIdForUpdate: Query[String, (PlayerId, String, Boolean, Option[String])] =
+        sql"""SELECT player_id, nickname, is_admin, email FROM player WHERE external_id = $text FOR UPDATE"""
+            .query(playerId *: text *: bool *: text.opt)
+
     /* Deliberately does not write `email`.
      *
      * Every caller of `update` is changing something else -- a nickname, an admin flag -- and passes
@@ -88,6 +95,16 @@ class PlayerRepo(session: Session[IO]) {
     def readByExternalIdForShare(externalId: String): IO[Option[Player]] =
         session
             .option(selectPlayerByExternalIdForShare)(externalId)
+            .map(_.map { case (id, nickname, isAdmin, email) =>
+                Player(id, nickname, isAdmin, externalId, email)
+            })
+
+    /** As `readByExternalId`, but taking the row's exclusive lock: for a caller whose write is derived from what it
+      * reads here, which is every caller that modifies the player itself.
+      */
+    def readByExternalIdForUpdate(externalId: String): IO[Option[Player]] =
+        session
+            .option(selectPlayerByExternalIdForUpdate)(externalId)
             .map(_.map { case (id, nickname, isAdmin, email) =>
                 Player(id, nickname, isAdmin, externalId, email)
             })

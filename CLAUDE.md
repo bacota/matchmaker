@@ -42,12 +42,55 @@ A route's request body is parsed by the shared `Json` codecs, so write the test 
 upickle writes it — an `Option` field is the bare value, and absent when there is none, not a
 one-element array.
 
-## Reads that lead to a write take `FOR UPDATE`
+## An updating API call is one transaction, and its reads take `FOR UPDATE`
 
-Where a repo reads a row in order to decide whether to modify it, the read locks the row and the
-decision is re-checked inside the lock — see `requireMatchForUpdate` and its counterparts in
-`MatchRepo`, `GameRepo`, `CharacterRepo` and `OpenChallengeRepo`. This is for the tables that
-actually contend; it is not a blanket rule for every select.
+Every API call that updates the database wraps *all* of its database access in a single
+`session.transaction.use` — not just the writes. A read taken outside the transaction that
+decides what the write does is a read of state that may already be gone by the time it is used.
+
+Within that transaction, any `SELECT` whose answer influences an update takes `FOR UPDATE` — see
+`requireMatchForUpdate` and its counterparts in `MatchRepo`, `GameRepo`, `CharacterRepo` and
+`OpenChallengeRepo`. Locking the row is not enough on its own: the decision has to be re-derived
+from what was read under the lock. Two things are exempt, and only these two.
+
+### The exception: a reference table read on the way to a write elsewhere
+
+A small, slowly changing table read in order to write a large, fast-moving one is read plainly.
+`game`, `game_role` and `game_parameter` are the cases: a start reads the game's roles to decide
+what participants to write, `enforceTimeouts` reads its timeout action to decide how to end a
+match, and neither locks it. The catalogue changes when an admin edits it, which is rarely and
+never concurrently with the play it governs, and locking it on every move would serialize the
+whole game's traffic behind one row for no race anybody has.
+
+What this does not excuse is a read of such a table on the way to writing *it* —
+`GameService.createOrUpdate` takes `lockForUpdate` on the game it is about to rewrite — or a read
+of a contended table (`match`, `participant`, `open_challenge`, `acceptance`, `result`) merely
+because the write lands on a different one. The exception is about the asymmetry: slow read, fast
+write. Where an existence check has to outlive the insert that relies on it, `FOR SHARE` is the
+middle course — `GameRepo.lockForShare` and `PlayerRepo.readForShare` exist for it, and
+`CharacterService.create` is the worked example. It blocks a concurrent delete of the row without
+making two inserts against it queue behind each other.
+
+Say so at the read. An unlocked `SELECT` inside a transaction that writes looks like the mistake
+this rule is about, so the exception is written down where it is being taken — the comments on
+`requireGame` in `GameEngineService` and `OpenChallengeService` are that note.
+
+### The exception: a call to an external service
+
+A transaction is never held open across a request to something outside the database — the game
+engine above all. A remote call can take as long as it likes, and a transaction waiting on one
+holds its locks and a pooled connection for exactly that long.
+
+So a call that writes both before and after an engine request is two transactions with a gap in
+the middle, and **nothing read before the gap may be assumed still true after it**. Start a fresh
+transaction for the second half and re-read, `FOR UPDATE`, anything the writes there depend on —
+including the row the first half wrote, whose state somebody else may have changed while the
+engine was answering. `GameEngineService.start` is the worked example: transaction A claims the
+challenge, the engine creates its game, and transaction B re-reads under lock to finish.
+
+The other half of that gap is that the second half cannot be undone by rolling back the first —
+once the engine has made its game, the only way out is forward. Repairing rather than unwinding
+(`refresh`) is the pattern for that.
 
 ## A response can outlive the session that asked for it
 

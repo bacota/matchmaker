@@ -32,7 +32,11 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                     result <-
                         if (trimmed.gameId == GameId.unassigned) gameRepo.create(trimmed)
                         else
-                            gameRepo.read(trimmed.gameId).flatMap {
+                            // Locked before it is read: `checkRoles` below decides what may be written
+                            // from what is there now, and the update rewrites the roles and parameters it
+                            // was checked against. Two admins saving the same game at once would
+                            // otherwise both diff against the state before either of them wrote.
+                            gameRepo.lockForUpdate(trimmed.gameId) *> gameRepo.read(trimmed.gameId).flatMap {
                                 case None => IO.raiseError(NotFoundError(s"no game with id ${trimmed.gameId.value}"))
                                 case Some(existing) =>
                                     checkRoles(existing, trimmed) *> gameRepo

@@ -83,8 +83,11 @@ class NotificationService(sessionPool: SessionPool) {
     ): IO[Unit] =
         sessionPool.use { session =>
             val repo = new NotificationRepo(session)
-            callerPlayer(session, callerExternalId).flatMap { player =>
-                session.transaction.use { _ =>
+            session.transaction.use { _ =>
+                // Inside the transaction, like every other read here: the row written below is the
+                // caller's, so which player that is has to be settled by the same transaction that
+                // writes it rather than by a statement that committed before it began.
+                callerPlayer(session, callerExternalId).flatMap { player =>
                     for {
                         before <- repo.readForPlayerForUpdate(player.playerId)
                         changed = before.differences(preferences)
@@ -123,25 +126,26 @@ class NotificationService(sessionPool: SessionPool) {
     ): IO[Unit] =
         sessionPool.use { session =>
             val repo = new NotificationRepo(session)
-            for {
-                player <- callerPlayer(session, callerExternalId)
-                exists <- repo.gameExists(gameId)
-                _ <- IO.raiseUnless(exists)(NotFoundError(s"no game with id ${gameId.value}"))
-                _ <- session.transaction.use { _ =>
-                    for {
-                        // The player's row, not this game's: the same lock every level of this service
-                        // takes, and the only one available when the `player_game` row does not exist
-                        // yet. See `NotificationRepo.lockSettings`.
-                        _ <- repo.lockSettings(player.playerId)
-                        before <- repo.readForPlayerGame(player.playerId, gameId)
-                        changed = before.differences(preferences)
-                        _ <- repo.updateForPlayerGame(player.playerId, gameId, preferences)
-                        _ <- IO.whenA(applyToMatches && changed.nonEmpty)(
-                          repo.applyToMatches(player.playerId, Some(gameId), changed)
-                        )
-                    } yield ()
-                }
-            } yield ()
+            session.transaction.use { _ =>
+                for {
+                    // Caller and game resolved inside the transaction: both decide what is written
+                    // below, and the existence check in particular is what turns a bad id into a 404
+                    // rather than the foreign key violation a game deleted in the gap would produce.
+                    player <- callerPlayer(session, callerExternalId)
+                    exists <- repo.gameExists(gameId)
+                    _ <- IO.raiseUnless(exists)(NotFoundError(s"no game with id ${gameId.value}"))
+                    // The player's row, not this game's: the same lock every level of this service
+                    // takes, and the only one available when the `player_game` row does not exist
+                    // yet. See `NotificationRepo.lockSettings`.
+                    _ <- repo.lockSettings(player.playerId)
+                    before <- repo.readForPlayerGame(player.playerId, gameId)
+                    changed = before.differences(preferences)
+                    _ <- repo.updateForPlayerGame(player.playerId, gameId, preferences)
+                    _ <- IO.whenA(applyToMatches && changed.nonEmpty)(
+                      repo.applyToMatches(player.playerId, Some(gameId), changed)
+                    )
+                } yield ()
+            }
         }
 
     /** What the caller's seats in one match say. Every kind answered: a seat cannot leave one unsaid, so the form that
@@ -181,15 +185,19 @@ class NotificationService(sessionPool: SessionPool) {
     ): IO[Unit] =
         sessionPool.use { session =>
             val repo = new NotificationRepo(session)
-            for {
-                player <- callerPlayer(session, callerExternalId)
-                written <- repo.updateForPlayerInMatch(gameId, matchId, player.playerId, preferences)
-                _ <- IO.raiseUnless(written)(
-                  NotFoundError(
-                    s"player ${player.playerId.value} has no seat in match ${matchId.value} of game ${gameId.value}"
-                  )
-                )
-            } yield ()
+            // One statement's worth of writing, but still a transaction: the caller resolved above
+            // is the key the write is scoped by, and the two belong to one another.
+            session.transaction.use { _ =>
+                for {
+                    player <- callerPlayer(session, callerExternalId)
+                    written <- repo.updateForPlayerInMatch(gameId, matchId, player.playerId, preferences)
+                    _ <- IO.raiseUnless(written)(
+                      NotFoundError(
+                        s"player ${player.playerId.value} has no seat in match ${matchId.value} of game ${gameId.value}"
+                      )
+                    )
+                } yield ()
+            }
         }
 
     /* Every route here acts on the caller's own settings, so every one of them starts by turning the
