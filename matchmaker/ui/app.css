@@ -711,6 +711,15 @@ button.toggle {
   margin-top: 0.2rem;
 }
 
+/* A line under one of those fields saying why it is not accepted yet. Inside the label so it is
+   read out with the control -- the same reasoning as `label.field > .hint` -- which is also why it
+   needs telling to be a line of its own: a span is not one. */
+.account-section label > .hint {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.85rem;
+}
+
 /* A change that worked. The error banner's counterpart: same shape, so the two read as one slot
    reporting how it went rather than as two different things. */
 .notice {

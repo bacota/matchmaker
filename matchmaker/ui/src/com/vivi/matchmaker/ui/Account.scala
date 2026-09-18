@@ -137,13 +137,38 @@ object Account {
         }
     }
 
+    /* Whether this is an address at all, which is all the client can ask.
+     *
+     * One `@` with something either side, no whitespace, and a dot in the domain with something
+     * either side of that. The same shape as `PlayerService.validEmail`, which deliberately stops
+     * short of a grammar for addresses, plus the dot: Cognito's mail goes out through SES to the
+     * public internet, so a domain with no dot in it has nowhere to be delivered.
+     *
+     * Deliberately not stricter. The only thing that decides whether an address works is whether the
+     * code arrives at it, and a pattern that rejects a working address is worse than one that lets an
+     * unworkable one through -- the code simply never comes, which the form already handles. This is
+     * here to stop the offer being made for something that is plainly not an address yet, mid-typing
+     * or mistyped, and no more than that.
+     */
+    private def plausibleEmail(address: String): Boolean = {
+        val trimmed = address.trim
+        trimmed.count(_ == '@') == 1 && !trimmed.exists(_.isWhitespace) && {
+            val Array(local, domain) = trimmed.split("@", 2)
+            local.nonEmpty && domain.length > 2 && domain.contains(".") &&
+            !domain.startsWith(".") && !domain.endsWith(".")
+        }
+    }
+
     /** Asks Cognito to change the address, which starts the verification rather than finishing the change. Until the
       * code below is answered, the old address is still the one that signs in.
       */
     private def sendEmailCode(busy: Var[Boolean]): Unit = {
         val wanted = email.now().trim
 
-        if (wanted.isEmpty) emailOutcome.set(Some(Outcome(true, "Enter an email address.")))
+        // The button is disabled until this passes, so this is the keyboard's path in -- a form with a
+        // single text field submits on Enter -- and the message is the one the disabled button cannot
+        // give.
+        if (!plausibleEmail(wanted)) emailOutcome.set(Some(Outcome(true, "Enter an email address.")))
         else
             withAccessToken(emailOutcome, busy) { token =>
                 CognitoIdp.updateEmail(token, wanted).map { destination =>
@@ -590,7 +615,16 @@ object Account {
               // an address edited underneath it would confirm one address having verified another.
               disabled <-- emailStage.signal.map(_ != EmailStage.Idle),
               controlled(value <-- email.signal, onInput.mapToValue --> email)
-            )
+            ),
+            // Why the button below is inert. Only once something has been typed: a hint on an empty
+            // field is telling somebody off for not having started. Inside the label, like the hints
+            // on the notification questions, so it is read out as part of the field rather than as
+            // text that happens to be near it.
+            child <-- email.signal.map {
+                case typed if typed.trim.nonEmpty && !plausibleEmail(typed) =>
+                    span(cls := "detail hint", "That is not an email address yet.")
+                case _ => emptyNode
+            }
           ),
           child <-- emailStage.signal.map {
               case EmailStage.Idle => emptyNode
@@ -637,7 +671,8 @@ object Account {
                   )
           },
           child <-- emailStage.signal.map {
-              case EmailStage.Idle    => submit("Send verification code", busy)
+              case EmailStage.Idle =>
+                  submit("Send verification code", busy, blocked = email.signal.map(!plausibleEmail(_)))
               case EmailStage.Sent(_) => submit("Confirm new address", busy)
           },
           report(emailOutcome)
@@ -747,10 +782,13 @@ object Account {
     /** The submit button of one form. Not `busyButton`: these are real form submits, so that Enter works in the fields
       * and password managers offer to fill and to save.
       */
-    private def submit(label: String, busy: Var[Boolean]): HtmlElement =
+    private def submit(label: String, busy: Var[Boolean], blocked: Signal[Boolean] = Val(false)): HtmlElement =
         button(
           tpe := "submit",
-          disabled <-- busy.signal,
+          // `blocked` is for a form that can tell there is nothing to send yet -- the email form,
+          // whose field has to hold an address before there is any point offering to mail a code to
+          // it. Never the only guard: the save it disables checks the same thing for itself.
+          disabled <-- busy.signal.combineWith(blocked).map(_ || _),
           child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
           label
         )
