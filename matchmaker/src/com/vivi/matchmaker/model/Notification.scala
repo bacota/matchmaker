@@ -17,7 +17,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
     case ChallengeAccepted
         extends NotificationType(
           "CHALLENGE_ACCEPTED",
-          "Someone accepts my challenge",
+          "My challenge is accepted",
           "Also when someone backs out of one."
         )
 
@@ -25,7 +25,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
     case ChallengeReady
         extends NotificationType(
           "CHALLENGE_READY",
-          "My challenge is ready to start",
+          "My challenge can start",
           "Every role in it has been taken."
         )
 
@@ -33,7 +33,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
     case AcceptanceChanged
         extends NotificationType(
           "ACCEPTANCE_CHANGED",
-          "Someone joins a challenge I accepted",
+          "Someone joins a challenge",
           "Also when one of them backs out."
         )
 
@@ -41,7 +41,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
     case AcceptedChallengeReady
         extends NotificationType(
           "ACCEPTED_CHALLENGE_READY",
-          "A challenge I accepted is ready to start",
+          "A challenge can start",
           "You are waiting on whoever offered it."
         )
 
