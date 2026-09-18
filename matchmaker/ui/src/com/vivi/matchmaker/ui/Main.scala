@@ -836,7 +836,7 @@ object Views {
                   // holds an answer for all eight and the save still carries all eight -- what is
                   // saved for the five is what was fetched, unchanged.
                   Notifications.form(
-                    "Notifications for this match",
+                    "Notification Preferences for this match",
                     "What we email you about this match, whatever you change elsewhere later.",
                     preferences,
                     withDefault = false,
@@ -1248,7 +1248,7 @@ object Views {
           parameterEditor(parameters),
           div(
             cls := "card",
-            h3("Notifications"),
+            h3("Notification Preferences"),
             p(
               cls := "detail",
               "What this game's players are emailed about unless they choose otherwise. " +

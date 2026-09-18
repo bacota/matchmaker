@@ -357,7 +357,7 @@ object Account {
         div(
           suppressionNotice(settings.suppressed),
           Notifications.form(
-            "Notifications",
+            "Notification Preferences",
             "What we email you about, unless you say otherwise for a particular game or match.",
             overall,
             saveLabel = "Save notifications",
