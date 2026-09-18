@@ -346,6 +346,25 @@ object Store {
         }
     }
 
+    /** Brings matchmaker's copy of the address in step with the token, after a change the player has just confirmed.
+      *
+      * The other moment the claim can be trusted, and for the same reason sign-in is: `Account.confirmEmail` has
+      * redeemed the refresh token, so `fromToken` is the claim of a token Cognito issued after the change rather than
+      * one issued before it. Anything else — the address typed into the form, the claim of the token the session
+      * started with — is a value nobody can check, which is why this takes the address rather than reading it.
+      *
+      * Without this the change would still arrive, at the next sign-in. What it costs to wait is notifications going to
+      * the previous mailbox until then, and a suppression that the new address should have escaped staying in force
+      * because the stored address is still the one that bounced.
+      */
+    private[ui] def adoptEmail(fromToken: String): Future[Unit] =
+        player.now() match {
+            case PlayerState.Registered(stored) => syncEmail(stored, fromToken)
+            // Nobody to update: an unregistered or unavailable session has no stored address to disagree
+            // with, and registration sends whatever the claim says at the time.
+            case _ => Future.unit
+        }
+
     /** Brings matchmaker's copy of the address in step with the token, at sign-in.
       *
       * Sign-in is the one moment the claim can be trusted, which is why this is not done on every load. Cognito fixes
@@ -368,20 +387,29 @@ object Store {
       *     player did not cause and cannot act on; the next sign-in tries again, and until one succeeds the only cost
       *     is notifications going to the older address.
       */
-    private def syncEmail(stored: Player): Unit = {
-        val signIn = currentSignIn
+    private def syncEmail(stored: Player): Unit =
+        Auth.email.foreach(claim => syncEmail(stored, claim))
 
-        Auth.email.map(_.trim).filter(_.nonEmpty).foreach { fromToken =>
-            if (!stored.email.exists(_.equalsIgnoreCase(fromToken)))
-                ApiClient.updateEmail(fromToken).onComplete {
-                    case Success(updated) =>
-                        // Only if this is still the session that asked. A sign-out while the call was in
-                        // flight has already put something else on screen, and the answer to a request
-                        // about the previous session must not overwrite it.
-                        if (stillSignedInAs(signIn)) player.set(PlayerState.Registered(updated))
-                    case Failure(_) => ()
-                }
-        }
+    /* The write itself, shared by the two moments a claim is worth believing.
+     *
+     * Hands back a future that says when it has settled, succeeded or not, for the caller that has
+     * something to do afterwards -- `Account` re-reads the notification settings, and doing that before
+     * this landed would re-read the address this is replacing. Sign-in ignores it. */
+    private def syncEmail(stored: Player, fromToken: String): Future[Unit] = {
+        val signIn = currentSignIn
+        val claimed = fromToken.trim
+
+        if (claimed.isEmpty || stored.email.exists(_.equalsIgnoreCase(claimed))) Future.unit
+        else
+            ApiClient.updateEmail(claimed).transform {
+                case Success(updated) =>
+                    // Only if this is still the session that asked. A sign-out while the call was in
+                    // flight has already put something else on screen, and the answer to a request
+                    // about the previous session must not overwrite it.
+                    if (stillSignedInAs(signIn)) player.set(PlayerState.Registered(updated))
+                    Success(())
+                case Failure(_) => Success(())
+            }
     }
 
     def refreshMatches(): Unit = {

@@ -114,6 +114,22 @@ object Auth {
             case None           => refreshed().map(_ => accessToken)
         }
 
+    /** Redeems the refresh token whether or not the current ID token has expired, and answers with the address the new
+      * one claims.
+      *
+      * The two methods above refresh only when there is nothing usable left, which is exactly wrong after an attribute
+      * change: the token in hand is perfectly valid and says the old address. Cognito fixes an ID token's claims when
+      * it issues it, so redeeming the refresh token is what turns a confirmed change into a token that agrees with it —
+      * and the claim of a token Cognito has just issued is the only form of this address anybody can check. See
+      * `Account.confirmEmail`, its only caller.
+      *
+      * `None` covers both "the session is over" and "the new token still carries no address". Neither is worth
+      * distinguishing here, because the caller's answer to both is the fallback that was always there: the next sign-in
+      * syncs the address.
+      */
+    private[ui] def reissuedEmail(): Future[Option[String]] =
+        refreshed().map(_ => email)
+
     /** Redeems the refresh token, at most one redemption at a time — several requests hitting an expired token at once
       * must share one attempt rather than race to spend the token each. The result is read back out of storage by the
       * caller, which is what makes this usable for either token.

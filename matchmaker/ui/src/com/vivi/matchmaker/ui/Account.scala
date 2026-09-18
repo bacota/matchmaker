@@ -145,21 +145,45 @@ object Account {
                     emailStage.set(EmailStage.Idle)
                     email.set("")
                     emailCode.set("")
+                    adoptNewEmail()
                     // Worth saying explicitly: the address is the username on this pool, so the next sign-in
                     // is with the new one, and a player who does not know that has locked themselves out as
                     // far as they can tell.
-                    //
-                    // Nothing is reported to the API here. Matchmaker keeps a copy of the address to send
-                    // notifications to, and it is brought up to date at the next sign-in, from the claim of
-                    // the token that sign-in issues — see `Store.syncEmail`. Reporting it now would mean
-                    // sending an address that this session's own token still disagrees with, and the token
-                    // is the only thing either side can check.
                     emailOutcome.set(
                       Some(Outcome(false, s"Your email address is now $changed. Sign in with it next time."))
                     )
                 }
             }
     }
+
+    /** Tells matchmaker about the address Cognito now holds, having first obtained a token that says so.
+      *
+      * Not the address the player typed, and not this session's `email` claim: Cognito fixes an ID token's claims when
+      * it issues the token, so the one this tab is holding still names the old address however carefully the change was
+      * confirmed. Redeeming the refresh token produces one issued after the change, and its claim is the only version
+      * of this address either side can check — which is the rule `Store.syncEmail` follows at sign-in, applied at the
+      * other moment it holds.
+      *
+      * Nothing here is reported to the player, and no failure changes what the form says. The change itself has already
+      * succeeded at Cognito, which is what the message above is about; this is matchmaker's copy of the address
+      * catching up, and if the refresh does not get through it catches up at the next sign-in exactly as it did before.
+      * The one visible consequence of getting it done now is that mail follows the player immediately — including past
+      * a suppression the old address earned, which the new one has not.
+      */
+    private def adoptNewEmail(): Unit =
+        Auth.reissuedEmail().onComplete {
+            case Success(Some(claimed)) =>
+                // Then the settings again, because one of them is about the address that has just been
+                // replaced: a suppression is held against an address, so moving to a new one leaves the
+                // banner above describing mail nobody is holding back any more. Asked rather than
+                // cleared here -- `retryButton` gives the reason -- and only after the write has landed,
+                // or it would be answered from the address this is replacing.
+                Store.adoptEmail(claimed).foreach(_ => Store.reloadNotifications())
+            // No session left, or a token carrying no address at all — the local development case, where
+            // there is no Cognito identity behind the header. Neither says the stored address is wrong.
+            case Success(None) => ()
+            case Failure(_)    => ()
+        }
 
     private def savePassword(busy: Var[Boolean]): Unit =
         if (currentPassword.now().isEmpty || newPassword.now().isEmpty)
@@ -623,14 +647,6 @@ object Account {
                       strong("Your email is bouncing."),
                       s" Mail to ${notice.address} is not being delivered, so we have stopped sending it. ",
                       "Fix the mailbox and try again, or change your address above."
-                    ),
-                    // Signing out and in again is not a detail we can spare them: matchmaker's copy of the address is
-                    // only refreshed from the token at sign-in, so a player who changes it and stays signed in is
-                    // still being mailed at the old one -- and this button, which releases the address we hold, would
-                    // release the wrong one.
-                    p(
-                      cls := "hint",
-                      "If you have just changed your address, sign out and back in so we pick up the new one."
                     ),
                     retryButton(notice)
                   )
