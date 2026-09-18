@@ -167,7 +167,25 @@ class SuppressionRepoSpec extends FunSuite {
         assertEquals(row.map(_.reason), Some(SuppressionReason.Delay))
     }
 
-    test("releasing stops the suppression, and forgives the permanence that caused it") {
+    test("releasing a bounce lifts it") {
+        val email = address
+        val (outcome, active) = withRepo { repo =>
+            for {
+                _ <- repo.record(bounce(email, permanent = true))
+                outcome <- repo.releaseFor(email)
+                active <- repo.activeFor(Set(email))
+            } yield (outcome, active)
+        }
+        assertEquals(outcome, SuppressionRepo.Release.Released)
+        assertEquals(active, Set.empty[String])
+    }
+
+    /* The refusal is the repo's, not only the service's, and it is taken under the row's lock.
+     *
+     * Asserted here because the safety used to live in a `reason <> 'complaint'` WHERE clause that
+     * nothing tested and the service could not see: deleting it would have turned a button into an
+     * undo for a spam report, silently. */
+    test("releasing forgives the permanence that caused the suppression") {
         val email = address
         val (released, afterRelease, afterNextDelay) = withRepo { repo =>
             for {
@@ -181,21 +199,74 @@ class SuppressionRepoSpec extends FunSuite {
                 afterNextDelay <- repo.activeFor(Set(email))
             } yield (released, afterRelease, (row.map(_.occurrences), row.map(_.permanent), afterNextDelay))
         }
-        assert(released, "there was a row to release")
+        assertEquals(released, SuppressionRepo.Release.Released)
         assertEquals(afterRelease, Set.empty[String])
         assertEquals(afterNextDelay, (Some(1), Some(false), Set.empty[String]))
     }
 
-    test("releasing an address nothing was held back from says so") {
-        assertEquals(withRepo(_.releaseFor(address)), false)
+    test("releasing a complaint is refused, and leaves it suppressing") {
+        val email = address
+        val (outcome, active, row) = withRepo { repo =>
+            for {
+                _ <- repo.record(complaint(email))
+                outcome <- repo.releaseFor(email)
+                active <- repo.activeFor(Set(email))
+                row <- repo.read(email)
+            } yield (outcome, active, row)
+        }
+        assertEquals(outcome, SuppressionRepo.Release.RefusedComplaint)
+        assertEquals(active, Set(email))
+        assertEquals(row.flatMap(_.releasedAt), None, "the row was not released")
+    }
+
+    test("releasing what is not suppressed says so, and says it differently") {
+        assertEquals(withRepo(_.releaseFor(address)), SuppressionRepo.Release.NotSuppressed)
         val email = address
         assertEquals(
-          withRepo { repo =>
-              repo.record(complaint(email)) *> repo.releaseFor(email) *> repo.releaseFor(email)
-          },
-          false,
+          withRepo(repo =>
+              repo.record(bounce(email, permanent = true)) *> repo.releaseFor(email) *> repo.releaseFor(email)
+          ),
+          SuppressionRepo.Release.NotSuppressed,
           "a second release has nothing left to do"
         )
+    }
+
+    /* The race the lock exists for: a player presses "try again" while the consumer records a
+     * complaint about the same address.
+     *
+     * Either order is a correct outcome -- the complaint may land before the release is decided, or
+     * after it commits -- but one combination must never appear: a complaint on the row and
+     * released_at set, which is mail flowing again to an address that just reported us as spam. Run
+     * repeatedly because the interleaving is the point; a single pass proves little. */
+    test("a complaint recorded during a release is never released by it") {
+        (1 to 12).foreach { _ =>
+            val email = address
+            val row = TestSession.resource
+                .both(TestSession.resource)
+                .use { (one, two) =>
+                    val releasing = new SuppressionRepo(one)
+                    val recording = new SuppressionRepo(two)
+                    for {
+                        // A bounce first, so there is something releasable for the release to find.
+                        _ <- releasing.record(bounce(email, permanent = true))
+                        _ <- (releasing.releaseFor(email), recording.record(complaint(email))).parTupled
+                        row <- releasing.read(email)
+                    } yield row
+                }
+                .unsafeRunSync()
+
+            assert(row.isDefined)
+            row.foreach { held =>
+                assert(
+                  !(held.reason == SuppressionReason.Complaint && held.releasedAt.isDefined),
+                  s"a complaint was left released: $held"
+                )
+                // And whichever order it happened in, the address is suppressed: either the
+                // complaint won and suppresses on its own, or the release won and the complaint that
+                // followed re-suppressed it.
+                assert(held.active(Instant.now()), s"mail is flowing to a complained address: $held")
+            }
+        }
     }
 
     test("a second permanent bounce after a release suppresses again") {

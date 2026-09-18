@@ -67,18 +67,31 @@ class SuppressionService(sessionPool: SessionPool) {
       */
     def retryMine(callerExternalId: String): IO[Boolean] =
         sessionPool.use { session =>
-            val repo = new SuppressionRepo(session)
             callerAddress(session, callerExternalId).flatMap {
-                case None => IO.pure(false)
+                case None          => IO.pure(false)
                 case Some(address) =>
-                    repo.read(address).flatMap {
-                        case Some(row) if row.reason == SuppressionReason.Complaint =>
+                    /* The decision is the repo's, taken under the row's lock, and this only turns it
+                     * into something to say. It used to be taken here -- read the row, refuse a
+                     * complaint, then release -- which was two autocommit statements with a gap
+                     * between them: a complaint recorded in that gap was released by the update that
+                     * followed, and a spam report undone by a button is the one outcome this must
+                     * never produce.
+                     *
+                     * `RefusedComplaint` is a ValidationError rather than a silent `false` because
+                     * the player pressed a button and is owed the reason. It is a 400: the request
+                     * was understood and is not allowed, which is exactly what a complaint means
+                     * here. The screen does not offer the button in that case -- `Notice.canRetry`
+                     * is false -- so reaching this is a client that asked anyway, and it gets a
+                     * straight answer rather than an apparent success. */
+                    new SuppressionRepo(session).releaseFor(address).flatMap {
+                        case SuppressionRepo.Release.Released      => IO.pure(true)
+                        case SuppressionRepo.Release.NotSuppressed => IO.pure(false)
+                        case SuppressionRepo.Release.RefusedComplaint =>
                             IO.raiseError(
                               ValidationError(
                                 "This address reported our mail as spam, so we cannot start sending to it again."
                               )
                             )
-                        case _ => repo.releaseFor(address)
                     }
             }
         }

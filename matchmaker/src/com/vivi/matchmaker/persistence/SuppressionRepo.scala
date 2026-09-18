@@ -97,8 +97,25 @@ class SuppressionRepo(session: Session[IO]) {
                 AND (permanent OR (occurrences >= $int4 AND last_seen_at > now() - make_interval(secs => $float8)))"""
             .query(text)
 
+    /* Read in order to decide whether to write, so the read takes the row's lock and the decision is
+     * re-checked inside it -- `requireMatchForUpdate` and its counterparts in the other repos are
+     * the same shape for the same reason (see CLAUDE.md).
+     *
+     * This table contends for exactly one pair of writers, and they are the interesting pair: a
+     * player pressing "try again" while the bounce consumer records a complaint about the same
+     * address. Without the lock the check and the release are two autocommit transactions, and a
+     * complaint landing between them is a spam report undone by a button -- the one outcome this
+     * feature must never produce. `reason <> 'complaint'` in the UPDATE would refuse it even then,
+     * but that leaves the safety in a WHERE clause the service cannot see, and leaves the caller
+     * told "nothing was holding your mail back" when the truth is "refused". */
+    private val lockForRelease: Query[String, SuppressionReason] =
+        sql"""SELECT reason FROM email_suppression
+              WHERE email = lower($text) AND released_at IS NULL
+              FOR UPDATE""".query(reason)
+
     private val release: Command[String] =
-        sql"UPDATE email_suppression SET released_at = now() WHERE email = lower($text) AND released_at IS NULL AND reason <> 'complaint'".command
+        sql"""UPDATE email_suppression SET released_at = now()
+              WHERE email = lower($text) AND released_at IS NULL AND reason <> 'complaint'""".command
 
     /* The event's own identity, claimed before it is counted (V17).
      *
@@ -165,15 +182,39 @@ class SuppressionRepo(session: Session[IO]) {
                 .map(_.toSet)
     }
 
-    /** Marks an address as worth trying again, and says whether there was anything to mark.
+    /** Marks an address as worth trying again, and says what it decided.
       *
-      * `false` means there was no unreleased row — an address that never failed, or one somebody has already released.
-      * The caller is a button, and a button that says "we will try again" when nothing was stopping us is a lie that
-      * costs nothing to avoid.
+      * Three answers rather than a boolean, because the caller is a button and the three mean different things to
+      * whoever pressed it: it worked, there was nothing to do, and no. A complaint is refused here rather than only in
+      * the service, so that the refusal and the write are one decision taken under one lock — the service checks too,
+      * because that is where the sentence the player reads is composed, but not *only* there.
+      *
+      * All of it in one transaction, and the read takes the row's lock. That lock is what makes the check mean
+      * anything: a complaint recorded between a lockless read and this update would be released by it, and re-enabling
+      * mail to an address that has just reported us as spam is the one outcome this must never produce.
       */
-    def releaseFor(email: String): IO[Boolean] =
-        session.execute(release)(email.trim).map {
-            case Completion.Update(count) => count > 0
-            case _                        => false
+    def releaseFor(email: String): IO[SuppressionRepo.Release] =
+        session.transaction.use { _ =>
+            session.option(lockForRelease)(email.trim).flatMap {
+                case None                              => IO.pure(SuppressionRepo.Release.NotSuppressed)
+                case Some(SuppressionReason.Complaint) => IO.pure(SuppressionRepo.Release.RefusedComplaint)
+                case Some(_) => session.execute(release)(email.trim).as(SuppressionRepo.Release.Released)
+            }
         }
+}
+
+object SuppressionRepo {
+
+    /** What became of a request to try an address again. */
+    enum Release {
+
+        /** The suppression is lifted, and the next notification to this address will be sent. */
+        case Released
+
+        /** Nothing was holding mail back: an address that never failed, or one already released. */
+        case NotSuppressed
+
+        /** The address reported our mail as spam, and no button undoes that. */
+        case RefusedComplaint
+    }
 }
