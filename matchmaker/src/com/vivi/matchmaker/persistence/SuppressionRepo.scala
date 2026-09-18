@@ -1,0 +1,149 @@
+package com.vivi.matchmaker.persistence
+
+import cats.effect.IO
+import skunk._
+import skunk.implicits._
+import skunk.codec.all._
+import natchez.Trace.Implicits.noop
+import com.vivi.matchmaker.model.{EmailSuppression, SuppressionReason}
+
+/** The addresses mail is held back from: `email_suppression` (V16).
+  *
+  * A repo of its own rather than a few more columns on `PlayerRepo`, because it is not about players. The key is an
+  * address, which may belong to no player row, to one whose `email` has since changed, or to two players sharing a
+  * household mailbox — and the two callers are the bounce handler, which has never heard of a player, and the send
+  * path, which is asking about the recipients of one event.
+  *
+  * No `FOR UPDATE` anywhere here, which is the exception to the rule in CLAUDE.md rather than an oversight: there is no
+  * read that leads to a write. [[record]] is a single insert-on-conflict that does all of its deciding in the
+  * statement, so two events about the same address arriving at once cannot lose one another's increment.
+  */
+class SuppressionRepo(session: Session[IO]) {
+
+    private val reason: Codec[SuppressionReason] = text.imap(SuppressionReason.fromCode)(_.code)
+    private val instant = SkunkCodecs.instant
+
+    private val suppressionRow: Codec[EmailSuppression] =
+        (text *: reason *: bool *: text.opt *: instant *: instant *: int4 *: instant.opt)
+            .to[EmailSuppression]
+
+    /* One statement, and all of the policy is in it.
+     *
+     * Written as an upsert rather than as a read, a decision and a write because two SES events about
+     * the same address are genuinely concurrent -- one queue, one batch, several recipients of the
+     * same dead domain -- and the read-decide-write version of this either loses an increment or
+     * needs a lock to not. `ON CONFLICT` makes the increment the database's arithmetic.
+     *
+     * Four columns need explaining:
+     *
+     *   reason     -- the most serious event wins, not the most recent. A complaint outranks
+     *                 anything that follows it, because it is what decides both what the screen says
+     *                 and whether there is a button on it. An unreleased complaint therefore stays.
+     *   permanent  -- sticky, except across a release. A release means "start over", so the
+     *                 permanence that was forgiven does not come back to re-suppress the row on the
+     *                 next transient delay; a genuine second permanent bounce sets it again.
+     *   occurrences-- reset to 1 when the row was released or when the previous event is older than
+     *                 the window, incremented otherwise. This is what makes the threshold "three in
+     *                 seven days" and not "three ever".
+     *   released_at-- always cleared. Any new event is news after the fact that somebody said to try
+     *                 again, and the row goes back to being counted.
+     *
+     * `now()` throughout rather than a timestamp from the caller: the row is a record of when *we*
+     * heard, and an SES event carries a timestamp from a clock we do not own. */
+    private val upsert: Command[(String, SuppressionReason, Boolean, Option[String], Double)] =
+        sql"""INSERT INTO email_suppression
+                  (email, reason, permanent, diagnostic, first_seen_at, last_seen_at, occurrences, released_at)
+              VALUES (lower($text), $reason, $bool, ${text.opt}, now(), now(), 1, NULL)
+              ON CONFLICT (email) DO UPDATE SET
+                  reason = CASE
+                      WHEN email_suppression.reason = 'complaint' AND email_suppression.released_at IS NULL
+                          THEN email_suppression.reason
+                      ELSE EXCLUDED.reason
+                  END,
+                  permanent = EXCLUDED.permanent
+                      OR (email_suppression.permanent AND email_suppression.released_at IS NULL),
+                  diagnostic = COALESCE(EXCLUDED.diagnostic, email_suppression.diagnostic),
+                  last_seen_at = now(),
+                  occurrences = CASE
+                      WHEN email_suppression.released_at IS NOT NULL
+                          OR email_suppression.last_seen_at < now() - make_interval(secs => $float8)
+                          THEN 1
+                      ELSE email_suppression.occurrences + 1
+                  END,
+                  released_at = NULL""".command
+
+    private val selectByEmail: Query[String, EmailSuppression] =
+        sql"""SELECT email, reason, permanent, diagnostic, first_seen_at, last_seen_at, occurrences, released_at
+              FROM email_suppression WHERE email = lower($text)""".query(suppressionRow)
+
+    /* The predicate in `EmailSuppression.active`, in SQL, asked of many addresses at once.
+     *
+     * The database's own `now()` rather than a time from the caller, and one query rather than one
+     * per recipient: this runs on the path a player is waiting on, where the send path already went
+     * to some trouble to stop doing n sequential round trips.
+     *
+     * A statement per list length, which is what skunk's `list` encoder is: the lengths in practice
+     * are the number of players in a match, so this prepares a handful of statements and then
+     * reuses them. */
+    private def selectActive(count: Int): Query[(List[String], Int, Double), String] =
+        sql"""SELECT email FROM email_suppression
+              WHERE email IN (${text.list(count)})
+                AND released_at IS NULL
+                AND (permanent OR (occurrences >= $int4 AND last_seen_at > now() - make_interval(secs => $float8)))"""
+            .query(text)
+
+    private val release: Command[String] =
+        sql"UPDATE email_suppression SET released_at = now() WHERE email = lower($text) AND released_at IS NULL".command
+
+    /** Records one SES event against its address, creating the row or adding to it.
+      *
+      * Idempotent in the sense that matters and not in the sense that does not: sending the same event twice counts it
+      * twice, because SQS is at-least-once and the alternative is an event id column and a uniqueness constraint to
+      * make it exact. Two counted delays instead of one brings a threshold forward by one event, which is the same
+      * error as SES having reported one more delay than it did — well inside what a threshold of three tolerates.
+      */
+    def record(event: EmailSuppression.Event): IO[Unit] =
+        session
+            .execute(upsert)(
+              (
+                event.email.trim,
+                event.reason,
+                event.permanent,
+                event.diagnostic.map(_.trim).filter(_.nonEmpty),
+                EmailSuppression.windowSeconds
+              )
+            )
+            .void
+
+    /** Everything known about one address, suppressed or merely counted. `None` means nothing has ever gone wrong. */
+    def read(email: String): IO[Option[EmailSuppression]] =
+        session.option(selectByEmail)(email.trim)
+
+    /** Which of these addresses mail is currently held back from, lowercased.
+      *
+      * Takes and returns a set because the caller has a recipient list and wants to filter it; the answer is folded to
+      * lower case, as the table is, so a caller comparing against its own addresses must fold too.
+      */
+    def activeFor(emails: Set[String]): IO[Set[String]] = {
+        val folded = emails.map(_.trim.toLowerCase).filter(_.nonEmpty).toList
+        if (folded.isEmpty) IO.pure(Set.empty)
+        else
+            session
+                .execute(selectActive(folded.length))(
+                  (folded, EmailSuppression.transientThreshold, EmailSuppression.windowSeconds)
+                )
+                .map(_.toSet)
+    }
+
+    /** Marks an address as worth trying again, and says whether there was anything to mark.
+      *
+      * `false` means there was no unreleased row — an address that never failed, or one somebody has already released.
+      * The caller is a button, and a button that says "we will try again" when nothing was stopping us is a lie that
+      * costs nothing to avoid.
+      */
+    def releaseFor(email: String): IO[Boolean] =
+        session.execute(release)(email.trim).map {
+            case skunk.data.Completion.Update(count) => count > 0
+            case _                                   => false
+        }
+}
