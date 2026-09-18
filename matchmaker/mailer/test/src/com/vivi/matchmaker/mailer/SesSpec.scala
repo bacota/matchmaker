@@ -26,6 +26,20 @@ class SesSpec extends FunSuite {
         assertEquals(json("Content")("Simple")("Body")("Text")("Charset").str, "UTF-8")
     }
 
+    /* The one line bounce handling depends on: a send under a configuration set publishes its
+     * bounces and complaints to that set's event destinations, and a send without one tells us
+     * nothing afterwards. Absent rather than empty when there is none, so an environment with no
+     * bounce handling sends the request it always sent. */
+    test("a configuration set is named when there is one") {
+        val json = ujson.read(Ses.sendEmailBody(message, Some("matchmaker-dev-mail")))
+        assertEquals(json("ConfigurationSetName").str, "matchmaker-dev-mail")
+    }
+
+    test("and the key is absent when there is not") {
+        assertEquals(ujson.read(Ses.sendEmailBody(message)).obj.get("ConfigurationSetName"), None)
+        assertEquals(ujson.read(Ses.sendEmailBody(message, None)).obj.get("ConfigurationSetName"), None)
+    }
+
     test("the endpoint is the running region's") {
         assertEquals(Ses.endpoint("eu-west-2"), "https://email.eu-west-2.amazonaws.com/v2/email/outbound-emails")
     }

@@ -72,3 +72,16 @@ variable "log_retention_days" {
   type        = number
   default     = 14
 }
+
+variable "bounce_timeout_s" {
+  description = <<-EOT
+    Timeout for the bounce consumer, which lives in the api module but is polled from this
+    module's queue -- so the queue's visibility timeout is derived from it here.
+
+    Small: recording a bounce is one upsert per address against a database in the same region.
+    The value matters mainly for the first invocation of a cold container, which pays for a JVM
+    and a connection pool before it writes anything.
+  EOT
+  type        = number
+  default     = 30
+}

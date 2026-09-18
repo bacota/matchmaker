@@ -348,3 +348,44 @@ variable "ui_base_url" {
   type        = string
   default     = ""
 }
+
+variable "bounce_queue_arn" {
+  description = <<-EOT
+    The mail module's bounce queue: where SES's bounce, complaint and delivery-delay events wait.
+    Drained by the bounce consumer in this module, which is here rather than there because it
+    writes to the database and so has to be in the VPC.
+
+    Empty when deploy_mail is off, in which case no consumer, no log group and no policy is
+    created. Everything counts on mail_enabled rather than on this value, which is not known
+    until apply.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "bounce_timeout_s" {
+  description = <<-EOT
+    Timeout for the bounce consumer. Recording a batch is one upsert per address; the value is
+    really about the first invocation of a cold container, which pays for a JVM and a connection
+    pool first.
+
+    Kept in step with the mail module's bounce_timeout_s, which derives its queue's visibility
+    timeout from the same number.
+  EOT
+  type        = number
+  default     = 30
+}
+
+variable "bounce_db_pool_size" {
+  description = <<-EOT
+    Connections the bounce consumer's pool may open. Smaller than the api function's: a batch is
+    recorded sequentially -- two events about one address are exactly the case where concurrency
+    buys nothing -- so one connection is the working set, and the second is headroom.
+
+    Worth keeping small for a reason beyond thrift: this function and the api function draw from
+    the same database, and a consumer that scaled out under a burst of bounces could take
+    connections a player's request needs.
+  EOT
+  type        = number
+  default     = 2
+}
