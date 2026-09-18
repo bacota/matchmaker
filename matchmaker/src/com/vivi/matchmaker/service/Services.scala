@@ -84,7 +84,8 @@ object Services {
           // One `Notifications` for the four services that cause something worth an email. One
           // rather than one each, because who is told what does not depend on which service the
           // event came from -- that is the whole point of it being a class of its own.
-          challenges = new OpenChallengeService[T](pool, notifications, engine.startIfReady(_, _, _).map(_.isDefined)),
+          challenges =
+              new OpenChallengeService[T](pool, notifications, engine.startIfReady(_, _, _, _).map(_.isDefined)),
           acceptances = new AcceptanceService(pool, notifications),
           matches = new MatchService(pool, notifications),
           engine = engine,

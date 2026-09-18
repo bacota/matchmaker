@@ -3,6 +3,7 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import cats.syntax.all._
 import com.vivi.matchmaker.model._
+import skunk.Session
 import com.vivi.matchmaker.notify.Notifications
 import com.vivi.matchmaker.persistence.{
     AcceptanceRepo,
@@ -34,9 +35,18 @@ class OpenChallengeService[T](
      * The answer is what decides whether an acceptance is news in its own right -- see `accept` --
      * and the player is who accepted, which is what the mail about the match then opens with.
      *
+     * Handed the session this service is already holding, as every `Notifications` method is and for
+     * the same reason: a start needs a connection, and borrowing a second one while the first is
+     * still held is how a bounded pool deadlocks -- `Services.defaultPoolSize` concurrent accepts
+     * would each hold one and wait for one only another holder can give back. Not the transaction,
+     * which has committed by then and could not have covered a start anyway: a start talks to the
+     * game engine between two transactions of its own, and one transaction across that would hold
+     * the challenge's row lock for as long as another system takes to answer -- and would undo a
+     * recorded acceptance when that system failed.
+     *
      * Starts nothing by default, which is what an environment with no engine is -- so a spec with no
      * opinion about starting constructs this exactly as it did before. */
-    autoStart: (GameId, ChallengeId, Player) => IO[Boolean] = (_, _, _) => IO.pure(false)
+    autoStart: (Session[IO], GameId, ChallengeId, Player) => IO[Boolean] = (_, _, _, _) => IO.pure(false)
 )(using codec: TextCodec[T]) {
 
     private def requireGame(gameRepo: GameRepo[T], gameId: GameId): IO[Game] =
@@ -287,7 +297,7 @@ class OpenChallengeService[T](
                      *
                      * Neither can fail this accept: the acceptance is recorded, `startIfReady` swallows
                      * and logs whatever it runs into, and `Notifications` does the same. */
-                    startedMatch <- autoStart(gameId, challengeId, actor)
+                    startedMatch <- autoStart(session, gameId, challengeId, actor)
                     _ <- IO.unlessA(startedMatch)(
                       notifications.challengeAccepted(session, gameId, challengeId, actor)
                     )
