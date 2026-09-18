@@ -80,10 +80,13 @@ class GameEngineService[T](
       * leave this call having started nothing, and only the first of them is still an open challenge for an acceptance
       * to be news about.
       *
-      * A start that simply fails is the third, and is reported as "not started" on purpose: an acceptance that has been
-      * recorded must not be failed by a game engine that will not answer, the challenge is still there, and the
-      * challenger can still press Start. The failure is printed for the reason `Notifications` prints one — nobody is
-      * owed an error, but somebody may go looking for an explanation.
+      * A start that fails is reported by what it left behind rather than by the fact that it failed. One that failed at
+      * or before the engine call undid itself and is the third answer: the acceptance stands, the challenge is still
+      * there, the challenger can still press Start, and an acceptance that has been recorded must not be failed by a
+      * game engine that will not answer. One that failed after the engine made its game could not undo itself, and
+      * leaves the claimed, urlless match `start` documents — which is the second answer, because a challenge in that
+      * state is not one anybody can accept or start either. The failure is printed for the reason `Notifications`
+      * prints one: nobody is owed an error, but somebody may go looking for an explanation.
       *
       * The claim `start` takes is what makes a race harmless. Two acceptances landing together may both find the roster
       * full, and the second start then fails on the challenge's `startedMatchId` — or on the unique index behind it —
@@ -134,12 +137,33 @@ class GameEngineService[T](
                         }
                 case decided => IO.pure(decided)
             }
-            .handleError { error =>
-                // A real failure, as against a race: the challenge is still open and still startable by
-                // hand, so it is reported as the "not started" it is and the ordinary acceptance mail
-                // goes out saying so.
+            .handleErrorWith { error =>
                 System.err.println(s"could not start challenge ${challengeId.value} automatically: $error")
-                GameEngineService.AutoStart.NotReady
+
+                /* What the failure left behind, asked of the database rather than guessed at from where
+                 * the exception came from.
+                 *
+                 * The two outcomes are not alike. A failure at or before the engine call undoes itself
+                 * -- the half-made match is deleted and the claim released -- and leaves an open
+                 * challenge that its challenger can still start by hand, which is exactly what the
+                 * ordinary acceptance mail says. A failure *after* the engine has made its game cannot
+                 * be undone (see `start`), and leaves the documented urlless, permanently claimed
+                 * state: there is a match, Start would be refused, and a mail saying the challenge is
+                 * ready to start would be false twice over -- about the challenge, and about the action
+                 * it invites.
+                 *
+                 * So the claim is the question, and it answers every version of this rather than the
+                 * ones anybody thought to enumerate. If even that read fails there is nothing left to
+                 * ask with, and `NotReady` is the honest answer: an acceptance that goes unannounced is
+                 * a smaller wrong than one announced falsely, but a session too broken to answer is
+                 * also one too broken to have claimed anything. */
+                challengeRepo
+                    .startedMatch(gameId, challengeId)
+                    .map {
+                        case Some(_) => GameEngineService.AutoStart.AlreadyStarted
+                        case None    => GameEngineService.AutoStart.NotReady
+                    }
+                    .handleError(_ => GameEngineService.AutoStart.NotReady)
             }
     }
 
@@ -967,8 +991,10 @@ object GameEngineService {
         /** This call started it, as the match named here. */
         case Started(matchId: MatchId)
 
-        /** There is a match, and this call did not make it: another acceptance filled the last seat at the same moment,
-          * or the challenger pressed Start. Nothing to do, and nothing further to say about the challenge.
+        /** The challenge is claimed and this call did not deliver the match: another acceptance filled the last seat at
+          * the same moment, the challenger pressed Start, or this call's own start claimed the challenge and then
+          * failed past the point where anything could be undone. Whichever it was, there is nothing further to say
+          * about the challenge — it is not one anybody can still accept or start.
           */
         case AlreadyStarted
 

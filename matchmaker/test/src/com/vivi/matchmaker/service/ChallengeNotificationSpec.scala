@@ -76,7 +76,12 @@ class ChallengeNotificationSpec extends PropertySuite {
         def address(player: Player): String = player.email.get
     }
 
-    private def fixture(seed: String, autoStart: Boolean = false, engineFails: Boolean = false): IO[Fixture] = {
+    private def fixture(
+        seed: String,
+        autoStart: Boolean = false,
+        engineFails: Boolean = false,
+        message: String = "friendly game"
+    ): IO[Fixture] = {
         val notifier = new RecordingNotifier
         val services = TestServices.servicesWith(
           new StubEngine(engineFails),
@@ -97,7 +102,7 @@ class ChallengeNotificationSpec extends PropertySuite {
               PlainOpenChallenge(
                 ChallengeId(0),
                 challenger.playerId,
-                "friendly game",
+                message,
                 start = None,
                 timeLimit = None,
                 settings = "{}",
@@ -367,6 +372,36 @@ class ChallengeNotificationSpec extends PropertySuite {
                         f.services.engine.startIfReady(session, f.game.gameId, f.challenge.challengeId, f.third)
                     )
                 } yield again == GameEngineService.AutoStart.AlreadyStarted && again.isMatch
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* The other way a start can leave a match without returning one: it got past the engine, which
+     * cannot be undone, and then failed. `start` documents what that leaves -- a claimed challenge and
+     * a match with no urls -- and the point here is what is *not* said about it. "Your challenge is
+     * ready to start" would be false about the challenge and false about the action it invites, since
+     * Start is refused on a claimed one.
+     *
+     * The failure is forced by the trigger `TestMigration` installs, which refuses the write that
+     * records the engine's urls for a match described as 'explode'. */
+    property("a start that fails after the engine has its game sends no mail about the challenge") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed, autoStart = true, message = "explode").flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- IO(f.notifier.clear())
+                    _ <- accept(f, f.third, 2)
+                    claimed <- TestSession.resource.use(session =>
+                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                            .startedMatch(f.game.gameId, f.challenge.challengeId)
+                    )
+                } yield
+                // The claim stands: this is the state that cannot be undone.
+                claimed.isDefined &&
+                    // And nothing was said. The match mail never got as far as being sent, and the
+                    // acceptance mail would have described a challenge that is no longer one.
+                    f.notifier.messages.isEmpty
             }
             result.timeout(caseTimeout).unsafeRunSync()
         }
