@@ -63,6 +63,51 @@ class GameEngineService[T](
       * place of "gone".
       */
     def start(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Match] =
+        started(gameId, challengeId, Some(callerExternalId))
+
+    /** Starts a challenge because the challenger said to start it as soon as it could be, rather than because anybody
+      * asked now.
+      *
+      * `OpenChallenge.autoStart` is the setting, and "could be" is the rule a manual start already enforces: every
+      * non-optional role taken. Called after an acceptance has committed — see `OpenChallengeService.accept` — so the
+      * acceptance that fills the last required role is what starts the match. Not called when a challenge is created,
+      * even though a challenge whose only required role is the challenger's own is startable the moment it exists: a
+      * challenge that started itself before anybody could see it would not have been a challenge.
+      *
+      * `None` for every reason not to have started, and they are not told apart because the caller can do nothing about
+      * any of them: the challenge does not auto-start, the roster is not full yet, it has been started already, or the
+      * start itself failed. That last one is why this swallows — an acceptance that has been recorded must not be
+      * failed by a game engine that will not answer, and the challenger can still press Start. The failure is printed
+      * for the reason `Notifications` prints one: nobody is owed an error, but somebody may go looking for an
+      * explanation.
+      *
+      * The claim `start` takes is what makes a race harmless. Two acceptances landing together may both find the roster
+      * full, and the second start then fails on the challenge's `startedMatchId` — or on the unique index behind it —
+      * rather than making a second match.
+      */
+    def startIfReady(gameId: GameId, challengeId: ChallengeId): IO[Option[Match]] =
+        sessionPool
+            .use { session =>
+                for {
+                    challenge <- new OpenChallengeRepo(session).read(gameId, challengeId)
+                    unfilled <- new AcceptanceRepo(session).unclaimedRoles(gameId, challengeId)
+                } yield challenge.exists(_.autoStart) && unfilled.isEmpty
+            }
+            .flatMap {
+                case false => IO.pure(None)
+                case true  => started(gameId, challengeId, None).map(Some(_))
+            }
+            .handleError { error =>
+                System.err.println(s"could not start challenge ${challengeId.value} automatically: $error")
+                None
+            }
+
+    /* The start itself, for both of the things that can ask for one.
+     *
+     * `caller` is the external id to authorize against the challenger, and `None` is an automatic
+     * start: there is nobody to check, because nobody asked. It is also what decides who is left out
+     * of the mail about the match -- see the `matchStarted` call at the end. */
+    private def started(gameId: GameId, challengeId: ChallengeId, caller: Option[String]): IO[Match] =
         sessionPool.use { session =>
             val gameRepo = new GameRepo[T](session)
             val playerRepo = new PlayerRepo(session)
@@ -107,9 +152,13 @@ class GameEngineService[T](
                             case None =>
                                 IO.raiseError(NotFoundError(s"no player with id ${challenge.challenger.value}"))
                         }
-                        _ <- IO.raiseUnless(callerExternalId == challenger.externalId)(
-                          UnauthorizedError(s"caller '$callerExternalId' may not start challenge ${challengeId.value}")
-                        )
+                        _ <- caller.traverse_ { callerExternalId =>
+                            IO.raiseUnless(callerExternalId == challenger.externalId)(
+                              UnauthorizedError(
+                                s"caller '$callerExternalId' may not start challenge ${challengeId.value}"
+                              )
+                            )
+                        }
                         roster <- acceptanceRepo.listForChallenge(gameId, challengeId)
                         taken = roster.map((acceptance, _, _) => acceptance.gameRoleId).toSet
                         unfilled = game.roles.filterNot(_.optional).filterNot(role => taken.contains(role.gameRoleId))
@@ -183,9 +232,10 @@ class GameEngineService[T](
                 // After `applyEngineStatus`, not before: that is what writes whose turn it is, and "it is
                 // your turn" is most of what the mail has to say.
                 // Everyone in the match but the challenger, who pressed Start and is reading the
-                // answer. Swallowed and logged by `Notifications`, where the terms every notification
-                // is sent on are written down.
-                _ <- notifications.matchStarted(session, started, challenge.challenger)
+                // answer -- and everyone including them when nobody pressed anything, which is what an
+                // automatic start is. Swallowed and logged by `Notifications`, where the terms every
+                // notification is sent on are written down.
+                _ <- notifications.matchStarted(session, started, caller.map(_ => challenge.challenger))
             } yield started
         }
 

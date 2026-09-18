@@ -75,7 +75,7 @@ class ChallengeNotificationSpec extends PropertySuite {
         def address(player: Player): String = player.email.get
     }
 
-    private def fixture(seed: String): IO[Fixture] = {
+    private def fixture(seed: String, autoStart: Boolean = false): IO[Fixture] = {
         val notifier = new RecordingNotifier
         val services = TestServices.servicesWith(
           new StubEngine,
@@ -104,7 +104,8 @@ class ChallengeNotificationSpec extends PropertySuite {
                 isPublic = true,
                 gameRoleId = game.roles.head.gameRoleId,
                 timeLimitKind = TimeLimitKind.PerTurn,
-                timeLimitUnit = TimeLimitUnit.Minutes
+                timeLimitUnit = TimeLimitUnit.Minutes,
+                autoStart = autoStart
               ),
               s"challenger-$seed"
             )
@@ -274,6 +275,54 @@ class ChallengeNotificationSpec extends PropertySuite {
                 _ <- IO(f.notifier.clear())
                 _ <- accept(f, f.second, 1)
             } yield f.notifier.messages.isEmpty
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* A challenge offered as starting itself, which changes both halves of this: the acceptance
+     * that fills the roster is also the start, and what its players are told is about a match rather
+     * than about a challenge somebody could choose to start. */
+    property("a challenge that starts itself turns the last acceptance into a match") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed, autoStart = true).flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- IO(f.notifier.clear())
+                    _ <- accept(f, f.third, 2)
+                    claimed <- TestSession.resource.use(session =>
+                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                            .readForUpdate(f.game.gameId, f.challenge.challengeId)
+                    )
+                } yield {
+                    val subjects = f.notifier.messages.map(m => m.recipient -> m.subject).toMap
+                    // The challenge is spent: something started it, and nobody pressed Start.
+                    claimed.flatMap(_.startedMatchId).isDefined &&
+                    // Everyone in it, the challenger included -- on this path they are not the person
+                    // who did it, so the mail about the match is theirs like anybody's.
+                    subjects.keySet == Set(f.address(f.challenger), f.address(f.second), f.address(f.third)) &&
+                    subjects.values.forall(_ == "Your Tic-Tac-Toe match has started") &&
+                    // And not the mail that asks somebody to start what has already started.
+                    !subjects.values.exists(_.contains("ready to start"))
+                }
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    // The default, stated as a test rather than left to the column's DEFAULT: filling the roster of
+    // an ordinary challenge starts nothing, and its challenger is asked to.
+    property("an ordinary challenge leaves the start to its challenger") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed).flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- accept(f, f.third, 2)
+                    claimed <- TestSession.resource.use(session =>
+                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                            .readForUpdate(f.game.gameId, f.challenge.challengeId)
+                    )
+                } yield claimed.flatMap(_.startedMatchId).isEmpty
+            }
             result.timeout(caseTimeout).unsafeRunSync()
         }
     }

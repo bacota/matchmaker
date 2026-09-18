@@ -94,14 +94,16 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * @param startedBy
       *   the challenger, and the one person not written to: they pressed Start and are reading the answer to their own
       *   click. Passed rather than read, for the same reason `matchEnded` is told who cancelled — who caused an event
-      *   is something its caller knows and nothing here could work out.
+      *   is something its caller knows and nothing here could work out. `None` when nobody pressed anything: a
+      *   challenge that starts itself has no such person, and the challenger is then owed this mail like everyone else
+      *   — it is the only thing that tells them their challenge has become a match.
       */
-    def matchStarted(session: Session[IO], started: Match, startedBy: PlayerId): IO[Unit] =
+    def matchStarted(session: Session[IO], started: Match, startedBy: Option[PlayerId]): IO[Unit] =
         aboutMatch(session, started, s"start of match ${started.matchId.value}") {
             (from, uiBaseUrl, notice, seats, participants) =>
                 val byId = participants.map(participant => participant.participantId -> participant).toMap
 
-                seats.filter(_.player.playerId != startedBy).flatMap { seat =>
+                seats.filterNot(seat => startedBy.contains(seat.player.playerId)).flatMap { seat =>
                     val participant = byId.get(seat.participantId)
                     NotificationPolicy
                         .choose(Seq(NotificationType.MatchStarted), seat.preferences)
@@ -288,7 +290,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                             .flatMap(recipient =>
                                 NotificationPolicy
                                     .choose(
-                                      kindsFor(recipient, offered.challenger, joined, waitingFor),
+                                      kindsFor(recipient, offered, joined, waitingFor),
                                       recipient.levels.resolve
                                     )
                                     .flatMap(ChallengeMail.compose(from, uiBaseUrl, recipient.player, _, news))
@@ -302,15 +304,22 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
      * The "ready" kinds are offered only for an acceptance. A withdrawal can leave a roster still
      * full -- an optional role freed -- but "you can start it now" is not the news when somebody has
      * just left, and telling a challenger their challenge is ready because a player walked out of it
-     * would be actively misleading. */
+     * would be actively misleading.
+     *
+     * Nor are they offered by a challenge that starts itself, and for a sharper version of the same
+     * reason: there this acceptance *is* the start, so "every role is taken, you can start it
+     * whenever you like" describes a decision nobody is being left to make. What those players get
+     * instead is the mail about the match, which `GameEngineService.started` sends a moment later --
+     * to the challenger too, since on that path nobody pressed anything. The plainer kinds stay:
+     * that somebody joined is still true and still theirs to hear. */
     private def kindsFor(
         recipient: AcceptorNotifications,
-        challenger: PlayerId,
+        challenge: OpenChallenge,
         joined: Boolean,
         waitingFor: Seq[String]
     ): Seq[NotificationType] = {
-        val ready = joined && waitingFor.isEmpty
-        if (recipient.player.playerId == challenger)
+        val ready = joined && waitingFor.isEmpty && !challenge.autoStart
+        if (recipient.player.playerId == challenge.challenger)
             if (ready) Seq(NotificationType.ChallengeReady, NotificationType.ChallengeAccepted)
             else Seq(NotificationType.ChallengeAccepted)
         else if (ready) Seq(NotificationType.AcceptedChallengeReady, NotificationType.AcceptanceChanged)

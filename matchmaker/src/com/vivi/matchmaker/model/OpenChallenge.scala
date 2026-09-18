@@ -38,6 +38,16 @@ sealed trait OpenChallenge {
       * because the acceptance it is stored on is.
       */
     def gameRoleId: GameRoleId
+
+    /** Whether the match starts by itself as soon as every required role is taken, rather than waiting for the
+      * challenger to press Start (V18).
+      *
+      * The challenger's decision, which is why it is here and not on the game: the same game is offered on different
+      * terms by different people, and "whoever turns up, and we play" is one of them. "Required" is the rule a manual
+      * start already enforces, so a challenge with optional roles left begins without them — a challenger who wants
+      * those seats filled leaves this off, and pressing Start is then what says "this is everybody".
+      */
+    def autoStart: Boolean
 }
 
 case class PlainOpenChallenge(
@@ -51,7 +61,8 @@ case class PlainOpenChallenge(
     isPublic: Boolean = false,
     gameRoleId: GameRoleId,
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
-    timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes
+    timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
+    autoStart: Boolean = false
 ) extends OpenChallenge
 
 case class CharacterOpenChallenge(
@@ -66,7 +77,8 @@ case class CharacterOpenChallenge(
     isPublic: Boolean = false,
     gameRoleId: GameRoleId,
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
-    timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes
+    timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
+    autoStart: Boolean = false
 ) extends OpenChallenge
 
 /** An open challenge together with how many players have accepted it so far.
