@@ -22,9 +22,10 @@ class ChallengeNotificationSpec extends PropertySuite {
 
     private val caseTimeout = 60.seconds
 
-    private class StubEngine extends GameEngineClient {
+    private class StubEngine(fail: Boolean = false) extends GameEngineClient {
         def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
-            IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+            if (fail) IO.raiseError(new RuntimeException("engine says no"))
+            else IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
 
         def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] =
             IO.pure(GameStatusResponse(completed = false, participants = Nil))
@@ -75,10 +76,10 @@ class ChallengeNotificationSpec extends PropertySuite {
         def address(player: Player): String = player.email.get
     }
 
-    private def fixture(seed: String, autoStart: Boolean = false): IO[Fixture] = {
+    private def fixture(seed: String, autoStart: Boolean = false, engineFails: Boolean = false): IO[Fixture] = {
         val notifier = new RecordingNotifier
         val services = TestServices.servicesWith(
-          new StubEngine,
+          new StubEngine(engineFails),
           callbackBaseUrl = Some("https://matchmaker.example.com"),
           notifier = notifier,
           mail = TestServices.mailSettings
@@ -294,15 +295,44 @@ class ChallengeNotificationSpec extends PropertySuite {
                             .readForUpdate(f.game.gameId, f.challenge.challengeId)
                     )
                 } yield {
-                    val subjects = f.notifier.messages.map(m => m.recipient -> m.subject).toMap
+                    val sent = f.notifier.messages
                     // The challenge is spent: something started it, and nobody pressed Start.
                     claimed.flatMap(_.startedMatchId).isDefined &&
+                    // One mail each and no more. Counted rather than looked up by recipient, because
+                    // the fault this is here to catch is a second mail to the same player: the
+                    // acceptance that fills the roster is the match beginning, not two events.
+                    sent.size == 3 &&
                     // Everyone in it, the challenger included -- on this path they are not the person
                     // who did it, so the mail about the match is theirs like anybody's.
-                    subjects.keySet == Set(f.address(f.challenger), f.address(f.second), f.address(f.third)) &&
-                    subjects.values.forall(_ == "Your Tic-Tac-Toe match has started") &&
-                    // And not the mail that asks somebody to start what has already started.
-                    !subjects.values.exists(_.contains("ready to start"))
+                    sent.map(_.recipient).toSet ==
+                        Set(f.address(f.challenger), f.address(f.second), f.address(f.third)) &&
+                        sent.forall(_.subject == "Your Tic-Tac-Toe match has started")
+                }
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* An auto-start that does not happen, which is the case the ordinary mail must survive: the
+     * challenge is still there and still startable by hand, so the challenger is owed the one
+     * notification that says so. */
+    property("an auto-start that fails leaves the acceptance to be notified as usual") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed, autoStart = true, engineFails = true).flatMap { f =>
+                for {
+                    _ <- accept(f, f.second, 1)
+                    _ <- IO(f.notifier.clear())
+                    _ <- accept(f, f.third, 2)
+                    claimed <- TestSession.resource.use(session =>
+                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                            .readForUpdate(f.game.gameId, f.challenge.challengeId)
+                    )
+                } yield {
+                    val bySubject = f.notifier.messages.map(m => m.recipient -> m.subject).toMap
+                    // The failed start released its claim, so the challenge is startable again.
+                    claimed.flatMap(_.startedMatchId).isEmpty &&
+                    bySubject(f.address(f.challenger)) == "Your Tic-Tac-Toe challenge is ready to start" &&
+                    bySubject(f.address(f.second)) == "A Tic-Tac-Toe challenge you accepted is ready to start"
                 }
             }
             result.timeout(caseTimeout).unsafeRunSync()

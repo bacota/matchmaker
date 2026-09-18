@@ -26,14 +26,16 @@ class OpenChallengeService[T](
      * notifications existed. */
     notifications: Notifications = Notifications.disabled,
     /* How a challenge whose required roles have just filled up gets started, for the challenges
-     * offered on those terms (`OpenChallenge.autoStart`). A function rather than a
-     * `GameEngineService`, because what this service knows is that a challenge has been accepted:
-     * whether that is also the moment a match begins, and everything involved in beginning one,
-     * belongs to the service that starts matches.
+     * offered on those terms (`OpenChallenge.autoStart`), and whether it started one. A function
+     * rather than a `GameEngineService`, because what this service knows is that a challenge has
+     * been accepted: whether that is also the moment a match begins, and everything involved in
+     * beginning one, belongs to the service that starts matches.
      *
-     * Does nothing by default, which is what an environment with no engine is -- so a spec with no
+     * The answer is what decides whether an acceptance is news in its own right -- see `accept`.
+     *
+     * Starts nothing by default, which is what an environment with no engine is -- so a spec with no
      * opinion about starting constructs this exactly as it did before. */
-    autoStart: (GameId, ChallengeId) => IO[Unit] = (_, _) => IO.unit
+    autoStart: (GameId, ChallengeId) => IO[Boolean] = (_, _) => IO.pure(false)
 )(using codec: TextCodec[T]) {
 
     private def requireGame(gameRepo: GameRepo[T], gameId: GameId): IO[Game] =
@@ -268,13 +270,26 @@ class OpenChallengeService[T](
              * accept the same challenge waiting on an email. */
             accepted.flatMap { (created, actor) =>
                 for {
-                    _ <- notifications.challengeAccepted(session, gameId, challengeId, actor)
-                    /* And then, if this was the acceptance that filled the roster and the challenge was
-                     * offered as starting itself, the start. After the notification rather than before
-                     * it, so the two mails arrive in the order the events happened: somebody accepted,
-                     * and then the match began. Neither can fail this accept -- the acceptance is
-                     * recorded, and `startIfReady` swallows and logs whatever it runs into. */
-                    _ <- autoStart(gameId, challengeId)
+                    /* The start first, because whether it happened is what this acceptance *is*.
+                     *
+                     * On a challenge offered as starting itself, the acceptance that fills the last
+                     * required role is not news about a challenge -- it is the match beginning, and
+                     * `matchStarted` tells everyone so, the challenger included. Sending both would
+                     * write to them twice about one event, and the first of the two would be about a
+                     * challenge that no longer exists to be accepted or started.
+                     *
+                     * `false` covers every other case and they all want the ordinary mail: an
+                     * acceptance that leaves a role unfilled, a challenge that was not offered on these
+                     * terms, and a start that was meant to happen and failed -- that last one
+                     * especially, since the challenge is then still there to be started by hand and the
+                     * mail is what says so.
+                     *
+                     * Neither can fail this accept: the acceptance is recorded, `startIfReady` swallows
+                     * and logs whatever it runs into, and `Notifications` does the same. */
+                    startedMatch <- autoStart(gameId, challengeId)
+                    _ <- IO.unlessA(startedMatch)(
+                      notifications.challengeAccepted(session, gameId, challengeId, actor)
+                    )
                 } yield created
             }
         }

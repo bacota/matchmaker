@@ -306,19 +306,20 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
      * just left, and telling a challenger their challenge is ready because a player walked out of it
      * would be actively misleading.
      *
-     * Nor are they offered by a challenge that starts itself, and for a sharper version of the same
-     * reason: there this acceptance *is* the start, so "every role is taken, you can start it
-     * whenever you like" describes a decision nobody is being left to make. What those players get
-     * instead is the mail about the match, which `GameEngineService.started` sends a moment later --
-     * to the challenger too, since on that path nobody pressed anything. The plainer kinds stay:
-     * that somebody joined is still true and still theirs to hear. */
+     * Nothing here is conditioned on the challenge starting itself, and deliberately not: on that
+     * path this notification is not sent at all, because the acceptance that filled the roster was
+     * the match beginning rather than news about a challenge -- `OpenChallengeService.accept` is
+     * where that is decided, and it decides it by asking whether a match was actually started. Which
+     * leaves one case here that looks like it should be quiet and must not be: an auto-start that
+     * failed. The challenge is still there, still startable by hand, and "every role is taken, you
+     * can start it" is then the only mail that says so. */
     private def kindsFor(
         recipient: AcceptorNotifications,
         challenge: OpenChallenge,
         joined: Boolean,
         waitingFor: Seq[String]
     ): Seq[NotificationType] = {
-        val ready = joined && waitingFor.isEmpty && !challenge.autoStart
+        val ready = joined && waitingFor.isEmpty
         if (recipient.player.playerId == challenge.challenger)
             if (ready) Seq(NotificationType.ChallengeReady, NotificationType.ChallengeAccepted)
             else Seq(NotificationType.ChallengeAccepted)
