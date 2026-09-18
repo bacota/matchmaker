@@ -410,6 +410,78 @@ object Account {
           shown = allGames.chosen.signal
         )
 
+        /* Answers for one game, built here and handed to the defaults form to render inside the dialog
+         * its save button opens.
+         *
+         * There rather than as a fourth section of the panel, because that is the moment it answers the
+         * question a player is actually asking: having just said what they want in general, "except for
+         * this one game" is the exception that follows it. Out in the panel it was a second eight-
+         * question form underneath the first, and the panel is not a page.
+         *
+         * Built out here, so picking a game and saving for it does not depend on the dialog staying
+         * open -- `chosen` and `perGame` are this element's, not the dialog's. */
+        val oneGame: HtmlElement =
+            div(
+              cls := "account-section",
+              h3("One Game"),
+              p(
+                cls := "detail",
+                "Answers for a single game, which win over the ones above. " +
+                    "Anything left on \"Use Default\" falls back to them, and then to what the game itself asks for."
+              ),
+              label(
+                cls := "field",
+                "Game",
+                select(
+                  value <-- chosen.signal.map(_.map(_.value.toString).getOrElse("")),
+                  onChange.mapToValue --> { raw =>
+                      chosen.set(raw.toIntOption.map(GameId.apply))
+                  },
+                  option(value := "", "Choose a game"),
+                  children <-- Store.games.signal.map(
+                    _.map(game => option(value := game.gameId.value.toString, game.name)).toList
+                  )
+                )
+              ),
+              // Rebuilt per game, which is also how the form is re-seeded: a fresh element over a fresh
+              // `Var` of that game's answers, rather than one form whose contents have to be swapped
+              // underneath it.
+              child <-- chosen.signal.map {
+                  case None => emptyNode
+                  case Some(gameId) =>
+                      val forGame = Var(perGame.now().getOrElse(gameId, NotificationPreferences.unset))
+                      val alsoMatches = Notifications.Cascade(
+                        "Use the answers I change here in the matches of this game I am playing now",
+                        "Only the questions you change. Matches you have already finished are left alone."
+                      )
+                      Notifications.form(
+                        Store.games.now().find(_.gameId == gameId).map(_.name).getOrElse("This game"),
+                        "Leave a question on \"Use Default\" to answer it from your settings above.",
+                        forGame,
+                        saveLabel = "Save for this game",
+                        cascades = Seq(alsoMatches)
+                      ) { preferences =>
+                          // Guarded like the save above, and for the same reason: this writes one
+                          // player's answers into a store the next player may already be reading.
+                          val signIn = Store.currentSignIn
+                          ApiClient
+                              .updateGameNotifications(gameId, preferences, applyToMatches = alsoMatches.chosen.now())
+                              .map { _ =>
+                                  if (Store.stillSignedInAs(signIn)) {
+                                      perGame.update(_.updated(gameId, preferences))
+                                      Store.notificationSettings.update(_.map { current =>
+                                          current.copy(
+                                            games = current.games.filterNot(_.gameId == gameId) :+
+                                                com.vivi.matchmaker.model
+                                                    .GameNotificationPreferences(gameId, preferences)
+                                          )
+                                      })
+                                  }
+                              }
+                      }
+              }
+            )
+
         div(
           suppressionNotice(settings.suppressed),
           Notifications.form(
@@ -417,7 +489,8 @@ object Account {
             "What we email you about, unless you say otherwise for a particular game or match.",
             overall,
             saveLabel = "Save notifications",
-            cascades = Seq(allGames, allMatches)
+            cascades = Seq(allGames, allMatches),
+            deferred = Some(Notifications.Deferred("Saving your notification preferences", Seq(oneGame)))
           ) { preferences =>
               val games = allGames.chosen.now()
               // Only ever true while the box above it is checked -- `Cascade.shown` unchecks it when
@@ -456,66 +529,7 @@ object Account {
                           Future.unit
                       }
                   }
-          },
-          div(
-            cls := "account-section",
-            h3("One Game"),
-            p(
-              cls := "detail",
-              "Answers for a single game, which win over the ones above. " +
-                  "Anything left on \"Use Default\" falls back to them, and then to what the game itself asks for."
-            ),
-            label(
-              cls := "field",
-              "Game",
-              select(
-                value <-- chosen.signal.map(_.map(_.value.toString).getOrElse("")),
-                onChange.mapToValue --> { raw =>
-                    chosen.set(raw.toIntOption.map(GameId.apply))
-                },
-                option(value := "", "Choose a game"),
-                children <-- Store.games.signal.map(
-                  _.map(game => option(value := game.gameId.value.toString, game.name)).toList
-                )
-              )
-            ),
-            // Rebuilt per game, which is also how the form is re-seeded: a fresh element over a fresh
-            // `Var` of that game's answers, rather than one form whose contents have to be swapped
-            // underneath it.
-            child <-- chosen.signal.map {
-                case None => emptyNode
-                case Some(gameId) =>
-                    val forGame = Var(perGame.now().getOrElse(gameId, NotificationPreferences.unset))
-                    val alsoMatches = Notifications.Cascade(
-                      "Use the answers I change here in the matches of this game I am playing now",
-                      "Only the questions you change. Matches you have already finished are left alone."
-                    )
-                    Notifications.form(
-                      Store.games.now().find(_.gameId == gameId).map(_.name).getOrElse("This game"),
-                      "Leave a question on \"Use Default\" to answer it from your settings above.",
-                      forGame,
-                      saveLabel = "Save for this game",
-                      cascades = Seq(alsoMatches)
-                    ) { preferences =>
-                        // Guarded like the save above, and for the same reason: this writes one
-                        // player's answers into a store the next player may already be reading.
-                        val signIn = Store.currentSignIn
-                        ApiClient
-                            .updateGameNotifications(gameId, preferences, applyToMatches = alsoMatches.chosen.now())
-                            .map { _ =>
-                                if (Store.stillSignedInAs(signIn)) {
-                                    perGame.update(_.updated(gameId, preferences))
-                                    Store.notificationSettings.update(_.map { current =>
-                                        current.copy(
-                                          games = current.games.filterNot(_.gameId == gameId) :+
-                                              com.vivi.matchmaker.model.GameNotificationPreferences(gameId, preferences)
-                                        )
-                                    })
-                                }
-                            }
-                    }
-            }
-          )
+          }
         )
     }
 

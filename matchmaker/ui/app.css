@@ -833,3 +833,78 @@ button.toggle {
 .account-menu:focus-visible {
   outline: none;
 }
+
+/* A dialog over the account panel: the offers a save carries with it, and the per-game form.
+
+   `position: fixed` rather than absolute, and deliberately: this markup is rendered inside the
+   account panel, which is itself an absolutely positioned box with `overflow-y: auto`. An absolute
+   child would be laid out inside that scrolling box and clipped by it; a fixed one is positioned
+   against the viewport, which is what a dialog over the whole page means. Nothing on the way down
+   sets `transform`, `filter` or `will-change`, any of which would quietly make an ancestor the
+   containing block and put it back inside the panel.
+
+   Above the panel's own `z-index: 10`, because it is over it. */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+/* `.card` brings the border, the white ground and the padding; this adds the size and the lift off
+   what is behind it. The scrim's padding is what keeps it clear of the viewport's edges, so the
+   width is allowed all of the room inside it. */
+.modal {
+  width: min(32rem, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  margin: 0;
+  text-align: left;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* The dialog's first thing is its own heading, and the section inside it brings a border-top that
+   would read as a rule above nothing. */
+.modal > h3 {
+  margin-top: 0;
+}
+
+.modal > .account-section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+/* The notification questions, where there is room for a caption beside its dropdown rather than
+   above it. Eight questions three lines tall each is a column of mostly captions.
+
+   Only at the width that widens the panel in the first place, and only for the dropdowns.
+   `label.field` stacks for a good reason -- a caption beside a full-width *text* box wraps
+   immediately -- and a phone, or a match row on a phone, still wants the stack.
+
+   A grid rather than a flex line, for the reason `.cascade` gives: the hint underneath is a second
+   line, and a flex row would centre it halfway up the control. A fixed first column so the
+   dropdowns line up with each other instead of each with its own caption's length. */
+@media (min-width: 48rem) {
+  .account-menu label.field:has(> select),
+  .modal label.field:has(> select) {
+    display: grid;
+    grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
+    align-items: center;
+    gap: 0.15rem 0.6rem;
+  }
+
+  .account-menu label.field:has(> select) > select,
+  .modal label.field:has(> select) > select {
+    margin-top: 0;
+  }
+
+  .account-menu label.field:has(> select) > .hint,
+  .modal label.field:has(> select) > .hint {
+    grid-column: 2;
+    margin-top: 0;
+  }
+}

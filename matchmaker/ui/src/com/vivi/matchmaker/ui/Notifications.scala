@@ -2,6 +2,7 @@ package com.vivi.matchmaker.ui
 
 import scala.concurrent.Future
 import com.raquo.laminar.api.L.{*, given}
+import org.scalajs.dom
 import com.vivi.matchmaker.model._
 
 /** The forms a player sets their notification preferences with, wherever they appear.
@@ -91,6 +92,22 @@ object Notifications {
         shown: Signal[Boolean] = Val(true)
     )
 
+    /** What a form asks *after* the player has pressed save, rather than underneath the button.
+      *
+      * The cascades are the reason this exists. They are a second sentence about a save — "and in my games too" — and
+      * on a form of eight questions they read as two more questions, which is how a player ends up scrolling past them
+      * to find the button. Behind the button they are the only thing on screen at the moment they apply.
+      *
+      * Before the save rather than after it, which is not a detail: a cascade carries what a save *changed*, so saving
+      * first and offering to cascade afterwards would offer to carry a change that had already been recorded and had
+      * nothing left to carry (`NotificationService.updateMine` says the same thing from the other end).
+      *
+      * `alongside` is whatever else the screen wants in that dialog, rendered under the save — the account panel puts
+      * its per-game form there, because "not for all my games, just this one" is the other thing a player thinks at
+      * this exact moment. It is not part of this form's save, and has its own.
+      */
+    case class Deferred(heading: String, alongside: Seq[HtmlElement] = Nil)
+
     /* A cascade as a control. The caption wraps the box, so it is named without an id, for the same
      * reason `question` gives -- a page may render this form more than once. */
     private def offer(cascade: Cascade): HtmlElement =
@@ -167,44 +184,114 @@ object Notifications {
         withDefault: Boolean = true,
         saveLabel: String = "Save",
         cascades: Seq[Cascade] = Nil,
-        kinds: Seq[NotificationType] = NotificationType.values.toSeq
+        kinds: Seq[NotificationType] = NotificationType.values.toSeq,
+        deferred: Option[Deferred] = None
     )(save: NotificationPreferences => Future[Unit]): HtmlElement = {
         val busy = Var(false)
         val outcome: Var[Option[Outcome]] = Var(None)
+
+        /* Whether the dialog is up. Only ever true when `deferred` is set, and the same `Var` is what
+         * decides where the outcome is reported: the message belongs wherever the button that produced
+         * it is, and two live regions holding one message announce it twice. */
+        val asking = Var(false)
+
+        /* The button the dialog was opened from, so closing it can put focus back. A keyboard user
+         * returned to the top of the document has been sent somewhere, not returned -- the account
+         * panel's own trigger is held for the same reason. */
+        var trigger: Option[dom.html.Element] = None
+
+        def perform(): Unit =
+            if (!busy.now()) {
+                busy.set(true)
+                outcome.set(None)
+                save(preferences.now()).onComplete { result =>
+                    busy.set(false)
+                    outcome.set(Some(result match {
+                        case scala.util.Success(_) => Outcome(false, "Saved.")
+                        case scala.util.Failure(error) =>
+                            Outcome(true, Option(error.getMessage).getOrElse(error.toString))
+                    }))
+                }(scala.concurrent.ExecutionContext.Implicits.global)
+            }
+
+        def dismiss(): Unit = {
+            asking.set(false)
+            trigger.foreach(_.focus())
+        }
+
+        def saveButton(press: () => Unit, isTrigger: Boolean): HtmlElement =
+            button(
+              tpe := "button",
+              disabled <-- busy.signal.combineWith(preferences.signal).map { case (waiting, current) =>
+                  // On the game form every question must be answered before there is anything to save;
+                  // elsewhere "unanswered" is itself an answer, so only the request blocks the button.
+                  // Only the questions being asked can hold the button: one that is not on screen cannot
+                  // be answered, so waiting for it would disable the button with nothing to click.
+                  waiting || (!withDefault && current.unsaid.exists(kinds.contains))
+              },
+              child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
+              saveLabel,
+              if (isTrigger) onMountCallback(context => trigger = Some(context.thisNode.ref)) else emptyMod,
+              onClick --> (_ => press())
+            )
+
+        /* The dialog: the cascades, a button that does the save this time, and whatever the screen
+         * sent along. Stays up after a successful save rather than closing on it, because what it
+         * holds below the button is the next thing a player may want and closing would take it away
+         * -- "Saved." above it says the save happened. */
+        def dialog(ask: Deferred): HtmlElement =
+            div(
+              cls := "modal-scrim",
+              // The scrim is the gesture "not this", and the card inside it is not the scrim. Compared
+              // against `currentTarget` rather than tested for containment, because that is exactly the
+              // question: did the click land on the backdrop itself.
+              onClick --> (event => if (event.target == event.currentTarget) dismiss()),
+              div(
+                cls := "modal card",
+                role := "dialog",
+                htmlAttr("aria-modal", com.raquo.laminar.codecs.StringAsIsCodec) := "true",
+                aria.label := ask.heading,
+                // Focusable so focus can be moved in, but not a tab stop of its own.
+                tabIndex := -1,
+                inContext(node => onMountCallback(_ => node.ref.focus())),
+                // Escape closes this and only this. The account panel listens for Escape on the
+                // document, so an unstopped one would take the whole panel down and lose the dialog
+                // with it -- stopping it here is what makes the inner layer the one that answers.
+                onKeyDown.filter(_.key == "Escape") --> { event =>
+                    event.stopPropagation()
+                    dismiss()
+                },
+                h3(ask.heading),
+                cascades.map(offer),
+                saveButton(() => perform(), isTrigger = false),
+                report(outcome),
+                ask.alongside,
+                div(
+                  cls := "alternatives",
+                  button(tpe := "button", cls := "link", "Close", onClick --> (_ => dismiss()))
+                )
+              )
+            )
+
+        val tail: Seq[Modifier[HtmlElement]] = deferred match {
+            case None =>
+                Seq(div(cascades.map(offer)), saveButton(() => perform(), isTrigger = false), report(outcome))
+            case Some(ask) =>
+                Seq(
+                  saveButton(() => asking.set(true), isTrigger = true),
+                  // Only while the dialog is shut: the message is about the button that was pressed, and
+                  // the dialog reports it there while it is the one on screen.
+                  child <-- asking.signal.map(if (_) emptyNode else report(outcome)),
+                  child <-- asking.signal.map(if (_) dialog(ask) else emptyNode)
+                )
+        }
 
         div(
           cls := "account-section",
           h3(heading),
           p(cls := "detail", explanation),
           editor(preferences, withDefault, kinds),
-          cascades.map(offer),
-          button(
-            tpe := "button",
-            disabled <-- busy.signal.combineWith(preferences.signal).map { case (waiting, current) =>
-                // On the game form every question must be answered before there is anything to save;
-                // elsewhere "unanswered" is itself an answer, so only the request blocks the button.
-                // Only the questions being asked can hold the button: one that is not on screen cannot
-                // be answered, so waiting for it would disable the button with nothing to click.
-                waiting || (!withDefault && current.unsaid.exists(kinds.contains))
-            },
-            child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
-            saveLabel,
-            onClick --> { _ =>
-                if (!busy.now()) {
-                    busy.set(true)
-                    outcome.set(None)
-                    save(preferences.now()).onComplete { result =>
-                        busy.set(false)
-                        outcome.set(Some(result match {
-                            case scala.util.Success(_) => Outcome(false, "Saved.")
-                            case scala.util.Failure(error) =>
-                                Outcome(true, Option(error.getMessage).getOrElse(error.toString))
-                        }))
-                    }(scala.concurrent.ExecutionContext.Implicits.global)
-                }
-            }
-          ),
-          report(outcome)
+          tail
         )
     }
 }
