@@ -1158,11 +1158,9 @@ object Views {
                   // answers it opens with are what the seat was stamped with when the match started,
                   // so nothing is unanswered and the button is never disabled for want of a choice.
                   //
-                  // Only `duringMatch` is asked about: the other five are about a challenge, or about
-                  // the start, and none of them can happen again to a match that has started, so
-                  // offering them would be offering a choice that changes nothing. The seat still
-                  // holds an answer for all eleven and the save still carries all eleven -- what is
-                  // saved for the five is what was fetched, unchanged.
+                  // Only `duringMatch` is asked about: the seat also holds an answer for
+                  // `MatchStarted`, but that match has already started, so it is a choice that could
+                  // never apply again. What is saved for it is what was fetched, unchanged.
                   Notifications.form(
                     "Notification Preferences for this match",
                     "What we email you about this match, whatever you change elsewhere later.",
@@ -1171,12 +1169,13 @@ object Views {
                     saveLabel = "Save for this match",
                     kinds = NotificationType.duringMatch
                   ) { chosen =>
-                      chosen.complete match {
+                      chosen.completeForSeat match {
                           case Some(answers) =>
                               ApiClient.updateMatchNotifications(summary.gameId, summary.matchId, answers)
-                          // Unreachable: the form seeds all eight and its button is disabled while any
-                          // is unanswered. A failed Future rather than a silent success, so that a hole
-                          // in that reasoning shows up beside the form instead of looking saved.
+                          // Unreachable: the form seeds every kind a seat holds and its button is
+                          // disabled while any is unanswered. A failed Future rather than a silent
+                          // success, so that a hole in that reasoning shows up beside the form instead
+                          // of looking saved.
                           case None =>
                               scala.concurrent.Future.failed(
                                 new RuntimeException("Answer every question before saving.")

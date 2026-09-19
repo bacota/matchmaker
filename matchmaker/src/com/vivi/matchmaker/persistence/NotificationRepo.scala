@@ -13,7 +13,12 @@ import com.vivi.matchmaker.model._
   * what it was stamped with when it was created (or what its player has said about this match since). No other level is
   * read, and so none is carried here.
   */
-case class SeatNotifications(participantId: ParticipantId, player: Player, preferences: NotificationDefaults)
+/** One seat in a match, with what that seat says it wants to hear about it.
+  *
+  * Named for the row rather than for the preferences on it, since the model's `SeatNotifications` is now what those
+  * preferences are: this is the seat, and `preferences` is its answer.
+  */
+case class Seat(participantId: ParticipantId, player: Player, preferences: SeatNotifications)
 
 /** A game as the notification path needs it: what to call it, and what it says its players should hear.
   *
@@ -55,6 +60,7 @@ class NotificationRepo(session: Session[IO]) {
     private val challengeId = SkunkIdCodecs.challengeId
     private val preferences = SkunkCodecs.notificationPreferences
     private val defaults = SkunkCodecs.notificationDefaults
+    private val seatAnswers = SkunkCodecs.seatNotifications
 
     private val selectPlayerPreferences: Query[PlayerId, NotificationPreferences] =
         sql"""SELECT notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
@@ -147,7 +153,7 @@ class NotificationRepo(session: Session[IO]) {
 
     /* Every seat in a match with what it says about itself.
      *
-     * One table, and no COALESCE: since V14 a seat's eleven columns are NOT NULL and are the answer,
+     * One table, and no COALESCE: since V14 a seat's own columns are NOT NULL and are the answer,
      * which is the whole point of the change -- deciding whether to write to a seat no longer depends
      * on what its player has said since about the game in general. Carrying that into a match they
      * are already in is something they ask for; see `applyToMatches`.
@@ -156,17 +162,15 @@ class NotificationRepo(session: Session[IO]) {
      * listForMatch: one player may hold two seats, and each seat is asked about separately. */
     private val selectSeatPreferences: Query[
       (GameId, MatchId),
-      (ParticipantId, PlayerId, String, Boolean, String, Option[String], NotificationDefaults)
+      (ParticipantId, PlayerId, String, Boolean, String, Option[String], SeatNotifications)
     ] =
         sql"""SELECT p.participant_id, p.player_id, pl.nickname, pl.is_admin, pl.external_id, pl.email,
-                 p.notify_challenge_accepted, p.notify_challenge_ready, p.notify_acceptance_changed,
-                 p.notify_accepted_challenge_ready, p.notify_invitation_received, p.notify_invitation_accepted, p.notify_invitation_rejected, p.notify_match_started, p.notify_turn_taken,
-                 p.notify_your_turn, p.notify_match_ended
+                 p.notify_match_started, p.notify_turn_taken, p.notify_your_turn, p.notify_match_ended
           FROM participant p
           JOIN player pl ON pl.player_id = p.player_id
           WHERE p.game_id = $gameId AND p.match_id = $matchId
           ORDER BY p.participant_id"""
-            .query(participantId *: playerId *: text *: bool *: text *: text.opt *: defaults)
+            .query(participantId *: playerId *: text *: bool *: text *: text.opt *: seatAnswers)
 
     /* Everyone who has accepted one challenge, with the two levels that can speak for them.
      *
@@ -200,31 +204,20 @@ class NotificationRepo(session: Session[IO]) {
 
     /* The caller's own seats in one match. Plural: a player may hold two, and they are not two
      * settings -- so the read takes the first and the write covers all of them. */
-    private val selectParticipantPreferences: Query[(GameId, MatchId, PlayerId), NotificationDefaults] =
-        sql"""SELECT notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
-                 notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
-                 notify_your_turn, notify_match_ended
+    private val selectParticipantPreferences: Query[(GameId, MatchId, PlayerId), SeatNotifications] =
+        sql"""SELECT notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended
           FROM participant
           WHERE game_id = $gameId AND match_id = $matchId AND player_id = $playerId
-          ORDER BY participant_id""".query(defaults)
+          ORDER BY participant_id""".query(seatAnswers)
 
-    private val updateParticipantPreferences: Command[(NotificationDefaults, GameId, MatchId, PlayerId)] =
+    private val updateParticipantPreferences: Command[(SeatNotifications, GameId, MatchId, PlayerId)] =
         sql"""UPDATE participant SET
-            notify_challenge_accepted = $bool, notify_challenge_ready = $bool,
-            notify_acceptance_changed = $bool, notify_accepted_challenge_ready = $bool, notify_invitation_received = $bool, notify_invitation_accepted = $bool, notify_invitation_rejected = $bool,
             notify_match_started = $bool, notify_turn_taken = $bool,
             notify_your_turn = $bool, notify_match_ended = $bool,
             update_date = now()
           WHERE game_id = $gameId AND match_id = $matchId AND player_id = $playerId""".command
             .contramap { case (p, game, matchId, player) =>
                 (
-                  p.challengeAccepted,
-                  p.challengeReady,
-                  p.acceptanceChanged,
-                  p.acceptedChallengeReady,
-                  p.invitationReceived,
-                  p.invitationAccepted,
-                  p.invitationRejected,
                   p.matchStarted,
                   p.turnTaken,
                   p.yourTurn,
@@ -321,13 +314,6 @@ class NotificationRepo(session: Session[IO]) {
      * turns does not undo a mute somebody put on one match's results. */
     private val restampParticipants: Command[(Set[NotificationType], PlayerId, Option[GameId])] =
         sql"""UPDATE participant p SET
-            notify_challenge_accepted = CASE WHEN $bool THEN r.notify_challenge_accepted ELSE p.notify_challenge_accepted END,
-            notify_challenge_ready = CASE WHEN $bool THEN r.notify_challenge_ready ELSE p.notify_challenge_ready END,
-            notify_acceptance_changed = CASE WHEN $bool THEN r.notify_acceptance_changed ELSE p.notify_acceptance_changed END,
-            notify_accepted_challenge_ready = CASE WHEN $bool THEN r.notify_accepted_challenge_ready ELSE p.notify_accepted_challenge_ready END,
-            notify_invitation_received = CASE WHEN $bool THEN r.notify_invitation_received ELSE p.notify_invitation_received END,
-            notify_invitation_accepted = CASE WHEN $bool THEN r.notify_invitation_accepted ELSE p.notify_invitation_accepted END,
-            notify_invitation_rejected = CASE WHEN $bool THEN r.notify_invitation_rejected ELSE p.notify_invitation_rejected END,
             notify_match_started = CASE WHEN $bool THEN r.notify_match_started ELSE p.notify_match_started END,
             notify_turn_taken = CASE WHEN $bool THEN r.notify_turn_taken ELSE p.notify_turn_taken END,
             notify_your_turn = CASE WHEN $bool THEN r.notify_your_turn ELSE p.notify_your_turn END,
@@ -335,20 +321,6 @@ class NotificationRepo(session: Session[IO]) {
             update_date = now()
           FROM (
               SELECT g.game_id,
-                     COALESCE(pg.notify_challenge_accepted, pl.notify_challenge_accepted,
-                              g.notify_challenge_accepted) AS notify_challenge_accepted,
-                     COALESCE(pg.notify_challenge_ready, pl.notify_challenge_ready,
-                              g.notify_challenge_ready) AS notify_challenge_ready,
-                     COALESCE(pg.notify_acceptance_changed, pl.notify_acceptance_changed,
-                              g.notify_acceptance_changed) AS notify_acceptance_changed,
-                     COALESCE(pg.notify_accepted_challenge_ready, pl.notify_accepted_challenge_ready,
-                              g.notify_accepted_challenge_ready) AS notify_accepted_challenge_ready,
-                     COALESCE(pg.notify_invitation_received, pl.notify_invitation_received,
-                              g.notify_invitation_received) AS notify_invitation_received,
-                     COALESCE(pg.notify_invitation_accepted, pl.notify_invitation_accepted,
-                              g.notify_invitation_accepted) AS notify_invitation_accepted,
-                     COALESCE(pg.notify_invitation_rejected, pl.notify_invitation_rejected,
-                              g.notify_invitation_rejected) AS notify_invitation_rejected,
                      COALESCE(pg.notify_match_started, pl.notify_match_started,
                               g.notify_match_started) AS notify_match_started,
                      COALESCE(pg.notify_turn_taken, pl.notify_turn_taken,
@@ -363,18 +335,13 @@ class NotificationRepo(session: Session[IO]) {
               WHERE pl.player_id = $playerId AND g.game_id = COALESCE(${gameId.opt}, g.game_id)
           ) r
           WHERE p.player_id = $playerId AND p.game_id = r.game_id AND NOT p.completed""".command
-            // Eleven flags in `NotificationType.values` order, as everywhere else the columns are
-            // bound positionally. The player is named twice in the statement -- once to resolve the
-            // chain, once to pick the seats -- so it is bound twice from the one value.
+            // Four flags, in `NotificationType.onSeat` order: since V24 those are the only columns a
+            // seat has, so they are the only kinds a cascade into one can touch -- a player who changed
+            // what they hear about challenges has changed nothing a seat holds. Bound positionally like
+            // every other column list here. The player is named twice in the statement -- once to
+            // resolve the chain, once to pick the seats -- so it is bound twice from the one value.
             .contramap { case (changed, player, game) =>
                 (
-                  changed(NotificationType.ChallengeAccepted),
-                  changed(NotificationType.ChallengeReady),
-                  changed(NotificationType.AcceptanceChanged),
-                  changed(NotificationType.AcceptedChallengeReady),
-                  changed(NotificationType.InvitationReceived),
-                  changed(NotificationType.InvitationAccepted),
-                  changed(NotificationType.InvitationRejected),
                   changed(NotificationType.MatchStarted),
                   changed(NotificationType.TurnTaken),
                   changed(NotificationType.YourTurn),
@@ -473,7 +440,7 @@ class NotificationRepo(session: Session[IO]) {
         gameId: GameId,
         matchId: MatchId,
         playerId: PlayerId
-    ): IO[Option[NotificationDefaults]] =
+    ): IO[Option[SeatNotifications]] =
         session.execute(selectParticipantPreferences)((gameId, matchId, playerId)).map(_.headOption)
 
     /** Records what this player wants to hear about this match, on every seat they hold in it.
@@ -489,7 +456,7 @@ class NotificationRepo(session: Session[IO]) {
         gameId: GameId,
         matchId: MatchId,
         playerId: PlayerId,
-        preferences: NotificationDefaults
+        preferences: SeatNotifications
     ): IO[Boolean] =
         session
             .execute(updateParticipantPreferences)((preferences, gameId, matchId, playerId))
@@ -593,10 +560,10 @@ class NotificationRepo(session: Session[IO]) {
                 case None                            => NotificationLevels(game = defaults)
             }
 
-    def preferencesForMatch(gameId: GameId, matchId: MatchId): IO[List[SeatNotifications]] =
+    def preferencesForMatch(gameId: GameId, matchId: MatchId): IO[List[Seat]] =
         session
             .execute(selectSeatPreferences)((gameId, matchId))
             .map(_.map { case (participant, id, nickname, isAdmin, externalId, email, seat) =>
-                SeatNotifications(participant, Player(id, nickname, isAdmin, externalId, email), seat)
+                Seat(participant, Player(id, nickname, isAdmin, externalId, email), seat)
             })
 }

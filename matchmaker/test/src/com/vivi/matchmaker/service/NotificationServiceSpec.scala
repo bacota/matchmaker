@@ -253,7 +253,7 @@ class NotificationServiceSpec extends PropertySuite {
                 game <- makeGame(seed)
                 read <- services.notifications.forMatch(caller, game.gameId, MatchId(s"absent-$seed")).attempt
                 written <- services.notifications
-                    .updateForMatch(caller, game.gameId, MatchId(s"absent-$seed"), NotificationDefaults.all(true))
+                    .updateForMatch(caller, game.gameId, MatchId(s"absent-$seed"), SeatNotifications.all(true))
                     .attempt
             } yield read.left.exists(_.isInstanceOf[NotFoundError]) &&
                 written.left.exists(_.isInstanceOf[NotFoundError])

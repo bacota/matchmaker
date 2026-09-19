@@ -62,9 +62,9 @@ class NotificationPolicySpec extends FunSuite {
         NotificationType.values.foreach { asked =>
             val said = NotificationPreferences.unset.updated(asked, Some(false))
             val answers = NotificationLevels(player = said, game = NotificationDefaults.all(true)).resolve
-            assert(!NotificationPolicy.wants(asked, answers), s"$asked should be refused by its own setting")
+            assert(!NotificationPolicy.wants(asked, answers.apply), s"$asked should be refused by its own setting")
             NotificationType.values.filter(_ != asked).foreach { other =>
-                assert(NotificationPolicy.wants(other, answers), s"$other should be unaffected by $asked")
+                assert(NotificationPolicy.wants(other, answers.apply), s"$other should be unaffected by $asked")
             }
         }
     }
@@ -89,7 +89,7 @@ class NotificationPolicySpec extends FunSuite {
     test("choose takes the fullest reason the player has not refused") {
         assertEquals(
           NotificationPolicy
-              .choose(Seq(NotificationType.YourTurn, NotificationType.TurnTaken), NotificationDefaults.all(true)),
+              .choose(Seq(NotificationType.YourTurn, NotificationType.TurnTaken), NotificationDefaults.all(true).apply),
           Some(NotificationType.YourTurn)
         )
     }
@@ -97,7 +97,8 @@ class NotificationPolicySpec extends FunSuite {
     test("choose falls back to a plainer reason rather than sending nothing") {
         val refusedTheFullest = NotificationDefaults.all(true).copy(yourTurn = false)
         assertEquals(
-          NotificationPolicy.choose(Seq(NotificationType.YourTurn, NotificationType.TurnTaken), refusedTheFullest),
+          NotificationPolicy
+              .choose(Seq(NotificationType.YourTurn, NotificationType.TurnTaken), refusedTheFullest.apply),
           Some(NotificationType.TurnTaken)
         )
     }
@@ -105,10 +106,10 @@ class NotificationPolicySpec extends FunSuite {
     test("choose sends nothing only when every reason has been refused") {
         val refusedBoth = NotificationDefaults.all(true).copy(yourTurn = false, turnTaken = false)
         assertEquals(
-          NotificationPolicy.choose(Seq(NotificationType.YourTurn, NotificationType.TurnTaken), refusedBoth),
+          NotificationPolicy.choose(Seq(NotificationType.YourTurn, NotificationType.TurnTaken), refusedBoth.apply),
           None
         )
-        assertEquals(NotificationPolicy.choose(Seq.empty, NotificationDefaults.all(true)), None)
+        assertEquals(NotificationPolicy.choose(Seq.empty, NotificationDefaults.all(true).apply), None)
     }
 
     // What a cascade is allowed to touch. The three cases that matter are an answer changing, an
@@ -155,6 +156,30 @@ class NotificationPolicySpec extends FunSuite {
           ),
           "every other kind is about a challenge, or about the start itself"
         )
+    }
+
+    /* What `participant` stores (V24), and the reason the type is its own rather than the eleven-kind
+     * one: a seat is only ever asked about the match it is in. */
+    test("a seat answers about its match and about nothing else") {
+        assertEquals(
+          NotificationType.onSeat,
+          Seq(
+            NotificationType.MatchStarted,
+            NotificationType.TurnTaken,
+            NotificationType.YourTurn,
+            NotificationType.MatchEnded
+          )
+        )
+
+        // `false` for the rest, which is the absence of a question rather than a refusal: nothing about
+        // a challenge can happen once its match exists, so nothing asks a seat about one.
+        val seat = SeatNotifications.all(true)
+        assert(NotificationType.onSeat.forall(seat.apply))
+        assert(NotificationType.values.toSeq.filterNot(NotificationType.onSeat.contains).forall(!seat.apply(_)))
+
+        // And the round trip a form makes: four answers out, four answers back, nothing invented.
+        assertEquals(seat.asPreferences.completeForSeat, Some(seat))
+        assertEquals(seat.asPreferences.unsaid.toSet, NotificationType.values.toSet -- NotificationType.onSeat)
     }
 
     test("a column name per kind, all distinct, all derived from the code") {

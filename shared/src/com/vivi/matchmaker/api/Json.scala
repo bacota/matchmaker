@@ -55,6 +55,7 @@ object Json {
       */
     given ReadWriter[NotificationPreferences] = macroRW
     given ReadWriter[NotificationDefaults] = macroRW
+    given ReadWriter[SeatNotifications] = macroRW
     given ReadWriter[GameNotificationPreferences] = macroRW
 
     /** The reason mail to a player is being held back, if any: the `code` of a `SuppressionReason`, as the database

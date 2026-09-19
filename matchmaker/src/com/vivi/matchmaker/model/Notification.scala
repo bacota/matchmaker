@@ -122,6 +122,18 @@ object NotificationType {
       * kind added to the enum has to say for itself which side of the start it falls on.
       */
     val duringMatch: Seq[NotificationType] = values.toSeq.filter(_.inProgress)
+
+    /** The kinds a seat in a match can answer at all, which is what `participant` stores (V24).
+      *
+      * [[duringMatch]] plus [[MatchStarted]]: a seat exists by the time a match starts, and the mail announcing the
+      * start reads the seat's own answer. Everything else here is about a challenge — an acceptance, an invitation, a
+      * roster filling up — and none of it can happen once the match exists, so a seat has nothing to say about them and
+      * no column to say it in.
+      *
+      * Derived rather than written out, so that a kind added to the enum joins this list only if it says it belongs
+      * there.
+      */
+    val onSeat: Seq[NotificationType] = values.toSeq.filter(kind => kind.inProgress || kind == MatchStarted)
 }
 
 /** What a player has said about each kind of notification, at one level of the chain.
@@ -189,6 +201,20 @@ case class NotificationPreferences(
     /** The kinds this level has nothing to say about, i.e. the ones that fall through to the next. */
     def unsaid: Seq[NotificationType] = NotificationType.values.toSeq.filter(apply(_).isEmpty)
 
+    /** The four a seat holds, or `None` if any of those is unsaid. What the per-match form saves.
+      *
+      * Separate from [[complete]] because the two forms ask different questions: the game's asks all eleven and every
+      * one of them is a column, while a match's asks the four its seat can answer and must not be blocked by the seven
+      * it never shows.
+      */
+    def completeForSeat: Option[SeatNotifications] =
+        for {
+            started <- matchStarted
+            taken <- turnTaken
+            yours <- yourTurn
+            ended <- matchEnded
+        } yield SeatNotifications(started, taken, yours, ended)
+
     /** Every kind answered, or `None` if any is still unsaid. What turns the game form's eleven controls into the
       * eleven NOT NULL columns of `game`, and the reason the form cannot be submitted with one left blank.
       */
@@ -224,6 +250,43 @@ object NotificationPreferences {
   * because the difference is the whole point: this is what `game`'s eleven NOT NULL columns hold, and it is what
   * [[NotificationPolicy]] can finish on.
   */
+/** What one seat in one match says it wants to hear about that match (V24).
+  *
+  * Four kinds, not eleven. A seat used to carry a column per kind for uniformity with the three levels behind it, and
+  * seven of them could never fire: by the time there is a seat there is a match, and a challenge that has become a
+  * match cannot be accepted, filled or invited to again. The columns were written at creation, re-stamped by every
+  * cascade, and read by nothing.
+  *
+  * No chain behind it, which is what V14 established and this keeps: a seat's row is the answer, so a player who mutes
+  * one match stays muted there however they later change the game's settings or their own.
+  */
+case class SeatNotifications(matchStarted: Boolean, turnTaken: Boolean, yourTurn: Boolean, matchEnded: Boolean) {
+
+    /** `false` for every kind a seat does not answer. Not "they said no" — a seat is never asked about a challenge, and
+      * a caller that asks is asking about an event that cannot happen to a match.
+      */
+    def apply(kind: NotificationType): Boolean = kind match {
+        case NotificationType.MatchStarted => matchStarted
+        case NotificationType.TurnTaken    => turnTaken
+        case NotificationType.YourTurn     => yourTurn
+        case NotificationType.MatchEnded   => matchEnded
+        case _                             => false
+    }
+
+    /** These four as choices a form can edit, the seven it does not hold left unsaid. */
+    def asPreferences: NotificationPreferences =
+        NotificationType.onSeat.foldLeft(NotificationPreferences.unset)((preferences, kind) =>
+            preferences.updated(kind, Some(apply(kind)))
+        )
+}
+
+object SeatNotifications {
+
+    /** One answer for all four, which is what a match already being played was stamped with when V24 narrowed the row.
+      */
+    def all(enabled: Boolean): SeatNotifications = SeatNotifications(enabled, enabled, enabled, enabled)
+}
+
 case class NotificationDefaults(
     challengeAccepted: Boolean,
     challengeReady: Boolean,
@@ -369,9 +432,16 @@ case class NotificationSettings(
   * Over one recipient's answers, already resolved: a seat's own eleven columns, or [[NotificationLevels.resolve]] for
   * an audience that has no seat yet.
   */
+/** Which notification a recipient gets, given what they have said they want.
+  *
+  * `answers` is a function rather than a type, so that a game's [[NotificationDefaults]] and a seat's
+  * [[SeatNotifications]] can both be asked without sharing a supertype. They must not share one: both travel on the
+  * wire, and upickle tags a case class that has a parent with a `$type` discriminator — which would silently change the
+  * shape of every game payload. Pass either one's `apply`.
+  */
 object NotificationPolicy {
 
-    def wants(kind: NotificationType, answers: NotificationDefaults): Boolean = answers(kind)
+    def wants(kind: NotificationType, answers: NotificationType => Boolean): Boolean = answers(kind)
 
     /** The one notification a recipient gets for an event that is several kinds of news at once.
       *
@@ -386,6 +456,6 @@ object NotificationPolicy {
       *
       * `None` when they have refused all of them, which is the only case that sends nothing.
       */
-    def choose(kinds: Seq[NotificationType], answers: NotificationDefaults): Option[NotificationType] =
+    def choose(kinds: Seq[NotificationType], answers: NotificationType => Boolean): Option[NotificationType] =
         kinds.find(wants(_, answers))
 }

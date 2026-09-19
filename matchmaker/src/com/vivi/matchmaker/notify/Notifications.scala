@@ -185,7 +185,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                                 )
 
                                                 Option
-                                                    .when(NotificationPolicy.wants(kind, levels.resolve))(())
+                                                    .when(NotificationPolicy.wants(kind, levels.resolve.apply))(())
                                                     .flatMap(_ =>
                                                         ChallengeMail.compose(from, uiBaseUrl, recipient, kind, news)
                                                     )
@@ -229,7 +229,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                 seats.filterNot(seat => startedBy.contains(seat.player.playerId)).flatMap { seat =>
                     val participant = byId.get(seat.participantId)
                     NotificationPolicy
-                        .choose(Seq(NotificationType.MatchStarted), seat.preferences)
+                        .choose(Seq(NotificationType.MatchStarted), seat.preferences.apply)
                         .flatMap { kind =>
                             MatchMail.compose(
                               from,
@@ -279,7 +279,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                         else Seq(NotificationType.TurnTaken)
 
                     NotificationPolicy
-                        .choose(kinds, seat.preferences)
+                        .choose(kinds, seat.preferences.apply)
                         .flatMap { kind =>
                             MatchMail.compose(
                               from,
@@ -322,7 +322,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         aboutMatch(session, played, s"end of match ${played.matchId.value}") { (from, uiBaseUrl, notice, seats, _) =>
             seats.filterNot(seat => except.contains(seat.player.playerId)).flatMap { seat =>
                 NotificationPolicy
-                    .choose(Seq(NotificationType.MatchEnded), seat.preferences)
+                    .choose(Seq(NotificationType.MatchEnded), seat.preferences.apply)
                     .flatMap { kind =>
                         MatchMail.compose(
                           from,
@@ -416,7 +416,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                 NotificationPolicy
                                     .choose(
                                       kindsFor(recipient, offered, joined, waitingFor, wasInvited),
-                                      recipient.levels.resolve
+                                      recipient.levels.resolve.apply
                                     )
                                     .flatMap(ChallengeMail.compose(from, uiBaseUrl, recipient.player, _, news))
                             )
@@ -474,7 +474,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
      * A match whose game has gone is a broken row rather than a thing to write about, and this is the
      * reporting path -- so it sends nothing rather than failing the action that got here. */
     private def aboutMatch(session: Session[IO], played: Match, about: String)(
-        compose: (String, String, GameNotice, List[SeatNotifications], List[Participant]) => Seq[MailMessage]
+        compose: (String, String, GameNotice, List[Seat], List[Participant]) => Seq[MailMessage]
     ): IO[Unit] =
         dispatch(session, about) { (from, uiBaseUrl) =>
             val notificationRepo = new NotificationRepo(session)

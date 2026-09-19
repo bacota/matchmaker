@@ -231,15 +231,13 @@ class RouterSpec extends FunSuite {
       ("POST", "/games/1/matches/m1/refresh", "{}"),
       ("POST", "/games/1/matches/m1/cancel", "{}"),
       ("GET", "/games/1/matches/m1/notifications", "{}"),
-      // All eleven, and not optional: a seat answers every kind, so there is nothing here to leave
-      // out -- which is also why adding a kind (V23) fails this route's body until it is named here.
+      // The four a seat holds (V24), and not optional: a seat answers every kind it can be asked
+      // about, so there is nothing here to leave out. The seven kinds about a challenge are not a
+      // seat's to answer and are not accepted here.
       (
         "PUT",
         "/games/1/matches/m1/notifications",
-        """{"challengeAccepted":true,"challengeReady":true,"acceptanceChanged":true,
-           "acceptedChallengeReady":true,"invitationReceived":true,"invitationAccepted":true,
-           "invitationRejected":false,"matchStarted":true,"turnTaken":false,
-           "yourTurn":true,"matchEnded":true}"""
+        """{"matchStarted":true,"turnTaken":false,"yourTurn":true,"matchEnded":true}"""
       ),
       (
         "POST",
