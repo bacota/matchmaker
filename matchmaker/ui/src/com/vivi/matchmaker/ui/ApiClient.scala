@@ -159,8 +159,38 @@ object ApiClient {
     def challenges(gameId: GameId): Future[Seq[ChallengeSummary]] =
         get[Seq[ChallengeSummary]](s"/games/${gameId.value}/challenges")
 
-    def createChallenge(challenge: Challenge): Future[Challenge] =
-        send[Challenge](HttpMethod.POST, "/challenges", Some(write(challenge)))
+    /** Creates a challenge, and invites the players named with it in the same call.
+      *
+      * `invitations` is defaulted, so an open challenge nobody was asked to is the call without it. Sent together
+      * rather than as a create followed by an invite apiece because the server validates the set as a whole — and
+      * because a closed challenge created alone would exist, briefly, as one nobody could accept.
+      */
+    def createChallenge(challenge: Challenge, invitations: Seq[Invite] = Seq.empty): Future[Challenge] =
+        send[Challenge](HttpMethod.POST, "/challenges", Some(write(Json.CreateChallenge(challenge, invitations))))
+
+    /** Everything the signed-in player has been invited to and could still accept, across every game. */
+    def invitations(): Future[Seq[ChallengeInvitation]] =
+        get[Seq[ChallengeInvitation]]("/me/invitations")
+
+    /** Asks one player to a challenge the caller has already made, optionally holding a seat for them. The server
+      * refuses anyone but the challenger.
+      */
+    def invite(gameId: GameId, challengeId: ChallengeId, invite: Invite): Future[Invitation] =
+        send[Invitation](
+          HttpMethod.POST,
+          s"/challenges/${gameId.value}/${challengeId.value}/invitations",
+          Some(write(invite))
+        )
+
+    /** Takes an invitation back. Refused once that player has accepted — the challenger removes the acceptance instead,
+      * which `withdraw` below is the same route for.
+      */
+    def revokeInvitation(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId): Future[Unit] =
+        sendUnit(
+          HttpMethod.DELETE,
+          s"/challenges/${gameId.value}/${challengeId.value}/invitations/${playerId.value}",
+          None
+        )
 
     def deleteChallenge(gameId: GameId, challengeId: ChallengeId): Future[Unit] =
         sendUnit(HttpMethod.DELETE, s"/challenges/${gameId.value}/${challengeId.value}", None)

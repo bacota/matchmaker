@@ -308,6 +308,9 @@ locals {
     "POST /me/notifications/retry",
     "PUT /me/notifications/games/{gameId}",
     "GET /me/acceptances",
+    # What the caller has been asked to play, across every game — the invitations half of the list
+    # above, and the one invitation route that is not about a challenge the caller already holds.
+    "GET /me/invitations",
     "GET /me/matches",
     "GET /me/matches/due",
     "GET /me/matches/completed",
@@ -336,6 +339,11 @@ locals {
     "DELETE /challenges/{gameId}/{challengeId}",
     "POST /challenges/{gameId}/{challengeId}/acceptances",
     "DELETE /challenges/{gameId}/{challengeId}/acceptances/{playerId}",
+    # Asking particular players to a challenge, and then removing an invitation (V22). The POST is
+    # the challenger's alone; DELETE lets the invitee reject their own invitation or the challenger
+    # revoke it. The create route above carries the invitations a challenge starts with.
+    "POST /challenges/{gameId}/{challengeId}/invitations",
+    "DELETE /challenges/{gameId}/{challengeId}/invitations/{playerId}",
     # Turning a challenge into a match, and the two match routes that go with it. All three are
     # player actions: the challenger starts, and a participant reads or refreshes.
     "POST /challenges/{gameId}/{challengeId}/start",
