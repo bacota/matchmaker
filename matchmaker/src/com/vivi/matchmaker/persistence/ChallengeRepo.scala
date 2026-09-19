@@ -414,11 +414,13 @@ class ChallengeRepo(session: Session[IO]) {
             -- same reason the full one below is: it cannot be accepted by a passer-by, and the
             -- people it is still about are its challenger and the players it was addressed to.
             -- `is_open` first because it is the common case and the cheapest test. It does not
-            -- make V22's partial index usable -- an OR cannot be an index condition, so this
-            -- whole clause is a filter over the rows the primary key's game_id already found,
-            -- exactly as `started_match_id IS NULL` above it has always been. Splitting the
-            -- listing into a union to recover the index would duplicate the select list above;
-            -- see the note in V22.
+            -- make V22's (game_id, is_open) index usable -- an OR cannot be an index condition,
+            -- so this whole clause is a filter over the rows an index on game_id already found,
+            -- exactly as `started_match_id IS NULL` above it has always been. Recovering the
+            -- index means splitting this into a union of three branches (open, mine, invited),
+            -- measured at 15.6ms against 19.4ms on a game of 22k challenges -- at the cost of
+            -- writing the select list above three times. See the note in V22 for why that trade
+            -- is not taken yet.
             AND (ch.is_open
                  OR ch.challenger = $playerId
                  OR EXISTS (SELECT 1 FROM invitation i

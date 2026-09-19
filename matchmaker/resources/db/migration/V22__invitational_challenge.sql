@@ -15,21 +15,30 @@ ALTER TABLE challenge
 -- accept it. Same reasoning as V13's notification columns -- an existing behaviour becoming
 -- explicit takes the default that names it, and only a new behaviour has to be asked for.
 
--- One game's open challenges, which is what browsing a game asks for. Partial rather than a plain
--- (game_id, is_open): it is smaller, and it stays small as invitational challenges accumulate.
+-- One game's challenges, and whether each is open: the two columns every listing of challenges
+-- starts from.
 --
--- Honestly: `ChallengeRepo.listByGame` does not use it as it stands. That query has to show a
--- closed challenge to its challenger and its invitees, so its predicate is `is_open OR challenger =
--- $me OR EXISTS (invitation ...)`, and an OR cannot become an index condition -- the planner takes
--- the primary key for `game_id` and applies the rest as a filter, which is what it already did for
--- `started_match_id IS NULL` before any of this. Verified with EXPLAIN against 42k challenges.
+-- Not partial (`WHERE is_open`), though that is the narrower index and the obvious one to reach for.
+-- Measured against 22k challenges in one game, 2k of them closed: with `is_open` as a real column
+-- the index answers `game_id = ? AND is_open` from the index alone, and it still serves a lookup by
+-- `game_id` on its own -- which a partial index cannot, since it does not hold the closed rows at
+-- all. The extra column is one byte a row for a table read far more often than written.
 --
--- It is here because it is used the moment a query asks the plain question -- `game_id = ? AND
--- is_open` picks it up on its own -- and because the alternative, splitting that listing into a
--- union of the open case and the invited case, duplicates a thirty-line select list to save a
--- filter over one game's rows. Worth revisiting when a game has thousands of challenges, not
--- before.
-CREATE INDEX challenge_open_by_game ON challenge (game_id) WHERE is_open;
+-- What neither version does is help `ChallengeRepo.listByGame` as it stands. That query has to show
+-- a closed challenge to its challenger and its invitees, so its predicate is `is_open OR challenger
+-- = $me OR EXISTS (invitation ...)`, and an OR cannot become an index condition: the planner takes
+-- an index for `game_id` and applies the rest as a filter, exactly as it already did for
+-- `started_match_id IS NULL`.
+--
+-- Recovering it means splitting that listing into a union of three branches -- open, mine, invited
+-- -- each with an index-friendly predicate, which measures 15.6ms against the present 19.4ms on
+-- that same 22k-challenge game. Two branches is not enough: leaving `is_open OR challenger = $me`
+-- together in one of them blocks the index just as the single query does. It is not taken yet
+-- because the select list is fifteen columns and two scalar subqueries, a union needs it written
+-- three times, and drift between those copies would not be a wrong number -- it would be a
+-- challenge shown to the wrong player. A real game has about three challenges. Revisit when one has
+-- thousands; this index is what that change will be built on.
+CREATE INDEX challenge_game_open ON challenge (game_id, is_open);
 
 -- Who has been asked to accept a challenge, and as what.
 --
