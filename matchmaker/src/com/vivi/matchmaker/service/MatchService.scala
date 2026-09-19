@@ -120,7 +120,10 @@ class MatchService(
                   whoseTurn = onTheClock.map(_.seatNickname),
                   // The earliest, so a game where several move at once counts down to the first clock to
                   // run out, which is the first one anything happens on.
-                  turnDue = onTheClock.flatMap(_.seatDue).minOption
+                  turnDue = onTheClock.flatMap(_.seatDue).minOption,
+                  // A fact about the match, so it is the same on every row of it and comes off the
+                  // first like the rest of them.
+                  publicUrl = first.publicUrl
                 )
             }
 

@@ -972,7 +972,25 @@ object Views {
           // and never "your turn": a turn on this page is somebody else's by construction.
           if (summary.completed || summary.cancelled) emptyNode
           else if (summary.whoseTurn.nonEmpty) div(cls := "detail", s"waiting for ${summary.whoseTurn.mkString(", ")}")
-          else div(cls := "detail", "waiting for the other players")
+          else div(cls := "detail", "waiting for the other players"),
+          // The board, for anyone who cares to look: this is what being public gets you, and the
+          // engine issued the url when the match was created. Straight off the summary, with no
+          // request behind the click — unlike "View final state" on the player's own rows, which has
+          // to ask for a play url that is not on a summary.
+          //
+          // Absent when there is no url. A match is only listed here if it is public, but an engine
+          // that serves no spectator page answers with none, and a button that opens nothing is
+          // worse than no button.
+          summary.publicUrl
+              .map(url =>
+                  button(
+                    tpe := "button",
+                    cls := "link",
+                    "Watch",
+                    onClick --> (_ => dom.window.open(url, "_blank", "noopener,noreferrer"))
+                  )
+              )
+              .getOrElse(emptyNode)
         )
 
     private def matchRow(summary: MatchSummary, showDue: Boolean): HtmlElement =

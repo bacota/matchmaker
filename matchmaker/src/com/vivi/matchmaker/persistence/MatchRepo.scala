@@ -234,7 +234,8 @@ class MatchRepo(session: Session[IO]) {
     // character_id is nullable: a 'P'-type game's participant has no character_participant row.
     private val seatRow =
         gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: float8.opt *: timeLimitKind *:
-            timeLimitUnit *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt
+            timeLimitUnit *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt *:
+            text.opt
 
     private def toSeatRow(
         row: (
@@ -256,7 +257,8 @@ class MatchRepo(session: Session[IO]) {
             String,
             Boolean,
             Boolean,
-            Option[Instant]
+            Option[Instant],
+            Option[String]
         )
     ): MatchSeatRow = {
         val (
@@ -278,7 +280,8 @@ class MatchRepo(session: Session[IO]) {
           seatNickname,
           seatPending,
           seatCompleted,
-          seatDue
+          seatDue,
+          publicUrl
         ) = row
         MatchSeatRow(
           gameId,
@@ -299,7 +302,8 @@ class MatchRepo(session: Session[IO]) {
           seatNickname,
           seatPending,
           seatCompleted,
-          seatDue
+          seatDue,
+          publicUrl
         )
     }
 
@@ -312,7 +316,12 @@ class MatchRepo(session: Session[IO]) {
                  oc.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due
+                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 -- then, so it is null for every private match and is the field a Watch link
+                 -- needs. The same column on every list, because who may watch does not depend on
+                 -- which list the match is being read for.
+                 m.public_url
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -345,7 +354,12 @@ class MatchRepo(session: Session[IO]) {
                  oc.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due
+                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 -- then, so it is null for every private match and is the field a Watch link
+                 -- needs. The same column on every list, because who may watch does not depend on
+                 -- which list the match is being read for.
+                 m.public_url
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -379,7 +393,12 @@ class MatchRepo(session: Session[IO]) {
                  oc.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due
+                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 -- then, so it is null for every private match and is the field a Watch link
+                 -- needs. The same column on every list, because who may watch does not depend on
+                 -- which list the match is being read for.
+                 m.public_url
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -398,7 +417,12 @@ class MatchRepo(session: Session[IO]) {
                  oc.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due
+                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 -- then, so it is null for every private match and is the field a Watch link
+                 -- needs. The same column on every list, because who may watch does not depend on
+                 -- which list the match is being read for.
+                 m.public_url
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -415,7 +439,12 @@ class MatchRepo(session: Session[IO]) {
                  oc.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due
+                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 -- then, so it is null for every private match and is the field a Watch link
+                 -- needs. The same column on every list, because who may watch does not depend on
+                 -- which list the match is being read for.
+                 m.public_url
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -530,7 +559,10 @@ object MatchRepo {
         seatNickname: String,
         seatPending: Boolean,
         seatCompleted: Boolean,
-        seatDue: Option[Instant]
+        seatDue: Option[Instant],
+        // Where anyone may watch this match, and `None` for one that is not public. A fact about the
+        // match rather than about this seat, and so the same on every row of it.
+        publicUrl: Option[String]
     )
 
     /** What one seat has left of a chess-clock budget. */

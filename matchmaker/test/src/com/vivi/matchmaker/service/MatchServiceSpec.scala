@@ -99,7 +99,10 @@ class MatchServiceSpec extends PropertySuite {
         /* Whether the match may be looked at by anybody, which is what the lists on another player's
          * page select on. Defaulted false, as the column is, so the tests that predate it read the
          * same. */
-        isPublic: Boolean = false
+        isPublic: Boolean = false,
+        /* What the engine answered with when it created the game, for the tests about the Watch link.
+         * Null in the database for a match that is not public, which is the engine's own rule. */
+        publicUrl: Option[String] = None
     ): IO[MatchId] =
         for {
             // The match's creator is its challenge's challenger, and a match cannot exist without a
@@ -130,7 +133,8 @@ class MatchServiceSpec extends PropertySuite {
                 Instant.ofEpochSecond(1000),
                 None,
                 "{}",
-                isPublic = isPublic
+                isPublic = isPublic,
+                publicUrl = publicUrl
               )
             )
             _ <- new ParticipantRepo(session).create(
@@ -217,6 +221,41 @@ class MatchServiceSpec extends PropertySuite {
                         // The rows describe the player asked about, not the caller: it is their turn in
                         // the running one, and they created both.
                         running.forall(s => s.pending && s.isCreator)
+                }
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    /* The spectator's url travels on the summary, which is what a Watch link is drawn from -- and
+     * it is null for an engine that serves no board, so the absence has to survive the round trip
+     * as plainly as the value does. */
+    property("a summary carries the public url the engine issued, and none when there is none") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, watcherId, watchableId, plainId) =>
+                val url = s"http://engine.test/matches/$watchableId/board"
+                val result = TestSession.resource.use { session =>
+                    for {
+                        prepared <- setup(session, nickname, externalId)
+                        (player, game, character) = prepared
+                        _ <- addMatch(
+                          session,
+                          player,
+                          game,
+                          character,
+                          watchableId,
+                          None,
+                          pending = true,
+                          isPublic = true,
+                          publicUrl = Some(url)
+                        )
+                        _ <- addMatch(session, player, game, character, plainId, None, pending = true, isPublic = true)
+                        _ <- registrationService.register(watcherId, watcherId)
+                        seen <- matchService.publicFor(watcherId, player.playerId, over = false)
+                        // And on the player's own list, which is the same summary read by its owner.
+                        mine <- matchService.active(externalId)
+                    } yield seen.find(_.matchId == MatchId(watchableId)).flatMap(_.publicUrl).contains(url) &&
+                        seen.find(_.matchId == MatchId(plainId)).exists(_.publicUrl.isEmpty) &&
+                        mine.find(_.matchId == MatchId(watchableId)).flatMap(_.publicUrl).contains(url)
                 }
                 result.timeout(15.seconds).unsafeRunSync()
         }
