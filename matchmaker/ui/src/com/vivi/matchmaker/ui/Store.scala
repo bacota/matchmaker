@@ -94,6 +94,13 @@ object Store {
         challengesByGame.set(Map.empty)
         charactersByGame.set(Map.empty)
         acceptances.set(Seq.empty)
+        // Somebody else's page, and the search that found them: both are answers to questions the
+        // previous session asked, and the next player starts from an empty box.
+        playerSearch.set("")
+        playerResults.set(None)
+        publicActive.set(Seq.empty)
+        publicCompleted.set(Seq.empty)
+        publicMatchesLoading.set(false)
         // Dropped with the rest: they are one player's answers, and the next player to sign in
         // must not be shown them, let alone save them back.
         notificationSettings.set(None)
@@ -153,6 +160,101 @@ object Store {
       */
     val acceptances: Var[Seq[PendingAcceptance]] = Var(Seq.empty)
 
+    /** What is in the player search box, kept in the store rather than in the screen so that leaving the search for a
+      * player's page and coming back does not clear it -- the usual reason to come back is to try the next result.
+      */
+    val playerSearch: Var[String] = Var("")
+
+    /** What the last search answered, or `None` when nothing has been searched for in this session.
+      *
+      * `None` rather than an empty result, because "no search yet" and "no player by that name" are the two things the
+      * screen has to say differently, and an empty list cannot tell them apart. The `more` flag inside it is the
+      * server's word for "there were others" -- the list's own length cannot say so, since a full page may be the last
+      * one.
+      */
+    val playerResults: Var[Option[PlayerSearchResult]] = Var(None)
+
+    /** The public matches of the player whose page is open: still being played, and finished.
+      *
+      * Emptied and re-fetched for each player, which is why they carry no `Fetch` flag like the caller's own lists: a
+      * `Fetch` says "this has been answered once this session", and it would report the previous player's lists as
+      * loaded. `publicMatchesLoading` is what says a fetch is in flight instead.
+      */
+    val publicActive: Var[Seq[MatchSummary]] = Var(Seq.empty)
+    val publicCompleted: Var[Seq[MatchSummary]] = Var(Seq.empty)
+
+    /** Whether a fetch of somebody's public matches is in flight, for the sections to say "Loading…" on.
+      *
+      * A flag rather than reading emptiness as "still coming", which is what this replaced: a player with no public
+      * matches and a fetch that failed both leave the lists empty, and neither is still loading. Cleared however the
+      * requests settle, so a failure leaves the sections saying there is nothing here, beside the banner that says what
+      * went wrong -- rather than saying "Loading…" for the rest of the session.
+      */
+    val publicMatchesLoading: Var[Boolean] = Var(false)
+
+    /* Which fetch of a player's public matches is the one the page is waiting for.
+     *
+     * Incremented per fetch, and an answer commits only if its own number is still the current one.
+     * Two races need that, and the sign-in counter `reload` already applies catches neither, because
+     * both happen within one session:
+     *
+     *   - Two players. Opening A and then B before A has answered would write A's matches into the
+     *     slots B's page is drawing from -- one player's matches under another's nickname, which is
+     *     worse than stale because nothing about it looks wrong.
+     *   - One player, twice. An initial load and a refresh, or two impatient refreshes, can land in
+     *     either order; without this the older answer wins whenever it arrives second.
+     *
+     * A single counter rather than one per player, because one player's page is on screen at a time:
+     * what is wanted is not "the answer for this player" but "the answer to the question the page is
+     * currently asking", and anything else is by definition not it. */
+    private var publicMatchesFetch: Long = 0L
+
+    /** Which game's row is open on a player's page, if any. One at a time, like `editingGame`: the rows are a list to
+      * scan, and two open sets of matches make it a page to scroll.
+      */
+    val expandedPublicGame: Var[Option[GameId]] = Var(None)
+
+    /** Searches for players whose nickname starts with what is in the box, and holds the answer.
+      *
+      * Through `reload` so the answer is dropped if the session that asked has ended, and so a failure raises the
+      * banner: the caller is a button waiting to stop showing itself as busy, which is all it can usefully do with one.
+      *
+      * A blank box searches for nothing rather than for everybody -- the server refuses it, and asking would trade a
+      * request for a banner saying so.
+      */
+    def searchPlayers(): Future[Unit] = {
+        val prefix = playerSearch.now().trim
+        if (prefix.isEmpty) {
+            playerResults.set(None)
+            Future.unit
+        } else reload(ApiClient.searchPlayers(prefix))(result => playerResults.set(Some(result)))
+    }
+
+    /** Both of a player's public lists. Used when their page is opened and by that page's refresh button.
+      *
+      * Two requests, one fetch: they are the two halves of one page, they are numbered together, and the page stops
+      * saying it is loading when both have settled. Each commits only if this is still the fetch the page is waiting
+      * for -- see `publicMatchesFetch` for the two races that guards.
+      */
+    def reloadPublicMatches(playerId: PlayerId): Future[Unit] = {
+        publicMatchesFetch += 1
+        val fetch = publicMatchesFetch
+        publicMatchesLoading.set(true)
+
+        val running = reload(ApiClient.publicMatches(playerId))(list => ifCurrent(fetch)(publicActive.set(list)))
+        val over =
+            reload(ApiClient.publicCompletedMatches(playerId))(list => ifCurrent(fetch)(publicCompleted.set(list)))
+
+        // However they settled: `reload` reports a failure and succeeds, so this runs on either
+        // outcome, which is what stops a failed fetch from leaving the page loading for ever.
+        running.zip(over).map(_ => ifCurrent(fetch)(publicMatchesLoading.set(false)))
+    }
+
+    /* Commits a public-matches answer only if the page is still waiting for the fetch it came from. A
+     * later fetch has already emptied the lists and set the flag for itself, so an older answer has
+     * nothing to add and a place where it would do harm. */
+    private def ifCurrent(fetch: Long)(commit: => Unit): Unit = if (fetch == publicMatchesFetch) commit
+
     /** What the caller wants to be told about, once something has asked.
       *
       * `None` is "not fetched", not "nothing set": the settings form is inside the account panel, which most sessions
@@ -199,6 +301,15 @@ object Store {
         case Home
         case OneGame(gameId: GameId)
         case NewGame
+
+        /** The search box and its results. */
+        case FindPlayers
+
+        /** Somebody else's page. Carries the player rather than their id, because the page is headed by their nickname
+          * and the search result that opened it already knew it -- an id alone would mean a request to be told a name
+          * the previous screen had in its hand.
+          */
+        case OnePlayer(player: PublicPlayer)
     }
 
     val page: Var[Page] = Var(Page.Home)
@@ -215,6 +326,14 @@ object Store {
             case Page.OneGame(gameId) =>
                 refreshChallenges(gameId)
                 refreshCharacters(gameId)
+            /* Emptied before the request rather than left holding the last player's matches: the
+             * page is about to be headed with a different nickname, and rows from the player before
+             * them under it would be read as theirs. `None` is what the sections show as loading. */
+            case Page.OnePlayer(player) =>
+                expandedPublicGame.set(None)
+                publicActive.set(Seq.empty)
+                publicCompleted.set(Seq.empty)
+                reloadPublicMatches(player.playerId)
             case _ => ()
         }
     }

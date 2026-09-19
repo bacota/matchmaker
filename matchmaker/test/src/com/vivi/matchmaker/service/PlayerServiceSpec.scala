@@ -2,6 +2,7 @@ package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all._
 import org.scalacheck.Prop._
 import org.scalacheck.Gen
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
@@ -30,6 +31,194 @@ class PlayerServiceSpec extends PropertySuite {
     property("me rejects an externalId that has never registered") {
         forAll(genUniqueString) { externalId =>
             playerService.me(externalId).attempt.timeout(10.seconds).unsafeRunSync() match {
+                case Left(_: UnauthorizedError) => true
+                case _                          => false
+            }
+        }
+    }
+
+    /* Searching. Every case here uses a nickname built from a UUID, so the prefix it searches for
+     * matches nothing else in a database every other suite is also registering players in. */
+
+    property("search finds a player by a prefix of their nickname") {
+        forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+            val result = for {
+                registered <- registrationService.register(nickname, externalId)
+                found <- playerService.search(externalId, nickname.dropRight(1))
+            } yield found.players.map(_.playerId) == List(registered.playerId) &&
+                found.players.map(_.nickname) == List(nickname) &&
+                !found.more
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* A prefix, not a substring: searching for the middle of a nickname finds nothing, which is
+     * what makes the search something a player can predict the results of. */
+    property("search does not match the middle of a nickname") {
+        forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+            val result = for {
+                _ <- registrationService.register(nickname, externalId)
+                found <- playerService.search(externalId, nickname.drop(4))
+            } yield found.players.isEmpty
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* Case insensitive: the search compares a normalized nickname -- lowercased, whitespace
+     * collapsed, trimmed -- and V21 indexes that same expression. Nickname uniqueness is still case
+     * sensitive, so "Ash" and "ash" are two players, and a search that folds case offers both. */
+    property("search ignores the case of the prefix and of the nickname") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (suffix, externalId, callerId) =>
+            val nickname = s"A$suffix"
+            val result = for {
+                registered <- registrationService.register(nickname, externalId)
+                _ <- registrationService.register(callerId, callerId)
+                same <- playerService.search(callerId, s"A${suffix.take(4)}")
+                flipped <- playerService.search(callerId, s"a${suffix.take(4)}")
+                shouted <- playerService.search(callerId, s"A${suffix.take(4)}".toUpperCase)
+            } yield same.players.map(_.playerId) == List(registered.playerId) &&
+                flipped.players.map(_.playerId) == List(registered.playerId) &&
+                // Whatever the prefix was written as, the row says the nickname as it was registered.
+                same.players.map(_.nickname) == List(nickname) &&
+                shouted.players.map(_.playerId) == List(registered.playerId)
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* Both players are findable, and each is spelled as they registered: this is the consequence of
+     * folding case in a register where "Ash" and "ash" are two names. */
+    property("a folded search finds every player whose name differs only in case") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (suffix, upperId, lowerId, callerId) =>
+                val upper = s"A$suffix"
+                val lower = s"a$suffix"
+                val result = for {
+                    first <- registrationService.register(upper, upperId)
+                    second <- registrationService.register(lower, lowerId)
+                    _ <- registrationService.register(callerId, callerId)
+                    found <- playerService.search(callerId, s"a${suffix.take(4)}")
+                } yield found.players.map(_.playerId).toSet == Set(first.playerId, second.playerId) &&
+                    found.players.map(_.nickname).toSet == Set(upper, lower)
+                result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* Whitespace is normalized on both sides, so how a name was spaced is not something a searcher
+     * has to guess: any run of it is one space, and the ends do not count. Every case here is a
+     * nickname somebody could register -- nothing trims a nickname on the way in. */
+    property("search treats any run of whitespace as a single space") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (base, externalId, callerId) =>
+            val spaced = s"$base \t\n  tail"
+            val result = for {
+                registered <- registrationService.register(spaced, externalId)
+                _ <- registrationService.register(callerId, callerId)
+                single <- playerService.search(callerId, s"$base tail")
+                tabbed <- playerService.search(callerId, s"$base\ttail")
+                many <- playerService.search(callerId, s"$base     tail")
+            } yield single.players.map(_.playerId) == List(registered.playerId) &&
+                tabbed.players.map(_.playerId) == List(registered.playerId) &&
+                many.players.map(_.playerId) == List(registered.playerId)
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* And the ends are trimmed, on the stored name as well as on the prefix: " bob" is a nickname
+     * somebody has, and "bob" is how anybody would look for them. */
+    property("search ignores whitespace at the ends of the nickname") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (base, externalId, callerId) =>
+            val padded = s"  $base  "
+            val result = for {
+                registered <- registrationService.register(padded, externalId)
+                _ <- registrationService.register(callerId, callerId)
+                found <- playerService.search(callerId, base.take(8))
+            } yield found.players.map(_.playerId) == List(registered.playerId) &&
+                // Said back as it is stored, padding and all: normalizing is how it is found, not how
+                // it is spelled.
+                found.players.map(_.nickname) == List(padded)
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* The prefix is text, not a pattern. The search is a LIKE underneath -- which is what lets it use
+     * the index of V20 -- so every character LIKE reads as a wildcard has to be escaped on the way
+     * in: unescaped, the `%` and the `_` below would match the other player too, and the searcher has
+     * no way to say they meant the character. */
+    property("a wildcard character in the prefix matches itself") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (base, percentId, underscoreId, otherId, callerId) =>
+                val percent = s"$base%z"
+                val underscore = s"${base}_z"
+                val other = s"${base}xz"
+                val result = for {
+                    withPercent <- registrationService.register(percent, percentId)
+                    withUnderscore <- registrationService.register(underscore, underscoreId)
+                    _ <- registrationService.register(other, otherId)
+                    _ <- registrationService.register(callerId, callerId)
+                    forPercent <- playerService.search(callerId, s"$base%")
+                    forUnderscore <- playerService.search(callerId, s"${base}_")
+                    // And the plain prefix finds all three, so the two above are narrower than it
+                    // rather than simply broken.
+                    forBase <- playerService.search(callerId, base)
+                } yield forPercent.players.map(_.playerId) == List(withPercent.playerId) &&
+                    forUnderscore.players.map(_.playerId) == List(withUnderscore.playerId) &&
+                    forBase.players.length == 3 && !forBase.more
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    /* A backslash is LIKE's escape character, so it is the one that has to survive being escaped
+     * itself -- and a nickname may contain one. */
+    property("a backslash in the prefix matches itself") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (base, slashId, callerId) =>
+            val withSlash = s"$base\\z"
+            val result = for {
+                registered <- registrationService.register(withSlash, slashId)
+                _ <- registrationService.register(callerId, callerId)
+                found <- playerService.search(callerId, s"$base\\")
+            } yield found.players.map(_.playerId) == List(registered.playerId)
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* A page, and the reply says so. One `test` rather than a property: it registers a player per
+     * row, and the thing being checked is a boundary, not a range of inputs. */
+    test("search shows at most the limit and says when there are more") {
+        val base = s"prefix-${java.util.UUID.randomUUID()}"
+        val caller = genUniqueString.sample.get
+
+        val result = for {
+            _ <- registrationService.register(caller, caller)
+            // One more than the limit, so the page is full *and* something is left over.
+            registered <- (1 to PlayerService.searchLimit + 1).toList
+                .traverse(n => registrationService.register(f"$base-$n%03d", genUniqueString.sample.get))
+            full <- playerService.search(caller, base)
+            // A prefix that matches exactly one of them says the opposite, which is the half of this
+            // that would still pass if `more` were hard-coded true.
+            one <- playerService.search(caller, registered.head.nickname)
+        } yield full.players.length == PlayerService.searchLimit && full.more &&
+            // Nickname order, and the limit applied after it: the first page is the first names.
+            full.players.map(_.nickname) == registered.map(_.nickname).sorted.take(PlayerService.searchLimit) &&
+            one.players.length == 1 && !one.more
+
+        assert(result.timeout(60.seconds).unsafeRunSync())
+    }
+
+    property("search refuses a blank prefix") {
+        forAll(genUniqueString) { externalId =>
+            val result = for {
+                _ <- registrationService.register(externalId, externalId)
+                outcome <- playerService.search(externalId, "   ").attempt
+            } yield outcome match {
+                case Left(_: ValidationError) => true
+                case _                        => false
+            }
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    property("search rejects a caller who has never registered") {
+        forAll(genUniqueString) { externalId =>
+            playerService.search(externalId, "a").attempt.timeout(10.seconds).unsafeRunSync() match {
                 case Left(_: UnauthorizedError) => true
                 case _                          => false
             }

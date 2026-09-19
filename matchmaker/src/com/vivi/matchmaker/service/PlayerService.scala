@@ -2,7 +2,7 @@ package com.vivi.matchmaker.service
 
 import cats.effect.IO
 import skunk.SqlState
-import com.vivi.matchmaker.model.Player
+import com.vivi.matchmaker.model.{Player, PlayerSearchResult}
 import com.vivi.matchmaker.persistence.PlayerRepo
 
 /** The caller's own player record: reading it, and the two parts of it they may change.
@@ -30,6 +30,40 @@ class PlayerService(sessionPool: SessionPool) {
                 case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
             }
         }
+
+    /** Players whose nickname begins with `prefix`, for the search box.
+      *
+     * Case insensitive, because the normalized comparison intentionally folds names while preserving the
+     * registered spelling in the result. Two players may be registered as "Ash" and "ash", and a search
+     * offers both rather than treating them as one.
+      *
+      * At most [[PlayerService.searchLimit]] players, with `more` saying there were others. A prefix of one letter can
+      * match most of the register, and a page of everybody is not an answer -- so the reply says plainly that it is a
+      * page, and the remedy is the one the searcher already has: type more of the name. No offset paging: the next page
+      * of a name search is not what anybody wants, the narrower prefix is.
+      *
+      * Asks for one row more than it shows, which is how `more` is known. Counting the matches instead would be a
+      * second query over the same predicate to answer a question with only two useful values.
+      *
+      * A blank prefix is refused rather than answered with the first 25 players in the register: it is what an empty
+      * search box sends, and a list of strangers is not what pressing Search on nothing meant to ask for.
+      */
+    def search(callerExternalId: String, prefix: String): IO[PlayerSearchResult] = {
+        val trimmed = prefix.trim
+        IO.raiseWhen(trimmed.isEmpty)(ValidationError("search prefix must not be blank")) *>
+            sessionPool.use { session =>
+                val repo = new PlayerRepo(session)
+                for {
+                    // Registered callers only, like every other route: the search says who plays here,
+                    // which is for the people who do.
+                    _ <- requireRegistered(repo, callerExternalId)
+                    found <- repo.searchByNicknamePrefix(trimmed, PlayerService.searchLimit + 1)
+                } yield PlayerSearchResult(
+                  found.take(PlayerService.searchLimit),
+                  more = found.sizeIs > PlayerService.searchLimit
+                )
+            }
+    }
 
     /** Renames the caller.
       *
@@ -98,6 +132,16 @@ class PlayerService(sessionPool: SessionPool) {
             }
         }
 
+    /* That the caller is a registered player, for the search above -- which is about somebody
+     * else, and needs no row of the caller's beyond the fact that there is one. Unlocked -- nothing
+     * here writes, and what is being checked is existence, which a read of somebody else's page
+     * does not depend on staying true for. */
+    private def requireRegistered(repo: PlayerRepo, callerExternalId: String): IO[Player] =
+        repo.readByExternalId(callerExternalId).flatMap {
+            case Some(player) => IO.pure(player)
+            case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+        }
+
     /* The caller's own row, locked, for the two calls that rewrite it. Unauthorized rather than
      * NotFound for the reason `me` gives. */
     private def requireCaller(repo: PlayerRepo, callerExternalId: String): IO[Player] =
@@ -117,4 +161,12 @@ class PlayerService(sessionPool: SessionPool) {
             !trimmed.exists(_.isWhitespace)
         IO.raiseUnless(plausible)(ValidationError(s"'$email' is not an email address")).as(trimmed)
     }
+}
+
+object PlayerService {
+
+    /** How many players a nickname search answers with at most. A screenful, with `more` on the reply to say when it is
+      * not all of them; the cure for hitting it is a longer prefix, not another page.
+      */
+    val searchLimit: Int = 25
 }

@@ -6,7 +6,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.{GameId, MatchId, Player, PlayerId}
+import com.vivi.matchmaker.model.{GameId, MatchId, Player, PlayerId, PublicPlayer}
 
 class PlayerRepo(session: Session[IO]) {
     private val playerId = SkunkIdCodecs.playerId
@@ -108,6 +108,79 @@ class PlayerRepo(session: Session[IO]) {
             .map(_.map { case (id, nickname, isAdmin, email) =>
                 Player(id, nickname, isAdmin, externalId, email)
             })
+
+    /* Players whose nickname begins with a prefix, for the search box.
+     *
+     * Case insensitive, and insensitive to how the name was spaced: both sides of the comparison are
+     * normalized the same way -- lowercased, every run of whitespace collapsed to one space, and
+     * trimmed -- so "red  BARON" finds "Red Baron". `normalized` below is the Scala half; the SQL
+     * expression here is the other, and V20 indexes exactly this expression. The three must stay
+     * identical: a difference in any of them is not a wrong answer but a silent table scan, or a
+     * nickname that cannot be found by the way it is written.
+     *
+     * `LIKE` rather than `starts_with`, because this is the form the index can serve: Postgres turns
+     * `expr LIKE 'abc%'` into the range `expr ~>=~ 'abc' AND expr ~<~ 'abd'` over V21's
+     * `text_pattern_ops` index. The price is that the pattern has a language, so the prefix is
+     * escaped on the way in -- see `likePrefix`.
+     *
+     * Ordered by nickname, not by the normalized form: the page is a list somebody reads, and the
+     * order they see is the order of the names as they are written. That ORDER BY is in the
+     * database's collation rather than the index's byte order either way, so the plan sorts what the
+     * range scan found -- the handful of rows the prefix matched, not the table.
+     *
+     * `LIMIT` is a parameter rather than a constant here because the caller asks for one more than
+     * it means to show -- that extra row is how it knows to say "there are more". */
+    private val selectPlayersByNicknamePrefix: Query[(String, Int), (PlayerId, String)] =
+        sql"""SELECT player_id, nickname FROM player
+          WHERE btrim(regexp_replace(lower(nickname), '[ \t\n\r\f\v]+', ' ', 'g')) LIKE $text
+          ORDER BY nickname
+          LIMIT $int4"""
+            .query(playerId *: text)
+
+    /** Players whose nickname begins with `prefix`, in nickname order, at most `limit` of them.
+      *
+      * Case insensitive and whitespace insensitive, and the prefix is text rather than a pattern: see
+      * `selectPlayersByNicknamePrefix`, `normalized` and `likePrefix`. Answers with
+      * [[com.vivi.matchmaker.model.PublicPlayer]] rather than `Player`, because the caller is a stranger -- the address
+      * and the Cognito identity on a `Player` are not theirs to see, and the way to keep it that way is not to read
+      * them.
+      */
+    def searchByNicknamePrefix(prefix: String, limit: Int): IO[List[PublicPlayer]] =
+        session
+            .execute(selectPlayersByNicknamePrefix)((likePrefix(normalized(prefix)), limit))
+            .map(_.map((id, nickname) => PublicPlayer(id, nickname)))
+
+    /* A nickname, or the start of one, in the form the search compares.
+     *
+     * The Scala half of V21's index expression, and it has to agree with it character for character:
+     * lowercase, every run of whitespace one space, ends trimmed.
+     *
+     * Two deliberate details. The whitespace class is written out rather than `\\s`, because
+     * Postgres's `\\s` is locale-dependent and Java's is a fixed five characters plus vertical tab --
+     * naming them makes both sides the same function instead of two that agree on ASCII. And the
+     * locale is `ROOT` rather than the JVM's default, because `toLowerCase` with a Turkish default
+     * locale maps `I` to a dotless `i`, which would fold one way in this process and another way in
+     * the database. */
+    private def normalized(nickname: String): String =
+        nickname.toLowerCase(java.util.Locale.ROOT).replaceAll("[ \\t\\n\\r\\f\\u000B]+", " ").trim
+
+    /* The prefix somebody typed, as a LIKE pattern that matches it literally and then anything.
+     *
+     * Three characters mean something to LIKE and have to be spelled out to mean themselves: `%`
+     * (any run), `_` (any one character) and the escape character itself. Unescaped, a nickname
+     * search for "a_b" would find "axb" -- a wildcard the searcher did not ask for and cannot turn
+     * off. The backslash is LIKE's default escape, so no ESCAPE clause is needed, and this is a
+     * parameter rather than interpolated SQL, so nothing here is about quoting.
+     *
+     * The trailing `%` is the only wildcard in the result, and it is what makes this a prefix match
+     * rather than an equality. */
+    private def likePrefix(prefix: String): String = {
+        val escaped = prefix.flatMap {
+            case c @ ('\\' | '%' | '_') => s"\\$c"
+            case c                      => c.toString
+        }
+        s"$escaped%"
+    }
 
     /* Everyone playing one match, in seat order.
      *

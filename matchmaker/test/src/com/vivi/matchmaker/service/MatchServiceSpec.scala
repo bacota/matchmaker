@@ -95,7 +95,18 @@ class MatchServiceSpec extends PropertySuite {
         character: Character[String],
         matchIdStr: String,
         completedAt: Option[Instant],
-        pending: Boolean
+        pending: Boolean,
+        /* Whether the match may be looked at by anybody, which is what the lists on another player's
+         * page select on. Defaulted false, as the column is, so the tests that predate it read the
+         * same. */
+        isPublic: Boolean = false,
+        /* What the engine answered with when it created the game, for the tests about the Watch link.
+         * Null in the database for a match that is not public, which is the engine's own rule. */
+        publicUrl: Option[String] = None,
+        /* Whether this player's own seat is finished, which is normally whether the match is -- but
+         * not always: a player can be out of a match that is still being played, and the lists on
+         * their page split on the seat. */
+        seatCompleted: Option[Boolean] = None
     ): IO[MatchId] =
         for {
             // The match's creator is its challenge's challenger, and a match cannot exist without a
@@ -125,7 +136,9 @@ class MatchServiceSpec extends PropertySuite {
                 completedAt,
                 Instant.ofEpochSecond(1000),
                 None,
-                "{}"
+                "{}",
+                isPublic = isPublic,
+                publicUrl = publicUrl
               )
             )
             _ <- new ParticipantRepo(session).create(
@@ -135,13 +148,167 @@ class MatchServiceSpec extends PropertySuite {
                 matchId,
                 player.playerId,
                 pending,
-                completedAt.isDefined,
+                seatCompleted.getOrElse(completedAt.isDefined),
                 Some(Instant.ofEpochSecond(2000)),
                 character.characterId,
                 game.roles.head.gameRoleId
               )
             )
         } yield matchId
+
+    /* Another player's page: the two lists a stranger is shown, which are the same two lists the
+     * caller sees of their own matches minus every match that was not offered as public. The rule is
+     * in the query, so what these check is that the query is the one being used. */
+
+    property("publicFor shows a public match and hides a private one") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, watcherId, openId, hiddenId) =>
+                val result = TestSession.resource.use { session =>
+                    for {
+                        prepared <- setup(session, nickname, externalId)
+                        (player, game, character) = prepared
+                        open <- addMatch(
+                          session,
+                          player,
+                          game,
+                          character,
+                          openId,
+                          None,
+                          pending = true,
+                          isPublic = true
+                        )
+                        _ <- addMatch(session, player, game, character, hiddenId, None, pending = true)
+                        // A second player, because this list is read by somebody who is not in the match.
+                        _ <- registrationService.register(watcherId, watcherId)
+                        seen <- matchService.publicFor(watcherId, player.playerId, over = false)
+                        // And the player's own list is unchanged by any of it: they see both.
+                        mine <- matchService.active(externalId)
+                    } yield seen.map(_.matchId) == List(open) &&
+                        mine.map(_.matchId).toSet == Set(open, MatchId(hiddenId))
+                }
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("publicFor splits the public matches into running and finished, as the caller's own lists are split") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, watcherId, runningId, finishedId) =>
+                val result = TestSession.resource.use { session =>
+                    for {
+                        prepared <- setup(session, nickname, externalId)
+                        (player, game, character) = prepared
+                        _ <- addMatch(
+                          session,
+                          player,
+                          game,
+                          character,
+                          runningId,
+                          None,
+                          pending = true,
+                          isPublic = true
+                        )
+                        _ <- addMatch(
+                          session,
+                          player,
+                          game,
+                          character,
+                          finishedId,
+                          Some(Instant.ofEpochSecond(5000)),
+                          pending = false,
+                          isPublic = true
+                        )
+                        _ <- registrationService.register(watcherId, watcherId)
+                        running <- matchService.publicFor(watcherId, player.playerId, over = false)
+                        over <- matchService.publicFor(watcherId, player.playerId, over = true)
+                    } yield running.map(_.matchId) == List(MatchId(runningId)) &&
+                        over.map(_.matchId) == List(MatchId(finishedId)) &&
+                        // The rows describe the player asked about, not the caller: it is their turn in
+                        // the running one, and they created both.
+                        running.forall(s => s.pending && s.isCreator)
+                }
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    /* The spectator's url travels on the summary, which is what a Watch link is drawn from -- and
+     * it is null for an engine that serves no board, so the absence has to survive the round trip
+     * as plainly as the value does. */
+    property("a summary carries the public url the engine issued, and none when there is none") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, watcherId, watchableId, plainId) =>
+                val url = s"http://engine.test/matches/$watchableId/board"
+                val result = TestSession.resource.use { session =>
+                    for {
+                        prepared <- setup(session, nickname, externalId)
+                        (player, game, character) = prepared
+                        _ <- addMatch(
+                          session,
+                          player,
+                          game,
+                          character,
+                          watchableId,
+                          None,
+                          pending = true,
+                          isPublic = true,
+                          publicUrl = Some(url)
+                        )
+                        _ <- addMatch(session, player, game, character, plainId, None, pending = true, isPublic = true)
+                        _ <- registrationService.register(watcherId, watcherId)
+                        seen <- matchService.publicFor(watcherId, player.playerId, over = false)
+                        // And on the player's own list, which is the same summary read by its owner.
+                        mine <- matchService.active(externalId)
+                    } yield seen.find(_.matchId == MatchId(watchableId)).flatMap(_.publicUrl).contains(url) &&
+                        seen.find(_.matchId == MatchId(plainId)).exists(_.publicUrl.isEmpty) &&
+                        mine.find(_.matchId == MatchId(watchableId)).flatMap(_.publicUrl).contains(url)
+                }
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    /* The split is the seat's, not the match's: a player who is out of a match that is still being
+     * played has finished with it, and their page should say so. */
+    property("publicFor puts a retired seat among the finished matches, though the match runs on") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, watcherId, matchIdStr) =>
+                val result = TestSession.resource.use { session =>
+                    for {
+                        prepared <- setup(session, nickname, externalId)
+                        (player, game, character) = prepared
+                        _ <- addMatch(
+                          session,
+                          player,
+                          game,
+                          character,
+                          matchIdStr,
+                          // The match itself is unfinished; this player's seat is not.
+                          None,
+                          pending = false,
+                          isPublic = true,
+                          seatCompleted = Some(true)
+                        )
+                        _ <- registrationService.register(watcherId, watcherId)
+                        running <- matchService.publicFor(watcherId, player.playerId, over = false)
+                        over <- matchService.publicFor(watcherId, player.playerId, over = true)
+                    } yield running.isEmpty && over.map(_.matchId) == List(MatchId(matchIdStr)) &&
+                        // Still an unfinished match, which is why the row cannot say it completed.
+                        over.forall(s => !s.completed && !s.cancelled)
+                }
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("publicFor rejects a caller who has never registered") {
+        forAll(genUniqueString) { externalId =>
+            matchService
+                .publicFor(externalId, PlayerId(1), over = false)
+                .attempt
+                .timeout(10.seconds)
+                .unsafeRunSync() match {
+                case Left(_: UnauthorizedError) => true
+                case _                          => false
+            }
+        }
+    }
 
     property("due returns matches where it is the caller's turn") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>

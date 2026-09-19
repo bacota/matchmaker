@@ -54,6 +54,27 @@ class MatchService(
     def completed(callerExternalId: String): IO[List[MatchSummary]] =
         forCaller(callerExternalId)((repo, playerId) => repo.listForPlayer(playerId, over = true).map(summarise))
 
+    /** The matches another player has marked public, either still running or finished.
+      *
+      * The one list here that is not about the caller, and so the one with a visibility rule: only matches whose
+      * challenge was offered as public. That rule lives in the query (`MatchRepo.listPublicForPlayer`) rather than
+      * here, so a private match is never read at all.
+      *
+      * The caller still has to be a registered player -- who plays here is for the people who play here -- but there is
+      * nothing else to authorize: a public match is public to all of them, and the caller's own relationship to it
+      * makes no difference to what this says.
+      *
+      * No clocks, even for the running list. A chess clock is a thing its owner spends, `withClocks` reads the caller's
+      * own budgets, and a stranger's remaining seconds are not what somebody reading their page came for.
+      */
+    def publicFor(callerExternalId: String, playerId: PlayerId, over: Boolean): IO[List[MatchSummary]] =
+        sessionPool.use { session =>
+            for {
+                _ <- resolveCaller(session, callerExternalId)
+                rows <- new MatchRepo(session).listPublicForPlayer(playerId, over)
+            } yield summarise(rows)
+        }
+
     /** Folds one row per seat into one summary per match.
       *
       * This is where a list of matches is actually decided, rather than in the SQL that fetched it. What a row carries
@@ -99,7 +120,10 @@ class MatchService(
                   whoseTurn = onTheClock.map(_.seatNickname),
                   // The earliest, so a game where several move at once counts down to the first clock to
                   // run out, which is the first one anything happens on.
-                  turnDue = onTheClock.flatMap(_.seatDue).minOption
+                  turnDue = onTheClock.flatMap(_.seatDue).minOption,
+                  // A fact about the match, so it is the same on every row of it and comes off the
+                  // first like the rest of them.
+                  publicUrl = first.publicUrl
                 )
             }
 

@@ -234,7 +234,8 @@ class MatchRepo(session: Session[IO]) {
     // character_id is nullable: a 'P'-type game's participant has no character_participant row.
     private val seatRow =
         gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: float8.opt *: timeLimitKind *:
-            timeLimitUnit *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt
+            timeLimitUnit *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt *:
+            text.opt
 
     private def toSeatRow(
         row: (
@@ -256,7 +257,8 @@ class MatchRepo(session: Session[IO]) {
             String,
             Boolean,
             Boolean,
-            Option[Instant]
+            Option[Instant],
+            Option[String]
         )
     ): MatchSeatRow = {
         val (
@@ -278,7 +280,8 @@ class MatchRepo(session: Session[IO]) {
           seatNickname,
           seatPending,
           seatCompleted,
-          seatDue
+          seatDue,
+          publicUrl
         ) = row
         MatchSeatRow(
           gameId,
@@ -299,7 +302,8 @@ class MatchRepo(session: Session[IO]) {
           seatNickname,
           seatPending,
           seatCompleted,
-          seatDue
+          seatDue,
+          publicUrl
         )
     }
 
@@ -312,7 +316,12 @@ class MatchRepo(session: Session[IO]) {
                  oc.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due
+                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 -- then, so it is null for every private match and is the field a Watch link
+                 -- needs. The same column on every list, because who may watch does not depend on
+                 -- which list the match is being read for.
+                 m.public_url
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -345,7 +354,12 @@ class MatchRepo(session: Session[IO]) {
                  oc.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due
+                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 -- then, so it is null for every private match and is the field a Watch link
+                 -- needs. The same column on every list, because who may watch does not depend on
+                 -- which list the match is being read for.
+                 m.public_url
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -357,12 +371,91 @@ class MatchRepo(session: Session[IO]) {
           ORDER BY m.completed DESC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
+    /* The same two lists, for a player who is not the caller: only the matches marked public.
+     *
+     * `m.public` is set when the match is started, from the challenge it was started from -- the
+     * "Public" box on the challenge form -- and it is the player's own statement that this match may
+     * be looked at by anybody. So it is the whole of the visibility rule here, and it is applied in
+     * the WHERE rather than by the caller: a filter in Scala would mean the private matches were
+     * fetched, and a list that is filtered after it is read is one refactor away from being
+     * returned unfiltered.
+     *
+     * Written out rather than folded into the two queries above with an `AND ($bool OR m.public)`.
+     * The columns are the same and the duplication is real, but the alternative is a flag that
+     * decides who may see the rows, sitting in the middle of a query that is read for its columns --
+     * and a caller that passes the wrong one has a leak rather than a wrong list. Two queries cannot
+     * be called with the wrong argument.
+     *
+     * The caller-relative columns are still relative to the player being asked about: `p.pending` is
+     * whether it is their turn, and `oc.challenger = p.player_id` whether the match is theirs. */
+    private val selectPublicActiveForPlayer =
+        sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+                 oc.challenger = p.player_id, m.start,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
+                 p.participant_id, cp.character_id, p.pending, p.due,
+                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 -- then, so it is null for every private match and is the field a Watch link
+                 -- needs. The same column on every list, because who may watch does not depend on
+                 -- which list the match is being read for.
+                 m.public_url
+          FROM participant p
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN game g ON g.game_id = m.game_id
+          JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
+          LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
+          JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
+          JOIN player seat_player ON seat_player.player_id = seat.player_id
+          -- The seat, and only the seat: `p` is the player being asked about, and `p.completed` is
+          -- whether *their* part is over. A player who is out of a match that is still running has
+          -- finished with it, and it belongs among what they have played rather than among what they
+          -- are playing.
+          --
+          -- Nothing about the match is consulted, so a seat is in exactly one of these two lists and
+          -- the flag alone decides which. That puts the weight on `participant.completed` being kept
+          -- true: a match ending retires its seats through the engine's status (`applyEngineStatus`)
+          -- and a cancel retires them outright (V15), which is what makes the flag the whole answer.
+          -- Supported by the index on participant(player_id, completed) -- V19.
+          WHERE p.player_id = $playerId AND m.public AND NOT p.completed
+          -- Not by the caller's deadline, which is nothing to a reader who is not in the match:
+          -- most recently started first, which is the order a stranger reads a list of games in.
+          ORDER BY m.start DESC, m.match_id, seat.participant_id"""
+            .query(seatRow)
+
+    private val selectPublicOverForPlayer =
+        sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+                 oc.challenger = p.player_id, m.start,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
+                 p.participant_id, cp.character_id, p.pending, p.due,
+                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 -- then, so it is null for every private match and is the field a Watch link
+                 -- needs. The same column on every list, because who may watch does not depend on
+                 -- which list the match is being read for.
+                 m.public_url
+          FROM participant p
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN game g ON g.game_id = m.game_id
+          JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
+          LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
+          JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
+          JOIN player seat_player ON seat_player.player_id = seat.player_id
+          -- The other half of that: their seat is done, whatever the match is doing.
+          WHERE p.player_id = $playerId AND m.public AND p.completed
+          ORDER BY m.completed DESC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
+            .query(seatRow)
+
     private val selectDueForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
                  oc.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due
+                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 -- Where anyone may watch, for a match created public: the engine issues one only
+                 -- then, so it is null for every private match and is the field a Watch link
+                 -- needs. The same column on every list, because who may watch does not depend on
+                 -- which list the match is being read for.
+                 m.public_url
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -382,6 +475,16 @@ class MatchRepo(session: Session[IO]) {
       */
     def listForPlayer(playerId: PlayerId, over: Boolean): IO[List[MatchSeatRow]] =
         session.execute(if (over) selectOverForPlayer else selectActiveForPlayer)(playerId).map(_.map(toSeatRow))
+
+    /** The public matches one player is in, still running or over, one row per seat.
+      *
+      * For somebody else's page: `listForPlayer` above answers about the caller and shows everything, this one answers
+      * about anybody and shows only what that player marked public.
+      */
+    def listPublicForPlayer(playerId: PlayerId, over: Boolean): IO[List[MatchSeatRow]] =
+        session
+            .execute(if (over) selectPublicOverForPlayer else selectPublicActiveForPlayer)(playerId)
+            .map(_.map(toSeatRow))
 
     /** The running matches in which it is this player's turn, one row per seat. */
     def listDueForPlayer(playerId: PlayerId): IO[List[MatchSeatRow]] =
@@ -467,7 +570,10 @@ object MatchRepo {
         seatNickname: String,
         seatPending: Boolean,
         seatCompleted: Boolean,
-        seatDue: Option[Instant]
+        seatDue: Option[Instant],
+        // Where anyone may watch this match, and `None` for one that is not public. A fact about the
+        // match rather than about this seat, and so the same on every row of it.
+        publicUrl: Option[String]
     )
 
     /** What one seat has left of a chess-clock budget. */

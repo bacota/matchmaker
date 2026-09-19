@@ -65,6 +65,11 @@ object Json {
     given ReadWriter[NotificationSettings] = macroRW
 
     given ReadWriter[Player] = macroRW
+
+    /* The two shapes a stranger is answered with. Their own codecs rather than `Player`'s, because
+     * the point of the model classes is that the fields a stranger does not see are not on them. */
+    given ReadWriter[PublicPlayer] = macroRW
+    given ReadWriter[PlayerSearchResult] = macroRW
     given ReadWriter[GameRole] = macroRW
     given ReadWriter[GameParameterValue[String]] = macroRW
     given ReadWriter[GameParameter[String]] = macroRW

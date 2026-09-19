@@ -59,7 +59,13 @@ case class MatchSummary(
     // What is left on each player's clock, for a match played under a total (chess clock) limit
     // and empty for every other kind — a per-turn limit gives everyone the whole limit again on
     // every move, so there is no balance to run down and nothing to show.
-    clocks: Seq[PlayerClock] = Nil
+    clocks: Seq[PlayerClock] = Nil,
+    // Where anyone may watch, as the engine issued it when the match was created — and `None` both
+    // for a match that was not offered as public and for an engine that serves no such page. A
+    // spectator's url, not a player's: `playUrl` is the one that needs a seat, and it is
+    // deliberately not on a summary at all, since a player's own row asks for the match when it
+    // needs one.
+    publicUrl: Option[String] = None
 ) {
 
     /** Whether the match was played to an end. */

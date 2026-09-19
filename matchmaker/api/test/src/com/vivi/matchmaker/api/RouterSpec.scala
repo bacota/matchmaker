@@ -30,7 +30,26 @@ class RouterSpec extends FunSuite {
         path: String,
         headers: Map[String, String] = Map("x-external-id" -> "sub-1"),
         body: String = "{}"
-    ): Request = Request(method, path, headers, Map.empty, body)
+    ): Request = {
+        // A query string on the path is split off into the query map, the way the gateway's own
+        // parsing does, so a route that reads a parameter can be listed in `routed` with one.
+        val (bare, query) = path.split('?') match {
+            case Array(bare, rest) =>
+                (
+                  bare,
+                  rest
+                      .split('&')
+                      .map(_.split('=') match {
+                          case Array(name, value) => name -> value
+                          case other              => other.head -> ""
+                      })
+                      .toMap
+                )
+            case _ => (path, Map.empty[String, String])
+        }
+
+        Request(method, bare, headers, query, body)
+    }
 
     private def dispatch(request: Request): ApiGateway.Response =
         Router.dispatch(services, request, Authenticator.TrustedHeader).unsafeRunSync()
@@ -191,6 +210,11 @@ class RouterSpec extends FunSuite {
       ("GET", "/me/matches/due", "{}"),
       ("GET", "/me/matches/completed", "{}"),
       ("GET", "/me/results", "{}"),
+      // With a prefix, because a blank one is a 400 from the service and these tests are about the
+      // route reaching it at all. `request` splits the query string off the path.
+      ("GET", "/players?prefix=a", "{}"),
+      ("GET", "/players/2/matches", "{}"),
+      ("GET", "/players/2/matches/completed", "{}"),
       ("GET", "/games", "{}"),
       ("POST", "/games", gameBody),
       ("GET", "/games/1/challenges", "{}"),
@@ -237,7 +261,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 32)
+        assertEquals(routed.size, 35)
         assertEquals(routed.distinct.size, routed.size)
     }
 

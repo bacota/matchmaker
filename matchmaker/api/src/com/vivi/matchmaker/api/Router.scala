@@ -130,6 +130,23 @@ object Router {
             case ("GET", "me" :: "matches" :: "completed" :: Nil) =>
                 ok(services.matches.completed(caller))
 
+            /* Finding somebody, and then looking at them. Three routes and no body between them:
+             * the prefix is a query parameter because this is a GET that reads, and the player's
+             * page is two lists rather than one because the caller's own matches are two lists --
+             * the same split, so the same rows mean the same thing on either screen.
+             *
+             * What comes back is `PublicPlayer` and public matches only. There is no route here
+             * that answers with a `Player`: an address and a Cognito id are not things a stranger
+             * asks for, so no stranger's route returns the shape that carries them. */
+            case ("GET", "players" :: Nil) =>
+                ok(services.players.search(caller, request.query.getOrElse("prefix", "")))
+
+            case ("GET", "players" :: playerId :: "matches" :: Nil) =>
+                withPlayerId(playerId)(id => ok(services.matches.publicFor(caller, id, over = false)))
+
+            case ("GET", "players" :: playerId :: "matches" :: "completed" :: Nil) =>
+                withPlayerId(playerId)(id => ok(services.matches.publicFor(caller, id, over = true)))
+
             case ("GET", "games" :: Nil) =>
                 ok(services.games.list(caller, activeOnly = request.query.get("activeOnly").contains("true")))
 

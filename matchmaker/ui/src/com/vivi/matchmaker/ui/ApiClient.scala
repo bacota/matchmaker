@@ -57,6 +57,26 @@ object ApiClient {
 
     def completedMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches/completed")
 
+    /** Players whose nickname begins with `prefix`, case insensitively, and whether there were more than the answer
+      * shows.
+      *
+      * The prefix goes in the query string encoded, because a nickname may contain anything somebody can type -- a `&`
+      * or a `#` unencoded would truncate the search or be read as part of the url.
+      */
+    def searchPlayers(prefix: String): Future[PlayerSearchResult] =
+        get[PlayerSearchResult](s"/players?prefix=${js.URIUtils.encodeURIComponent(prefix)}")
+
+    /** Another player's matches: the ones they marked public, still being played and finished.
+      *
+      * Two calls rather than one for the same reason the caller's own lists are two: they are two lists on the screen,
+      * ordered differently -- what is being played now, and what finished most recently first.
+      */
+    def publicMatches(playerId: PlayerId): Future[Seq[MatchSummary]] =
+        get[Seq[MatchSummary]](s"/players/${playerId.value}/matches")
+
+    def publicCompletedMatches(playerId: PlayerId): Future[Seq[MatchSummary]] =
+        get[Seq[MatchSummary]](s"/players/${playerId.value}/matches/completed")
+
     /** Everything the caller has said yes to and that has not yet become a match. Takes no player id: the server scopes
       * it to whoever the token says is calling.
       */

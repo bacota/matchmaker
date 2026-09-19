@@ -1,0 +1,20 @@
+-- An index for the two lists on another player's page.
+--
+-- Both read `participant` by the player being looked at and then split on whether that player's own
+-- seat is finished: `MatchRepo.selectPublicActiveForPlayer` takes `NOT p.completed`, and
+-- `selectPublicOverForPlayer` takes `p.completed`. The existing index on participant(player_id) --
+-- V1 -- gets the first half of that, and leaves the second to a filter over every seat the player
+-- has ever held, which for an active player is every match they have played.
+--
+-- `player_id` first because it is the equality, `completed` second because it is what is then
+-- selected on: a two-column btree in that order serves both queries from one side of the tree, and
+-- either value of the flag is a contiguous range within a player's rows.
+--
+-- Not a partial index per value, which is the other way to write this: two indexes to maintain on
+-- every insert and every finishing seat, in exchange for nothing here -- a boolean has two values
+-- and both of them are wanted.
+--
+-- It does not replace participant(player_id), which the caller's own lists still use for a player
+-- whose seats are being read without regard to whether they are done; this index serves those
+-- equally well as a prefix, and dropping the narrower one is a separate decision from adding this.
+CREATE INDEX participant_player_completed ON participant (player_id, completed);
