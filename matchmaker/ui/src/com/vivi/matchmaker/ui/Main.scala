@@ -897,8 +897,8 @@ object Views {
       */
     private def publicGameRow(game: Game): HtmlElement = {
         val expanded = Store.expandedPublicGame.signal.map(_.contains(game.gameId))
-        val running = Store.publicActive.signal.map(_.map(_.filter(_.gameId == game.gameId)))
-        val over = Store.publicCompleted.signal.map(_.map(_.filter(_.gameId == game.gameId)))
+        val running = Store.publicActive.signal.map(_.filter(_.gameId == game.gameId))
+        val over = Store.publicCompleted.signal.map(_.filter(_.gameId == game.gameId))
 
         li(
           cls := "row",
@@ -917,11 +917,14 @@ object Views {
           ),
           div(
             cls := "detail",
-            child.text <-- running.combineWith(over).map {
-                case (Some(active), Some(finished)) => s"${active.length} being played, ${finished.length} finished"
-                // Either list still on its way. Both are asked for together, so this is the state of
-                // the page rather than of this row.
-                case _ => "loading…"
+            // The same rule the lists themselves follow: what is held goes on being counted while a
+            // reload is in flight — the section dims to say so — and "loading…" is for the case where
+            // there is nothing to count yet, which is a page just opened rather than a player with
+            // nothing to show. Saying "0 being played" in that moment would be a number about to
+            // change.
+            child.text <-- running.combineWith(over, Store.publicMatchesLoading.signal).map {
+                case (active, finished, loading) if active.isEmpty && finished.isEmpty && loading => "loading…"
+                case (active, finished, _) => s"${active.length} being played, ${finished.length} finished"
             }
           ),
           child <-- expanded.map {
@@ -929,23 +932,23 @@ object Views {
                   div(
                     cls := "detail-panel",
                     h3("Current Matches"),
-                    child <-- running.map(publicMatches("None being played in public.")),
+                    publicMatches(running, "None being played in public."),
                     h3("Completed Matches"),
-                    child <-- over.map(publicMatches("None finished in public."))
+                    publicMatches(over, "None finished in public.")
                   )
               else emptyNode
           }
         )
     }
 
-    /* The three states one of these lists can be in: still coming, empty, and full. `listing` says
-     * the same thing for the caller's own lists, over a `Fetch` flag; these are re-fetched per
-     * player, so what stands in for that flag is the `Option` itself. */
-    private def publicMatches(empty: String)(matches: Option[Seq[MatchSummary]]): HtmlElement = matches match {
-        case None            => p(cls := "empty", "Loading…")
-        case Some(Seq())     => p(cls := "empty", empty)
-        case Some(summaries) => ul(summaries.map(publicMatchRow))
-    }
+    /* The same three states every other list on screen distinguishes -- still coming, empty, full --
+     * and through the same `listing` helper. What stands in for the caller's `Fetch` flag is
+     * `publicMatchesLoading`: a `Fetch` records that something answered once this session, and these
+     * lists are re-fetched for every player whose page is opened. */
+    private def publicMatches(matches: Signal[Seq[MatchSummary]], empty: String): Modifier[HtmlElement] =
+        listing(matches, Store.publicMatchesLoading.signal)(p(cls := "empty", empty))(summaries =>
+            ul(summaries.map(publicMatchRow))
+        )
 
     /** One of another player's matches.
       *

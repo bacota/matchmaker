@@ -1,0 +1,48 @@
+-- An index for the player search, which matches a prefix of a nickname, ignoring case and spacing.
+--
+-- The search compares a *normalized* nickname, and this index is on exactly that expression -- which
+-- is what makes a prefix search a range scan rather than a scan of the table. The expression is the
+-- whole contract between this index and `PlayerRepo.searchByNicknamePrefix`: the query has to spell
+-- it identically or the planner cannot use this, so if one changes the other changes with it.
+--
+-- What the normalization does, innermost first:
+--
+--   lower(...)                      "Ash" and "ash" are the same search result. Nickname uniqueness
+--                                   is still case sensitive, so both may exist -- a folded search
+--                                   offers both, spelled as they were registered.
+--   regexp_replace(..., ' ', 'g')   every run of whitespace becomes one space, so "Red  Baron",
+--                                   "Red\tBaron" and "Red Baron" are found by the same prefix.
+--   btrim(...)                      and leading or trailing space is not part of the name. Nothing
+--                                   trims a nickname on the way in (`RegistrationService.register`
+--                                   only refuses a blank one), so " bob" is a nickname somebody has,
+--                                   and it should be findable by "bob".
+--
+-- The character class is written out rather than `\s`, and for the same reason on both sides of the
+-- comparison: `\s` in Postgres means `[[:space:]]`, whose membership depends on the database's
+-- locale, and Java's `\s` is the five ASCII characters plus vertical tab. Naming them makes the two
+-- normalizations the same function rather than two functions that agree on ASCII.
+--
+-- `text_pattern_ops` rather than the default operator class, and that is the other half of the point:
+-- a btree in the database's collation cannot serve `expr LIKE 'abc%'`, because in a non-C collation
+-- the strings beginning with "abc" are not a contiguous range of that ordering. `text_pattern_ops`
+-- compares byte by byte, which makes them one -- Postgres rewrites the pattern into
+-- `expr ~>=~ 'abc' AND expr ~<~ 'abd'` and scans it.
+--
+-- There is already a unique index on nickname (V1, from the constraint) and it is neither a
+-- substitute nor replaced: it is on the nickname as stored and in the database collation, so it
+-- cannot serve this search at all, and it is still what enforces uniqueness and what an equality
+-- lookup on a nickname uses.
+--
+-- What this index does not order is the result. `searchByNicknamePrefix` ends with ORDER BY nickname
+-- -- the names as they are written, which is what somebody reading the list sees -- so the plan is a
+-- range scan through this index and then a sort of what it found. That is the right trade: the sort is
+-- over the handful of rows a prefix matched, not over the table.
+--
+-- One caveat worth writing down, because it is invisible until it bites. The bounds above are derived
+-- from the *value* of the pattern, so they need a custom plan: with `plan_cache_mode = auto` (the
+-- default) a prepared statement is planned with its actual parameters and gets the range scan, and
+-- under a forced generic plan it falls back to scanning the unique index with a filter. The query
+-- stays correct either way; only its plan changes.
+CREATE INDEX player_nickname_search ON player (
+    btrim(regexp_replace(lower(nickname), '[ \t\n\r\f\v]+', ' ', 'g')) text_pattern_ops
+);
