@@ -57,7 +57,7 @@ object ApiClient {
 
     def completedMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches/completed")
 
-    /** Players whose nickname begins with `prefix`, case sensitively, and whether there were more than the answer
+    /** Players whose nickname begins with `prefix`, case insensitively, and whether there were more than the answer
       * shows.
       *
       * The prefix goes in the query string encoded, because a nickname may contain anything somebody can type -- a `&`
