@@ -374,7 +374,7 @@ class ChallengeRepo(session: Session[IO]) {
     // joins the challenger's own acceptance to read their role, and counting over a second join to
     // the same table would multiply the rows rather than count them.
     private val selectChallengesByGame: Query[
-      (GameId, PlayerId, PlayerId, PlayerId),
+      (GameId, PlayerId, PlayerId, PlayerId, PlayerId),
       (
           ChallengeId,
           GameType,
@@ -432,12 +432,24 @@ class ChallengeRepo(session: Session[IO]) {
             -- Full means every one of the game's roles is spoken for, optional ones included:
             -- those are seats a latecomer could still take, even though a start need not wait
             -- for them.
+            --
+            -- "Spoken for" means accepted or reserved (V22). A role held by an invitation to
+            -- somebody else is not a seat this viewer can take -- `ChallengeService.accept`
+            -- refuses it -- so a challenge whose every remaining role is reserved for other
+            -- people is as good as full to them, open or not. Reserved for *this* viewer counts
+            -- the other way: it is the one seat they are certain of, and a challenge held open
+            -- for them is the last thing to hide from them.
             AND (EXISTS (SELECT 1 FROM game_role gr
                           WHERE gr.game_id = ch.game_id
                             AND NOT EXISTS (SELECT 1 FROM acceptance ac
                                              WHERE ac.game_id = ch.game_id
                                                AND ac.challenge_id = ch.challenge_id
-                                               AND ac.game_role_id = gr.game_role_id))
+                                               AND ac.game_role_id = gr.game_role_id)
+                            AND NOT EXISTS (SELECT 1 FROM invitation held
+                                             WHERE held.game_id = ch.game_id
+                                               AND held.challenge_id = ch.challenge_id
+                                               AND held.game_role_id = gr.game_role_id
+                                               AND held.player_id <> $playerId))
                  OR EXISTS (SELECT 1 FROM acceptance ac
                              WHERE ac.game_id = ch.game_id AND ac.challenge_id = ch.challenge_id
                                AND ac.player_id = $playerId))
@@ -458,10 +470,10 @@ class ChallengeRepo(session: Session[IO]) {
       * here: `ChallengeService.listByGame` adds them, since they are rows in another table and this query is already
       * asking three questions.
       *
-      * A challenge that is full — every role of its game taken — but not yet started is excluded too, unless `viewer`
-      * has accepted it. It is not something anyone else can join, and listing it invites a click on an Accept the
-      * service would refuse. The challenger sees their own throughout, since creating a challenge writes their
-      * acceptance of it.
+      * A challenge that is full — every role of its game either accepted or reserved for somebody other than `viewer`
+      * by an invitation — but not yet started is excluded too, unless `viewer` has accepted it. It is not something
+      * anyone else can join, and listing it invites a click on an Accept the service would refuse. The challenger sees
+      * their own throughout, since creating a challenge writes their acceptance of it.
       *
       * The count and the claimed roles come back with the challenge rather than from a call per challenge: the UI needs
       * both for every row it draws — the count to know whether a challenge has enough acceptances to be started, the
@@ -470,7 +482,7 @@ class ChallengeRepo(session: Session[IO]) {
       */
     def listByGame(id: GameId, viewer: PlayerId): IO[List[ChallengeSummary]] =
         session
-            .execute(selectChallengesByGame)((id, viewer, viewer, viewer))
+            .execute(selectChallengesByGame)((id, viewer, viewer, viewer, viewer))
             .map(_.map {
                 case (
                       challengeId,

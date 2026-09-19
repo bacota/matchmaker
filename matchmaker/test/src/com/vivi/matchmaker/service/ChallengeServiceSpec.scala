@@ -849,6 +849,41 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
+    property("listByGame hides an open challenge whose every remaining role is held for other players") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, invitedNickname, invitedExternalId, strangerNickname, strangerExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    invited <- makeCharacterInGame(fixture.game, invitedNickname, invitedExternalId)
+                    other <- makeCharacterInGame(fixture.game, genUniqueString.sample.get, genUniqueString.sample.get)
+                    _ <- makeCharacterInGame(fixture.game, strangerNickname, strangerExternalId)
+                    // Open, and every seat is spoken for: the challenger holds the first, and the other
+                    // two are reserved by invitations to two other players. A stranger can accept none of
+                    // them, so listing it would offer them an Accept the service refuses -- which is what
+                    // this clause has always been for.
+                    created <- challengeService.create(
+                      challengeFor(fixture),
+                      externalId,
+                      Seq(
+                        Invite(invited._1.playerId, Some(fixture.game.roles(1).gameRoleId)),
+                        Invite(other._1.playerId, Some(fixture.game.roles(2).gameRoleId))
+                      )
+                    )
+                    strangers <- challengeService.listByGame(fixture.game.gameId, strangerExternalId)
+                    // The invitee still sees it: one of those seats is theirs, and a challenge being held
+                    // open for somebody is the last thing to hide from them.
+                    theirs <- challengeService.listByGame(fixture.game.gameId, invitedExternalId)
+                    // As does the challenger, through the acceptance creating it wrote.
+                    mine <- challengeService.listByGame(fixture.game.gameId, externalId)
+                } yield {
+                    def has(summaries: List[ChallengeSummary]) =
+                        summaries.exists(_.challenge.challengeId == created.challengeId)
+                    !has(strangers) && has(theirs) && has(mine)
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
     property("listByGame shows a challenge that is not open only to its challenger and its invitees") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, invitedNickname, invitedExternalId, strangerNickname, strangerExternalId) =>
