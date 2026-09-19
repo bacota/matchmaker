@@ -182,8 +182,50 @@ object Router {
                     )
                 }
 
+            /* Making a challenge, and asking particular players to it in the same call.
+             *
+             * One call rather than a create followed by a POST per invitation: a closed challenge
+             * with nobody invited yet is a challenge nobody can accept, and the service validates
+             * the whole set against each other — two invitations cannot hold one role — which it
+             * can only do if it is given them together. The body wraps the challenge for the
+             * reason `Json.CreateChallenge` says.
+             */
             case ("POST", "challenges" :: Nil) =>
-                body[Challenge](request).flatMap(c => created(services.challenges.create(c, caller)))
+                body[Json.CreateChallenge](request).flatMap(r =>
+                    created(services.challenges.create(r.challenge, caller, r.invitations))
+                )
+
+            // What the caller has been asked to play, across every game: the home page's question,
+            // and the one invitation route that is not about a challenge the caller already holds.
+            case ("GET", "me" :: "invitations" :: Nil) =>
+                ok(services.challenges.invitationsFor(caller))
+
+            /* Inviting somebody to a challenge that already exists, and taking it back. Only the
+             * challenger may either — the service checks that, since the challenge is what says who
+             * they are.
+             *
+             * The body is an `Invite` rather than a request type of its own: who, and as what, is
+             * the whole of what a caller decides here, and it is the same value `POST /challenges`
+             * carries. The player is in the path on the revoke because the invitation is the
+             * resource being removed, which is how the acceptance routes above read too.
+             */
+            case ("POST", "challenges" :: gameId :: challengeId :: "invitations" :: Nil) =>
+                withGameId(gameId) { gid =>
+                    withChallengeId(challengeId) { id =>
+                        body[Invite](request).flatMap(invite =>
+                            created(services.challenges.invite(gid, id, invite, caller))
+                        )
+                    }
+                }
+
+            case ("DELETE", "challenges" :: gameId :: challengeId :: "invitations" :: playerId :: Nil) =>
+                withGameId(gameId) { gid =>
+                    withChallengeId(challengeId) { challenge =>
+                        withPlayerId(playerId)(player =>
+                            noContent(services.challenges.revoke(gid, challenge, player, caller))
+                        )
+                    }
+                }
 
             // Turns a challenge into a match: matchmaker creates the game in the engine and records
             // the urls it returns. Only the challenger may do it — the service checks that.

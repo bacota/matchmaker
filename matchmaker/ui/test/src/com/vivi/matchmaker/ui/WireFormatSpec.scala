@@ -3,6 +3,7 @@ package com.vivi.matchmaker.ui
 import java.time.{Duration, Instant}
 import munit.FunSuite
 import upickle.default.{read, write}
+import com.vivi.matchmaker.api.Json
 import com.vivi.matchmaker.api.Json.given
 import com.vivi.matchmaker.model._
 
@@ -162,6 +163,40 @@ class WireFormatSpec extends FunSuite {
         val fromOlderServer = read[ChallengeSummary](write(open))
         assert(fromOlderServer.challenge.isOpen)
         assert(fromOlderServer.invitations.isEmpty)
+    }
+
+    // The body `POST /challenges` takes since V22: the challenge nested, and the invitations to
+    // send with it beside it. Written here rather than only on the server because the browser is
+    // what composes it, and a nested `Challenge` has to keep its discriminator through the wrapper
+    // -- the same hazard `ChallengeSummary` has below.
+    test("a create-challenge body round-trips, and invitations are optional") {
+        val challenge = PlainChallenge(
+          challengeId = ChallengeId(0),
+          challenger = PlayerId(1),
+          message = "fancy a game?",
+          start = None,
+          timeLimit = None,
+          settings = "{}",
+          gameId = GameId(2),
+          gameRoleId = GameRoleId(3),
+          isOpen = false
+        )
+        val invited = Json.CreateChallenge(
+          challenge,
+          Seq(Invite(PlayerId(4), Some(GameRoleId(5))), Invite(PlayerId(6)))
+        )
+
+        val decoded = read[Json.CreateChallenge](write(invited))
+        assertEquals(decoded, invited)
+        // The subtype survives the nesting, which is what the discriminator is for.
+        assert(decoded.challenge.isInstanceOf[PlainChallenge])
+        assertEquals(decoded.invitations.map(_.gameRoleId), Seq(Some(GameRoleId(5)), None))
+
+        // And an open challenge nobody was asked to: `invitations` is defaulted, so the field is
+        // absent on the wire and reads back empty.
+        val alone = Json.CreateChallenge(challenge.copy(isOpen = true))
+        assertEquals(read[Json.CreateChallenge](write(alone)), alone)
+        assert(read[Json.CreateChallenge](write(alone)).invitations.isEmpty)
     }
 
     // What the home page's invitations section decodes, and the one DTO here that carries names

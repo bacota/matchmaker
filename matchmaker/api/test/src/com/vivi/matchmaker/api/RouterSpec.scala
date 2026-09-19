@@ -151,6 +151,18 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request("DELETE", "/challenges/1/1/acceptances/abc")).statusCode, 400)
     }
 
+    test("a non-numeric player id in an invitation path is a bad request") {
+        assertEquals(dispatch(request("DELETE", "/challenges/1/1/invitations/abc")).statusCode, 400)
+    }
+
+    // The one deliberate break in the V22 wire format: `POST /challenges` takes the challenge
+    // nested now, so a client sending the bare challenge it used to send is refused rather than
+    // creating something. Answered at parsing, before the service -- a 500 here would mean the
+    // body had been understood.
+    test("a bare challenge body is no longer accepted by the create route") {
+        assertEquals(dispatch(request("POST", "/challenges", body = write(challenge))).statusCode, 400)
+    }
+
     /** Bodies are serialized from real model values rather than hand-written JSON, so that a body is never accidentally
       * invalid — which would fail the request at parsing with 400 and hide whether the route matched at all.
       */
@@ -168,19 +180,23 @@ class RouterSpec extends FunSuite {
       )
     )
 
-    private val challengeBody = write(
-      CharacterChallenge(
-        ChallengeId(0),
-        PlayerId(1),
-        "message",
-        None,
-        None,
-        "{}",
-        GameId(1),
-        CharacterId(1),
-        gameRoleId = GameRoleId(1)
-      )
-    )
+    private val challenge =
+        CharacterChallenge(
+          ChallengeId(0),
+          PlayerId(1),
+          "message",
+          None,
+          None,
+          "{}",
+          GameId(1),
+          CharacterId(1),
+          gameRoleId = GameRoleId(1)
+        )
+
+    // Wrapped, and with an invitation in it: the nested challenge still has to go through the
+    // merged `Challenge` reader, which is the part of this body that could break on its own.
+    private val challengeBody =
+        write(Json.CreateChallenge(challenge, Seq(Invite(PlayerId(2), Some(GameRoleId(2))))))
 
     private val resultsBody = write(
       Json.MatchResults(List(Json.ResultEntry(ParticipantId(1), 1, Map("points" -> ujson.Num(3)), isWinner = true)))
@@ -206,6 +222,7 @@ class RouterSpec extends FunSuite {
         """{"preferences":{"matchStarted":true,"yourTurn":false},"applyToMatches":true}"""
       ),
       ("GET", "/me/acceptances", "{}"),
+      ("GET", "/me/invitations", "{}"),
       ("GET", "/me/matches", "{}"),
       ("GET", "/me/matches/due", "{}"),
       ("GET", "/me/matches/completed", "{}"),
@@ -226,6 +243,10 @@ class RouterSpec extends FunSuite {
       ("DELETE", "/challenges/1/1", "{}"),
       ("POST", "/challenges/1/1/acceptances", """{"characterId":1,"gameRoleId":1}"""),
       ("DELETE", "/challenges/1/1/acceptances/2", "{}"),
+      // Inviting somebody to an existing challenge, and taking it back. The body is an `Invite`,
+      // whose `gameRoleId` is optional -- so "anybody's free seat" is the field left out.
+      ("POST", "/challenges/1/1/invitations", """{"playerId":2,"gameRoleId":2}"""),
+      ("DELETE", "/challenges/1/1/invitations/2", "{}"),
       ("POST", "/challenges/1/1/start", "{}"),
       ("GET", "/games/1/matches/m1", "{}"),
       ("POST", "/games/1/matches/m1/refresh", "{}"),
@@ -261,7 +282,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 35)
+        assertEquals(routed.size, 38)
         assertEquals(routed.distinct.size, routed.size)
     }
 

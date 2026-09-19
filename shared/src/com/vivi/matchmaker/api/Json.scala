@@ -185,6 +185,21 @@ object Json {
     // role, and a challenge cannot be started until each of its game's required roles is taken.
     case class AcceptRequest(characterId: Option[CharacterId], gameRoleId: GameRoleId)
 
+    /** A challenge and the invitations to send with it (V22).
+      *
+      * A wrapper rather than an `invitations` field on `Challenge`, because an invitation is not part of what a
+      * challenge *is*: the rows live in their own table, `ChallengeSummary` already carries `Invitation`s for reading,
+      * and a `Challenge` that sometimes holds `Invite`s on the way in and never on the way out is a field that means
+      * one thing in one direction. Here it is plainly what the caller is asking for — make this challenge, and ask
+      * these players.
+      *
+      * `invitations` is defaulted, so a body that is just `{"challenge": ...}` creates an uninvited challenge. The
+      * nesting is what a client written before invitations existed does not have, which is why the route takes this
+      * shape rather than accepting both: a bare challenge would parse as a `CreateChallenge` with no `challenge` field
+      * and fail, loudly, instead of silently creating something.
+      */
+    case class CreateChallenge(challenge: Challenge, invitations: Seq[Invite] = Seq.empty)
+
     /** The game engine's callbacks, from `interaction-design.txt`.
       *
       * Both are authorized as the game rather than as a player: X-External-Id carries the game's shared secret, the
@@ -273,6 +288,7 @@ object Json {
     given ReadWriter[CharacterRequest] = macroRW
     given ReadWriter[UpdateStateRequest] = macroRW
     given ReadWriter[AcceptRequest] = macroRW
+    given ReadWriter[CreateChallenge] = macroRW
     given ReadWriter[PreferencesRequest] = macroRW
     given ReadWriter[MoveNotification] = macroRW
     given ReadWriter[ResultEntry] = macroRW
