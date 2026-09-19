@@ -406,16 +406,17 @@ class MatchRepo(session: Session[IO]) {
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
-          -- Split on the seat rather than on the match: `p` is the player being asked about, and
-          -- `p.completed` is whether *their* part is over. A player who is out of a match that is
-          -- still running has finished with it, and it belongs among what they have played rather
-          -- than among what they are playing.
+          -- The seat, and only the seat: `p` is the player being asked about, and `p.completed` is
+          -- whether *their* part is over. A player who is out of a match that is still running has
+          -- finished with it, and it belongs among what they have played rather than among what they
+          -- are playing.
           --
-          -- The match-level conditions stay as well, so a match that is over is never listed as
-          -- current whatever its seats say: between them the two predicates partition the rows, and
-          -- nothing is listed twice or dropped.
-          WHERE p.player_id = $playerId AND m.public
-            AND NOT p.completed AND m.completed IS NULL AND NOT m.cancelled
+          -- Nothing about the match is consulted, so a seat is in exactly one of these two lists and
+          -- the flag alone decides which. That puts the weight on `participant.completed` being kept
+          -- true: a match ending retires its seats through the engine's status (`applyEngineStatus`)
+          -- and a cancel retires them outright (V15), which is what makes the flag the whole answer.
+          -- Supported by the index on participant(player_id, completed) -- V19.
+          WHERE p.player_id = $playerId AND m.public AND NOT p.completed
           -- Not by the caller's deadline, which is nothing to a reader who is not in the match:
           -- most recently started first, which is the order a stranger reads a list of games in.
           ORDER BY m.start DESC, m.match_id, seat.participant_id"""
@@ -439,10 +440,8 @@ class MatchRepo(session: Session[IO]) {
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
-          -- The other half of the partition above: their seat is done, or the match is. A cancel
-          -- retires every seat (V15), so a called-off match arrives here by either route.
-          WHERE p.player_id = $playerId AND m.public
-            AND (p.completed OR m.completed IS NOT NULL OR m.cancelled)
+          -- The other half of that: their seat is done, whatever the match is doing.
+          WHERE p.player_id = $playerId AND m.public AND p.completed
           ORDER BY m.completed DESC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
