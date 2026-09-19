@@ -182,6 +182,12 @@ object ApiClient {
           Some(write(invite))
         )
 
+    /** Turns down an invitation the caller was sent. Under `/me` because the invitation being declined is the caller's
+      * own — see the route's comment. Refused once they have accepted, where backing out is the way out.
+      */
+    def rejectInvitation(gameId: GameId, challengeId: ChallengeId): Future[Unit] =
+        sendUnit(HttpMethod.DELETE, s"/me/invitations/${gameId.value}/${challengeId.value}", None)
+
     /** Takes an invitation back. Refused once that player has accepted — the challenger removes the acceptance instead,
       * which `withdraw` below is the same route for.
       */

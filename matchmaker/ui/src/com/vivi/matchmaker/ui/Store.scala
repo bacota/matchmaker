@@ -94,6 +94,9 @@ object Store {
         challengesByGame.set(Map.empty)
         charactersByGame.set(Map.empty)
         acceptances.set(Seq.empty)
+        invitations.set(Seq.empty)
+        // Whoever was about to be invited was being invited by the player who has just gone.
+        invitee.set(None)
         // Somebody else's page, and the search that found them: both are answers to questions the
         // previous session asked, and the next player starts from an empty box.
         playerSearch.set("")
@@ -127,7 +130,7 @@ object Store {
       * not been fetched is a missing key rather than an empty list, and those screens already say "Loading…" on it.
       */
     enum Fetch {
-        case Due, Active, Completed, Results, Games, Acceptances
+        case Due, Active, Completed, Results, Games, Acceptances, Invitations
     }
 
     /* Which of them have been answered in this session -- however they were answered.
@@ -159,6 +162,25 @@ object Store {
       * and the list "back out" acts on.
       */
     val acceptances: Var[Seq[PendingAcceptance]] = Var(Seq.empty)
+
+    /** What the caller has been invited to and could still accept (V22), newest first and across every game.
+      *
+      * Beside `acceptances` rather than inside it: an invitation is a challenge the caller has *not* answered, where a
+      * pending acceptance is one they have, and the two sections ask different things of them. It carries the game's
+      * name and the challenger's nickname with each row, because the section that draws it spans every game and has
+      * nothing to look either up from — see `ChallengeInvitation`.
+      */
+    val invitations: Var[Seq[ChallengeInvitation]] = Var(Seq.empty)
+
+    /** The player a challenge is about to be offered to, carried from their page to a game's.
+      *
+      * Set by the invite button on somebody's page, which then shows the game screen with the challenge form open: the
+      * form is where a challenge is composed, and who it is for is the one thing that screen cannot ask, since it has
+      * no search box on it. Cleared when the form closes or the challenge is made, so the next challenge offered from
+      * that screen is not quietly addressed to whoever was looked at last -- which is the bug this shape invites, and
+      * the reason it is one slot rather than a list.
+      */
+    val invitee: Var[Option[PublicPlayer]] = Var(None)
 
     /** What is in the player search box, kept in the store rather than in the screen so that leaving the search for a
       * player's page and coming back does not clear it -- the usual reason to come back is to try the next result.
@@ -538,6 +560,7 @@ object Store {
         load(ApiClient.activeMatches(), Fetch.Active)(active.set)
         load(ApiClient.completedMatches(), Fetch.Completed)(completed.set)
         load(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
+        load(ApiClient.invitations(), Fetch.Invitations)(invitations.set)
         load(ApiClient.results(), Fetch.Results)(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
     }
 
@@ -576,6 +599,8 @@ object Store {
     def reloadActive(): Future[Unit] = reload(ApiClient.activeMatches(), Fetch.Active)(active.set)
 
     def reloadAcceptances(): Future[Unit] = reload(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
+
+    def reloadInvitations(): Future[Unit] = reload(ApiClient.invitations(), Fetch.Invitations)(invitations.set)
 
     /** The finished matches and their results together: the completed lists show the result table under each row, so
       * reloading one without the other would leave a match beside somebody else's outcome.
