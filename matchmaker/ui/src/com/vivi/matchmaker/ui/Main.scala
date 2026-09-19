@@ -328,9 +328,11 @@ object Views {
           div(
             cls := "screen",
             child <-- Store.page.signal.map {
-                case Store.Page.Home            => mainPage
-                case Store.Page.OneGame(gameId) => gamePage(gameId)
-                case Store.Page.NewGame         => newGamePage
+                case Store.Page.Home              => mainPage
+                case Store.Page.OneGame(gameId)   => gamePage(gameId)
+                case Store.Page.NewGame           => newGamePage
+                case Store.Page.FindPlayers       => findPlayersPage
+                case Store.Page.OnePlayer(player) => playerPage(player)
             }
           )
         )
@@ -345,6 +347,10 @@ object Views {
         navTag(
           cls := "menu",
           menuItem("Main page", Store.Page.Home),
+          // Above the games rather than below them: it is a way of getting to a player, and the
+          // games below it are a way of getting to a game. The list of games can be long, and an
+          // entry after it is an entry that has to be scrolled to.
+          menuItem("Find Players", Store.Page.FindPlayers),
           listing(Store.games.signal, Store.loading(Store.Fetch.Games))(p(cls := "empty", "No games yet."))(games =>
               div(games.map(game => menuItem(game.name, Store.Page.OneGame(game.gameId))))
           ),
@@ -753,6 +759,220 @@ object Views {
             onClick --> (_ => stepCompleted(1)),
             "Older"
           )
+        )
+
+    // -------------------------------------------------------------------------
+    // Players
+    // -------------------------------------------------------------------------
+
+    /* Whether a search is in flight, so the box can say so. At this level because the search is
+     * submitted two ways -- the button, and Enter in the field -- and both mean the same thing. */
+    private val searchingPlayers: Var[Boolean] = Var(false)
+
+    private def runPlayerSearch(): Unit = refresh(searchingPlayers, () => Store.searchPlayers())
+
+    /** The screen that finds a player by the start of their nickname.
+      *
+      * A prefix rather than a substring, and case sensitively, which is what the search is specified to be — so the
+      * field says so. Saying it in the label is the whole of the explanation anyone needs: nicknames are case sensitive
+      * here (the unique index treats "Ash" and "ash" as two names), and a search that quietly folded case would offer
+      * one as the other.
+      */
+    private def findPlayersPage: HtmlElement =
+        sectionTag(
+          cls := "refreshable",
+          div(cls := "section-head", h2("Find Players")),
+          div(
+            cls := "section-body",
+            form(
+              cls := "search",
+              // Enter in the field submits, which is what a search box does; without this it would
+              // reload the page and sign the player out of the screen they are looking at.
+              onSubmit.preventDefault --> (_ => runPlayerSearch()),
+              field(
+                "Nickname begins with (case sensitive)",
+                input(
+                  tpe := "search",
+                  // A nickname is not a word the browser has seen before, and a dropdown of the
+                  // player's own past searches over the results is in the way rather than helpful.
+                  autoComplete := "off",
+                  controlled(value <-- Store.playerSearch.signal, onInput.mapToValue --> Store.playerSearch)
+                )
+              ),
+              button(
+                tpe := "submit",
+                disabled <-- searchingPlayers.signal
+                    .combineWith(Store.playerSearch.signal)
+                    .map { case (busy, typed) => busy || typed.trim.isEmpty },
+                child <-- searchingPlayers.signal.map(
+                  if (_) span(cls := "spinner", aria.hidden := true) else emptyNode
+                ),
+                "Search"
+              )
+            ),
+            // The live region is this container, which is mounted once, rather than the message
+            // inside it: a region created at the moment it has something to say is announced by
+            // nothing. So the results are replaced *within* an element that was already there.
+            div(
+              aria.live := "polite",
+              child <-- Store.playerResults.signal.map(playerResults)
+            )
+          )
+        )
+
+    private def playerResults(found: Option[PlayerSearchResult]): HtmlElement = found match {
+        // Nothing has been searched for yet, which is not the same as nothing having been found.
+        case None                                   => p(cls := "empty", "Search for the start of a nickname.")
+        case Some(result) if result.players.isEmpty => p(cls := "empty", "No player's nickname starts with that.")
+        case Some(result) =>
+            div(
+              ul(result.players.map(playerResultRow)),
+              // Said only when there are others, and said as the remedy rather than as a limit: the
+              // searcher cannot ask for page two, and would not want it — the next page of a name
+              // search is a longer prefix, which is the one thing they can do from here.
+              if (result.more)
+                  div(
+                    cls := "detail",
+                    s"Showing the first ${result.players.length}. Type more of the nickname to narrow it."
+                  )
+              else emptyNode
+            )
+    }
+
+    /* The nickname is the link, rather than a name beside a "View" button: the row has one thing to
+     * do, and a control whose name is the player being opened needs no other label. */
+    private def playerResultRow(player: PublicPlayer): HtmlElement =
+        li(
+          cls := "row",
+          button(
+            tpe := "button",
+            cls := "link",
+            player.nickname,
+            onClick --> (_ => Store.show(Store.Page.OnePlayer(player)))
+          )
+        )
+
+    /* One flag for the whole of a player's page, because one button reloads all of it: both lists
+     * come of the one action, and dimming half a screen that is being replaced whole would be a lie
+     * to anything reading it. */
+    private val refreshingPublicMatches: Var[Boolean] = Var(false)
+
+    /** Somebody else's page: a row for every game, each opening onto what that player has played of it.
+      *
+      * Only their public matches, which is their own statement about which ones may be looked at — the "Public" box on
+      * the challenge the match was started from. Nothing here is filtered in the browser: the server answers with the
+      * public ones and nothing else, so a private match is not among the rows this hides.
+      *
+      * A row per game rather than a row per game they have played, so the page is the same shape for every player and
+      * the count on each row is the answer to "have they played this?" — which is a thing worth being told without
+      * having to open anything.
+      */
+    private def playerPage(player: PublicPlayer): HtmlElement =
+        div(
+          h2(player.nickname),
+          // Back to the results that opened this, which are still held: the store keeps the box and
+          // the answer, so the way back is the list as it was rather than a search to type again.
+          button(
+            tpe := "button",
+            cls := "link",
+            "Back to search",
+            onClick --> (_ => Store.show(Store.Page.FindPlayers))
+          ),
+          refreshableSection(
+            "Public Matches",
+            refreshingPublicMatches,
+            () => Store.reloadPublicMatches(player.playerId),
+            subsection = false
+          )(
+            listing(Store.games.signal, Store.loading(Store.Fetch.Games))(p(cls := "empty", "No games yet."))(games =>
+                ul(games.map(publicGameRow))
+            )
+          )
+        )
+
+    /** One game on a player's page: its name, how much of it they have played, and — when opened — the matches.
+      *
+      * The counts are drawn whether or not the row is open, and they are what makes a page of every game readable: a
+      * row saying "0 being played, 0 finished" is one nobody needs to open, and that is most of them for most players.
+      */
+    private def publicGameRow(game: Game): HtmlElement = {
+        val expanded = Store.expandedPublicGame.signal.map(_.contains(game.gameId))
+        val running = Store.publicActive.signal.map(_.map(_.filter(_.gameId == game.gameId)))
+        val over = Store.publicCompleted.signal.map(_.map(_.filter(_.gameId == game.gameId)))
+
+        li(
+          cls := "row",
+          button(
+            tpe := "button",
+            cls := "toggle",
+            // The state is announced rather than spelled into the label, so the label stays the name
+            // of the game — which is what the reader is scanning the list for.
+            aria.expanded <-- expanded,
+            game.name,
+            onClick --> { _ =>
+                Store.expandedPublicGame.update(current =>
+                    if (current.contains(game.gameId)) None else Some(game.gameId)
+                )
+            }
+          ),
+          div(
+            cls := "detail",
+            child.text <-- running.combineWith(over).map {
+                case (Some(active), Some(finished)) => s"${active.length} being played, ${finished.length} finished"
+                // Either list still on its way. Both are asked for together, so this is the state of
+                // the page rather than of this row.
+                case _ => "loading…"
+            }
+          ),
+          child <-- expanded.map {
+              if (_)
+                  div(
+                    cls := "detail-panel",
+                    h3("Current Matches"),
+                    child <-- running.map(publicMatches("None being played in public.")),
+                    h3("Completed Matches"),
+                    child <-- over.map(publicMatches("None finished in public."))
+                  )
+              else emptyNode
+          }
+        )
+    }
+
+    /* The three states one of these lists can be in: still coming, empty, and full. `listing` says
+     * the same thing for the caller's own lists, over a `Fetch` flag; these are re-fetched per
+     * player, so what stands in for that flag is the `Option` itself. */
+    private def publicMatches(empty: String)(matches: Option[Seq[MatchSummary]]): HtmlElement = matches match {
+        case None            => p(cls := "empty", "Loading…")
+        case Some(Seq())     => p(cls := "empty", empty)
+        case Some(summaries) => ul(summaries.map(publicMatchRow))
+    }
+
+    /** One of another player's matches.
+      *
+      * Its own row rather than `matchRow`, which is written for the caller's own matches: it offers Play, Refresh and
+      * Cancel, says "your turn", and shows the clocks a player spends — none of which mean anything on somebody else's
+      * page, and the buttons would fail against a match the reader has no seat in. What is left is what a reader can
+      * use: what the match is, when it happened, and who it is waiting on.
+      */
+    private def publicMatchRow(summary: MatchSummary): HtmlElement =
+        li(
+          cls := "row",
+          // The game's name is the row this sits under, so what names the match here is what its
+          // creator called it — and an unnamed match is said by its id rather than by a blank line.
+          div(
+            cls := "title",
+            if (summary.description.trim.nonEmpty) summary.description else s"match ${summary.matchId.value}"
+          ),
+          div(cls := "detail", s"started ${Format.date(summary.start)}"),
+          if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
+          summary.completedAt
+              .map(when => div(cls := "detail", s"completed ${Format.date(when)}"))
+              .getOrElse(emptyNode),
+          // Whose move it is, for a match still being played. Named, as on the caller's own rows,
+          // and never "your turn": a turn on this page is somebody else's by construction.
+          if (summary.completed || summary.cancelled) emptyNode
+          else if (summary.whoseTurn.nonEmpty) div(cls := "detail", s"waiting for ${summary.whoseTurn.mkString(", ")}")
+          else div(cls := "detail", "waiting for the other players")
         )
 
     private def matchRow(summary: MatchSummary, showDue: Boolean): HtmlElement =

@@ -314,6 +314,13 @@ locals {
     # How the caller's finished matches ended: every seat of every one of them, in one call.
     "GET /me/results",
 
+    # Finding another player by a prefix of their nickname, and the two lists their page shows:
+    # the matches they marked public, running and finished. The prefix is a query parameter, so it
+    # needs no route of its own beyond "GET /players".
+    "GET /players",
+    "GET /players/{playerId}/matches",
+    "GET /players/{playerId}/matches/completed",
+
     "GET /games",
     "POST /games",
     "GET /games/{gameId}/challenges",

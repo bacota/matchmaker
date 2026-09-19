@@ -6,7 +6,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.{GameId, MatchId, Player, PlayerId}
+import com.vivi.matchmaker.model.{GameId, MatchId, Player, PlayerId, PublicPlayer}
 
 class PlayerRepo(session: Session[IO]) {
     private val playerId = SkunkIdCodecs.playerId
@@ -108,6 +108,39 @@ class PlayerRepo(session: Session[IO]) {
             .map(_.map { case (id, nickname, isAdmin, email) =>
                 Player(id, nickname, isAdmin, externalId, email)
             })
+
+    /* Players whose nickname begins with a prefix, for the search box.
+     *
+     * `starts_with` rather than LIKE: the prefix is whatever somebody typed, and under LIKE a `%`
+     * or a `_` in it would silently become a wildcard -- so "a_b" would match "axb", which is not
+     * what the person searching asked for and not something they can turn off. `starts_with` has no
+     * pattern language at all, and is case sensitive, which is what the search is specified to be.
+     *
+     * Ordered by nickname so the page is stable: the caller takes the first few of these and says
+     * whether there were more, and an unordered LIMIT would answer a repeated search with a
+     * different few. Sorted in the database's collation, which is also the one `starts_with`
+     * compares in.
+     *
+     * `LIMIT` is a parameter rather than a constant here because the caller asks for one more than
+     * it means to show -- that extra row is how it knows to say "there are more". */
+    private val selectPlayersByNicknamePrefix: Query[(String, Int), (PlayerId, String)] =
+        sql"""SELECT player_id, nickname FROM player
+          WHERE starts_with(nickname, $text)
+          ORDER BY nickname
+          LIMIT $int4"""
+            .query(playerId *: text)
+
+    /** Players whose nickname begins with `prefix`, in nickname order, at most `limit` of them.
+      *
+      * Case sensitive, and no wildcards: see `selectPlayersByNicknamePrefix`. Answers with
+      * [[com.vivi.matchmaker.model.PublicPlayer]] rather than `Player`, because the caller is a stranger -- the address
+      * and the Cognito identity on a `Player` are not theirs to see, and the way to keep it that way is not to read
+      * them.
+      */
+    def searchByNicknamePrefix(prefix: String, limit: Int): IO[List[PublicPlayer]] =
+        session
+            .execute(selectPlayersByNicknamePrefix)((prefix, limit))
+            .map(_.map((id, nickname) => PublicPlayer(id, nickname)))
 
     /* Everyone playing one match, in seat order.
      *

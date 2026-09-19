@@ -386,6 +386,17 @@ ul {
   color: var(--muted);
 }
 
+/* The player search: one field and its button, in a column narrow enough to read as a search
+   rather than as a form spanning the window. The button sits under the field, where a wrapped
+   caption cannot push it out of line, and keeps its own tap size from the rules above. */
+.search {
+  max-width: 24rem;
+}
+
+.search button {
+  margin-top: 0.25rem;
+}
+
 /* The completed list's pager: two buttons with the position between them, pushed to the outside
    edges so "Newer" and "Older" land where a reader tapping through pages expects them and the
    line saying which rows these are stays centred between them. Wraps on a narrow screen, where
