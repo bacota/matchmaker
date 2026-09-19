@@ -124,6 +124,94 @@ class JsonSpec extends FunSuite {
         assertEquals(read[List[ChallengeSummary]](write(both)), both)
     }
 
+    // What an invitational challenge looks like on the wire: the flag that closes it, and the rows
+    // saying who may accept it. Both are new in V22, and both have defaults -- which is the catch
+    // below.
+    test("a ChallengeSummary carries a closed challenge and its invitations") {
+        val summary = ChallengeSummary(
+          PlainChallenge(
+            ChallengeId(1),
+            PlayerId(2),
+            "just us",
+            start = None,
+            timeLimit = None,
+            settings = "{}",
+            gameId = GameId(3),
+            gameRoleId = GameRoleId(4),
+            isOpen = false
+          ),
+          acceptances = 1,
+          takenRoles = Seq(GameRoleId(4)),
+          // With a role and without: a seat held for this player, and an invitation to any free one.
+          invitations = Seq(
+            Invitation(GameId(3), ChallengeId(1), PlayerId(5), Some(GameRoleId(6))),
+            Invitation(GameId(3), ChallengeId(1), PlayerId(7))
+          )
+        )
+
+        val decoded = read[ChallengeSummary](write(summary))
+        assertEquals(decoded, summary)
+        // Asserted rather than left to equality: these two are what decide whether the UI offers an
+        // Accept at all, and to whom.
+        assert(!decoded.challenge.isOpen)
+        assertEquals(decoded.invitations.map(_.gameRoleId), Seq(Some(GameRoleId(6)), None))
+    }
+
+    // upickle omits a field whose value equals its default, so `isOpen = true` and no invitations
+    // write nothing at all -- which is the wire format an older browser sends, and what every
+    // challenge created before V22 amounts to. Reading that back as "open, nobody invited" is the
+    // only answer that keeps those challenges joinable.
+    test("an open challenge says nothing about being open, and reads back open") {
+        val open = ChallengeSummary(
+          PlainChallenge(
+            ChallengeId(1),
+            PlayerId(2),
+            "anyone?",
+            start = None,
+            timeLimit = None,
+            settings = "{}",
+            gameId = GameId(3),
+            gameRoleId = GameRoleId(4)
+          ),
+          acceptances = 1
+        )
+        val json = ujson.read(write(open))
+
+        assertEquals(json("challenge").obj.get("isOpen"), None)
+        assertEquals(json.obj.get("invitations"), None)
+
+        // And the other direction: JSON with neither field is an open challenge nobody was invited to.
+        val fromOlderClient = read[ChallengeSummary](write(open))
+        assert(fromOlderClient.challenge.isOpen)
+        assert(fromOlderClient.invitations.isEmpty)
+    }
+
+    // The two halves of an invitation as the API passes them around: `Invite` is what a caller asks
+    // for, `ChallengeInvitation` is what a player's own invitations list answers with.
+    test("an Invite and a ChallengeInvitation round-trip, with and without a role") {
+        val asked = Invite(PlayerId(1), Some(GameRoleId(2)))
+        val anySeat = Invite(PlayerId(3))
+        assertEquals(read[Invite](write(asked)), asked)
+        assertEquals(read[Invite](write(anySeat)), anySeat)
+
+        val listed = ChallengeInvitation(
+          Invitation(GameId(1), ChallengeId(2), PlayerId(3), Some(GameRoleId(4))),
+          gameName = "Chess",
+          challengerNickname = "ada",
+          message = "best of three",
+          roleName = Some("white")
+        )
+        val unnamed = listed.copy(
+          invitation = listed.invitation.copy(gameRoleId = None),
+          roleName = None
+        )
+        assertEquals(read[ChallengeInvitation](write(listed)), listed)
+        assertEquals(read[ChallengeInvitation](write(unnamed)), unnamed)
+        // roleName is Some exactly when the invitation names a role, which is what the row on the
+        // home page reads to say "as white" or nothing at all.
+        assertEquals(read[ChallengeInvitation](write(unnamed)).roleName, None)
+    }
+
     test("a ChallengeSummary nests the challenge rather than flattening it") {
         val json = ujson.read(
           write(

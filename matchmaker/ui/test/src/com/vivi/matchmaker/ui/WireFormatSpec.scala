@@ -125,6 +125,68 @@ class WireFormatSpec extends FunSuite {
         assertEquals(decoded.completedAt, summary.completedAt)
     }
 
+    // The browser's half of the V22 contract. `isOpen` and `invitations` both have defaults, and
+    // upickle omits a field equal to its default -- so an open challenge arrives with neither field
+    // present, as does every challenge stored before V22 existed. Reading that as "open, nobody
+    // invited" is what keeps those challenges joinable in a browser holding a newer bundle.
+    test("a closed challenge and its invitations survive the trip, and an open one needs no flag") {
+        val closed = ChallengeSummary(
+          PlainChallenge(
+            challengeId = ChallengeId(1),
+            challenger = PlayerId(2),
+            message = "just us",
+            start = None,
+            timeLimit = None,
+            settings = "{}",
+            gameId = GameId(3),
+            gameRoleId = GameRoleId(4),
+            isOpen = false
+          ),
+          acceptances = 1,
+          takenRoles = Seq(GameRoleId(4)),
+          invitations = Seq(
+            Invitation(GameId(3), ChallengeId(1), PlayerId(5), Some(GameRoleId(6))),
+            Invitation(GameId(3), ChallengeId(1), PlayerId(7))
+          )
+        )
+
+        val decoded = read[ChallengeSummary](write(closed))
+        assertEquals(decoded, closed)
+        assert(!decoded.challenge.isOpen)
+        assertEquals(decoded.invitations.map(_.gameRoleId), Seq(Some(GameRoleId(6)), None))
+
+        val open = closed.copy(
+          challenge = closed.challenge.asInstanceOf[PlainChallenge].copy(isOpen = true),
+          invitations = Seq.empty
+        )
+        val fromOlderServer = read[ChallengeSummary](write(open))
+        assert(fromOlderServer.challenge.isOpen)
+        assert(fromOlderServer.invitations.isEmpty)
+    }
+
+    // What the home page's invitations section decodes, and the one DTO here that carries names
+    // rather than ids -- it is drawn on a screen that spans every game and has nothing to look a
+    // game's name or a challenger's nickname up from.
+    test("a ChallengeInvitation round-trips, with and without the role it was offered as") {
+        val asWhite = ChallengeInvitation(
+          Invitation(GameId(1), ChallengeId(2), PlayerId(3), Some(GameRoleId(4))),
+          gameName = "Chess",
+          challengerNickname = "ada",
+          message = "best of three",
+          roleName = Some("white")
+        )
+        val anySeat = asWhite.copy(
+          invitation = asWhite.invitation.copy(gameRoleId = None),
+          roleName = None
+        )
+
+        assertEquals(read[ChallengeInvitation](write(asWhite)), asWhite)
+        assertEquals(read[ChallengeInvitation](write(anySeat)), anySeat)
+        // A list, which is the response shape rather than a single invitation.
+        val both = List(asWhite, anySeat)
+        assertEquals(read[List[ChallengeInvitation]](write(both)), both)
+    }
+
     // The challenges page decodes this and nothing else, and the nested `challenge` goes through
     // the merged Challenge reader. A discriminator or field mapping that does not survive being
     // nested would break only here, in the browser, on the one screen that loads it.

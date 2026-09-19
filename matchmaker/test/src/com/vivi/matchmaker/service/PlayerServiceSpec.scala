@@ -96,7 +96,12 @@ class PlayerServiceSpec extends PropertySuite {
                     first <- registrationService.register(upper, upperId)
                     second <- registrationService.register(lower, lowerId)
                     _ <- registrationService.register(callerId, callerId)
-                    found <- playerService.search(callerId, s"a${suffix.take(4)}")
+                    // A long slice of the suffix, not a short one: the shared test database holds a
+                    // hundred thousand players, and a five-character prefix has already matched a third
+                    // player registered by another property -- which falsified this one, since it asserts
+                    // the result is exactly the two names it made. Twenty random characters cannot
+                    // collide, and it is still a proper prefix of both, which is what this is about.
+                    found <- playerService.search(callerId, s"a${suffix.take(20)}")
                 } yield found.players.map(_.playerId).toSet == Set(first.playerId, second.playerId) &&
                     found.players.map(_.nickname).toSet == Set(upper, lower)
                 result.timeout(10.seconds).unsafeRunSync()
