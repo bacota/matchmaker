@@ -371,8 +371,8 @@ object Views {
     }
 
     /** The main page: what is waiting on this player, what they are playing, and what lately finished. No games list —
-      * the menu is the games list now — and the completed matches are trimmed to the most recent few, because the whole
-      * history of a game lives on that game's own screen.
+      * the menu is the games list now — and the completed matches are shown a page at a time, because the whole history
+      * of a game is what that game's own screen is for.
       */
     private def mainPage: HtmlElement =
         div(
@@ -650,11 +650,57 @@ object Views {
         )
     }
 
-    /** The last few finished matches, whatever game they were played in.
+    /* Which page of the finished matches is being looked at, counted from 0 at the most recent.
+     *
+     * Owned here rather than inside the section for the same reason `refreshingCompleted` is: the
+     * section's own reload rebuilds nothing, but a sign-out and a re-fetch both change the list
+     * under it, and a page number thrown away with the element would send the reader back to the
+     * top every time. It is deliberately not reset by a refresh either -- somebody reading page
+     * three and asking whether it is still true means to stay on page three.
+     *
+     * Never trusted as-is: what it holds can be past the end of a list that has since been
+     * re-fetched shorter, so every use of it goes through `completedWindow`, which clamps. */
+    private val completedPage: Var[Int] = Var(0)
+
+    /** What the completed list shows right now: the rows on this page, the page they are (clamped), and how many
+      * finished matches there are altogether.
       *
-      * The list arrives most recently finished first, so the most recent few are simply its first few — no sorting
-      * here, and nothing that would disagree with the game screens, which show the same list filtered rather than a
+      * Derived rather than stored, so the held page number can be stale without anything on screen being wrong: a
+      * reload that shortens the list moves the reader to the last page that exists instead of showing them a blank one,
+      * and the clamp is in one place rather than at each of the three things that read it.
+      */
+    private val completedWindow: Signal[(Seq[MatchSummary], Int, Int)] =
+        Store.completed.signal.combineWith(completedPage.signal).map { case (all, wanted) =>
+            val page = clampCompletedPage(wanted, all.length)
+            val from = page * Store.recentlyCompleted
+            (all.slice(from, from + Store.recentlyCompleted), page, all.length)
+        }
+
+    /** The nearest page that exists to the one asked for: 0 when the list is empty or shorter than a page. */
+    private def clampCompletedPage(wanted: Int, total: Int): Int =
+        math.min(math.max(wanted, 0), math.max(0, (total - 1) / Store.recentlyCompleted))
+
+    /** Moves the completed list a page towards the older matches (`by` positive) or the newer ones.
+      *
+      * Clamped against the list as it stands now rather than as it stood when the button was drawn, because a reload
+      * may have landed in between — and clamped on the way in as well as on the way out, so stepping back from a page
+      * that no longer exists lands beside it rather than somewhere further past the end.
+      */
+    private def stepCompleted(by: Int): Unit = {
+        val total = Store.completed.now().length
+        completedPage.set(clampCompletedPage(clampCompletedPage(completedPage.now(), total) + by, total))
+    }
+
+    /** The finished matches, whatever game they were played in, a page at a time.
+      *
+      * The list arrives most recently finished first, so the first page is the most recent matches — no sorting here,
+      * and nothing that would disagree with the game screens, which show the same list filtered rather than a
       * differently ordered one.
+      *
+      * Paged rather than truncated because the whole list is already here: `completedMatches()` answers with all of
+      * them, the older ones were simply being dropped on the floor, and paging through what is already loaded costs no
+      * request at all. The page is still a page — a hundred finished matches at the bottom of the home screen is
+      * something to scroll past, which is what the truncation was right about.
       */
     private def recentlyCompletedSection: HtmlElement =
         refreshableSection(
@@ -663,9 +709,50 @@ object Views {
           () => Store.reloadCompleted(),
           subsection = false
         )(
-          listing(Store.completed.signal.map(_.take(Store.recentlyCompleted)), Store.loading(Store.Fetch.Completed))(
+          listing(completedWindow.map(_._1), Store.loading(Store.Fetch.Completed))(
             p(cls := "empty", "Nothing finished yet.")
-          )(matches => ul(matches.map(matchRow(_, showDue = false))))
+          )(matches => ul(matches.map(matchRow(_, showDue = false)))),
+          completedPager
+        )
+
+    /** The two buttons and the position line under the completed list.
+      *
+      * One element that is always mounted and hidden while everything fits on a page, rather than one that appears and
+      * disappears: the position line is a live region, and a live region created at the moment its text changes is
+      * announced by nothing. Hidden, it says nothing either — which is right, because with a single page there is no
+      * position to be in.
+      *
+      * "Newer" and "Older" rather than "Previous" and "Next": the list is ordered by when a match finished, and which
+      * direction "next" goes in is exactly the thing the reader would have to work out.
+      */
+    private def completedPager: HtmlElement =
+        div(
+          cls := "pager",
+          hidden <-- completedWindow.map { case (_, _, total) => total <= Store.recentlyCompleted },
+          button(
+            tpe := "button",
+            disabled <-- completedWindow.map { case (_, page, _) => page == 0 },
+            onClick --> (_ => stepCompleted(-1)),
+            "Newer"
+          ),
+          // Which matches these are, in the terms the reader can see: rows counted from the most
+          // recent, not a page number they would have to multiply out for themselves.
+          div(
+            cls := "detail",
+            aria.live := "polite",
+            child.text <-- completedWindow.map { case (rows, page, total) =>
+                val from = page * Store.recentlyCompleted
+                if (rows.isEmpty) s"$total finished" else s"${from + 1}–${from + rows.length} of $total"
+            }
+          ),
+          button(
+            tpe := "button",
+            disabled <-- completedWindow.map { case (_, page, total) =>
+                (page + 1) * Store.recentlyCompleted >= total
+            },
+            onClick --> (_ => stepCompleted(1)),
+            "Older"
+          )
         )
 
     private def matchRow(summary: MatchSummary, showDue: Boolean): HtmlElement =

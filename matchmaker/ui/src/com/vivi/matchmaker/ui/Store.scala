@@ -229,8 +229,8 @@ object Store {
       */
     val showChallengeForm: Var[Boolean] = Var(false)
 
-    /** How many finished matches the home screen shows. The whole history belongs to the game it was played in; the
-      * home screen is a glance at what happened lately.
+    /** How many finished matches the home screen shows at once. The whole history belongs to the game it was played in;
+      * the home screen shows it a page of this size at a time, most recent first.
       */
     val recentlyCompleted: Int = 10
 
