@@ -82,6 +82,9 @@ object Json {
     given ReadWriter[CharacterChallenge] = macroRW
     given ReadWriter[Challenge] =
         ReadWriter.merge(summon[ReadWriter[PlainChallenge]], summon[ReadWriter[CharacterChallenge]])
+    given ReadWriter[Invitation] = macroRW
+    given ReadWriter[Invite] = macroRW
+    given ReadWriter[ChallengeInvitation] = macroRW
     given ReadWriter[ChallengeSummary] = macroRW
 
     given ReadWriter[PlainAcceptance] = macroRW

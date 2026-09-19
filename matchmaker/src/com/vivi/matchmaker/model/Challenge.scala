@@ -2,7 +2,9 @@ package com.vivi.matchmaker.model
 
 import java.time.{Duration, Instant}
 
-/** An open offer to play a match, waiting for other players to accept it.
+/** An offer to play a match, waiting for other players to accept it.
+  *
+  * Open to anyone, or addressed to particular players — see [[isOpen]] and [[Invitation]].
   *
   * Mirrors the `challenge` table split: a `'P'`-type game's challenge is a plain [[PlainChallenge]], while a `'C'`-type
   * game's challenge is a [[CharacterChallenge]] naming the character it is offered on behalf of. The two can never be
@@ -48,6 +50,19 @@ sealed trait Challenge {
       * those seats filled leaves this off, and pressing Start is then what says "this is everybody".
       */
     def autoStart: Boolean
+
+    /** Whether anybody may accept this, rather than only the players invited to it (V22).
+      *
+      * The challenger's policy, and the whole of what "open" means — there is no second flag saying the same thing
+      * another way, because two flags can disagree. False makes the [[Invitation]] rows the only way in:
+      * `ChallengeService.accept` refuses a player who has not been invited, and a challenge that is closed with nobody
+      * invited is refused at creation, since nobody could ever accept it.
+      *
+      * Independent of who has been invited, which is why it is a column here rather than something derived from the
+      * invitations. An open challenge may carry invitations — a nudge to a friend, whose seat is held for them all the
+      * same — and a closed one may be re-opened without anybody's invitation being touched.
+      */
+    def isOpen: Boolean
 }
 
 case class PlainChallenge(
@@ -62,7 +77,8 @@ case class PlainChallenge(
     gameRoleId: GameRoleId,
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
-    autoStart: Boolean = false
+    autoStart: Boolean = false,
+    isOpen: Boolean = true
 ) extends Challenge
 
 case class CharacterChallenge(
@@ -78,7 +94,8 @@ case class CharacterChallenge(
     gameRoleId: GameRoleId,
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
-    autoStart: Boolean = false
+    autoStart: Boolean = false,
+    isOpen: Boolean = true
 ) extends Challenge
 
 /** An open challenge together with how many players have accepted it so far.
@@ -92,4 +109,15 @@ case class CharacterChallenge(
   * refused, and not offer a role somebody else has already taken; the count is what it says beside the challenge, since
   * a game's roles are what the seats are and `takenRoles` is which of them are gone.
   */
-case class ChallengeSummary(challenge: Challenge, acceptances: Int, takenRoles: Seq[GameRoleId] = Seq.empty)
+case class ChallengeSummary(
+    challenge: Challenge,
+    acceptances: Int,
+    takenRoles: Seq[GameRoleId] = Seq.empty,
+    /** Who has been invited to this challenge, and as what.
+      *
+      * Beside `takenRoles` because it answers the other half of the same question: those are the seats that are gone,
+      * these are the ones held for somebody in particular, and a player deciding what they may accept as needs both. It
+      * also says who has been asked, which is the whole of what a closed challenge shows about itself.
+      */
+    invitations: Seq[Invitation] = Seq.empty
+)
