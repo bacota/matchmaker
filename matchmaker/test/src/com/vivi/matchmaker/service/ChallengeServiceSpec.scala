@@ -849,6 +849,106 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
+    /* The three refusals a player can actually walk into, and what they are told.
+     *
+     * The wording is asserted, not just the type: these sentences are shown to whoever pressed the
+     * button -- the UI prints a 404 or 409 message verbatim -- so they are part of the interface, and a
+     * developer-facing string with ids in it would reach a player's screen the day somebody reworded
+     * one without knowing that. */
+    property("accepting a challenge whose match has started says so, without naming ids") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, otherNickname, otherExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    other <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
+                    created <- challengeService.create(challengeFor(fixture), externalId)
+                    _ <- TestSession.resource.use(session =>
+                        new ChallengeRepo(session)
+                            .claimForStart(fixture.game.gameId, created.challengeId, MatchId("m-1"))
+                    )
+                    attempt <- challengeService
+                        .accept(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Some(other._2.characterId),
+                          fixture.game.roles(1).gameRoleId,
+                          otherExternalId
+                        )
+                        .attempt
+                } yield attempt match {
+                    case Left(e: ConflictError) =>
+                        e.message == "The match has already started. The challenge is closed."
+                    case _ => false
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("accepting after an invitation is withdrawn says the invitation is gone") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, otherNickname, otherExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    other <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
+                    (player, character) = other
+                    created <- challengeService.create(
+                      closedChallengeFor(fixture),
+                      externalId,
+                      Seq(Invite(player.playerId))
+                    )
+                    // Revoked by the challenger, after which this player is in the same position as one
+                    // who was never asked -- which is what the message has to cover.
+                    _ <- challengeService.revoke(fixture.game.gameId, created.challengeId, player.playerId, externalId)
+                    attempt <- challengeService
+                        .accept(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Some(character.characterId),
+                          fixture.game.roles(1).gameRoleId,
+                          otherExternalId
+                        )
+                        .attempt
+                    // And turning down an invitation that is already gone says its own thing.
+                    rejecting <- challengeService
+                        .reject(fixture.game.gameId, created.challengeId, otherExternalId)
+                        .attempt
+                } yield (attempt, rejecting) match {
+                    case (Left(e: UnauthorizedError), Left(r: NotFoundError)) =>
+                        e.message == "This challenge is open only to players invited to it. " +
+                            "If you were invited, the invitation has been withdrawn." &&
+                            r.message == "That invitation is no longer there. It may have been withdrawn."
+                    case _ => false
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("accepting a challenge its challenger has withdrawn says it is gone") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, otherNickname, otherExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    other <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
+                    created <- challengeService.create(challengeFor(fixture), externalId)
+                    _ <- challengeService.delete(fixture.game.gameId, created.challengeId, externalId)
+                    attempt <- challengeService
+                        .accept(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Some(other._2.characterId),
+                          fixture.game.roles(1).gameRoleId,
+                          otherExternalId
+                        )
+                        .attempt
+                } yield attempt match {
+                    case Left(e: NotFoundError) =>
+                        e.message == "That challenge is no longer there. Whoever offered it has withdrawn it."
+                    case _ => false
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
     property("listByGame hides an open challenge whose every remaining role is held for other players") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, invitedNickname, invitedExternalId, strangerNickname, strangerExternalId) =>

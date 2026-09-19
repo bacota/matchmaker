@@ -313,19 +313,20 @@ class ChallengeService[T](
                         case Some(t) => IO.pure(t)
                         case None =>
                             IO.raiseError(
-                              NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
+                              NotFoundError("That challenge is no longer there. Whoever offered it has withdrawn it.")
                             )
                     }
                     // A challenge whose start is in flight is spoken for: its roster has already been
                     // turned into participants and handed to the engine, so an acceptance added now would
-                    // never reach the match and would be deleted with the challenge when the start
-                    // finishes. Refused rather than silently lost.
-                    _ <- challengeInfo.startedMatchId.traverse_ { existing =>
-                        IO.raiseError(
-                          ConflictError(
-                            s"challenge ${challengeId.value} is being started as match ${existing.value} and can no longer be accepted"
-                          )
-                        )
+                    // never reach the match: the roster the engine was given is the match, and nothing
+                    // added here joins it. Refused rather than silently lost.
+                    //
+                    // The message is for whoever pressed Accept, which is why it names no ids and does
+                    // not mention the claim: what they need to know is that the match is under way and
+                    // the challenge is finished with. The request's own path carries the ids for
+                    // anything reading the logs.
+                    _ <- challengeInfo.startedMatchId.traverse_ { _ =>
+                        IO.raiseError(ConflictError("The match has already started. The challenge is closed."))
                     }
                     gameType = challengeInfo.gameType
                     // A role has to be one of this game's, which the schema's composite foreign key also
@@ -408,8 +409,13 @@ class ChallengeService[T](
                     // a person and a character is not one.
                     invitation <- invitationRepo.read(gameId, challengeId, acceptance.playerId)
                     _ <- IO.raiseWhen(!challengeInfo.isOpen && invitation.isEmpty)(
+                      // Said the same way to a player who was never invited and to one whose invitation
+                      // has been withdrawn, because by now those are the same state: withdrawing deletes
+                      // the row, and there is nothing left to tell them apart by. The sentence covers
+                      // both rather than guessing at which.
                       UnauthorizedError(
-                        s"challenge ${challengeId.value} is not open, and player ${acceptance.playerId.value} was not invited to it"
+                        "This challenge is open only to players invited to it. " +
+                            "If you were invited, the invitation has been withdrawn."
                       )
                     )
                     // An invitation that names a role is a seat held for this player, and the offer was to
@@ -551,21 +557,19 @@ class ChallengeService[T](
                         case Some(l) => IO.pure(l)
                         case None =>
                             IO.raiseError(
-                              NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
+                              NotFoundError("That challenge is no longer there. Whoever offered it has withdrawn it.")
                             )
                     }
-                    _ <- locked.startedMatchId.traverse_ { existing =>
+                    _ <- locked.startedMatchId.traverse_ { _ =>
                         IO.raiseError(
-                          ConflictError(
-                            s"challenge ${challengeId.value} is being started as match ${existing.value} and can no longer be deleted"
-                          )
+                          ConflictError("The match has already started, so the challenge can no longer be deleted.")
                         )
                     }
                     challenge <- challengeRepo.read(gameId, challengeId).flatMap {
                         case Some(c) => IO.pure(c)
                         case None =>
                             IO.raiseError(
-                              NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
+                              NotFoundError("That challenge is no longer there. Whoever offered it has withdrawn it.")
                             )
                     }
                     _ <- challenge match {
@@ -628,7 +632,7 @@ class ChallengeService[T](
                     // start's two transactions would be permission to accept a challenge that is already a
                     // match.
                     locked <- requireLocked(challengeRepo, gameId, challengeId)
-                    _ <- refuseStarted(locked, challengeId, "invited to")
+                    _ <- refuseStarted(locked)
                     challenge <- requireChallenge(challengeRepo, gameId, challengeId)
                     _ <- requireChallenger(playerRepo, challenge, callerExternalId, "invite to")
                     game <- requireGame(gameRepo, gameId)
@@ -680,7 +684,7 @@ class ChallengeService[T](
             val rejected = session.transaction.use { _ =>
                 for {
                     locked <- requireLocked(challengeRepo, gameId, challengeId)
-                    _ <- refuseStarted(locked, challengeId, "rejected in")
+                    _ <- refuseStarted(locked)
                     caller <- requireCaller(playerRepo, callerExternalId)
                     // The invitation is what authorizes this, so its absence is the refusal: a player with
                     // no invitation to this challenge has nothing to reject, which is a 404 about the
@@ -689,9 +693,7 @@ class ChallengeService[T](
                         case Some(_) => IO.unit
                         case None =>
                             IO.raiseError(
-                              NotFoundError(
-                                s"player ${caller.playerId.value} has no invitation to challenge ${challengeId.value}"
-                              )
+                              NotFoundError("That invitation is no longer there. It may have been withdrawn.")
                             )
                     }
                     _ <- invitationRepo.delete(gameId, challengeId, caller.playerId)
@@ -724,7 +726,7 @@ class ChallengeService[T](
             session.transaction.use { _ =>
                 for {
                     locked <- requireLocked(challengeRepo, gameId, challengeId)
-                    _ <- refuseStarted(locked, challengeId, "revoked in")
+                    _ <- refuseStarted(locked)
                     challenge <- requireChallenge(challengeRepo, gameId, challengeId)
                     _ <- requireChallenger(playerRepo, challenge, callerExternalId, "revoke an invitation to")
                     _ <- invitationRepo.read(gameId, challengeId, playerId).flatMap {
@@ -732,7 +734,7 @@ class ChallengeService[T](
                         case None =>
                             IO.raiseError(
                               NotFoundError(
-                                s"player ${playerId.value} has no invitation to challenge ${challengeId.value}"
+                                "That invitation is no longer there. It may already have been turned down."
                               )
                             )
                     }
@@ -752,19 +754,17 @@ class ChallengeService[T](
         challengeRepo.readForUpdate(gameId, challengeId).flatMap {
             case Some(locked) => IO.pure(locked)
             case None =>
-                IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
+                IO.raiseError(NotFoundError("That challenge is no longer there. Whoever offered it has withdrawn it."))
         }
 
     /* A challenge whose start is in flight is spoken for: its roster has been handed to the engine,
-     * and nothing about who may accept it means anything any more. `verb` names what was being
-     * attempted, so the refusal says which. */
-    private def refuseStarted(locked: LockedChallenge, challengeId: ChallengeId, verb: String): IO[Unit] =
-        locked.startedMatchId.traverse_ { existing =>
-            IO.raiseError(
-              ConflictError(
-                s"challenge ${challengeId.value} is being started as match ${existing.value} and nobody can be $verb it"
-              )
-            )
+     * and nothing about who may be invited to it means anything any more.
+     *
+     * What was being attempted is not named: invite, reject and revoke all fail for the one reason, and
+     * the reason is the part worth saying. */
+    private def refuseStarted(locked: LockedChallenge): IO[Unit] =
+        locked.startedMatchId.traverse_ { _ =>
+            IO.raiseError(ConflictError("The match has already started. The challenge is closed."))
         }
 
     private def requireChallenge(
@@ -775,7 +775,7 @@ class ChallengeService[T](
         challengeRepo.read(gameId, challengeId).flatMap {
             case Some(challenge) => IO.pure(challenge)
             case None =>
-                IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
+                IO.raiseError(NotFoundError("That challenge is no longer there. Whoever offered it has withdrawn it."))
         }
 
     private def requireCaller(playerRepo: PlayerRepo, callerExternalId: String): IO[Player] =
