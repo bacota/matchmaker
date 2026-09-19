@@ -339,9 +339,9 @@ locals {
     "DELETE /challenges/{gameId}/{challengeId}",
     "POST /challenges/{gameId}/{challengeId}/acceptances",
     "DELETE /challenges/{gameId}/{challengeId}/acceptances/{playerId}",
-    # Asking particular players to a challenge, and taking the ask back (V22). Both are the
-    # challenger's alone; the create route above carries the invitations a challenge starts with,
-    # so these two are for changing one's mind afterwards.
+    # Asking particular players to a challenge, and then removing an invitation (V22). The POST is
+    # the challenger's alone; DELETE lets the invitee reject their own invitation or the challenger
+    # revoke it. The create route above carries the invitations a challenge starts with.
     "POST /challenges/{gameId}/{challengeId}/invitations",
     "DELETE /challenges/{gameId}/{challengeId}/invitations/{playerId}",
     # Turning a challenge into a match, and the two match routes that go with it. All three are
