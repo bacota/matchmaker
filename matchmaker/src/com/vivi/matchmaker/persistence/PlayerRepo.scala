@@ -114,7 +114,7 @@ class PlayerRepo(session: Session[IO]) {
      * Case insensitive, and insensitive to how the name was spaced: both sides of the comparison are
      * normalized the same way -- lowercased, every run of whitespace collapsed to one space, and
      * trimmed -- so "red  BARON" finds "Red Baron". `normalized` below is the Scala half; the SQL
-     * expression here is the other, and V21 indexes exactly this expression. The three must stay
+     * expression here is the other, and V20 indexes exactly this expression. The three must stay
      * identical: a difference in any of them is not a wrong answer but a silent table scan, or a
      * nickname that cannot be found by the way it is written.
      *
