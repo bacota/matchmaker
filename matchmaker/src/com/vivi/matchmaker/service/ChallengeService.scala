@@ -164,7 +164,7 @@ class ChallengeService[T](
             // Creating a challenge is itself an acceptance of it: the challenger is the first
             // participant. Both rows go in together so a challenge can never exist with its creator
             // missing from its own acceptances.
-            session.transaction.use { _ =>
+            val made = session.transaction.use { _ =>
                 for {
                     // Unlocked, per the note on `requireGame`: what this decides is the challenge
                     // and acceptance rows written below, not anything about the game itself.
@@ -256,9 +256,32 @@ class ChallengeService[T](
                           Invitation(created.gameId, created.challengeId, invite.playerId, invite.gameRoleId)
                         )
                     )
-                } yield created
+                    // Carried out of the transaction because the mail needs the invitee's own address and
+                    // the name of the seat they were offered, and `game` is in hand here where it is not
+                    // afterwards. Read rather than passed for the same reason `accept` reads its actor.
+                    invited <- invitations.traverse(invite =>
+                        requirePlayer(playerRepo, invite.playerId).map(player => (player, roleName(game, invite)))
+                    )
+                } yield (created, invited)
+            }
+
+            /* After the commit, and nothing about it can fail the create -- see `Notifications`. One
+             * mail per invitee, because each is being told about their own invitation and nobody else's:
+             * a challenge offered to three people is three private offers that happen to share a row. */
+            made.flatMap { (created, invited) =>
+                invited
+                    .traverse_((player, role) =>
+                        notifications.invitationMade(session, created.gameId, created.challengeId, player, role)
+                    )
+                    .as(created)
             }
         }
+
+    /* The name of the seat an invitation holds, for the mail that offers it. From the game already in
+     * hand rather than a query: the roles are what `validateInvitations` has just checked the id
+     * against, so a `None` here means the invitation named no role rather than that a role is missing. */
+    private def roleName(game: Game, invite: Invite): Option[String] =
+        invite.gameRoleId.flatMap(id => game.roles.find(_.gameRoleId == id).map(_.name))
 
     /** Accepts `challengeId` in game `gameId`, authorized by `callerExternalId`. For a `'C'`-type game's challenge,
       * `characterId` must be `Some`, naming the character accepting on the caller's behalf, and is authorized the same
@@ -290,19 +313,20 @@ class ChallengeService[T](
                         case Some(t) => IO.pure(t)
                         case None =>
                             IO.raiseError(
-                              NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
+                              NotFoundError("That challenge is no longer there. Whoever offered it has withdrawn it.")
                             )
                     }
                     // A challenge whose start is in flight is spoken for: its roster has already been
                     // turned into participants and handed to the engine, so an acceptance added now would
-                    // never reach the match and would be deleted with the challenge when the start
-                    // finishes. Refused rather than silently lost.
-                    _ <- challengeInfo.startedMatchId.traverse_ { existing =>
-                        IO.raiseError(
-                          ConflictError(
-                            s"challenge ${challengeId.value} is being started as match ${existing.value} and can no longer be accepted"
-                          )
-                        )
+                    // never reach the match: the roster the engine was given is the match, and nothing
+                    // added here joins it. Refused rather than silently lost.
+                    //
+                    // The message is for whoever pressed Accept, which is why it names no ids and does
+                    // not mention the claim: what they need to know is that the match is under way and
+                    // the challenge is finished with. The request's own path carries the ids for
+                    // anything reading the logs.
+                    _ <- challengeInfo.startedMatchId.traverse_ { _ =>
+                        IO.raiseError(ConflictError("The match has already started. The challenge is closed."))
                     }
                     gameType = challengeInfo.gameType
                     // A role has to be one of this game's, which the schema's composite foreign key also
@@ -385,8 +409,13 @@ class ChallengeService[T](
                     // a person and a character is not one.
                     invitation <- invitationRepo.read(gameId, challengeId, acceptance.playerId)
                     _ <- IO.raiseWhen(!challengeInfo.isOpen && invitation.isEmpty)(
+                      // Said the same way to a player who was never invited and to one whose invitation
+                      // has been withdrawn, because by now those are the same state: withdrawing deletes
+                      // the row, and there is nothing left to tell them apart by. The sentence covers
+                      // both rather than guessing at which.
                       UnauthorizedError(
-                        s"challenge ${challengeId.value} is not open, and player ${acceptance.playerId.value} was not invited to it"
+                        "This challenge is open only to players invited to it. " +
+                            "If you were invited, the invitation has been withdrawn."
                       )
                     )
                     // An invitation that names a role is a seat held for this player, and the offer was to
@@ -428,14 +457,14 @@ class ChallengeService[T](
                     // Carried out of the transaction because it is the one thing the notification
                     // cannot read for itself: it addresses the other players by saying who accepted.
                     actor <- requirePlayer(playerRepo, created.playerId)
-                } yield (created, actor)
+                } yield (created, actor, invitation.isDefined)
             }
 
             /* After the commit, and nothing about it can fail the accept -- see `Notifications`.
              * Outside the transaction on purpose: it holds the challenge's FOR UPDATE lock, and half a
              * dozen reads and a queue call taken inside it would keep every other player trying to
              * accept the same challenge waiting on an email. */
-            accepted.flatMap { (created, actor) =>
+            accepted.flatMap { (created, actor, wasInvited) =>
                 for {
                     /* The start first, because whether it happened is what this acceptance *is*.
                      *
@@ -461,8 +490,12 @@ class ChallengeService[T](
                      * Neither can fail this accept: the acceptance is recorded, `startIfReady` swallows
                      * and logs whatever it runs into, and `Notifications` does the same. */
                     isMatch <- autoStart(session, gameId, challengeId, actor)
+                    /* `wasInvited` reaches the challenger and nobody else: their invitation was taken
+                     * up, which is more than that somebody accepted. It is one mail either way -- the
+                     * kind is chosen from what they have asked for -- and it is suppressed with the rest
+                     * of this when the acceptance started the match, for the same reason. */
                     _ <- IO.unlessA(isMatch)(
-                      notifications.challengeAccepted(session, gameId, challengeId, actor)
+                      notifications.challengeAccepted(session, gameId, challengeId, actor, wasInvited)
                     )
                 } yield created
             }
@@ -524,21 +557,19 @@ class ChallengeService[T](
                         case Some(l) => IO.pure(l)
                         case None =>
                             IO.raiseError(
-                              NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
+                              NotFoundError("That challenge is no longer there. Whoever offered it has withdrawn it.")
                             )
                     }
-                    _ <- locked.startedMatchId.traverse_ { existing =>
+                    _ <- locked.startedMatchId.traverse_ { _ =>
                         IO.raiseError(
-                          ConflictError(
-                            s"challenge ${challengeId.value} is being started as match ${existing.value} and can no longer be deleted"
-                          )
+                          ConflictError("The match has already started, so the challenge can no longer be deleted.")
                         )
                     }
                     challenge <- challengeRepo.read(gameId, challengeId).flatMap {
                         case Some(c) => IO.pure(c)
                         case None =>
                             IO.raiseError(
-                              NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}")
+                              NotFoundError("That challenge is no longer there. Whoever offered it has withdrawn it.")
                             )
                     }
                     _ <- challenge match {
@@ -595,13 +626,13 @@ class ChallengeService[T](
             val challengeRepo = new ChallengeRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
             val invitationRepo = new InvitationRepo(session)
-            session.transaction.use { _ =>
+            val invited = session.transaction.use { _ =>
                 for {
                     // Locked first, like every other write to a challenge: an invitation added between a
                     // start's two transactions would be permission to accept a challenge that is already a
                     // match.
                     locked <- requireLocked(challengeRepo, gameId, challengeId)
-                    _ <- refuseStarted(locked, challengeId, "invited to")
+                    _ <- refuseStarted(locked)
                     challenge <- requireChallenge(challengeRepo, gameId, challengeId)
                     _ <- requireChallenger(playerRepo, challenge, callerExternalId, "invite to")
                     game <- requireGame(gameRepo, gameId)
@@ -623,7 +654,14 @@ class ChallengeService[T](
                     created <- invitationRepo.create(
                       Invitation(gameId, challengeId, invite.playerId, invite.gameRoleId)
                     )
-                } yield created
+                    player <- requirePlayer(playerRepo, invite.playerId)
+                } yield (created, player, roleName(game, invite))
+            }
+
+            /* After the commit, like every other notification here: an invitation that has been made is
+             * not undone by a mail that could not be sent. */
+            invited.flatMap { (created, player, role) =>
+                notifications.invitationMade(session, gameId, challengeId, player, role).as(created)
             }
         }
 
@@ -634,19 +672,22 @@ class ChallengeService[T](
       * the only one who can say which, and removing their challenge on somebody else's decision is not this service's
       * to make.
       *
-      * Rejecting does not touch an acceptance. A player who has already accepted and then rejects the invitation is
-      * saying something incoherent, and the acceptance is the more specific statement, so [[AcceptanceService.delete]]
-      * stays the way out of a challenge already joined.
+      * A player who has already accepted is refused rather than obliged. Deleting their invitation would leave them
+      * holding the seat they had been invited into with no permission to be there — which is not nothing, since backing
+      * out and changing their mind would then be refused — and it would tell the challenger their seat is free to offer
+      * again while it is still taken. [[AcceptanceService.delete]] is the way out of a challenge already joined, and
+      * the refusal says so.
       */
     def reject(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
             val playerRepo = new PlayerRepo(session)
             val challengeRepo = new ChallengeRepo(session)
             val invitationRepo = new InvitationRepo(session)
-            session.transaction.use { _ =>
+            val acceptanceRepo = new AcceptanceRepo(session)
+            val rejected = session.transaction.use { _ =>
                 for {
                     locked <- requireLocked(challengeRepo, gameId, challengeId)
-                    _ <- refuseStarted(locked, challengeId, "rejected in")
+                    _ <- refuseStarted(locked)
                     caller <- requireCaller(playerRepo, callerExternalId)
                     // The invitation is what authorizes this, so its absence is the refusal: a player with
                     // no invitation to this challenge has nothing to reject, which is a 404 about the
@@ -655,23 +696,36 @@ class ChallengeService[T](
                         case Some(_) => IO.unit
                         case None =>
                             IO.raiseError(
-                              NotFoundError(
-                                s"player ${caller.playerId.value} has no invitation to challenge ${challengeId.value}"
-                              )
+                              NotFoundError("That invitation is no longer there. It may have been withdrawn.")
                             )
                     }
+                    // Under the challenge's lock, like the invitation read above and for the same reason:
+                    // an acceptance landing between this check and the delete would leave exactly the
+                    // state this refuses.
+                    accepted <- acceptanceRepo.hasAccepted(gameId, challengeId, caller.playerId)
+                    _ <- IO.raiseWhen(accepted)(
+                      ConflictError(
+                        "You have already accepted this challenge, so there is no invitation left to turn down. " +
+                            "Back out of the challenge instead."
+                      )
+                    )
                     _ <- invitationRepo.delete(gameId, challengeId, caller.playerId)
-                } yield ()
+                } yield caller
             }
+
+            /* After the commit. The challenger is the only one told, and they are told by `Notifications`
+             * reading the challenge for itself -- all this knows is who said no. */
+            rejected.flatMap(caller => notifications.invitationRejected(session, gameId, challengeId, caller))
         }
 
     /** Takes an invitation back. The challenger's mirror of [[reject]], and the only way to correct one that was sent
       * to the wrong player or for the wrong seat.
       *
-      * An acceptance already made is left alone: revoking permission to accept does not un-accept, and a challenger who
-      * wants a player out of their challenge removes the acceptance (which they may — see
-      * [[AcceptanceService.delete]]). Otherwise a revoke would be a way to eject a player through a route that reports
-      * nothing to them.
+      * A player who has already accepted is refused, as they are in [[reject]] and for the same reason: their
+      * invitation is what permits the seat they are sitting in, and taking it back without taking the seat leaves the
+      * two disagreeing. A challenger who wants a player out of their challenge removes the acceptance, which they may —
+      * see [[AcceptanceService.delete]]. That also keeps a revoke from being a way to eject a player through a route
+      * that reports nothing to them.
       */
     def revoke(
         gameId: GameId,
@@ -683,10 +737,11 @@ class ChallengeService[T](
             val playerRepo = new PlayerRepo(session)
             val challengeRepo = new ChallengeRepo(session)
             val invitationRepo = new InvitationRepo(session)
+            val acceptanceRepo = new AcceptanceRepo(session)
             session.transaction.use { _ =>
                 for {
                     locked <- requireLocked(challengeRepo, gameId, challengeId)
-                    _ <- refuseStarted(locked, challengeId, "revoked in")
+                    _ <- refuseStarted(locked)
                     challenge <- requireChallenge(challengeRepo, gameId, challengeId)
                     _ <- requireChallenger(playerRepo, challenge, callerExternalId, "revoke an invitation to")
                     _ <- invitationRepo.read(gameId, challengeId, playerId).flatMap {
@@ -694,10 +749,16 @@ class ChallengeService[T](
                         case None =>
                             IO.raiseError(
                               NotFoundError(
-                                s"player ${playerId.value} has no invitation to challenge ${challengeId.value}"
+                                "That invitation is no longer there. It may already have been turned down."
                               )
                             )
                     }
+                    accepted <- acceptanceRepo.hasAccepted(gameId, challengeId, playerId)
+                    _ <- IO.raiseWhen(accepted)(
+                      ConflictError(
+                        "That player has already accepted this challenge. Remove their acceptance instead."
+                      )
+                    )
                     _ <- invitationRepo.delete(gameId, challengeId, playerId)
                 } yield ()
             }
@@ -714,19 +775,17 @@ class ChallengeService[T](
         challengeRepo.readForUpdate(gameId, challengeId).flatMap {
             case Some(locked) => IO.pure(locked)
             case None =>
-                IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
+                IO.raiseError(NotFoundError("That challenge is no longer there. Whoever offered it has withdrawn it."))
         }
 
     /* A challenge whose start is in flight is spoken for: its roster has been handed to the engine,
-     * and nothing about who may accept it means anything any more. `verb` names what was being
-     * attempted, so the refusal says which. */
-    private def refuseStarted(locked: LockedChallenge, challengeId: ChallengeId, verb: String): IO[Unit] =
-        locked.startedMatchId.traverse_ { existing =>
-            IO.raiseError(
-              ConflictError(
-                s"challenge ${challengeId.value} is being started as match ${existing.value} and nobody can be $verb it"
-              )
-            )
+     * and nothing about who may be invited to it means anything any more.
+     *
+     * What was being attempted is not named: invite, reject and revoke all fail for the one reason, and
+     * the reason is the part worth saying. */
+    private def refuseStarted(locked: LockedChallenge): IO[Unit] =
+        locked.startedMatchId.traverse_ { _ =>
+            IO.raiseError(ConflictError("The match has already started. The challenge is closed."))
         }
 
     private def requireChallenge(
@@ -737,7 +796,7 @@ class ChallengeService[T](
         challengeRepo.read(gameId, challengeId).flatMap {
             case Some(challenge) => IO.pure(challenge)
             case None =>
-                IO.raiseError(NotFoundError(s"no challenge with id ${challengeId.value} in game ${gameId.value}"))
+                IO.raiseError(NotFoundError("That challenge is no longer there. Whoever offered it has withdrawn it."))
         }
 
     private def requireCaller(playerRepo: PlayerRepo, callerExternalId: String): IO[Player] =

@@ -1161,7 +1161,7 @@ object Views {
                   // Only `duringMatch` is asked about: the other five are about a challenge, or about
                   // the start, and none of them can happen again to a match that has started, so
                   // offering them would be offering a choice that changes nothing. The seat still
-                  // holds an answer for all eight and the save still carries all eight -- what is
+                  // holds an answer for all eleven and the save still carries all eleven -- what is
                   // saved for the five is what was fetched, unchanged.
                   Notifications.form(
                     "Notification Preferences for this match",

@@ -145,6 +145,12 @@ class NotificationPolicySpec extends FunSuite {
             NotificationType.ChallengeReady,
             NotificationType.AcceptanceChanged,
             NotificationType.AcceptedChallengeReady,
+            // An invitation cannot be made to a match: by the time there is one, the challenge it was
+            // offered on is spoken for and its invitations are about to be deleted with it. So a match's
+            // own settings form does not ask about these three (V23).
+            NotificationType.InvitationReceived,
+            NotificationType.InvitationAccepted,
+            NotificationType.InvitationRejected,
             NotificationType.MatchStarted
           ),
           "every other kind is about a challenge, or about the start itself"
@@ -156,7 +162,7 @@ class NotificationPolicySpec extends FunSuite {
         assertEquals(NotificationType.values.map(_.column).distinct.length, NotificationType.values.length)
     }
 
-    // What the game form relies on: eight answers make a set of defaults, and anything less does not.
+    // What the game form relies on: eleven answers make a set of defaults, and anything less does not.
     test("preferences are complete only when every kind is answered") {
         assertEquals(NotificationPreferences.unset.complete, None)
         assertEquals(NotificationPreferences.unset.unsaid.length, NotificationType.values.length)

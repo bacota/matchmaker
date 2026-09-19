@@ -20,20 +20,20 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private val notifications = SkunkCodecs.notificationDefaults
     private val value: Codec[T] = SkunkCodecs.plainText[T]
 
-    /* The eight notify_* columns are written as one `$notifications`, which expands to eight
+    /* The eleven notify_* columns are written as one `$notifications`, which expands to eleven
      * placeholders in the order NotificationType.values gives -- the same order the column list
      * above is written in. See SkunkCodecs.notificationDefaults. */
     private val insertGameRow
         : Query[(GameType, String, String, String, Boolean, String, TimeoutAction, NotificationDefaults), GameId] =
         sql"""INSERT INTO game (game_type, name, description, url, active, external_id, timeout_action,
                             notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
-                            notify_accepted_challenge_ready, notify_match_started, notify_turn_taken,
+                            notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
                             notify_your_turn, notify_match_ended)
           VALUES ($gameType, $text, $text, $text, $bool, $text, $timeoutAction, $notifications)
           RETURNING game_id""".query(gameId)
 
     /* Where insert and select splice `$notifications` once, a SET list needs a placeholder per
-     * `column = ?`, so the eight are named individually and the whole value is taken apart here --
+     * `column = ?`, so the eleven are named individually and the whole value is taken apart here --
      * once, rather than at the call site, which would leave every caller restating the order. */
     private val updateGameRow: Command[
       (GameType, String, String, String, Boolean, String, TimeoutAction, NotificationDefaults, GameId)
@@ -41,7 +41,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         sql"""UPDATE game SET game_type = $gameType, name = $text, description = $text, url = $text, active = $bool,
           external_id = $text, timeout_action = $timeoutAction,
           notify_challenge_accepted = $bool, notify_challenge_ready = $bool, notify_acceptance_changed = $bool,
-          notify_accepted_challenge_ready = $bool, notify_match_started = $bool, notify_turn_taken = $bool,
+          notify_accepted_challenge_ready = $bool, notify_invitation_received = $bool, notify_invitation_accepted = $bool, notify_invitation_rejected = $bool, notify_match_started = $bool, notify_turn_taken = $bool,
           notify_your_turn = $bool, notify_match_ended = $bool
           WHERE game_id = $gameId""".command
             .contramap { case (gt, name, description, url, active, externalId, timeout, notify, id) =>
@@ -57,6 +57,9 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                   notify.challengeReady,
                   notify.acceptanceChanged,
                   notify.acceptedChallengeReady,
+                  notify.invitationReceived,
+                  notify.invitationAccepted,
+                  notify.invitationRejected,
                   notify.matchStarted,
                   notify.turnTaken,
                   notify.yourTurn,
@@ -71,7 +74,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     ] =
         sql"""SELECT game_type, name, description, url, active, external_id, timeout_action,
                  notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
-                 notify_accepted_challenge_ready, notify_match_started, notify_turn_taken,
+                 notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
                  notify_your_turn, notify_match_ended
           FROM game
           WHERE game_id = $gameId"""
@@ -297,7 +300,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private val selectGameAggregate =
         sql"""SELECT g.game_id, g.game_type, g.name, g.description, g.url, g.active, g.external_id, g.timeout_action,
                  g.notify_challenge_accepted, g.notify_challenge_ready, g.notify_acceptance_changed,
-                 g.notify_accepted_challenge_ready, g.notify_match_started, g.notify_turn_taken,
+                 g.notify_accepted_challenge_ready, g.notify_invitation_received, g.notify_invitation_accepted, g.notify_invitation_rejected, g.notify_match_started, g.notify_turn_taken,
                  g.notify_your_turn, g.notify_match_ended,
                  r.game_role_id, r.name, r.optional,
                  p.game_parameter_id, p.name, p.default_value,

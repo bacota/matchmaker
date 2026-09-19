@@ -9,10 +9,10 @@ import com.vivi.matchmaker.persistence._
 /** Everything matchmaker decides about notifications: who is told what, and when nobody is.
   *
   * A class of its own, and one method per thing that happens, because none of this is any of the services' business.
-  * What a service knows is that it has accepted a challenge or recorded a move; which of eight kinds of news that is to
-  * which of the players in it, whether any of them has asked not to hear about it, and what the mail then says are all
-  * questions with one right answer wherever the event came from. Those answers used to be spread across four services,
-  * where the same thirty lines appeared twice and the largest of them sat inline in `GameEngineService`.
+  * What a service knows is that it has accepted a challenge or recorded a move; which of eleven kinds of news that is
+  * to which of the players in it, whether any of them has asked not to hear about it, and what the mail then says are
+  * all questions with one right answer wherever the event came from. Those answers used to be spread across four
+  * services, where the same thirty lines appeared twice and the largest of them sat inline in `GameEngineService`.
   *
   * So a service calls one method, after its transaction has committed, and passes the thing that happened. Every method
   * here reads whatever else it needs for itself, which is why the call sites are one line: a notification is a report,
@@ -55,14 +55,21 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * @param actor
       *   the player who accepted. Passed rather than read because the caller has just had it in hand, and because they
       *   are the one person not told.
+      * @param wasInvited
+      *   whether this acceptance answers an invitation (V22). It changes what the *challenger* can be told — their
+      *   invitation was taken up, which is more than that somebody accepted — and nothing else: being invited is
+      *   between them and the invitee, so the other acceptors hear what they always hear. One mail either way, with
+      *   [[com.vivi.matchmaker.model.NotificationPolicy.choose]] picking the best kind the challenger has not refused;
+      *   a second call for the invitation would write to them twice about one event.
       */
     def challengeAccepted(
         session: Session[IO],
         gameId: GameId,
         challengeId: ChallengeId,
-        actor: Player
+        actor: Player,
+        wasInvited: Boolean = false
     ): IO[Unit] =
-        rosterChanged(session, gameId, challengeId, actor, joined = true, except = None)
+        rosterChanged(session, gameId, challengeId, actor, joined = true, except = None, wasInvited = wasInvited)
 
     /** Somebody's acceptance has gone. Told to the same audience, minus whoever did it.
       *
@@ -81,6 +88,113 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         removedBy: Player
     ): IO[Unit] =
         rosterChanged(session, gameId, challengeId, acceptor, joined = false, except = Some(removedBy.playerId))
+
+    // -------------------------------------------------------------------------
+    // Things that happen to an invitation (V22)
+    // -------------------------------------------------------------------------
+
+    /** Somebody has been invited to a challenge. Told to them, and to nobody else.
+      *
+      * Nobody else, unlike every other event here: an invitation is between the challenger who made it and the player
+      * it was made to. The other acceptors are not waiting on it — a challenge does not become startable by somebody
+      * being asked — and telling them would be reporting a decision that is not theirs and may never come to anything.
+      *
+      * @param invited
+      *   the player invited. Passed rather than read for the reason `challengeAccepted`'s actor is: the caller has just
+      *   had them in hand, and they are the recipient here rather than the one person left out.
+      * @param roleName
+      *   the seat they were asked to play, when the invitation named one.
+      */
+    def invitationMade(
+        session: Session[IO],
+        gameId: GameId,
+        challengeId: ChallengeId,
+        invited: Player,
+        roleName: Option[String]
+    ): IO[Unit] =
+        aboutInvitation(session, gameId, challengeId, NotificationType.InvitationReceived, roleName) { challenger =>
+            (invited, challenger.nickname)
+        }
+
+    /** An invitation has been turned down. Told to the challenger.
+      *
+      * The one event in matchmaker that reports something *not* happening, and it earns its mail because nothing else
+      * would say so: rejecting deletes the invitation and leaves the challenge exactly as it was, so a challenger who
+      * was holding a seat for somebody would otherwise find out by going to look.
+      */
+    def invitationRejected(
+        session: Session[IO],
+        gameId: GameId,
+        challengeId: ChallengeId,
+        rejector: Player
+    ): IO[Unit] =
+        aboutInvitation(session, gameId, challengeId, NotificationType.InvitationRejected, None) { challenger =>
+            (challenger, rejector.nickname)
+        }
+
+    /* The three invitation mails, which differ only in who is written to and whose name the sentence
+     * carries. `addressee` answers both from the challenger: the invitee for an invitation made, the
+     * challenger for an answer to one.
+     *
+     * The recipient's preferences are read by `levelsForPlayer` rather than `levelsForChallenge`,
+     * because neither of them need be an acceptor: an invited player has accepted nothing yet, and a
+     * challenger who has retired their own seat is no longer in the roster either.
+     *
+     * One kind rather than a list, unlike a roster change: there is no second, plainer thing any of
+     * these could say, so a recipient who has turned the kind off hears nothing -- which is what
+     * turning it off means. */
+    private def aboutInvitation(
+        session: Session[IO],
+        gameId: GameId,
+        challengeId: ChallengeId,
+        kind: NotificationType,
+        roleName: Option[String]
+    )(addressee: Player => (Player, String)): IO[Unit] =
+        dispatch(session, s"invitation to challenge ${challengeId.value} of game ${gameId.value}") {
+            (from, uiBaseUrl) =>
+                val notificationRepo = new NotificationRepo(session)
+                val challengeRepo = new ChallengeRepo(session)
+                val playerRepo = new PlayerRepo(session)
+                val acceptanceRepo = new AcceptanceRepo(session)
+
+                notificationRepo.gameNotice(gameId).flatMap {
+                    // As in `rosterChanged`: a game or challenge that is no longer there is not a thing
+                    // to write about, and this path reports rather than decides -- it sends nothing
+                    // instead of failing what has already happened.
+                    case None => IO.pure(Seq.empty[MailMessage])
+                    case Some(notice) =>
+                        challengeRepo.read(gameId, challengeId).flatMap {
+                            case None => IO.pure(Seq.empty[MailMessage])
+                            case Some(challenge) =>
+                                for {
+                                    challenger <- playerRepo.read(challenge.challenger)
+                                    waitingFor <- acceptanceRepo.unclaimedRoles(gameId, challengeId)
+                                    mail <- challenger.traverse { offeredBy =>
+                                        val (recipient, subject) = addressee(offeredBy)
+                                        notificationRepo
+                                            .levelsForPlayer(recipient.playerId, gameId, notice.notifications)
+                                            .map { levels =>
+                                                val news = ChallengeNews(
+                                                  gameName = notice.name,
+                                                  description = challenge.message,
+                                                  actor = subject,
+                                                  role = roleName,
+                                                  joined = true,
+                                                  challenger = offeredBy.nickname,
+                                                  waitingFor = waitingFor
+                                                )
+
+                                                Option
+                                                    .when(NotificationPolicy.wants(kind, levels.resolve))(())
+                                                    .flatMap(_ =>
+                                                        ChallengeMail.compose(from, uiBaseUrl, recipient, kind, news)
+                                                    )
+                                            }
+                                    }
+                                } yield mail.flatten.toSeq
+                        }
+                }
+        }
 
     // -------------------------------------------------------------------------
     // Things that happen to a match
@@ -250,7 +364,8 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         challengeId: ChallengeId,
         actor: Player,
         joined: Boolean,
-        except: Option[PlayerId]
+        except: Option[PlayerId],
+        wasInvited: Boolean = false
     ): IO[Unit] =
         dispatch(session, s"challenge ${challengeId.value} of game ${gameId.value}") { (from, uiBaseUrl) =>
             val notificationRepo = new NotificationRepo(session)
@@ -300,7 +415,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                             .flatMap(recipient =>
                                 NotificationPolicy
                                     .choose(
-                                      kindsFor(recipient, offered, joined, waitingFor),
+                                      kindsFor(recipient, offered, joined, waitingFor, wasInvited),
                                       recipient.levels.resolve
                                     )
                                     .flatMap(ChallengeMail.compose(from, uiBaseUrl, recipient.player, _, news))
@@ -327,11 +442,24 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         recipient: AcceptorNotifications,
         challenge: Challenge,
         joined: Boolean,
-        waitingFor: Seq[String]
+        waitingFor: Seq[String],
+        wasInvited: Boolean
     ): Seq[NotificationType] = {
         val ready = joined && waitingFor.isEmpty
         if (recipient.player.playerId == challenge.challenger)
-            if (ready) Seq(NotificationType.ChallengeReady, NotificationType.ChallengeAccepted)
+            // `InvitationAccepted` sits between the two for an acceptance that answers an invitation:
+            // less useful than "you can start it now", more than "somebody accepted", and offered only
+            // to the challenger because they are the only one whose invitation it was. A challenger who
+            // has turned it off still hears the plain version, which is the whole point of asking in
+            // order rather than picking one kind and then testing it.
+            if (ready && wasInvited)
+                Seq(
+                  NotificationType.ChallengeReady,
+                  NotificationType.InvitationAccepted,
+                  NotificationType.ChallengeAccepted
+                )
+            else if (ready) Seq(NotificationType.ChallengeReady, NotificationType.ChallengeAccepted)
+            else if (wasInvited) Seq(NotificationType.InvitationAccepted, NotificationType.ChallengeAccepted)
             else Seq(NotificationType.ChallengeAccepted)
         else if (ready) Seq(NotificationType.AcceptedChallengeReady, NotificationType.AcceptanceChanged)
         else Seq(NotificationType.AcceptanceChanged)
@@ -397,7 +525,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
             .handleError(error => System.err.println(s"could not queue notifications for $about: $error"))
 
     /* The one choke point every mail passes through, which is why the suppression check is here
-     * and not in the eight places that compose one.
+     * and not in the eleven places that compose one.
      *
      * Here rather than in the mailer for a reason that is not about tidiness: the mailer has no
      * database, and giving it one would put it in the VPC and undo the argument its own module

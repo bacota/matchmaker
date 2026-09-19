@@ -47,30 +47,37 @@ class GameRepoSpec extends PropertySuite {
         assertEquals(parameter.values.size, 3)
     }
 
-    /* The eight notify_* columns are bound positionally by one codec, in four statements, so a
+    /* The eleven notify_* columns are bound positionally by one codec, in four statements, so a
      * column list out of step with `NotificationType.values` would store every answer under the
-     * wrong heading -- and would pass any test that set them all to the same value. Hence eight
-     * different answers, written, read, updated and listed. */
+     * wrong heading -- and would pass any test that set them all to the same value. Hence answers
+     * that alternate, written, read, updated and listed: alternating is what makes a swap of any two
+     * neighbouring columns visible, which is the way a list goes wrong when a kind is added. */
     test("a game's notification defaults survive create, read, update and list") {
         val distinct = NotificationDefaults(
           challengeAccepted = true,
           challengeReady = false,
           acceptanceChanged = true,
           acceptedChallengeReady = false,
-          matchStarted = true,
-          turnTaken = false,
-          yourTurn = true,
-          matchEnded = false
+          invitationReceived = true,
+          invitationAccepted = false,
+          invitationRejected = true,
+          matchStarted = false,
+          turnTaken = true,
+          yourTurn = false,
+          matchEnded = true
         )
         val flipped = NotificationDefaults(
           challengeAccepted = false,
           challengeReady = true,
           acceptanceChanged = false,
           acceptedChallengeReady = true,
-          matchStarted = false,
-          turnTaken = true,
-          yourTurn = false,
-          matchEnded = true
+          invitationReceived = false,
+          invitationAccepted = true,
+          invitationRejected = false,
+          matchStarted = true,
+          turnTaken = false,
+          yourTurn = true,
+          matchEnded = false
         )
 
         val (created, read, listed, updated) = TestSession.resource

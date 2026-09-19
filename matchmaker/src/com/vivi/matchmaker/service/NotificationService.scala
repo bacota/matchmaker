@@ -15,7 +15,7 @@ import com.vivi.matchmaker.persistence.{NotificationRepo, PlayerRepo, Suppressio
   * The fourth level, a game's defaults, is not here: it belongs to the game's definition, is set by the admin who
   * registers it, and travels with the rest of `Game` through `GameService`.
   *
-  * The three read as a chain only when a seat is created: since V14 a seat carries its own eight answers and nothing
+  * The three read as a chain only when a seat is created: since V14 a seat carries its own eleven answers and nothing
   * reads past it, so changing a game's settings does not change a match already being played. What makes that sayable
   * is the cascades below — the offers `updateMine` and `updateForGame` take, which carry a player's answers into the
   * rows that had inherited from them.
@@ -35,7 +35,7 @@ class NotificationService(sessionPool: SessionPool) {
                 /* And whether any of it is reaching them.
                  *
                  * Read here rather than from a route of its own because a screen that showed the
-                 * form before it knew the form was moot would be showing eight settings that change
+                 * form before it knew the form was moot would be showing eleven settings that change
                  * nothing. Read against the player's *stored* address, which is the one the send path
                  * writes to -- a player who has just changed their address in Cognito and not signed
                  * in again still has the old one here, and is correctly still told about the old
@@ -113,7 +113,7 @@ class NotificationService(sessionPool: SessionPool) {
       *
       * Only what this save changed reaches those seats, which is what the read below is for: a player who turns off
       * turn-taken for a game has said nothing about the match whose results they muted last week, and re-stamping all
-      * eight columns would have unmuted it.
+      * eleven columns would have unmuted it.
       *
       * The game is checked for existence first so that a bad id is a 404 rather than a foreign key violation, which
       * would reach the caller as a 500 about something they cannot act on.
