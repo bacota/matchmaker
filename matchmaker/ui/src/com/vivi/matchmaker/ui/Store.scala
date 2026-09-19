@@ -100,6 +100,9 @@ object Store {
         // Somebody else's page, and the search that found them: both are answers to questions the
         // previous session asked, and the next player starts from an empty box.
         playerSearch.set("")
+        // One player's idea of who is who, learned from their searches: dropped with the rest, so the
+        // next player is shown ids rather than names the session before them looked up.
+        nicknames.set(Map.empty)
         playerResults.set(None)
         publicActive.set(Seq.empty)
         publicCompleted.set(Seq.empty)
@@ -182,6 +185,23 @@ object Store {
       */
     val invitee: Var[Option[PublicPlayer]] = Var(None)
 
+    /** Nicknames for player ids this session has been told, so a row holding an id can say who it means.
+      *
+      * A challenge's invitations name their players by id and nothing else — `Invitation` is permission, not a player —
+      * and the challenger looking at their own challenge needs the name. Filled from the searches that found them,
+      * which is where every invitation on that screen is made from, so the player just invited is in here by the time
+      * the row is redrawn.
+      *
+      * Best-effort by design: a miss is an id shown plainly, not a request. An invitation made in another session, or
+      * in this one before a reload, is a name nobody here has heard — and one fetch per row to learn it would be a
+      * request per invitation on a screen that already has what it needs for everything else.
+      */
+    val nicknames: Var[Map[PlayerId, String]] = Var(Map.empty)
+
+    /** Remembers who a search or a page has just named. */
+    def remember(players: Seq[PublicPlayer]): Unit =
+        nicknames.update(_ ++ players.map(player => player.playerId -> player.nickname))
+
     /** What is in the player search box, kept in the store rather than in the screen so that leaving the search for a
       * player's page and coming back does not clear it -- the usual reason to come back is to try the next result.
       */
@@ -249,7 +269,11 @@ object Store {
         if (prefix.isEmpty) {
             playerResults.set(None)
             Future.unit
-        } else reload(ApiClient.searchPlayers(prefix))(result => playerResults.set(Some(result)))
+        } else
+            reload(ApiClient.searchPlayers(prefix)) { result =>
+                playerResults.set(Some(result))
+                remember(result.players)
+            }
     }
 
     /** Both of a player's public lists. Used when their page is opened and by that page's refresh button.

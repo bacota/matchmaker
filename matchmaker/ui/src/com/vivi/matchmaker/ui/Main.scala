@@ -1959,8 +1959,244 @@ object Views {
               Store.run(ApiClient.deleteChallenge(game.gameId, challenge.challengeId), busy)(_ =>
                   Store.refreshChallenges(game.gameId)
               )
+          },
+          invitedList(game, summary),
+          invitePanel(game, summary)
+        )
+    }
+
+    /** Who has been asked to this challenge already, and the challenger's way of taking it back.
+      *
+      * Above the invite panel because it is what the panel's answer has to be given against: whether there is a seat
+      * left to hold for somebody depends on which are held already, and reading that off the list is how a challenger
+      * knows what the picker below is offering them.
+      *
+      * A player is named when this session has heard their nickname — see `Store.nicknames` — and by their id when it
+      * has not. An id is a poor thing to show and a worse thing to hide: the row is the only place a stray invitation
+      * can be revoked from.
+      */
+    private def invitedList(game: Game, summary: ChallengeSummary): HtmlElement =
+        div(
+          child <-- Store.nicknames.signal.map { known =>
+              if (summary.invitations.isEmpty) emptyNode
+              else
+                  div(
+                    cls := "detail-panel",
+                    h4("Invited"),
+                    ul(
+                      summary.invitations.map { invitation =>
+                          val who =
+                              known.getOrElse(invitation.playerId, s"player ${invitation.playerId.value}")
+                          val seat = invitation.gameRoleId
+                              .flatMap(role => game.roles.find(_.gameRoleId == role))
+                              .fold("any seat that is free")(role => role.name)
+
+                          li(
+                            cls := "row",
+                            div(cls := "title", who),
+                            div(cls := "detail", s"holding $seat"),
+                            busyButton("Revoke", classes = Some("link")) { busy =>
+                                Store.run(
+                                  ApiClient
+                                      .revokeInvitation(
+                                        game.gameId,
+                                        summary.challenge.challengeId,
+                                        invitation.playerId
+                                      ),
+                                  busy,
+                                  // A 409 is the server saying that player has accepted since this list
+                                  // was drawn, and a 404 that the invitation is already gone. Either way
+                                  // the row is stale, so the list is re-read rather than corrected here.
+                                  invitationStale(game.gameId)
+                                )(_ => Store.refreshChallenges(game.gameId))
+                            }
+                          )
+                      }
+                    )
+                  )
           }
         )
+
+    /** Inviting somebody to a challenge that already exists: find them, choose the seat, ask.
+      *
+      * The other half of [[inviteControl]], which invites at the moment a challenge is created. This one exists because
+      * a challenger's mind changes after the fact — a seat nobody has taken, somebody who should have been asked in the
+      * first place — and because the alternative is deleting the challenge and offering it again.
+      *
+      * Its own search box rather than the one on "Find Players": that box and its results belong to that screen, and
+      * are deliberately kept across a visit to a player's page, so borrowing them here would clear a search somebody
+      * means to come back to.
+      *
+      * The panel is rebuilt, and so collapses, when the challenge list is re-read — which a successful invitation
+      * causes. That is the intended end of the interaction: the invitation now shows in the list above, which is the
+      * answer to the question the panel was asking.
+      */
+    private def invitePanel(game: Game, summary: ChallengeSummary): HtmlElement = {
+        val open = Var(false)
+        val prefix = Var("")
+        val found = Var(Option.empty[PlayerSearchResult])
+        val chosen = Var(Option.empty[PublicPlayer])
+        // The seat to hold for them, `None` meaning any that is still free when they answer.
+        val seat = Var(Option.empty[GameRoleId])
+
+        /* What may still be offered to somebody in particular, and the constraint this panel exists
+         * to respect.
+         *
+         * Two things are gone, not one. A role somebody has accepted is taken, which `freeRoles`
+         * already answers. A role another invitation is holding is *also* gone, even though nobody
+         * has accepted it: `ChallengeService.invite` builds its `taken` set from the accepted roles
+         * and the reserved ones together, so a second invitation naming a held seat is refused with
+         * a 409 -- the seat is promised, and two players cannot both be honoured. The same rule is
+         * enforced within one `create` by the pairwise check in `validateInvitations`.
+         *
+         * "Any seat that is free" is not subject to it and is always offered: several invitations may
+         * name no role at all, since none of them is holding anything for anybody. */
+        val held = summary.invitations.flatMap(_.gameRoleId).toSet
+        val offerable = freeRoles(game, summary).filterNot(role => held.contains(role.gameRoleId))
+
+        // Nobody who is already invited, and not the challenger themselves: the first is the
+        // invitation table's primary key and the second a rule of the service, so both come back as
+        // errors rather than as invitations. A name that cannot be acted on is better left out of the
+        // results than shown with a button that fails.
+        val alreadyAsked = summary.invitations.map(_.playerId).toSet + summary.challenge.challenger
+
+        div(
+          button(
+            tpe := "button",
+            cls := "link",
+            aria.expanded <-- open.signal,
+            child.text <-- open.signal.map(if (_) "Close" else "Invite a player"),
+            onClick --> { _ =>
+                // Emptied on the way out, so re-opening it is a fresh question rather than the last
+                // one's half-finished answer.
+                if (open.now()) { prefix.set(""); found.set(None); chosen.set(None); seat.set(None) }
+                open.update(!_)
+            }
+          ),
+          child <-- open.signal.map { showing =>
+              if (!showing) emptyNode
+              else
+                  div(
+                    cls := "detail-panel",
+                    child <-- chosen.signal.map {
+                        case None =>
+                            div(
+                              field(
+                                "Find a player",
+                                input(
+                                  tpe := "search",
+                                  controlled(value <-- prefix.signal, onInput.mapToValue --> prefix)
+                                )
+                              ),
+                              busyButton(
+                                "Search",
+                                disabledWhen = prefix.signal.map(_.trim.isEmpty)
+                              ) { busy =>
+                                  Store.run(ApiClient.searchPlayers(prefix.now().trim), busy) { result =>
+                                      // Remembered for the invited list above, which has ids and no
+                                      // names of its own.
+                                      Store.remember(result.players)
+                                      found.set(Some(result))
+                                  }
+                              },
+                              child <-- found.signal.map {
+                                  case None => emptyNode
+                                  case Some(result) =>
+                                      val askable = result.players.filterNot(p => alreadyAsked.contains(p.playerId))
+                                      if (askable.isEmpty)
+                                          p(
+                                            cls := "empty",
+                                            aria.live := "polite",
+                                            "Nobody new by that name. Anyone already invited is not listed again."
+                                          )
+                                      else
+                                          ul(
+                                            // A live region: the list appears without the page
+                                            // reloading, and a reader who pressed Search is waiting to
+                                            // be told what came back.
+                                            aria.live := "polite",
+                                            askable.map(candidate =>
+                                                li(
+                                                  cls := "row",
+                                                  button(
+                                                    tpe := "button",
+                                                    cls := "link",
+                                                    candidate.nickname,
+                                                    onClick --> (_ => chosen.set(Some(candidate)))
+                                                  )
+                                                )
+                                            )
+                                          )
+                              }
+                            )
+
+                        case Some(candidate) =>
+                            div(
+                              p(cls := "detail", aria.live := "polite", s"Inviting ${candidate.nickname}."),
+                              field(
+                                "Their seat",
+                                select(
+                                  onChange.mapToValue --> { raw =>
+                                      seat.set(
+                                        raw.toIntOption
+                                            .map(GameRoleId.apply)
+                                            .filter(id => offerable.exists(_.gameRoleId == id))
+                                      )
+                                  },
+                                  value <-- seat.signal.map(_.map(_.value.toString).getOrElse("")),
+                                  // Always available, and the default: a role-less invitation holds
+                                  // nothing, so any number of them can stand together.
+                                  option(value := "", "any seat that is free"),
+                                  offerable.map(role => option(value := role.gameRoleId.value.toString, role.name))
+                                )
+                              ),
+                              // Said rather than left to be inferred from a short list: a challenger
+                              // who means to hold a particular seat and cannot see it needs to know
+                              // whether it is taken or promised, which are different problems with
+                              // different remedies -- one waits, the other is a revoke above.
+                              if (offerable.isEmpty)
+                                  p(
+                                    cls := "detail",
+                                    "Every role is either taken or already held for somebody, so this invitation " +
+                                        "can only be for any seat that comes free."
+                                  )
+                              else emptyNode,
+                              busyButton("Send the invitation") { busy =>
+                                  Store.run(
+                                    ApiClient.invite(
+                                      game.gameId,
+                                      summary.challenge.challengeId,
+                                      Invite(candidate.playerId, seat.now())
+                                    ),
+                                    busy,
+                                    invitationStale(game.gameId)
+                                  )(_ => Store.refreshChallenges(game.gameId))
+                              },
+                              button(
+                                tpe := "button",
+                                cls := "link",
+                                "Somebody else",
+                                onClick --> { _ =>
+                                    chosen.set(None); seat.set(None)
+                                }
+                              )
+                            )
+                    }
+                  )
+          }
+        )
+    }
+
+    /** What to do when inviting or revoking is refused because the challenge has moved on.
+      *
+      * 409 covers both races this panel has: a seat promised or accepted since the picker was drawn, and a player who
+      * accepted between the list being fetched and a revoke being pressed. 404 is the challenge or the invitation
+      * already gone. In every one of those the list on screen is what is wrong, so it is re-read — and the server's own
+      * message is left standing, because it is the one that says which of them happened.
+      */
+    private def invitationStale(gameId: GameId)(failure: Throwable): Unit = failure match {
+        case ApiError(404 | 409, _) => Store.refreshChallenges(gameId)
+        case _                      => ()
     }
 
     private def openChallengeRow(
