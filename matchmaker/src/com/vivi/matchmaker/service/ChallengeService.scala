@@ -164,7 +164,7 @@ class ChallengeService[T](
             // Creating a challenge is itself an acceptance of it: the challenger is the first
             // participant. Both rows go in together so a challenge can never exist with its creator
             // missing from its own acceptances.
-            session.transaction.use { _ =>
+            val made = session.transaction.use { _ =>
                 for {
                     // Unlocked, per the note on `requireGame`: what this decides is the challenge
                     // and acceptance rows written below, not anything about the game itself.
@@ -256,9 +256,32 @@ class ChallengeService[T](
                           Invitation(created.gameId, created.challengeId, invite.playerId, invite.gameRoleId)
                         )
                     )
-                } yield created
+                    // Carried out of the transaction because the mail needs the invitee's own address and
+                    // the name of the seat they were offered, and `game` is in hand here where it is not
+                    // afterwards. Read rather than passed for the same reason `accept` reads its actor.
+                    invited <- invitations.traverse(invite =>
+                        requirePlayer(playerRepo, invite.playerId).map(player => (player, roleName(game, invite)))
+                    )
+                } yield (created, invited)
+            }
+
+            /* After the commit, and nothing about it can fail the create -- see `Notifications`. One
+             * mail per invitee, because each is being told about their own invitation and nobody else's:
+             * a challenge offered to three people is three private offers that happen to share a row. */
+            made.flatMap { (created, invited) =>
+                invited
+                    .traverse_((player, role) =>
+                        notifications.invitationMade(session, created.gameId, created.challengeId, player, role)
+                    )
+                    .as(created)
             }
         }
+
+    /* The name of the seat an invitation holds, for the mail that offers it. From the game already in
+     * hand rather than a query: the roles are what `validateInvitations` has just checked the id
+     * against, so a `None` here means the invitation named no role rather than that a role is missing. */
+    private def roleName(game: Game, invite: Invite): Option[String] =
+        invite.gameRoleId.flatMap(id => game.roles.find(_.gameRoleId == id).map(_.name))
 
     /** Accepts `challengeId` in game `gameId`, authorized by `callerExternalId`. For a `'C'`-type game's challenge,
       * `characterId` must be `Some`, naming the character accepting on the caller's behalf, and is authorized the same
@@ -428,14 +451,14 @@ class ChallengeService[T](
                     // Carried out of the transaction because it is the one thing the notification
                     // cannot read for itself: it addresses the other players by saying who accepted.
                     actor <- requirePlayer(playerRepo, created.playerId)
-                } yield (created, actor)
+                } yield (created, actor, invitation.isDefined)
             }
 
             /* After the commit, and nothing about it can fail the accept -- see `Notifications`.
              * Outside the transaction on purpose: it holds the challenge's FOR UPDATE lock, and half a
              * dozen reads and a queue call taken inside it would keep every other player trying to
              * accept the same challenge waiting on an email. */
-            accepted.flatMap { (created, actor) =>
+            accepted.flatMap { (created, actor, wasInvited) =>
                 for {
                     /* The start first, because whether it happened is what this acceptance *is*.
                      *
@@ -461,8 +484,12 @@ class ChallengeService[T](
                      * Neither can fail this accept: the acceptance is recorded, `startIfReady` swallows
                      * and logs whatever it runs into, and `Notifications` does the same. */
                     isMatch <- autoStart(session, gameId, challengeId, actor)
+                    /* `wasInvited` reaches the challenger and nobody else: their invitation was taken
+                     * up, which is more than that somebody accepted. It is one mail either way -- the
+                     * kind is chosen from what they have asked for -- and it is suppressed with the rest
+                     * of this when the acceptance started the match, for the same reason. */
                     _ <- IO.unlessA(isMatch)(
-                      notifications.challengeAccepted(session, gameId, challengeId, actor)
+                      notifications.challengeAccepted(session, gameId, challengeId, actor, wasInvited)
                     )
                 } yield created
             }
@@ -595,7 +622,7 @@ class ChallengeService[T](
             val challengeRepo = new ChallengeRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
             val invitationRepo = new InvitationRepo(session)
-            session.transaction.use { _ =>
+            val invited = session.transaction.use { _ =>
                 for {
                     // Locked first, like every other write to a challenge: an invitation added between a
                     // start's two transactions would be permission to accept a challenge that is already a
@@ -623,7 +650,14 @@ class ChallengeService[T](
                     created <- invitationRepo.create(
                       Invitation(gameId, challengeId, invite.playerId, invite.gameRoleId)
                     )
-                } yield created
+                    player <- requirePlayer(playerRepo, invite.playerId)
+                } yield (created, player, roleName(game, invite))
+            }
+
+            /* After the commit, like every other notification here: an invitation that has been made is
+             * not undone by a mail that could not be sent. */
+            invited.flatMap { (created, player, role) =>
+                notifications.invitationMade(session, gameId, challengeId, player, role).as(created)
             }
         }
 
@@ -643,7 +677,7 @@ class ChallengeService[T](
             val playerRepo = new PlayerRepo(session)
             val challengeRepo = new ChallengeRepo(session)
             val invitationRepo = new InvitationRepo(session)
-            session.transaction.use { _ =>
+            val rejected = session.transaction.use { _ =>
                 for {
                     locked <- requireLocked(challengeRepo, gameId, challengeId)
                     _ <- refuseStarted(locked, challengeId, "rejected in")
@@ -661,8 +695,12 @@ class ChallengeService[T](
                             )
                     }
                     _ <- invitationRepo.delete(gameId, challengeId, caller.playerId)
-                } yield ()
+                } yield caller
             }
+
+            /* After the commit. The challenger is the only one told, and they are told by `Notifications`
+             * reading the challenge for itself -- all this knows is who said no. */
+            rejected.flatMap(caller => notifications.invitationRejected(session, gameId, challengeId, caller))
         }
 
     /** Takes an invitation back. The challenger's mirror of [[reject]], and the only way to correct one that was sent

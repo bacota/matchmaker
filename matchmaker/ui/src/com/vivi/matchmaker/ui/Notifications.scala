@@ -7,10 +7,10 @@ import com.vivi.matchmaker.model._
 
 /** The forms a player sets their notification preferences with, wherever they appear.
   *
-  * Three screens ask for the same eight questions and differ only in what an unanswered one falls back to — the account
-  * panel (everywhere, and per game), a match row (this match), and the admin's game form (the game's own defaults, the
-  * one place where "unanswered" is not allowed). So the controls are here rather than in any of them, and each screen
-  * supplies the heading, the fallback and the save.
+  * Three screens ask for the same eleven questions and differ only in what an unanswered one falls back to — the
+  * account panel (everywhere, and per game), a match row (this match), and the admin's game form (the game's own
+  * defaults, the one place where "unanswered" is not allowed). So the controls are here rather than in any of them, and
+  * each screen supplies the heading, the fallback and the save.
   */
 object Notifications {
 
@@ -22,7 +22,7 @@ object Notifications {
     /** One question, as a labelled dropdown.
       *
       * A `select` rather than three radio buttons: the third option is a real answer here, not an escape from the other
-      * two, and eight groups of three radios is a very tall form on a phone. The caption wraps the control, so the
+      * two, and eleven groups of three radios is a very tall form on a phone. The caption wraps the control, so the
       * control is named without an id that would have to be unique across a page that renders this form more than once
       * — the same reasoning as `Main.field`.
       *
@@ -95,7 +95,7 @@ object Notifications {
     /** What a form asks *after* the player has pressed save, rather than underneath the button.
       *
       * The cascades are the reason this exists. They are a second sentence about a save — "and in my games too" — and
-      * on a form of eight questions they read as two more questions, which is how a player ends up scrolling past them
+      * on a form of eleven questions they read as two more questions, which is how a player ends up scrolling past them
       * to find the button. Behind the button they are the only thing on screen at the moment they apply.
       *
       * Before the save rather than after it, which is not a detail: a cascade carries what a save *changed*, so saving
@@ -134,7 +134,7 @@ object Notifications {
 
     /** The questions, in the order a player meets the events they are about.
       *
-      * All eight unless a screen says otherwise. `kinds` is for a form that cannot act on some of them — the per-match
+      * All eleven unless a screen says otherwise. `kinds` is for a form that cannot act on some of them — the per-match
       * one, where the five questions about challenges and about the start are all about things that have already
       * happened. A question left out is not answered differently; the answer the form was seeded with travels back
       * untouched.
@@ -167,7 +167,7 @@ object Notifications {
           }
         )
 
-    /** A form over one level of preference: the eight questions, a save button, and what came of it.
+    /** A form over one level of preference: the eleven questions, a save button, and what came of it.
       *
       * The save is handed the current answers and reports when it has finished. Reported here rather than through
       * `Store.error` for the reason `Account` gives: this form is inside a panel or a row, and a banner at the top of

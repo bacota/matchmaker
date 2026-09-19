@@ -427,6 +427,163 @@ class ChallengeNotificationSpec extends PropertySuite {
 
     /* Editing the game needs an admin, and the fixture's players are not. Registered here rather
      * than in the fixture because only one property needs one. */
+    // ---------------------------------------------------------------------------
+    // Invitations (V23)
+    // ---------------------------------------------------------------------------
+
+    private def invite(f: Fixture, who: Player, role: Option[Int] = None): IO[Invitation] =
+        f.services.challenges.invite(
+          f.game.gameId,
+          f.challenge.challengeId,
+          Invite(who.playerId, role.map(f.game.roles(_).gameRoleId)),
+          f.challenger.externalId
+        )
+
+    property("an invitation is told to the player invited, and to nobody else") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed).flatMap { f =>
+                invite(f, f.second, Some(1)).map { _ =>
+                    // Not the challenger (they did it) and not the third player: an invitation is between
+                    // the two of them, and nothing about the challenge has changed for anybody else.
+                    f.notifier.recipients == Set(f.address(f.second)) &&
+                    f.notifier.messages.size == 1 &&
+                    f.notifier.messages.head.subject ==
+                        s"challenger-$seed has invited you to play Tic-Tac-Toe" &&
+                        // The seat they were asked for, and the challenger's own description of the challenge.
+                        f.notifier.messages.head.body.contains("as defender") &&
+                        f.notifier.messages.head.body.contains("friendly game")
+                }
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    property("an invitation to any free seat says nothing about a role") {
+        forAll(genUniqueString) { seed =>
+            val result = fixture(seed).flatMap { f =>
+                invite(f, f.second).map { _ =>
+                    // No role named at all, which is what an invitation to any free seat means. Asserted
+                    // by the role names themselves rather than by the word "as": "has invited" contains
+                    // one of those.
+                    f.notifier.messages.size == 1 &&
+                    f.game.roles.forall(role => !f.notifier.messages.head.body.contains(role.name))
+                }
+            }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    property("a challenge created with invitations writes to each of them, and to nobody else") {
+        forAll(genUniqueString) { seed =>
+            val result = for {
+                f <- fixture(seed)
+                _ <- f.services.challenges.create(
+                  PlainChallenge(
+                    ChallengeId(0),
+                    f.challenger.playerId,
+                    "just us",
+                    start = None,
+                    timeLimit = None,
+                    settings = "{}",
+                    gameId = f.game.gameId,
+                    gameRoleId = f.game.roles.head.gameRoleId,
+                    isOpen = false
+                  ),
+                  f.challenger.externalId,
+                  Seq(Invite(f.second.playerId), Invite(f.third.playerId, Some(f.game.roles(2).gameRoleId)))
+                )
+            } yield
+            // Two private offers that happen to share a challenge, so two mails and no more.
+            f.notifier.recipients == Set(f.address(f.second), f.address(f.third)) &&
+                f.notifier.messages.size == 2 &&
+                f.notifier.messages.forall(_.body.contains("just us")) &&
+                f.notifier.messages.exists(_.body.contains("as healer"))
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    property("accepting an invitation tells the challenger that theirs was taken up") {
+        forAll(genUniqueString) { seed =>
+            val result = for {
+                f <- fixture(seed)
+                _ <- invite(f, f.second, Some(1))
+                _ <- IO(f.notifier.clear())
+                _ <- accept(f, f.second, 1)
+            } yield
+            // One mail, to the challenger, and the invitation-specific one rather than the plain
+            // "somebody accepted": their offer to this player is what was answered.
+            f.notifier.recipients == Set(f.address(f.challenger)) &&
+                f.notifier.messages.size == 1 &&
+                f.notifier.messages.head.subject == s"second-$seed has accepted your Tic-Tac-Toe invitation"
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    property("an acceptance nobody was invited to stays the plain kind") {
+        forAll(genUniqueString) { seed =>
+            val result = for {
+                f <- fixture(seed)
+                _ <- accept(f, f.second, 1)
+            } yield f.notifier.messages.head.subject ==
+                s"second-$seed has accepted your Tic-Tac-Toe challenge"
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    property("a challenger who does not want to hear about invitations still hears the acceptance") {
+        forAll(genUniqueString) { seed =>
+            val result = for {
+                f <- fixture(seed)
+                _ <- invite(f, f.second, Some(1))
+                // Off at the player level, which the game's "yes" no longer answers for them.
+                _ <- f.services.notifications.updateMine(
+                  f.challenger.externalId,
+                  NotificationPreferences(invitationAccepted = Some(false))
+                )
+                _ <- IO(f.notifier.clear())
+                _ <- accept(f, f.second, 1)
+            } yield
+            // The plainer mail, not silence: asking in order is what makes refusing the fuller reason
+            // fall back rather than cancel.
+            f.notifier.messages.size == 1 &&
+                f.notifier.messages.head.subject == s"second-$seed has accepted your Tic-Tac-Toe challenge"
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    property("rejecting an invitation tells the challenger, and says the challenge is still open") {
+        forAll(genUniqueString) { seed =>
+            val result = for {
+                f <- fixture(seed)
+                _ <- invite(f, f.second, Some(1))
+                _ <- IO(f.notifier.clear())
+                _ <- f.services.challenges.reject(f.game.gameId, f.challenge.challengeId, f.second.externalId)
+            } yield f.notifier.recipients == Set(f.address(f.challenger)) &&
+                f.notifier.messages.size == 1 &&
+                f.notifier.messages.head.subject ==
+                s"second-$seed has turned down your Tic-Tac-Toe invitation" &&
+                f.notifier.messages.head.body.contains("still open")
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    property("a game that asks for silence about invitations gets it") {
+        forAll(genUniqueString) { seed =>
+            val result = for {
+                f <- fixture(seed)
+                _ <- f.services.games.createOrUpdate(
+                  adminOf(f),
+                  f.game.copy(notifications = NotificationDefaults.all(false))
+                )
+                _ <- IO(f.notifier.clear())
+                _ <- invite(f, f.second, Some(1))
+                afterInvite = f.notifier.messages.isEmpty
+                _ <- f.services.challenges.reject(f.game.gameId, f.challenge.challengeId, f.second.externalId)
+            } yield afterInvite && f.notifier.messages.isEmpty
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
     private def adminOf(f: Fixture): String = {
         val externalId = s"admin-${f.game.externalId}"
         TestSession.resource

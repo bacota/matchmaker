@@ -9,7 +9,9 @@ import com.vivi.matchmaker.model.NotificationType
   * `kind` in [[ChallengeMail.compose]], not a different set of facts.
   *
   * @param actor
-  *   the nickname of whoever has just accepted or backed out
+  *   the nickname of whoever has just accepted or backed out — or, for the invitation kinds, whoever accepted or
+  *   rejected an invitation. Unused by [[NotificationType.InvitationReceived]], whose recipient *is* the invitee and so
+  *   is not named to themselves
   * @param role
   *   the role they took, when they took one. A withdrawal says nothing about the role it freed: the roster line below
   *   already names it whenever it is a role a start waits for, and naming an optional one adds nothing.
@@ -32,13 +34,17 @@ case class ChallengeNews(
 
 /** What a player is told when a challenge they are in changes.
   *
-  * Four of the eight notification kinds land here, and they are two pairs: something happened (an acceptance, a
+  * Seven of the eleven notification kinds land here, and they are two pairs: something happened (an acceptance, a
   * withdrawal) and the roster is now complete. Each pair is said once to the player who offered the challenge and once
   * to the players who accepted it, because those are different pieces of news — one of them can press Start.
   *
+  * The other three are the invitation kinds (V22), which are the same shape one level out: an invitation is made, taken
+  * up, or turned down, and the first of those is the only mail here addressed to somebody who is not yet in the
+  * challenge at all.
+  *
   * Rendering is separated from deciding who to write to, and is a pure function of its arguments, so what the mail says
-  * can be tested without a challenge or a database. The deciding halves are `ChallengeService.accept` and
-  * `AcceptanceService.delete`.
+  * can be tested without a challenge or a database. The deciding halves are `ChallengeService.accept`,
+  * `ChallengeService.invite`, `ChallengeService.reject` and `AcceptanceService.delete`.
   */
 object ChallengeMail extends NotificationMail[ChallengeNews] {
 
@@ -128,6 +134,61 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
                     MailTemplates.render(
                       "mail.challenge.acceptedReady.body",
                       "challenger" -> news.challenger,
+                      "game" -> name,
+                      "quoted" -> quoted
+                    )
+                  )
+                )
+
+            // To the invited player, and the only mail here that its recipient did not already know
+            // they had a stake in. `actor` is not used: they are the one being written to, and the
+            // challenger is who the news is about.
+            case NotificationType.InvitationReceived =>
+                Some(
+                  (
+                    MailTemplates
+                        .render("mail.invitation.received.subject", "challenger" -> news.challenger, "game" -> name),
+                    MailTemplates.render(
+                      "mail.invitation.received.body",
+                      "challenger" -> news.challenger,
+                      "game" -> name,
+                      "quoted" -> quoted,
+                      "role" -> role
+                    )
+                  )
+                )
+
+            // Back to the challenger. The roster line is here for the reason it is on
+            // ChallengeAccepted: they are the one who can start it, so how far off that is is the
+            // part they need.
+            case NotificationType.InvitationAccepted =>
+                Some(
+                  (
+                    MailTemplates
+                        .render("mail.invitation.accepted.subject", "actor" -> news.actor, "game" -> name),
+                    MailTemplates.render(
+                      "mail.invitation.accepted.body",
+                      "actor" -> news.actor,
+                      "game" -> name,
+                      "quoted" -> quoted,
+                      "role" -> role,
+                      "roster" -> roster
+                    )
+                  )
+                )
+
+            // Also to the challenger, and no roster line: a rejection changes nothing about what the
+            // challenge is waiting for, since the invitation was never an acceptance. What it says
+            // instead is that the challenge is still there, which is the thing a challenger would
+            // otherwise have to go and check.
+            case NotificationType.InvitationRejected =>
+                Some(
+                  (
+                    MailTemplates
+                        .render("mail.invitation.rejected.subject", "actor" -> news.actor, "game" -> name),
+                    MailTemplates.render(
+                      "mail.invitation.rejected.body",
+                      "actor" -> news.actor,
                       "game" -> name,
                       "quoted" -> quoted
                     )

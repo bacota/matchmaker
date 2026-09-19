@@ -45,7 +45,40 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
           "You are waiting on whoever offered it."
         )
 
-    /** (5) A match you are a participant in has begun. */
+    /** (5) Somebody has invited you to a challenge of theirs (V22).
+      *
+      * The only notification here that is the first a player hears of the thing it is about: every other kind is news
+      * about a challenge or a match they are already in. So it is also the only one whose recipient may have nothing on
+      * screen to act on yet, which is why its mail links to the home page rather than to a challenge.
+      */
+    case InvitationReceived
+        extends NotificationType(
+          "INVITATION_RECEIVED",
+          "Someone invites me to a challenge",
+          "A challenge offered to you in particular."
+        )
+
+    /** (6) Somebody has accepted an invitation you sent. */
+    case InvitationAccepted
+        extends NotificationType(
+          "INVITATION_ACCEPTED",
+          "My invitation is accepted",
+          "Someone you invited has joined your challenge."
+        )
+
+    /** (7) Somebody has turned down an invitation you sent.
+      *
+      * Worth its own kind rather than silence: the challenge stays as it was, so nothing else would tell the challenger
+      * that a seat they were holding is not going to be taken.
+      */
+    case InvitationRejected
+        extends NotificationType(
+          "INVITATION_REJECTED",
+          "My invitation is turned down",
+          "Also when they simply say no."
+        )
+
+    /** (8) A match you are a participant in has begun. */
     case MatchStarted
         extends NotificationType("MATCH_STARTED", "A match I am in starts", "With whose turn it is first.")
 
@@ -71,8 +104,8 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
       * opinion about, every one of them has either happened or can no longer happen. Only playing and finishing are
       * still ahead.
       *
-      * A seat still carries an answer for all eight — they are NOT NULL and are stamped from the chain when the seat is
-      * created, and none of them is a lie — but a form over one match has no business asking about the five, because
+      * A seat still carries an answer for all eleven — they are NOT NULL and are stamped from the chain when the seat
+      * is created, and none of them is a lie — but a form over one match has no business asking about the five, because
       * changing them cannot change what anybody is sent. [[NotificationType.duringMatch]] is the list that form uses.
       */
     def inProgress: Boolean = this match {
@@ -103,6 +136,9 @@ case class NotificationPreferences(
     challengeReady: Option[Boolean] = None,
     acceptanceChanged: Option[Boolean] = None,
     acceptedChallengeReady: Option[Boolean] = None,
+    invitationReceived: Option[Boolean] = None,
+    invitationAccepted: Option[Boolean] = None,
+    invitationRejected: Option[Boolean] = None,
     matchStarted: Option[Boolean] = None,
     turnTaken: Option[Boolean] = None,
     yourTurn: Option[Boolean] = None,
@@ -114,6 +150,9 @@ case class NotificationPreferences(
         case NotificationType.ChallengeReady         => challengeReady
         case NotificationType.AcceptanceChanged      => acceptanceChanged
         case NotificationType.AcceptedChallengeReady => acceptedChallengeReady
+        case NotificationType.InvitationReceived     => invitationReceived
+        case NotificationType.InvitationAccepted     => invitationAccepted
+        case NotificationType.InvitationRejected     => invitationRejected
         case NotificationType.MatchStarted           => matchStarted
         case NotificationType.TurnTaken              => turnTaken
         case NotificationType.YourTurn               => yourTurn
@@ -126,6 +165,9 @@ case class NotificationPreferences(
         case NotificationType.ChallengeReady         => copy(challengeReady = choice)
         case NotificationType.AcceptanceChanged      => copy(acceptanceChanged = choice)
         case NotificationType.AcceptedChallengeReady => copy(acceptedChallengeReady = choice)
+        case NotificationType.InvitationReceived     => copy(invitationReceived = choice)
+        case NotificationType.InvitationAccepted     => copy(invitationAccepted = choice)
+        case NotificationType.InvitationRejected     => copy(invitationRejected = choice)
         case NotificationType.MatchStarted           => copy(matchStarted = choice)
         case NotificationType.TurnTaken              => copy(turnTaken = choice)
         case NotificationType.YourTurn               => copy(yourTurn = choice)
@@ -147,8 +189,8 @@ case class NotificationPreferences(
     /** The kinds this level has nothing to say about, i.e. the ones that fall through to the next. */
     def unsaid: Seq[NotificationType] = NotificationType.values.toSeq.filter(apply(_).isEmpty)
 
-    /** Every kind answered, or `None` if any is still unsaid. What turns the game form's eight controls into the eight
-      * NOT NULL columns of `game`, and the reason the form cannot be submitted with one left blank.
+    /** Every kind answered, or `None` if any is still unsaid. What turns the game form's eleven controls into the
+      * eleven NOT NULL columns of `game`, and the reason the form cannot be submitted with one left blank.
       */
     def complete: Option[NotificationDefaults] =
         if (unsaid.nonEmpty) None
@@ -159,6 +201,9 @@ case class NotificationPreferences(
                 challengeReady.get,
                 acceptanceChanged.get,
                 acceptedChallengeReady.get,
+                invitationReceived.get,
+                invitationAccepted.get,
+                invitationRejected.get,
                 matchStarted.get,
                 turnTaken.get,
                 yourTurn.get,
@@ -175,8 +220,8 @@ object NotificationPreferences {
 
 /** A game's answer for every kind — the end of the chain, and so the one level that cannot say "I have not said".
   *
-  * A separate type from [[NotificationPreferences]] rather than one with a convention that all eight are `Some`,
-  * because the difference is the whole point: this is what `game`'s eight NOT NULL columns hold, and it is what
+  * A separate type from [[NotificationPreferences]] rather than one with a convention that all eleven are `Some`,
+  * because the difference is the whole point: this is what `game`'s eleven NOT NULL columns hold, and it is what
   * [[NotificationPolicy]] can finish on.
   */
 case class NotificationDefaults(
@@ -184,6 +229,9 @@ case class NotificationDefaults(
     challengeReady: Boolean,
     acceptanceChanged: Boolean,
     acceptedChallengeReady: Boolean,
+    invitationReceived: Boolean,
+    invitationAccepted: Boolean,
+    invitationRejected: Boolean,
     matchStarted: Boolean,
     turnTaken: Boolean,
     yourTurn: Boolean,
@@ -195,6 +243,9 @@ case class NotificationDefaults(
         case NotificationType.ChallengeReady         => challengeReady
         case NotificationType.AcceptanceChanged      => acceptanceChanged
         case NotificationType.AcceptedChallengeReady => acceptedChallengeReady
+        case NotificationType.InvitationReceived     => invitationReceived
+        case NotificationType.InvitationAccepted     => invitationAccepted
+        case NotificationType.InvitationRejected     => invitationRejected
         case NotificationType.MatchStarted           => matchStarted
         case NotificationType.TurnTaken              => turnTaken
         case NotificationType.YourTurn               => yourTurn
@@ -208,6 +259,9 @@ case class NotificationDefaults(
           Some(challengeReady),
           Some(acceptanceChanged),
           Some(acceptedChallengeReady),
+          Some(invitationReceived),
+          Some(invitationAccepted),
+          Some(invitationRejected),
           Some(matchStarted),
           Some(turnTaken),
           Some(yourTurn),
@@ -217,11 +271,23 @@ case class NotificationDefaults(
 
 object NotificationDefaults {
 
-    /** One answer for all eight. `all(true)` is what V13 gave every game that already existed, and so what a `Game`
+    /** One answer for all eleven. `all(true)` is what V13 gave every game that already existed, and so what a `Game`
       * built by a client that has never heard of notifications carries.
       */
     def all(enabled: Boolean): NotificationDefaults =
-        NotificationDefaults(enabled, enabled, enabled, enabled, enabled, enabled, enabled, enabled)
+        NotificationDefaults(
+          enabled,
+          enabled,
+          enabled,
+          enabled,
+          enabled,
+          enabled,
+          enabled,
+          enabled,
+          enabled,
+          enabled,
+          enabled
+        )
 }
 
 /** The levels a new seat inherits from, unresolved.
@@ -230,7 +296,7 @@ object NotificationDefaults {
   * [[resolve]] — and can be exercised without a database. `playerGame` is `unset` when there is no such row: a player
   * who has never opened a game's settings has none.
   *
-  * Note what is *not* here: the participant level. Since V14 a seat's own eight answers are NOT NULL and are the whole
+  * Note what is *not* here: the participant level. Since V14 a seat's own eleven answers are NOT NULL and are the whole
   * answer for anything about a match, so a chain is only ever walked in the two places one still has to be — creating a
   * seat, and writing to somebody about a challenge, which nobody is a participant in yet.
   */
@@ -256,6 +322,9 @@ case class NotificationLevels(
           answer(NotificationType.ChallengeReady),
           answer(NotificationType.AcceptanceChanged),
           answer(NotificationType.AcceptedChallengeReady),
+          answer(NotificationType.InvitationReceived),
+          answer(NotificationType.InvitationAccepted),
+          answer(NotificationType.InvitationRejected),
           answer(NotificationType.MatchStarted),
           answer(NotificationType.TurnTaken),
           answer(NotificationType.YourTurn),
@@ -297,8 +366,8 @@ case class NotificationSettings(
 
 /** Whether a particular player is to be told about a particular thing.
   *
-  * Over one recipient's answers, already resolved: a seat's own eight columns, or [[NotificationLevels.resolve]] for an
-  * audience that has no seat yet.
+  * Over one recipient's answers, already resolved: a seat's own eleven columns, or [[NotificationLevels.resolve]] for
+  * an audience that has no seat yet.
   */
 object NotificationPolicy {
 

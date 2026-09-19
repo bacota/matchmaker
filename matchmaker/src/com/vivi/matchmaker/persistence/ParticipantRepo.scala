@@ -21,7 +21,7 @@ class ParticipantRepo(session: Session[IO]) {
 
     /* A seat, stamped on creation with what its player wants to hear about it.
      *
-     * INSERT ... SELECT rather than VALUES, because the eight `notify_*` columns are NOT NULL (V14)
+     * INSERT ... SELECT rather than VALUES, because the eleven `notify_*` columns are NOT NULL (V14)
      * and what goes in them is the chain resolved at this moment: what the player has said about this
      * game, else what they have said in general, else what the game asks for. That is the same rule as
      * `NotificationLevels.resolve`, done here instead of read and passed in, so that a seat cannot be
@@ -37,7 +37,7 @@ class ParticipantRepo(session: Session[IO]) {
         : Query[(GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId), ParticipantId] =
         sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed, due, game_role_id,
               notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
-              notify_accepted_challenge_ready, notify_match_started, notify_turn_taken,
+              notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
               notify_your_turn, notify_match_ended)
           SELECT $gameId, $matchId, $gameType, $playerId, $bool, $bool, ${instant.opt}, $gameRoleId,
                  COALESCE(pg.notify_challenge_accepted, pl.notify_challenge_accepted,
@@ -46,8 +46,14 @@ class ParticipantRepo(session: Session[IO]) {
                           g.notify_challenge_ready),
                  COALESCE(pg.notify_acceptance_changed, pl.notify_acceptance_changed,
                           g.notify_acceptance_changed),
-                 COALESCE(pg.notify_accepted_challenge_ready, pl.notify_accepted_challenge_ready,
+                 COALESCE(pg.notify_accepted_challenge_ready, pg.notify_invitation_received, pg.notify_invitation_accepted, pg.notify_invitation_rejected, pl.notify_accepted_challenge_ready, pl.notify_invitation_received, pl.notify_invitation_accepted, pl.notify_invitation_rejected,
                           g.notify_accepted_challenge_ready),
+                 COALESCE(pg.notify_invitation_received, pl.notify_invitation_received,
+                          g.notify_invitation_received),
+                 COALESCE(pg.notify_invitation_accepted, pl.notify_invitation_accepted,
+                          g.notify_invitation_accepted),
+                 COALESCE(pg.notify_invitation_rejected, pl.notify_invitation_rejected,
+                          g.notify_invitation_rejected),
                  COALESCE(pg.notify_match_started, pl.notify_match_started,
                           g.notify_match_started),
                  COALESCE(pg.notify_turn_taken, pl.notify_turn_taken,
