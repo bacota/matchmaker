@@ -183,7 +183,7 @@ object Router {
                 }
 
             case ("POST", "challenges" :: Nil) =>
-                body[OpenChallenge](request).flatMap(c => created(services.challenges.create(c, caller)))
+                body[Challenge](request).flatMap(c => created(services.challenges.create(c, caller)))
 
             // Turns a challenge into a match: matchmaker creates the game in the engine and records
             // the urls it returns. Only the challenger may do it — the service checks that.

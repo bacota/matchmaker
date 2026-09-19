@@ -9,7 +9,7 @@ import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, GameRepo, TestSession}
 
-class OpenChallengeServiceSpec extends PropertySuite {
+class ChallengeServiceSpec extends PropertySuite {
     TestMigration.ensure()
 
     private val challengeService = TestServices.services.challenges
@@ -62,8 +62,8 @@ class OpenChallengeServiceSpec extends PropertySuite {
             } yield (player, character)
         }
 
-    private def challengeFor(fixture: Fixture): OpenChallenge =
-        CharacterOpenChallenge(
+    private def challengeFor(fixture: Fixture): Challenge =
+        CharacterChallenge(
           ChallengeId(0),
           fixture.owner.playerId,
           "message",
@@ -82,7 +82,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
                 fixture <- makeFixture(nickname, externalId)
                 created <- challengeService.create(challengeFor(fixture), externalId)
             } yield created match {
-                case c: CharacterOpenChallenge => c.characterId == fixture.character.characterId; case _ => false
+                case c: CharacterChallenge => c.characterId == fixture.character.characterId; case _ => false
             }
             result.timeout(10.seconds).unsafeRunSync()
         }
@@ -106,7 +106,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
         }
     }
 
-    // The challenger's role is not a column on open_challenge — it is stored on the acceptance
+    // The challenger's role is not a column on challenge — it is stored on the acceptance
     // create makes for them, and read back from there. This checks both halves: that the role given
     // on the challenge lands on that acceptance, and that reading the challenge reports it again.
     property("the challenger's role is stored on their acceptance and read back with the challenge") {
@@ -128,8 +128,8 @@ class OpenChallengeServiceSpec extends PropertySuite {
                 }
                 role = game.roles.head.gameRoleId
                 challenge = challengeFor(base) match {
-                    case c: CharacterOpenChallenge => c.copy(gameRoleId = role)
-                    case other                     => other
+                    case c: CharacterChallenge => c.copy(gameRoleId = role)
+                    case other                 => other
                 }
                 created <- challengeService.create(challenge, externalId)
                 acceptance <- TestSession.resource.use { session =>
@@ -175,8 +175,8 @@ class OpenChallengeServiceSpec extends PropertySuite {
                     other <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
                     (otherPlayer, _) = other
                     challenge = challengeFor(fixture) match {
-                        case c: CharacterOpenChallenge => c.copy(challenger = otherPlayer.playerId)
-                        case c                         => c
+                        case c: CharacterChallenge => c.copy(challenger = otherPlayer.playerId)
+                        case c                     => c
                     }
                     attempt <- challengeService.create(challenge, externalId).attempt
                 } yield attempt match {
@@ -353,7 +353,7 @@ class OpenChallengeServiceSpec extends PropertySuite {
                     }
                     _ <- challengeService.delete(fixture.game.gameId, created.challengeId, externalId)
                     remainingChallenge <- TestSession.resource.use(session =>
-                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                        new com.vivi.matchmaker.persistence.ChallengeRepo(session)
                             .read(fixture.game.gameId, created.challengeId)
                     )
                     remainingAcceptance <- TestSession.resource.use(session =>

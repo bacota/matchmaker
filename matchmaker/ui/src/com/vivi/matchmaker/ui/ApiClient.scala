@@ -156,11 +156,11 @@ object ApiClient {
     def createGame(game: Game): Future[Game] =
         send[Game](HttpMethod.POST, "/games", Some(write(game)))
 
-    def challenges(gameId: GameId): Future[Seq[OpenChallengeSummary]] =
-        get[Seq[OpenChallengeSummary]](s"/games/${gameId.value}/challenges")
+    def challenges(gameId: GameId): Future[Seq[ChallengeSummary]] =
+        get[Seq[ChallengeSummary]](s"/games/${gameId.value}/challenges")
 
-    def createChallenge(challenge: OpenChallenge): Future[OpenChallenge] =
-        send[OpenChallenge](HttpMethod.POST, "/challenges", Some(write(challenge)))
+    def createChallenge(challenge: Challenge): Future[Challenge] =
+        send[Challenge](HttpMethod.POST, "/challenges", Some(write(challenge)))
 
     def deleteChallenge(gameId: GameId, challengeId: ChallengeId): Future[Unit] =
         sendUnit(HttpMethod.DELETE, s"/challenges/${gameId.value}/${challengeId.value}", None)

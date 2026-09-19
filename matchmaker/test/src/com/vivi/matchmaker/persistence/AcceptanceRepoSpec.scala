@@ -14,7 +14,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                     val gameRepo = new GameRepo[String](session)
                     val playerRepo = new PlayerRepo(session)
                     val characterRepo = new CharacterRepo[String](session)
-                    val openChallengeRepo = new OpenChallengeRepo(session)
+                    val challengeRepo = new ChallengeRepo(session)
                     val acceptanceRepo = new AcceptanceRepo(session)
 
                     for {
@@ -26,7 +26,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                         )
                         challenge <- IO.pure(
                           Generators
-                              .genOpenChallenge(
+                              .genChallenge(
                                 createdChallenger.playerId,
                                 createdGame.gameId,
                                 createdCharacter.characterId,
@@ -35,7 +35,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                               .sample
                               .get
                         )
-                        createdChallenge <- openChallengeRepo.create(challenge)
+                        createdChallenge <- challengeRepo.create(challenge)
                         acceptance = CharacterAcceptance(
                           createdChallenge.challengeId,
                           createdAcceptor.playerId,
@@ -64,7 +64,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                     val gameRepo = new GameRepo[String](session)
                     val playerRepo = new PlayerRepo(session)
                     val characterRepo = new CharacterRepo[String](session)
-                    val openChallengeRepo = new OpenChallengeRepo(session)
+                    val challengeRepo = new ChallengeRepo(session)
                     val acceptanceRepo = new AcceptanceRepo(session)
 
                     for {
@@ -76,7 +76,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                         )
                         challenge <- IO.pure(
                           Generators
-                              .genOpenChallenge(
+                              .genChallenge(
                                 createdChallenger.playerId,
                                 createdGame.gameId,
                                 createdCharacter.characterId,
@@ -85,7 +85,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                               .sample
                               .get
                         )
-                        createdChallenge <- openChallengeRepo.create(challenge)
+                        createdChallenge <- challengeRepo.create(challenge)
                         acceptance = CharacterAcceptance(
                           createdChallenge.challengeId,
                           createdAcceptor.playerId,
@@ -108,7 +108,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                     val gameRepo = new GameRepo[String](session)
                     val playerRepo = new PlayerRepo(session)
                     val characterRepo = new CharacterRepo[String](session)
-                    val openChallengeRepo = new OpenChallengeRepo(session)
+                    val challengeRepo = new ChallengeRepo(session)
                     val acceptanceRepo = new AcceptanceRepo(session)
 
                     for {
@@ -120,7 +120,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                         )
                         challenge <- IO.pure(
                           Generators
-                              .genOpenChallenge(
+                              .genChallenge(
                                 createdChallenger.playerId,
                                 createdGame.gameId,
                                 createdCharacter.characterId,
@@ -129,7 +129,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                               .sample
                               .get
                         )
-                        createdChallenge <- openChallengeRepo.create(challenge)
+                        createdChallenge <- challengeRepo.create(challenge)
                         // The challenger's own acceptance, written with the challenge by the service and
                         // joined back in by every read of one: it is where the challenge's role lives.
                         _ <- acceptanceRepo.create(
@@ -167,7 +167,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                     val gameRepo = new GameRepo[String](session)
                     val playerRepo = new PlayerRepo(session)
                     val characterRepo = new CharacterRepo[String](session)
-                    val openChallengeRepo = new OpenChallengeRepo(session)
+                    val challengeRepo = new ChallengeRepo(session)
                     val acceptanceRepo = new AcceptanceRepo(session)
 
                     for {
@@ -179,7 +179,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                         )
                         challenge <- IO.pure(
                           Generators
-                              .genOpenChallenge(
+                              .genChallenge(
                                 createdChallenger.playerId,
                                 createdGame.gameId,
                                 createdCharacter.characterId,
@@ -188,7 +188,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                               .sample
                               .get
                         )
-                        createdChallenge <- openChallengeRepo.create(challenge)
+                        createdChallenge <- challengeRepo.create(challenge)
                         found <- acceptanceRepo.readWithChallengeAndPlayers(
                           createdGame.gameId,
                           createdChallenge.challengeId,
@@ -207,7 +207,7 @@ class AcceptanceRepoSpec extends PropertySuite {
                     val gameRepo = new GameRepo[String](session)
                     val playerRepo = new PlayerRepo(session)
                     val characterRepo = new CharacterRepo[String](session)
-                    val openChallengeRepo = new OpenChallengeRepo(session)
+                    val challengeRepo = new ChallengeRepo(session)
                     val acceptanceRepo = new AcceptanceRepo(session)
 
                     for {
@@ -220,9 +220,9 @@ class AcceptanceRepoSpec extends PropertySuite {
 
                         // Two challenges accepted by one player, so the list is exercised as a list rather
                         // than as a single row that happens to come back.
-                        first <- openChallengeRepo.create(
+                        first <- challengeRepo.create(
                           Generators
-                              .genOpenChallenge(
+                              .genChallenge(
                                 createdChallenger.playerId,
                                 createdGame.gameId,
                                 createdCharacter.characterId,
@@ -231,9 +231,9 @@ class AcceptanceRepoSpec extends PropertySuite {
                               .sample
                               .get
                         )
-                        second <- openChallengeRepo.create(
+                        second <- challengeRepo.create(
                           Generators
-                              .genOpenChallenge(
+                              .genChallenge(
                                 createdChallenger.playerId,
                                 createdGame.gameId,
                                 createdCharacter.characterId,

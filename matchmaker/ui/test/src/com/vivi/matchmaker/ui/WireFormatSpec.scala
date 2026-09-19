@@ -126,11 +126,11 @@ class WireFormatSpec extends FunSuite {
     }
 
     // The challenges page decodes this and nothing else, and the nested `challenge` goes through
-    // the merged OpenChallenge reader. A discriminator or field mapping that does not survive being
+    // the merged Challenge reader. A discriminator or field mapping that does not survive being
     // nested would break only here, in the browser, on the one screen that loads it.
-    test("an OpenChallengeSummary round-trips both kinds of challenge, keeping the subtype") {
-        val character = OpenChallengeSummary(
-          CharacterOpenChallenge(
+    test("a ChallengeSummary round-trips both kinds of challenge, keeping the subtype") {
+        val character = ChallengeSummary(
+          CharacterChallenge(
             challengeId = ChallengeId(1),
             challenger = PlayerId(2),
             message = "anyone?",
@@ -145,8 +145,8 @@ class WireFormatSpec extends FunSuite {
           acceptances = 2,
           takenRoles = Seq(GameRoleId(4))
         )
-        val plain = OpenChallengeSummary(
-          PlainOpenChallenge(
+        val plain = ChallengeSummary(
+          PlainChallenge(
             challengeId = ChallengeId(5),
             challenger = PlayerId(6),
             message = "a plain game",
@@ -161,20 +161,20 @@ class WireFormatSpec extends FunSuite {
         )
 
         // The list is the response shape; decoding them singly would not notice a broken Seq codec.
-        val decoded = read[Seq[OpenChallengeSummary]](write(Seq(character, plain)))
+        val decoded = read[Seq[ChallengeSummary]](write(Seq(character, plain)))
 
         assertEquals(decoded, Seq(character, plain))
         // Which subtype came back decides whether the UI offers a character to accept with, so it is
         // asserted rather than left to equality.
-        assert(decoded.head.challenge.isInstanceOf[CharacterOpenChallenge])
-        assert(decoded(1).challenge.isInstanceOf[PlainOpenChallenge])
+        assert(decoded.head.challenge.isInstanceOf[CharacterChallenge])
+        assert(decoded(1).challenge.isInstanceOf[PlainChallenge])
         // The count is what the Start button is shown or hidden on.
         assertEquals(decoded.map(_.acceptances), Seq(2, 1))
         assertEquals(decoded.head.challenge.start, character.challenge.start)
     }
 
     test("an absent optional stays absent rather than becoming a default") {
-        val challenge = CharacterOpenChallenge(
+        val challenge = CharacterChallenge(
           challengeId = ChallengeId(0),
           challenger = PlayerId(1),
           message = "anyone?",
@@ -186,7 +186,7 @@ class WireFormatSpec extends FunSuite {
           gameRoleId = GameRoleId(2)
         )
 
-        val decoded = read[OpenChallenge](write(challenge))
+        val decoded = read[Challenge](write(challenge))
 
         assertEquals(decoded.start, None)
         assertEquals(decoded.timeLimit, Some(Duration.ofSeconds(300)))

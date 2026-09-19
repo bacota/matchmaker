@@ -14,7 +14,7 @@ import com.vivi.matchmaker.model.{
     TimeLimitKind
 }
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
-import com.vivi.matchmaker.persistence.{MatchRepo, OpenChallengeRepo, ParticipantRepo, PlayerRepo, ResultRepo}
+import com.vivi.matchmaker.persistence.{MatchRepo, ChallengeRepo, ParticipantRepo, PlayerRepo, ResultRepo}
 
 /** Lists a player's matches, and lets the creator of one call it off.
   *
@@ -193,7 +193,7 @@ class MatchService(
     def cancel(gameId: GameId, matchId: MatchId, callerExternalId: String): IO[Match] =
         sessionPool.use { session =>
             val matchRepo = new MatchRepo(session)
-            val challengeRepo = new OpenChallengeRepo(session)
+            val challengeRepo = new ChallengeRepo(session)
             val participantRepo = new ParticipantRepo(session)
 
             session.transaction

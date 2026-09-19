@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all._
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.notify.Notifications
-import com.vivi.matchmaker.persistence.{AcceptanceRepo, OpenChallengeRepo, PlayerRepo}
+import com.vivi.matchmaker.persistence.{AcceptanceRepo, ChallengeRepo, PlayerRepo}
 
 /** Lists and deletes acceptances. `delete` is authorized by `callerExternalId` matching either the player who made the
   * acceptance or the player who owns the challenge (i.e. the challenger); `mine` is scoped to the caller's own player
@@ -13,7 +13,7 @@ import com.vivi.matchmaker.persistence.{AcceptanceRepo, OpenChallengeRepo, Playe
   */
 class AcceptanceService(
     sessionPool: SessionPool,
-    /* Silent by default, as in `OpenChallengeService`, and for the same reasons. */
+    /* Silent by default, as in `ChallengeService`, and for the same reasons. */
     notifications: Notifications = Notifications.disabled
 ) {
 
@@ -38,7 +38,7 @@ class AcceptanceService(
     def delete(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
             val acceptanceRepo = new AcceptanceRepo(session)
-            val challengeRepo = new OpenChallengeRepo(session)
+            val challengeRepo = new ChallengeRepo(session)
             // The repo's delete removes the character_acceptance row and the acceptance row as separate
             // statements, and the authorization checked below must hold for both.
             val withdrawn = session.transaction.use { _ =>
@@ -87,7 +87,7 @@ class AcceptanceService(
             }
 
             /* After the commit, outside the challenge's lock, and unable to fail the withdrawal --
-             * the same three terms as `OpenChallengeService.accept`; see `Notifications`.
+             * the same three terms as `ChallengeService.accept`; see `Notifications`.
              *
              * Who did it is not always whose seat it was: a challenger may remove somebody else's
              * acceptance. The service knows which, because authorization here turns on exactly that

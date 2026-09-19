@@ -77,12 +77,12 @@ object Json {
 
     // Sealed-trait wire format: each concrete case gets its own macro-derived ReadWriter, merged
     // into one for the trait. upickle tags the JSON with a discriminator field so a reader can
-    // tell a PlainOpenChallenge from a CharacterOpenChallenge (etc.) apart on the way back in.
-    given ReadWriter[PlainOpenChallenge] = macroRW
-    given ReadWriter[CharacterOpenChallenge] = macroRW
-    given ReadWriter[OpenChallenge] =
-        ReadWriter.merge(summon[ReadWriter[PlainOpenChallenge]], summon[ReadWriter[CharacterOpenChallenge]])
-    given ReadWriter[OpenChallengeSummary] = macroRW
+    // tell a PlainChallenge from a CharacterChallenge (etc.) apart on the way back in.
+    given ReadWriter[PlainChallenge] = macroRW
+    given ReadWriter[CharacterChallenge] = macroRW
+    given ReadWriter[Challenge] =
+        ReadWriter.merge(summon[ReadWriter[PlainChallenge]], summon[ReadWriter[CharacterChallenge]])
+    given ReadWriter[ChallengeSummary] = macroRW
 
     given ReadWriter[PlainAcceptance] = macroRW
     given ReadWriter[CharacterAcceptance] = macroRW

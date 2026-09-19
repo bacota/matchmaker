@@ -56,7 +56,7 @@ class AcceptanceRepo(session: Session[IO]) {
     // acceptance's primary key is the composite (game_id, challenge_id, game_role_id), so game_id
     // is required in every lookup below rather than challenge_id alone. Looking a row up by player
     // instead, as this one does, is not a key lookup at all: it holds only because the application
-    // refuses a player a second seat in one challenge (see OpenChallengeService.accept). If that
+    // refuses a player a second seat in one challenge (see ChallengeService.accept). If that
     // rule is ever relaxed, this is one of the places that has to stop assuming one row.
     private val selectAcceptance: Query[(GameId, ChallengeId, PlayerId), (GameType, GameRoleId, Option[Long])] =
         sql"""SELECT a.game_type, a.game_role_id, ca.character_id
@@ -106,9 +106,9 @@ class AcceptanceRepo(session: Session[IO]) {
     /** Whether this player has already accepted this challenge.
       *
       * Since V5 the primary key is (game_id, challenge_id, game_role_id), so the database no longer refuses a player a
-      * second seat in one challenge — `OpenChallengeService.accept` does, and this is what it asks. `EXISTS` rather
-      * than reading the row: the question is only whether there is one, and unlike [[read]] this stays a straight
-      * answer if the rule is ever relaxed and a player does hold two.
+      * second seat in one challenge — `ChallengeService.accept` does, and this is what it asks. `EXISTS` rather than
+      * reading the row: the question is only whether there is one, and unlike [[read]] this stays a straight answer if
+      * the rule is ever relaxed and a player does hold two.
       */
     def hasAccepted(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId): IO[Boolean] =
         session.unique(selectHasAccepted)((gameId, challengeId, playerId))
@@ -164,24 +164,24 @@ class AcceptanceRepo(session: Session[IO]) {
             SkunkCodecs.timeLimitKind *: SkunkCodecs.timeLimitUnit *: playerRow *: playerRow
 
     // `a` is the acceptance being read; `challenger_acceptance` is the challenger's own, which is
-    // where a challenge's gameRoleId lives (there is no such column on open_challenge — see
-    // OpenChallengeRepo). The join is an inner one: every challenge has a challenger's acceptance,
+    // where a challenge's gameRoleId lives (there is no such column on challenge — see
+    // ChallengeRepo). The join is an inner one: every challenge has a challenger's acceptance,
     // created with it, and that acceptance names a role.
     private val selectAcceptanceWithChallengeAndPlayers = sql"""
-    SELECT a.game_type, oc.challenger, oc.message, oc.start,
-           EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public,
-           challenger_acceptance.game_role_id, cc.character_id, oc.time_limit_kind, oc.time_limit_unit,
+    SELECT a.game_type, ch.challenger, ch.message, ch.start,
+           EXTRACT(EPOCH FROM ch.time_limit)::float8, ch.settings, ch.public,
+           challenger_acceptance.game_role_id, cc.character_id, ch.time_limit_kind, ch.time_limit_unit,
            acceptor.nickname, acceptor.is_admin, acceptor.external_id, acceptor.email,
            challenger.nickname, challenger.is_admin, challenger.external_id, challenger.email
     FROM acceptance a
-    JOIN open_challenge oc ON oc.game_id = a.game_id AND oc.challenge_id = a.challenge_id
-    LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
+    JOIN challenge ch ON ch.game_id = a.game_id AND ch.challenge_id = a.challenge_id
+    LEFT JOIN character_challenge cc ON cc.game_id = ch.game_id AND cc.challenge_id = ch.challenge_id
     JOIN acceptance challenger_acceptance
-           ON challenger_acceptance.game_id = oc.game_id
-          AND challenger_acceptance.challenge_id = oc.challenge_id
-          AND challenger_acceptance.player_id = oc.challenger
+           ON challenger_acceptance.game_id = ch.game_id
+          AND challenger_acceptance.challenge_id = ch.challenge_id
+          AND challenger_acceptance.player_id = ch.challenger
     JOIN player acceptor ON acceptor.player_id = a.player_id
-    JOIN player challenger ON challenger.player_id = oc.challenger
+    JOIN player challenger ON challenger.player_id = ch.challenger
     WHERE a.game_id = $gameId AND a.challenge_id = $challengeId AND a.player_id = $playerId"""
         .query(acceptanceWithChallengeAndPlayersRow)
 
@@ -192,7 +192,7 @@ class AcceptanceRepo(session: Session[IO]) {
         gameId: GameId,
         challengeId: ChallengeId,
         playerId: PlayerId
-    ): IO[Option[(OpenChallenge, Player, Player)]] =
+    ): IO[Option[(Challenge, Player, Player)]] =
         session
             .option(selectAcceptanceWithChallengeAndPlayers)((gameId, challengeId, playerId))
             .map(_.map {
@@ -215,14 +215,14 @@ class AcceptanceRepo(session: Session[IO]) {
                       challengerEmail
                     ) =>
                     val timeLimit = timeLimitSeconds.map(v => Duration.ofSeconds(v.toLong))
-                    val challengeModel: OpenChallenge = gameType match {
+                    val challengeModel: Challenge = gameType match {
                         case GameType.Character =>
                             val cid = characterIdValue.getOrElse(
                               throw new IllegalStateException(
-                                s"challenge ${challengeId.value} is game_type 'C' but has no character_open_challenge row"
+                                s"challenge ${challengeId.value} is game_type 'C' but has no character_challenge row"
                               )
                             )
-                            CharacterOpenChallenge(
+                            CharacterChallenge(
                               challengeId,
                               challenger,
                               message,
@@ -237,7 +237,7 @@ class AcceptanceRepo(session: Session[IO]) {
                               timeLimitUnit
                             )
                         case GameType.Plain =>
-                            PlainOpenChallenge(
+                            PlainChallenge(
                               challengeId,
                               challenger,
                               message,
@@ -261,7 +261,7 @@ class AcceptanceRepo(session: Session[IO]) {
     private val selectAcceptancesForPlayer
         : Query[PlayerId, (ChallengeId, GameType, GameId, GameRoleId, Option[Long], PlayerId, Boolean)] =
         sql"""SELECT a.challenge_id, a.game_type, a.game_id, a.game_role_id, ca.character_id,
-                 oc.challenger,
+                 ch.challenger,
                  -- Ready to start: no required role of the game is still unclaimed. Computed here
                  -- rather than by counting acceptances, because a challenge is full when its
                  -- roles are taken, and optional roles are not ones a start waits for. This is
@@ -276,8 +276,8 @@ class AcceptanceRepo(session: Session[IO]) {
           FROM acceptance a
           LEFT JOIN character_acceptance ca
                  ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.game_role_id = a.game_role_id
-          JOIN open_challenge oc ON oc.game_id = a.game_id AND oc.challenge_id = a.challenge_id
-          WHERE a.player_id = $playerId AND oc.started_match_id IS NULL
+          JOIN challenge ch ON ch.game_id = a.game_id AND ch.challenge_id = a.challenge_id
+          WHERE a.player_id = $playerId AND ch.started_match_id IS NULL
           ORDER BY a.challenge_id"""
             .query(challengeId *: gameType *: gameId *: gameRoleId *: int8.opt *: playerId *: bool)
 

@@ -20,7 +20,7 @@ object SkunkCodecs {
         timestamptz.imap(_.toInstant)(i => OffsetDateTime.ofInstant(i, ZoneOffset.UTC))
 
     /** The `game_type` discriminator column (`CHAR(1)`, `'C'`/`'P'`), on `game` and on every table split by it
-      * (`open_challenge`, `acceptance`, `participant`, and their `character_*` siblings).
+      * (`challenge`, `acceptance`, `participant`, and their `character_*` siblings).
       */
     val gameType: Codec[GameType] = bpchar(1).imap(s => GameType.fromCode(s.head))(_.code.toString)
 
@@ -30,8 +30,8 @@ object SkunkCodecs {
       */
     val timeoutAction: Codec[TimeoutAction] = text.imap(TimeoutAction.fromCode)(_.code)
 
-    /** `time_limit_kind` on `match` and `open_challenge`: whether the limit is per turn or the player's budget for the
-      * whole match. Text under a check constraint, as `timeoutAction` is.
+    /** `time_limit_kind` on `match` and `challenge`: whether the limit is per turn or the player's budget for the whole
+      * match. Text under a check constraint, as `timeoutAction` is.
       */
     val timeLimitKind: Codec[TimeLimitKind] = text.imap(TimeLimitKind.fromCode)(_.code)
 

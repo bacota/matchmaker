@@ -173,7 +173,7 @@ class NotificationRepo(session: Session[IO]) {
      * a challenge.
      *
      * The challenger is in here too, because creating a challenge inserts their own acceptance --
-     * see `OpenChallengeService.create`. So this one query is the whole audience for anything that
+     * see `ChallengeService.create`. So this one query is the whole audience for anything that
      * happens to a challenge, and which of them is the challenger is a comparison the caller makes.
      */
     private val selectLevelsForChallenge: Query[

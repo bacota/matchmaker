@@ -4,12 +4,12 @@ import java.time.{Duration, Instant}
 
 /** An open offer to play a match, waiting for other players to accept it.
   *
-  * Mirrors the `open_challenge` table split: a `'P'`-type game's challenge is a plain [[PlainOpenChallenge]], while a
-  * `'C'`-type game's challenge is a [[CharacterOpenChallenge]] naming the character it is offered on behalf of. The two
-  * can never be mixed with the wrong kind of game — the schema's composite foreign keys enforce that, and the service
-  * layer checks it too.
+  * Mirrors the `challenge` table split: a `'P'`-type game's challenge is a plain [[PlainChallenge]], while a `'C'`-type
+  * game's challenge is a [[CharacterChallenge]] naming the character it is offered on behalf of. The two can never be
+  * mixed with the wrong kind of game — the schema's composite foreign keys enforce that, and the service layer checks
+  * it too.
   */
-sealed trait OpenChallenge {
+sealed trait Challenge {
     def challengeId: ChallengeId
     def challenger: PlayerId
     def message: String
@@ -32,7 +32,7 @@ sealed trait OpenChallenge {
 
     /** The role the challenger will play.
       *
-      * Not a column on `open_challenge`: creating a challenge also creates the challenger's own acceptance, so this is
+      * Not a column on `challenge`: creating a challenge also creates the challenger's own acceptance, so this is
       * stored on that acceptance like every other player's role, and is read back from it. Setting it on a challenge is
       * how the challenger claims a role at creation; changing it afterwards means changing their acceptance. Mandatory,
       * because the acceptance it is stored on is.
@@ -50,7 +50,7 @@ sealed trait OpenChallenge {
     def autoStart: Boolean
 }
 
-case class PlainOpenChallenge(
+case class PlainChallenge(
     challengeId: ChallengeId,
     challenger: PlayerId,
     message: String,
@@ -63,9 +63,9 @@ case class PlainOpenChallenge(
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
     autoStart: Boolean = false
-) extends OpenChallenge
+) extends Challenge
 
-case class CharacterOpenChallenge(
+case class CharacterChallenge(
     challengeId: ChallengeId,
     challenger: PlayerId,
     message: String,
@@ -79,17 +79,17 @@ case class CharacterOpenChallenge(
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
     autoStart: Boolean = false
-) extends OpenChallenge
+) extends Challenge
 
 /** An open challenge together with how many players have accepted it so far.
   *
-  * The count is not part of [[OpenChallenge]] itself because a challenge is also what a client *sends* to create one,
-  * and how many acceptances it has is not the client's to state. It is derived on read, which is the only place it
-  * means anything.
+  * The count is not part of [[Challenge]] itself because a challenge is also what a client *sends* to create one, and
+  * how many acceptances it has is not the client's to state. It is derived on read, which is the only place it means
+  * anything.
   *
   * What it is for: a challenge cannot be started until every required role of its game has been taken, and the server
   * refuses one that is not ready. Sending the roles already claimed lets the UI not offer a Start that would be
   * refused, and not offer a role somebody else has already taken; the count is what it says beside the challenge, since
   * a game's roles are what the seats are and `takenRoles` is which of them are gone.
   */
-case class OpenChallengeSummary(challenge: OpenChallenge, acceptances: Int, takenRoles: Seq[GameRoleId] = Seq.empty)
+case class ChallengeSummary(challenge: Challenge, acceptances: Int, takenRoles: Seq[GameRoleId] = Seq.empty)

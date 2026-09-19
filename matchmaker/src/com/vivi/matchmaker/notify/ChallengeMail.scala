@@ -37,7 +37,7 @@ case class ChallengeNews(
   * to the players who accepted it, because those are different pieces of news — one of them can press Start.
   *
   * Rendering is separated from deciding who to write to, and is a pure function of its arguments, so what the mail says
-  * can be tested without a challenge or a database. The deciding halves are `OpenChallengeService.accept` and
+  * can be tested without a challenge or a database. The deciding halves are `ChallengeService.accept` and
   * `AcceptanceService.delete`.
   */
 object ChallengeMail extends NotificationMail[ChallengeNews] {

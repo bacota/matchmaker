@@ -1755,7 +1755,7 @@ object Views {
         )
     }
 
-    private def myChallengeRow(game: Game, summary: OpenChallengeSummary): HtmlElement = {
+    private def myChallengeRow(game: Game, summary: ChallengeSummary): HtmlElement = {
         val challenge = summary.challenge
         li(
           cls := "row",
@@ -1786,7 +1786,7 @@ object Views {
 
     private def openChallengeRow(
         game: Game,
-        summary: OpenChallengeSummary,
+        summary: ChallengeSummary,
         characterId: Option[CharacterId]
     ): HtmlElement = {
         val challenge = summary.challenge
@@ -1884,7 +1884,7 @@ object Views {
         )
 
     /** The clock something is played under, for a challenge — every row of both lists has one. */
-    private def timeLimitDetail(challenge: OpenChallenge): HtmlElement =
+    private def timeLimitDetail(challenge: Challenge): HtmlElement =
         timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind, challenge.timeLimitUnit)
 
     /** The clock something is played under, said in full wherever it is said at all.
@@ -1915,13 +1915,13 @@ object Views {
         )
 
     /** The roles of `game` that no acceptance of `summary` has claimed yet. */
-    private def freeRoles(game: Game, summary: OpenChallengeSummary): Seq[GameRole] =
+    private def freeRoles(game: Game, summary: ChallengeSummary): Seq[GameRole] =
         game.roles.filterNot(r => summary.takenRoles.contains(r.gameRoleId))
 
     /** The roles a start is still waiting for: required, and unclaimed. Optional roles are exactly the ones a match
       * need not wait for, so they are not counted here even when free.
       */
-    private def unfilledRoles(game: Game, summary: OpenChallengeSummary): Seq[GameRole] =
+    private def unfilledRoles(game: Game, summary: ChallengeSummary): Seq[GameRole] =
         freeRoles(game, summary).filterNot(_.optional)
 
     /** A picker for the role a player will play, which matchmaker passes on to the game engine.
@@ -2046,9 +2046,9 @@ object Views {
               role.now().foreach { chosen =>
                   // The server assigns the id; this is the same unassigned-sentinel convention the
                   // service layer uses on create.
-                  val challenge: OpenChallenge = characterId match {
+                  val challenge: Challenge = characterId match {
                       case Some(cid) =>
-                          CharacterOpenChallenge(
+                          CharacterChallenge(
                             challengeId = ChallengeId(0),
                             challenger = player.playerId,
                             message = message.now().trim,
@@ -2064,7 +2064,7 @@ object Views {
                             autoStart = autoStart.now()
                           )
                       case None =>
-                          PlainOpenChallenge(
+                          PlainChallenge(
                             challengeId = ChallengeId(0),
                             challenger = player.playerId,
                             message = message.now().trim,

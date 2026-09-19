@@ -164,12 +164,12 @@ object Generators {
           } yield key -> value
         )
 
-    def genOpenChallenge(
+    def genChallenge(
         challenger: PlayerId,
         gameId: GameId,
         characterId: CharacterId,
         gameRoleId: GameRoleId
-    ): Gen[OpenChallenge] =
+    ): Gen[Challenge] =
         for {
             message <- genString
             start <- Gen.option(genInstant)
@@ -177,7 +177,7 @@ object Generators {
             isPublic <- Gen.oneOf(true, false)
             timeLimitKind <- Gen.oneOf(TimeLimitKind.values.toSeq)
             timeLimitUnit <- Gen.oneOf(TimeLimitUnit.values.toSeq)
-        } yield CharacterOpenChallenge(
+        } yield CharacterChallenge(
           ChallengeId(0),
           challenger,
           message,
@@ -208,12 +208,12 @@ object Generators {
     def challengeIn(session: Session[IO], game: Game): IO[ChallengeId] = {
         val playerRepo = new PlayerRepo(session)
         val characterRepo = new CharacterRepo[String](session)
-        val challengeRepo = new OpenChallengeRepo(session)
+        val challengeRepo = new ChallengeRepo(session)
         for {
             player <- playerRepo.create(genPlayer.sample.get)
             character <- characterRepo.create(genCharacter(game.gameId, Some(player.playerId)).sample.get)
             challenge <- challengeRepo.create(
-              genOpenChallenge(
+              genChallenge(
                 player.playerId,
                 game.gameId,
                 character.characterId,

@@ -61,8 +61,8 @@ class AcceptanceServiceSpec extends PropertySuite {
             } yield (player, character)
         }
 
-    private def challengeFor(fixture: Fixture): OpenChallenge =
-        CharacterOpenChallenge(
+    private def challengeFor(fixture: Fixture): Challenge =
+        CharacterChallenge(
           ChallengeId(0),
           fixture.owner.playerId,
           "message",
