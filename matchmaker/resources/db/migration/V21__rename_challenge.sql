@@ -8,7 +8,7 @@
 --
 -- Indexes, constraints and the update_date trigger follow the table automatically. Their *names*
 -- do not: `open_challenge_pkey`, the foreign keys, and the index V1 created on (challenger) still
--- say open_challenge. They are left alone deliberately -- renaming them changes nothing any query
+-- say open_challenge. They are left alone deliberately -- renaming them changes nothing that any query
 -- names, and a migration that renames a dozen constraints is a dozen more chances to name one
 -- wrong than it is worth.
 ALTER TABLE open_challenge RENAME TO challenge;
