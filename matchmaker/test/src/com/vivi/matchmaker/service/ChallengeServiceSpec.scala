@@ -769,6 +769,86 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
+    property("a player who has already accepted cannot turn the invitation down, and keeps their seat") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, otherNickname, otherExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    other <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
+                    (player, character) = other
+                    created <- challengeService.create(
+                      closedChallengeFor(fixture),
+                      externalId,
+                      Seq(Invite(player.playerId))
+                    )
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(character.characterId),
+                      fixture.game.roles(1).gameRoleId,
+                      otherExternalId
+                    )
+                    // Refused: deleting the invitation would leave them in a seat they are no longer
+                    // permitted to hold, and would tell the challenger it was free to offer again.
+                    attempt <- challengeService
+                        .reject(fixture.game.gameId, created.challengeId, otherExternalId)
+                        .attempt
+                    // And the challenger cannot take it back from under them either.
+                    revoking <- challengeService
+                        .revoke(fixture.game.gameId, created.challengeId, player.playerId, externalId)
+                        .attempt
+                    stillIn <- TestSession.resource.use(session =>
+                        new AcceptanceRepo(session)
+                            .hasAccepted(fixture.game.gameId, created.challengeId, player.playerId)
+                    )
+                    stillInvited <- TestSession.resource.use(session =>
+                        new InvitationRepo(session).read(fixture.game.gameId, created.challengeId, player.playerId)
+                    )
+                } yield (attempt, revoking) match {
+                    case (Left(rejected: ConflictError), Left(revoked: ConflictError)) =>
+                        rejected.message ==
+                            "You have already accepted this challenge, so there is no invitation left to turn down. " +
+                            "Back out of the challenge instead." &&
+                            revoked.message ==
+                            "That player has already accepted this challenge. Remove their acceptance instead." &&
+                            // Neither refusal took anything away.
+                            stillIn && stillInvited.isDefined
+                    case _ => false
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("backing out first leaves the invitation to be turned down") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, otherNickname, otherExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    other <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
+                    (player, character) = other
+                    created <- challengeService.create(
+                      closedChallengeFor(fixture),
+                      externalId,
+                      Seq(Invite(player.playerId))
+                    )
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(character.characterId),
+                      fixture.game.roles(1).gameRoleId,
+                      otherExternalId
+                    )
+                    // The invitation outlives the acceptance, which is what makes this the route the
+                    // refusal above points at rather than a dead end.
+                    _ <- TestServices.services.acceptances
+                        .delete(fixture.game.gameId, created.challengeId, player.playerId, otherExternalId)
+                    _ <- challengeService.reject(fixture.game.gameId, created.challengeId, otherExternalId)
+                    left <- invitationsOf(fixture.game, created.challengeId)
+                } yield left.isEmpty
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
     property("a player with no invitation has nothing to reject") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, otherNickname, otherExternalId) =>

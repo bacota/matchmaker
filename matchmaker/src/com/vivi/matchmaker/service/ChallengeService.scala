@@ -672,15 +672,18 @@ class ChallengeService[T](
       * the only one who can say which, and removing their challenge on somebody else's decision is not this service's
       * to make.
       *
-      * Rejecting does not touch an acceptance. A player who has already accepted and then rejects the invitation is
-      * saying something incoherent, and the acceptance is the more specific statement, so [[AcceptanceService.delete]]
-      * stays the way out of a challenge already joined.
+      * A player who has already accepted is refused rather than obliged. Deleting their invitation would leave them
+      * holding the seat they had been invited into with no permission to be there — which is not nothing, since backing
+      * out and changing their mind would then be refused — and it would tell the challenger their seat is free to offer
+      * again while it is still taken. [[AcceptanceService.delete]] is the way out of a challenge already joined, and
+      * the refusal says so.
       */
     def reject(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
             val playerRepo = new PlayerRepo(session)
             val challengeRepo = new ChallengeRepo(session)
             val invitationRepo = new InvitationRepo(session)
+            val acceptanceRepo = new AcceptanceRepo(session)
             val rejected = session.transaction.use { _ =>
                 for {
                     locked <- requireLocked(challengeRepo, gameId, challengeId)
@@ -696,6 +699,16 @@ class ChallengeService[T](
                               NotFoundError("That invitation is no longer there. It may have been withdrawn.")
                             )
                     }
+                    // Under the challenge's lock, like the invitation read above and for the same reason:
+                    // an acceptance landing between this check and the delete would leave exactly the
+                    // state this refuses.
+                    accepted <- acceptanceRepo.hasAccepted(gameId, challengeId, caller.playerId)
+                    _ <- IO.raiseWhen(accepted)(
+                      ConflictError(
+                        "You have already accepted this challenge, so there is no invitation left to turn down. " +
+                            "Back out of the challenge instead."
+                      )
+                    )
                     _ <- invitationRepo.delete(gameId, challengeId, caller.playerId)
                 } yield caller
             }
@@ -708,10 +721,11 @@ class ChallengeService[T](
     /** Takes an invitation back. The challenger's mirror of [[reject]], and the only way to correct one that was sent
       * to the wrong player or for the wrong seat.
       *
-      * An acceptance already made is left alone: revoking permission to accept does not un-accept, and a challenger who
-      * wants a player out of their challenge removes the acceptance (which they may — see
-      * [[AcceptanceService.delete]]). Otherwise a revoke would be a way to eject a player through a route that reports
-      * nothing to them.
+      * A player who has already accepted is refused, as they are in [[reject]] and for the same reason: their
+      * invitation is what permits the seat they are sitting in, and taking it back without taking the seat leaves the
+      * two disagreeing. A challenger who wants a player out of their challenge removes the acceptance, which they may —
+      * see [[AcceptanceService.delete]]. That also keeps a revoke from being a way to eject a player through a route
+      * that reports nothing to them.
       */
     def revoke(
         gameId: GameId,
@@ -723,6 +737,7 @@ class ChallengeService[T](
             val playerRepo = new PlayerRepo(session)
             val challengeRepo = new ChallengeRepo(session)
             val invitationRepo = new InvitationRepo(session)
+            val acceptanceRepo = new AcceptanceRepo(session)
             session.transaction.use { _ =>
                 for {
                     locked <- requireLocked(challengeRepo, gameId, challengeId)
@@ -738,6 +753,12 @@ class ChallengeService[T](
                               )
                             )
                     }
+                    accepted <- acceptanceRepo.hasAccepted(gameId, challengeId, playerId)
+                    _ <- IO.raiseWhen(accepted)(
+                      ConflictError(
+                        "That player has already accepted this challenge. Remove their acceptance instead."
+                      )
+                    )
                     _ <- invitationRepo.delete(gameId, challengeId, playerId)
                 } yield ()
             }
