@@ -33,9 +33,9 @@ class PlayerService(sessionPool: SessionPool) {
 
     /** Players whose nickname begins with `prefix`, for the search box.
       *
-      * Case sensitive, because a nickname is: two players may be registered as "Ash" and "ash", the database's unique
-      * index treats them as two names, and a search that folded case would offer them as one another's results. It also
-      * means the prefix somebody types is the prefix that is matched, with no rule to explain.
+     * Case insensitive, because the normalized comparison intentionally folds names while preserving the
+     * registered spelling in the result. Two players may be registered as "Ash" and "ash", and a search
+     * offers both rather than treating them as one.
       *
       * At most [[PlayerService.searchLimit]] players, with `more` saying there were others. A prefix of one letter can
       * match most of the register, and a page of everybody is not an answer -- so the reply says plainly that it is a
