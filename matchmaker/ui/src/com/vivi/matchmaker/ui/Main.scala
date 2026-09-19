@@ -773,10 +773,10 @@ object Views {
 
     /** The screen that finds a player by the start of their nickname.
       *
-      * A prefix rather than a substring, and case sensitively, which is what the search is specified to be — so the
-      * field says so. Saying it in the label is the whole of the explanation anyone needs: nicknames are case sensitive
-      * here (the unique index treats "Ash" and "ash" as two names), and a search that quietly folded case would offer
-      * one as the other.
+      * A prefix rather than a substring — the start of a name, not any part of it — and nothing else to explain: case
+      * is ignored, and so is how the name was spaced, so there is no rule for the searcher to get right. Nicknames
+      * themselves are still case sensitive, which is why two players whose names differ only in case both appear here,
+      * each spelled as they registered.
       */
     private def findPlayersPage: HtmlElement =
         sectionTag(
@@ -790,7 +790,7 @@ object Views {
               // reload the page and sign the player out of the screen they are looking at.
               onSubmit.preventDefault --> (_ => runPlayerSearch()),
               field(
-                "Nickname begins with (case sensitive)",
+                "Nickname begins with",
                 input(
                   tpe := "search",
                   // A nickname is not a word the browser has seen before, and a dropdown of the

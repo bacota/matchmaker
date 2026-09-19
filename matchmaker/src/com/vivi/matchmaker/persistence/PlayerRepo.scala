@@ -111,42 +111,58 @@ class PlayerRepo(session: Session[IO]) {
 
     /* Players whose nickname begins with a prefix, for the search box.
      *
-     * `LIKE`, over a pattern built below rather than over the prefix itself, because this is the form
-     * an index can serve: with the `text_pattern_ops` index of V20 in place, Postgres turns
-     * `nickname LIKE 'abc%'` into the range `nickname ~>=~ 'abc' AND nickname ~<~ 'abd'` and scans
-     * it. `starts_with(nickname, $1)`, which this replaced, is a function call over every row and
-     * indexable by nothing.
+     * Case insensitive, and insensitive to how the name was spaced: both sides of the comparison are
+     * normalized the same way -- lowercased, every run of whitespace collapsed to one space, and
+     * trimmed -- so "red  BARON" finds "Red Baron". `normalized` below is the Scala half; the SQL
+     * expression here is the other, and V21 indexes exactly this expression. The three must stay
+     * identical: a difference in any of them is not a wrong answer but a silent table scan, or a
+     * nickname that cannot be found by the way it is written.
      *
-     * The price of LIKE is that the pattern has a language, so the prefix has to be escaped on the
-     * way in -- see `likePrefix`. Case sensitive, which is what the search is specified to be: LIKE
-     * compares as the column does, and the column is case sensitive.
+     * `LIKE` rather than `starts_with`, because this is the form the index can serve: Postgres turns
+     * `expr LIKE 'abc%'` into the range `expr ~>=~ 'abc' AND expr ~<~ 'abd'` over V21's
+     * `text_pattern_ops` index. The price is that the pattern has a language, so the prefix is
+     * escaped on the way in -- see `likePrefix`.
      *
-     * Ordered by nickname so the page is stable: the caller takes the first few of these and says
-     * whether there were more, and an unordered LIMIT would answer a repeated search with a
-     * different few. That ORDER BY is in the database's collation rather than the index's byte
-     * order, so the plan sorts what the range scan found -- which is the handful of rows the prefix
-     * matched, not the table.
+     * Ordered by nickname, not by the normalized form: the page is a list somebody reads, and the
+     * order they see is the order of the names as they are written. That ORDER BY is in the
+     * database's collation rather than the index's byte order either way, so the plan sorts what the
+     * range scan found -- the handful of rows the prefix matched, not the table.
      *
      * `LIMIT` is a parameter rather than a constant here because the caller asks for one more than
      * it means to show -- that extra row is how it knows to say "there are more". */
     private val selectPlayersByNicknamePrefix: Query[(String, Int), (PlayerId, String)] =
         sql"""SELECT player_id, nickname FROM player
-          WHERE nickname LIKE $text
+          WHERE btrim(regexp_replace(lower(nickname), '[ \t\n\r\f\v]+', ' ', 'g')) LIKE $text
           ORDER BY nickname
           LIMIT $int4"""
             .query(playerId *: text)
 
     /** Players whose nickname begins with `prefix`, in nickname order, at most `limit` of them.
       *
-      * Case sensitive, and the prefix is text rather than a pattern: see `likePrefix`. Answers with
+      * Case insensitive and whitespace insensitive, and the prefix is text rather than a pattern: see
+      * `selectPlayersByNicknamePrefix`, `normalized` and `likePrefix`. Answers with
       * [[com.vivi.matchmaker.model.PublicPlayer]] rather than `Player`, because the caller is a stranger -- the address
       * and the Cognito identity on a `Player` are not theirs to see, and the way to keep it that way is not to read
       * them.
       */
     def searchByNicknamePrefix(prefix: String, limit: Int): IO[List[PublicPlayer]] =
         session
-            .execute(selectPlayersByNicknamePrefix)((likePrefix(prefix), limit))
+            .execute(selectPlayersByNicknamePrefix)((likePrefix(normalized(prefix)), limit))
             .map(_.map((id, nickname) => PublicPlayer(id, nickname)))
+
+    /* A nickname, or the start of one, in the form the search compares.
+     *
+     * The Scala half of V21's index expression, and it has to agree with it character for character:
+     * lowercase, every run of whitespace one space, ends trimmed.
+     *
+     * Two deliberate details. The whitespace class is written out rather than `\\s`, because
+     * Postgres's `\\s` is locale-dependent and Java's is a fixed five characters plus vertical tab --
+     * naming them makes both sides the same function instead of two that agree on ASCII. And the
+     * locale is `ROOT` rather than the JVM's default, because `toLowerCase` with a Turkish default
+     * locale maps `I` to a dotless `i`, which would fold one way in this process and another way in
+     * the database. */
+    private def normalized(nickname: String): String =
+        nickname.toLowerCase(java.util.Locale.ROOT).replaceAll("[ \\t\\n\\r\\f\\u000B]+", " ").trim
 
     /* The prefix somebody typed, as a LIKE pattern that matches it literally and then anything.
      *

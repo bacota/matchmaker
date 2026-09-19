@@ -64,16 +64,77 @@ class PlayerServiceSpec extends PropertySuite {
         }
     }
 
-    /* Case sensitive, as specified -- and as the unique index on nickname already is: "Ash" and
-     * "ash" are two registrable names, so a search that folded case would offer each as the other. */
-    property("search is case sensitive") {
-        forAll(genUniqueString, genUniqueString) { (suffix, externalId) =>
+    /* Case insensitive: the search compares a normalized nickname -- lowercased, whitespace
+     * collapsed, trimmed -- and V21 indexes that same expression. Nickname uniqueness is still case
+     * sensitive, so "Ash" and "ash" are two players, and a search that folds case offers both. */
+    property("search ignores the case of the prefix and of the nickname") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (suffix, externalId, callerId) =>
             val nickname = s"A$suffix"
             val result = for {
-                _ <- registrationService.register(nickname, externalId)
-                same <- playerService.search(externalId, s"A${suffix.take(4)}")
-                flipped <- playerService.search(externalId, s"a${suffix.take(4)}")
-            } yield same.players.map(_.nickname) == List(nickname) && flipped.players.isEmpty
+                registered <- registrationService.register(nickname, externalId)
+                _ <- registrationService.register(callerId, callerId)
+                same <- playerService.search(callerId, s"A${suffix.take(4)}")
+                flipped <- playerService.search(callerId, s"a${suffix.take(4)}")
+                shouted <- playerService.search(callerId, s"A${suffix.take(4)}".toUpperCase)
+            } yield same.players.map(_.playerId) == List(registered.playerId) &&
+                flipped.players.map(_.playerId) == List(registered.playerId) &&
+                // Whatever the prefix was written as, the row says the nickname as it was registered.
+                same.players.map(_.nickname) == List(nickname) &&
+                shouted.players.map(_.playerId) == List(registered.playerId)
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* Both players are findable, and each is spelled as they registered: this is the consequence of
+     * folding case in a register where "Ash" and "ash" are two names. */
+    property("a folded search finds every player whose name differs only in case") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (suffix, upperId, lowerId, callerId) =>
+                val upper = s"A$suffix"
+                val lower = s"a$suffix"
+                val result = for {
+                    first <- registrationService.register(upper, upperId)
+                    second <- registrationService.register(lower, lowerId)
+                    _ <- registrationService.register(callerId, callerId)
+                    found <- playerService.search(callerId, s"a${suffix.take(4)}")
+                } yield found.players.map(_.playerId).toSet == Set(first.playerId, second.playerId) &&
+                    found.players.map(_.nickname).toSet == Set(upper, lower)
+                result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* Whitespace is normalized on both sides, so how a name was spaced is not something a searcher
+     * has to guess: any run of it is one space, and the ends do not count. Every case here is a
+     * nickname somebody could register -- nothing trims a nickname on the way in. */
+    property("search treats any run of whitespace as a single space") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (base, externalId, callerId) =>
+            val spaced = s"$base \t\n  tail"
+            val result = for {
+                registered <- registrationService.register(spaced, externalId)
+                _ <- registrationService.register(callerId, callerId)
+                single <- playerService.search(callerId, s"$base tail")
+                tabbed <- playerService.search(callerId, s"$base\ttail")
+                many <- playerService.search(callerId, s"$base     tail")
+            } yield single.players.map(_.playerId) == List(registered.playerId) &&
+                tabbed.players.map(_.playerId) == List(registered.playerId) &&
+                many.players.map(_.playerId) == List(registered.playerId)
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* And the ends are trimmed, on the stored name as well as on the prefix: " bob" is a nickname
+     * somebody has, and "bob" is how anybody would look for them. */
+    property("search ignores whitespace at the ends of the nickname") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (base, externalId, callerId) =>
+            val padded = s"  $base  "
+            val result = for {
+                registered <- registrationService.register(padded, externalId)
+                _ <- registrationService.register(callerId, callerId)
+                found <- playerService.search(callerId, base.take(8))
+            } yield found.players.map(_.playerId) == List(registered.playerId) &&
+                // Said back as it is stored, padding and all: normalizing is how it is found, not how
+                // it is spelled.
+                found.players.map(_.nickname) == List(padded)
             result.timeout(10.seconds).unsafeRunSync()
         }
     }
