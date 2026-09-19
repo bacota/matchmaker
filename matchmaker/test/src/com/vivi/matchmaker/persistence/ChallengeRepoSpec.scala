@@ -6,7 +6,7 @@ import com.vivi.matchmaker.PropertySuite
 import com.vivi.matchmaker.model.CharacterAcceptance
 import org.scalacheck.Prop._
 
-class OpenChallengeRepoSpec extends PropertySuite {
+class ChallengeRepoSpec extends PropertySuite {
     property("create then read returns the open challenge just created") {
         forAll(Generators.genPlayer) { player =>
             TestSession.resource
@@ -14,7 +14,7 @@ class OpenChallengeRepoSpec extends PropertySuite {
                     val gameRepo = new GameRepo[String](session)
                     val playerRepo = new PlayerRepo(session)
                     val characterRepo = new CharacterRepo[String](session)
-                    val openChallengeRepo = new OpenChallengeRepo(session)
+                    val challengeRepo = new ChallengeRepo(session)
                     val acceptanceRepo = new AcceptanceRepo(session)
 
                     for {
@@ -25,7 +25,7 @@ class OpenChallengeRepoSpec extends PropertySuite {
                         )
                         challenge <- IO.pure(
                           Generators
-                              .genOpenChallenge(
+                              .genChallenge(
                                 createdPlayer.playerId,
                                 createdGame.gameId,
                                 createdCharacter.characterId,
@@ -34,7 +34,7 @@ class OpenChallengeRepoSpec extends PropertySuite {
                               .sample
                               .get
                         )
-                        created <- openChallengeRepo.create(challenge)
+                        created <- challengeRepo.create(challenge)
                         // The challenger's own acceptance, which the service always writes alongside the
                         // challenge and which is where the challenge's role is stored -- reading a challenge
                         // joins it back in, so a challenge without one is not a state that ever exists.
@@ -47,7 +47,7 @@ class OpenChallengeRepoSpec extends PropertySuite {
                             challenge.gameRoleId
                           )
                         )
-                        found <- openChallengeRepo.read(createdGame.gameId, created.challengeId)
+                        found <- challengeRepo.read(createdGame.gameId, created.challengeId)
                     } yield found == Some(created)
                 }
                 .unsafeRunSync()

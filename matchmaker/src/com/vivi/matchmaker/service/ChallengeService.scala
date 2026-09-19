@@ -5,21 +5,14 @@ import cats.syntax.all._
 import com.vivi.matchmaker.model._
 import skunk.Session
 import com.vivi.matchmaker.notify.Notifications
-import com.vivi.matchmaker.persistence.{
-    AcceptanceRepo,
-    CharacterRepo,
-    GameRepo,
-    OpenChallengeRepo,
-    PlayerRepo,
-    TextCodec
-}
+import com.vivi.matchmaker.persistence.{AcceptanceRepo, CharacterRepo, GameRepo, ChallengeRepo, PlayerRepo, TextCodec}
 
-/** Creates and deletes open challenges. For a `'C'`-type game (a [[CharacterOpenChallenge]]), both operations are
+/** Creates and deletes open challenges. For a `'C'`-type game (a [[CharacterChallenge]]), both operations are
   * authorized by `callerExternalId` matching the externalId of the player who owns the challenge's character, same as
-  * before. For a `'P'`-type game (a [[PlainOpenChallenge]]) there is no character to authorize through, so
+  * before. For a `'P'`-type game (a [[PlainChallenge]]) there is no character to authorize through, so
   * `callerExternalId` must match the challenger player directly.
   */
-class OpenChallengeService[T](
+class ChallengeService[T](
     sessionPool: SessionPool,
     /* Who gets told about an acceptance is `Notifications`' business, not this service's: all this
      * knows is that one happened. Silent by default, which is what an environment with no queue and
@@ -27,7 +20,7 @@ class OpenChallengeService[T](
      * notifications existed. */
     notifications: Notifications = Notifications.disabled,
     /* How a challenge whose required roles have just filled up gets started, for the challenges
-     * offered on those terms (`OpenChallenge.autoStart`), and whether the challenge is now a match.
+     * offered on those terms (`Challenge.autoStart`), and whether the challenge is now a match.
      *
      * A match rather than "did this start one", which is not the same question and is the wrong one:
      * a start that lost a race to another acceptance filling the same last seat, or to the challenger
@@ -79,12 +72,12 @@ class OpenChallengeService[T](
             case None    => IO.raiseError(NotFoundError(s"no player with id ${playerId.value}"))
         }
 
-    def create(challenge: OpenChallenge, callerExternalId: String): IO[OpenChallenge] =
+    def create(challenge: Challenge, callerExternalId: String): IO[Challenge] =
         sessionPool.use { session =>
             val gameRepo = new GameRepo[T](session)
             val characterRepo = new CharacterRepo[T](session)
             val playerRepo = new PlayerRepo(session)
-            val challengeRepo = new OpenChallengeRepo(session)
+            val challengeRepo = new ChallengeRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
             // Creating a challenge is itself an acceptance of it: the challenger is the first
             // participant. Both rows go in together so a challenge can never exist with its creator
@@ -95,11 +88,11 @@ class OpenChallengeService[T](
                     // and acceptance rows written below, not anything about the game itself.
                     game <- requireGame(gameRepo, challenge.gameId)
                     _ <- challenge match {
-                        case cc: CharacterOpenChallenge =>
+                        case cc: CharacterChallenge =>
                             for {
                                 _ <- IO.raiseUnless(game.gameType == GameType.Character)(
                                   ValidationError(
-                                    s"game ${game.gameId.value} does not require a character, but a CharacterOpenChallenge was given"
+                                    s"game ${game.gameId.value} does not require a character, but a CharacterChallenge was given"
                                   )
                                 )
                                 // Locked: ownership is what authorizes this challenge, and the challenge row
@@ -131,11 +124,11 @@ class OpenChallengeService[T](
                                   )
                                 )
                             } yield ()
-                        case _: PlainOpenChallenge =>
+                        case _: PlainChallenge =>
                             for {
                                 _ <- IO.raiseUnless(game.gameType == GameType.Plain)(
                                   ValidationError(
-                                    s"game ${game.gameId.value} requires a character, but a PlainOpenChallenge was given"
+                                    s"game ${game.gameId.value} requires a character, but a PlainChallenge was given"
                                   )
                                 )
                                 challengerPlayer <- requirePlayer(playerRepo, challenge.challenger)
@@ -155,9 +148,9 @@ class OpenChallengeService[T](
                     )
                     created <- challengeRepo.create(challenge)
                     _ <- acceptanceRepo.create(created match {
-                        case cc: CharacterOpenChallenge =>
+                        case cc: CharacterChallenge =>
                             CharacterAcceptance(cc.challengeId, cc.challenger, cc.gameId, cc.characterId, cc.gameRoleId)
-                        case pc: PlainOpenChallenge =>
+                        case pc: PlainChallenge =>
                             PlainAcceptance(pc.challengeId, pc.challenger, pc.gameId, pc.gameRoleId)
                     })
                 } yield created
@@ -166,7 +159,7 @@ class OpenChallengeService[T](
 
     /** Accepts `challengeId` in game `gameId`, authorized by `callerExternalId`. For a `'C'`-type game's challenge,
       * `characterId` must be `Some`, naming the character accepting on the caller's behalf, and is authorized the same
-      * way `create` authorizes a [[CharacterOpenChallenge]]. For a `'P'`-type game's challenge, `characterId` must be
+      * way `create` authorizes a [[CharacterChallenge]]. For a `'P'`-type game's challenge, `characterId` must be
       * `None`, and the caller accepts as themselves. The challenge row is locked (`FOR UPDATE`) before the role check,
       * which is what makes that check race-free against concurrent acceptance attempts: `gameRoleId` must be one of the
       * game's roles and must not already be taken by another acceptance of this challenge, and two players asking for
@@ -185,7 +178,7 @@ class OpenChallengeService[T](
             val gameRepo = new GameRepo[T](session)
             val characterRepo = new CharacterRepo[T](session)
             val playerRepo = new PlayerRepo(session)
-            val challengeRepo = new OpenChallengeRepo(session)
+            val challengeRepo = new ChallengeRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
             val accepted = session.transaction.use { _ =>
                 for {
@@ -336,16 +329,16 @@ class OpenChallengeService[T](
       *
       * The caller is resolved to a player rather than merely checked, because what the list holds depends on who is
       * asking: a challenge that is full but not yet started is shown only to the players in it. See
-      * [[OpenChallengeRepo.listByGame]].
+      * [[ChallengeRepo.listByGame]].
       */
-    def listByGame(gameId: GameId, callerExternalId: String): IO[List[OpenChallengeSummary]] =
+    def listByGame(gameId: GameId, callerExternalId: String): IO[List[ChallengeSummary]] =
         sessionPool.use { session =>
             for {
                 caller <- new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
                     case Some(player) => IO.pure(player)
                     case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
                 }
-                challenges <- new OpenChallengeRepo(session).listByGame(gameId, caller.playerId)
+                challenges <- new ChallengeRepo(session).listByGame(gameId, caller.playerId)
             } yield challenges
         }
 
@@ -353,7 +346,7 @@ class OpenChallengeService[T](
         sessionPool.use { session =>
             val characterRepo = new CharacterRepo[T](session)
             val playerRepo = new PlayerRepo(session)
-            val challengeRepo = new OpenChallengeRepo(session)
+            val challengeRepo = new ChallengeRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
             session.transaction.use { _ =>
                 for {
@@ -383,7 +376,7 @@ class OpenChallengeService[T](
                             )
                     }
                     _ <- challenge match {
-                        case cc: CharacterOpenChallenge =>
+                        case cc: CharacterChallenge =>
                             // Locked: the owner read here is the only thing authorizing the delete below.
                             characterRepo.readWithOwnerAndGameForUpdate(cc.characterId).flatMap {
                                 case Some(joined) =>
@@ -395,7 +388,7 @@ class OpenChallengeService[T](
                                 case None =>
                                     IO.raiseError(NotFoundError(s"no character with id ${cc.characterId.value}"))
                             }
-                        case pc: PlainOpenChallenge =>
+                        case pc: PlainChallenge =>
                             requirePlayer(playerRepo, pc.challenger).flatMap { challenger =>
                                 IO.raiseUnless(callerExternalId == challenger.externalId)(
                                   UnauthorizedError(

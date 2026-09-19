@@ -313,7 +313,7 @@ class MatchRepo(session: Session[IO]) {
      * plan the database actually runs. */
     private val selectActiveForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
-                 oc.challenger = p.player_id, m.start,
+                 ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed, seat.due,
@@ -328,7 +328,7 @@ class MatchRepo(session: Session[IO]) {
           -- The challenge the match was started from, which is never deleted: its challenger is
           -- the match's creator, and comparing them here is what tells this player whether the
           -- match is theirs to cancel.
-          JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
+          JOIN challenge ch ON ch.game_id = m.game_id AND ch.challenge_id = m.challenge_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           -- Everyone in the match, the caller included. This is what multiplies the rows, and
           -- what lets a caller say who is playing and who is waited on without asking again.
@@ -351,7 +351,7 @@ class MatchRepo(session: Session[IO]) {
      * ahead of everything, and `start` orders them among themselves. */
     private val selectOverForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
-                 oc.challenger = p.player_id, m.start,
+                 ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed, seat.due,
@@ -363,7 +363,7 @@ class MatchRepo(session: Session[IO]) {
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
-          JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
+          JOIN challenge ch ON ch.game_id = m.game_id AND ch.challenge_id = m.challenge_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
@@ -387,10 +387,10 @@ class MatchRepo(session: Session[IO]) {
      * be called with the wrong argument.
      *
      * The caller-relative columns are still relative to the player being asked about: `p.pending` is
-     * whether it is their turn, and `oc.challenger = p.player_id` whether the match is theirs. */
+     * whether it is their turn, and `ch.challenger = p.player_id` whether the match is theirs. */
     private val selectPublicActiveForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
-                 oc.challenger = p.player_id, m.start,
+                 ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed, seat.due,
@@ -402,7 +402,7 @@ class MatchRepo(session: Session[IO]) {
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
-          JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
+          JOIN challenge ch ON ch.game_id = m.game_id AND ch.challenge_id = m.challenge_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
@@ -424,7 +424,7 @@ class MatchRepo(session: Session[IO]) {
 
     private val selectPublicOverForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
-                 oc.challenger = p.player_id, m.start,
+                 ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed, seat.due,
@@ -436,7 +436,7 @@ class MatchRepo(session: Session[IO]) {
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
-          JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
+          JOIN challenge ch ON ch.game_id = m.game_id AND ch.challenge_id = m.challenge_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
@@ -447,7 +447,7 @@ class MatchRepo(session: Session[IO]) {
 
     private val selectDueForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
-                 oc.challenger = p.player_id, m.start,
+                 ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed, seat.due,
@@ -459,7 +459,7 @@ class MatchRepo(session: Session[IO]) {
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
-          JOIN open_challenge oc ON oc.game_id = m.game_id AND oc.challenge_id = m.challenge_id
+          JOIN challenge ch ON ch.game_id = m.game_id AND ch.challenge_id = m.challenge_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id

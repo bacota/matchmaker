@@ -12,7 +12,7 @@ import com.vivi.matchmaker.persistence.{
     CharacterRepo,
     GameRepo,
     MatchRepo,
-    OpenChallengeRepo,
+    ChallengeRepo,
     ParticipantRepo,
     ResultRepo,
     TestSession
@@ -112,8 +112,8 @@ class MatchServiceSpec extends PropertySuite {
             // The match's creator is its challenge's challenger, and a match cannot exist without a
             // challenge to point at — so the whole chain is built here even though most of these
             // tests only care about the lists.
-            challenge <- new OpenChallengeRepo(session).create(
-              CharacterOpenChallenge(
+            challenge <- new ChallengeRepo(session).create(
+              CharacterChallenge(
                 ChallengeId(0),
                 player.playerId,
                 "challenge",

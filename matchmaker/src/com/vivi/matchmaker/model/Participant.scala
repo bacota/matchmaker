@@ -3,7 +3,7 @@ package com.vivi.matchmaker.model
 import java.time.Instant
 
 /** A player's (or, for a `'C'`-type game, a character's) seat in a match. Mirrors the `participant` table split the
-  * same way [[OpenChallenge]] mirrors `open_challenge`.
+  * same way [[Challenge]] mirrors `challenge`.
   */
 sealed trait Participant {
     def participantId: ParticipantId

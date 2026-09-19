@@ -255,7 +255,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         dispatch(session, s"challenge ${challengeId.value} of game ${gameId.value}") { (from, uiBaseUrl) =>
             val notificationRepo = new NotificationRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
-            val challengeRepo = new OpenChallengeRepo(session)
+            val challengeRepo = new ChallengeRepo(session)
 
             notificationRepo.gameNotice(gameId).flatMap {
                 // A game that is not there is not a thing to write about, and this is the reporting
@@ -318,14 +318,14 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
      *
      * Nothing here is conditioned on the challenge starting itself, and deliberately not: on that
      * path this notification is not sent at all, because the acceptance that filled the roster was
-     * the match beginning rather than news about a challenge -- `OpenChallengeService.accept` is
+     * the match beginning rather than news about a challenge -- `ChallengeService.accept` is
      * where that is decided, and it decides it by asking whether a match was actually started. Which
      * leaves one case here that looks like it should be quiet and must not be: an auto-start that
      * failed. The challenge is still there, still startable by hand, and "every role is taken, you
      * can start it" is then the only mail that says so. */
     private def kindsFor(
         recipient: AcceptorNotifications,
-        challenge: OpenChallenge,
+        challenge: Challenge,
         joined: Boolean,
         waitingFor: Seq[String]
     ): Seq[NotificationType] = {

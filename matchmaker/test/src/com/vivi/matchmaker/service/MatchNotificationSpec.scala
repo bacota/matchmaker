@@ -99,7 +99,7 @@ class MatchNotificationSpec extends PropertySuite {
             accepter <- services.registration
                 .register(s"accepter-$seed", s"accepter-$seed", Some(s"accepter-$seed@example.com"))
             challenge <- services.challenges.create(
-              PlainOpenChallenge(
+              PlainChallenge(
                 ChallengeId(0),
                 challenger.playerId,
                 "friendly game",

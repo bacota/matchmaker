@@ -42,8 +42,8 @@ class JsonSpec extends FunSuite {
         assertEquals(decoded.parameters.head.asInstanceOf[GameParameter[String]].defaultValue, Some("default"))
     }
 
-    test("an OpenChallenge round-trips its Instant and Duration fields") {
-        val challenge = CharacterOpenChallenge(
+    test("a Challenge round-trips its Instant and Duration fields") {
+        val challenge = CharacterChallenge(
           ChallengeId(1),
           PlayerId(2),
           "message",
@@ -54,13 +54,13 @@ class JsonSpec extends FunSuite {
           characterId = CharacterId(5),
           gameRoleId = GameRoleId(6)
         )
-        assertEquals(read[OpenChallenge](write(challenge)), challenge)
+        assertEquals(read[Challenge](write(challenge)), challenge)
     }
 
     test("a Duration is seconds and an Instant is ISO-8601") {
         val json = ujson.read(
           write(
-            CharacterOpenChallenge(
+            CharacterChallenge(
               ChallengeId(1),
               PlayerId(2),
               "m",
@@ -78,11 +78,11 @@ class JsonSpec extends FunSuite {
     }
 
     // What GET /games/:id/challenges actually returns. The nested `challenge` goes through the
-    // merged OpenChallenge reader, so a discriminator that did not survive being a field of another
+    // merged Challenge reader, so a discriminator that did not survive being a field of another
     // object would show up only when the challenges page was loaded.
-    test("an OpenChallengeSummary round-trips both kinds of challenge, keeping the subtype") {
-        val character = OpenChallengeSummary(
-          CharacterOpenChallenge(
+    test("a ChallengeSummary round-trips both kinds of challenge, keeping the subtype") {
+        val character = ChallengeSummary(
+          CharacterChallenge(
             ChallengeId(1),
             PlayerId(2),
             "message",
@@ -97,8 +97,8 @@ class JsonSpec extends FunSuite {
           acceptances = 2,
           takenRoles = Seq(GameRoleId(6), GameRoleId(7))
         )
-        val plain = OpenChallengeSummary(
-          PlainOpenChallenge(
+        val plain = ChallengeSummary(
+          PlainChallenge(
             ChallengeId(7),
             PlayerId(8),
             "message",
@@ -112,23 +112,23 @@ class JsonSpec extends FunSuite {
           takenRoles = Seq(GameRoleId(10))
         )
 
-        assertEquals(read[OpenChallengeSummary](write(character)), character)
-        assertEquals(read[OpenChallengeSummary](write(plain)), plain)
+        assertEquals(read[ChallengeSummary](write(character)), character)
+        assertEquals(read[ChallengeSummary](write(plain)), plain)
         // The subtype is what decides whether the UI has a character to accept with, so assert it
         // rather than trusting equality alone to have compared it.
-        assert(read[OpenChallengeSummary](write(character)).challenge.isInstanceOf[CharacterOpenChallenge])
-        assert(read[OpenChallengeSummary](write(plain)).challenge.isInstanceOf[PlainOpenChallenge])
+        assert(read[ChallengeSummary](write(character)).challenge.isInstanceOf[CharacterChallenge])
+        assert(read[ChallengeSummary](write(plain)).challenge.isInstanceOf[PlainChallenge])
 
         // A list of both, which is the response shape rather than a single summary.
         val both = List(character, plain)
-        assertEquals(read[List[OpenChallengeSummary]](write(both)), both)
+        assertEquals(read[List[ChallengeSummary]](write(both)), both)
     }
 
-    test("an OpenChallengeSummary nests the challenge rather than flattening it") {
+    test("a ChallengeSummary nests the challenge rather than flattening it") {
         val json = ujson.read(
           write(
-            OpenChallengeSummary(
-              PlainOpenChallenge(
+            ChallengeSummary(
+              PlainChallenge(
                 ChallengeId(1),
                 PlayerId(2),
                 "m",

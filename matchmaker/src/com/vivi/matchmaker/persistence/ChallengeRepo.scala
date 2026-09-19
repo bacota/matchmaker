@@ -9,20 +9,20 @@ import natchez.Trace.Implicits.noop
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 
-/** The fields read (and locked) by [[OpenChallengeRepo.readForUpdate]].
+/** The fields read (and locked) by [[ChallengeRepo.readForUpdate]].
   *
   * `startedMatchId` is non-empty once a challenge has been claimed by `GameEngineService.start`; see
-  * [[OpenChallengeRepo.claimForStart]].
+  * [[ChallengeRepo.claimForStart]].
   */
 case class LockedChallenge(gameType: GameType, startedMatchId: Option[MatchId])
 
-/** Reads and writes `open_challenge` (plus its `character_open_challenge` sibling).
+/** Reads and writes `challenge` (plus its `character_challenge` sibling).
   *
-  * `OpenChallenge.gameRoleId` has no column here — the challenger's role lives on their own acceptance, which
-  * `OpenChallengeService.create` writes in the same transaction as the challenge. Reads join that acceptance back in,
-  * so a challenge still reports the role its challenger will play without the fact being stored twice.
+  * `Challenge.gameRoleId` has no column here — the challenger's role lives on their own acceptance, which
+  * `ChallengeService.create` writes in the same transaction as the challenge. Reads join that acceptance back in, so a
+  * challenge still reports the role its challenger will play without the fact being stored twice.
   */
-class OpenChallengeRepo(session: Session[IO]) {
+class ChallengeRepo(session: Session[IO]) {
     private val challengeId = SkunkIdCodecs.challengeId
     private val playerId = SkunkIdCodecs.playerId
     private val gameId = SkunkIdCodecs.gameId
@@ -54,7 +54,7 @@ class OpenChallengeRepo(session: Session[IO]) {
       ),
       ChallengeId
     ] =
-        sql"""INSERT INTO open_challenge (game_type, challenger, message, start, time_limit,
+        sql"""INSERT INTO challenge (game_type, challenger, message, start, time_limit,
                                       settings, game_id, public, time_limit_kind, time_limit_unit,
                                       auto_start)
           VALUES ($gameType, $playerId, $text, ${instant.opt}, ${float8.opt} * INTERVAL '1 second',
@@ -62,7 +62,7 @@ class OpenChallengeRepo(session: Session[IO]) {
           RETURNING challenge_id""".query(challengeId)
 
     private val insertCharacterChallenge: Command[(GameId, ChallengeId, CharacterId)] =
-        sql"""INSERT INTO character_open_challenge (game_id, challenge_id, game_type, character_id)
+        sql"""INSERT INTO character_challenge (game_id, challenge_id, game_type, character_id)
           VALUES ($gameId, $challengeId, 'C', $characterId)""".command
 
     // A trailing opaque-typed codec defeats skunk's twiddle-list match-type resolution from
@@ -105,7 +105,7 @@ class OpenChallengeRepo(session: Session[IO]) {
             TimeLimitUnit,
             Boolean
         )
-    ): OpenChallenge = {
+    ): Challenge = {
         val (
           gameType,
           gameId,
@@ -126,10 +126,10 @@ class OpenChallengeRepo(session: Session[IO]) {
             case GameType.Character =>
                 val cid = characterIdValue.getOrElse(
                   throw new IllegalStateException(
-                    s"open_challenge ${id.value} is game_type 'C' but has no character_open_challenge row"
+                    s"challenge ${id.value} is game_type 'C' but has no character_challenge row"
                   )
                 )
-                CharacterOpenChallenge(
+                CharacterChallenge(
                   id,
                   challenger,
                   message,
@@ -145,7 +145,7 @@ class OpenChallengeRepo(session: Session[IO]) {
                   autoStart
                 )
             case GameType.Plain =>
-                PlainOpenChallenge(
+                PlainChallenge(
                   id,
                   challenger,
                   message,
@@ -162,7 +162,7 @@ class OpenChallengeRepo(session: Session[IO]) {
         }
     }
 
-    // open_challenge's primary key is the composite (game_id, challenge_id) — challenge_id alone
+    // challenge's primary key is the composite (game_id, challenge_id) — challenge_id alone
     // is not declared unique — so both columns are required here, not challenge_id alone.
     private val selectChallenge: Query[
       (GameId, ChallengeId),
@@ -182,18 +182,18 @@ class OpenChallengeRepo(session: Session[IO]) {
           Boolean
       )
     ] =
-        sql"""SELECT oc.game_type, oc.game_id, oc.challenger, oc.message, oc.start,
-                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, a.game_role_id, cc.character_id,
-                 oc.time_limit_kind, oc.time_limit_unit, oc.auto_start
-          FROM open_challenge oc
-          LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
-          JOIN acceptance a ON a.game_id = oc.game_id AND a.challenge_id = oc.challenge_id
-                           AND a.player_id = oc.challenger
-          WHERE oc.game_id = $gameId AND oc.challenge_id = $challengeId"""
+        sql"""SELECT ch.game_type, ch.game_id, ch.challenger, ch.message, ch.start,
+                 EXTRACT(EPOCH FROM ch.time_limit)::float8, ch.settings, ch.public, a.game_role_id, cc.character_id,
+                 ch.time_limit_kind, ch.time_limit_unit, ch.auto_start
+          FROM challenge ch
+          LEFT JOIN character_challenge cc ON cc.game_id = ch.game_id AND cc.challenge_id = ch.challenge_id
+          JOIN acceptance a ON a.game_id = ch.game_id AND a.challenge_id = ch.challenge_id
+                           AND a.player_id = ch.challenger
+          WHERE ch.game_id = $gameId AND ch.challenge_id = $challengeId"""
             .query(challengeRow)
 
     private val selectChallengeForUpdate: Query[(GameId, ChallengeId), (GameType, Option[MatchId])] =
-        sql"""SELECT game_type, started_match_id FROM open_challenge
+        sql"""SELECT game_type, started_match_id FROM challenge
           WHERE game_id = $gameId AND challenge_id = $challengeId FOR UPDATE"""
             .query(gameType *: matchId.opt)
 
@@ -214,21 +214,21 @@ class OpenChallengeRepo(session: Session[IO]) {
           ChallengeId
       )
     ] =
-        sql"""UPDATE open_challenge SET challenger = $playerId, message = $text,
+        sql"""UPDATE challenge SET challenger = $playerId, message = $text,
           start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
           public = $bool, time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit,
           auto_start = $bool
           WHERE game_id = $gameId AND challenge_id = $challengeId""".command
 
-    /** Inserts the challenge, and for a [[CharacterOpenChallenge]] its character row too.
+    /** Inserts the challenge, and for a [[CharacterChallenge]] its character row too.
       *
       * Like every write in this package it opens no transaction of its own — that is the calling service's job, and
       * skunk rejects nested transactions outright anyway.
       */
-    def create(c: OpenChallenge): IO[OpenChallenge] = {
+    def create(c: Challenge): IO[Challenge] = {
         val gt = c match {
-            case _: CharacterOpenChallenge => GameType.Character
-            case _: PlainOpenChallenge     => GameType.Plain
+            case _: CharacterChallenge => GameType.Character
+            case _: PlainChallenge     => GameType.Plain
         }
         for {
             id <- session.unique(insertChallenge)(
@@ -247,17 +247,17 @@ class OpenChallengeRepo(session: Session[IO]) {
               )
             )
             _ <- c match {
-                case cc: CharacterOpenChallenge =>
+                case cc: CharacterChallenge =>
                     session.execute(insertCharacterChallenge)((c.gameId, id, cc.characterId)).void
-                case _: PlainOpenChallenge => IO.unit
+                case _: PlainChallenge => IO.unit
             }
         } yield c match {
-            case cc: CharacterOpenChallenge => cc.copy(challengeId = id)
-            case pc: PlainOpenChallenge     => pc.copy(challengeId = id)
+            case cc: CharacterChallenge => cc.copy(challengeId = id)
+            case pc: PlainChallenge     => pc.copy(challengeId = id)
         }
     }
 
-    def read(gameId: GameId, id: ChallengeId): IO[Option[OpenChallenge]] =
+    def read(gameId: GameId, id: ChallengeId): IO[Option[Challenge]] =
         session.option(selectChallenge)((gameId, id)).map(_.map(row => toChallenge(id, row)))
 
     /** Reads a challenge's game_type and start claim, taking a row lock (`FOR UPDATE`) that is held until the enclosing
@@ -275,7 +275,7 @@ class OpenChallengeRepo(session: Session[IO]) {
      * is still news about an open challenge, or news that has been overtaken by the match beginning --
      * and locking a row to decide what to put in an email would make every start wait on a mail. */
     private val selectStartedMatch: Query[(GameId, ChallengeId), Option[MatchId]] =
-        sql"""SELECT started_match_id FROM open_challenge
+        sql"""SELECT started_match_id FROM challenge
           WHERE game_id = $gameId AND challenge_id = $challengeId"""
             .query(matchId.opt)
 
@@ -287,7 +287,7 @@ class OpenChallengeRepo(session: Session[IO]) {
         session.option(selectStartedMatch)((gameId, id)).map(_.flatten)
 
     private val selectChallenger: Query[(GameId, ChallengeId), PlayerId] =
-        sql"""SELECT challenger FROM open_challenge
+        sql"""SELECT challenger FROM challenge
           WHERE game_id = $gameId AND challenge_id = $challengeId""".query(playerId)
 
     /** Just the challenger of a challenge.
@@ -300,11 +300,11 @@ class OpenChallengeRepo(session: Session[IO]) {
         session.option(selectChallenger)((gameId, id))
 
     private val claimChallengeForStart: Command[(MatchId, GameId, ChallengeId)] =
-        sql"""UPDATE open_challenge SET started_match_id = $matchId
+        sql"""UPDATE challenge SET started_match_id = $matchId
           WHERE game_id = $gameId AND challenge_id = $challengeId""".command
 
     private val releaseChallengeStartClaim: Command[(GameId, ChallengeId)] =
-        sql"""UPDATE open_challenge SET started_match_id = NULL
+        sql"""UPDATE challenge SET started_match_id = NULL
           WHERE game_id = $gameId AND challenge_id = $challengeId""".command
 
     /** Marks a challenge as being started as `matchId`, so that a second concurrent start is refused rather than
@@ -323,7 +323,7 @@ class OpenChallengeRepo(session: Session[IO]) {
     def releaseStartClaim(gameId: GameId, id: ChallengeId): IO[Unit] =
         session.execute(releaseChallengeStartClaim)((gameId, id)).void
 
-    def update(c: OpenChallenge): IO[Unit] =
+    def update(c: Challenge): IO[Unit] =
         session
             .execute(updateChallenge)(
               (
@@ -342,15 +342,15 @@ class OpenChallengeRepo(session: Session[IO]) {
             )
             .void
 
-    // character_open_challenge has a FK to open_challenge, so its row must go first — deleting
-    // the parent row while a character_open_challenge row still references it is a FK violation.
-    // open_challenge's primary key is the composite (game_id, challenge_id) — challenge_id alone
+    // character_challenge has a FK to challenge, so its row must go first — deleting
+    // the parent row while a character_challenge row still references it is a FK violation.
+    // challenge's primary key is the composite (game_id, challenge_id) — challenge_id alone
     // is not declared unique — so both columns are required here, not challenge_id alone.
     private val deleteCharacterChallenge: Command[(GameId, ChallengeId)] =
-        sql"DELETE FROM character_open_challenge WHERE game_id = $gameId AND challenge_id = $challengeId".command
+        sql"DELETE FROM character_challenge WHERE game_id = $gameId AND challenge_id = $challengeId".command
 
     private val deleteChallenge: Command[(GameId, ChallengeId)] =
-        sql"DELETE FROM open_challenge WHERE game_id = $gameId AND challenge_id = $challengeId".command
+        sql"DELETE FROM challenge WHERE game_id = $gameId AND challenge_id = $challengeId".command
 
     def delete(gameId: GameId, id: ChallengeId): IO[Unit] =
         for {
@@ -381,22 +381,22 @@ class OpenChallengeRepo(session: Session[IO]) {
           Boolean
       )
     ] =
-        sql"""SELECT oc.challenge_id, oc.game_type, oc.challenger, oc.message, oc.start,
-                 EXTRACT(EPOCH FROM oc.time_limit)::float8, oc.settings, oc.public, a.game_role_id, cc.character_id,
+        sql"""SELECT ch.challenge_id, ch.game_type, ch.challenger, ch.message, ch.start,
+                 EXTRACT(EPOCH FROM ch.time_limit)::float8, ch.settings, ch.public, a.game_role_id, cc.character_id,
                  (SELECT count(*) FROM acceptance ac
-                   WHERE ac.game_id = oc.game_id AND ac.challenge_id = oc.challenge_id),
+                   WHERE ac.game_id = ch.game_id AND ac.challenge_id = ch.challenge_id),
                  -- The roles already claimed, as a comma-separated list rather than an array:
                  -- one more scalar subquery beside the count, decoded as text below, which keeps
                  -- this row a flat tuple of scalars like every other query here.
                  (SELECT coalesce(string_agg(ac.game_role_id::text, ',' ORDER BY ac.game_role_id), '')
                     FROM acceptance ac
-                   WHERE ac.game_id = oc.game_id AND ac.challenge_id = oc.challenge_id),
-                 oc.time_limit_kind, oc.time_limit_unit, oc.auto_start
-          FROM open_challenge oc
-          LEFT JOIN character_open_challenge cc ON cc.game_id = oc.game_id AND cc.challenge_id = oc.challenge_id
-          JOIN acceptance a ON a.game_id = oc.game_id AND a.challenge_id = oc.challenge_id
-                           AND a.player_id = oc.challenger
-          WHERE oc.game_id = $gameId AND oc.started_match_id IS NULL
+                   WHERE ac.game_id = ch.game_id AND ac.challenge_id = ch.challenge_id),
+                 ch.time_limit_kind, ch.time_limit_unit, ch.auto_start
+          FROM challenge ch
+          LEFT JOIN character_challenge cc ON cc.game_id = ch.game_id AND cc.challenge_id = ch.challenge_id
+          JOIN acceptance a ON a.game_id = ch.game_id AND a.challenge_id = ch.challenge_id
+                           AND a.player_id = ch.challenger
+          WHERE ch.game_id = $gameId AND ch.started_match_id IS NULL
             -- A full challenge is nobody else's business: it cannot be accepted, and the only
             -- people it is still about are the ones already in it — who need it in order to see
             -- what they are waiting for, and who, if the challenger, need it to start the match.
@@ -404,15 +404,15 @@ class OpenChallengeRepo(session: Session[IO]) {
             -- those are seats a latecomer could still take, even though a start need not wait
             -- for them.
             AND (EXISTS (SELECT 1 FROM game_role gr
-                          WHERE gr.game_id = oc.game_id
+                          WHERE gr.game_id = ch.game_id
                             AND NOT EXISTS (SELECT 1 FROM acceptance ac
-                                             WHERE ac.game_id = oc.game_id
-                                               AND ac.challenge_id = oc.challenge_id
+                                             WHERE ac.game_id = ch.game_id
+                                               AND ac.challenge_id = ch.challenge_id
                                                AND ac.game_role_id = gr.game_role_id))
                  OR EXISTS (SELECT 1 FROM acceptance ac
-                             WHERE ac.game_id = oc.game_id AND ac.challenge_id = oc.challenge_id
+                             WHERE ac.game_id = ch.game_id AND ac.challenge_id = ch.challenge_id
                                AND ac.player_id = $playerId))
-          ORDER BY oc.create_date DESC"""
+          ORDER BY ch.create_date DESC"""
             .query(
               challengeId *: gameType *: playerId *: text *: instant.opt *: float8.opt *: settings *: bool *:
                   gameRoleId *: int8.opt *: int8 *: text *: timeLimitKind *: timeLimitUnit *: bool
@@ -434,7 +434,7 @@ class OpenChallengeRepo(session: Session[IO]) {
       * roles to know which ones are still free to accept as, and together whether a start would be refused for a role
       * nobody has taken.
       */
-    def listByGame(id: GameId, viewer: PlayerId): IO[List[OpenChallengeSummary]] =
+    def listByGame(id: GameId, viewer: PlayerId): IO[List[ChallengeSummary]] =
         session
             .execute(selectChallengesByGame)((id, viewer))
             .map(_.map {
@@ -455,7 +455,7 @@ class OpenChallengeRepo(session: Session[IO]) {
                       timeLimitUnit,
                       autoStart
                     ) =>
-                    OpenChallengeSummary(
+                    ChallengeSummary(
                       toChallenge(
                         challengeId,
                         (

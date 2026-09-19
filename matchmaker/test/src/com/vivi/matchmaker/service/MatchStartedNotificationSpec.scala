@@ -103,7 +103,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
             challenger <- services.registration.register(s"challenger-$seed", challengerId, challengerEmail)
             accepter <- services.registration.register(s"accepter-$seed", accepterId, accepterEmail)
             challenge <- services.challenges.create(
-              PlainOpenChallenge(
+              PlainChallenge(
                 ChallengeId(0),
                 challenger.playerId,
                 "friendly game",
@@ -602,7 +602,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   Some(s"quiet-a-$seed@example.com")
                 )
                 challenge <- services.challenges.create(
-                  PlainOpenChallenge(
+                  PlainChallenge(
                     ChallengeId(0),
                     challenger.playerId,
                     "friendly game",

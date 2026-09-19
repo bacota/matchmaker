@@ -169,7 +169,7 @@ class RouterSpec extends FunSuite {
     )
 
     private val challengeBody = write(
-      CharacterOpenChallenge(
+      CharacterChallenge(
         ChallengeId(0),
         PlayerId(1),
         "message",

@@ -15,7 +15,7 @@ case class Services[T](
     players: PlayerService,
     games: GameService[T],
     characters: CharacterService[T],
-    challenges: OpenChallengeService[T],
+    challenges: ChallengeService[T],
     acceptances: AcceptanceService,
     matches: MatchService,
     engine: GameEngineService[T],
@@ -73,7 +73,7 @@ object Services {
          * offered as starting itself turns an acceptance into a start, and the acceptance is
          * `challenges`' to record while the start is this one's to carry out. Only the function is
          * shared, so neither service has to know about the other -- see
-         * `OpenChallengeService.autoStart`. */
+         * `ChallengeService.autoStart`. */
         val engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications)
 
         Services(
@@ -84,7 +84,7 @@ object Services {
           // One `Notifications` for the four services that cause something worth an email. One
           // rather than one each, because who is told what does not depend on which service the
           // event came from -- that is the whole point of it being a class of its own.
-          challenges = new OpenChallengeService[T](pool, notifications, engine.startIfReady(_, _, _, _).map(_.isMatch)),
+          challenges = new ChallengeService[T](pool, notifications, engine.startIfReady(_, _, _, _).map(_.isMatch)),
           acceptances = new AcceptanceService(pool, notifications),
           matches = new MatchService(pool, notifications),
           engine = engine,

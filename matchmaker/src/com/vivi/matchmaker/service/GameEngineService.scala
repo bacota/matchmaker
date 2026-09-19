@@ -69,8 +69,8 @@ class GameEngineService[T](
     /** Starts a challenge because the challenger said to start it as soon as it could be, rather than because anybody
       * asked now.
       *
-      * `OpenChallenge.autoStart` is the setting, and "could be" is the rule a manual start already enforces: every
-      * non-optional role taken. Called after an acceptance has committed — see `OpenChallengeService.accept` — so the
+      * `Challenge.autoStart` is the setting, and "could be" is the rule a manual start already enforces: every
+      * non-optional role taken. Called after an acceptance has committed — see `ChallengeService.accept` — so the
       * acceptance that fills the last required role is what starts the match. Not called when a challenge is created,
       * even though a challenge whose only required role is the challenger's own is startable the moment it exists: a
       * challenge that started itself before anybody could see it would not have been a challenge.
@@ -114,7 +114,7 @@ class GameEngineService[T](
         challengeId: ChallengeId,
         acceptor: Player
     ): IO[GameEngineService.AutoStart] = {
-        val challengeRepo = new OpenChallengeRepo(session)
+        val challengeRepo = new ChallengeRepo(session)
 
         (for {
             claimed <- challengeRepo.startedMatch(gameId, challengeId)
@@ -181,7 +181,7 @@ class GameEngineService[T](
     ): IO[Match] = {
         val gameRepo = new GameRepo[T](session)
         val playerRepo = new PlayerRepo(session)
-        val challengeRepo = new OpenChallengeRepo(session)
+        val challengeRepo = new ChallengeRepo(session)
         val acceptanceRepo = new AcceptanceRepo(session)
         val characterRepo = new CharacterRepo[T](session)
         val matchRepo = new MatchRepo(session)
@@ -484,7 +484,7 @@ class GameEngineService[T](
                     // startable once more. If this is the part that fails, the challenge stays claimed and
                     // no further start of it will be accepted — the same outcome as before this claim
                     // existed had the deletes failed, and `refresh` still reports the urlless match.
-                    new OpenChallengeRepo(session).releaseStartClaim(gameId, challengeId)
+                    new ChallengeRepo(session).releaseStartClaim(gameId, challengeId)
             }
             .handleError(_ => ())
 
@@ -837,7 +837,7 @@ class GameEngineService[T](
     private def createRequest(
         matchId: MatchId,
         game: Game,
-        challenge: OpenChallenge,
+        challenge: Challenge,
         players: List[EnginePlayer]
     ): CreateGameRequest =
         CreateGameRequest(
@@ -975,7 +975,7 @@ class GameEngineService[T](
             case None    => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
         }
 
-    private def requireChallenge(repo: OpenChallengeRepo, gameId: GameId, challengeId: ChallengeId): IO[OpenChallenge] =
+    private def requireChallenge(repo: ChallengeRepo, gameId: GameId, challengeId: ChallengeId): IO[Challenge] =
         repo.read(gameId, challengeId).flatMap {
             case Some(c) => IO.pure(c)
             case None =>

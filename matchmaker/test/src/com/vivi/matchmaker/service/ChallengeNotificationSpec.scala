@@ -68,7 +68,7 @@ class ChallengeNotificationSpec extends PropertySuite {
         services: Services[String],
         notifier: RecordingNotifier,
         game: Game,
-        challenge: OpenChallenge,
+        challenge: Challenge,
         challenger: Player,
         second: Player,
         third: Player
@@ -99,7 +99,7 @@ class ChallengeNotificationSpec extends PropertySuite {
             third <- services.registration
                 .register(s"third-$seed", s"third-$seed", Some(s"third-$seed@example.com"))
             challenge <- services.challenges.create(
-              PlainOpenChallenge(
+              PlainChallenge(
                 ChallengeId(0),
                 challenger.playerId,
                 message,
@@ -296,7 +296,7 @@ class ChallengeNotificationSpec extends PropertySuite {
                     _ <- IO(f.notifier.clear())
                     _ <- accept(f, f.third, 2)
                     claimed <- TestSession.resource.use(session =>
-                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                        new com.vivi.matchmaker.persistence.ChallengeRepo(session)
                             .readForUpdate(f.game.gameId, f.challenge.challengeId)
                     )
                 } yield {
@@ -339,7 +339,7 @@ class ChallengeNotificationSpec extends PropertySuite {
                     _ <- IO(f.notifier.clear())
                     _ <- accept(f, f.third, 2)
                     claimed <- TestSession.resource.use(session =>
-                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                        new com.vivi.matchmaker.persistence.ChallengeRepo(session)
                             .readForUpdate(f.game.gameId, f.challenge.challengeId)
                     )
                 } yield {
@@ -393,7 +393,7 @@ class ChallengeNotificationSpec extends PropertySuite {
                     _ <- IO(f.notifier.clear())
                     _ <- accept(f, f.third, 2)
                     claimed <- TestSession.resource.use(session =>
-                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                        new com.vivi.matchmaker.persistence.ChallengeRepo(session)
                             .startedMatch(f.game.gameId, f.challenge.challengeId)
                     )
                 } yield
@@ -416,7 +416,7 @@ class ChallengeNotificationSpec extends PropertySuite {
                     _ <- accept(f, f.second, 1)
                     _ <- accept(f, f.third, 2)
                     claimed <- TestSession.resource.use(session =>
-                        new com.vivi.matchmaker.persistence.OpenChallengeRepo(session)
+                        new com.vivi.matchmaker.persistence.ChallengeRepo(session)
                             .readForUpdate(f.game.gameId, f.challenge.challengeId)
                     )
                 } yield claimed.flatMap(_.startedMatchId).isEmpty

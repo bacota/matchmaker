@@ -22,7 +22,7 @@ case class GameRole(
 )
 
 /** Whether a game's challenges/acceptances/participants require an attached character. Mirrors the `game_type`
-  * discriminator column (`'C'`/`'P'`) that `game` and every table split into a `character_*` sibling (`open_challenge`,
+  * discriminator column (`'C'`/`'P'`) that `game` and every table split into a `character_*` sibling (`challenge`,
   * `acceptance`, `participant`) carry.
   */
 enum GameType(val code: Char) {

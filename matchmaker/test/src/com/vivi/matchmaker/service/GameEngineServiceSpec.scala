@@ -17,7 +17,7 @@ import com.vivi.matchmaker.persistence.{
     CharacterRepo,
     GameRepo,
     MatchRepo,
-    OpenChallengeRepo,
+    ChallengeRepo,
     ParticipantRepo,
     ResultRepo,
     TestSession,
@@ -148,8 +148,8 @@ class GameEngineServiceSpec extends PropertySuite {
         timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
         timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
         start: Option[Instant] = None
-    ): OpenChallenge =
-        CharacterOpenChallenge(
+    ): Challenge =
+        CharacterChallenge(
           ChallengeId(0),
           fixture.owner.playerId,
           message,
@@ -214,8 +214,8 @@ class GameEngineServiceSpec extends PropertySuite {
                 // with nobody playing it — the only thing standing between this challenge and a match.
                 challenge <- services.challenges.create(
                   challengeFor(fixture) match {
-                      case c: CharacterOpenChallenge => c.copy(gameRoleId = fixture.game.roles(1).gameRoleId)
-                      case other                     => other
+                      case c: CharacterChallenge => c.copy(gameRoleId = fixture.game.roles(1).gameRoleId)
+                      case other                 => other
                   },
                   externalId
                 )
@@ -322,7 +322,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 // a second Start used to slip through. A connection of its own, not the services' pool,
                 // so this read cannot be waiting on the session the parked start is holding.
                 claimed <- entered.get *> TestSession.resource.use { session =>
-                    new OpenChallengeRepo(session).readForUpdate(fixture.game.gameId, challenge.challengeId)
+                    new ChallengeRepo(session).readForUpdate(fixture.game.gameId, challenge.challengeId)
                 }
                 _ <- release.complete(())
                 started <- first.joinWithNever
@@ -370,7 +370,7 @@ class GameEngineServiceSpec extends PropertySuite {
                           otherExternalId
                         )
                     _ <- TestSession.resource.use { session =>
-                        new OpenChallengeRepo(session)
+                        new ChallengeRepo(session)
                             .claimForStart(fixture.game.gameId, challenge.challengeId, MatchId("in-flight"))
                     }
                     restarted <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt

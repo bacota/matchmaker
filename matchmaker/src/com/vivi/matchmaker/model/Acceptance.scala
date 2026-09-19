@@ -1,7 +1,7 @@
 package com.vivi.matchmaker.model
 
-/** A player's acceptance of an open challenge. Mirrors the `acceptance` table split, the same way [[OpenChallenge]]
-  * mirrors `open_challenge`: a `'P'`-type game's acceptance is a [[PlainAcceptance]], a `'C'`-type game's is a
+/** A player's acceptance of an open challenge. Mirrors the `acceptance` table split, the same way [[Challenge]] mirrors
+  * `challenge`: a `'P'`-type game's acceptance is a [[PlainAcceptance]], a `'C'`-type game's is a
   * [[CharacterAcceptance]] naming the character accepting on the player's behalf.
   *
   * `gameRoleId` is the role the player will play in the match, chosen when accepting and carried onto the
