@@ -310,7 +310,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
               notifier = notifier,
               mail = TestServices.mailSettings
             )
-            val muted = NotificationDefaults.all(true).copy(turnTaken = false)
+            val muted = SeatNotifications.all(true).copy(turnTaken = false)
 
             val result = for {
                 started <- startedMatch(
@@ -329,8 +329,8 @@ class MatchStartedNotificationSpec extends PropertySuite {
                     .forMatch(s"challenger-$seed", started.gameId, started.matchId)
                 // Stamped from the chain at the start, which in this fixture is the game's own
                 // defaults: every kind answered, nothing unsaid, and so nothing the form has to fill in.
-            } yield before == NotificationDefaults.all(true) && after == muted &&
-                challenger == NotificationDefaults.all(true)
+            } yield before == SeatNotifications.all(true) && after == muted &&
+                challenger == SeatNotifications.all(true)
             result.timeout(caseTimeout).unsafeRunSync()
         }
     }
@@ -367,7 +367,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                 // And the level they changed did take the change: this is the match not hearing it,
                 // not the write going nowhere.
                 settings <- services.notifications.mine(accepterId)
-            } yield seat == NotificationDefaults.all(true) &&
+            } yield seat == SeatNotifications.all(true) &&
                 settings.games.exists(g => g.gameId == started.gameId && g.preferences.turnTaken.contains(false))
             result.timeout(caseTimeout).unsafeRunSync()
         }
@@ -398,12 +398,12 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   applyToMatches = true
                 )
                 seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
-                // The other seven come from the chain as it now stands, not from what the request
-                // named: the one question they answered is the only one that moved.
+                // The rest come from the chain as it now stands, not from what the request named: the
+                // one question they answered is the only one that moved.
                 challenger <- services.notifications
                     .forMatch(s"challenger-$seed", started.gameId, started.matchId)
-            } yield seat == NotificationDefaults.all(true).copy(turnTaken = false) &&
-                challenger == NotificationDefaults.all(true)
+            } yield seat == SeatNotifications.all(true).copy(turnTaken = false) &&
+                challenger == SeatNotifications.all(true)
             result.timeout(caseTimeout).unsafeRunSync()
         }
     }
@@ -447,7 +447,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                 )
                 seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
                 settings <- services.notifications.mine(accepterId)
-            } yield seat == NotificationDefaults.all(true).copy(turnTaken = false) &&
+            } yield seat == SeatNotifications.all(true).copy(turnTaken = false) &&
                 settings.games.exists(g => g.gameId == started.gameId && g.preferences.turnTaken.contains(false))
             result.timeout(caseTimeout).unsafeRunSync()
         }
@@ -457,7 +457,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
      *
      * A player mutes one match's results, then changes something else about the game and asks for it
      * to reach the matches they are in. The question they changed moves; the mute does not. Writing
-     * all eight columns from the chain would have unmuted it, which is what this is here to catch. */
+     * every column from the chain would have unmuted it, which is what this is here to catch. */
     property("a cascade leaves the questions it did not change alone in the seat") {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier
@@ -481,7 +481,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   accepterId,
                   started.gameId,
                   started.matchId,
-                  NotificationDefaults.all(true).copy(matchEnded = false)
+                  SeatNotifications.all(true).copy(matchEnded = false)
                 )
                 _ <- services.notifications.updateForGame(
                   accepterId,
@@ -490,7 +490,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   applyToMatches = true
                 )
                 seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
-            } yield seat == NotificationDefaults.all(true).copy(turnTaken = false, matchEnded = false)
+            } yield seat == SeatNotifications.all(true).copy(turnTaken = false, matchEnded = false)
             result.timeout(caseTimeout).unsafeRunSync()
         }
     }
@@ -533,7 +533,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
             } yield
             // match-ended was never part of this save, so the game still says no to it and the seat,
             // stamped with that same no before the start, still holds it.
-            seat == NotificationDefaults.all(true).copy(turnTaken = false, matchEnded = false) &&
+            seat == SeatNotifications.all(true).copy(turnTaken = false, matchEnded = false) &&
                 settings.games.exists(g =>
                     g.gameId == started.gameId && g.preferences.matchEnded.contains(false) &&
                         g.preferences.turnTaken.contains(false)
@@ -575,7 +575,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   applyToMatches = true
                 )
                 seat <- services.notifications.forMatch(accepterId, started.gameId, started.matchId)
-            } yield seat == NotificationDefaults.all(true)
+            } yield seat == SeatNotifications.all(true)
             result.timeout(caseTimeout).unsafeRunSync()
         }
     }

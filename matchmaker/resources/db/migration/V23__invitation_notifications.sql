@@ -25,18 +25,11 @@ ALTER TABLE player
     ADD COLUMN notify_invitation_accepted BOOLEAN,
     ADD COLUMN notify_invitation_rejected BOOLEAN;
 
--- Existing seats get NULL... except they cannot: since V14 a seat's notify_ columns are NOT NULL and
--- are the answer, with no chain behind them. So these three are NOT NULL DEFAULT TRUE, which stamps
--- every match already being played with "yes" -- the same answer V13's game-level default gives, and
--- the one a seat created from today's chain would get for a game that has said nothing else.
---
--- Not a decision about those matches so much as an admission about them: an invitation cannot be
--- made to a match, so these three kinds will never fire for a seat that already exists. The value
--- matters only for a seat whose player later opens that match's settings and saves them.
-ALTER TABLE participant
-    ADD COLUMN notify_invitation_received BOOLEAN NOT NULL DEFAULT TRUE,
-    ADD COLUMN notify_invitation_accepted BOOLEAN NOT NULL DEFAULT TRUE,
-    ADD COLUMN notify_invitation_rejected BOOLEAN NOT NULL DEFAULT TRUE;
+-- `participant` is deliberately not here. A seat is only ever asked about the match it is in, and an
+-- invitation cannot be made to a match: by the time a seat exists, the challenge it came from is
+-- spoken for and its invitations are about to be deleted with it. Three columns nothing could read
+-- would be three more for every cascade to re-stamp. V24 takes the same view of the four challenge
+-- columns V13 put there, and narrows the row to the kinds that can fire.
 
 ALTER TABLE player_game
     ADD COLUMN notify_invitation_received BOOLEAN,

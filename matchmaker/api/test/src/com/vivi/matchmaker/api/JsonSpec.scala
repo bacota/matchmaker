@@ -42,6 +42,31 @@ class JsonSpec extends FunSuite {
         assertEquals(decoded.parameters.head.asInstanceOf[GameParameter[String]].defaultValue, Some("default"))
     }
 
+    /* Preferences and answers are plain objects, and must stay plain.
+     *
+     * upickle tags a case class that has *any* supertype with a `$type` discriminator -- sealed or
+     * not. Giving `NotificationDefaults` and `SeatNotifications` a shared parent, which is the obvious
+     * way to let one policy ask either of them, silently rewrote the shape of every game payload and of
+     * this route's body. Round-tripping cannot see it: write-then-read agrees with itself. Only JSON
+     * written by hand, as a client writes it, shows it up -- which is what this asserts.
+     */
+    test("a seat's answers and a game's defaults are untagged objects") {
+        val seat = write(SeatNotifications.all(true))
+        val defaults = write(NotificationDefaults.all(true))
+
+        assert(!seat.contains("$type"), seat)
+        assert(!defaults.contains("$type"), defaults)
+
+        // And so JSON with no tag reads back, which is what a client sends.
+        assertEquals(
+          read[SeatNotifications]("""{"matchStarted":true,"turnTaken":false,"yourTurn":true,"matchEnded":false}"""),
+          SeatNotifications(matchStarted = true, turnTaken = false, yourTurn = true, matchEnded = false)
+        )
+        // Four fields, not eleven: the kinds about a challenge are not a seat's to answer (V24), and a
+        // body naming them is not a seat's settings.
+        assertEquals(ujson.read(seat).obj.keySet, Set("matchStarted", "turnTaken", "yourTurn", "matchEnded"))
+    }
+
     test("a Challenge round-trips its Instant and Duration fields") {
         val challenge = CharacterChallenge(
           ChallengeId(1),

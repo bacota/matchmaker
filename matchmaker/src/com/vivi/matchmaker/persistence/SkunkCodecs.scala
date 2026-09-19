@@ -8,6 +8,7 @@ import com.vivi.matchmaker.model.{
     GameType,
     NotificationDefaults,
     NotificationPreferences,
+    SeatNotifications,
     TimeLimitKind,
     TimeLimitUnit,
     TimeoutAction
@@ -51,6 +52,16 @@ object SkunkCodecs {
     val notificationPreferences: Codec[NotificationPreferences] =
         (bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *:
             bool.opt *: bool.opt).to[NotificationPreferences]
+
+    /** The four `notify_*` columns of `participant` (V24), as one value.
+      *
+      * Four rather than eleven, and so its own codec rather than [[notificationDefaults]]: a seat can only be asked
+      * about a match it is in, and the seven kinds about a challenge have no column here to answer from. Bound
+      * positionally in `NotificationType.onSeat` order, which is `values` order narrowed — the same rule as the other
+      * two, so a kind added to the enum in the wrong place is wrong in one way rather than two.
+      */
+    val seatNotifications: Codec[SeatNotifications] =
+        (bool *: bool *: bool *: bool).to[SeatNotifications]
 
     /** The same eleven columns on `game`, where they are NOT NULL: the end of the chain has to answer. */
     val notificationDefaults: Codec[NotificationDefaults] =

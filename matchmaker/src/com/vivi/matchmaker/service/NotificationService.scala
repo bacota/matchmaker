@@ -148,13 +148,16 @@ class NotificationService(sessionPool: SessionPool) {
             }
         }
 
-    /** What the caller's seats in one match say. Every kind answered: a seat cannot leave one unsaid, so the form that
-      * shows these has no "Use Default" option and nothing to fall back to.
+    /** What the caller's seats in one match say. Every kind a seat can answer, all of them said: a seat cannot leave
+      * one unsaid, so the form that shows these has no "Use Default" option and nothing to fall back to.
+      *
+      * Four kinds rather than eleven since V24 — a seat is only ever asked about the match it is in, which is what
+      * [[com.vivi.matchmaker.model.SeatNotifications]] holds.
       *
       * Refused unless the caller is in the match: the answer would otherwise tell someone who is not playing that a
       * match exists, and there is nothing for them to set.
       */
-    def forMatch(callerExternalId: String, gameId: GameId, matchId: MatchId): IO[NotificationDefaults] =
+    def forMatch(callerExternalId: String, gameId: GameId, matchId: MatchId): IO[SeatNotifications] =
         sessionPool.use { session =>
             val repo = new NotificationRepo(session)
             for {
@@ -181,7 +184,7 @@ class NotificationService(sessionPool: SessionPool) {
         callerExternalId: String,
         gameId: GameId,
         matchId: MatchId,
-        preferences: NotificationDefaults
+        preferences: SeatNotifications
     ): IO[Unit] =
         sessionPool.use { session =>
             val repo = new NotificationRepo(session)

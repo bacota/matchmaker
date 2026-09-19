@@ -129,13 +129,13 @@ object ApiClient {
       * cannot be unsaid — so the form this seeds offers no "Use Default". 404 where the caller has no seat in it, which
       * is also the answer to asking about somebody else's match.
       */
-    def matchNotifications(gameId: GameId, matchId: MatchId): Future[NotificationDefaults] =
-        get[NotificationDefaults](s"/games/${gameId.value}/matches/${matchId.value}/notifications")
+    def matchNotifications(gameId: GameId, matchId: MatchId): Future[SeatNotifications] =
+        get[SeatNotifications](s"/games/${gameId.value}/matches/${matchId.value}/notifications")
 
     def updateMatchNotifications(
         gameId: GameId,
         matchId: MatchId,
-        preferences: NotificationDefaults
+        preferences: SeatNotifications
     ): Future[Unit] =
         sendUnit(
           HttpMethod.PUT,

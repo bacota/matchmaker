@@ -258,9 +258,11 @@ object Router {
 
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "notifications" :: Nil) =>
                 withGameId(gameId) { gid =>
-                    // `NotificationDefaults`, not preferences: a seat answers every kind, so there is
-                    // nothing here a caller may leave unsaid and nothing below it to fall through to.
-                    body[NotificationDefaults](request).flatMap(p =>
+                    // `SeatNotifications`, not preferences: a seat answers every kind it can be asked
+                    // about, so there is nothing here a caller may leave unsaid and nothing below it to
+                    // fall through to. Four kinds since V24 -- the seven about a challenge are not a
+                    // seat's to answer.
+                    body[SeatNotifications](request).flatMap(p =>
                         noContent(services.notifications.updateForMatch(caller, gid, MatchId(matchId), p))
                     )
                 }
