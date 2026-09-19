@@ -1,0 +1,24 @@
+-- An index for the player search, which matches a prefix of a nickname.
+--
+-- `text_pattern_ops` rather than the default operator class, and that is the whole point of the
+-- migration: a btree in the database's own collation cannot serve `LIKE 'abc%'`, because in a
+-- non-C collation the strings beginning with "abc" are not a contiguous range of that ordering.
+-- `text_pattern_ops` compares byte by byte, which makes them one -- Postgres rewrites the pattern
+-- into `nickname ~>=~ 'abc' AND nickname ~<~ 'abd'` and scans it.
+--
+-- There is already a unique index on nickname (V1, from the constraint) and it is not a substitute:
+-- it is in the database collation, so the planner can only scan it whole and filter. This index does
+-- not replace it either -- uniqueness is still enforced there, and an equality lookup on a nickname
+-- is served by it.
+--
+-- What this does not order is the result. `MatchRepo`'s searches -- `PlayerRepo.searchByNicknamePrefix`
+-- -- end with ORDER BY nickname, which is in the database collation and not in this index's byte
+-- order, so the plan is a range scan through this index and then a sort of what it found. That is the
+-- right trade: the sort is over the handful of rows a prefix matched, not over the table.
+--
+-- One caveat worth writing down, because it is invisible until it bites. The bounds above are derived
+-- from the *value* of the pattern, so they need a custom plan: with `plan_cache_mode = auto` (the
+-- default) a prepared statement is planned with its actual parameters and gets the range scan, and
+-- under a forced generic plan it falls back to scanning the unique index with a filter. The query
+-- stays correct either way; only its plan changes.
+CREATE INDEX player_nickname_prefix ON player (nickname text_pattern_ops);

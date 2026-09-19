@@ -78,17 +78,43 @@ class PlayerServiceSpec extends PropertySuite {
         }
     }
 
-    /* The prefix is text, not a pattern. Under LIKE the `%` below would be a wildcard and this
-     * search would return both players; `starts_with` has no pattern language to escape. */
+    /* The prefix is text, not a pattern. The search is a LIKE underneath -- which is what lets it use
+     * the index of V20 -- so every character LIKE reads as a wildcard has to be escaped on the way
+     * in: unescaped, the `%` and the `_` below would match the other player too, and the searcher has
+     * no way to say they meant the character. */
     property("a wildcard character in the prefix matches itself") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (base, literalId, otherId) =>
-            val literal = s"$base%z"
-            val other = s"${base}xz"
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (base, percentId, underscoreId, otherId, callerId) =>
+                val percent = s"$base%z"
+                val underscore = s"${base}_z"
+                val other = s"${base}xz"
+                val result = for {
+                    withPercent <- registrationService.register(percent, percentId)
+                    withUnderscore <- registrationService.register(underscore, underscoreId)
+                    _ <- registrationService.register(other, otherId)
+                    _ <- registrationService.register(callerId, callerId)
+                    forPercent <- playerService.search(callerId, s"$base%")
+                    forUnderscore <- playerService.search(callerId, s"${base}_")
+                    // And the plain prefix finds all three, so the two above are narrower than it
+                    // rather than simply broken.
+                    forBase <- playerService.search(callerId, base)
+                } yield forPercent.players.map(_.playerId) == List(withPercent.playerId) &&
+                    forUnderscore.players.map(_.playerId) == List(withUnderscore.playerId) &&
+                    forBase.players.length == 3 && !forBase.more
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    /* A backslash is LIKE's escape character, so it is the one that has to survive being escaped
+     * itself -- and a nickname may contain one. */
+    property("a backslash in the prefix matches itself") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (base, slashId, callerId) =>
+            val withSlash = s"$base\\z"
             val result = for {
-                registered <- registrationService.register(literal, literalId)
-                _ <- registrationService.register(other, otherId)
-                found <- playerService.search(literalId, s"$base%")
-            } yield found.players.map(_.playerId) == List(registered.playerId) && !found.more
+                registered <- registrationService.register(withSlash, slashId)
+                _ <- registrationService.register(callerId, callerId)
+                found <- playerService.search(callerId, s"$base\\")
+            } yield found.players.map(_.playerId) == List(registered.playerId)
             result.timeout(10.seconds).unsafeRunSync()
         }
     }

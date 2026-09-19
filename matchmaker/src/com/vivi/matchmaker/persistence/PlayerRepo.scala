@@ -111,36 +111,60 @@ class PlayerRepo(session: Session[IO]) {
 
     /* Players whose nickname begins with a prefix, for the search box.
      *
-     * `starts_with` rather than LIKE: the prefix is whatever somebody typed, and under LIKE a `%`
-     * or a `_` in it would silently become a wildcard -- so "a_b" would match "axb", which is not
-     * what the person searching asked for and not something they can turn off. `starts_with` has no
-     * pattern language at all, and is case sensitive, which is what the search is specified to be.
+     * `LIKE`, over a pattern built below rather than over the prefix itself, because this is the form
+     * an index can serve: with the `text_pattern_ops` index of V20 in place, Postgres turns
+     * `nickname LIKE 'abc%'` into the range `nickname ~>=~ 'abc' AND nickname ~<~ 'abd'` and scans
+     * it. `starts_with(nickname, $1)`, which this replaced, is a function call over every row and
+     * indexable by nothing.
+     *
+     * The price of LIKE is that the pattern has a language, so the prefix has to be escaped on the
+     * way in -- see `likePrefix`. Case sensitive, which is what the search is specified to be: LIKE
+     * compares as the column does, and the column is case sensitive.
      *
      * Ordered by nickname so the page is stable: the caller takes the first few of these and says
      * whether there were more, and an unordered LIMIT would answer a repeated search with a
-     * different few. Sorted in the database's collation, which is also the one `starts_with`
-     * compares in.
+     * different few. That ORDER BY is in the database's collation rather than the index's byte
+     * order, so the plan sorts what the range scan found -- which is the handful of rows the prefix
+     * matched, not the table.
      *
      * `LIMIT` is a parameter rather than a constant here because the caller asks for one more than
      * it means to show -- that extra row is how it knows to say "there are more". */
     private val selectPlayersByNicknamePrefix: Query[(String, Int), (PlayerId, String)] =
         sql"""SELECT player_id, nickname FROM player
-          WHERE starts_with(nickname, $text)
+          WHERE nickname LIKE $text
           ORDER BY nickname
           LIMIT $int4"""
             .query(playerId *: text)
 
     /** Players whose nickname begins with `prefix`, in nickname order, at most `limit` of them.
       *
-      * Case sensitive, and no wildcards: see `selectPlayersByNicknamePrefix`. Answers with
+      * Case sensitive, and the prefix is text rather than a pattern: see `likePrefix`. Answers with
       * [[com.vivi.matchmaker.model.PublicPlayer]] rather than `Player`, because the caller is a stranger -- the address
       * and the Cognito identity on a `Player` are not theirs to see, and the way to keep it that way is not to read
       * them.
       */
     def searchByNicknamePrefix(prefix: String, limit: Int): IO[List[PublicPlayer]] =
         session
-            .execute(selectPlayersByNicknamePrefix)((prefix, limit))
+            .execute(selectPlayersByNicknamePrefix)((likePrefix(prefix), limit))
             .map(_.map((id, nickname) => PublicPlayer(id, nickname)))
+
+    /* The prefix somebody typed, as a LIKE pattern that matches it literally and then anything.
+     *
+     * Three characters mean something to LIKE and have to be spelled out to mean themselves: `%`
+     * (any run), `_` (any one character) and the escape character itself. Unescaped, a nickname
+     * search for "a_b" would find "axb" -- a wildcard the searcher did not ask for and cannot turn
+     * off. The backslash is LIKE's default escape, so no ESCAPE clause is needed, and this is a
+     * parameter rather than interpolated SQL, so nothing here is about quoting.
+     *
+     * The trailing `%` is the only wildcard in the result, and it is what makes this a prefix match
+     * rather than an equality. */
+    private def likePrefix(prefix: String): String = {
+        val escaped = prefix.flatMap {
+            case c @ ('\\' | '%' | '_') => s"\\$c"
+            case c                      => c.toString
+        }
+        s"$escaped%"
+    }
 
     /* Everyone playing one match, in seat order.
      *
