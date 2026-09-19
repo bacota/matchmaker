@@ -102,7 +102,11 @@ class MatchServiceSpec extends PropertySuite {
         isPublic: Boolean = false,
         /* What the engine answered with when it created the game, for the tests about the Watch link.
          * Null in the database for a match that is not public, which is the engine's own rule. */
-        publicUrl: Option[String] = None
+        publicUrl: Option[String] = None,
+        /* Whether this player's own seat is finished, which is normally whether the match is -- but
+         * not always: a player can be out of a match that is still being played, and the lists on
+         * their page split on the seat. */
+        seatCompleted: Option[Boolean] = None
     ): IO[MatchId] =
         for {
             // The match's creator is its challenge's challenger, and a match cannot exist without a
@@ -144,7 +148,7 @@ class MatchServiceSpec extends PropertySuite {
                 matchId,
                 player.playerId,
                 pending,
-                completedAt.isDefined,
+                seatCompleted.getOrElse(completedAt.isDefined),
                 Some(Instant.ofEpochSecond(2000)),
                 character.characterId,
                 game.roles.head.gameRoleId
@@ -256,6 +260,38 @@ class MatchServiceSpec extends PropertySuite {
                     } yield seen.find(_.matchId == MatchId(watchableId)).flatMap(_.publicUrl).contains(url) &&
                         seen.find(_.matchId == MatchId(plainId)).exists(_.publicUrl.isEmpty) &&
                         mine.find(_.matchId == MatchId(watchableId)).flatMap(_.publicUrl).contains(url)
+                }
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    /* The split is the seat's, not the match's: a player who is out of a match that is still being
+     * played has finished with it, and their page should say so. */
+    property("publicFor puts a retired seat among the finished matches, though the match runs on") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, watcherId, matchIdStr) =>
+                val result = TestSession.resource.use { session =>
+                    for {
+                        prepared <- setup(session, nickname, externalId)
+                        (player, game, character) = prepared
+                        _ <- addMatch(
+                          session,
+                          player,
+                          game,
+                          character,
+                          matchIdStr,
+                          // The match itself is unfinished; this player's seat is not.
+                          None,
+                          pending = false,
+                          isPublic = true,
+                          seatCompleted = Some(true)
+                        )
+                        _ <- registrationService.register(watcherId, watcherId)
+                        running <- matchService.publicFor(watcherId, player.playerId, over = false)
+                        over <- matchService.publicFor(watcherId, player.playerId, over = true)
+                    } yield running.isEmpty && over.map(_.matchId) == List(MatchId(matchIdStr)) &&
+                        // Still an unfinished match, which is why the row cannot say it completed.
+                        over.forall(s => !s.completed && !s.cancelled)
                 }
                 result.timeout(15.seconds).unsafeRunSync()
         }
