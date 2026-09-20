@@ -678,7 +678,11 @@ object Views {
       * not the same thing said: a refusal is not an acceptance, and the banner the server wrote is the account of it.
       */
     private def reloadAfterAnsweringInvitation(invited: ChallengeInvitation): Unit = {
-        refresh(refreshingInvitations, () => Store.reloadInvitationsWithAcceptances())
+        // The invitations alone, not `reloadInvitationsWithAcceptances`: `reloadAfterStart` below
+        // re-reads the acceptances, and asking for the same list twice in one beat is two requests
+        // whose answers race -- the store drops the loser, so the only thing the second one buys is
+        // the section dimming twice.
+        refresh(refreshingInvitations, () => Store.reloadInvitations())
         reloadAfterStart()
         // The challenge itself has changed — a seat taken — so the game's list is stale if that screen
         // is the one behind this.
@@ -2140,6 +2144,12 @@ object Views {
       * A player is named when this session has heard their nickname — see `Store.nicknames` — and by their id when it
       * has not. An id is a poor thing to show and a worse thing to hide: the row is the only place a stray invitation
       * can be revoked from.
+      *
+      * An invitee who has accepted gets a different button, because accepting does not remove the invitation — the row
+      * is what permits the seat — so this list goes on showing them, and `revoke` refuses an invitation that has been
+      * taken up: the acceptance is what is holding the seat now, and it is what has to go. That is a real action the
+      * challenger is allowed (`AcceptanceService.delete` admits the acceptor or the challenger), so the row offers it
+      * rather than a Revoke that could only ever be answered with "remove their acceptance instead".
       */
     private def invitedList(game: Game, summary: ChallengeSummary): HtmlElement =
         div(
@@ -2156,26 +2166,49 @@ object Views {
                           val seat = invitation.gameRoleId
                               .flatMap(role => game.roles.find(_.gameRoleId == role))
                               .fold("any seat that is free")(role => role.name)
+                          val accepted = summary.acceptedInvitees.contains(invitation.playerId)
 
                           li(
                             cls := "row",
                             div(cls := "title", who),
-                            div(cls := "detail", s"holding $seat"),
-                            busyButton("Revoke", classes = Some("link")) { busy =>
-                                Store.run(
-                                  ApiClient
-                                      .revokeInvitation(
+                            div(cls := "detail", if (accepted) s"accepted, as $seat" else s"holding $seat"),
+                            if (accepted)
+                                // Removing the acceptance, which is what is holding the seat. The
+                                // invitation is left where it is: it is still true that this player was
+                                // asked, and leaving it means they can accept again without being asked
+                                // twice. Revoking it as well would be a second decision, and the row
+                                // stays in this list to be revoked once the seat is free.
+                                busyButton("Remove", classes = Some("link")) { busy =>
+                                    Store.run(
+                                      ApiClient.withdraw(
                                         game.gameId,
                                         summary.challenge.challengeId,
                                         invitation.playerId
                                       ),
-                                  busy,
-                                  // A 409 is the server saying that player has accepted since this list
-                                  // was drawn, and a 404 that the invitation is already gone. Either way
-                                  // the row is stale, so the list is re-read rather than corrected here.
-                                  invitationStale(game.gameId)
-                                )(_ => Store.refreshChallenges(game.gameId))
-                            }
+                                      busy,
+                                      // A 404 is the acceptance being gone already and a 409 the
+                                      // challenge being started, past which nobody can be removed. Both
+                                      // say this row was drawn from a stale list.
+                                      invitationStale(game.gameId)
+                                    )(_ => Store.refreshChallenges(game.gameId))
+                                }
+                            else
+                                busyButton("Revoke", classes = Some("link")) { busy =>
+                                    Store.run(
+                                      ApiClient
+                                          .revokeInvitation(
+                                            game.gameId,
+                                            summary.challenge.challengeId,
+                                            invitation.playerId
+                                          ),
+                                      busy,
+                                      // A 409 is the server saying that player has accepted since this
+                                      // list was drawn, and a 404 that the invitation is already gone.
+                                      // Either way the row is stale, so the list is re-read rather than
+                                      // corrected here.
+                                      invitationStale(game.gameId)
+                                    )(_ => Store.refreshChallenges(game.gameId))
+                                }
                           )
                       }
                     )
@@ -2796,18 +2829,32 @@ object Views {
                   val invitations =
                       invitee.map(asked => Invite(asked.playerId, inviteeRole.now())).toSeq
 
+                  // Taken before the request, and checked before the store is written: this callback
+                  // closes the form, clears the invitee and re-reads a game's challenges, and all
+                  // three of those belong to whoever was on this screen when the button was clicked.
+                  // A create answered after a sign-out would close a form the next player has opened
+                  // and clear an invitee they had just chosen; answered after a walk to another game,
+                  // it would re-read the challenges of the game they have left. `Store.run` drops
+                  // nothing by design -- a click is always worth an answer -- so the guard belongs
+                  // here, which is what `currentSignIn` is visible outside the store for.
+                  val signIn = Store.currentSignIn
                   Store.run(ApiClient.createChallenge(challenge, invitations), busy) { _ =>
+                      // The fields are this form's own, so a stale answer resetting them costs
+                      // nothing: the form it belongs to is gone, and a form still on screen is a
+                      // newer one this cannot reach.
                       message.set("")
                       timeLimit.set("")
                       timeLimitUnit.set(TimeLimitUnit.Minutes)
                       timeLimitKind.set(TimeLimitKind.PerTurn)
                       autoStart.set(true)
-                      // The challenge it was open for now exists and is in the list below it. The
-                      // invitation went with it, so the slot is spent -- the next challenge offered
-                      // from this screen is not addressed to the same player by default.
-                      Store.showChallengeForm.set(false)
-                      Store.invitee.set(None)
-                      Store.refreshChallenges(game.gameId)
+                      if (Store.stillSignedInAs(signIn) && Store.page.now() == Store.Page.OneGame(game.gameId)) {
+                          // The challenge it was open for now exists and is in the list below it. The
+                          // invitation went with it, so the slot is spent -- the next challenge offered
+                          // from this screen is not addressed to the same player by default.
+                          Store.showChallengeForm.set(false)
+                          Store.invitee.set(None)
+                          Store.refreshChallenges(game.gameId)
+                      }
                   }
               }
           }

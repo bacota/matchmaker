@@ -85,7 +85,7 @@ object Store {
         // is an answer to a question nobody is asking any more.
         signIns += 1
         // Nobody owns a banner for a session that is over.
-        bannerFromAction = false
+        bannerOwner = Banner.Nobody
         Auth.clearSession()
         signedIn.set(false)
         player.set(PlayerState.Loading)
@@ -119,9 +119,11 @@ object Store {
         // must not be shown them, let alone save them back.
         notificationSettings.set(None)
         // Back to "nothing has answered yet", so the next player's sections say they are loading
-        // rather than reporting this player's empty lists as theirs.
-        fetched.set(Set.empty)
-        answered.set(Set.empty)
+        // rather than reporting this player's empty lists as theirs. The stamps go with them: the
+        // sign-in counter already drops every answer still in flight, and a stamp left behind would
+        // be compared against the next session's requests.
+        outcomes.set(Map.empty)
+        latestAsk.clear()
         page.set(Page.Home)
         showChallengeForm.set(false)
         editingGame.set(None)
@@ -145,40 +147,72 @@ object Store {
         case Due, Active, Completed, Results, Games, Acceptances, Invitations
     }
 
-    /* Which of them have been answered in this session -- however they were answered.
+    /* How each list's *latest* answer went: absent until one has come, `true` for an answer that
+     * brought a list, `false` for a request that failed.
      *
-     * A request that failed is not still in flight: the section it would have filled says what it
-     * knows, beside the banner that says what went wrong. Leaving it saying "Loading..." for ever
-     * would be a worse lie than the one this exists to correct. */
-    private val fetched: Var[Set[Fetch]] = Var(Set.empty)
+     * The latest rather than the best. Two accumulating sets stood here -- "has answered" and "has
+     * answered with a list" -- and a fetch that succeeded and later failed stayed in both, because
+     * nothing was ever taken out of either. So a list held stale contents while reporting itself
+     * known and not failed, which is the one combination that offers no way out: the section drew
+     * the old rows, decided what the player could do from them, and showed no retry, since by its
+     * own account nothing had gone wrong. One slot per list, overwritten by each answer, cannot say
+     * that -- a failure replaces the success it followed rather than joining it.
+     *
+     * Why the distinction is needed at all: a failed fetch is not still in flight, so a section over
+     * one must stop saying "Loading..." -- that would be the worse lie -- and what it has instead is
+     * an empty list. Anything deciding what a player may do by reading such a list decides from a
+     * blank, which is what the invitations section did: it hides the invitations already accepted by
+     * comparing two lists, and with no acceptances to compare against it hid nothing and offered
+     * buttons that could only be refused.
+     *
+     * One map rather than a flag per list, because every list has the distinction and only some have
+     * had to notice it. */
+    private val outcomes: Var[Map[Fetch, Boolean]] = Var(Map.empty)
 
-    /* Which of them answered with a list, as against merely answering.
+    /* Which request is the newest one asked for each list, so that an older one's answer can be told
+     * from the current one's.
      *
-     * The two come apart exactly when a request failed: `fetched` is marked however it ended -- a
-     * failure is not still in flight, and a section saying "Loading..." for ever over one would be
-     * the worse lie -- so a failed fetch leaves a list that is empty and has "answered". Anything
-     * deciding what a player may do by reading such a list decides from a blank, which is what the
-     * invitations section did: it hides the invitations already accepted by comparing two lists, and
-     * with no acceptances to compare against it hid nothing and offered buttons that could only be
-     * refused.
+     * Reloads overlap: answering an invitation re-reads the invitations, the acceptances and both
+     * match lists at once, and a second answer a moment later asks for the same lists again while
+     * the first set is still in flight. Nothing orders the responses, so the older request can land
+     * last -- and committing it would restore a row the player has just answered, or an acceptance
+     * list from before they accepted, and leave it there until something else happened to reload.
      *
-     * Beside `fetched` rather than a flag per list, because every list has the distinction and only
-     * some have had to notice it. */
-    private val answered: Var[Set[Fetch]] = Var(Set.empty)
+     * A stamp per list rather than one counter for the store: two lists reloaded together are two
+     * questions, and the answer to one is not made stale by a newer question about the other.
+     *
+     * A plain `var` and a plain `Map` because nothing renders either: this decides whether an answer
+     * is committed, and what is rendered is what the commit writes. */
+    private var requests: Int = 0
+    private val latestAsk = scala.collection.mutable.Map.empty[Fetch, Int]
+
+    /** Stamps a request as the newest for every list it will answer for, and says what its stamp is. */
+    private def ask(fetches: Seq[Fetch]): Int = {
+        requests += 1
+        fetches.foreach(what => latestAsk.update(what, requests))
+        requests
+    }
+
+    /** Whether `stamp`'s answer is still the current answer for every list it speaks for.
+      *
+      * Vacuously true for a request that speaks for none -- `reloadChallenges` and the per-player lists, which are
+      * keyed by what they are about and so cannot be overwritten by an answer about something else.
+      */
+    private def newest(stamp: Int, fetches: Seq[Fetch]): Boolean =
+        fetches.forall(what => latestAsk.get(what).contains(stamp))
 
     /** Whether a list is still on its way, which is to say nothing has answered for it yet this session. */
-    def loading(what: Fetch): Signal[Boolean] = fetched.signal.map(!_.contains(what))
+    def loading(what: Fetch): Signal[Boolean] = outcomes.signal.map(!_.contains(what))
 
     /** Whether what is held for a list is this session's own answer rather than the empty default. */
-    def known(what: Fetch): Signal[Boolean] = answered.signal.map(_.contains(what))
+    def known(what: Fetch): Signal[Boolean] = outcomes.signal.map(_.get(what).contains(true))
 
-    /** Whether a list was asked for and came back with nothing to hold: its request failed.
+    /** Whether the last thing to happen to a list was its request failing, so what is held for it is nothing.
       *
       * The third state a section needs, and the one most often inferred wrongly from emptiness. A screen that can tell
       * it from "nothing yet" can offer the thing that helps, which is to ask again.
       */
-    def failed(what: Fetch): Signal[Boolean] =
-        fetched.signal.combineWith(answered.signal).map((asked, got) => asked.contains(what) && !got.contains(what))
+    def failed(what: Fetch): Signal[Boolean] = outcomes.signal.map(_.get(what).contains(false))
 
     val due: Var[Seq[MatchSummary]] = Var(Seq.empty)
     val active: Var[Seq[MatchSummary]] = Var(Seq.empty)
@@ -541,17 +575,39 @@ object Store {
       * failure nobody observes disappears silently, which in a UI looks exactly like a button that does nothing.
       */
     def run[A](action: Future[A])(onSuccess: A => Unit): Unit =
-        action.onComplete(settle(_, byAction = true)(onSuccess))
+        action.onComplete(settle(_, Banner.Action)(onSuccess))
 
-    /* Whether the banner now showing is about something the player did, rather than about a list that
-     * failed to arrive.
+    /** Who raised the banner now showing, which is what decides who may clear it. */
+    private enum Banner {
+
+        /** Nothing is showing, so there is nothing to be careful of. */
+        case Nobody
+
+        /** Something the player did — a button, or a refusal this UI made itself. */
+        case Action
+
+        /** A list that failed to arrive, named by the lists that request spoke for. */
+        case Background(lists: Set[Fetch])
+    }
+
+    /* Which of those raised the banner now showing.
      *
-     * It decides who may clear it. An action's success clears any banner: the click worked, so
-     * whatever went wrong before it is history. A *fetch's* success clears only a fetch's banner,
-     * because a list arriving says nothing about an action that failed -- and the reloads a 404/409
-     * handler starts are expected to succeed, since they succeed precisely because the refusal was
-     * real. Letting one of those clear the message would leave a screen that had visibly changed with
-     * no account of why.
+     * An action's success clears any banner: the click worked, so whatever went wrong before it is
+     * history. A *fetch's* success clears only a banner about the same lists, and that last part is
+     * the whole of why this names them rather than being a flag.
+     *
+     * A flag said no more than "a fetch raised it", and two fetches run together: answering an
+     * invitation re-reads the invitations and the acceptances at once. When one of them failed and
+     * the other then succeeded, the success saw only "a fetch raised it" -- true, and about the
+     * sibling that had just failed -- and erased a banner a second old, leaving a section empty with
+     * nothing on screen to say why or to offer another go. Asking whether the success is about the
+     * *same* lists answers no in that case and yes to a retry of the failed list itself, which is the
+     * one case where clearing it is right.
+     *
+     * A fetch's success also leaves an action's banner alone, because a list arriving says nothing
+     * about an action that failed -- and the reloads a 404/409 handler starts are expected to succeed,
+     * since they succeed precisely because the refusal was real. Letting one of those clear the
+     * message would leave a screen that had visibly changed with no account of why.
      *
      * Which is also why this is not a flag saying "hold the banner I just set": that has to be
      * released by something, and whatever releases it is a race -- a second click clears the hold, its
@@ -560,7 +616,19 @@ object Store {
      * with the reloads.
      *
      * A plain `var` because nothing renders it; what is rendered is `error`. */
-    private var bannerFromAction: Boolean = false
+    private var bannerOwner: Banner = Banner.Nobody
+
+    /** Whether an outcome belonging to `owner` may clear the banner that is up.
+      *
+      * An untagged fetch — one that speaks for no `Fetch` at all, like `reloadChallenges` — carries the empty set,
+      * which is a subset of every other, so it may clear another untagged fetch's banner and nothing else's.
+      */
+    private def mayClear(owner: Banner): Boolean = (owner, bannerOwner) match {
+        case (_, Banner.Nobody)                                    => true
+        case (Banner.Action, _)                                    => true
+        case (Banner.Background(mine), Banner.Background(showing)) => showing.subsetOf(mine)
+        case _                                                     => false
+    }
 
     /** Raises the banner for something the player did that this UI decided against, rather than something the server
       * refused: a match with no url to open, a form that does not add up.
@@ -570,7 +638,7 @@ object Store {
       */
     def reportProblem(message: String): Unit = {
         error.set(Some(message))
-        bannerFromAction = true
+        bannerOwner = Banner.Action
     }
 
     /** The same, holding `busy` for as long as the request is in flight, so the button that started it can show that it
@@ -581,7 +649,7 @@ object Store {
         busy.set(true)
         action.onComplete { outcome =>
             busy.set(false)
-            settle(outcome, byAction = true)(onSuccess)
+            settle(outcome, Banner.Action)(onSuccess)
         }
     }
 
@@ -594,13 +662,13 @@ object Store {
       * point of running last.
       *
       * A handler that reloads needs nothing else to keep that message: a reload is not an action, and a fetch's success
-      * leaves an action's banner alone. See `bannerFromAction`.
+      * leaves an action's banner alone. See `Banner`.
       */
     def run[A](action: Future[A], busy: Var[Boolean], onFailure: Throwable => Unit)(onSuccess: A => Unit): Unit = {
         busy.set(true)
         action.onComplete { outcome =>
             busy.set(false)
-            settle(outcome, byAction = true)(onSuccess)
+            settle(outcome, Banner.Action)(onSuccess)
             outcome.failed.foreach(onFailure)
         }
     }
@@ -618,27 +686,32 @@ object Store {
       */
     private def load[A](action: Future[A], fetches: Fetch*)(commit: A => Unit): Unit = {
         val signIn = currentSignIn
+        val stamp = ask(fetches)
         action.onComplete { outcome =>
-            if (stillSignedInAs(signIn)) {
-                settle(outcome, byAction = false)(commit)
-                fetched.update(_ ++ fetches)
-                // Only on a success, which is the whole of the distinction: see `answered`.
-                if (outcome.isSuccess) answered.update(_ ++ fetches)
+            // Superseded as well as signed out: an answer to a question since asked again is not this
+            // list's current answer, and committing it would undo the newer one. See `newest`.
+            if (stillSignedInAs(signIn) && newest(stamp, fetches)) {
+                settle(outcome, Banner.Background(fetches.toSet))(commit)
+                // However it ended: what the section shows next is decided by which of the two it was.
+                // See `outcomes`.
+                outcomes.update(_ ++ fetches.map(_ -> outcome.isSuccess))
             }
         }
     }
 
-    /* `byAction` says whether this outcome belongs to something the player did, which decides both
-     * whose banner may be cleared on a success and who owns the one a failure raises. See
-     * `bannerFromAction`. The value is committed either way -- what the distinction protects is the
-     * explanation, not the list. */
-    private def settle[A](outcome: Try[A], byAction: Boolean)(onSuccess: A => Unit): Unit = outcome match {
+    /* `owner` says what this outcome belongs to, which decides both whose banner may be cleared on a
+     * success and who owns the one a failure raises. See `Banner`. The value is committed either way
+     * -- what the distinction protects is the explanation, not the list. */
+    private def settle[A](outcome: Try[A], owner: Banner)(onSuccess: A => Unit): Unit = outcome match {
         case Success(value) =>
-            if (byAction || !bannerFromAction) error.set(None)
+            if (mayClear(owner)) {
+                error.set(None)
+                bannerOwner = Banner.Nobody
+            }
             onSuccess(value)
         case Failure(problem) =>
             report(problem)
-            bannerFromAction = byAction
+            bannerOwner = owner
     }
 
     /** Loads everything the signed-in user's home screen needs.
@@ -760,17 +833,18 @@ object Store {
       */
     private def reload[A](action: Future[A], fetches: Fetch*)(onSuccess: A => Unit): Future[Unit] = {
         val signIn = currentSignIn
+        val stamp = ask(fetches)
 
         action.transform { outcome =>
-            // Dropped rather than committed when the session that asked has ended, as in `load`. The
-            // `Future` still completes: the section that is waiting to stop showing itself as
-            // reloading has been unmounted by the sign-out, but it must not be left hanging if it has
-            // not.
+            // Dropped rather than committed when the session that asked has ended, or when this list
+            // has since been asked for again — as in `load`, and for the same two reasons. The
+            // `Future` still completes either way: the section that is waiting to stop showing itself
+            // as reloading has been unmounted by the sign-out, but it must not be left hanging if it
+            // has not, and a superseded reload is still a reload that has finished.
             try
-                if (stillSignedInAs(signIn)) {
-                    settle(outcome, byAction = false)(onSuccess)
-                    fetched.update(_ ++ fetches)
-                    if (outcome.isSuccess) answered.update(_ ++ fetches)
+                if (stillSignedInAs(signIn) && newest(stamp, fetches)) {
+                    settle(outcome, Banner.Background(fetches.toSet))(onSuccess)
+                    outcomes.update(_ ++ fetches.map(_ -> outcome.isSuccess))
                 }
             catch { case t: Throwable => report(t) }
             Success(())

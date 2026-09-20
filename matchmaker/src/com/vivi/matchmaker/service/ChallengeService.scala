@@ -519,9 +519,13 @@ class ChallengeService[T](
                 // the listing query: invitations are rows in another table, and that query is already
                 // asking three questions of `challenge`.
                 invitations <- new InvitationRepo(session).listForGame(gameId)
-            } yield challenges.map(summary =>
-                summary.copy(invitations = invitations.getOrElse(summary.challenge.challengeId, Nil))
-            )
+            } yield challenges.map { summary =>
+                val invited = invitations.getOrElse(summary.challenge.challengeId, Nil)
+                summary.copy(
+                  invitations = invited.map(_.invitation),
+                  acceptedInvitees = invited.filter(_.accepted).map(_.invitation.playerId)
+                )
+            }
         }
 
     /** Everything `callerExternalId` has been invited to and could still accept, newest first.

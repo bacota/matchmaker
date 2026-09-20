@@ -1217,6 +1217,58 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
+    /* The other side of "accepting leaves the invitation alone": if the row does not change, the
+     * challenger's own view of it has to say which invitees have accepted, or Revoke is offered on
+     * every one of them -- including the ones `revoke` refuses, where re-reading the list brings the
+     * same unusable row straight back.
+     *
+     * Asserted on both at once, from the challenger's own listing: the invitee who accepted, and one
+     * who was asked and has not answered. A flag that was simply always true would pass a test about
+     * the first alone.
+     */
+    property("listByGame says which of the invited players have accepted") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, invitedNickname, invitedExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    invited <- makeCharacterInGame(fixture.game, invitedNickname, invitedExternalId)
+                    // Asked and still deciding, so nothing about them is an acceptance.
+                    waiting <- registrationService.register(genUniqueString.sample.get, genUniqueString.sample.get)
+                    created <- challengeService.create(
+                      challengeFor(fixture),
+                      externalId,
+                      Seq(
+                        Invite(invited._1.playerId, Some(fixture.game.roles(1).gameRoleId)),
+                        Invite(waiting.playerId, Some(fixture.game.roles(2).gameRoleId))
+                      )
+                    )
+                    before <- challengeService.listByGame(fixture.game.gameId, externalId)
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(invited._2.characterId),
+                      fixture.game.roles(1).gameRoleId,
+                      invitedExternalId
+                    )
+                    after <- challengeService.listByGame(fixture.game.gameId, externalId)
+                } yield {
+                    def summary(listed: List[ChallengeSummary]) =
+                        listed.find(_.challenge.challengeId == created.challengeId).get
+
+                    // Nobody has accepted an invitation yet -- the challenger's own acceptance, written
+                    // when they created it, is not an invitation of theirs to have accepted.
+                    summary(before).acceptedInvitees.isEmpty &&
+                    // And afterwards, exactly the one who did.
+                    summary(after).acceptedInvitees == Seq(invited._1.playerId) &&
+                    // Both invitations are still listed, which is what makes the flag necessary: the
+                    // accepted one is not distinguishable from the waiting one without it.
+                    summary(after).invitations.map(_.playerId).sortBy(_.value) ==
+                        Seq(invited._1.playerId, waiting.playerId).sortBy(_.value)
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
     property("accepting an invitation leaves it in the invitations list, in no different shape") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, invitedNickname, invitedExternalId) =>

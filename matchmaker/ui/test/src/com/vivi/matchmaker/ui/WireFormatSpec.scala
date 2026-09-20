@@ -148,21 +148,27 @@ class WireFormatSpec extends FunSuite {
           invitations = Seq(
             Invitation(GameId(3), ChallengeId(1), PlayerId(5), Some(GameRoleId(6))),
             Invitation(GameId(3), ChallengeId(1), PlayerId(7))
-          )
+          ),
+          acceptedInvitees = Seq(PlayerId(5))
         )
 
         val decoded = read[ChallengeSummary](write(closed))
         assertEquals(decoded, closed)
         assert(!decoded.challenge.isOpen)
         assertEquals(decoded.invitations.map(_.gameRoleId), Seq(Some(GameRoleId(6)), None))
+        // Which of the invited players have accepted, which the invitation rows cannot say: this is
+        // what decides whether the challenger's row offers Revoke or Remove.
+        assertEquals(decoded.acceptedInvitees, Seq(PlayerId(5)))
 
         val open = closed.copy(
           challenge = closed.challenge.asInstanceOf[PlainChallenge].copy(isOpen = true),
-          invitations = Seq.empty
+          invitations = Seq.empty,
+          acceptedInvitees = Seq.empty
         )
         val fromOlderServer = read[ChallengeSummary](write(open))
         assert(fromOlderServer.challenge.isOpen)
         assert(fromOlderServer.invitations.isEmpty)
+        assert(fromOlderServer.acceptedInvitees.isEmpty)
     }
 
     // The body `POST /challenges` takes since V22: the challenge nested, and the invitations to
