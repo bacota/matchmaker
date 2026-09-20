@@ -140,11 +140,17 @@ object Store {
       * Every one of them starts empty, and an empty list read a moment after sign-in means the second of those, not the
       * first — which is why a section cannot answer the question from the list alone.
       *
-      * Not every fetch is here: the per-game challenges and characters are keyed by game in a `Map`, so a game that has
-      * not been fetched is a missing key rather than an empty list, and those screens already say "Loading…" on it.
+      * The keyed ones carry what they are about. A `Map` slot per game already tells a screen whether that game's list
+      * has arrived — a missing key rather than an empty list — so those screens do not ask `loading` about them. What
+      * the name is needed for is the ordering: two answers about the *same* game overwrite one another, so each has to
+      * be tellable from the other. See `latestAsk`.
       */
     enum Fetch {
         case Due, Active, Completed, Results, Games, Acceptances, Invitations
+        case Challenges(gameId: GameId)
+        case Characters(gameId: GameId)
+        case PlayerSearch
+        case NotificationSettings
     }
 
     /* How each list's *latest* answer went: absent until one has come, `true` for an answer that
@@ -195,8 +201,15 @@ object Store {
 
     /** Whether `stamp`'s answer is still the current answer for every list it speaks for.
       *
-      * Vacuously true for a request that speaks for none -- `reloadChallenges` and the per-player lists, which are
-      * keyed by what they are about and so cannot be overwritten by an answer about something else.
+      * Every fetch that writes into this store names one, which is what makes this worth asking. A request about a
+      * single game or a single search is not made safe by being keyed: the key keeps it from overwriting an answer
+      * about something *else*, and says nothing about the previous answer to the same question. A game's challenges are
+      * re-read by a refresh button and by every callback that changes them — creating, inviting, revoking, removing an
+      * acceptance — so two answers about one game overlap readily, and the older landing last puts back the invitation
+      * that was just withdrawn. Hence [[Fetch.Challenges]] and its neighbours carrying their key.
+      *
+      * The one exception is `reloadPublicMatches`, which has a counter of its own because the same guard has to decide
+      * when its page stops saying it is loading — see `publicMatchesFetch`. It remains vacuously true here.
       */
     private def newest(stamp: Int, fetches: Seq[Fetch]): Boolean =
         fetches.forall(what => latestAsk.get(what).contains(stamp))
@@ -396,7 +409,7 @@ object Store {
             playerResults.set(None)
             Future.unit
         } else
-            reload(ApiClient.searchPlayers(prefix)) { result =>
+            reload(ApiClient.searchPlayers(prefix), Fetch.PlayerSearch) { result =>
                 playerResults.set(Some(result))
                 remember(result.players)
             }
@@ -443,7 +456,8 @@ object Store {
       * after a sign-out would be what the next player's panel shows them, and what they could save back as their own.
       */
     def loadNotifications(): Unit =
-        if (notificationSettings.now().isEmpty) load(ApiClient.notifications())(s => notificationSettings.set(Some(s)))
+        if (notificationSettings.now().isEmpty)
+            load(ApiClient.notifications(), Fetch.NotificationSettings)(s => notificationSettings.set(Some(s)))
 
     /** Fetches them again whatever is held, and says when it has.
       *
@@ -456,7 +470,7 @@ object Store {
       * banner rather than being handed back to a caller with nothing useful to do about it.
       */
     def reloadNotifications(): Future[Unit] =
-        reload(ApiClient.notifications())(s => notificationSettings.set(Some(s)))
+        reload(ApiClient.notifications(), Fetch.NotificationSettings)(s => notificationSettings.set(Some(s)))
 
     /** How each finished match turned out, keyed by its match id: the rows of the result table shown under a completed
       * match. Loaded whole with the lists, not per row.
@@ -884,7 +898,9 @@ object Store {
     }
 
     def reloadChallenges(gameId: GameId): Future[Unit] =
-        reload(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))
+        reload(ApiClient.challenges(gameId), Fetch.Challenges(gameId))(list =>
+            challengesByGame.update(_.updated(gameId, list))
+        )
 
     def refreshGames(): Unit = load(ApiClient.games(activeOnly = true), Fetch.Games)(games.set)
 
@@ -896,12 +912,31 @@ object Store {
       * name, roles and settings it had before the save, and its edit form reopening on that stale snapshot to submit it
       * again.
       *
-      * Taken from the save's own answer rather than fetched, the server having just said what the game now is. A game
-      * saved as active is dropped from the unlisted map instead, the list it belongs in being the one re-read above.
+      * Both copies are written from the save's own answer, which is the authoritative account of what the game now is —
+      * the server has just said so. Only then is the list re-read, and the re-read is for what this cannot know:
+      * whatever else has changed in it, and the order the server puts it in.
+      *
+      * Written here rather than left to that re-read, which was the bug: the screen behind this form and the form
+      * itself are drawn from `games`, so until the request landed they both showed the name, description and roles the
+      * game had *before* the save — and if it failed they showed them for the rest of the session, over a save that had
+      * actually succeeded, with the form ready to submit the stale copy again.
+      *
+      * Which copy it belongs in is what `active` decides, so a save that flips it moves the game between them: into
+      * `games` and out of `unlistedGames` when it is active, and the other way when it is not. `refreshGames` reaches
+      * neither case on its own — it fetches the active games, so it cannot say what became of one that is no longer
+      * among them.
       */
     def gameSaved(saved: Game): Unit = {
-        refreshGames()
+        games.update { held =>
+            if (!saved.active) held.filterNot(_.gameId == saved.gameId)
+            else if (held.exists(_.gameId == saved.gameId))
+                held.map(game => if (game.gameId == saved.gameId) saved else game)
+            // Appended rather than placed: a game just created is not in the list at all, and where the
+            // server would sort it is exactly what the re-read below is for.
+            else held :+ saved
+        }
         unlistedGames.update(held => if (saved.active) held - saved.gameId else held.updated(saved.gameId, saved))
+        refreshGames()
     }
 
     /** Makes sure the game a screen is about can be drawn, deactivated or not.
@@ -949,9 +984,13 @@ object Store {
         }
 
     def refreshChallenges(gameId: GameId): Unit =
-        load(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))
+        load(ApiClient.challenges(gameId), Fetch.Challenges(gameId))(list =>
+            challengesByGame.update(_.updated(gameId, list))
+        )
 
     def refreshCharacters(gameId: GameId): Unit =
-        load(ApiClient.characters(gameId))(list => charactersByGame.update(_.updated(gameId, list)))
+        load(ApiClient.characters(gameId), Fetch.Characters(gameId))(list =>
+            charactersByGame.update(_.updated(gameId, list))
+        )
 
 }

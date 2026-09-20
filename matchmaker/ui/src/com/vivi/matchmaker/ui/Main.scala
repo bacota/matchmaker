@@ -1585,26 +1585,43 @@ object Views {
       * a menu that has outlived a reload — says so instead of showing an empty screen that looks like a game with
       * nothing in it.
       */
-    private def gamePage(gameId: GameId): HtmlElement =
+    private def gamePage(gameId: GameId): HtmlElement = {
+        // Through `Store.game`, which answers from the active games and from the deactivated one this
+        // screen may have been linked to -- an invitation outlives its game being deactivated, and
+        // reading the active list alone left such a page saying "Loading…" for ever. The two states are
+        // still told apart: "Loading…" while something is on its way, and a sentence saying so once
+        // nothing is.
+        val state = Store
+            .game(gameId)
+            .combineWith(Store.loading(Store.Fetch.Games).combineWith(Store.lookingForGame(gameId)).map(_ || _))
+
+        val message = state.map {
+            case (None, true)  => "Loading…"
+            case (None, false) => "That game is not available. It may have been withdrawn."
+            case (Some(_), _)  => ""
+        }
+
         div(
-          // Through `Store.game`, which answers from the active games and from the deactivated one
-          // this screen may have been linked to -- an invitation outlives its game being deactivated,
-          // and reading the active list alone left such a page saying "Loading…" for ever. The two
-          // states are still told apart: "Loading…" while something is on its way, and a sentence
-          // saying so once nothing is.
-          child <-- Store
-              .game(gameId)
-              .combineWith(
-                Store.loading(Store.Fetch.Games).combineWith(Store.lookingForGame(gameId)).map(_ || _)
-              )
+          /* What the lookup came to, in a region that is mounted before it is asked.
+           *
+           * The sentence used to arrive as part of a freshly built element, which is the one way of
+           * putting text in a live region that is not reliably announced: a reader watches regions it
+           * already knows about for changes, and a region that did not exist a moment ago has no
+           * change to report. So the region stands here for the life of the screen and only its words
+           * come and go -- the same shape the invitations section uses, and for the same reason.
+           *
+           * A `div` rather than a `p` because it is empty whenever there is a game to draw, and an
+           * empty `p` would leave its margins behind above the heading. The class comes and goes with
+           * the text so the styling applies to a sentence and to nothing.
+           */
+          div(
+            aria.live := "polite",
+            cls <-- message.map(said => if (said.isEmpty) "" else "empty"),
+            child.text <-- message
+          ),
+          child <-- state
               .map {
-                  case (None, true) => p(cls := "empty", "Loading…")
-                  case (None, false) =>
-                      p(
-                        cls := "empty",
-                        aria.live := "polite",
-                        "That game is not available. It may have been withdrawn."
-                      )
+                  case (None, _) => emptyNode
                   case (Some(game), _) =>
                       div(
                         h2(game.name),
@@ -1626,6 +1643,7 @@ object Views {
                       )
               }
         )
+    }
 
     /** The admin's edit form for a game, opened from a link on the game's own screen. Nothing for anyone else: the
       * server answers a non-admin with a 403, so the link is not there to press.
@@ -2277,6 +2295,37 @@ object Views {
               else
                   div(
                     cls := "detail-panel",
+                    /* How the panel is getting on, announced from a region mounted with it.
+                     *
+                     * Neither the results list, nor the "nobody new" line, nor the "inviting" line
+                     * can carry `aria-live` itself: each is built at the moment it has something to
+                     * say, and a region a reader has never seen before has no change to report --
+                     * which is exactly when the announcement matters, since a reader who pressed
+                     * Search is waiting to be told what came back. So this region says how it went
+                     * and those three go on saying what it was.
+                     *
+                     * At the panel rather than inside either branch, so that choosing somebody --
+                     * which replaces the whole of one branch with the other -- is a change of text
+                     * in a region that stays put rather than another region appearing.
+                     *
+                     * `sr-only`, because all three of those say the same thing to anybody who can
+                     * see them. A count rather than the names: the names are in the list, one button
+                     * each, and reading them twice is not worth the hearing.
+                     */
+                    p(
+                      cls := "sr-only",
+                      role := "status",
+                      aria.live := "polite",
+                      child.text <-- chosen.signal.combineWith(found.signal).map {
+                          case (Some(candidate), _) => s"Inviting ${candidate.nickname}."
+                          case (None, None)         => ""
+                          case (None, Some(result)) =>
+                              val askable = result.players.filterNot(p => alreadyAsked.contains(p.playerId))
+                              if (askable.isEmpty) "Nobody new by that name."
+                              else if (askable.size == 1) "One player found."
+                              else s"${askable.size} players found."
+                      }
+                    ),
                     child <-- chosen.signal.map {
                         case None =>
                             div(
@@ -2318,15 +2367,10 @@ object Views {
                                       if (askable.isEmpty)
                                           p(
                                             cls := "empty",
-                                            aria.live := "polite",
                                             "Nobody new by that name. Anyone already invited is not listed again."
                                           )
                                       else
                                           ul(
-                                            // A live region: the list appears without the page
-                                            // reloading, and a reader who pressed Search is waiting to
-                                            // be told what came back.
-                                            aria.live := "polite",
                                             askable.map(candidate =>
                                                 li(
                                                   cls := "row",
@@ -2344,7 +2388,7 @@ object Views {
 
                         case Some(candidate) =>
                             div(
-                              p(cls := "detail", aria.live := "polite", s"Inviting ${candidate.nickname}."),
+                              p(cls := "detail", s"Inviting ${candidate.nickname}."),
                               field(
                                 "Their seat",
                                 select(
@@ -2747,10 +2791,22 @@ object Views {
               TimeLimitKind.values.toSeq.map(kind => option(value := kind.code, kind.label))
             )
           ),
-          child <-- timeLimit.signal.map { raw =>
-              if (raw.trim.isEmpty || amountOf(raw).isDefined) emptyNode
-              else p(cls := "empty", aria.live := "polite", "A time limit is a whole number, more than zero.")
-          },
+          // The same rule the two regions above follow: the element carrying `aria-live` is mounted
+          // before it has anything to say, and it is the text that arrives. A message built at the
+          // moment it becomes true is a region nothing was watching, and a reader typing into the
+          // field is told nothing about why the form will not submit.
+          //
+          // A `div` rather than a `p` for the reason `gamePage`'s is: it is empty whenever the field
+          // is valid, which is most of the time, and an empty `p` would hold its margins open under
+          // the input. The class comes and goes with the text.
+          div(
+            aria.live := "polite",
+            cls <-- timeLimit.signal.map(raw => if (raw.trim.isEmpty || amountOf(raw).isDefined) "" else "empty"),
+            child.text <-- timeLimit.signal.map(raw =>
+                if (raw.trim.isEmpty || amountOf(raw).isDefined) ""
+                else "A time limit is a whole number, more than zero."
+            )
+          ),
           // Public means anyone may watch the match, which the game engine implements by issuing a
           // url that needs no sign-in. It is decided here because it is a property of the game being
           // offered, not of any one player's part in it.
