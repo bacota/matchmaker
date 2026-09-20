@@ -416,6 +416,14 @@ object Views {
      * behalf. */
     private val refreshingInvitations: Var[Boolean] = Var(false)
 
+    /* What the last answer to an invitation was, for the status line in that section.
+     *
+     * Held out here rather than inside the section, because the section is what goes away when the
+     * last invitation is answered -- and that is the moment most worth announcing. Never read by
+     * sight: `invitationsSection` renders it into an `sr-only` live region, for the reasons written
+     * there. */
+    private val invitationStatus: Var[Option[String]] = Var(None)
+
     /* The same, for the two match lists. Shared by the home screen's copy of each section and the
      * game screen's, which are never both on screen — and, more to the point, by the sections
      * themselves and by the actions below that change what belongs in them. */
@@ -487,9 +495,36 @@ object Views {
       */
     private def invitationsSection: HtmlElement =
         div(
+          /* What the last answer to an invitation was, said once, to whoever is not watching the list.
+           *
+           * Answering one removes its row, and may remove the whole section with it — which is a
+           * change nobody is told about by sight alone being gone. The error banner is `role="alert"`,
+           * so a refusal already announces itself; this is the other half, and the half that was
+           * silent.
+           *
+           * A one-line status rather than `aria-live` on the section, which is what was suggested for
+           * this. A live region announces its whole subtree: on the first fetch of the session that
+           * subtree is a heading, a refresh button and every row, read out unprompted at the moment
+           * the player is reading something else — and none of the sibling sections, which appear and
+           * disappear just as asynchronously, behaves that way. What `refreshableSection` already
+           * does for a list being replaced is mark its body `aria-busy`, which is the mechanism for
+           * "this is changing"; a sentence is the mechanism for "here is what you did".
+           *
+           * Present from the start and empty, because a live region has to exist before the text
+           * arrives in it to be announced reliably. `sr-only` because the row vanishing says the same
+           * thing to anybody who can see it, and a line of text left behind under a heading that may
+           * itself be gone is not worth the clutter. The game is named so that two answers running do
+           * not read as one unchanged sentence.
+           */
+          p(
+            cls := "sr-only",
+            role := "status",
+            aria.live := "polite",
+            child.text <-- invitationStatus.signal.map(_.getOrElse(""))
+          ),
           child <-- Store.invitations.signal
-              .combineWith(Store.acceptances.signal, Store.loading(Store.Fetch.Acceptances))
-              .map { (invitations, acceptances, acceptancesComing) =>
+              .combineWith(Store.acceptances.signal, Store.acceptancesKnown.signal)
+              .map { (invitations, acceptances, acceptancesKnown) =>
                   /* An invitation the player has already accepted is still an invitation: it
                    * outlives the acceptance it led to, so that backing out and changing their mind
                    * again is something they may do -- see `Invitation`. What it is not is something
@@ -510,18 +545,37 @@ object Views {
                       accepted.contains((invited.invitation.gameId, invited.invitation.challengeId))
                   )
 
-                  // Nothing until the acceptances have answered: until they have, an accepted
-                  // invitation is indistinguishable from one still open, and showing it would offer
-                  // two buttons that cannot work. The section is absent when empty anyway, so waiting
-                  // costs a moment of nothing rather than a moment of something wrong.
-                  if (acceptancesComing || unanswered.isEmpty) emptyNode
+                  /* No rows until the acceptances are known, and `known` rather than "has answered":
+                   * a failed fetch leaves an empty list that has answered, and filtering against it
+                   * would offer two buttons that can only be refused. See `Store.acceptancesKnown`.
+                   *
+                   * Said rather than hidden when there are invitations and no acceptances to compare
+                   * them with. Hiding the section outright would take the refresh button with it, and
+                   * this is the only button on the page that reloads the acceptances when that list
+                   * came back empty -- the sections drawn from it are absent in that case, their own
+                   * buttons included. So a failure there would be unrecoverable without a reload of
+                   * the page, which is the thing these buttons exist to avoid. */
+                  if (invitations.isEmpty) emptyNode
                   else
                       refreshableSection(
                         "You Have Been Invited",
                         refreshingInvitations,
-                        () => Store.reloadInvitations(),
+                        // Both lists, because which invitations are still to answer is a question
+                        // about both: an invitation accepted in another tab stays in the invitations
+                        // response on purpose, so reloading that alone leaves its row exactly where it
+                        // was.
+                        () => Store.reloadInvitationsWithAcceptances(),
                         subsection = false
-                      )(ul(unanswered.map(invitationRow)))
+                      )(
+                        if (!acceptancesKnown)
+                            p(
+                              cls := "empty",
+                              "Can't tell which of these you have already accepted just now. " +
+                                  "Refresh this section to try again."
+                            )
+                        else if (unanswered.isEmpty) p(cls := "empty", "You have answered all of these.")
+                        else ul(unanswered.map(invitationRow))
+                      )
               }
         )
 
@@ -559,9 +613,9 @@ object Views {
                   Store.run(
                     ApiClient.accept(invitation.gameId, invitation.challengeId, None, role),
                     busy,
-                    invitationGone(invitation)
+                    invitationGone(invited)
                   ) { _ =>
-                      acceptedInvitation(invitation)
+                      acceptedInvitation(invited)
                   }
               }
           else
@@ -575,9 +629,9 @@ object Views {
               Store.run(
                 ApiClient.rejectInvitation(invitation.gameId, invitation.challengeId),
                 busy,
-                invitationGone(invitation)
+                invitationGone(invited)
               ) { _ =>
-                  declinedInvitation(invitation)
+                  declinedInvitation(invited)
               }
           }
         )
@@ -600,8 +654,14 @@ object Views {
       * Dimmed and re-read rather than edited in place, for the reason `reloadAcceptanceSections` says: a list that
       * silently loses a row is a list that might have lost the wrong one.
       */
-    private def acceptedInvitation(invitation: Invitation): Unit = {
-        refresh(refreshingInvitations, () => Store.reloadInvitations())
+    private def acceptedInvitation(invited: ChallengeInvitation): Unit = {
+        val invitation = invited.invitation
+        // Named, so that two answers running do not read as one sentence that never changed — a live
+        // region announces a change in its text, and "Invitation accepted." twice over is no change.
+        invitationStatus.set(
+          Some(s"Invitation to ${invited.gameName} accepted. If it was the last seat, the match has already started.")
+        )
+        refresh(refreshingInvitations, () => Store.reloadInvitationsWithAcceptances())
         reloadAfterStart()
         // The challenge itself has changed — a seat taken — so the game's list is stale if that screen
         // is the one behind this.
@@ -616,8 +676,10 @@ object Views {
       * accepted, which the server enforces — so the lists that would say otherwise are left alone rather than dimmed
       * for nothing.
       */
-    private def declinedInvitation(invitation: Invitation): Unit = {
-        refresh(refreshingInvitations, () => Store.reloadInvitations())
+    private def declinedInvitation(invited: ChallengeInvitation): Unit = {
+        val invitation = invited.invitation
+        invitationStatus.set(Some(s"Invitation to ${invited.gameName} declined."))
+        refresh(refreshingInvitations, () => Store.reloadInvitationsWithAcceptances())
         if (Store.page.now() == Store.Page.OneGame(invitation.gameId))
             Store.refreshChallenges(invitation.gameId)
     }
@@ -640,10 +702,18 @@ object Views {
       * The accepting reload is used for either button, because a refusal says less than a success does: a 409 on a
       * decline can mean this player has already accepted it, or that the challenge has been started, and both of those
       * are news for the match lists. The wider reload is the one that cannot be wrong here.
+      *
+      * `holdBanner` before those reloads, because a success clears the banner and every one of them is expected to
+      * succeed — they succeed *because* the refusal was real. Without it the row is corrected and the server's account
+      * of why disappears with the first answer to land, which is the one thing the player needed to read.
       */
-    private def invitationGone(invitation: Invitation)(failure: Throwable): Unit = failure match {
-        case ApiError(404 | 409, _) => acceptedInvitation(invitation)
-        case _                      => ()
+    private def invitationGone(invited: ChallengeInvitation)(failure: Throwable): Unit = failure match {
+        case ApiError(404 | 409, _) =>
+            Store.holdBanner()
+            // The status line says nothing here: the banner is the message, and it is the server's
+            // own -- several things produce a 409 on these buttons, and only it knows which.
+            acceptedInvitation(invited)
+        case _ => ()
     }
 
     /* Absent altogether when there is nothing ready to start, heading and refresh button with it.
@@ -791,12 +861,16 @@ object Views {
       */
     private def alreadyStarted(acceptance: Acceptance)(failure: Throwable): Unit = failure match {
         case ApiError(409, _) =>
+            // Set and held before the reloads rather than after them, which is where it used to be:
+            // the reloads are asynchronous, so one landing later cleared this message however late it
+            // was written. `holdBanner` is what actually keeps it — see `Store.holdBanner`.
+            Store.error.set(Some("That match has already started, so there is nothing left to back out of."))
+            Store.holdBanner()
             reloadAfterStart()
             // A started challenge is no longer offered either, so the game screen's list is as stale as
             // this row was — the same refresh the success path does, for the same reason.
             if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
                 Store.refreshChallenges(acceptance.gameId)
-            Store.error.set(Some("That match has already started, so there is nothing left to back out of."))
         case _ => ()
     }
 
@@ -1498,7 +1572,7 @@ object Views {
           child <-- Store
               .game(gameId)
               .combineWith(
-                Store.loading(Store.Fetch.Games).combineWith(Store.loadingUnlistedGame.signal).map(_ || _)
+                Store.loading(Store.Fetch.Games).combineWith(Store.lookingForGame(gameId)).map(_ || _)
               )
               .map {
                   case (None, true) => p(cls := "empty", "Loading…")
@@ -2161,11 +2235,24 @@ object Views {
                                 "Search",
                                 disabledWhen = prefix.signal.map(_.trim.isEmpty)
                               ) { busy =>
+                                  /* Guarded by the sign-in counter, because this writes into the store:
+                                   * `Store.nicknames` outlives this panel, and an answer that arrives
+                                   * after a sign-out would teach the next player's session who the
+                                   * previous one had been looking for.
+                                   *
+                                   * `Store.run` is right for the request -- it is a button, and the
+                                   * spinner belongs to a click somebody is waiting on -- and it
+                                   * deliberately drops nothing, which is why the check is here rather
+                                   * than in it. The same treatment `Account`'s rename takes, and the
+                                   * reason those two methods are `private[ui]`. */
+                                  val signIn = Store.currentSignIn
                                   Store.run(ApiClient.searchPlayers(prefix.now().trim), busy) { result =>
-                                      // Remembered for the invited list above, which has ids and no
-                                      // names of its own.
-                                      Store.remember(result.players)
-                                      found.set(Some(result))
+                                      if (Store.stillSignedInAs(signIn)) {
+                                          // Remembered for the invited list above, which has ids and no
+                                          // names of its own.
+                                          Store.remember(result.players)
+                                          found.set(Some(result))
+                                      }
                                   }
                               },
                               child <-- found.signal.map {
@@ -2258,14 +2345,30 @@ object Views {
 
     /** What to do when inviting or revoking is refused because the challenge has moved on.
       *
-      * 409 covers both races this panel has: a seat promised or accepted since the picker was drawn, and a player who
-      * accepted between the list being fetched and a revoke being pressed. 404 is the challenge or the invitation
-      * already gone. In every one of those the list on screen is what is wrong, so it is re-read — and the server's own
-      * message is left standing, because it is the one that says which of them happened.
+      * The server's own message is left standing in both cases, because it is the one that says which thing happened —
+      * and held through the reloads below, which would otherwise clear it by succeeding. See `Store.holdBanner`.
+      *
+      * The two statuses are not the same news, so they do not get the same reload:
+      *
+      *   - 409 is the challenge having moved on under this panel, and one of the things that can mean is that it has
+      *     *started*: `refuseStarted` refuses both of these calls on a started challenge with exactly this status. The
+      *     challenger is a participant in the match that start created — creating a challenge accepts it — so their own
+      *     match lists are as stale as this panel is, and a match they may already be on the clock in would otherwise
+      *     be missing from "Current Matches" until something else asked. The other things a 409 means here — a seat
+      *     promised or accepted since the picker was drawn, a player who accepted before the revoke landed — leave
+      *     those lists alone, and three reloads that find nothing new cost a dimmed second.
+      *   - 404 is the challenge or the invitation simply gone. Nothing was started by that, so the challenge list is
+      *     the whole of what is stale.
       */
     private def invitationStale(gameId: GameId)(failure: Throwable): Unit = failure match {
-        case ApiError(404 | 409, _) => Store.refreshChallenges(gameId)
-        case _                      => ()
+        case ApiError(409, _) =>
+            Store.holdBanner()
+            Store.refreshChallenges(gameId)
+            reloadAfterStart()
+        case ApiError(404, _) =>
+            Store.holdBanner()
+            Store.refreshChallenges(gameId)
+        case _ => ()
     }
 
     /** A challenge somebody else is offering, and this player's way into it.

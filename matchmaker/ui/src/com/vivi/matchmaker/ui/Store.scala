@@ -84,6 +84,8 @@ object Store {
         // First, before anything is cleared: from here on, an answer to a request this session made
         // is an answer to a question nobody is asking any more.
         signIns += 1
+        // Nothing is being held for a session that is over.
+        bannerHeld = false
         Auth.clearSession()
         signedIn.set(false)
         player.set(PlayerState.Loading)
@@ -92,10 +94,13 @@ object Store {
         completed.set(Seq.empty)
         games.set(Seq.empty)
         unlistedGames.set(Map.empty)
-        loadingUnlistedGame.set(false)
+        lookingForGames.set(Set.empty)
         challengesByGame.set(Map.empty)
         charactersByGame.set(Map.empty)
         acceptances.set(Seq.empty)
+        // Back to "nobody has told us", so the next player's screen waits for their own answer
+        // rather than reading this one's empty list as theirs.
+        acceptancesKnown.set(false)
         invitations.set(Seq.empty)
         // Whoever was about to be invited was being invited by the player who has just gone.
         invitee.set(None)
@@ -166,13 +171,24 @@ object Store {
       */
     val unlistedGames: Var[Map[GameId, Game]] = Var(Map.empty)
 
-    /** Whether a look for one of those is in flight.
+    /** Which games are being looked for right now.
       *
-      * Its own flag rather than a `Fetch`: a `Fetch` says a list has been answered once this session, and this is asked
-      * per game and only for the games that are missing. Without it a screen would read "not yet answered" as "not
-      * there" for as long as the request took, and say so.
+      * Its own state rather than a `Fetch`: a `Fetch` says a list has been answered once this session, and this is
+      * asked per game and only for the games that are missing. Without it a screen would read "not yet answered" as
+      * "not there" for as long as the request took, and say so.
+      *
+      * A set rather than one flag, because two of these can be in flight — one screen navigated away from before it
+      * answered, and the next one asking for a different game. One flag was cleared by whichever answered first, which
+      * told the screen still waiting that its game was not there. Each lookup takes its own game out, so a stale answer
+      * releases only what it was asked about.
+      *
+      * It is also what keeps a second lookup for the same game from being made: re-selecting a game is this screen's
+      * refresh, and `show` calls `ensureGame` each time.
       */
-    val loadingUnlistedGame: Var[Boolean] = Var(false)
+    private val lookingForGames: Var[Set[GameId]] = Var(Set.empty)
+
+    /** Whether the game this screen is about is still being looked for. */
+    def lookingForGame(gameId: GameId): Signal[Boolean] = lookingForGames.signal.map(_.contains(gameId))
 
     /** Open challenges per game, filled in only for games the user has expanded — there is one request per expansion,
       * and games nobody opens cost nothing.
@@ -188,6 +204,20 @@ object Store {
       * and the list "back out" acts on.
       */
     val acceptances: Var[Seq[PendingAcceptance]] = Var(Seq.empty)
+
+    /** Whether the list above is this session's own answer rather than the empty default.
+      *
+      * Not the same question as `loading(Fetch.Acceptances)`. A `Fetch` is marked however the request ended — a failure
+      * is not still in flight, and a section that said "Loading…" for ever over a failed request would be the worse lie
+      * — so "has answered" and "has answered *with* something" come apart exactly when the request failed. An empty
+      * list then means "nobody has told us", and anything deciding what a player may do by reading it would be deciding
+      * from a blank.
+      *
+      * Which is what the invitations section does: an invitation the player has already accepted is filtered out by
+      * comparing the two lists, and with no acceptances to compare against it would offer two buttons that can only be
+      * refused. Set inside the commit, which runs on success only.
+      */
+    val acceptancesKnown: Var[Boolean] = Var(false)
 
     /** What the caller has been invited to and could still accept (V22), newest first and across every game.
       *
@@ -471,14 +501,40 @@ object Store {
     /** Runs an action and reports a failure rather than losing it. Every button goes through here: a `Future` whose
       * failure nobody observes disappears silently, which in a UI looks exactly like a button that does nothing.
       */
-    def run[A](action: Future[A])(onSuccess: A => Unit): Unit =
+    def run[A](action: Future[A])(onSuccess: A => Unit): Unit = {
+        beginAction()
         action.onComplete(settle(_)(onSuccess))
+    }
+
+    /* Whether the banner is being held against the reloads a failure handler has started.
+     *
+     * `settle` clears the banner whenever a request succeeds, which is right for an action -- the
+     * click worked, so whatever went wrong before it is history -- and wrong for the list reloads a
+     * 404 or 409 handler kicks off. Those succeed *because* the failure was real: the row was stale,
+     * which is what the message says, and the reload is the correction. Letting the first of them
+     * clear it leaves a screen that has visibly changed with no account of why.
+     *
+     * Released by the next action, which is the moment the message stops being about what is on
+     * screen. A plain `var` because it is a detail of the two methods below and nothing renders it. */
+    private var bannerHeld: Boolean = false
+
+    /** Keeps the banner now showing through the reloads a failure handler is about to start.
+      *
+      * Called by a handler passed as `onFailure` to `run`, which runs after the message has been set — so this holds
+      * whatever the server said, without the handler having to know it or write its own version of it.
+      */
+    def holdBanner(): Unit = bannerHeld = true
+
+    /* Every action starts by releasing the hold: from here on the banner is about this click, not
+     * about the one before it. */
+    private def beginAction(): Unit = bannerHeld = false
 
     /** The same, holding `busy` for as long as the request is in flight, so the button that started it can show that it
       * is waiting. The flag is cleared however the request ends — a failure re-enables the button rather than leaving
       * it spinning on an answer that already came.
       */
     def run[A](action: Future[A], busy: Var[Boolean])(onSuccess: A => Unit): Unit = {
+        beginAction()
         busy.set(true)
         action.onComplete { outcome =>
             busy.set(false)
@@ -493,8 +549,12 @@ object Store {
       * after the banner has been set, so a handler that reloads the affected list corrects it in the same beat as the
       * message explaining why — and a handler that sets `error` itself replaces that message deliberately, which is the
       * point of running last.
+      *
+      * A handler that reloads should also call [[holdBanner]]: the reloads it starts succeed, and a success clears the
+      * banner it was just given.
       */
     def run[A](action: Future[A], busy: Var[Boolean], onFailure: Throwable => Unit)(onSuccess: A => Unit): Unit = {
+        beginAction()
         busy.set(true)
         action.onComplete { outcome =>
             busy.set(false)
@@ -525,7 +585,9 @@ object Store {
     }
 
     private def settle[A](outcome: Try[A])(onSuccess: A => Unit): Unit = outcome match {
-        case Success(value) => error.set(None); onSuccess(value)
+        // Held banners survive a success here; see `bannerHeld`. The value is still committed either
+        // way -- what is being held is the explanation, not the list.
+        case Success(value) => if (!bannerHeld) error.set(None); onSuccess(value)
         case Failure(error) => report(error)
     }
 
@@ -635,7 +697,7 @@ object Store {
         load(ApiClient.dueMatches(), Fetch.Due)(due.set)
         load(ApiClient.activeMatches(), Fetch.Active)(active.set)
         load(ApiClient.completedMatches(), Fetch.Completed)(completed.set)
-        load(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
+        load(ApiClient.acceptances(), Fetch.Acceptances)(keepAcceptances)
         load(ApiClient.invitations(), Fetch.Invitations)(invitations.set)
         load(ApiClient.results(), Fetch.Results)(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
     }
@@ -674,7 +736,23 @@ object Store {
 
     def reloadActive(): Future[Unit] = reload(ApiClient.activeMatches(), Fetch.Active)(active.set)
 
-    def reloadAcceptances(): Future[Unit] = reload(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
+    def reloadAcceptances(): Future[Unit] = reload(ApiClient.acceptances(), Fetch.Acceptances)(keepAcceptances)
+
+    /* Both halves of an answer that arrived: the list, and the fact that it did. In one place so that
+     * no caller can set the list without recording that it is real. */
+    private def keepAcceptances(pending: Seq[PendingAcceptance]): Unit = {
+        acceptances.set(pending)
+        acceptancesKnown.set(true)
+    }
+
+    /** The invitations and the acceptances together, which is what the invitations section is drawn from.
+      *
+      * Its own reload rather than `reloadInvitations` alone: which invitations are still to answer is a question about
+      * both lists, and the section is the only place on the page from which a failed acceptances fetch can be retried —
+      * the sections drawn from the acceptances are absent when that list is empty, refresh button and all.
+      */
+    def reloadInvitationsWithAcceptances(): Future[Unit] =
+        reloadInvitations().zip(reloadAcceptances()).map(_ => ())
 
     def reloadInvitations(): Future[Unit] = reload(ApiClient.invitations(), Fetch.Invitations)(invitations.set)
 
@@ -703,13 +781,23 @@ object Store {
       * in would quietly turn every "which game?" list on the screen into a list of games nobody may still play.
       */
     def ensureGame(gameId: GameId): Unit =
-        if (!games.now().exists(_.gameId == gameId) && !unlistedGames.now().contains(gameId)) {
-            loadingUnlistedGame.set(true)
-            // Cleared however it ends, like every other flag of its kind here: a failure leaves the
-            // screen saying the game is not available, beside the banner saying what went wrong,
-            // rather than saying it is still loading for the rest of the session.
+        if (
+          !games.now().exists(_.gameId == gameId) && !unlistedGames.now().contains(gameId) &&
+          !lookingForGames.now().contains(gameId)
+        ) {
+            val signIn = currentSignIn
+            lookingForGames.update(_ + gameId)
+            /* Released however it ends, like every other flag of its kind here: a failure leaves the
+             * screen saying the game is not available, beside the banner saying what went wrong, rather
+             * than saying it is still loading for the rest of the session.
+             *
+             * Guarded by the sign-in counter, which `load` below cannot do for this: `load` guards what
+             * it commits, and this runs on the way there. An answer to a request the previous session
+             * made would otherwise release a lookup this one is still waiting on -- the counter is
+             * incremented before anything is cleared, so a request in flight across a sign-out is
+             * exactly the case it catches. */
             val answered = ApiClient.games(activeOnly = false).transform { outcome =>
-                loadingUnlistedGame.set(false)
+                if (stillSignedInAs(signIn)) lookingForGames.update(_ - gameId)
                 outcome
             }
             load(answered)(all =>
