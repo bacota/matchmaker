@@ -1103,15 +1103,10 @@ object Views {
                       tpe := "button",
                       disabled <-- chosen.signal.map(_.isEmpty),
                       s"Offer ${invitee.nickname} a challenge",
-                      onClick --> { _ =>
-                          chosen.now().foreach { gameId =>
-                              // Set before the navigation, so the form is built with it already in hand
-                              // rather than opening blank and gaining a name a moment later.
-                              Store.invitee.set(Some(invitee))
-                              Store.showChallengeForm.set(true)
-                              Store.show(Store.Page.OneGame(gameId))
-                          }
-                      }
+                      // One call, because the three things it does have to happen in one order:
+                      // `Store.show` clears the form and the invitee, so that arriving at a game any
+                      // other way cannot inherit either.
+                      onClick --> (_ => chosen.now().foreach(gameId => Store.showGameToInvite(gameId, invitee)))
                     )
                   )
               }

@@ -390,6 +390,22 @@ object Store {
       * it, which is the only refresh this screen has.
       */
     def show(next: Page): Unit = {
+        /* Leaving a screen closes the challenge form and forgets who it was being addressed to.
+         *
+         * Both are one slot for the whole session -- there is one form open at a time and one player
+         * being asked -- and neither means anything on the screen after this one. Left standing, the
+         * form reopened on the next game looked at, already addressed to somebody chosen for a
+         * different game: it does say whose name it carries, but nobody asked it to carry one here.
+         *
+         * Only on an actual change of screen. Re-selecting the game already shown is this screen's
+         * only refresh, and closing a half-typed challenge would be a strange thing for a refresh to
+         * do. `showGameToInvite` below is the one caller that wants them set, which is why it sets
+         * them after this rather than before. */
+        if (next != page.now()) {
+            showChallengeForm.set(false)
+            invitee.set(None)
+        }
+
         page.set(next)
         next match {
             case Page.OneGame(gameId) =>
@@ -406,6 +422,18 @@ object Store {
                 reloadPublicMatches(player.playerId)
             case _ => ()
         }
+    }
+
+    /** Goes to a game's screen with the challenge form open and addressed to one player.
+      *
+      * The invite button on somebody's page: composing a challenge needs the form, and who it is for is the one thing
+      * that screen cannot ask. Setting the two after the navigation rather than before it, because `show` clears them —
+      * which is what keeps every *other* way of arriving at a game from inheriting them.
+      */
+    def showGameToInvite(gameId: GameId, asked: PublicPlayer): Unit = {
+        show(Page.OneGame(gameId))
+        invitee.set(Some(asked))
+        showChallengeForm.set(true)
     }
 
     /** The game whose admin edit form is open, if any. One slot rather than a set: editing two games at once is not a
