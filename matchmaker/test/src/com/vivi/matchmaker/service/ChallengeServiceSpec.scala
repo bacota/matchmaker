@@ -1092,6 +1092,58 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
+    /* A game being deactivated does not withdraw the invitations to challenges in it, nor stop them
+     * being accepted.
+     *
+     * `active` decides what `GameService.list` offers -- it is how an admin stops a game being picked
+     * for something new -- and nothing in this service reads it. So a player invited before the
+     * deactivation is still invited afterwards, and accepting still works.
+     *
+     * Written down because a browser holds only the *active* games, which makes the opposite
+     * assumption easy to make and quiet when made: a screen that decided what an invitation may do by
+     * looking its game up in that list would withdraw the button from exactly these challenges, and
+     * the server would have honoured the click. `ChallengeInvitation.gameType` exists so that no
+     * screen has to look.
+     */
+    property("an invitation outlives its game being deactivated, and can still be accepted") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, invitedNickname, invitedExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    invited <- makeCharacterInGame(fixture.game, invitedNickname, invitedExternalId)
+                    role = fixture.game.roles(1).gameRoleId
+                    created <- challengeService.create(
+                      closedChallengeFor(fixture),
+                      externalId,
+                      Seq(Invite(invited._1.playerId, Some(role)))
+                    )
+                    // Withdrawn from the catalogue, after the invitation was sent and before it is
+                    // answered -- which is the whole of what a deactivation is.
+                    _ <- TestSession.resource.use(session =>
+                        new GameRepo[String](session).update(fixture.game.copy(active = false))
+                    )
+                    listed <- challengeService.invitationsFor(invitedExternalId)
+                    accepted <- challengeService
+                        .accept(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Some(invited._2.characterId),
+                          role,
+                          invitedExternalId
+                        )
+                        .attempt
+                } yield {
+                    val mine = listed.filter(_.invitation.challengeId == created.challengeId)
+                    // Still listed, still named, and still acceptable.
+                    mine.sizeIs == 1 &&
+                    mine.head.gameName == fixture.game.name &&
+                    mine.head.gameType == GameType.Character &&
+                    accepted.isRight
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
     property("invitationsFor spans every game and names the game, the challenger and the role") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, otherNickname, otherExternalId) =>
@@ -1119,6 +1171,11 @@ class ChallengeServiceSpec extends PropertySuite {
                     named.exists(i =>
                         i.challengerNickname == nickname &&
                             i.gameName == first.game.name &&
+                            // The kind of game, which is what the row reads to know whether accepting
+                            // from the list can work at all -- an acceptance in a character game has to
+                            // name a character, and the list holds none. The fixtures are character
+                            // games, so this is the value that must not arrive defaulted.
+                            i.gameType == GameType.Character &&
                             i.roleName.contains(first.game.roles(1).name) &&
                             i.invitation.gameRoleId.contains(role)
                     ) &&

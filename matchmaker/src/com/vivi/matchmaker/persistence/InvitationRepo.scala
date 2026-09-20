@@ -22,6 +22,7 @@ class InvitationRepo(session: Session[IO]) {
     private val playerId = SkunkIdCodecs.playerId
     private val gameId = SkunkIdCodecs.gameId
     private val gameRoleId = SkunkIdCodecs.gameRoleId
+    private val gameType = SkunkCodecs.gameType
 
     private val insertInvitation: Command[(GameId, ChallengeId, PlayerId, Option[GameRoleId])] =
         sql"""INSERT INTO invitation (game_id, challenge_id, player_id, game_role_id)
@@ -99,10 +100,10 @@ class InvitationRepo(session: Session[IO]) {
     // this is a filter here rather than a delete there.
     private val selectByPlayer: Query[
       PlayerId,
-      (GameId, ChallengeId, Option[GameRoleId], String, String, String, Option[String])
+      (GameId, ChallengeId, Option[GameRoleId], String, GameType, String, String, Option[String])
     ] =
         sql"""SELECT i.game_id, i.challenge_id, i.game_role_id,
-                 g.name, challenger.nickname, ch.message, r.name
+                 g.name, g.game_type, challenger.nickname, ch.message, r.name
           FROM invitation i
           JOIN challenge ch ON ch.game_id = i.game_id AND ch.challenge_id = i.challenge_id
           JOIN game g ON g.game_id = i.game_id
@@ -110,7 +111,7 @@ class InvitationRepo(session: Session[IO]) {
           LEFT JOIN game_role r ON r.game_id = i.game_id AND r.game_role_id = i.game_role_id
           WHERE i.player_id = $playerId AND ch.started_match_id IS NULL
           ORDER BY i.create_date DESC, i.challenge_id"""
-            .query(gameId *: challengeId *: gameRoleId.opt *: text *: text *: text *: text.opt)
+            .query(gameId *: challengeId *: gameRoleId.opt *: text *: gameType *: text *: text *: text.opt)
 
     /** Everything this player has been invited to and could still accept, newest first.
       *
@@ -120,10 +121,11 @@ class InvitationRepo(session: Session[IO]) {
     def listForPlayer(player: PlayerId): IO[List[ChallengeInvitation]] =
         session
             .execute(selectByPlayer)(player)
-            .map(_.map { case (game, challenge, role, gameName, challenger, message, roleName) =>
+            .map(_.map { case (game, challenge, role, gameName, kind, challenger, message, roleName) =>
                 ChallengeInvitation(
                   Invitation(game, challenge, player, role),
                   gameName,
+                  kind,
                   challenger,
                   message,
                   roleName

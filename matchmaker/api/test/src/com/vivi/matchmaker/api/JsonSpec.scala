@@ -222,6 +222,7 @@ class JsonSpec extends FunSuite {
         val listed = ChallengeInvitation(
           Invitation(GameId(1), ChallengeId(2), PlayerId(3), Some(GameRoleId(4))),
           gameName = "Chess",
+          gameType = GameType.Plain,
           challengerNickname = "ada",
           message = "best of three",
           roleName = Some("white")

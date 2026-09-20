@@ -91,6 +91,8 @@ object Store {
         active.set(Seq.empty)
         completed.set(Seq.empty)
         games.set(Seq.empty)
+        unlistedGames.set(Map.empty)
+        loadingUnlistedGame.set(false)
         challengesByGame.set(Map.empty)
         charactersByGame.set(Map.empty)
         acceptances.set(Seq.empty)
@@ -150,6 +152,27 @@ object Store {
     val active: Var[Seq[MatchSummary]] = Var(Seq.empty)
     val completed: Var[Seq[MatchSummary]] = Var(Seq.empty)
     val games: Var[Seq[Game]] = Var(Seq.empty)
+
+    /** Games reachable by a link but absent from the list above: the deactivated ones.
+      *
+      * `games` holds the active games, because that is what every list and the menu should offer. A game can still be
+      * *arrived at* after being deactivated — an invitation to a challenge in it, a match still being played — and its
+      * screen drawn from the active list alone would say "Loading…" for ever, waiting for a game that list will never
+      * hold.
+      *
+      * Fetched once per game, on the way to its screen, and kept for the session: a deactivated game does not come back
+      * while somebody is looking at it. Separate from `games` rather than merged into it so the menu and every "which
+      * game?" picker go on offering the active ones only.
+      */
+    val unlistedGames: Var[Map[GameId, Game]] = Var(Map.empty)
+
+    /** Whether a look for one of those is in flight.
+      *
+      * Its own flag rather than a `Fetch`: a `Fetch` says a list has been answered once this session, and this is asked
+      * per game and only for the games that are missing. Without it a screen would read "not yet answered" as "not
+      * there" for as long as the request took, and say so.
+      */
+    val loadingUnlistedGame: Var[Boolean] = Var(false)
 
     /** Open challenges per game, filled in only for games the user has expanded — there is one request per expansion,
       * and games nobody opens cost nothing.
@@ -372,6 +395,7 @@ object Store {
             case Page.OneGame(gameId) =>
                 refreshChallenges(gameId)
                 refreshCharacters(gameId)
+                ensureGame(gameId)
             /* Emptied before the request rather than left holding the last player's matches: the
              * page is about to be headed with a different nickname, and rows from the player before
              * them under it would be read as theirs. `None` is what the sections show as loading. */
@@ -639,6 +663,40 @@ object Store {
         reload(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))
 
     def refreshGames(): Unit = load(ApiClient.games(activeOnly = true), Fetch.Games)(games.set)
+
+    /** Makes sure the game a screen is about can be drawn, deactivated or not.
+      *
+      * Nothing to do in the ordinary case: an active game is already held, and this costs no request. Otherwise the
+      * full list is asked for — the one route there is, since a game has no endpoint of its own — and what comes back
+      * is kept in `unlistedGames` rather than in `games`, so the menu and the pickers go on listing the active games
+      * only.
+      *
+      * Only the game asked for is kept, for that reason: the answer holds every game there is, and folding all of them
+      * in would quietly turn every "which game?" list on the screen into a list of games nobody may still play.
+      */
+    def ensureGame(gameId: GameId): Unit =
+        if (!games.now().exists(_.gameId == gameId) && !unlistedGames.now().contains(gameId)) {
+            loadingUnlistedGame.set(true)
+            // Cleared however it ends, like every other flag of its kind here: a failure leaves the
+            // screen saying the game is not available, beside the banner saying what went wrong,
+            // rather than saying it is still loading for the rest of the session.
+            val answered = ApiClient.games(activeOnly = false).transform { outcome =>
+                loadingUnlistedGame.set(false)
+                outcome
+            }
+            load(answered)(all =>
+                all.find(_.gameId == gameId).foreach(game => unlistedGames.update(_.updated(gameId, game)))
+            )
+        }
+
+    /** The game a screen is about: active, or reachable-but-deactivated, or not yet known.
+      *
+      * The two slots asked as one question, so a screen does not have to know that there are two.
+      */
+    def game(gameId: GameId): Signal[Option[Game]] =
+        games.signal.combineWith(unlistedGames.signal).map { (active, unlisted) =>
+            active.find(_.gameId == gameId).orElse(unlisted.get(gameId))
+        }
 
     def refreshChallenges(gameId: GameId): Unit =
         load(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))

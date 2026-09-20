@@ -487,19 +487,15 @@ object Views {
       */
     private def invitationsSection: HtmlElement =
         div(
-          child <-- Store.invitations.signal.combineWith(Store.games.signal).map { (invitations, games) =>
+          child <-- Store.invitations.signal.map { invitations =>
               if (invitations.isEmpty) emptyNode
-              else {
-                  val byId = games.map(game => game.gameId -> game).toMap
+              else
                   refreshableSection(
                     "You Have Been Invited",
                     refreshingInvitations,
                     () => Store.reloadInvitations(),
                     subsection = false
-                  )(
-                    ul(invitations.map(invitation => invitationRow(invitation, byId.get(invitation.invitation.gameId))))
-                  )
-              }
+                  )(ul(invitations.map(invitationRow)))
           }
         )
 
@@ -509,13 +505,18 @@ object Views {
       * invitation, and the game is not one played through characters. Otherwise the choice belongs on the game's own
       * screen, which is where the free roles and this player's characters are loaded — so the button goes there instead
       * of guessing at either. Declining needs neither, and is offered on every row.
+      *
+      * Every fact it decides on comes from the response, and none from `Store.games`. That list holds the *active*
+      * games, and an invitation outlives its game being deactivated — `active` decides what is listed, not what may be
+      * accepted — so a lookup there would quietly withdraw the Accept button from a challenge the server would still
+      * honour, and only for the invitations least likely to be noticed.
       */
-    private def invitationRow(invited: ChallengeInvitation, game: Option[Game]): HtmlElement = {
+    private def invitationRow(invited: ChallengeInvitation): HtmlElement = {
         val invitation = invited.invitation
         // A character game's acceptance must name a character, and this row has none loaded; a
         // role-less invitation is an offer of any free seat, and which are free is not in this
         // response either.
-        val acceptableHere = invitation.gameRoleId.isDefined && game.exists(_.gameType != GameType.Character)
+        val acceptableHere = invitation.gameRoleId.isDefined && invited.gameType != GameType.Character
 
         li(
           cls := "row",
@@ -1437,28 +1438,44 @@ object Views {
       */
     private def gamePage(gameId: GameId): HtmlElement =
         div(
-          child <-- Store.games.signal.map(_.find(_.gameId == gameId)).map {
-              case None => p(cls := "empty", "Loading…")
-              case Some(game) =>
-                  div(
-                    h2(game.name),
-                    p(cls := "detail", game.description),
-                    editGamePanel(game),
-                    // What is waiting on this player in this game, before what they could join: a turn
-                    // they owe somebody is more urgent than a challenge they might accept.
-                    //
-                    // Both halves of the pending acceptances, in the order the home page puts them: the
-                    // ones this player can start now, and the ones that are still waiting on somebody.
-                    // Splitting them across two screens would leave a game page listing an acceptance as
-                    // waiting to start with no way to start it.
-                    readyToStartSection(Some(game)),
-                    dueSection(Some(game)),
-                    myMatchesSection(Some(game)),
-                    pendingAcceptances(Some(game)),
-                    gameChallenges(game),
-                    gameHistory(game)
-                  )
-          }
+          // Through `Store.game`, which answers from the active games and from the deactivated one
+          // this screen may have been linked to -- an invitation outlives its game being deactivated,
+          // and reading the active list alone left such a page saying "Loading…" for ever. The two
+          // states are still told apart: "Loading…" while something is on its way, and a sentence
+          // saying so once nothing is.
+          child <-- Store
+              .game(gameId)
+              .combineWith(
+                Store.loading(Store.Fetch.Games).combineWith(Store.loadingUnlistedGame.signal).map(_ || _)
+              )
+              .map {
+                  case (None, true) => p(cls := "empty", "Loading…")
+                  case (None, false) =>
+                      p(
+                        cls := "empty",
+                        aria.live := "polite",
+                        "That game is not available. It may have been withdrawn."
+                      )
+                  case (Some(game), _) =>
+                      div(
+                        h2(game.name),
+                        p(cls := "detail", game.description),
+                        editGamePanel(game),
+                        // What is waiting on this player in this game, before what they could join: a turn
+                        // they owe somebody is more urgent than a challenge they might accept.
+                        //
+                        // Both halves of the pending acceptances, in the order the home page puts them: the
+                        // ones this player can start now, and the ones that are still waiting on somebody.
+                        // Splitting them across two screens would leave a game page listing an acceptance as
+                        // waiting to start with no way to start it.
+                        readyToStartSection(Some(game)),
+                        dueSection(Some(game)),
+                        myMatchesSection(Some(game)),
+                        pendingAcceptances(Some(game)),
+                        gameChallenges(game),
+                        gameHistory(game)
+                      )
+              }
         )
 
     /** The admin's edit form for a game, opened from a link on the game's own screen. Nothing for anyone else: the
