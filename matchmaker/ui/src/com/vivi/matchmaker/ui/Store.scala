@@ -149,6 +149,8 @@ object Store {
         case Due, Active, Completed, Results, Games, Acceptances, Invitations
         case Challenges(gameId: GameId)
         case Characters(gameId: GameId)
+        case Game(gameId: GameId)
+        case PublicMatches
         case PlayerSearch
         case NotificationSettings
     }
@@ -208,8 +210,8 @@ object Store {
       * acceptance — so two answers about one game overlap readily, and the older landing last puts back the invitation
       * that was just withdrawn. Hence [[Fetch.Challenges]] and its neighbours carrying their key.
       *
-      * The one exception is `reloadPublicMatches`, which has a counter of its own because the same guard has to decide
-      * when its page stops saying it is loading — see `publicMatchesFetch`. It remains vacuously true here.
+      * Every fetch in this store goes through it, so there is nothing left for which this is vacuously true. Two
+      * requests that answer one question share a stamp rather than taking one each — see `reloadAs`.
       */
     private def newest(stamp: Int, fetches: Seq[Fetch]): Boolean =
         fetches.forall(what => latestAsk.get(what).contains(stamp))
@@ -311,7 +313,16 @@ object Store {
       */
     val nicknames: Var[Map[PlayerId, String]] = Var(Map.empty)
 
-    /** Remembers who a search or a page has just named. */
+    /** Remembers who a search or a page has just named.
+      *
+      * Deliberately not ordered against anything, unlike every other write here that a fetch feeds. This accumulates
+      * rather than replaces: each merge adds the names one answer happened to carry and takes nothing away, so two
+      * merges commute and an older one is not a stale version of a newer one — it is a different, equally true, part of
+      * the same map. A stamp could only drop names that were correct, and a miss here is an id shown plainly.
+      *
+      * So this is not an oversight to be tidied up by applying the guard uniformly. Reach for one only if this ever
+      * starts overwriting the map instead of adding to it.
+      */
     def remember(players: Seq[PublicPlayer]): Unit =
         nicknames.update(_ ++ players.map(player => player.playerId -> player.nickname))
 
@@ -373,11 +384,10 @@ object Store {
       */
     val publicMatchesLoading: Var[Boolean] = Var(false)
 
-    /* Which fetch of a player's public matches is the one the page is waiting for.
+    /* Why these two lists are [[Fetch.PublicMatches]] and not a fetch keyed by the player.
      *
-     * Incremented per fetch, and an answer commits only if its own number is still the current one.
-     * Two races need that, and the sign-in counter `reload` already applies catches neither, because
-     * both happen within one session:
+     * A counter of their own stood here, doing what `latestAsk` does for every other list. Two races
+     * need it, and the sign-in counter catches neither, because both happen within one session:
      *
      *   - Two players. Opening A and then B before A has answered would write A's matches into the
      *     slots B's page is drawing from -- one player's matches under another's nickname, which is
@@ -385,10 +395,10 @@ object Store {
      *   - One player, twice. An initial load and a refresh, or two impatient refreshes, can land in
      *     either order; without this the older answer wins whenever it arrives second.
      *
-     * A single counter rather than one per player, because one player's page is on screen at a time:
-     * what is wanted is not "the answer for this player" but "the answer to the question the page is
-     * currently asking", and anything else is by definition not it. */
-    private var publicMatchesFetch: Long = 0L
+     * Unkeyed, unlike `Challenges` and its neighbours, because one player's page is on screen at a
+     * time: what is wanted is not "the answer for this player" but "the answer to the question the
+     * page is currently asking", and anything else is by definition not it. Keying it by player would
+     * let A's answer commit while B's page is up, which is the first race above. */
 
     /** Which game's row is open on a player's page, if any. One at a time, like `editingGame`: the rows are a list to
       * scan, and two open sets of matches make it a page to scroll.
@@ -417,28 +427,24 @@ object Store {
 
     /** Both of a player's public lists. Used when their page is opened and by that page's refresh button.
       *
-      * Two requests, one fetch: they are the two halves of one page, they are numbered together, and the page stops
-      * saying it is loading when both have settled. Each commits only if this is still the fetch the page is waiting
-      * for -- see `publicMatchesFetch` for the two races that guards.
+      * Two requests, one question: they are the two halves of one page, so they share a stamp rather than taking one
+      * each, and the page stops saying it is loading when both have settled. Each commits only if that stamp is still
+      * the one the page is waiting for — see the note above [[Fetch.PublicMatches]] for the two races that guards.
       */
     def reloadPublicMatches(playerId: PlayerId): Future[Unit] = {
-        publicMatchesFetch += 1
-        val fetch = publicMatchesFetch
+        val lists = Seq(Fetch.PublicMatches)
+        val stamp = ask(lists)
         publicMatchesLoading.set(true)
 
-        val running = reload(ApiClient.publicMatches(playerId))(list => ifCurrent(fetch)(publicActive.set(list)))
-        val over =
-            reload(ApiClient.publicCompletedMatches(playerId))(list => ifCurrent(fetch)(publicCompleted.set(list)))
+        val running = reloadAs(ApiClient.publicMatches(playerId), stamp, lists)(publicActive.set)
+        val over = reloadAs(ApiClient.publicCompletedMatches(playerId), stamp, lists)(publicCompleted.set)
 
-        // However they settled: `reload` reports a failure and succeeds, so this runs on either
-        // outcome, which is what stops a failed fetch from leaving the page loading for ever.
-        running.zip(over).map(_ => ifCurrent(fetch)(publicMatchesLoading.set(false)))
+        // However they settled: `reloadAs` reports a failure and succeeds, so this runs on either
+        // outcome, which is what stops a failed fetch from leaving the page loading for ever. Guarded
+        // like the two commits are, and by the same stamp: a newer fetch has already set the flag for
+        // itself, and this one clearing it would say that fetch had finished.
+        running.zip(over).map(_ => if (newest(stamp, lists)) publicMatchesLoading.set(false))
     }
-
-    /* Commits a public-matches answer only if the page is still waiting for the fetch it came from. A
-     * later fetch has already emptied the lists and set the flag for itself, so an older answer has
-     * nothing to add and a place where it would do harm. */
-    private def ifCurrent(fetch: Long)(commit: => Unit): Unit = if (fetch == publicMatchesFetch) commit
 
     /** What the caller wants to be told about, once something has asked.
       *
@@ -845,9 +851,17 @@ object Store {
       * and the result is always a success, because the only caller is a section waiting to stop showing that it is
       * reloading. A failure there is not a second thing to handle; it is a banner that has already been raised.
       */
-    private def reload[A](action: Future[A], fetches: Fetch*)(onSuccess: A => Unit): Future[Unit] = {
+    private def reload[A](action: Future[A], fetches: Fetch*)(onSuccess: A => Unit): Future[Unit] =
+        reloadAs(action, ask(fetches), fetches)(onSuccess)
+
+    /** `reload`, against a stamp already taken rather than one of its own.
+      *
+      * For the caller whose one question takes two requests: stamping each separately would have the second supersede
+      * the first, and the page would commit half of what it asked for. One stamp shared between them makes the pair a
+      * single question, which is what it is. `reloadPublicMatches` is the case.
+      */
+    private def reloadAs[A](action: Future[A], stamp: Int, fetches: Seq[Fetch])(onSuccess: A => Unit): Future[Unit] = {
         val signIn = currentSignIn
-        val stamp = ask(fetches)
 
         action.transform { outcome =>
             // Dropped rather than committed when the session that asked has ended, or when this list
@@ -971,7 +985,16 @@ object Store {
                     failure
                 case success => success
             }
-            load(answered) { all =>
+            /* Keyed by the game asked about, not by the route. Every one of these calls the same
+             * endpoint and keeps one game out of the answer, so two lookups for two games must not
+             * supersede each other -- an unkeyed stamp would have the second cancel the first, and
+             * the first screen would be told its game does not exist.
+             *
+             * Nothing releases the flag when a commit is dropped as superseded, and nothing needs to:
+             * the guard above starts no second lookup while one for the same game is in flight, so the
+             * only request that can take this key is this one. Were that precondition ever relaxed,
+             * the newer lookup would release the flag itself. */
+            load(answered, Fetch.Game(gameId)) { all =>
                 all.find(_.gameId == gameId).foreach(game => unlistedGames.update(_.updated(gameId, game)))
                 lookingForGames.update(_ - gameId)
             }
