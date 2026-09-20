@@ -487,16 +487,42 @@ object Views {
       */
     private def invitationsSection: HtmlElement =
         div(
-          child <-- Store.invitations.signal.map { invitations =>
-              if (invitations.isEmpty) emptyNode
-              else
-                  refreshableSection(
-                    "You Have Been Invited",
-                    refreshingInvitations,
-                    () => Store.reloadInvitations(),
-                    subsection = false
-                  )(ul(invitations.map(invitationRow)))
-          }
+          child <-- Store.invitations.signal
+              .combineWith(Store.acceptances.signal, Store.loading(Store.Fetch.Acceptances))
+              .map { (invitations, acceptances, acceptancesComing) =>
+                  /* An invitation the player has already accepted is still an invitation: it
+                   * outlives the acceptance it led to, so that backing out and changing their mind
+                   * again is something they may do -- see `Invitation`. What it is not is something
+                   * still to answer, and both buttons on such a row are refused with a 409: `accept`
+                   * because one player may hold one seat, and `reject` because the invitation is what
+                   * permits the seat they are sitting in.
+                   *
+                   * So it is filtered out here rather than by the query, which would have to forget
+                   * the invitation to forget the row. The same shape `challengePanel` uses to drop a
+                   * challenge this player has accepted from the open list, and for the same reason:
+                   * what is left is what they can still act on.
+                   *
+                   * It comes back if they back out, which is right -- they are invited again in the
+                   * only sense that matters, and the acceptance leaving the list is what says so. */
+                  val accepted =
+                      acceptances.map(pending => (pending.acceptance.gameId, pending.acceptance.challengeId)).toSet
+                  val unanswered = invitations.filterNot(invited =>
+                      accepted.contains((invited.invitation.gameId, invited.invitation.challengeId))
+                  )
+
+                  // Nothing until the acceptances have answered: until they have, an accepted
+                  // invitation is indistinguishable from one still open, and showing it would offer
+                  // two buttons that cannot work. The section is absent when empty anyway, so waiting
+                  // costs a moment of nothing rather than a moment of something wrong.
+                  if (acceptancesComing || unanswered.isEmpty) emptyNode
+                  else
+                      refreshableSection(
+                        "You Have Been Invited",
+                        refreshingInvitations,
+                        () => Store.reloadInvitations(),
+                        subsection = false
+                      )(ul(unanswered.map(invitationRow)))
+              }
         )
 
     /** One invitation: who asked, to what, and as what — then the two answers.
@@ -576,17 +602,20 @@ object Views {
       *
       * The shape `alreadyStarted` has, and for the same reason: this row is on screen because the list was fetched
       * before the challenger withdrew it, or started the challenge, or before this player accepted from another tab.
-      * 404 and 409 are both the server saying so, so both are treated as the news they are — the list is re-read, and
-      * the banner says what happened in words rather than in the ids the server's message names.
+      * 404 and 409 are both the server saying so, so both are treated as the news they are and the lists are re-read.
+      *
+      * The banner is left exactly as the server wrote it, which `alreadyStarted` does not do. There, one thing can have
+      * happened — the match has started — and it can be said in better words than the ids the message names. Here
+      * several can: the challenge is gone, the invitation was withdrawn, this player has already accepted, somebody
+      * else took the seat. Only the server knows which, and a single sentence covering all of them would be wrong about
+      * most.
       *
       * Anything else is left as `Store.run` reported it. A 5xx says nothing about whether the invitation is still
       * there, and a list that looked corrected on the strength of one would be worse than a plain failure.
       */
     private def invitationGone(invitation: Invitation)(failure: Throwable): Unit = failure match {
-        case ApiError(404 | 409, _) =>
-            answeredInvitation(invitation)
-            Store.error.set(Some("That invitation is no longer open. The list has been brought up to date."))
-        case _ => ()
+        case ApiError(404 | 409, _) => answeredInvitation(invitation)
+        case _                      => ()
     }
 
     /* Absent altogether when there is nothing ready to start, heading and refresh button with it.

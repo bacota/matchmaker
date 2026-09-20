@@ -1144,6 +1144,51 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
+    /* Accepting does not remove the invitation, and so does not remove it from this list either.
+     *
+     * The row survives on purpose: it is what permits the seat, so backing out and changing their
+     * mind again is something a player may do. The consequence is that `invitationsFor` answers with
+     * invitations in both states, and nothing in the response says which -- an invitation carries no
+     * state about whether it was taken up.
+     *
+     * Which is why the screen that draws it filters against the acceptances it already holds: both
+     * buttons on an accepted row are refused with a 409, `accept` because one player may hold one
+     * seat and `reject` because the invitation permits the seat they are in. This property is that
+     * assumption written down, so a later decision to filter here instead fails loudly there.
+     */
+    property("accepting an invitation leaves it in the invitations list, in no different shape") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, invitedNickname, invitedExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    invited <- makeCharacterInGame(fixture.game, invitedNickname, invitedExternalId)
+                    role = fixture.game.roles(1).gameRoleId
+                    created <- challengeService.create(
+                      closedChallengeFor(fixture),
+                      externalId,
+                      Seq(Invite(invited._1.playerId, Some(role)))
+                    )
+                    before <- challengeService.invitationsFor(invitedExternalId)
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(invited._2.characterId),
+                      role,
+                      invitedExternalId
+                    )
+                    after <- challengeService.invitationsFor(invitedExternalId)
+                } yield {
+                    def mine(listed: List[ChallengeInvitation]) =
+                        listed.filter(_.invitation.challengeId == created.challengeId)
+
+                    // There before, there after, and identical: nothing in the row marks it answered,
+                    // which is the whole reason the caller has to know from somewhere else.
+                    mine(before).sizeIs == 1 && mine(after) == mine(before)
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
     property("invitationsFor spans every game and names the game, the challenger and the role") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, otherNickname, otherExternalId) =>
