@@ -1156,6 +1156,67 @@ class ChallengeServiceSpec extends PropertySuite {
      * seat and `reject` because the invitation permits the seat they are in. This property is that
      * assumption written down, so a later decision to filter here instead fails loudly there.
      */
+    /* A player already in the challenge cannot be invited to it, with or without a seat named.
+     *
+     * The seat they are sitting in was already refused by `taken` -- an accepted role is not free to
+     * offer -- which is what made the role-less case easy to miss: it held nothing, so it passed every
+     * check and wrote a row that nothing could then remove. `reject` refuses them because their
+     * invitation is what permits their seat, `revoke` refuses the challenger in the same words, and
+     * the mail told somebody they had been invited to a challenge they had already joined.
+     */
+    property("invite refuses a player who has already accepted, seat or no seat") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, otherNickname, otherExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    other <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
+                    created <- challengeService.create(challengeFor(fixture), externalId)
+                    // In the challenge, in a seat of their own.
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(other._2.characterId),
+                      fixture.game.roles(1).gameRoleId,
+                      otherExternalId
+                    )
+                    // The seat they are in, which `taken` has always refused.
+                    toTheirSeat <- challengeService
+                        .invite(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Invite(other._1.playerId, Some(fixture.game.roles(1).gameRoleId)),
+                          externalId
+                        )
+                        .attempt
+                    // And to no seat at all, which used to be allowed.
+                    toAnySeat <- challengeService
+                        .invite(fixture.game.gameId, created.challengeId, Invite(other._1.playerId), externalId)
+                        .attempt
+                    // A free seat still goes to somebody who is not in it, so this refuses one player
+                    // rather than every invitation to a challenge that has an acceptance in it.
+                    third <- registrationService.register(genUniqueString.sample.get, genUniqueString.sample.get)
+                    toAnother <- challengeService
+                        .invite(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Invite(third.playerId, Some(fixture.game.roles(2).gameRoleId)),
+                          externalId
+                        )
+                        .attempt
+                    left <- invitationsOf(fixture.game, created.challengeId)
+                } yield {
+                    def refused(outcome: Either[Throwable, ?]) = outcome match {
+                        case Left(_: ConflictError) => true
+                        case _                      => false
+                    }
+                    refused(toTheirSeat) && refused(toAnySeat) && toAnother.isRight &&
+                    // Nothing was written for the player who is already seated.
+                    left.map(_.playerId) == List(third.playerId)
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
     property("accepting an invitation leaves it in the invitations list, in no different shape") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, invitedNickname, invitedExternalId) =>

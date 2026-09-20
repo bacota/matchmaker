@@ -651,6 +651,25 @@ class ChallengeService[T](
                         s"player ${invite.playerId.value} has already been invited to challenge ${challengeId.value}"
                       )
                     )
+                    /* And nobody who is already in it.
+                     *
+                     * `taken` above refuses an invitation to the *seat* they are sitting in, which is
+                     * the case that looks like this one and is not it: an invitation naming no role at
+                     * all held nothing, cleared every check, and wrote a row that neither side could
+                     * then remove. [[reject]] refuses them, because their invitation is what permits
+                     * the seat they are in; [[revoke]] refuses the challenger, for the same reason and
+                     * in the same words. So the row outlived every way of getting rid of it short of
+                     * the acceptance going first, and a mail went out inviting somebody to a challenge
+                     * they had already joined.
+                     *
+                     * Under the challenge's lock, with the two checks above, so an acceptance landing
+                     * between this and the insert cannot leave that state either. */
+                    seated <- acceptanceRepo.hasAccepted(gameId, challengeId, invite.playerId)
+                    _ <- IO.raiseWhen(seated)(
+                      ConflictError(
+                        s"player ${invite.playerId.value} has already accepted challenge ${challengeId.value}"
+                      )
+                    )
                     created <- invitationRepo.create(
                       Invitation(gameId, challengeId, invite.playerId, invite.gameRoleId)
                     )
