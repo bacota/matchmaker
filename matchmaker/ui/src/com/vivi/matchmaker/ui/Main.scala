@@ -667,7 +667,7 @@ object Views {
         // Named, so that two answers running do not read as one sentence that never changed — a live
         // region announces a change in its text, and "Invitation accepted." twice over is no change.
         Store.sayAboutInvitations(
-          s"Invitation to ${invited.gameName} accepted. If it was the last seat, the match has already started."
+          s"Invitation to ${invited.gameName} accepted."
         )
         reloadAfterAnsweringInvitation(invited)
     }
