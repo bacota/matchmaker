@@ -965,13 +965,16 @@ object Store {
              * made would otherwise release a lookup this one is still waiting on -- the counter is
              * incremented before anything is cleared, so a request in flight across a sign-out is
              * exactly the case it catches. */
-            val answered = ApiClient.games(activeOnly = false).transform { outcome =>
-                if (stillSignedInAs(signIn)) lookingForGames.update(_ - gameId)
-                outcome
+            val answered = ApiClient.games(activeOnly = false).transform {
+                case failure @ Failure(_) =>
+                    if (stillSignedInAs(signIn)) lookingForGames.update(_ - gameId)
+                    failure
+                case success => success
             }
-            load(answered)(all =>
+            load(answered) { all =>
                 all.find(_.gameId == gameId).foreach(game => unlistedGames.update(_.updated(gameId, game)))
-            )
+                lookingForGames.update(_ - gameId)
+            }
         }
 
     /** The game a screen is about: active, or reachable-but-deactivated, or not yet known.
