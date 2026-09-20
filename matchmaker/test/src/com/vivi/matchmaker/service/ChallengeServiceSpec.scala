@@ -1092,6 +1092,216 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
+    /* A game being deactivated does not withdraw the invitations to challenges in it, nor stop them
+     * being accepted.
+     *
+     * `active` decides what `GameService.list` offers -- it is how an admin stops a game being picked
+     * for something new -- and nothing in this service reads it. So a player invited before the
+     * deactivation is still invited afterwards, and accepting still works.
+     *
+     * Written down because a browser holds only the *active* games, which makes the opposite
+     * assumption easy to make and quiet when made: a screen that decided what an invitation may do by
+     * looking its game up in that list would withdraw the button from exactly these challenges, and
+     * the server would have honoured the click. `ChallengeInvitation.gameType` exists so that no
+     * screen has to look.
+     */
+    property("an invitation outlives its game being deactivated, and can still be accepted") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, invitedNickname, invitedExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    invited <- makeCharacterInGame(fixture.game, invitedNickname, invitedExternalId)
+                    role = fixture.game.roles(1).gameRoleId
+                    created <- challengeService.create(
+                      closedChallengeFor(fixture),
+                      externalId,
+                      Seq(Invite(invited._1.playerId, Some(role)))
+                    )
+                    // Withdrawn from the catalogue, after the invitation was sent and before it is
+                    // answered -- which is the whole of what a deactivation is.
+                    _ <- TestSession.resource.use(session =>
+                        new GameRepo[String](session).update(fixture.game.copy(active = false))
+                    )
+                    listed <- challengeService.invitationsFor(invitedExternalId)
+                    accepted <- challengeService
+                        .accept(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Some(invited._2.characterId),
+                          role,
+                          invitedExternalId
+                        )
+                        .attempt
+                } yield {
+                    val mine = listed.filter(_.invitation.challengeId == created.challengeId)
+                    // Still listed, still named, and still acceptable.
+                    mine.sizeIs == 1 &&
+                    mine.head.gameName == fixture.game.name &&
+                    mine.head.gameType == GameType.Character &&
+                    accepted.isRight
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    /* Accepting does not remove the invitation, and so does not remove it from this list either.
+     *
+     * The row survives on purpose: it is what permits the seat, so backing out and changing their
+     * mind again is something a player may do. The consequence is that `invitationsFor` answers with
+     * invitations in both states, and nothing in the response says which -- an invitation carries no
+     * state about whether it was taken up.
+     *
+     * Which is why the screen that draws it filters against the acceptances it already holds: both
+     * buttons on an accepted row are refused with a 409, `accept` because one player may hold one
+     * seat and `reject` because the invitation permits the seat they are in. This property is that
+     * assumption written down, so a later decision to filter here instead fails loudly there.
+     */
+    /* A player already in the challenge cannot be invited to it, with or without a seat named.
+     *
+     * The seat they are sitting in was already refused by `taken` -- an accepted role is not free to
+     * offer -- which is what made the role-less case easy to miss: it held nothing, so it passed every
+     * check and wrote a row that nothing could then remove. `reject` refuses them because their
+     * invitation is what permits their seat, `revoke` refuses the challenger in the same words, and
+     * the mail told somebody they had been invited to a challenge they had already joined.
+     */
+    property("invite refuses a player who has already accepted, seat or no seat") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, otherNickname, otherExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    other <- makeCharacterInGame(fixture.game, otherNickname, otherExternalId)
+                    created <- challengeService.create(challengeFor(fixture), externalId)
+                    // In the challenge, in a seat of their own.
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(other._2.characterId),
+                      fixture.game.roles(1).gameRoleId,
+                      otherExternalId
+                    )
+                    // The seat they are in, which `taken` has always refused.
+                    toTheirSeat <- challengeService
+                        .invite(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Invite(other._1.playerId, Some(fixture.game.roles(1).gameRoleId)),
+                          externalId
+                        )
+                        .attempt
+                    // And to no seat at all, which used to be allowed.
+                    toAnySeat <- challengeService
+                        .invite(fixture.game.gameId, created.challengeId, Invite(other._1.playerId), externalId)
+                        .attempt
+                    // A free seat still goes to somebody who is not in it, so this refuses one player
+                    // rather than every invitation to a challenge that has an acceptance in it.
+                    third <- registrationService.register(genUniqueString.sample.get, genUniqueString.sample.get)
+                    toAnother <- challengeService
+                        .invite(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Invite(third.playerId, Some(fixture.game.roles(2).gameRoleId)),
+                          externalId
+                        )
+                        .attempt
+                    left <- invitationsOf(fixture.game, created.challengeId)
+                } yield {
+                    def refused(outcome: Either[Throwable, ?]) = outcome match {
+                        case Left(_: ConflictError) => true
+                        case _                      => false
+                    }
+                    refused(toTheirSeat) && refused(toAnySeat) && toAnother.isRight &&
+                    // Nothing was written for the player who is already seated.
+                    left.map(_.playerId) == List(third.playerId)
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    /* The other side of "accepting leaves the invitation alone": if the row does not change, the
+     * challenger's own view of it has to say which invitees have accepted, or Revoke is offered on
+     * every one of them -- including the ones `revoke` refuses, where re-reading the list brings the
+     * same unusable row straight back.
+     *
+     * Asserted on both at once, from the challenger's own listing: the invitee who accepted, and one
+     * who was asked and has not answered. A flag that was simply always true would pass a test about
+     * the first alone.
+     */
+    property("listByGame says which of the invited players have accepted") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, invitedNickname, invitedExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    invited <- makeCharacterInGame(fixture.game, invitedNickname, invitedExternalId)
+                    // Asked and still deciding, so nothing about them is an acceptance.
+                    waiting <- registrationService.register(genUniqueString.sample.get, genUniqueString.sample.get)
+                    created <- challengeService.create(
+                      challengeFor(fixture),
+                      externalId,
+                      Seq(
+                        Invite(invited._1.playerId, Some(fixture.game.roles(1).gameRoleId)),
+                        Invite(waiting.playerId, Some(fixture.game.roles(2).gameRoleId))
+                      )
+                    )
+                    before <- challengeService.listByGame(fixture.game.gameId, externalId)
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(invited._2.characterId),
+                      fixture.game.roles(1).gameRoleId,
+                      invitedExternalId
+                    )
+                    after <- challengeService.listByGame(fixture.game.gameId, externalId)
+                } yield {
+                    def summary(listed: List[ChallengeSummary]) =
+                        listed.find(_.challenge.challengeId == created.challengeId).get
+
+                    // Nobody has accepted an invitation yet -- the challenger's own acceptance, written
+                    // when they created it, is not an invitation of theirs to have accepted.
+                    summary(before).acceptedInvitees.isEmpty &&
+                    // And afterwards, exactly the one who did.
+                    summary(after).acceptedInvitees == Seq(invited._1.playerId) &&
+                    // Both invitations are still listed, which is what makes the flag necessary: the
+                    // accepted one is not distinguishable from the waiting one without it.
+                    summary(after).invitations.map(_.playerId).sortBy(_.value) ==
+                        Seq(invited._1.playerId, waiting.playerId).sortBy(_.value)
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("accepting an invitation leaves it in the invitations list, in no different shape") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, invitedNickname, invitedExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    invited <- makeCharacterInGame(fixture.game, invitedNickname, invitedExternalId)
+                    role = fixture.game.roles(1).gameRoleId
+                    created <- challengeService.create(
+                      closedChallengeFor(fixture),
+                      externalId,
+                      Seq(Invite(invited._1.playerId, Some(role)))
+                    )
+                    before <- challengeService.invitationsFor(invitedExternalId)
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(invited._2.characterId),
+                      role,
+                      invitedExternalId
+                    )
+                    after <- challengeService.invitationsFor(invitedExternalId)
+                } yield {
+                    def mine(listed: List[ChallengeInvitation]) =
+                        listed.filter(_.invitation.challengeId == created.challengeId)
+
+                    // There before, there after, and identical: nothing in the row marks it answered,
+                    // which is the whole reason the caller has to know from somewhere else.
+                    mine(before).sizeIs == 1 && mine(after) == mine(before)
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
     property("invitationsFor spans every game and names the game, the challenger and the role") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, otherNickname, otherExternalId) =>
@@ -1119,6 +1329,11 @@ class ChallengeServiceSpec extends PropertySuite {
                     named.exists(i =>
                         i.challengerNickname == nickname &&
                             i.gameName == first.game.name &&
+                            // The kind of game, which is what the row reads to know whether accepting
+                            // from the list can work at all -- an acceptance in a character game has to
+                            // name a character, and the list holds none. The fixtures are character
+                            // games, so this is the value that must not arrive defaulted.
+                            i.gameType == GameType.Character &&
                             i.roleName.contains(first.game.roles(1).name) &&
                             i.invitation.gameRoleId.contains(role)
                     ) &&

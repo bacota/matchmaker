@@ -53,6 +53,7 @@ label,
 h1,
 h2,
 h3,
+h4,
 button {
   overflow-wrap: normal;
 }
@@ -246,6 +247,21 @@ h3 {
   letter-spacing: 0.04em;
   color: var(--muted);
   margin: 1rem 0 0.35rem;
+}
+
+/* A heading inside a row's own panel -- "Invited", under one challenge. Quieter than the h3 above
+   it and without the uppercasing, which at this size reads as another section rather than as a
+   label on part of one. It is an h4 because it sits under an h3 and skipping a level leaves a
+   reader navigating by headings with a gap; nothing about the look depends on the level.
+
+   Scoped to the panel rather than written as a bare `h4`, which is what it was first: the admin
+   game form has had "Roles" and "Parameters" as h4s all along, and a global rule restyled those
+   too -- quietly, since nothing on this screen is near that one. The level says where a heading
+   sits in the document; it does not say what it should look like everywhere it is used. */
+.detail-panel h4 {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0.5rem 0 0.25rem;
 }
 
 .header {

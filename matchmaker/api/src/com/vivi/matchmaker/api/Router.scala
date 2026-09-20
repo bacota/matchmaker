@@ -200,6 +200,21 @@ object Router {
             case ("GET", "me" :: "invitations" :: Nil) =>
                 ok(services.challenges.invitationsFor(caller))
 
+            /* Turning one down. Under `/me` rather than beside the revoke below, because the caller
+             * is the invitation: `reject` reads the caller's own player row and deletes that row, so
+             * there is no player id for a path to carry and none a caller could name instead.
+             *
+             * That is the difference from the acceptance routes, where one path serves the player
+             * backing out and the challenger removing them: there the row is named by a player id
+             * either way, and the service decides which of the two the caller is. An invitation's
+             * two sides are two questions -- "I decline" and "I withdraw my offer to them" -- and
+             * they differ in what they notify as well as in who may ask.
+             */
+            case ("DELETE", "me" :: "invitations" :: gameId :: challengeId :: Nil) =>
+                withGameId(gameId) { gid =>
+                    withChallengeId(challengeId)(id => noContent(services.challenges.reject(gid, id, caller)))
+                }
+
             /* Inviting somebody to a challenge that already exists, and taking it back. Only the
              * challenger may either — the service checks that, since the challenge is what says who
              * they are.

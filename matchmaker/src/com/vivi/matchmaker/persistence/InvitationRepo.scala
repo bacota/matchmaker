@@ -22,6 +22,7 @@ class InvitationRepo(session: Session[IO]) {
     private val playerId = SkunkIdCodecs.playerId
     private val gameId = SkunkIdCodecs.gameId
     private val gameRoleId = SkunkIdCodecs.gameRoleId
+    private val gameType = SkunkCodecs.gameType
 
     private val insertInvitation: Command[(GameId, ChallengeId, PlayerId, Option[GameRoleId])] =
         sql"""INSERT INTO invitation (game_id, challenge_id, player_id, game_role_id)
@@ -99,10 +100,10 @@ class InvitationRepo(session: Session[IO]) {
     // this is a filter here rather than a delete there.
     private val selectByPlayer: Query[
       PlayerId,
-      (GameId, ChallengeId, Option[GameRoleId], String, String, String, Option[String])
+      (GameId, ChallengeId, Option[GameRoleId], String, GameType, String, String, Option[String])
     ] =
         sql"""SELECT i.game_id, i.challenge_id, i.game_role_id,
-                 g.name, challenger.nickname, ch.message, r.name
+                 g.name, g.game_type, challenger.nickname, ch.message, r.name
           FROM invitation i
           JOIN challenge ch ON ch.game_id = i.game_id AND ch.challenge_id = i.challenge_id
           JOIN game g ON g.game_id = i.game_id
@@ -110,7 +111,7 @@ class InvitationRepo(session: Session[IO]) {
           LEFT JOIN game_role r ON r.game_id = i.game_id AND r.game_role_id = i.game_role_id
           WHERE i.player_id = $playerId AND ch.started_match_id IS NULL
           ORDER BY i.create_date DESC, i.challenge_id"""
-            .query(gameId *: challengeId *: gameRoleId.opt *: text *: text *: text *: text.opt)
+            .query(gameId *: challengeId *: gameRoleId.opt *: text *: gameType *: text *: text *: text.opt)
 
     /** Everything this player has been invited to and could still accept, newest first.
       *
@@ -120,33 +121,46 @@ class InvitationRepo(session: Session[IO]) {
     def listForPlayer(player: PlayerId): IO[List[ChallengeInvitation]] =
         session
             .execute(selectByPlayer)(player)
-            .map(_.map { case (game, challenge, role, gameName, challenger, message, roleName) =>
+            .map(_.map { case (game, challenge, role, gameName, kind, challenger, message, roleName) =>
                 ChallengeInvitation(
                   Invitation(game, challenge, player, role),
                   gameName,
+                  kind,
                   challenger,
                   message,
                   roleName
                 )
             })
 
-    private val selectByGame: Query[GameId, (ChallengeId, PlayerId, Option[GameRoleId])] =
-        sql"""SELECT challenge_id, player_id, game_role_id FROM invitation
-          WHERE game_id = $gameId
-          ORDER BY challenge_id, player_id""".query(challengeId *: playerId *: gameRoleId.opt)
+    private val selectByGame: Query[GameId, (ChallengeId, PlayerId, Option[GameRoleId], Boolean)] =
+        sql"""SELECT i.challenge_id, i.player_id, i.game_role_id,
+                 EXISTS (SELECT 1 FROM acceptance ac
+                          WHERE ac.game_id = i.game_id
+                            AND ac.challenge_id = i.challenge_id
+                            AND ac.player_id = i.player_id) AS accepted
+          FROM invitation i
+          WHERE i.game_id = $gameId
+          ORDER BY i.challenge_id, i.player_id""".query(challengeId *: playerId *: gameRoleId.opt *: bool)
 
     /** Every invitation in one game, grouped by the challenge it belongs to.
       *
       * One query for a whole listing rather than one per challenge: `ChallengeService.listByGame` draws a dozen rows
       * and each of them says who was invited, which is a dozen round trips asked as one. A game with no invitations
       * anywhere answers with an empty map and costs a single index-less scan of a table that is empty in that case too.
+      *
+      * Each row says whether that player has accepted, which is the one thing about an invitation that cannot be read
+      * off the invitation: accepting deliberately leaves the row in place, because the row is what permits the seat. So
+      * an invitation and a taken seat look identical here without it, and the challenger's Revoke -- which the service
+      * refuses once the invitee has accepted -- would be offered on a row it can never apply to. Asked as an `EXISTS`
+      * on the same query rather than a second one for the same reason the query exists at all.
       */
-    def listForGame(gameId: GameId): IO[Map[ChallengeId, List[Invitation]]] =
+    def listForGame(gameId: GameId): IO[Map[ChallengeId, List[InvitedPlayer]]] =
         session
             .execute(selectByGame)(gameId)
             .map(
-              _.map((challenge, player, role) => Invitation(gameId, challenge, player, role))
-                  .groupBy(_.challengeId)
+              _.map((challenge, player, role, accepted) =>
+                  InvitedPlayer(Invitation(gameId, challenge, player, role), accepted)
+              ).groupBy(_.invitation.challengeId)
             )
 
     private val deleteOne: Command[(GameId, ChallengeId, PlayerId)] =

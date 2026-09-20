@@ -311,6 +311,10 @@ locals {
     # What the caller has been asked to play, across every game — the invitations half of the list
     # above, and the one invitation route that is not about a challenge the caller already holds.
     "GET /me/invitations",
+    # Turning one down, which is the invitee's side. Under /me because the caller is the
+    # invitation -- there is no player id for the path to carry. The challenger's side is the
+    # revoke below, on the challenge itself.
+    "DELETE /me/invitations/{gameId}/{challengeId}",
     "GET /me/matches",
     "GET /me/matches/due",
     "GET /me/matches/completed",

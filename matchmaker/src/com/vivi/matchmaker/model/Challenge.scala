@@ -119,5 +119,15 @@ case class ChallengeSummary(
       * these are the ones held for somebody in particular, and a player deciding what they may accept as needs both. It
       * also says who has been asked, which is the whole of what a closed challenge shows about itself.
       */
-    invitations: Seq[Invitation] = Seq.empty
+    invitations: Seq[Invitation] = Seq.empty,
+    /** Which of those invited players have accepted, a subset of `invitations` by player.
+      *
+      * Derived on read like `acceptances` and `takenRoles`, and here rather than on [[Invitation]] for the reason
+      * [[InvitedPlayer]] gives: accepting leaves the invitation exactly as it was, so the row cannot say. What reads it
+      * is the challenger's Revoke, which the service refuses once the invitee has accepted.
+      *
+      * Not every acceptor — only the invited ones. An acceptance by somebody who was never invited is nobody's
+      * invitation to revoke, and listing it would say more about who is playing than the rest of this summary does.
+      */
+    acceptedInvitees: Seq[PlayerId] = Seq.empty
 )

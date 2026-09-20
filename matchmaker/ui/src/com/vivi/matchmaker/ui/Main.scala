@@ -382,6 +382,7 @@ object Views {
       */
     private def mainPage: HtmlElement =
         div(
+          invitationsSection,
           readyToStartSection(),
           dueSection(),
           myMatchesSection(),
@@ -408,6 +409,12 @@ object Views {
       * it.
       */
     private val refreshingAcceptances: Var[Boolean] = Var(false)
+
+    /* And for the invitations. Its own flag rather than sharing the acceptances' one: they are two
+     * requests, and answering an invitation changes both lists -- which is why the actions below
+     * refresh both, each through its own flag, rather than dimming one section on the other's
+     * behalf. */
+    private val refreshingInvitations: Var[Boolean] = Var(false)
 
     /* The same, for the two match lists. Shared by the home screen's copy of each section and the
      * game screen's, which are never both on screen — and, more to the point, by the sections
@@ -470,6 +477,267 @@ object Views {
       */
     private def reloadAcceptanceSections(): Unit =
         refresh(refreshingAcceptances, () => Store.reloadAcceptances())
+
+    /** What this player has been invited to and has not answered (V22).
+      *
+      * First on the page, and absent when there is nothing in it, for the reason "Ready to Start" is both: an
+      * invitation is a thing somebody else did that is waiting on this player, not a list they came to check. Every
+      * other section here is about a challenge or match they are already in — this is the only one about one they are
+      * not, which is also why it names the challenger.
+      */
+    private def invitationsSection: HtmlElement =
+        div(
+          /* What the last answer to an invitation was, said once, to whoever is not watching the list.
+           *
+           * Answering one removes its row, and may remove the whole section with it — which is a
+           * change nobody is told about by sight alone being gone. The error banner is `role="alert"`,
+           * so a refusal already announces itself; this is the other half, and the half that was
+           * silent.
+           *
+           * A one-line status rather than `aria-live` on the section, which is what was suggested for
+           * this. A live region announces its whole subtree: on the first fetch of the session that
+           * subtree is a heading, a refresh button and every row, read out unprompted at the moment
+           * the player is reading something else — and none of the sibling sections, which appear and
+           * disappear just as asynchronously, behaves that way. What `refreshableSection` already
+           * does for a list being replaced is mark its body `aria-busy`, which is the mechanism for
+           * "this is changing"; a sentence is the mechanism for "here is what you did".
+           *
+           * Present from the start and empty, because a live region has to exist before the text
+           * arrives in it to be announced reliably. `sr-only` because the row vanishing says the same
+           * thing to anybody who can see it, and a line of text left behind under a heading that may
+           * itself be gone is not worth the clutter. The game is named so that two answers running do
+           * not read as one unchanged sentence.
+           */
+          p(
+            cls := "sr-only",
+            role := "status",
+            aria.live := "polite",
+            // From the store, and stamped there with the session that said it: the words outlive
+            // both this element and the sign-in that produced them, and neither belongs to whoever
+            // is reading the page next. See `Store.invitationsSaid`.
+            child.text <-- Store.invitationsSaid
+          ),
+          child <-- Store.invitations.signal
+              .combineWith(
+                Store.acceptances.signal,
+                // A row needs both lists, so the section's state is the worse of their two states:
+                // known when both are, and in need of asking again if either failed.
+                Store.known(Store.Fetch.Invitations).combineWith(Store.known(Store.Fetch.Acceptances)).map(_ && _),
+                Store.failed(Store.Fetch.Invitations).combineWith(Store.failed(Store.Fetch.Acceptances)).map(_ || _)
+              )
+              .map { (invitations, acceptances, bothKnown, eitherFailed) =>
+                  /* An invitation the player has already accepted is still an invitation: it
+                   * outlives the acceptance it led to, so that backing out and changing their mind
+                   * again is something they may do -- see `Invitation`. What it is not is something
+                   * still to answer, and both buttons on such a row are refused with a 409: `accept`
+                   * because one player may hold one seat, and `reject` because the invitation is what
+                   * permits the seat they are sitting in.
+                   *
+                   * So it is filtered out here rather than by the query, which would have to forget
+                   * the invitation to forget the row. The same shape `challengePanel` uses to drop a
+                   * challenge this player has accepted from the open list, and for the same reason:
+                   * what is left is what they can still act on.
+                   *
+                   * It comes back if they back out, which is right -- they are invited again in the
+                   * only sense that matters, and the acceptance leaving the list is what says so. */
+                  val accepted =
+                      acceptances.map(pending => (pending.acceptance.gameId, pending.acceptance.challengeId)).toSet
+                  val unanswered = invitations.filterNot(invited =>
+                      accepted.contains((invited.invitation.gameId, invited.invitation.challengeId))
+                  )
+
+                  /* Three states, not two, and emptiness tells none of them apart.
+                   *
+                   * A list that failed leaves nothing held and nothing in flight, so drawing the rows
+                   * from what is held would put an empty section over a failure -- or worse, draw rows
+                   * filtered against an acceptance list that never arrived, which is to filter against
+                   * a blank and offer buttons that can only be refused.
+                   *
+                   * So: if either list failed, the section stands with a line saying to ask again, and
+                   * its refresh button is what asks. It is also the *only* button on the page that
+                   * reloads the acceptances when that list came back empty, since the sections drawn
+                   * from that list are absent when it is empty, their own buttons with them -- hiding
+                   * this one would leave a failure there unrecoverable without reloading the page,
+                   * which is what these buttons exist to avoid.
+                   *
+                   * Then nothing at all until both have answered, which is a page still loading. And
+                   * nothing once they have if there is nothing left to answer: an invitation accepted
+                   * on a challenge nobody has started stays in the response on purpose, so a heading
+                   * over "you have answered all of these" is a section about nothing to do. */
+                  if (eitherFailed)
+                      refreshableSection(
+                        "You Have Been Invited",
+                        refreshingInvitations,
+                        () => Store.reloadInvitationsWithAcceptances(),
+                        subsection = false
+                      )(
+                        p(cls := "empty", "Couldn't load your invitations just now. Refresh to try again.")
+                      )
+                  else if (!bothKnown || unanswered.isEmpty) emptyNode
+                  else
+                      refreshableSection(
+                        "You Have Been Invited",
+                        refreshingInvitations,
+                        // Both lists, because which invitations are still to answer is a question
+                        // about both: an invitation accepted in another tab stays in the invitations
+                        // response on purpose, so reloading that alone leaves its row exactly where it
+                        // was.
+                        () => Store.reloadInvitationsWithAcceptances(),
+                        subsection = false
+                      )(ul(unanswered.map(invitationRow)))
+              }
+        )
+
+    /** One invitation: who asked, to what, and as what — then the two answers.
+      *
+      * Accept is offered here only when this row holds everything an acceptance needs: the seat was named in the
+      * invitation, and the game is not one played through characters. Otherwise the choice belongs on the game's own
+      * screen, which is where the free roles and this player's characters are loaded — so the button goes there instead
+      * of guessing at either. Declining needs neither, and is offered on every row.
+      *
+      * Every fact it decides on comes from the response, and none from `Store.games`. That list holds the *active*
+      * games, and an invitation outlives its game being deactivated — `active` decides what is listed, not what may be
+      * accepted — so a lookup there would quietly withdraw the Accept button from a challenge the server would still
+      * honour, and only for the invitations least likely to be noticed.
+      */
+    private def invitationRow(invited: ChallengeInvitation): HtmlElement = {
+        val invitation = invited.invitation
+        // A character game's acceptance must name a character, and this row has none loaded; a
+        // role-less invitation is an offer of any free seat, and which are free is not in this
+        // response either.
+        val acceptableHere = invitation.gameRoleId.isDefined && invited.gameType != GameType.Character
+
+        li(
+          cls := "row",
+          div(cls := "title", invited.message),
+          div(cls := "detail", s"${invited.challengerNickname} invited you to ${invited.gameName}"),
+          div(
+            cls := "detail",
+            invited.roleName.fold("as any seat that is free")(role => s"as $role")
+          ),
+          if (acceptableHere)
+              busyButton("Accept") { busy =>
+                  // `get` is safe under `acceptableHere`, which is what this branch is selected by.
+                  val role = invitation.gameRoleId.get
+                  Store.run(
+                    ApiClient.accept(invitation.gameId, invitation.challengeId, None, role),
+                    busy,
+                    invitationGone(invited)
+                  ) { _ =>
+                      acceptedInvitation(invited)
+                  }
+              }
+          else
+              button(
+                tpe := "button",
+                cls := "link",
+                "Open the game",
+                onClick --> (_ => Store.show(Store.Page.OneGame(invitation.gameId)))
+              ),
+          busyButton("Decline", classes = Some("link")) { busy =>
+              Store.run(
+                ApiClient.rejectInvitation(invitation.gameId, invitation.challengeId),
+                busy,
+                invitationGone(invited)
+              ) { _ =>
+                  declinedInvitation(invited)
+              }
+          }
+        )
+    }
+
+    /** Everything accepting an invitation from this list can have changed, reloaded the way each section's own button
+      * reloads it.
+      *
+      * Four lists, not two. The acceptance may have taken the last required seat of an auto-starting challenge, in
+      * which case the server has already created the match, this player is in it, and it may be their turn in it. So
+      * the match lists are re-read as well, through `reloadAfterStart` — the same set a Start reloads, because this may
+      * *have been* the start.
+      *
+      * Unconditionally, unlike `openChallengeRow`, which works out whether its own acceptance started the match and
+      * reloads accordingly. That row can: it holds the challenge, its roster and its `autoStart` flag. This one holds
+      * none of them — a `ChallengeInvitation` is an invitation and the names needed to draw it — and the response says
+      * only that the acceptance was made. Three reloads that find nothing new cost a dimmed second; a match missing
+      * from "Current Matches" costs the player a turn they did not know was theirs.
+      *
+      * Dimmed and re-read rather than edited in place, for the reason `reloadAcceptanceSections` says: a list that
+      * silently loses a row is a list that might have lost the wrong one.
+      */
+    private def acceptedInvitation(invited: ChallengeInvitation): Unit = {
+        // Named, so that two answers running do not read as one sentence that never changed — a live
+        // region announces a change in its text, and "Invitation accepted." twice over is no change.
+        Store.sayAboutInvitations(
+          s"Invitation to ${invited.gameName} accepted. If it was the last seat, the match has already started."
+        )
+        reloadAfterAnsweringInvitation(invited)
+    }
+
+    /** The reloads an answered invitation calls for, without saying anything about how it went.
+      *
+      * Shared by the success path above and the failure path below, which want the same lists re-read and emphatically
+      * not the same thing said: a refusal is not an acceptance, and the banner the server wrote is the account of it.
+      */
+    private def reloadAfterAnsweringInvitation(invited: ChallengeInvitation): Unit = {
+        // The invitations alone, not `reloadInvitationsWithAcceptances`: `reloadAfterStart` below
+        // re-reads the acceptances, and asking for the same list twice in one beat is two requests
+        // whose answers race -- the store drops the loser, so the only thing the second one buys is
+        // the section dimming twice.
+        refresh(refreshingInvitations, () => Store.reloadInvitations())
+        reloadAfterStart()
+        // The challenge itself has changed — a seat taken — so the game's list is stale if that screen
+        // is the one behind this.
+        if (Store.page.now() == Store.Page.OneGame(invited.invitation.gameId))
+            Store.refreshChallenges(invited.invitation.gameId)
+    }
+
+    /** And what declining changes, which is less: the invitation is gone, and the seat it held is free for whoever else
+      * may accept.
+      *
+      * No match can have come of it and no acceptance changed — declining is the answer of somebody who has not
+      * accepted, which the server enforces — so the lists that would say otherwise are left alone rather than dimmed
+      * for nothing.
+      */
+    private def declinedInvitation(invited: ChallengeInvitation): Unit = {
+        val invitation = invited.invitation
+        Store.sayAboutInvitations(s"Invitation to ${invited.gameName} declined.")
+        refresh(refreshingInvitations, () => Store.reloadInvitationsWithAcceptances())
+        if (Store.page.now() == Store.Page.OneGame(invitation.gameId))
+            Store.refreshChallenges(invitation.gameId)
+    }
+
+    /** What to do when answering an invitation is refused because it is no longer there to answer.
+      *
+      * The shape `alreadyStarted` has, and for the same reason: this row is on screen because the list was fetched
+      * before the challenger withdrew it, or started the challenge, or before this player accepted from another tab.
+      * 404 and 409 are both the server saying so, so both are treated as the news they are and the lists are re-read.
+      *
+      * The banner is left exactly as the server wrote it, which `alreadyStarted` does not do. There, one thing can have
+      * happened — the match has started — and it can be said in better words than the ids the message names. Here
+      * several can: the challenge is gone, the invitation was withdrawn, this player has already accepted, somebody
+      * else took the seat. Only the server knows which, and a single sentence covering all of them would be wrong about
+      * most.
+      *
+      * Anything else is left as `Store.run` reported it. A 5xx says nothing about whether the invitation is still
+      * there, and a list that looked corrected on the strength of one would be worse than a plain failure.
+      *
+      * The accepting reload is used for either button, because a refusal says less than a success does: a 409 on a
+      * decline can mean this player has already accepted it, or that the challenge has been started, and both of those
+      * are news for the match lists. The wider reload is the one that cannot be wrong here.
+      *
+      * The server's account of it is left standing, and nothing here has to arrange that: a reload is not an action,
+      * and a fetch succeeding does not clear an action's banner — see `Store.reportProblem`. Which matters here more
+      * than anywhere, because every reload this starts is expected to succeed; they succeed *because* the refusal was
+      * real.
+      */
+    private def invitationGone(invited: ChallengeInvitation)(failure: Throwable): Unit = failure match {
+        case ApiError(404 | 409, _) =>
+            // The reloads only. Nothing is announced: the banner is the message, and it is the
+            // server's own -- several things produce a 409 on these buttons and only it knows which.
+            // This used to go through `acceptedInvitation`, which announced an acceptance that had
+            // just been refused, contradicting the banner beside it.
+            reloadAfterAnsweringInvitation(invited)
+        case _ => ()
+    }
 
     /* Absent altogether when there is nothing ready to start, heading and refresh button with it.
      *
@@ -616,12 +884,16 @@ object Views {
       */
     private def alreadyStarted(acceptance: Acceptance)(failure: Throwable): Unit = failure match {
         case ApiError(409, _) =>
+            // Raised before the reloads rather than after them, which is where it used to be: the
+            // reloads are asynchronous, so one landing later cleared this message however late it was
+            // written. What keeps it now is that it is an action's banner and those are fetches — see
+            // `Store.reportProblem`.
+            Store.reportProblem("That match has already started, so there is nothing left to back out of.")
             reloadAfterStart()
             // A started challenge is no longer offered either, so the game screen's list is as stale as
             // this row was — the same refresh the success path does, for the same reason.
             if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
                 Store.refreshChallenges(acceptance.gameId)
-            Store.error.set(Some("That match has already started, so there is nothing left to back out of."))
         case _ => ()
     }
 
@@ -878,6 +1150,7 @@ object Views {
             "Back to search",
             onClick --> (_ => Store.show(Store.Page.FindPlayers))
           ),
+          inviteControl(player),
           refreshableSection(
             "Public Matches",
             refreshingPublicMatches,
@@ -889,6 +1162,54 @@ object Views {
             )
           )
         )
+
+    /** Asking this player for a game (V22): pick the game, and go and compose the challenge.
+      *
+      * Two steps rather than one, because a challenge is more than who it is for — it has a message, a clock, a seat
+      * for its challenger — and all of that lives in the form on the game's screen. So this carries the one thing that
+      * screen cannot ask for, the player, and takes the reader there with the form already open.
+      *
+      * Not shown to a player looking at their own page: the server refuses a challenger inviting themselves, and a
+      * control that cannot work is worse than none. Nor when no games have loaded, since there would be nothing to
+      * choose.
+      */
+    private def inviteControl(invitee: PublicPlayer): HtmlElement = {
+        val chosen = Var(Option.empty[GameId])
+
+        div(
+          child <-- Store.games.signal.combineWith(currentPlayer).map { (games, me) =>
+              if (games.isEmpty || me.exists(_.playerId == invitee.playerId)) emptyNode
+              else {
+                  // Pre-selected rather than left blank: one game is the usual case, and a select whose
+                  // first entry is "choose one" is a step that answers nothing.
+                  if (chosen.now().isEmpty) chosen.set(games.headOption.map(_.gameId))
+                  div(
+                    cls := "card",
+                    h3(s"Challenge ${invitee.nickname}"),
+                    field(
+                      "Game",
+                      select(
+                        onChange.mapToValue --> { raw =>
+                            chosen.set(raw.toIntOption.map(GameId.apply).filter(id => games.exists(_.gameId == id)))
+                        },
+                        value <-- chosen.signal.map(_.map(_.value.toString).getOrElse("")),
+                        games.map(game => option(value := game.gameId.value.toString, game.name))
+                      )
+                    ),
+                    button(
+                      tpe := "button",
+                      disabled <-- chosen.signal.map(_.isEmpty),
+                      s"Offer ${invitee.nickname} a challenge",
+                      // One call, because the three things it does have to happen in one order:
+                      // `Store.show` clears the form and the invitee, so that arriving at a game any
+                      // other way cannot inherit either.
+                      onClick --> (_ => chosen.now().foreach(gameId => Store.showGameToInvite(gameId, invitee)))
+                    )
+                  )
+              }
+          }
+        )
+    }
 
     /** One game on a player's page: its name, how much of it they have played, and — when opened — the matches.
       *
@@ -1063,7 +1384,7 @@ object Views {
                         Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                             m.playUrl.orElse(m.publicUrl) match {
                                 case Some(url) => dom.window.open(url, "_blank", "noopener,noreferrer")
-                                case None      => Store.error.set(Some("This match has no url to view."))
+                                case None      => Store.reportProblem("This match has no url to view.")
                             }
                         }
                     }
@@ -1077,7 +1398,7 @@ object Views {
                     Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                         m.playUrl match {
                             case Some(url) => dom.window.open(url, "_blank", "noopener,noreferrer")
-                            case None      => Store.error.set(Some("This match has no play url yet."))
+                            case None      => Store.reportProblem("This match has no play url yet.")
                         }
                     }
                 },
@@ -1264,31 +1585,65 @@ object Views {
       * a menu that has outlived a reload — says so instead of showing an empty screen that looks like a game with
       * nothing in it.
       */
-    private def gamePage(gameId: GameId): HtmlElement =
+    private def gamePage(gameId: GameId): HtmlElement = {
+        // Through `Store.game`, which answers from the active games and from the deactivated one this
+        // screen may have been linked to -- an invitation outlives its game being deactivated, and
+        // reading the active list alone left such a page saying "Loading…" for ever. The two states are
+        // still told apart: "Loading…" while something is on its way, and a sentence saying so once
+        // nothing is.
+        val state = Store
+            .game(gameId)
+            .combineWith(Store.loading(Store.Fetch.Games).combineWith(Store.lookingForGame(gameId)).map(_ || _))
+
+        val message = state.map {
+            case (None, true)  => "Loading…"
+            case (None, false) => "That game is not available. It may have been withdrawn."
+            case (Some(_), _)  => ""
+        }
+
         div(
-          child <-- Store.games.signal.map(_.find(_.gameId == gameId)).map {
-              case None => p(cls := "empty", "Loading…")
-              case Some(game) =>
-                  div(
-                    h2(game.name),
-                    p(cls := "detail", game.description),
-                    editGamePanel(game),
-                    // What is waiting on this player in this game, before what they could join: a turn
-                    // they owe somebody is more urgent than a challenge they might accept.
-                    //
-                    // Both halves of the pending acceptances, in the order the home page puts them: the
-                    // ones this player can start now, and the ones that are still waiting on somebody.
-                    // Splitting them across two screens would leave a game page listing an acceptance as
-                    // waiting to start with no way to start it.
-                    readyToStartSection(Some(game)),
-                    dueSection(Some(game)),
-                    myMatchesSection(Some(game)),
-                    pendingAcceptances(Some(game)),
-                    gameChallenges(game),
-                    gameHistory(game)
-                  )
-          }
+          /* What the lookup came to, in a region that is mounted before it is asked.
+           *
+           * The sentence used to arrive as part of a freshly built element, which is the one way of
+           * putting text in a live region that is not reliably announced: a reader watches regions it
+           * already knows about for changes, and a region that did not exist a moment ago has no
+           * change to report. So the region stands here for the life of the screen and only its words
+           * come and go -- the same shape the invitations section uses, and for the same reason.
+           *
+           * A `div` rather than a `p` because it is empty whenever there is a game to draw, and an
+           * empty `p` would leave its margins behind above the heading. The class comes and goes with
+           * the text so the styling applies to a sentence and to nothing.
+           */
+          div(
+            aria.live := "polite",
+            cls <-- message.map(said => if (said.isEmpty) "" else "empty"),
+            child.text <-- message
+          ),
+          child <-- state
+              .map {
+                  case (None, _) => emptyNode
+                  case (Some(game), _) =>
+                      div(
+                        h2(game.name),
+                        p(cls := "detail", game.description),
+                        editGamePanel(game),
+                        // What is waiting on this player in this game, before what they could join: a turn
+                        // they owe somebody is more urgent than a challenge they might accept.
+                        //
+                        // Both halves of the pending acceptances, in the order the home page puts them: the
+                        // ones this player can start now, and the ones that are still waiting on somebody.
+                        // Splitting them across two screens would leave a game page listing an acceptance as
+                        // waiting to start with no way to start it.
+                        readyToStartSection(Some(game)),
+                        dueSection(Some(game)),
+                        myMatchesSection(Some(game)),
+                        pendingAcceptances(Some(game)),
+                        gameChallenges(game),
+                        gameHistory(game)
+                      )
+              }
         )
+    }
 
     /** The admin's edit form for a game, opened from a link on the game's own screen. Nothing for anyone else: the
       * server answers a non-admin with a 403, so the link is not there to press.
@@ -1604,7 +1959,7 @@ object Views {
               } yield (roleModels, parameterModels, notificationDefaults)
 
               drafted match {
-                  case Left(problem) => Store.error.set(Some(problem))
+                  case Left(problem) => Store.reportProblem(problem)
                   case Right((roleModels, parameterModels, notificationDefaults)) =>
                       val game = Game(
                         // Unassigned means create and the server assigns the real id — the same sentinel
@@ -1649,7 +2004,11 @@ object Views {
                               )
                               Store.editingGame.set(None)
                           }
-                          Store.refreshGames()
+                          // Both copies of the game list, because a game saved while deactivated is in
+                          // neither the active one nor reachable by `ensureGame` — its own screen would
+                          // otherwise go on showing what it was before this save, and reopening this
+                          // form would submit that. See `Store.gameSaved`.
+                          Store.gameSaved(saved)
                       }
               }
           }
@@ -1725,10 +2084,19 @@ object Views {
                         button(
                           aria.expanded <-- Store.showChallengeForm.signal,
                           child.text <-- Store.showChallengeForm.signal.map(if (_) "Close" else "Create Challenge"),
-                          onClick --> (_ => Store.showChallengeForm.update(!_))
+                          onClick --> { _ =>
+                              // Closing the form abandons the invitation it was opened for. Left set, it
+                              // would address the next challenge offered from this screen to whoever was
+                              // looked at before -- and nothing on the closed form would say so.
+                              if (Store.showChallengeForm.now()) Store.invitee.set(None)
+                              Store.showChallengeForm.update(!_)
+                          }
                         ),
+                        // Built from the slot as it stands when the form opens: a challenge is composed
+                        // for one player, and one being looked up while the form is open is a different
+                        // challenge, offered by opening it again.
                         child <-- Store.showChallengeForm.signal.map {
-                            if (_) newChallengeForm(game, player, characterId) else emptyNode
+                            if (_) newChallengeForm(game, player, characterId, Store.invitee.now()) else emptyNode
                         },
                         refreshableSection(
                           "Your Open Challenges",
@@ -1746,7 +2114,7 @@ object Views {
                           subsection = true
                         )(
                           if (available.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
-                          else ul(available.map(openChallengeRow(game, _, characterId)))
+                          else ul(available.map(openChallengeRow(game, _, characterId, player.playerId)))
                         )
                       )
               }
@@ -1779,31 +2147,386 @@ object Views {
               Store.run(ApiClient.deleteChallenge(game.gameId, challenge.challengeId), busy)(_ =>
                   Store.refreshChallenges(game.gameId)
               )
+          },
+          invitedList(game, summary),
+          invitePanel(game, summary)
+        )
+    }
+
+    /** Who has been asked to this challenge already, and the challenger's way of taking it back.
+      *
+      * Above the invite panel because it is what the panel's answer has to be given against: whether there is a seat
+      * left to hold for somebody depends on which are held already, and reading that off the list is how a challenger
+      * knows what the picker below is offering them.
+      *
+      * A player is named when this session has heard their nickname — see `Store.nicknames` — and by their id when it
+      * has not. An id is a poor thing to show and a worse thing to hide: the row is the only place a stray invitation
+      * can be revoked from.
+      *
+      * An invitee who has accepted gets a different button, because accepting does not remove the invitation — the row
+      * is what permits the seat — so this list goes on showing them, and `revoke` refuses an invitation that has been
+      * taken up: the acceptance is what is holding the seat now, and it is what has to go. That is a real action the
+      * challenger is allowed (`AcceptanceService.delete` admits the acceptor or the challenger), so the row offers it
+      * rather than a Revoke that could only ever be answered with "remove their acceptance instead".
+      */
+    private def invitedList(game: Game, summary: ChallengeSummary): HtmlElement =
+        div(
+          child <-- Store.nicknames.signal.map { known =>
+              if (summary.invitations.isEmpty) emptyNode
+              else
+                  div(
+                    cls := "detail-panel",
+                    h4("Invited"),
+                    ul(
+                      summary.invitations.map { invitation =>
+                          val who =
+                              known.getOrElse(invitation.playerId, s"player ${invitation.playerId.value}")
+                          val seat = invitation.gameRoleId
+                              .flatMap(role => game.roles.find(_.gameRoleId == role))
+                              .fold("any seat that is free")(role => role.name)
+                          val accepted = summary.acceptedInvitees.contains(invitation.playerId)
+
+                          li(
+                            cls := "row",
+                            div(cls := "title", who),
+                            div(cls := "detail", if (accepted) s"accepted, as $seat" else s"holding $seat"),
+                            if (accepted)
+                                // Removing the acceptance, which is what is holding the seat. The
+                                // invitation is left where it is: it is still true that this player was
+                                // asked, and leaving it means they can accept again without being asked
+                                // twice. Revoking it as well would be a second decision, and the row
+                                // stays in this list to be revoked once the seat is free.
+                                busyButton("Remove", classes = Some("link")) { busy =>
+                                    Store.run(
+                                      ApiClient.withdraw(
+                                        game.gameId,
+                                        summary.challenge.challengeId,
+                                        invitation.playerId
+                                      ),
+                                      busy,
+                                      // A 404 is the acceptance being gone already and a 409 the
+                                      // challenge being started, past which nobody can be removed. Both
+                                      // say this row was drawn from a stale list.
+                                      invitationStale(game.gameId)
+                                    )(_ => Store.refreshChallenges(game.gameId))
+                                }
+                            else
+                                busyButton("Revoke", classes = Some("link")) { busy =>
+                                    Store.run(
+                                      ApiClient
+                                          .revokeInvitation(
+                                            game.gameId,
+                                            summary.challenge.challengeId,
+                                            invitation.playerId
+                                          ),
+                                      busy,
+                                      // A 409 is the server saying that player has accepted since this
+                                      // list was drawn, and a 404 that the invitation is already gone.
+                                      // Either way the row is stale, so the list is re-read rather than
+                                      // corrected here.
+                                      invitationStale(game.gameId)
+                                    )(_ => Store.refreshChallenges(game.gameId))
+                                }
+                          )
+                      }
+                    )
+                  )
+          }
+        )
+
+    /** Inviting somebody to a challenge that already exists: find them, choose the seat, ask.
+      *
+      * The other half of [[inviteControl]], which invites at the moment a challenge is created. This one exists because
+      * a challenger's mind changes after the fact — a seat nobody has taken, somebody who should have been asked in the
+      * first place — and because the alternative is deleting the challenge and offering it again.
+      *
+      * Its own search box rather than the one on "Find Players": that box and its results belong to that screen, and
+      * are deliberately kept across a visit to a player's page, so borrowing them here would clear a search somebody
+      * means to come back to.
+      *
+      * The panel is rebuilt, and so collapses, when the challenge list is re-read — which a successful invitation
+      * causes. That is the intended end of the interaction: the invitation now shows in the list above, which is the
+      * answer to the question the panel was asking.
+      */
+    private def invitePanel(game: Game, summary: ChallengeSummary): HtmlElement = {
+        val open = Var(false)
+        val prefix = Var("")
+        val found = Var(Option.empty[PlayerSearchResult])
+        val chosen = Var(Option.empty[PublicPlayer])
+        // The seat to hold for them, `None` meaning any that is still free when they answer.
+        val seat = Var(Option.empty[GameRoleId])
+
+        /* What may still be offered to somebody in particular, and the constraint this panel exists
+         * to respect.
+         *
+         * Two things are gone, not one. A role somebody has accepted is taken, which `freeRoles`
+         * already answers. A role another invitation is holding is *also* gone, even though nobody
+         * has accepted it: `ChallengeService.invite` builds its `taken` set from the accepted roles
+         * and the reserved ones together, so a second invitation naming a held seat is refused with
+         * a 409 -- the seat is promised, and two players cannot both be honoured. The same rule is
+         * enforced within one `create` by the pairwise check in `validateInvitations`.
+         *
+         * "Any seat that is free" is not subject to it and is always offered: several invitations may
+         * name no role at all, since none of them is holding anything for anybody. */
+        val held = summary.invitations.flatMap(_.gameRoleId).toSet
+        val offerable = freeRoles(game, summary).filterNot(role => held.contains(role.gameRoleId))
+
+        // Nobody who is already invited, and not the challenger themselves: the first is the
+        // invitation table's primary key and the second a rule of the service, so both come back as
+        // errors rather than as invitations. A name that cannot be acted on is better left out of the
+        // results than shown with a button that fails.
+        val alreadyAsked = summary.invitations.map(_.playerId).toSet + summary.challenge.challenger
+
+        div(
+          button(
+            tpe := "button",
+            cls := "link",
+            aria.expanded <-- open.signal,
+            child.text <-- open.signal.map(if (_) "Close" else "Invite a player"),
+            onClick --> { _ =>
+                // Emptied on the way out, so re-opening it is a fresh question rather than the last
+                // one's half-finished answer.
+                if (open.now()) { prefix.set(""); found.set(None); chosen.set(None); seat.set(None) }
+                open.update(!_)
+            }
+          ),
+          child <-- open.signal.map { showing =>
+              if (!showing) emptyNode
+              else
+                  div(
+                    cls := "detail-panel",
+                    /* How the panel is getting on, announced from a region mounted with it.
+                     *
+                     * Neither the results list, nor the "nobody new" line, nor the "inviting" line
+                     * can carry `aria-live` itself: each is built at the moment it has something to
+                     * say, and a region a reader has never seen before has no change to report --
+                     * which is exactly when the announcement matters, since a reader who pressed
+                     * Search is waiting to be told what came back. So this region says how it went
+                     * and those three go on saying what it was.
+                     *
+                     * At the panel rather than inside either branch, so that choosing somebody --
+                     * which replaces the whole of one branch with the other -- is a change of text
+                     * in a region that stays put rather than another region appearing.
+                     *
+                     * `sr-only`, because all three of those say the same thing to anybody who can
+                     * see them. A count rather than the names: the names are in the list, one button
+                     * each, and reading them twice is not worth the hearing.
+                     */
+                    p(
+                      cls := "sr-only",
+                      role := "status",
+                      aria.live := "polite",
+                      child.text <-- chosen.signal.combineWith(found.signal).map {
+                          case (Some(candidate), _) => s"Inviting ${candidate.nickname}."
+                          case (None, None)         => ""
+                          case (None, Some(result)) =>
+                              val askable = result.players.filterNot(p => alreadyAsked.contains(p.playerId))
+                              if (askable.isEmpty) "Nobody new by that name."
+                              else if (askable.size == 1) "One player found."
+                              else s"${askable.size} players found."
+                      }
+                    ),
+                    child <-- chosen.signal.map {
+                        case None =>
+                            div(
+                              field(
+                                "Find a player",
+                                input(
+                                  tpe := "search",
+                                  controlled(value <-- prefix.signal, onInput.mapToValue --> prefix)
+                                )
+                              ),
+                              busyButton(
+                                "Search",
+                                disabledWhen = prefix.signal.map(_.trim.isEmpty)
+                              ) { busy =>
+                                  /* Guarded by the sign-in counter, because this writes into the store:
+                                   * `Store.nicknames` outlives this panel, and an answer that arrives
+                                   * after a sign-out would teach the next player's session who the
+                                   * previous one had been looking for.
+                                   *
+                                   * `Store.run` is right for the request -- it is a button, and the
+                                   * spinner belongs to a click somebody is waiting on -- and it
+                                   * deliberately drops nothing, which is why the check is here rather
+                                   * than in it. The same treatment `Account`'s rename takes, and the
+                                   * reason those two methods are `private[ui]`. */
+                                  val signIn = Store.currentSignIn
+                                  Store.run(ApiClient.searchPlayers(prefix.now().trim), busy) { result =>
+                                      if (Store.stillSignedInAs(signIn)) {
+                                          // Remembered for the invited list above, which has ids and no
+                                          // names of its own.
+                                          Store.remember(result.players)
+                                          found.set(Some(result))
+                                      }
+                                  }
+                              },
+                              child <-- found.signal.map {
+                                  case None => emptyNode
+                                  case Some(result) =>
+                                      val askable = result.players.filterNot(p => alreadyAsked.contains(p.playerId))
+                                      if (askable.isEmpty)
+                                          p(
+                                            cls := "empty",
+                                            "Nobody new by that name. Anyone already invited is not listed again."
+                                          )
+                                      else
+                                          ul(
+                                            askable.map(candidate =>
+                                                li(
+                                                  cls := "row",
+                                                  button(
+                                                    tpe := "button",
+                                                    cls := "link",
+                                                    candidate.nickname,
+                                                    onClick --> (_ => chosen.set(Some(candidate)))
+                                                  )
+                                                )
+                                            )
+                                          )
+                              }
+                            )
+
+                        case Some(candidate) =>
+                            div(
+                              p(cls := "detail", s"Inviting ${candidate.nickname}."),
+                              field(
+                                "Their seat",
+                                select(
+                                  onChange.mapToValue --> { raw =>
+                                      seat.set(
+                                        raw.toIntOption
+                                            .map(GameRoleId.apply)
+                                            .filter(id => offerable.exists(_.gameRoleId == id))
+                                      )
+                                  },
+                                  value <-- seat.signal.map(_.map(_.value.toString).getOrElse("")),
+                                  // Always available, and the default: a role-less invitation holds
+                                  // nothing, so any number of them can stand together.
+                                  option(value := "", "any seat that is free"),
+                                  offerable.map(role => option(value := role.gameRoleId.value.toString, role.name))
+                                )
+                              ),
+                              // Said rather than left to be inferred from a short list: a challenger
+                              // who means to hold a particular seat and cannot see it needs to know
+                              // whether it is taken or promised, which are different problems with
+                              // different remedies -- one waits, the other is a revoke above.
+                              if (offerable.isEmpty)
+                                  p(
+                                    cls := "detail",
+                                    "Every role is either taken or already held for somebody, so this invitation " +
+                                        "can only be for any seat that comes free."
+                                  )
+                              else emptyNode,
+                              busyButton("Send the invitation") { busy =>
+                                  Store.run(
+                                    ApiClient.invite(
+                                      game.gameId,
+                                      summary.challenge.challengeId,
+                                      Invite(candidate.playerId, seat.now())
+                                    ),
+                                    busy,
+                                    invitationStale(game.gameId)
+                                  )(_ => Store.refreshChallenges(game.gameId))
+                              },
+                              button(
+                                tpe := "button",
+                                cls := "link",
+                                "Somebody else",
+                                onClick --> { _ =>
+                                    chosen.set(None); seat.set(None)
+                                }
+                              )
+                            )
+                    }
+                  )
           }
         )
     }
 
+    /** What to do when inviting or revoking is refused because the challenge has moved on.
+      *
+      * The server's own message is left standing in both cases, because it is the one that says which thing happened —
+      * The reloads below cannot clear it: they are fetches, and a fetch's success leaves an action's banner alone.
+      *
+      * The two statuses are not the same news, so they do not get the same reload:
+      *
+      *   - 409 is the challenge having moved on under this panel, and one of the things that can mean is that it has
+      *     *started*: `refuseStarted` refuses both of these calls on a started challenge with exactly this status. The
+      *     challenger is a participant in the match that start created — creating a challenge accepts it — so their own
+      *     match lists are as stale as this panel is, and a match they may already be on the clock in would otherwise
+      *     be missing from "Current Matches" until something else asked. The other things a 409 means here — a seat
+      *     promised or accepted since the picker was drawn, a player who accepted before the revoke landed — leave
+      *     those lists alone, and three reloads that find nothing new cost a dimmed second.
+      *   - 404 is the challenge or the invitation simply gone. Nothing was started by that, so the challenge list is
+      *     the whole of what is stale.
+      */
+    private def invitationStale(gameId: GameId)(failure: Throwable): Unit = failure match {
+        case ApiError(409, _) =>
+            Store.refreshChallenges(gameId)
+            reloadAfterStart()
+        case ApiError(404, _) => Store.refreshChallenges(gameId)
+        case _                => ()
+    }
+
+    /** A challenge somebody else is offering, and this player's way into it.
+      *
+      * `me` is here for the roles (V22). A seat is not free merely because nobody has accepted it: an invitation holds
+      * one for the player it names, and an invitation *to this player* that names a seat is an offer of that seat and
+      * no other. Both are refused by the server — the first with a 409, the second with a 400 — so both narrow the
+      * picker rather than being left to fail on submit, which for the second would fail on the *default* selection and
+      * so on the first click.
+      */
     private def openChallengeRow(
         game: Game,
         summary: ChallengeSummary,
-        characterId: Option[CharacterId]
+        characterId: Option[CharacterId],
+        me: PlayerId
     ): HtmlElement = {
         val challenge = summary.challenge
-        // Only the roles nobody has claimed yet: accepting as a taken role is refused by the server,
-        // and there is no reason to offer a choice that cannot work. A challenge with none left is
-        // one that is full, and gets no Accept at all.
+        // The roles nobody has claimed yet: accepting as a taken role is refused by the server, and
+        // there is no reason to offer a choice that cannot work. A challenge with none left is one
+        // that is full, and gets no Accept at all.
         val free = freeRoles(game, summary)
-        val role = Var(free.headOption.map(_.gameRoleId))
+        // The seat held for this player, if they were invited to one. `accept` refuses any other role
+        // for them, so it is not one choice among the free ones -- it is the only one.
+        val mySeat = summary.invitations.find(_.playerId == me).flatMap(_.gameRoleId)
+        // And the seats held for everybody else, which are free of acceptances and still not on offer.
+        val heldForOthers = summary.invitations.filterNot(_.playerId == me).flatMap(_.gameRoleId).toSet
+
+        val choices = mySeat match {
+            case Some(seat) => free.filter(_.gameRoleId == seat)
+            case None       => free.filterNot(role => heldForOthers.contains(role.gameRoleId))
+        }
+
+        // Pre-selected from what may actually be accepted, which is the half of this that a picker
+        // alone would not fix: an invited player's default used to be the first free role, and their
+        // invitation names a different one.
+        val role = Var(choices.headOption.map(_.gameRoleId))
+
         li(
           cls := "row",
           div(cls := "title", challenge.message),
           div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
           timeLimitDetail(challenge),
-          roleSelect(free, role),
-          if (free.isEmpty) div(cls := "detail", "every role is taken")
+          // A seat held for this player is said rather than offered: a picker with one entry asks a
+          // question whose answer is already settled, and what they need to know is which seat they
+          // were asked for.
+          mySeat.flatMap(seat => game.roles.find(_.gameRoleId == seat)) match {
+              case Some(seat) => div(cls := "detail", s"invited as ${seat.name}")
+              case None       => roleSelect(choices, role)
+          },
+          if (choices.isEmpty)
+              // Told apart, because the remedies differ: a full challenge is one to forget, where a
+              // challenge whose free seats are all promised may still come to this player if one of
+              // those invitations is turned down.
+              div(
+                cls := "detail",
+                if (free.isEmpty) "every role is taken"
+                else "every role still free is held for another player"
+              )
           else
               busyButton("Accept") { busy =>
-                  val chosen = role.now().getOrElse(free.head.gameRoleId)
+                  val chosen = role.now().getOrElse(choices.head.gameRoleId)
                   // Whether this acceptance is also the start: an auto-starting challenge whose last
                   // required role is the one being taken here. Worked out from what this row already
                   // knows rather than asked of the server, because the server answers an acceptance
@@ -1942,7 +2665,19 @@ object Views {
               choices.map(r => option(value := r.gameRoleId.value.toString, r.name))
             )
 
-    private def newChallengeForm(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement = {
+    /** The form that offers a challenge, and — when `invitee` is set — invites one player to it in the same request.
+      *
+      * `invitee` arrives from that player's own page, which is the only screen that can name somebody: see
+      * [[inviteControl]]. With one, the challenge defaults to closed, because the reason to invite a particular player
+      * is usually that the game is for them — and the box below says so and can be unticked, since an invitation to an
+      * open challenge is a nudge rather than a gate, and a challenger who wants both is entitled to both.
+      */
+    private def newChallengeForm(
+        game: Game,
+        player: Player,
+        characterId: Option[CharacterId],
+        invitee: Option[PublicPlayer] = None
+    ): HtmlElement = {
         val message = Var("")
         val isPublic = Var(false)
         // Whether the match begins on its own once every required role is taken, instead of waiting
@@ -1970,12 +2705,59 @@ object Views {
         // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
         // has been claimed yet, so every role of the game is on offer and the first stands selected.
         val role = Var(game.roles.headOption.map(_.gameRoleId))
+        // Whether anybody may accept this, or only the players invited to it. Open unless somebody is
+        // being invited, which is the case the flag exists for -- a challenge with nobody invited and
+        // closed is one nobody can accept at all, and the server refuses it.
+        val isOpen = Var(invitee.isEmpty)
+        // The seat being held for the invited player, or `None` for "any that is still free". Their
+        // own choice of role is what `None` leaves them, and it is the default: holding a particular
+        // seat is the stronger statement of the two, so it is the one the challenger has to make.
+        val inviteeRole = Var(Option.empty[GameRoleId])
 
         div(
           cls := "card",
           h3("Offer a Challenge"),
           field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
           roleSelect(game.roles, role),
+          // Everything about the one player this is being offered to, and nothing at all when it is
+          // being offered to whoever comes along.
+          invitee.fold(emptyNode) { asked =>
+              div(
+                cls := "detail-panel",
+                p(cls := "detail", s"Inviting ${asked.nickname}."),
+                field(
+                  "Their seat",
+                  // Rebuilt as the challenger's own role changes, because the seat they take is not
+                  // one they can also hold for somebody else -- the server refuses a role twice over,
+                  // and offering it here would be offering a choice that fails on submit.
+                  select(
+                    onChange.mapToValue --> { raw =>
+                        inviteeRole.set(
+                          raw.toIntOption.map(GameRoleId.apply).filter(id => game.roles.exists(_.gameRoleId == id))
+                        )
+                    },
+                    value <-- inviteeRole.signal.map(_.map(_.value.toString).getOrElse("")),
+                    // The blank first entry is the default, and it means something: any seat still
+                    // free when they answer, rather than one held for them.
+                    option(value := "", "any seat that is free"),
+                    children <-- role.signal.map(mine =>
+                        game.roles
+                            .filterNot(r => mine.contains(r.gameRoleId))
+                            .map(r => option(value := r.gameRoleId.value.toString, r.name))
+                    )
+                  )
+                ),
+                // Ticked leaves the challenge open to anybody, with the invitation as a nudge; unticked
+                // -- the default when inviting -- makes the invitations the only way in.
+                label(
+                  input(
+                    tpe := "checkbox",
+                    controlled(checked <-- isOpen.signal, onClick.mapToChecked --> isOpen)
+                  ),
+                  "Anyone may accept this, not only the players invited"
+                )
+              )
+          },
           // The number and the unit it is in, in one field: they are one answer, and a caption
           // over each would read as two questions.
           field(
@@ -2009,10 +2791,22 @@ object Views {
               TimeLimitKind.values.toSeq.map(kind => option(value := kind.code, kind.label))
             )
           ),
-          child <-- timeLimit.signal.map { raw =>
-              if (raw.trim.isEmpty || amountOf(raw).isDefined) emptyNode
-              else p(cls := "empty", aria.live := "polite", "A time limit is a whole number, more than zero.")
-          },
+          // The same rule the two regions above follow: the element carrying `aria-live` is mounted
+          // before it has anything to say, and it is the text that arrives. A message built at the
+          // moment it becomes true is a region nothing was watching, and a reader typing into the
+          // field is told nothing about why the form will not submit.
+          //
+          // A `div` rather than a `p` for the reason `gamePage`'s is: it is empty whenever the field
+          // is valid, which is most of the time, and an empty `p` would hold its margins open under
+          // the input. The class comes and goes with the text.
+          div(
+            aria.live := "polite",
+            cls <-- timeLimit.signal.map(raw => if (raw.trim.isEmpty || amountOf(raw).isDefined) "" else "empty"),
+            child.text <-- timeLimit.signal.map(raw =>
+                if (raw.trim.isEmpty || amountOf(raw).isDefined) ""
+                else "A time limit is a whole number, more than zero."
+            )
+          ),
           // Public means anyone may watch the match, which the game engine implements by issuing a
           // url that needs no sign-in. It is decided here because it is a property of the game being
           // offered, not of any one player's part in it.
@@ -2032,6 +2826,10 @@ object Views {
             ),
             "Start when all seats filled"
           ),
+          // The challenger changing their own role can leave the invitee holding the seat just taken,
+          // which the server refuses. Released rather than refused here: the challenger's choice is
+          // the one they just made, and the invitation falls back to "any seat that is free".
+          role.signal --> { mine => if (mine.exists(inviteeRole.now().contains)) inviteeRole.set(None) },
           busyButton(
             "Create Challenge",
             // A game with no roles at all has nothing an acceptance could name, so no challenge for
@@ -2060,7 +2858,8 @@ object Views {
                             gameRoleId = chosen,
                             timeLimitKind = timeLimitKind.now(),
                             timeLimitUnit = timeLimitUnit.now(),
-                            autoStart = autoStart.now()
+                            autoStart = autoStart.now(),
+                            isOpen = isOpen.now()
                           )
                       case None =>
                           PlainChallenge(
@@ -2075,19 +2874,43 @@ object Views {
                             gameRoleId = chosen,
                             timeLimitKind = timeLimitKind.now(),
                             timeLimitUnit = timeLimitUnit.now(),
-                            autoStart = autoStart.now()
+                            autoStart = autoStart.now(),
+                            isOpen = isOpen.now()
                           )
                   }
 
-                  Store.run(ApiClient.createChallenge(challenge), busy) { _ =>
+                  // One request rather than a create and then an invite: the server validates the
+                  // invitations against the challenge and against each other, and a closed challenge
+                  // created on its own would exist, briefly, as one nobody could accept.
+                  val invitations =
+                      invitee.map(asked => Invite(asked.playerId, inviteeRole.now())).toSeq
+
+                  // Taken before the request, and checked before the store is written: this callback
+                  // closes the form, clears the invitee and re-reads a game's challenges, and all
+                  // three of those belong to whoever was on this screen when the button was clicked.
+                  // A create answered after a sign-out would close a form the next player has opened
+                  // and clear an invitee they had just chosen; answered after a walk to another game,
+                  // it would re-read the challenges of the game they have left. `Store.run` drops
+                  // nothing by design -- a click is always worth an answer -- so the guard belongs
+                  // here, which is what `currentSignIn` is visible outside the store for.
+                  val signIn = Store.currentSignIn
+                  Store.run(ApiClient.createChallenge(challenge, invitations), busy) { _ =>
+                      // The fields are this form's own, so a stale answer resetting them costs
+                      // nothing: the form it belongs to is gone, and a form still on screen is a
+                      // newer one this cannot reach.
                       message.set("")
                       timeLimit.set("")
                       timeLimitUnit.set(TimeLimitUnit.Minutes)
                       timeLimitKind.set(TimeLimitKind.PerTurn)
                       autoStart.set(true)
-                      // The challenge it was open for now exists and is in the list below it.
-                      Store.showChallengeForm.set(false)
-                      Store.refreshChallenges(game.gameId)
+                      if (Store.stillSignedInAs(signIn) && Store.page.now() == Store.Page.OneGame(game.gameId)) {
+                          // The challenge it was open for now exists and is in the list below it. The
+                          // invitation went with it, so the slot is spent -- the next challenge offered
+                          // from this screen is not addressed to the same player by default.
+                          Store.showChallengeForm.set(false)
+                          Store.invitee.set(None)
+                          Store.refreshChallenges(game.gameId)
+                      }
                   }
               }
           }

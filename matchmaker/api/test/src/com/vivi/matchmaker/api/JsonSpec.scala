@@ -171,15 +171,18 @@ class JsonSpec extends FunSuite {
           invitations = Seq(
             Invitation(GameId(3), ChallengeId(1), PlayerId(5), Some(GameRoleId(6))),
             Invitation(GameId(3), ChallengeId(1), PlayerId(7))
-          )
+          ),
+          // One of the two has accepted, which the invitation itself cannot say.
+          acceptedInvitees = Seq(PlayerId(5))
         )
 
         val decoded = read[ChallengeSummary](write(summary))
         assertEquals(decoded, summary)
-        // Asserted rather than left to equality: these two are what decide whether the UI offers an
-        // Accept at all, and to whom.
+        // Asserted rather than left to equality: these three are what decide whether the UI offers an
+        // Accept at all, to whom, and which invited players it may still offer a Revoke beside.
         assert(!decoded.challenge.isOpen)
         assertEquals(decoded.invitations.map(_.gameRoleId), Seq(Some(GameRoleId(6)), None))
+        assertEquals(decoded.acceptedInvitees, Seq(PlayerId(5)))
     }
 
     // upickle omits a field whose value equals its default, so `isOpen = true` and no invitations
@@ -204,11 +207,14 @@ class JsonSpec extends FunSuite {
 
         assertEquals(json("challenge").obj.get("isOpen"), None)
         assertEquals(json.obj.get("invitations"), None)
+        assertEquals(json.obj.get("acceptedInvitees"), None)
 
-        // And the other direction: JSON with neither field is an open challenge nobody was invited to.
+        // And the other direction: JSON with none of the three is an open challenge nobody was invited
+        // to, and so nobody invited has accepted.
         val fromOlderClient = read[ChallengeSummary](write(open))
         assert(fromOlderClient.challenge.isOpen)
         assert(fromOlderClient.invitations.isEmpty)
+        assert(fromOlderClient.acceptedInvitees.isEmpty)
     }
 
     // The two halves of an invitation as the API passes them around: `Invite` is what a caller asks
@@ -222,6 +228,7 @@ class JsonSpec extends FunSuite {
         val listed = ChallengeInvitation(
           Invitation(GameId(1), ChallengeId(2), PlayerId(3), Some(GameRoleId(4))),
           gameName = "Chess",
+          gameType = GameType.Plain,
           challengerNickname = "ada",
           message = "best of three",
           roleName = Some("white")

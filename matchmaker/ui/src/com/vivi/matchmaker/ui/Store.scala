@@ -84,6 +84,8 @@ object Store {
         // First, before anything is cleared: from here on, an answer to a request this session made
         // is an answer to a question nobody is asking any more.
         signIns += 1
+        // Nobody owns a banner for a session that is over.
+        bannerOwner = Banner.Nobody
         Auth.clearSession()
         signedIn.set(false)
         player.set(PlayerState.Loading)
@@ -91,12 +93,24 @@ object Store {
         active.set(Seq.empty)
         completed.set(Seq.empty)
         games.set(Seq.empty)
+        unlistedGames.set(Map.empty)
+        lookingForGames.set(Set.empty)
         challengesByGame.set(Map.empty)
         charactersByGame.set(Map.empty)
         acceptances.set(Seq.empty)
+        invitations.set(Seq.empty)
+        // And what was last said about one. The stamp above would keep it from being read anyway;
+        // this is so that nothing is held about a player who has gone, which is what the rest of
+        // this method is for.
+        invitationStatus.set(None)
+        // Whoever was about to be invited was being invited by the player who has just gone.
+        invitee.set(None)
         // Somebody else's page, and the search that found them: both are answers to questions the
         // previous session asked, and the next player starts from an empty box.
         playerSearch.set("")
+        // One player's idea of who is who, learned from their searches: dropped with the rest, so the
+        // next player is shown ids rather than names the session before them looked up.
+        nicknames.set(Map.empty)
         playerResults.set(None)
         publicActive.set(Seq.empty)
         publicCompleted.set(Seq.empty)
@@ -105,8 +119,11 @@ object Store {
         // must not be shown them, let alone save them back.
         notificationSettings.set(None)
         // Back to "nothing has answered yet", so the next player's sections say they are loading
-        // rather than reporting this player's empty lists as theirs.
-        fetched.set(Set.empty)
+        // rather than reporting this player's empty lists as theirs. The stamps go with them: the
+        // sign-in counter already drops every answer still in flight, and a stamp left behind would
+        // be compared against the next session's requests.
+        outcomes.set(Map.empty)
+        latestAsk.clear()
         page.set(Page.Home)
         showChallengeForm.set(false)
         editingGame.set(None)
@@ -123,27 +140,129 @@ object Store {
       * Every one of them starts empty, and an empty list read a moment after sign-in means the second of those, not the
       * first — which is why a section cannot answer the question from the list alone.
       *
-      * Not every fetch is here: the per-game challenges and characters are keyed by game in a `Map`, so a game that has
-      * not been fetched is a missing key rather than an empty list, and those screens already say "Loading…" on it.
+      * The keyed ones carry what they are about. A `Map` slot per game already tells a screen whether that game's list
+      * has arrived — a missing key rather than an empty list — so those screens do not ask `loading` about them. What
+      * the name is needed for is the ordering: two answers about the *same* game overwrite one another, so each has to
+      * be tellable from the other. See `latestAsk`.
       */
     enum Fetch {
-        case Due, Active, Completed, Results, Games, Acceptances
+        case Due, Active, Completed, Results, Games, Acceptances, Invitations
+        case Challenges(gameId: GameId)
+        case Characters(gameId: GameId)
+        case PlayerSearch
+        case NotificationSettings
     }
 
-    /* Which of them have been answered in this session -- however they were answered.
+    /* How each list's *latest* answer went: absent until one has come, `true` for an answer that
+     * brought a list, `false` for a request that failed.
      *
-     * A request that failed is not still in flight: the section it would have filled says what it
-     * knows, beside the banner that says what went wrong. Leaving it saying "Loading..." for ever
-     * would be a worse lie than the one this exists to correct. */
-    private val fetched: Var[Set[Fetch]] = Var(Set.empty)
+     * The latest rather than the best. Two accumulating sets stood here -- "has answered" and "has
+     * answered with a list" -- and a fetch that succeeded and later failed stayed in both, because
+     * nothing was ever taken out of either. So a list held stale contents while reporting itself
+     * known and not failed, which is the one combination that offers no way out: the section drew
+     * the old rows, decided what the player could do from them, and showed no retry, since by its
+     * own account nothing had gone wrong. One slot per list, overwritten by each answer, cannot say
+     * that -- a failure replaces the success it followed rather than joining it.
+     *
+     * Why the distinction is needed at all: a failed fetch is not still in flight, so a section over
+     * one must stop saying "Loading..." -- that would be the worse lie -- and what it has instead is
+     * an empty list. Anything deciding what a player may do by reading such a list decides from a
+     * blank, which is what the invitations section did: it hides the invitations already accepted by
+     * comparing two lists, and with no acceptances to compare against it hid nothing and offered
+     * buttons that could only be refused.
+     *
+     * One map rather than a flag per list, because every list has the distinction and only some have
+     * had to notice it. */
+    private val outcomes: Var[Map[Fetch, Boolean]] = Var(Map.empty)
+
+    /* Which request is the newest one asked for each list, so that an older one's answer can be told
+     * from the current one's.
+     *
+     * Reloads overlap: answering an invitation re-reads the invitations, the acceptances and both
+     * match lists at once, and a second answer a moment later asks for the same lists again while
+     * the first set is still in flight. Nothing orders the responses, so the older request can land
+     * last -- and committing it would restore a row the player has just answered, or an acceptance
+     * list from before they accepted, and leave it there until something else happened to reload.
+     *
+     * A stamp per list rather than one counter for the store: two lists reloaded together are two
+     * questions, and the answer to one is not made stale by a newer question about the other.
+     *
+     * A plain `var` and a plain `Map` because nothing renders either: this decides whether an answer
+     * is committed, and what is rendered is what the commit writes. */
+    private var requests: Int = 0
+    private val latestAsk = scala.collection.mutable.Map.empty[Fetch, Int]
+
+    /** Stamps a request as the newest for every list it will answer for, and says what its stamp is. */
+    private def ask(fetches: Seq[Fetch]): Int = {
+        requests += 1
+        fetches.foreach(what => latestAsk.update(what, requests))
+        requests
+    }
+
+    /** Whether `stamp`'s answer is still the current answer for every list it speaks for.
+      *
+      * Every fetch that writes into this store names one, which is what makes this worth asking. A request about a
+      * single game or a single search is not made safe by being keyed: the key keeps it from overwriting an answer
+      * about something *else*, and says nothing about the previous answer to the same question. A game's challenges are
+      * re-read by a refresh button and by every callback that changes them — creating, inviting, revoking, removing an
+      * acceptance — so two answers about one game overlap readily, and the older landing last puts back the invitation
+      * that was just withdrawn. Hence [[Fetch.Challenges]] and its neighbours carrying their key.
+      *
+      * The one exception is `reloadPublicMatches`, which has a counter of its own because the same guard has to decide
+      * when its page stops saying it is loading — see `publicMatchesFetch`. It remains vacuously true here.
+      */
+    private def newest(stamp: Int, fetches: Seq[Fetch]): Boolean =
+        fetches.forall(what => latestAsk.get(what).contains(stamp))
 
     /** Whether a list is still on its way, which is to say nothing has answered for it yet this session. */
-    def loading(what: Fetch): Signal[Boolean] = fetched.signal.map(!_.contains(what))
+    def loading(what: Fetch): Signal[Boolean] = outcomes.signal.map(!_.contains(what))
+
+    /** Whether what is held for a list is this session's own answer rather than the empty default. */
+    def known(what: Fetch): Signal[Boolean] = outcomes.signal.map(_.get(what).contains(true))
+
+    /** Whether the last thing to happen to a list was its request failing, so what is held for it is nothing.
+      *
+      * The third state a section needs, and the one most often inferred wrongly from emptiness. A screen that can tell
+      * it from "nothing yet" can offer the thing that helps, which is to ask again.
+      */
+    def failed(what: Fetch): Signal[Boolean] = outcomes.signal.map(_.get(what).contains(false))
 
     val due: Var[Seq[MatchSummary]] = Var(Seq.empty)
     val active: Var[Seq[MatchSummary]] = Var(Seq.empty)
     val completed: Var[Seq[MatchSummary]] = Var(Seq.empty)
     val games: Var[Seq[Game]] = Var(Seq.empty)
+
+    /** Games reachable by a link but absent from the list above: the deactivated ones.
+      *
+      * `games` holds the active games, because that is what every list and the menu should offer. A game can still be
+      * *arrived at* after being deactivated — an invitation to a challenge in it, a match still being played — and its
+      * screen drawn from the active list alone would say "Loading…" for ever, waiting for a game that list will never
+      * hold.
+      *
+      * Fetched once per game, on the way to its screen, and kept for the session: a deactivated game does not come back
+      * while somebody is looking at it. Separate from `games` rather than merged into it so the menu and every "which
+      * game?" picker go on offering the active ones only.
+      */
+    val unlistedGames: Var[Map[GameId, Game]] = Var(Map.empty)
+
+    /** Which games are being looked for right now.
+      *
+      * Its own state rather than a `Fetch`: a `Fetch` says a list has been answered once this session, and this is
+      * asked per game and only for the games that are missing. Without it a screen would read "not yet answered" as
+      * "not there" for as long as the request took, and say so.
+      *
+      * A set rather than one flag, because two of these can be in flight — one screen navigated away from before it
+      * answered, and the next one asking for a different game. One flag was cleared by whichever answered first, which
+      * told the screen still waiting that its game was not there. Each lookup takes its own game out, so a stale answer
+      * releases only what it was asked about.
+      *
+      * It is also what keeps a second lookup for the same game from being made: re-selecting a game is this screen's
+      * refresh, and `show` calls `ensureGame` each time.
+      */
+    private val lookingForGames: Var[Set[GameId]] = Var(Set.empty)
+
+    /** Whether the game this screen is about is still being looked for. */
+    def lookingForGame(gameId: GameId): Signal[Boolean] = lookingForGames.signal.map(_.contains(gameId))
 
     /** Open challenges per game, filled in only for games the user has expanded — there is one request per expansion,
       * and games nobody opens cost nothing.
@@ -159,6 +278,68 @@ object Store {
       * and the list "back out" acts on.
       */
     val acceptances: Var[Seq[PendingAcceptance]] = Var(Seq.empty)
+
+    /** What the caller has been invited to and could still accept (V22), newest first and across every game.
+      *
+      * Beside `acceptances` rather than inside it: an invitation is a challenge the caller has *not* answered, where a
+      * pending acceptance is one they have, and the two sections ask different things of them. It carries the game's
+      * name and the challenger's nickname with each row, because the section that draws it spans every game and has
+      * nothing to look either up from — see `ChallengeInvitation`.
+      */
+    val invitations: Var[Seq[ChallengeInvitation]] = Var(Seq.empty)
+
+    /** The player a challenge is about to be offered to, carried from their page to a game's.
+      *
+      * Set by the invite button on somebody's page, which then shows the game screen with the challenge form open: the
+      * form is where a challenge is composed, and who it is for is the one thing that screen cannot ask, since it has
+      * no search box on it. Cleared when the form closes or the challenge is made, so the next challenge offered from
+      * that screen is not quietly addressed to whoever was looked at last -- which is the bug this shape invites, and
+      * the reason it is one slot rather than a list.
+      */
+    val invitee: Var[Option[PublicPlayer]] = Var(None)
+
+    /** Nicknames for player ids this session has been told, so a row holding an id can say who it means.
+      *
+      * A challenge's invitations name their players by id and nothing else — `Invitation` is permission, not a player —
+      * and the challenger looking at their own challenge needs the name. Filled from the searches that found them,
+      * which is where every invitation on that screen is made from, so the player just invited is in here by the time
+      * the row is redrawn.
+      *
+      * Best-effort by design: a miss is an id shown plainly, not a request. An invitation made in another session, or
+      * in this one before a reload, is a name nobody here has heard — and one fetch per row to learn it would be a
+      * request per invitation on a screen that already has what it needs for everything else.
+      */
+    val nicknames: Var[Map[PlayerId, String]] = Var(Map.empty)
+
+    /** Remembers who a search or a page has just named. */
+    def remember(players: Seq[PublicPlayer]): Unit =
+        nicknames.update(_ ++ players.map(player => player.playerId -> player.nickname))
+
+    /* What the last answer to an invitation was, and which session answered it.
+     *
+     * Here rather than in the view for the reason every other per-player value is: this one names a
+     * game the *previous* player was invited to, and a view-local slot outlives the session that
+     * filled it -- `sessionExpired` cannot reach into the screen to clear it. Which made it one
+     * player's data sitting in the next player's page, announced or not.
+     *
+     * Stamped with the sign-in it belongs to rather than merely cleared, because clearing alone
+     * leaves the other half: `Store.run` drops nothing, so an accept that answers after a sign-out
+     * still reports itself, and it would report itself into the session that had just started. The
+     * stamp makes such a write unreadable instead of racing it. */
+    private val invitationStatus: Var[Option[(Int, String)]] = Var(None)
+
+    /** Says what has just been done with an invitation, for the status line in that section to announce. */
+    def sayAboutInvitations(said: String): Unit = invitationStatus.set(Some((currentSignIn, said)))
+
+    /** What to announce, which is nothing at all unless this session is the one that said it.
+      *
+      * Empty rather than absent, because a live region has to be in the page before the text arrives in it: the element
+      * stands there always and it is the words that come and go.
+      */
+    val invitationsSaid: Signal[String] = invitationStatus.signal.map {
+        case Some((signIn, said)) if stillSignedInAs(signIn) => said
+        case _                                               => ""
+    }
 
     /** What is in the player search box, kept in the store rather than in the screen so that leaving the search for a
       * player's page and coming back does not clear it -- the usual reason to come back is to try the next result.
@@ -227,7 +408,11 @@ object Store {
         if (prefix.isEmpty) {
             playerResults.set(None)
             Future.unit
-        } else reload(ApiClient.searchPlayers(prefix))(result => playerResults.set(Some(result)))
+        } else
+            reload(ApiClient.searchPlayers(prefix), Fetch.PlayerSearch) { result =>
+                playerResults.set(Some(result))
+                remember(result.players)
+            }
     }
 
     /** Both of a player's public lists. Used when their page is opened and by that page's refresh button.
@@ -271,7 +456,8 @@ object Store {
       * after a sign-out would be what the next player's panel shows them, and what they could save back as their own.
       */
     def loadNotifications(): Unit =
-        if (notificationSettings.now().isEmpty) load(ApiClient.notifications())(s => notificationSettings.set(Some(s)))
+        if (notificationSettings.now().isEmpty)
+            load(ApiClient.notifications(), Fetch.NotificationSettings)(s => notificationSettings.set(Some(s)))
 
     /** Fetches them again whatever is held, and says when it has.
       *
@@ -284,7 +470,7 @@ object Store {
       * banner rather than being handed back to a caller with nothing useful to do about it.
       */
     def reloadNotifications(): Future[Unit] =
-        reload(ApiClient.notifications())(s => notificationSettings.set(Some(s)))
+        reload(ApiClient.notifications(), Fetch.NotificationSettings)(s => notificationSettings.set(Some(s)))
 
     /** How each finished match turned out, keyed by its match id: the rows of the result table shown under a completed
       * match. Loaded whole with the lists, not per row.
@@ -321,11 +507,28 @@ object Store {
       * it, which is the only refresh this screen has.
       */
     def show(next: Page): Unit = {
+        /* Leaving a screen closes the challenge form and forgets who it was being addressed to.
+         *
+         * Both are one slot for the whole session -- there is one form open at a time and one player
+         * being asked -- and neither means anything on the screen after this one. Left standing, the
+         * form reopened on the next game looked at, already addressed to somebody chosen for a
+         * different game: it does say whose name it carries, but nobody asked it to carry one here.
+         *
+         * Only on an actual change of screen. Re-selecting the game already shown is this screen's
+         * only refresh, and closing a half-typed challenge would be a strange thing for a refresh to
+         * do. `showGameToInvite` below is the one caller that wants them set, which is why it sets
+         * them after this rather than before. */
+        if (next != page.now()) {
+            showChallengeForm.set(false)
+            invitee.set(None)
+        }
+
         page.set(next)
         next match {
             case Page.OneGame(gameId) =>
                 refreshChallenges(gameId)
                 refreshCharacters(gameId)
+                ensureGame(gameId)
             /* Emptied before the request rather than left holding the last player's matches: the
              * page is about to be headed with a different nickname, and rows from the player before
              * them under it would be read as theirs. `None` is what the sections show as loading. */
@@ -336,6 +539,18 @@ object Store {
                 reloadPublicMatches(player.playerId)
             case _ => ()
         }
+    }
+
+    /** Goes to a game's screen with the challenge form open and addressed to one player.
+      *
+      * The invite button on somebody's page: composing a challenge needs the form, and who it is for is the one thing
+      * that screen cannot ask. Setting the two after the navigation rather than before it, because `show` clears them —
+      * which is what keeps every *other* way of arriving at a game from inheriting them.
+      */
+    def showGameToInvite(gameId: GameId, asked: PublicPlayer): Unit = {
+        show(Page.OneGame(gameId))
+        invitee.set(Some(asked))
+        showChallengeForm.set(true)
     }
 
     /** The game whose admin edit form is open, if any. One slot rather than a set: editing two games at once is not a
@@ -374,7 +589,71 @@ object Store {
       * failure nobody observes disappears silently, which in a UI looks exactly like a button that does nothing.
       */
     def run[A](action: Future[A])(onSuccess: A => Unit): Unit =
-        action.onComplete(settle(_)(onSuccess))
+        action.onComplete(settle(_, Banner.Action)(onSuccess))
+
+    /** Who raised the banner now showing, which is what decides who may clear it. */
+    private enum Banner {
+
+        /** Nothing is showing, so there is nothing to be careful of. */
+        case Nobody
+
+        /** Something the player did — a button, or a refusal this UI made itself. */
+        case Action
+
+        /** A list that failed to arrive, named by the lists that request spoke for. */
+        case Background(lists: Set[Fetch])
+    }
+
+    /* Which of those raised the banner now showing.
+     *
+     * An action's success clears any banner: the click worked, so whatever went wrong before it is
+     * history. A *fetch's* success clears only a banner about the same lists, and that last part is
+     * the whole of why this names them rather than being a flag.
+     *
+     * A flag said no more than "a fetch raised it", and two fetches run together: answering an
+     * invitation re-reads the invitations and the acceptances at once. When one of them failed and
+     * the other then succeeded, the success saw only "a fetch raised it" -- true, and about the
+     * sibling that had just failed -- and erased a banner a second old, leaving a section empty with
+     * nothing on screen to say why or to offer another go. Asking whether the success is about the
+     * *same* lists answers no in that case and yes to a retry of the failed list itself, which is the
+     * one case where clearing it is right.
+     *
+     * A fetch's success also leaves an action's banner alone, because a list arriving says nothing
+     * about an action that failed -- and the reloads a 404/409 handler starts are expected to succeed,
+     * since they succeed precisely because the refusal was real. Letting one of those clear the
+     * message would leave a screen that had visibly changed with no account of why.
+     *
+     * Which is also why this is not a flag saying "hold the banner I just set": that has to be
+     * released by something, and whatever releases it is a race -- a second click clears the hold, its
+     * own failure raises a newer banner, and the first click's reload lands and clears that. Asking
+     * who owns the banner has no such window, because the answer travels with the banner rather than
+     * with the reloads.
+     *
+     * A plain `var` because nothing renders it; what is rendered is `error`. */
+    private var bannerOwner: Banner = Banner.Nobody
+
+    /** Whether an outcome belonging to `owner` may clear the banner that is up.
+      *
+      * An untagged fetch — one that speaks for no `Fetch` at all, like `reloadChallenges` — carries the empty set,
+      * which is a subset of every other, so it may clear another untagged fetch's banner and nothing else's.
+      */
+    private def mayClear(owner: Banner): Boolean = (owner, bannerOwner) match {
+        case (_, Banner.Nobody)                                    => true
+        case (Banner.Action, _)                                    => true
+        case (Banner.Background(mine), Banner.Background(showing)) => showing.subsetOf(mine)
+        case _                                                     => false
+    }
+
+    /** Raises the banner for something the player did that this UI decided against, rather than something the server
+      * refused: a match with no url to open, a form that does not add up.
+      *
+      * Through here rather than by setting `error`, so that it is a banner with an owner — one a list reload cannot
+      * clear by succeeding, exactly like a refusal from the server.
+      */
+    def reportProblem(message: String): Unit = {
+        error.set(Some(message))
+        bannerOwner = Banner.Action
+    }
 
     /** The same, holding `busy` for as long as the request is in flight, so the button that started it can show that it
       * is waiting. The flag is cleared however the request ends — a failure re-enables the button rather than leaving
@@ -384,7 +663,7 @@ object Store {
         busy.set(true)
         action.onComplete { outcome =>
             busy.set(false)
-            settle(outcome)(onSuccess)
+            settle(outcome, Banner.Action)(onSuccess)
         }
     }
 
@@ -395,12 +674,15 @@ object Store {
       * after the banner has been set, so a handler that reloads the affected list corrects it in the same beat as the
       * message explaining why — and a handler that sets `error` itself replaces that message deliberately, which is the
       * point of running last.
+      *
+      * A handler that reloads needs nothing else to keep that message: a reload is not an action, and a fetch's success
+      * leaves an action's banner alone. See `Banner`.
       */
     def run[A](action: Future[A], busy: Var[Boolean], onFailure: Throwable => Unit)(onSuccess: A => Unit): Unit = {
         busy.set(true)
         action.onComplete { outcome =>
             busy.set(false)
-            settle(outcome)(onSuccess)
+            settle(outcome, Banner.Action)(onSuccess)
             outcome.failed.foreach(onFailure)
         }
     }
@@ -418,17 +700,32 @@ object Store {
       */
     private def load[A](action: Future[A], fetches: Fetch*)(commit: A => Unit): Unit = {
         val signIn = currentSignIn
+        val stamp = ask(fetches)
         action.onComplete { outcome =>
-            if (stillSignedInAs(signIn)) {
-                settle(outcome)(commit)
-                fetched.update(_ ++ fetches)
+            // Superseded as well as signed out: an answer to a question since asked again is not this
+            // list's current answer, and committing it would undo the newer one. See `newest`.
+            if (stillSignedInAs(signIn) && newest(stamp, fetches)) {
+                settle(outcome, Banner.Background(fetches.toSet))(commit)
+                // However it ended: what the section shows next is decided by which of the two it was.
+                // See `outcomes`.
+                outcomes.update(_ ++ fetches.map(_ -> outcome.isSuccess))
             }
         }
     }
 
-    private def settle[A](outcome: Try[A])(onSuccess: A => Unit): Unit = outcome match {
-        case Success(value) => error.set(None); onSuccess(value)
-        case Failure(error) => report(error)
+    /* `owner` says what this outcome belongs to, which decides both whose banner may be cleared on a
+     * success and who owns the one a failure raises. See `Banner`. The value is committed either way
+     * -- what the distinction protects is the explanation, not the list. */
+    private def settle[A](outcome: Try[A], owner: Banner)(onSuccess: A => Unit): Unit = outcome match {
+        case Success(value) =>
+            if (mayClear(owner)) {
+                error.set(None)
+                bannerOwner = Banner.Nobody
+            }
+            onSuccess(value)
+        case Failure(problem) =>
+            report(problem)
+            bannerOwner = owner
     }
 
     /** Loads everything the signed-in user's home screen needs.
@@ -538,6 +835,7 @@ object Store {
         load(ApiClient.activeMatches(), Fetch.Active)(active.set)
         load(ApiClient.completedMatches(), Fetch.Completed)(completed.set)
         load(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
+        load(ApiClient.invitations(), Fetch.Invitations)(invitations.set)
         load(ApiClient.results(), Fetch.Results)(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
     }
 
@@ -549,16 +847,18 @@ object Store {
       */
     private def reload[A](action: Future[A], fetches: Fetch*)(onSuccess: A => Unit): Future[Unit] = {
         val signIn = currentSignIn
+        val stamp = ask(fetches)
 
         action.transform { outcome =>
-            // Dropped rather than committed when the session that asked has ended, as in `load`. The
-            // `Future` still completes: the section that is waiting to stop showing itself as
-            // reloading has been unmounted by the sign-out, but it must not be left hanging if it has
-            // not.
+            // Dropped rather than committed when the session that asked has ended, or when this list
+            // has since been asked for again — as in `load`, and for the same two reasons. The
+            // `Future` still completes either way: the section that is waiting to stop showing itself
+            // as reloading has been unmounted by the sign-out, but it must not be left hanging if it
+            // has not, and a superseded reload is still a reload that has finished.
             try
-                if (stillSignedInAs(signIn)) {
-                    settle(outcome)(onSuccess)
-                    fetched.update(_ ++ fetches)
+                if (stillSignedInAs(signIn) && newest(stamp, fetches)) {
+                    settle(outcome, Banner.Background(fetches.toSet))(onSuccess)
+                    outcomes.update(_ ++ fetches.map(_ -> outcome.isSuccess))
                 }
             catch { case t: Throwable => report(t) }
             Success(())
@@ -577,6 +877,17 @@ object Store {
 
     def reloadAcceptances(): Future[Unit] = reload(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
 
+    /** The invitations and the acceptances together, which is what the invitations section is drawn from.
+      *
+      * Its own reload rather than `reloadInvitations` alone: which invitations are still to answer is a question about
+      * both lists, and the section is the only place on the page from which a failed acceptances fetch can be retried —
+      * the sections drawn from the acceptances are absent when that list is empty, refresh button and all.
+      */
+    def reloadInvitationsWithAcceptances(): Future[Unit] =
+        reloadInvitations().zip(reloadAcceptances()).map(_ => ())
+
+    def reloadInvitations(): Future[Unit] = reload(ApiClient.invitations(), Fetch.Invitations)(invitations.set)
+
     /** The finished matches and their results together: the completed lists show the result table under each row, so
       * reloading one without the other would leave a match beside somebody else's outcome.
       */
@@ -587,14 +898,102 @@ object Store {
     }
 
     def reloadChallenges(gameId: GameId): Future[Unit] =
-        reload(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))
+        reload(ApiClient.challenges(gameId), Fetch.Challenges(gameId))(list =>
+            challengesByGame.update(_.updated(gameId, list))
+        )
 
     def refreshGames(): Unit = load(ApiClient.games(activeOnly = true), Fetch.Games)(games.set)
 
+    /** What to re-read after an admin saves a game.
+      *
+      * The active list, for the menu and every picker drawn from it — and the copy held in `unlistedGames`, which
+      * `refreshGames` cannot reach and `ensureGame` will not fetch again, since holding it is what tells that method
+      * there is nothing to look for. A game saved while deactivated would otherwise leave its own screen showing the
+      * name, roles and settings it had before the save, and its edit form reopening on that stale snapshot to submit it
+      * again.
+      *
+      * Both copies are written from the save's own answer, which is the authoritative account of what the game now is —
+      * the server has just said so. Only then is the list re-read, and the re-read is for what this cannot know:
+      * whatever else has changed in it, and the order the server puts it in.
+      *
+      * Written here rather than left to that re-read, which was the bug: the screen behind this form and the form
+      * itself are drawn from `games`, so until the request landed they both showed the name, description and roles the
+      * game had *before* the save — and if it failed they showed them for the rest of the session, over a save that had
+      * actually succeeded, with the form ready to submit the stale copy again.
+      *
+      * Which copy it belongs in is what `active` decides, so a save that flips it moves the game between them: into
+      * `games` and out of `unlistedGames` when it is active, and the other way when it is not. `refreshGames` reaches
+      * neither case on its own — it fetches the active games, so it cannot say what became of one that is no longer
+      * among them.
+      */
+    def gameSaved(saved: Game): Unit = {
+        games.update { held =>
+            if (!saved.active) held.filterNot(_.gameId == saved.gameId)
+            else if (held.exists(_.gameId == saved.gameId))
+                held.map(game => if (game.gameId == saved.gameId) saved else game)
+            // Appended rather than placed: a game just created is not in the list at all, and where the
+            // server would sort it is exactly what the re-read below is for.
+            else held :+ saved
+        }
+        unlistedGames.update(held => if (saved.active) held - saved.gameId else held.updated(saved.gameId, saved))
+        refreshGames()
+    }
+
+    /** Makes sure the game a screen is about can be drawn, deactivated or not.
+      *
+      * Nothing to do in the ordinary case: an active game is already held, and this costs no request. Otherwise the
+      * full list is asked for — the one route there is, since a game has no endpoint of its own — and what comes back
+      * is kept in `unlistedGames` rather than in `games`, so the menu and the pickers go on listing the active games
+      * only.
+      *
+      * Only the game asked for is kept, for that reason: the answer holds every game there is, and folding all of them
+      * in would quietly turn every "which game?" list on the screen into a list of games nobody may still play.
+      */
+    def ensureGame(gameId: GameId): Unit =
+        if (
+          !games.now().exists(_.gameId == gameId) && !unlistedGames.now().contains(gameId) &&
+          !lookingForGames.now().contains(gameId)
+        ) {
+            val signIn = currentSignIn
+            lookingForGames.update(_ + gameId)
+            /* Released however it ends, like every other flag of its kind here: a failure leaves the
+             * screen saying the game is not available, beside the banner saying what went wrong, rather
+             * than saying it is still loading for the rest of the session.
+             *
+             * Guarded by the sign-in counter, which `load` below cannot do for this: `load` guards what
+             * it commits, and this runs on the way there. An answer to a request the previous session
+             * made would otherwise release a lookup this one is still waiting on -- the counter is
+             * incremented before anything is cleared, so a request in flight across a sign-out is
+             * exactly the case it catches. */
+            val answered = ApiClient.games(activeOnly = false).transform {
+                case failure @ Failure(_) =>
+                    if (stillSignedInAs(signIn)) lookingForGames.update(_ - gameId)
+                    failure
+                case success => success
+            }
+            load(answered) { all =>
+                all.find(_.gameId == gameId).foreach(game => unlistedGames.update(_.updated(gameId, game)))
+                lookingForGames.update(_ - gameId)
+            }
+        }
+
+    /** The game a screen is about: active, or reachable-but-deactivated, or not yet known.
+      *
+      * The two slots asked as one question, so a screen does not have to know that there are two.
+      */
+    def game(gameId: GameId): Signal[Option[Game]] =
+        games.signal.combineWith(unlistedGames.signal).map { (active, unlisted) =>
+            active.find(_.gameId == gameId).orElse(unlisted.get(gameId))
+        }
+
     def refreshChallenges(gameId: GameId): Unit =
-        load(ApiClient.challenges(gameId))(list => challengesByGame.update(_.updated(gameId, list)))
+        load(ApiClient.challenges(gameId), Fetch.Challenges(gameId))(list =>
+            challengesByGame.update(_.updated(gameId, list))
+        )
 
     def refreshCharacters(gameId: GameId): Unit =
-        load(ApiClient.characters(gameId))(list => charactersByGame.update(_.updated(gameId, list)))
+        load(ApiClient.characters(gameId), Fetch.Characters(gameId))(list =>
+            charactersByGame.update(_.updated(gameId, list))
+        )
 
 }

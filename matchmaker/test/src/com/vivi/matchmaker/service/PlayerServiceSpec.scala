@@ -38,7 +38,12 @@ class PlayerServiceSpec extends PropertySuite {
     }
 
     /* Searching. Every case here uses a nickname built from a UUID, so the prefix it searches for
-     * matches nothing else in a database every other suite is also registering players in. */
+     * matches nothing else in a database every other suite is also registering players in.
+     *
+     * Which holds only for a prefix long enough to be that unique. The uniqueness is in the UUID at
+     * the *end* of the generated string, so a short prefix is a slice of the random characters before
+     * it, and those collide: a four-character one did, about once a run. Where a property asserts on
+     * exactly the players it registered, the prefix it searches for is twenty characters or more. */
 
     property("search finds a player by a prefix of their nickname") {
         forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
@@ -73,9 +78,16 @@ class PlayerServiceSpec extends PropertySuite {
             val result = for {
                 registered <- registrationService.register(nickname, externalId)
                 _ <- registrationService.register(callerId, callerId)
-                same <- playerService.search(callerId, s"A${suffix.take(4)}")
-                flipped <- playerService.search(callerId, s"a${suffix.take(4)}")
-                shouted <- playerService.search(callerId, s"A${suffix.take(4)}".toUpperCase)
+                // Twenty characters of the suffix rather than four, for the reason written out on the
+                // folded search below: the shared test database holds well over a hundred thousand
+                // players, four random alphanumerics have fourteen million combinations, and the
+                // arithmetic of those two is a percent or so per case -- which is why this property
+                // failed about once a run while passing whenever it was looked at on its own. Nothing
+                // about case folding needs a short prefix; what it needs is the same prefix in three
+                // spellings.
+                same <- playerService.search(callerId, s"A${suffix.take(20)}")
+                flipped <- playerService.search(callerId, s"a${suffix.take(20)}")
+                shouted <- playerService.search(callerId, s"A${suffix.take(20)}".toUpperCase)
             } yield same.players.map(_.playerId) == List(registered.playerId) &&
                 flipped.players.map(_.playerId) == List(registered.playerId) &&
                 // Whatever the prefix was written as, the row says the nickname as it was registered.

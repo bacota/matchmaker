@@ -22,6 +22,20 @@ case class Invitation(
     gameRoleId: Option[GameRoleId] = None
 )
 
+/** An invitation together with whether the player it names has accepted it.
+  *
+  * The one thing about an invitation that cannot be read off the invitation. Accepting deliberately leaves the row in
+  * place — the row is what permits the seat, and taking it away would make the acceptance unverifiable — so an
+  * invitation waiting for an answer and one that has been taken up are the same row. A reader that has to tell them
+  * apart needs the `acceptance` table, which is why this pairing exists rather than a field on [[Invitation]]: it is
+  * derived on read, and an [[Invitation]] is also what is written.
+  *
+  * Who needs it: the challenger's own view of a challenge, where every invited player has a Revoke beside them.
+  * `ChallengeService.revoke` refuses one whose invitee has accepted — the acceptance has to be removed first, which is
+  * a different action — so without this the button is offered on a row it can never apply to.
+  */
+case class InvitedPlayer(invitation: Invitation, accepted: Boolean)
+
 /** An invitation as it is asked for, before the challenge it belongs to necessarily exists.
   *
   * Separate from [[Invitation]] because a challenge created with invitations has no id yet, and an [[Invitation]]
@@ -36,6 +50,12 @@ case class Invite(playerId: PlayerId, gameRoleId: Option[GameRoleId] = None)
   * a challenger's nickname up from anything it already holds — where the game screen, which lists one game's
   * challenges, can. Hence the names travelling with the row.
   *
+  * @param gameType
+  *   whether the game is played through characters, which decides what an acceptance of this invitation has to name —
+  *   and so whether it can be accepted from the list at all. Carried here rather than looked up for the reason the
+  *   names are: the screen that draws this holds no game. It matters more than the names do, because the only game list
+  *   a browser holds is of the *active* games, and a challenge in a game deactivated since the invitation was sent is
+  *   still one its invitee may accept — `active` filters what is listed, not what may be played.
   * @param roleName
   *   the name of the seat they were asked to take, when they were asked for one. `Some` exactly when
   *   `invitation.gameRoleId` is, and read from `game_role` in the same query rather than looked up per row.
@@ -43,6 +63,7 @@ case class Invite(playerId: PlayerId, gameRoleId: Option[GameRoleId] = None)
 case class ChallengeInvitation(
     invitation: Invitation,
     gameName: String,
+    gameType: GameType,
     challengerNickname: String,
     message: String,
     roleName: Option[String]
