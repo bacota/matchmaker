@@ -561,7 +561,7 @@ object Views {
                     busy,
                     invitationGone(invitation)
                   ) { _ =>
-                      answeredInvitation(invitation)
+                      acceptedInvitation(invitation)
                   }
               }
           else
@@ -577,23 +577,47 @@ object Views {
                 busy,
                 invitationGone(invitation)
               ) { _ =>
-                  answeredInvitation(invitation)
+                  declinedInvitation(invitation)
               }
           }
         )
     }
 
-    /** Both lists an answered invitation changes, reloaded the way their own buttons reload them.
+    /** Everything accepting an invitation from this list can have changed, reloaded the way each section's own button
+      * reloads it.
       *
-      * The invitation is gone either way — accepted or declined, the row goes — and an acceptance has also joined what
-      * this player is waiting on. Dimmed and re-read rather than edited in place, for the reason
-      * `reloadAcceptanceSections` says: a list that silently loses a row is a list that might have lost the wrong one.
+      * Four lists, not two. The acceptance may have taken the last required seat of an auto-starting challenge, in
+      * which case the server has already created the match, this player is in it, and it may be their turn in it. So
+      * the match lists are re-read as well, through `reloadAfterStart` — the same set a Start reloads, because this may
+      * *have been* the start.
+      *
+      * Unconditionally, unlike `openChallengeRow`, which works out whether its own acceptance started the match and
+      * reloads accordingly. That row can: it holds the challenge, its roster and its `autoStart` flag. This one holds
+      * none of them — a `ChallengeInvitation` is an invitation and the names needed to draw it — and the response says
+      * only that the acceptance was made. Three reloads that find nothing new cost a dimmed second; a match missing
+      * from "Current Matches" costs the player a turn they did not know was theirs.
+      *
+      * Dimmed and re-read rather than edited in place, for the reason `reloadAcceptanceSections` says: a list that
+      * silently loses a row is a list that might have lost the wrong one.
       */
-    private def answeredInvitation(invitation: Invitation): Unit = {
+    private def acceptedInvitation(invitation: Invitation): Unit = {
         refresh(refreshingInvitations, () => Store.reloadInvitations())
-        reloadAcceptanceSections()
-        // The challenge itself has changed — a seat taken, or one released for whoever else may
-        // accept — so the game's list is stale if that screen is the one behind this.
+        reloadAfterStart()
+        // The challenge itself has changed — a seat taken — so the game's list is stale if that screen
+        // is the one behind this.
+        if (Store.page.now() == Store.Page.OneGame(invitation.gameId))
+            Store.refreshChallenges(invitation.gameId)
+    }
+
+    /** And what declining changes, which is less: the invitation is gone, and the seat it held is free for whoever else
+      * may accept.
+      *
+      * No match can have come of it and no acceptance changed — declining is the answer of somebody who has not
+      * accepted, which the server enforces — so the lists that would say otherwise are left alone rather than dimmed
+      * for nothing.
+      */
+    private def declinedInvitation(invitation: Invitation): Unit = {
+        refresh(refreshingInvitations, () => Store.reloadInvitations())
         if (Store.page.now() == Store.Page.OneGame(invitation.gameId))
             Store.refreshChallenges(invitation.gameId)
     }
@@ -612,9 +636,13 @@ object Views {
       *
       * Anything else is left as `Store.run` reported it. A 5xx says nothing about whether the invitation is still
       * there, and a list that looked corrected on the strength of one would be worse than a plain failure.
+      *
+      * The accepting reload is used for either button, because a refusal says less than a success does: a 409 on a
+      * decline can mean this player has already accepted it, or that the challenge has been started, and both of those
+      * are news for the match lists. The wider reload is the one that cannot be wrong here.
       */
     private def invitationGone(invitation: Invitation)(failure: Throwable): Unit = failure match {
-        case ApiError(404 | 409, _) => answeredInvitation(invitation)
+        case ApiError(404 | 409, _) => acceptedInvitation(invitation)
         case _                      => ()
     }
 
