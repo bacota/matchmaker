@@ -1972,7 +1972,7 @@ object Views {
                           subsection = true
                         )(
                           if (available.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
-                          else ul(available.map(openChallengeRow(game, _, characterId)))
+                          else ul(available.map(openChallengeRow(game, _, characterId, player.playerId)))
                         )
                       )
               }
@@ -2245,27 +2245,65 @@ object Views {
         case _                      => ()
     }
 
+    /** A challenge somebody else is offering, and this player's way into it.
+      *
+      * `me` is here for the roles (V22). A seat is not free merely because nobody has accepted it: an invitation holds
+      * one for the player it names, and an invitation *to this player* that names a seat is an offer of that seat and
+      * no other. Both are refused by the server — the first with a 409, the second with a 400 — so both narrow the
+      * picker rather than being left to fail on submit, which for the second would fail on the *default* selection and
+      * so on the first click.
+      */
     private def openChallengeRow(
         game: Game,
         summary: ChallengeSummary,
-        characterId: Option[CharacterId]
+        characterId: Option[CharacterId],
+        me: PlayerId
     ): HtmlElement = {
         val challenge = summary.challenge
-        // Only the roles nobody has claimed yet: accepting as a taken role is refused by the server,
-        // and there is no reason to offer a choice that cannot work. A challenge with none left is
-        // one that is full, and gets no Accept at all.
+        // The roles nobody has claimed yet: accepting as a taken role is refused by the server, and
+        // there is no reason to offer a choice that cannot work. A challenge with none left is one
+        // that is full, and gets no Accept at all.
         val free = freeRoles(game, summary)
-        val role = Var(free.headOption.map(_.gameRoleId))
+        // The seat held for this player, if they were invited to one. `accept` refuses any other role
+        // for them, so it is not one choice among the free ones -- it is the only one.
+        val mySeat = summary.invitations.find(_.playerId == me).flatMap(_.gameRoleId)
+        // And the seats held for everybody else, which are free of acceptances and still not on offer.
+        val heldForOthers = summary.invitations.filterNot(_.playerId == me).flatMap(_.gameRoleId).toSet
+
+        val choices = mySeat match {
+            case Some(seat) => free.filter(_.gameRoleId == seat)
+            case None       => free.filterNot(role => heldForOthers.contains(role.gameRoleId))
+        }
+
+        // Pre-selected from what may actually be accepted, which is the half of this that a picker
+        // alone would not fix: an invited player's default used to be the first free role, and their
+        // invitation names a different one.
+        val role = Var(choices.headOption.map(_.gameRoleId))
+
         li(
           cls := "row",
           div(cls := "title", challenge.message),
           div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
           timeLimitDetail(challenge),
-          roleSelect(free, role),
-          if (free.isEmpty) div(cls := "detail", "every role is taken")
+          // A seat held for this player is said rather than offered: a picker with one entry asks a
+          // question whose answer is already settled, and what they need to know is which seat they
+          // were asked for.
+          mySeat.flatMap(seat => game.roles.find(_.gameRoleId == seat)) match {
+              case Some(seat) => div(cls := "detail", s"invited as ${seat.name}")
+              case None       => roleSelect(choices, role)
+          },
+          if (choices.isEmpty)
+              // Told apart, because the remedies differ: a full challenge is one to forget, where a
+              // challenge whose free seats are all promised may still come to this player if one of
+              // those invitations is turned down.
+              div(
+                cls := "detail",
+                if (free.isEmpty) "every role is taken"
+                else "every role still free is held for another player"
+              )
           else
               busyButton("Accept") { busy =>
-                  val chosen = role.now().getOrElse(free.head.gameRoleId)
+                  val chosen = role.now().getOrElse(choices.head.gameRoleId)
                   // Whether this acceptance is also the start: an auto-starting challenge whose last
                   // required role is the one being taken here. Worked out from what this row already
                   // knows rather than asked of the server, because the server answers an acceptance
