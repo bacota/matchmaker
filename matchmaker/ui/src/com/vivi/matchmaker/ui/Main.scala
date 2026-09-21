@@ -2035,7 +2035,7 @@ object Views {
           child <-- (if (game.gameType == GameType.Plain)
                          currentPlayer.map {
                              case None         => p(cls := "empty", "Loading…")
-                             case Some(player) => challengePanel(game, player, None)
+                             case Some(player) => challengePanel(game, player, Seq.empty)
                          }
                      else
                          currentPlayer.combineWith(Store.charactersByGame.signal).map {
@@ -2047,7 +2047,7 @@ object Views {
                                      // challenge, so there is nothing to show until there is one.
                                      case Some(Nil) => characterForm(game, player)
                                      case Some(characters) =>
-                                         challengePanel(game, player, Some(characters.head.characterId))
+                                         challengePanel(game, player, characters.map(_.characterId))
                                  }
                          })
         )
@@ -2070,7 +2070,11 @@ object Views {
         )
     }
 
-    private def challengePanel(game: Game, player: Player, characterId: Option[CharacterId]): HtmlElement = {
+    /* `characters` is every character this player has in the game, empty for a plain game. Offering a
+     * challenge is done as the first of them; accepting one is done as whichever of them was invited
+     * to it, if any was -- see `openChallengeRow`. */
+    private def challengePanel(game: Game, player: Player, characters: Seq[CharacterId]): HtmlElement = {
+        val characterId = characters.headOption
         // One flag for both lists, held out here rather than inside either of them: they are two
         // views of one request, and this element is rebuilt when that request answers.
         val refreshingChallenges = Var(false)
@@ -2125,7 +2129,7 @@ object Views {
                           subsection = true
                         )(
                           if (available.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
-                          else ul(available.map(openChallengeRow(game, _, characterId, player.playerId)))
+                          else ul(available.map(openChallengeRow(game, _, characters, player.playerId)))
                         )
                       )
               }
@@ -2274,8 +2278,12 @@ object Views {
       * fetched when this is mounted — by name only, which is all another player may see of them — and the first one not
       * already invited is chosen for the challenger, since most players have one character in a game.
       *
-      * The fetch writes only into this picker's own state, which goes with it; it is still dropped if the session that
-      * asked has ended, so a late answer cannot choose a character on the next player's form.
+      * The answer is dropped unless this same mount of this picker is still the one waiting for it, and the session
+      * that asked is still signed in. `chosen` belongs to the form around the picker, not to the picker: switching to
+      * another player replaces the picker but keeps the form, so a late answer about the previous player would
+      * otherwise pick one of *their* characters on a form now showing somebody else — and send the invitation there. A
+      * counter rather than a mounted flag, because a flag reads true again if the same picker is remounted before the
+      * answer lands.
       */
     private def characterPicker(
         gameId: GameId,
@@ -2285,12 +2293,16 @@ object Views {
     ): HtmlElement = {
         // None while the request is out; Left when it failed.
         val loaded = Var(Option.empty[Either[String, Seq[CharacterName]]])
+        // Which mount is current; bumped on unmount too, so nothing answers a picker that has gone.
+        var mount = 0
         div(
           onMountCallback { _ =>
+              mount += 1
+              val asked = mount
               chosen.set(None)
               val signIn = Store.currentSignIn
               ApiClient.characterNames(gameId, owner.playerId).onComplete { answer =>
-                  if (Store.stillSignedInAs(signIn)) answer match {
+                  if (asked == mount && Store.stillSignedInAs(signIn)) answer match {
                       case scala.util.Success(names) =>
                           val offered = names.filterNot(c => exclude.contains(c.characterId))
                           loaded.set(Some(Right(offered)))
@@ -2300,6 +2312,7 @@ object Views {
                   }
               }
           },
+          onUnmountCallback(_ => mount += 1),
           // Announced, because it changes without a reload: what came back decides whether there is
           // anything to invite at all.
           div(
@@ -2606,10 +2619,16 @@ object Views {
     private def openChallengeRow(
         game: Game,
         summary: ChallengeSummary,
-        characterId: Option[CharacterId],
+        myCharacters: Seq[CharacterId],
         me: PlayerId
     ): HtmlElement = {
         val challenge = summary.challenge
+        // Which character this row accepts as. The one invited to this challenge, if the player owns one
+        // that was -- an invitation is to a character (V25), and accepting as any other is refused on a
+        // closed challenge and is a different seat on an open one. Otherwise their first, as before.
+        // A player holds one seat per challenge, so if two of theirs were invited, either will do.
+        val invitedCharacter = summary.invitedCharacters.find(i => myCharacters.contains(i.invitation.characterId))
+        val characterId = invitedCharacter.map(_.invitation.characterId).orElse(myCharacters.headOption)
         // The roles nobody has claimed yet: accepting as a taken role is refused by the server, and
         // there is no reason to offer a choice that cannot work. A challenge with none left is one
         // that is full, and gets no Accept at all.
@@ -2652,6 +2671,11 @@ object Views {
           // A seat held for this player is said rather than offered: a picker with one entry asks a
           // question whose answer is already settled, and what they need to know is which seat they
           // were asked for.
+          // Said when it is not the character this screen otherwise acts as, since the player did not
+          // choose it here and it is the one the Accept below sends.
+          invitedCharacter
+              .filterNot(i => myCharacters.headOption.contains(i.invitation.characterId))
+              .fold(emptyNode)(i => div(cls := "detail", s"${i.characterName} was invited")),
           mySeat.flatMap(seat => game.roles.find(_.gameRoleId == seat)) match {
               case Some(seat) => div(cls := "detail", s"invited as ${seat.name}")
               case None       => roleSelect(choices, role)

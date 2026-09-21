@@ -1,5 +1,7 @@
 package com.vivi.matchmaker.model
 
+import java.time.Instant
+
 /** An invitation to accept one challenge (V22).
   *
   * Permission, and nothing more: it says this player may accept this challenge, and — when [[gameRoleId]] is set —
@@ -59,6 +61,10 @@ case class Invite(playerId: PlayerId, gameRoleId: Option[GameRoleId] = None)
   * @param roleName
   *   the name of the seat they were asked to take, when they were asked for one. `Some` exactly when
   *   `invitation.gameRoleId` is, and read from `game_role` in the same query rather than looked up per row.
+  * @param invitedAt
+  *   when the invitation was made. What the list is ordered by, and carried rather than only sorted on because the list
+  *   is assembled from two tables — a plain game's invitations and a character game's (V25) — which the service merges
+  *   by it.
   * @param character
   *   for a character game, the character invited (V25). `invitation.playerId` is then that character's *current* owner
   *   — the caller — resolved on read rather than stored, and the acceptance has to name this character.
@@ -70,6 +76,7 @@ case class ChallengeInvitation(
     challengerNickname: String,
     message: String,
     roleName: Option[String],
+    invitedAt: Instant,
     character: Option[CharacterName] = None
 )
 

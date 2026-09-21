@@ -13,6 +13,7 @@ import com.vivi.matchmaker.persistence.{
     CharacterInvitationRepo,
     CharacterRepo,
     GameRepo,
+    InvitationRepo,
     TestSession
 }
 
@@ -491,6 +492,70 @@ class ChallengeServiceSpec extends PropertySuite {
     // ---------------------------------------------------------------------------
     // Invitations (V22)
     // ---------------------------------------------------------------------------
+
+    /* A plain ('P') game and its challenger, for the player-invitation paths: V22's `invitation` is
+     * a plain game's alone since V25, so those paths need a game with no characters to test them in. */
+    private case class PlainFixture(owner: Player, game: Game)
+
+    private def makePlainGame: IO[Game] =
+        TestSession.resource.use(session =>
+            new GameRepo[String](session).create(
+              Game(
+                GameId.unassigned,
+                GameType.Plain,
+                "plain game",
+                "description",
+                "url",
+                active = true,
+                Seq(
+                  GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false),
+                  GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false),
+                  GameRole(GameRoleId(0), GameId.unassigned, "third", optional = false)
+                ),
+                Seq.empty,
+                genUniqueString.sample.get
+              )
+            )
+        )
+
+    private def makePlainFixture(nickname: String, externalId: String): IO[PlainFixture] =
+        for {
+            owner <- registrationService.register(nickname, externalId)
+            game <- makePlainGame
+        } yield PlainFixture(owner, game)
+
+    private def plainChallengeFor(fixture: PlainFixture, isOpen: Boolean = true): Challenge =
+        PlainChallenge(
+          challengeId = ChallengeId(0),
+          challenger = fixture.owner.playerId,
+          message = "message",
+          start = None,
+          timeLimit = None,
+          settings = "{}",
+          gameId = fixture.game.gameId,
+          gameRoleId = fixture.game.roles.head.gameRoleId,
+          isOpen = isOpen
+        )
+
+    private def plainInvitationsOf(game: Game, challenge: ChallengeId): IO[List[Invitation]] =
+        TestSession.resource.use(session => new InvitationRepo(session).listForChallenge(game.gameId, challenge))
+
+    private case class Registered(player: Player, externalId: String)
+
+    private def register: IO[Registered] = {
+        val externalId = genUniqueString.sample.get
+        registrationService.register(genUniqueString.sample.get, externalId).map(Registered(_, externalId))
+    }
+
+    private def plainAccept(
+        fixture: PlainFixture,
+        challenge: ChallengeId,
+        role: Int,
+        externalId: String
+    ): IO[Either[Throwable, Acceptance]] =
+        challengeService
+            .accept(fixture.game.gameId, challenge, None, fixture.game.roles(role).gameRoleId, externalId)
+            .attempt
 
     private def closedChallengeFor(fixture: Fixture): Challenge =
         challengeFor(fixture) match {
@@ -1219,18 +1284,6 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
-    /* Accepting does not remove the invitation, and so does not remove it from this list either.
-     *
-     * The row survives on purpose: it is what permits the seat, so backing out and changing their
-     * mind again is something a player may do. The consequence is that `invitationsFor` answers with
-     * invitations in both states, and nothing in the response says which -- an invitation carries no
-     * state about whether it was taken up.
-     *
-     * Which is why the screen that draws it filters against the acceptances it already holds: both
-     * buttons on an accepted row are refused with a 409, `accept` because one player may hold one
-     * seat and `reject` because the invitation permits the seat they are in. This property is that
-     * assumption written down, so a later decision to filter here instead fails loudly there.
-     */
     /* A player already in the challenge cannot be invited to it, with or without a seat named.
      *
      * The seat they are sitting in was already refused by `taken` -- an accepted role is not free to
@@ -1352,35 +1405,74 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
-    property("accepting an invitation leaves it in the invitations list, in no different shape") {
+    /* A character's invitation that has been accepted leaves `invitationsFor`, and comes back if the
+     * acceptance is withdrawn -- the row itself is untouched throughout, since it is what permits the
+     * seat. Filtered by the server rather than left to the screen, for the reason the next property
+     * shows: after a transfer, the screen has no acceptance of its own to filter by. */
+    property("an accepted character invitation leaves the invitations list, and returns on backing out") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, invitedNickname, invitedExternalId) =>
                 val result = for {
                     fixture <- makeFixture(nickname, externalId)
                     invited <- makeCharacterInGame(fixture.game, invitedNickname, invitedExternalId)
+                    (player, character) = invited
                     role = fixture.game.roles(1).gameRoleId
                     created <- challengeService.create(
                       closedChallengeFor(fixture),
                       externalId,
-                      characterInvitations = Seq(CharacterInvite(invited._2.characterId, Some(role)))
+                      characterInvitations = Seq(CharacterInvite(character.characterId, Some(role)))
                     )
                     before <- challengeService.invitationsFor(invitedExternalId)
                     _ <- challengeService.accept(
                       fixture.game.gameId,
                       created.challengeId,
-                      Some(invited._2.characterId),
+                      Some(character.characterId),
                       role,
                       invitedExternalId
                     )
-                    after <- challengeService.invitationsFor(invitedExternalId)
+                    accepted <- challengeService.invitationsFor(invitedExternalId)
+                    _ <- TestServices.services.acceptances
+                        .delete(fixture.game.gameId, created.challengeId, player.playerId, invitedExternalId)
+                    backedOut <- challengeService.invitationsFor(invitedExternalId)
                 } yield {
                     def mine(listed: List[ChallengeInvitation]) =
                         listed.filter(_.invitation.challengeId == created.challengeId)
-
-                    // There before, there after, and identical: nothing in the row marks it answered,
-                    // which is the whole reason the caller has to know from somewhere else.
-                    mine(before).sizeIs == 1 && mine(after) == mine(before)
+                    mine(before).sizeIs == 1 && mine(accepted).isEmpty && mine(backedOut) == mine(before)
                 }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a character transferred after accepting offers its new owner no invitation to answer") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, formerNickname, formerExternalId, newNickname, newExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    former <- makeCharacterInGame(fixture.game, formerNickname, formerExternalId)
+                    (_, character) = former
+                    _ <- registrationService.register(newNickname, newExternalId)
+                    role = fixture.game.roles(1).gameRoleId
+                    created <- challengeService.create(
+                      closedChallengeFor(fixture),
+                      externalId,
+                      characterInvitations = Seq(CharacterInvite(character.characterId, Some(role)))
+                    )
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(character.characterId),
+                      role,
+                      formerExternalId
+                    )
+                    _ <- TestServices.services.characters.update(
+                      character.characterId,
+                      character.name,
+                      character.description,
+                      newExternalId,
+                      formerExternalId
+                    )
+                    listed <- challengeService.invitationsFor(newExternalId)
+                } yield listed.forall(_.invitation.challengeId != created.challengeId)
                 result.timeout(20.seconds).unsafeRunSync()
         }
     }
@@ -1562,6 +1654,401 @@ class ChallengeServiceSpec extends PropertySuite {
                     case _                                                    => false
                 }
                 result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    /* One seat per character, not only per player. The acceptance names the player who made it, so a
+     * character accepted by one owner and transferred to another would otherwise pass the per-player
+     * check again and take a second seat -- on any challenge, invited or open. */
+    property("a character already seated cannot accept again under a new owner") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, formerNickname, formerExternalId, newNickname, newExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    former <- makeCharacterInGame(fixture.game, formerNickname, formerExternalId)
+                    (_, character) = former
+                    _ <- registrationService.register(newNickname, newExternalId)
+                    // Open and role-less: nothing about an invitation is involved.
+                    created <- challengeService.create(challengeFor(fixture), externalId)
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(character.characterId),
+                      fixture.game.roles(1).gameRoleId,
+                      formerExternalId
+                    )
+                    _ <- TestServices.services.characters.update(
+                      character.characterId,
+                      character.name,
+                      character.description,
+                      newExternalId,
+                      formerExternalId
+                    )
+                    again <- challengeService
+                        .accept(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Some(character.characterId),
+                          fixture.game.roles(2).gameRoleId,
+                          newExternalId
+                        )
+                        .attempt
+                    seats <- TestSession.resource.use(session =>
+                        new AcceptanceRepo(session).rolesForChallenge(fixture.game.gameId, created.challengeId)
+                    )
+                } yield again match {
+                    case Left(_: ConflictError) => seats.size == 2
+                    case _                      => false
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    /* `invitationsFor` reads a plain game's invitations and a character game's from two tables. Made
+     * plain, then character, then plain: appending one list to the other would put both plain ones first,
+     * so this is only newest-first if the two are merged by when each was made. */
+    property("invitationsFor is newest first across plain and character games") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, invitedNickname, invitedExternalId) =>
+                def plainChallenge(game: Game, challenger: PlayerId) =
+                    PlainChallenge(
+                      challengeId = ChallengeId(0),
+                      challenger = challenger,
+                      message = "plain",
+                      start = None,
+                      timeLimit = None,
+                      settings = "{}",
+                      gameId = game.gameId,
+                      gameRoleId = game.roles.head.gameRoleId,
+                      isOpen = false
+                    )
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    invited <- makeCharacterInGame(fixture.game, invitedNickname, invitedExternalId)
+                    (invitee, character) = invited
+                    firstGame <- makePlainGame
+                    secondGame <- makePlainGame
+                    oldest <- challengeService.create(
+                      plainChallenge(firstGame, fixture.owner.playerId),
+                      externalId,
+                      Seq(Invite(invitee.playerId))
+                    )
+                    middle <- challengeService.create(
+                      closedChallengeFor(fixture),
+                      externalId,
+                      characterInvitations = Seq(CharacterInvite(character.characterId))
+                    )
+                    newest <- challengeService.create(
+                      plainChallenge(secondGame, fixture.owner.playerId),
+                      externalId,
+                      Seq(Invite(invitee.playerId))
+                    )
+                    listed <- challengeService.invitationsFor(invitedExternalId)
+                } yield {
+                    val ours = Set(oldest.challengeId, middle.challengeId, newest.challengeId)
+                    listed.map(_.invitation.challengeId).filter(ours.contains) ==
+                        List(newest.challengeId, middle.challengeId, oldest.challengeId)
+                }
+                result.timeout(30.seconds).unsafeRunSync()
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Player invitations, in a plain game (V22). The properties above test a character game, whose
+    // invitations name characters (V25); these keep the player-invitation paths under test.
+    // ---------------------------------------------------------------------------------------------
+
+    property("plain: a closed challenge is accepted by its invited player, as the seat held, and by nobody else") {
+        forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+            val result = for {
+                fixture <- makePlainFixture(nickname, externalId)
+                invitee <- register
+                stranger <- register
+                created <- challengeService.create(
+                  plainChallengeFor(fixture, isOpen = false),
+                  externalId,
+                  Seq(Invite(invitee.player.playerId, Some(fixture.game.roles(1).gameRoleId)))
+                )
+                stranger <- plainAccept(fixture, created.challengeId, 2, stranger.externalId)
+                wrongSeat <- plainAccept(fixture, created.challengeId, 2, invitee.externalId)
+                accepted <- plainAccept(fixture, created.challengeId, 1, invitee.externalId)
+            } yield (stranger, wrongSeat, accepted) match {
+                case (Left(_: UnauthorizedError), Left(_: ValidationError), Right(a)) =>
+                    a.playerId == invitee.player.playerId && a.isInstanceOf[PlainAcceptance]
+                case _ => false
+            }
+            result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("plain: a role held for one player is not free for another, even on an open challenge") {
+        forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+            val result = for {
+                fixture <- makePlainFixture(nickname, externalId)
+                invitee <- register
+                stranger <- register
+                created <- challengeService.create(
+                  plainChallengeFor(fixture),
+                  externalId,
+                  Seq(Invite(invitee.player.playerId, Some(fixture.game.roles(1).gameRoleId)))
+                )
+                held <- plainAccept(fixture, created.challengeId, 1, stranger.externalId)
+                free <- plainAccept(fixture, created.challengeId, 2, stranger.externalId)
+            } yield (held, free) match {
+                case (Left(_: ConflictError), Right(_)) => true
+                case _                                  => false
+            }
+            result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("plain: create refuses a player twice, one role for two, the challenger's own seat, and the challenger") {
+        forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+            val result = for {
+                fixture <- makePlainFixture(nickname, externalId)
+                first <- register
+                second <- register
+                role = fixture.game.roles(1).gameRoleId
+                twice <- challengeService
+                    .create(
+                      plainChallengeFor(fixture),
+                      externalId,
+                      Seq(Invite(first.player.playerId), Invite(first.player.playerId))
+                    )
+                    .attempt
+                sameRole <- challengeService
+                    .create(
+                      plainChallengeFor(fixture),
+                      externalId,
+                      Seq(Invite(first.player.playerId, Some(role)), Invite(second.player.playerId, Some(role)))
+                    )
+                    .attempt
+                ownSeat <- challengeService
+                    .create(
+                      plainChallengeFor(fixture),
+                      externalId,
+                      Seq(Invite(first.player.playerId, Some(fixture.game.roles.head.gameRoleId)))
+                    )
+                    .attempt
+                themselves <- challengeService
+                    .create(plainChallengeFor(fixture), externalId, Seq(Invite(fixture.owner.playerId)))
+                    .attempt
+            } yield (twice, sameRole, ownSeat, themselves) match {
+                case (
+                      Left(_: ValidationError),
+                      Left(_: ValidationError),
+                      Left(_: ConflictError),
+                      Left(_: ValidationError)
+                    ) =>
+                    true
+                case _ => false
+            }
+            result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("plain: invite adds an invitation, only the challenger may, and not twice or to somebody seated") {
+        forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+            val result = for {
+                fixture <- makePlainFixture(nickname, externalId)
+                invitee <- register
+                seated <- register
+                created <- challengeService.create(plainChallengeFor(fixture), externalId)
+                _ <- plainAccept(fixture, created.challengeId, 2, seated.externalId)
+                byStranger <- challengeService
+                    .invite(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Invite(invitee.player.playerId),
+                      invitee.externalId
+                    )
+                    .attempt
+                invited <- challengeService.invite(
+                  fixture.game.gameId,
+                  created.challengeId,
+                  Invite(invitee.player.playerId, Some(fixture.game.roles(1).gameRoleId)),
+                  externalId
+                )
+                twice <- challengeService
+                    .invite(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Invite(invitee.player.playerId),
+                      externalId
+                    )
+                    .attempt
+                toSeated <- challengeService
+                    .invite(fixture.game.gameId, created.challengeId, Invite(seated.player.playerId), externalId)
+                    .attempt
+                held <- plainInvitationsOf(fixture.game, created.challengeId)
+            } yield (byStranger, twice, toSeated) match {
+                case (Left(_: UnauthorizedError), Left(_: ConflictError), Left(_: ConflictError)) =>
+                    held == List(invited)
+                case _ => false
+            }
+            result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("plain: reject deletes one invitation, and is refused once the player has accepted") {
+        forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+            val result = for {
+                fixture <- makePlainFixture(nickname, externalId)
+                first <- register
+                second <- register
+                created <- challengeService.create(
+                  plainChallengeFor(fixture, isOpen = false),
+                  externalId,
+                  Seq(Invite(first.player.playerId), Invite(second.player.playerId))
+                )
+                _ <- challengeService.reject(fixture.game.gameId, created.challengeId, first.externalId)
+                left <- plainInvitationsOf(fixture.game, created.challengeId)
+                _ <- plainAccept(fixture, created.challengeId, 1, second.externalId)
+                afterAccepting <- challengeService
+                    .reject(fixture.game.gameId, created.challengeId, second.externalId)
+                    .attempt
+                again <- challengeService.reject(fixture.game.gameId, created.challengeId, first.externalId).attempt
+            } yield (afterAccepting, again) match {
+                case (Left(_: ConflictError), Left(_: NotFoundError)) =>
+                    left.map(_.playerId) == List(second.player.playerId)
+                case _ => false
+            }
+            result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("plain: revoke is the challenger's alone, and refused once the player has accepted") {
+        forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+            val result = for {
+                fixture <- makePlainFixture(nickname, externalId)
+                invitee <- register
+                accepter <- register
+                created <- challengeService.create(
+                  plainChallengeFor(fixture, isOpen = false),
+                  externalId,
+                  Seq(Invite(invitee.player.playerId), Invite(accepter.player.playerId))
+                )
+                byInvitee <- challengeService
+                    .revoke(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      invitee.player.playerId,
+                      invitee.externalId
+                    )
+                    .attempt
+                _ <- challengeService.revoke(
+                  fixture.game.gameId,
+                  created.challengeId,
+                  invitee.player.playerId,
+                  externalId
+                )
+                again <- challengeService
+                    .revoke(fixture.game.gameId, created.challengeId, invitee.player.playerId, externalId)
+                    .attempt
+                _ <- plainAccept(fixture, created.challengeId, 1, accepter.externalId)
+                seated <- challengeService
+                    .revoke(fixture.game.gameId, created.challengeId, accepter.player.playerId, externalId)
+                    .attempt
+                left <- plainInvitationsOf(fixture.game, created.challengeId)
+            } yield (byInvitee, again, seated) match {
+                case (Left(_: UnauthorizedError), Left(_: NotFoundError), Left(e: ConflictError)) =>
+                    e.message == "That player has already accepted this challenge. Remove their acceptance instead." &&
+                    left.map(_.playerId) == List(accepter.player.playerId)
+                case _ => false
+            }
+            result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a plain game refuses an invitation to a character, on create and on invite") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, otherNickname, otherExternalId) =>
+                val result = for {
+                    fixture <- makePlainFixture(nickname, externalId)
+                    // A real character, from a character game: what is refused is the kind of
+                    // invitation, before anything about the character is looked at.
+                    elsewhere <- makeFixture(otherNickname, otherExternalId)
+                    onCreate <- challengeService
+                        .create(
+                          plainChallengeFor(fixture),
+                          externalId,
+                          characterInvitations = Seq(CharacterInvite(elsewhere.character.characterId))
+                        )
+                        .attempt
+                    created <- challengeService.create(plainChallengeFor(fixture), externalId)
+                    onInvite <- challengeService
+                        .inviteCharacter(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          CharacterInvite(elsewhere.character.characterId),
+                          externalId
+                        )
+                        .attempt
+                } yield (onCreate, onInvite) match {
+                    case (Left(_: ValidationError), Left(_: ValidationError)) => true
+                    case _                                                    => false
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("plain: listByGame shows a closed challenge to its challenger and invitee only, and who accepted") {
+        forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+            val result = for {
+                fixture <- makePlainFixture(nickname, externalId)
+                accepter <- register
+                waiting <- register
+                stranger <- register
+                created <- challengeService.create(
+                  plainChallengeFor(fixture, isOpen = false),
+                  externalId,
+                  Seq(Invite(accepter.player.playerId), Invite(waiting.player.playerId))
+                )
+                _ <- plainAccept(fixture, created.challengeId, 1, accepter.externalId)
+                mine <- challengeService.listByGame(fixture.game.gameId, externalId)
+                theirs <- challengeService.listByGame(fixture.game.gameId, waiting.externalId)
+                strangers <- challengeService.listByGame(fixture.game.gameId, stranger.externalId)
+            } yield {
+                def find(listed: List[ChallengeSummary]) = listed.find(_.challenge.challengeId == created.challengeId)
+                find(mine).exists(summary =>
+                    summary.challenge.isInstanceOf[PlainChallenge] &&
+                        summary.invitations.map(_.playerId).toSet == Set(
+                          accepter.player.playerId,
+                          waiting.player.playerId
+                        ) &&
+                        summary.acceptedInvitees == Seq(accepter.player.playerId) &&
+                        summary.invitedCharacters.isEmpty
+                ) && find(theirs).isDefined && find(strangers).isEmpty
+            }
+            result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    property("plain: invitationsFor lists a player invitation with no character, and keeps it once accepted") {
+        forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
+            val result = for {
+                fixture <- makePlainFixture(nickname, externalId)
+                invitee <- register
+                role = fixture.game.roles(1).gameRoleId
+                created <- challengeService.create(
+                  plainChallengeFor(fixture, isOpen = false),
+                  externalId,
+                  Seq(Invite(invitee.player.playerId, Some(role)))
+                )
+                before <- challengeService.invitationsFor(invitee.externalId)
+                _ <- plainAccept(fixture, created.challengeId, 1, invitee.externalId)
+                after <- challengeService.invitationsFor(invitee.externalId)
+            } yield {
+                def mine(listed: List[ChallengeInvitation]) =
+                    listed.filter(_.invitation.challengeId == created.challengeId)
+                // Unlike a character's, a plain invitation stays listed once accepted: the acceptance
+                // names the same player the invitation does, so the screen filters it against its own.
+                mine(before).sizeIs == 1 && mine(after) == mine(before) &&
+                mine(before).head.character.isEmpty &&
+                mine(before).head.gameType == GameType.Plain &&
+                mine(before).head.roleName.contains(fixture.game.roles(1).name)
+            }
+            result.timeout(20.seconds).unsafeRunSync()
         }
     }
 

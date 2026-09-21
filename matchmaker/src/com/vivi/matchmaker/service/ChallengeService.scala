@@ -579,6 +579,21 @@ class ChallengeService[T](
                         s"player ${acceptance.playerId.value} has already accepted challenge ${challengeId.value}"
                       )
                     )
+                    // And one seat per *character*, which the check above does not imply: the acceptance
+                    // names the player who made it, and a character accepted by one owner and then
+                    // transferred would pass that check again under its new one. Not a rule to relax --
+                    // a character is one participant -- and under the same challenge lock.
+                    _ <- acceptance match {
+                        case ca: CharacterAcceptance =>
+                            acceptanceRepo.characterHasAccepted(gameId, challengeId, ca.characterId).flatMap { seated =>
+                                IO.raiseWhen(seated)(
+                                  ConflictError(
+                                    s"character ${ca.characterId.value} has already accepted challenge ${challengeId.value}"
+                                  )
+                                )
+                            }
+                        case _: PlainAcceptance => IO.unit
+                    }
                     created <- acceptanceRepo.create(acceptance)
                     // Carried out of the transaction because it is the one thing the notification
                     // cannot read for itself: it addresses the other players by saying who accepted.
@@ -673,7 +688,7 @@ class ChallengeService[T](
                 // Through the characters the caller owns now (V25), so one transferred to them since it was
                 // invited is theirs to answer, and one transferred away is not.
                 characterInvitations <- new CharacterInvitationRepo(session).listForOwner(caller.playerId)
-            } yield invitations ++ characterInvitations
+            } yield (invitations ++ characterInvitations).sorted(ChallengeService.newestInvitationFirst)
         }
 
     def delete(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Unit] =
@@ -973,7 +988,7 @@ class ChallengeService[T](
                               NotFoundError("That invitation is no longer there. It may have been withdrawn.")
                             )
                     }
-                    accepted <- characterInvitationRepo.hasAccepted(gameId, challengeId, characterId)
+                    accepted <- new AcceptanceRepo(session).characterHasAccepted(gameId, challengeId, characterId)
                     _ <- IO.raiseWhen(accepted)(
                       ConflictError(
                         "You have already accepted this challenge, so there is no invitation left to turn down. " +
@@ -1061,7 +1076,7 @@ class ChallengeService[T](
                               )
                             )
                     }
-                    accepted <- characterInvitationRepo.hasAccepted(gameId, challengeId, characterId)
+                    accepted <- new AcceptanceRepo(session).characterHasAccepted(gameId, challengeId, characterId)
                     _ <- IO.raiseWhen(accepted)(
                       ConflictError(
                         "That character has already accepted this challenge. Remove their acceptance instead."
@@ -1128,4 +1143,18 @@ class ChallengeService[T](
             )
         }
 
+}
+
+object ChallengeService {
+
+    /* How `invitationsFor` merges its two sources, each already newest-first on its own: newest first
+     * across both, then by challenge and character, which is the tie-break each repo query uses. A plain
+     * invitation has no character and sorts before a character one on a full tie -- which cannot happen
+     * in practice, since one game is either kind and a challenge belongs to one game. */
+    val newestInvitationFirst: Ordering[ChallengeInvitation] =
+        Ordering
+            .by[ChallengeInvitation, java.time.Instant](_.invitedAt)
+            .reverse
+            .orElseBy(_.invitation.challengeId.value)
+            .orElseBy(_.character.fold(0L)(_.characterId.value))
 }

@@ -215,7 +215,8 @@ class WireFormatSpec extends FunSuite {
           gameType = GameType.Plain,
           challengerNickname = "ada",
           message = "best of three",
-          roleName = Some("white")
+          roleName = Some("white"),
+          invitedAt = java.time.Instant.parse("2026-09-21T12:00:00.123456Z")
         )
         val anySeat = asWhite.copy(
           invitation = asWhite.invitation.copy(gameRoleId = None),
