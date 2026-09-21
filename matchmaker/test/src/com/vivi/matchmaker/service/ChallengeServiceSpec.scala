@@ -1472,7 +1472,14 @@ class ChallengeServiceSpec extends PropertySuite {
                       formerExternalId
                     )
                     listed <- challengeService.invitationsFor(newExternalId)
-                } yield listed.forall(_.invitation.challengeId != created.challengeId)
+                    // Nor shows them the challenge: it is closed, and not full (the third role is
+                    // free), so only the invitation could have admitted them -- and it has nothing
+                    // left to offer. The previous owner, whose acceptance holds the seat, still sees it.
+                    theirs <- challengeService.listByGame(fixture.game.gameId, newExternalId)
+                    formers <- challengeService.listByGame(fixture.game.gameId, formerExternalId)
+                } yield listed.forall(_.invitation.challengeId != created.challengeId) &&
+                    theirs.forall(_.challenge.challengeId != created.challengeId) &&
+                    formers.exists(_.challenge.challengeId == created.challengeId)
                 result.timeout(20.seconds).unsafeRunSync()
         }
     }
@@ -2049,6 +2056,51 @@ class ChallengeServiceSpec extends PropertySuite {
                 mine(before).head.roleName.contains(fixture.game.roles(1).name)
             }
             result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
+    /* A character transferred to somebody already seated in the challenge -- through another of their
+     * characters -- is not an invitation they can answer: one seat per player. Hidden from their list
+     * while that seat stands, and back once they give it up. */
+    property("an invitation is not listed to an owner already seated in the challenge, until they back out") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, formerNickname, formerExternalId, seatedNickname, seatedExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    former <- makeCharacterInGame(fixture.game, formerNickname, formerExternalId)
+                    (_, invitedCharacter) = former
+                    seated <- makeCharacterInGame(fixture.game, seatedNickname, seatedExternalId)
+                    (seatedPlayer, seatedCharacter) = seated
+                    created <- challengeService.create(
+                      challengeFor(fixture),
+                      externalId,
+                      characterInvitations = Seq(CharacterInvite(invitedCharacter.characterId))
+                    )
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(seatedCharacter.characterId),
+                      fixture.game.roles(1).gameRoleId,
+                      seatedExternalId
+                    )
+                    _ <- TestServices.services.characters.update(
+                      invitedCharacter.characterId,
+                      invitedCharacter.name,
+                      invitedCharacter.description,
+                      seatedExternalId,
+                      formerExternalId
+                    )
+                    whileSeated <- challengeService.invitationsFor(seatedExternalId)
+                    _ <- TestServices.services.acceptances
+                        .delete(fixture.game.gameId, created.challengeId, seatedPlayer.playerId, seatedExternalId)
+                    afterBackingOut <- challengeService.invitationsFor(seatedExternalId)
+                } yield {
+                    def mine(listed: List[ChallengeInvitation]) =
+                        listed.filter(_.invitation.challengeId == created.challengeId)
+                    mine(whileSeated).isEmpty &&
+                    mine(afterBackingOut).flatMap(_.character.map(_.characterId)) == List(invitedCharacter.characterId)
+                }
+                result.timeout(30.seconds).unsafeRunSync()
         }
     }
 

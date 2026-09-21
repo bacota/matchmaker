@@ -374,7 +374,7 @@ class ChallengeRepo(session: Session[IO]) {
     // joins the challenger's own acceptance to read their role, and counting over a second join to
     // the same table would multiply the rows rather than count them.
     private val selectChallengesByGame: Query[
-      (GameId, PlayerId, PlayerId, PlayerId, PlayerId, PlayerId, PlayerId),
+      (GameId, PlayerId, PlayerId, PlayerId, PlayerId, PlayerId, PlayerId, PlayerId),
       (
           ChallengeId,
           GameType,
@@ -423,14 +423,29 @@ class ChallengeRepo(session: Session[IO]) {
             -- is not taken yet.
             AND (ch.is_open
                  OR ch.challenger = $playerId
+                 -- Anybody already seated in it, who needs it to see what they are waiting for and
+                 -- to back out. Usually their invitation admits them too, but not always: a character
+                 -- accepted and then transferred takes its invitation to the new owner, and leaves the
+                 -- player whose acceptance holds the seat with nothing else to see the challenge by.
+                 OR EXISTS (SELECT 1 FROM acceptance mine
+                             WHERE mine.game_id = ch.game_id AND mine.challenge_id = ch.challenge_id
+                               AND mine.player_id = $playerId)
                  OR EXISTS (SELECT 1 FROM invitation i
                              WHERE i.game_id = ch.game_id AND i.challenge_id = ch.challenge_id
                                AND i.player_id = $playerId)
-                 -- A character game's invitation (V25) reaches whoever owns the character now.
+                 -- A character game's invitation (V25) reaches whoever owns the character now --
+                 -- unless the character has already accepted, which leaves its new owner (after a
+                 -- transfer) nothing to answer: the seat is the previous owner's acceptance, and the
+                 -- clause above still shows the challenge to them. The same exclusion as
+                 -- CharacterInvitationRepo.listForOwner.
                  OR EXISTS (SELECT 1 FROM character_invitation ci
                              JOIN character c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
                              WHERE ci.game_id = ch.game_id AND ci.challenge_id = ch.challenge_id
-                               AND c.player_id = $playerId))
+                               AND c.player_id = $playerId
+                               AND NOT EXISTS (SELECT 1 FROM character_acceptance ca
+                                                WHERE ca.game_id = ci.game_id
+                                                  AND ca.challenge_id = ci.challenge_id
+                                                  AND ca.character_id = ci.character_id)))
             -- A full challenge is nobody else's business: it cannot be accepted, and the only
             -- people it is still about are the ones already in it — who need it in order to see
             -- what they are waiting for, and who, if the challenger, need it to start the match.
@@ -494,7 +509,7 @@ class ChallengeRepo(session: Session[IO]) {
       */
     def listByGame(id: GameId, viewer: PlayerId): IO[List[ChallengeSummary]] =
         session
-            .execute(selectChallengesByGame)((id, viewer, viewer, viewer, viewer, viewer, viewer))
+            .execute(selectChallengesByGame)((id, viewer, viewer, viewer, viewer, viewer, viewer, viewer))
             .map(_.map {
                 case (
                       challengeId,
