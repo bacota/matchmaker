@@ -224,6 +224,7 @@ class RouterSpec extends FunSuite {
       ("GET", "/me/acceptances", "{}"),
       ("GET", "/me/invitations", "{}"),
       ("DELETE", "/me/invitations/1/1", "{}"),
+      ("DELETE", "/me/character-invitations/1/1/3", "{}"),
       ("GET", "/me/matches", "{}"),
       ("GET", "/me/matches/due", "{}"),
       ("GET", "/me/matches/completed", "{}"),
@@ -237,6 +238,7 @@ class RouterSpec extends FunSuite {
       ("POST", "/games", gameBody),
       ("GET", "/games/1/challenges", "{}"),
       ("GET", "/games/1/characters", "{}"),
+      ("GET", "/games/1/players/2/characters", "{}"),
       ("POST", "/games/1/characters", """{"name":"n","description":"d","externalId":"sub-1"}"""),
       ("PUT", "/characters/1", """{"name":"n","description":"d","externalId":"sub-1"}"""),
       ("PUT", "/characters/1/state", """{"state":"s"}"""),
@@ -248,6 +250,8 @@ class RouterSpec extends FunSuite {
       // whose `gameRoleId` is optional -- so "anybody's free seat" is the field left out.
       ("POST", "/challenges/1/1/invitations", """{"playerId":2,"gameRoleId":2}"""),
       ("DELETE", "/challenges/1/1/invitations/2", "{}"),
+      ("POST", "/challenges/1/1/character-invitations", """{"characterId":3,"gameRoleId":2}"""),
+      ("DELETE", "/challenges/1/1/character-invitations/3", "{}"),
       ("POST", "/challenges/1/1/start", "{}"),
       ("GET", "/games/1/matches/m1", "{}"),
       ("POST", "/games/1/matches/m1/refresh", "{}"),
@@ -283,7 +287,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 39)
+        assertEquals(routed.size, 43)
         assertEquals(routed.distinct.size, routed.size)
     }
 

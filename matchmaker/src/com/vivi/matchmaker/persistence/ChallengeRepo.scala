@@ -374,7 +374,7 @@ class ChallengeRepo(session: Session[IO]) {
     // joins the challenger's own acceptance to read their role, and counting over a second join to
     // the same table would multiply the rows rather than count them.
     private val selectChallengesByGame: Query[
-      (GameId, PlayerId, PlayerId, PlayerId, PlayerId),
+      (GameId, PlayerId, PlayerId, PlayerId, PlayerId, PlayerId, PlayerId),
       (
           ChallengeId,
           GameType,
@@ -425,7 +425,12 @@ class ChallengeRepo(session: Session[IO]) {
                  OR ch.challenger = $playerId
                  OR EXISTS (SELECT 1 FROM invitation i
                              WHERE i.game_id = ch.game_id AND i.challenge_id = ch.challenge_id
-                               AND i.player_id = $playerId))
+                               AND i.player_id = $playerId)
+                 -- A character game's invitation (V25) reaches whoever owns the character now.
+                 OR EXISTS (SELECT 1 FROM character_invitation ci
+                             JOIN character c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
+                             WHERE ci.game_id = ch.game_id AND ci.challenge_id = ch.challenge_id
+                               AND c.player_id = $playerId))
             -- A full challenge is nobody else's business: it cannot be accepted, and the only
             -- people it is still about are the ones already in it — who need it in order to see
             -- what they are waiting for, and who, if the challenger, need it to start the match.
@@ -449,7 +454,14 @@ class ChallengeRepo(session: Session[IO]) {
                                              WHERE held.game_id = ch.game_id
                                                AND held.challenge_id = ch.challenge_id
                                                AND held.game_role_id = gr.game_role_id
-                                               AND held.player_id <> $playerId))
+                                               AND held.player_id <> $playerId)
+                            AND NOT EXISTS (SELECT 1 FROM character_invitation held
+                                             JOIN character c ON c.game_id = held.game_id
+                                                             AND c.character_id = held.character_id
+                                             WHERE held.game_id = ch.game_id
+                                               AND held.challenge_id = ch.challenge_id
+                                               AND held.game_role_id = gr.game_role_id
+                                               AND c.player_id IS DISTINCT FROM $playerId))
                  OR EXISTS (SELECT 1 FROM acceptance ac
                              WHERE ac.game_id = ch.game_id AND ac.challenge_id = ch.challenge_id
                                AND ac.player_id = $playerId))
@@ -482,7 +494,7 @@ class ChallengeRepo(session: Session[IO]) {
       */
     def listByGame(id: GameId, viewer: PlayerId): IO[List[ChallengeSummary]] =
         session
-            .execute(selectChallengesByGame)((id, viewer, viewer, viewer, viewer))
+            .execute(selectChallengesByGame)((id, viewer, viewer, viewer, viewer, viewer, viewer))
             .map(_.map {
                 case (
                       challengeId,

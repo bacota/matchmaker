@@ -34,6 +34,23 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             } yield characters
         }
 
+    /** Another player's characters in one game, by name only (V25).
+      *
+      * What a challenger needs in order to invite one of them, and deliberately no more: [[listForGame]]'s reason for
+      * not enumerating another player's characters is their state, which [[CharacterName]] leaves out. The caller must
+      * be registered, as for every other read.
+      */
+    def namesFor(gameId: GameId, playerId: PlayerId, callerExternalId: String): IO[List[CharacterName]] =
+        sessionPool.use { session =>
+            for {
+                _ <- new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+                    case Some(p) => IO.pure(p)
+                    case None    => IO.raiseError(UnauthorizedError(s"no player for caller '$callerExternalId'"))
+                }
+                names <- new CharacterRepo[T](session).listNamesForPlayerAndGame(playerId, gameId)
+            } yield names
+        }
+
     def create(
         gameId: GameId,
         name: String,

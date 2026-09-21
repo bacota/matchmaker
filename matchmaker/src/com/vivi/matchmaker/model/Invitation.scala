@@ -59,6 +59,9 @@ case class Invite(playerId: PlayerId, gameRoleId: Option[GameRoleId] = None)
   * @param roleName
   *   the name of the seat they were asked to take, when they were asked for one. `Some` exactly when
   *   `invitation.gameRoleId` is, and read from `game_role` in the same query rather than looked up per row.
+  * @param character
+  *   for a character game, the character invited (V25). `invitation.playerId` is then that character's *current* owner
+  *   — the caller — resolved on read rather than stored, and the acceptance has to name this character.
   */
 case class ChallengeInvitation(
     invitation: Invitation,
@@ -66,5 +69,43 @@ case class ChallengeInvitation(
     gameType: GameType,
     challengerNickname: String,
     message: String,
-    roleName: Option[String]
+    roleName: Option[String],
+    character: Option[CharacterName] = None
 )
+
+/** An invitation to one character to accept one challenge (V25) — a character game's counterpart of [[Invitation]].
+  *
+  * Names the character and not its owner, because in a character game it is the character that plays: whoever owns
+  * [[characterId]] when the invitation is answered is who may answer it. The owner is never stored here, so a character
+  * transferred to another player carries its invitations with it and leaves nothing behind for its previous owner.
+  *
+  * Otherwise it means what [[Invitation]] means: permission and nothing more, with [[gameRoleId]] the seat held for
+  * this character or `None` for any free seat.
+  */
+case class CharacterInvitation(
+    gameId: GameId,
+    challengeId: ChallengeId,
+    characterId: CharacterId,
+    gameRoleId: Option[GameRoleId] = None
+)
+
+/** A character invitation as a challenge listing shows it: the character's name, which the challenger's screen has no
+  * other way to learn, and whether that character has accepted — [[InvitedPlayer]]'s reason, asked of a character.
+  *
+  * @param acceptedBy
+  *   the player whose acceptance seated this character, when it has been accepted. The player rather than a flag,
+  *   because removing that acceptance is addressed by player, and the character's owner may have changed since.
+  */
+case class InvitedCharacter(invitation: CharacterInvitation, characterName: String, acceptedBy: Option[PlayerId])
+
+/** A character invitation as it is asked for, before the challenge necessarily exists — [[Invite]] for a character
+  * game.
+  */
+case class CharacterInvite(characterId: CharacterId, gameRoleId: Option[GameRoleId] = None)
+
+/** A character the caller may name in a [[CharacterInvite]]: another player's character, without its state.
+  *
+  * What the invite form needs to offer a choice between somebody's characters, and nothing more. A character's state is
+  * its owner's business, which is why this is not a [[Character]].
+  */
+case class CharacterName(characterId: CharacterId, gameId: GameId, name: String)

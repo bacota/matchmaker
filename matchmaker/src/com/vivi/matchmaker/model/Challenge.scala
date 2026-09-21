@@ -129,5 +129,9 @@ case class ChallengeSummary(
       * Not every acceptor — only the invited ones. An acceptance by somebody who was never invited is nobody's
       * invitation to revoke, and listing it would say more about who is playing than the rest of this summary does.
       */
-    acceptedInvitees: Seq[PlayerId] = Seq.empty
+    acceptedInvitees: Seq[PlayerId] = Seq.empty,
+    /** A character game's invitations (V25), which name characters rather than players. Always empty for a plain game,
+      * as `invitations` is for a character game.
+      */
+    invitedCharacters: Seq[InvitedCharacter] = Seq.empty
 )
