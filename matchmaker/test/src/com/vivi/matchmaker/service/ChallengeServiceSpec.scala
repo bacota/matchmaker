@@ -1565,4 +1565,63 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
+    /* `listByGame` is a union with one branch per game type, and every other property here uses a
+     * character game -- so this is the plain branch's own: a closed challenge is shown to its
+     * challenger and the player invited to it and to nobody else, and it comes back as a
+     * `PlainChallenge`, not with a character from the other branch. */
+    property("listByGame shows a plain game's closed challenge only to its challenger and invited player") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, invitedNickname, invitedExternalId, strangerNickname, strangerExternalId) =>
+                val result = for {
+                    challenger <- registrationService.register(nickname, externalId)
+                    invited <- registrationService.register(invitedNickname, invitedExternalId)
+                    _ <- registrationService.register(strangerNickname, strangerExternalId)
+                    game <- TestSession.resource.use(session =>
+                        new GameRepo[String](session).create(
+                          Game(
+                            GameId.unassigned,
+                            GameType.Plain,
+                            "plain game",
+                            "description",
+                            "url",
+                            active = true,
+                            Seq(
+                              GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false),
+                              GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false)
+                            ),
+                            Seq.empty,
+                            genUniqueString.sample.get
+                          )
+                        )
+                    )
+                    created <- challengeService.create(
+                      PlainChallenge(
+                        challengeId = ChallengeId(0),
+                        challenger = challenger.playerId,
+                        message = "message",
+                        start = None,
+                        timeLimit = None,
+                        settings = "{}",
+                        gameId = game.gameId,
+                        isPublic = false,
+                        gameRoleId = game.roles.head.gameRoleId,
+                        isOpen = false
+                      ),
+                      externalId,
+                      Seq(Invite(invited.playerId, Some(game.roles(1).gameRoleId)))
+                    )
+                    mine <- challengeService.listByGame(game.gameId, externalId)
+                    theirs <- challengeService.listByGame(game.gameId, invitedExternalId)
+                    strangers <- challengeService.listByGame(game.gameId, strangerExternalId)
+                } yield {
+                    def find(summaries: List[ChallengeSummary]) =
+                        summaries.find(_.challenge.challengeId == created.challengeId)
+                    find(mine).exists(_.challenge.isInstanceOf[PlainChallenge]) &&
+                    find(mine).exists(_.invitations.map(_.playerId) == Seq(invited.playerId)) &&
+                    find(theirs).isDefined && find(strangers).isEmpty
+                }
+                result.timeout(20.seconds).unsafeRunSync()
+        }
+    }
+
 }
