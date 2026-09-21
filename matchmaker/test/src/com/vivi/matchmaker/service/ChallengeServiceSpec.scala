@@ -2104,4 +2104,69 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
+    /* The open-challenge side of a transfer after accepting. An open challenge stays listed to the new
+     * owner, so the listing has to say which characters are seated -- the one they were handed is, and
+     * accepting as it again is refused -- and another character of theirs can still take a seat. */
+    property("listByGame names the seated characters, so a transferred one is skipped for another") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, formerNickname, formerExternalId, newNickname, newExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    former <- makeCharacterInGame(fixture.game, formerNickname, formerExternalId)
+                    (_, transferred) = former
+                    newOwner <- makeCharacterInGame(fixture.game, newNickname, newExternalId)
+                    (_, ownCharacter) = newOwner
+                    created <- challengeService.create(
+                      challengeFor(fixture),
+                      externalId,
+                      characterInvitations = Seq(CharacterInvite(transferred.characterId))
+                    )
+                    _ <- challengeService.accept(
+                      fixture.game.gameId,
+                      created.challengeId,
+                      Some(transferred.characterId),
+                      fixture.game.roles(1).gameRoleId,
+                      formerExternalId
+                    )
+                    _ <- TestServices.services.characters.update(
+                      transferred.characterId,
+                      transferred.name,
+                      transferred.description,
+                      newExternalId,
+                      formerExternalId
+                    )
+                    listed <- challengeService.listByGame(fixture.game.gameId, newExternalId)
+                    asTransferred <- challengeService
+                        .accept(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Some(transferred.characterId),
+                          fixture.game.roles(2).gameRoleId,
+                          newExternalId
+                        )
+                        .attempt
+                    asOwn <- challengeService
+                        .accept(
+                          fixture.game.gameId,
+                          created.challengeId,
+                          Some(ownCharacter.characterId),
+                          fixture.game.roles(2).gameRoleId,
+                          newExternalId
+                        )
+                        .attempt
+                } yield {
+                    val summary = listed.find(_.challenge.challengeId == created.challengeId)
+                    summary.exists(s =>
+                        s.seatedCharacters.toSet == Set(fixture.character.characterId, transferred.characterId)
+                    ) &&
+                    (asTransferred match {
+                        case Left(_: ConflictError) => true
+                        case _                      => false
+                    }) &&
+                    asOwn.isRight
+                }
+                result.timeout(30.seconds).unsafeRunSync()
+        }
+    }
+
 }

@@ -2623,12 +2623,18 @@ object Views {
         me: PlayerId
     ): HtmlElement = {
         val challenge = summary.challenge
-        // Which character this row accepts as. The one invited to this challenge, if the player owns one
-        // that was -- an invitation is to a character (V25), and accepting as any other is refused on a
-        // closed challenge and is a different seat on an open one. Otherwise their first, as before.
-        // A player holds one seat per challenge, so if two of theirs were invited, either will do.
-        val invitedCharacter = summary.invitedCharacters.find(i => myCharacters.contains(i.invitation.characterId))
-        val characterId = invitedCharacter.map(_.invitation.characterId).orElse(myCharacters.headOption)
+        // Which character this row accepts as. Only one not already seated here: a character accepted
+        // and then transferred to this player holds a seat that is not theirs, and accepting as it again
+        // is refused. Of those, the one invited to this challenge if there is one -- an invitation is to a
+        // character (V25), and accepting as any other is refused on a closed challenge and is a different
+        // seat on an open one. Otherwise their first eligible one. A player holds one seat per challenge,
+        // so if two of theirs were invited, either will do.
+        val eligible = myCharacters.filterNot(summary.seatedCharacters.contains)
+        val invitedCharacter = summary.invitedCharacters.find(i => eligible.contains(i.invitation.characterId))
+        val characterId = invitedCharacter.map(_.invitation.characterId).orElse(eligible.headOption)
+        // A character game in which every one of this player's characters is seated already has no
+        // Accept to offer at all.
+        val noCharacterLeft = myCharacters.nonEmpty && eligible.isEmpty
         // The roles nobody has claimed yet: accepting as a taken role is refused by the server, and
         // there is no reason to offer a choice that cannot work. A challenge with none left is one
         // that is full, and gets no Accept at all.
@@ -2674,13 +2680,16 @@ object Views {
           // Said when it is not the character this screen otherwise acts as, since the player did not
           // choose it here and it is the one the Accept below sends.
           invitedCharacter
-              .filterNot(i => myCharacters.headOption.contains(i.invitation.characterId))
+              .filterNot(i => eligible.headOption.contains(i.invitation.characterId))
               .fold(emptyNode)(i => div(cls := "detail", s"${i.characterName} was invited")),
           mySeat.flatMap(seat => game.roles.find(_.gameRoleId == seat)) match {
-              case Some(seat) => div(cls := "detail", s"invited as ${seat.name}")
-              case None       => roleSelect(choices, role)
+              case _ if noCharacterLeft => emptyNode
+              case Some(seat)           => div(cls := "detail", s"invited as ${seat.name}")
+              case None                 => roleSelect(choices, role)
           },
-          if (choices.isEmpty)
+          if (noCharacterLeft)
+              div(cls := "detail", "your characters in this game already hold seats in this challenge")
+          else if (choices.isEmpty)
               // Told apart, because the remedies differ: a full challenge is one to forget, where a
               // challenge whose free seats are all promised may still come to this player if one of
               // those invitations is turned down.
