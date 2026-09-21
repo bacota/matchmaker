@@ -70,6 +70,10 @@ class CharacterInvitationRepo(session: Session[IO]) {
     // transferred, its new owner holds no acceptance to filter by, and would be offered an Accept
     // (refused, the seat is taken) and a Decline (refused, "already accepted") for a seat somebody
     // else is sitting in. The invitation row stays; it reappears here if that acceptance is removed.
+    //
+    // And one whose current owner already holds a seat in the challenge, through another character
+    // or as its challenger: `accept` allows one seat per player, so there is nothing for them to
+    // accept either. The same "stays, and reappears" holds.
     private val selectByOwner: Query[
       PlayerId,
       (
@@ -99,6 +103,10 @@ class CharacterInvitationRepo(session: Session[IO]) {
                              WHERE ca.game_id = i.game_id
                                AND ca.challenge_id = i.challenge_id
                                AND ca.character_id = i.character_id)
+            AND NOT EXISTS (SELECT 1 FROM acceptance a
+                             WHERE a.game_id = i.game_id
+                               AND a.challenge_id = i.challenge_id
+                               AND a.player_id = c.player_id)
           ORDER BY i.create_date DESC, i.challenge_id, i.character_id"""
             .query(
               gameId *: challengeId *: characterId *: text *: gameRoleId.opt *: text *: gameType *: text *: text *:
