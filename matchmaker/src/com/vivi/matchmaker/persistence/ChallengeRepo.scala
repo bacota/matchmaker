@@ -391,7 +391,8 @@ class ChallengeRepo(session: Session[IO]) {
           TimeLimitKind,
           TimeLimitUnit,
           Boolean,
-          Boolean
+          Boolean,
+          String
       )
     ] =
         sql"""SELECT ch.challenge_id, ch.game_type, ch.challenger, ch.message, ch.start,
@@ -404,7 +405,13 @@ class ChallengeRepo(session: Session[IO]) {
                  (SELECT coalesce(string_agg(ac.game_role_id::text, ',' ORDER BY ac.game_role_id), '')
                     FROM acceptance ac
                    WHERE ac.game_id = ch.game_id AND ac.challenge_id = ch.challenge_id),
-                 ch.time_limit_kind, ch.time_limit_unit, ch.auto_start, ch.is_open
+                 ch.time_limit_kind, ch.time_limit_unit, ch.auto_start, ch.is_open,
+                 -- The characters already seated, the same way: a character game's viewer may own
+                 -- one of them without holding its seat (it was accepted, then transferred to them),
+                 -- and accepting as it again is refused -- so the screen has to know which to skip.
+                 (SELECT coalesce(string_agg(ca.character_id::text, ',' ORDER BY ca.character_id), '')
+                    FROM character_acceptance ca
+                   WHERE ca.game_id = ch.game_id AND ca.challenge_id = ch.challenge_id)
           FROM challenge ch
           LEFT JOIN character_challenge cc ON cc.game_id = ch.game_id AND cc.challenge_id = ch.challenge_id
           JOIN acceptance a ON a.game_id = ch.game_id AND a.challenge_id = ch.challenge_id
@@ -483,7 +490,7 @@ class ChallengeRepo(session: Session[IO]) {
           ORDER BY ch.create_date DESC"""
             .query(
               challengeId *: gameType *: playerId *: text *: instant.opt *: float8.opt *: settings *: bool *:
-                  gameRoleId *: int8.opt *: int8 *: text *: timeLimitKind *: timeLimitUnit *: bool *: bool
+                  gameRoleId *: int8.opt *: int8 *: text *: timeLimitKind *: timeLimitUnit *: bool *: bool *: text
             )
 
     /** Every challenge for a game that `viewer` may see, newest first, each with how many players have accepted it.
@@ -527,7 +534,8 @@ class ChallengeRepo(session: Session[IO]) {
                       timeLimitKind,
                       timeLimitUnit,
                       autoStart,
-                      isOpen
+                      isOpen,
+                      seatedCharacters
                     ) =>
                     ChallengeSummary(
                       toChallenge(
@@ -550,7 +558,9 @@ class ChallengeRepo(session: Session[IO]) {
                         )
                       ),
                       acceptances.toInt,
-                      takenRoles.split(',').filter(_.nonEmpty).map(v => GameRoleId(v.toInt)).toSeq
+                      takenRoles.split(',').filter(_.nonEmpty).map(v => GameRoleId(v.toInt)).toSeq,
+                      seatedCharacters =
+                          seatedCharacters.split(',').filter(_.nonEmpty).map(v => CharacterId(v.toLong)).toSeq
                     )
             })
 }

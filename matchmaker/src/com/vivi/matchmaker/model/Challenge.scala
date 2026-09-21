@@ -133,5 +133,13 @@ case class ChallengeSummary(
     /** A character game's invitations (V25), which name characters rather than players. Always empty for a plain game,
       * as `invitations` is for a character game.
       */
-    invitedCharacters: Seq[InvitedCharacter] = Seq.empty
+    invitedCharacters: Seq[InvitedCharacter] = Seq.empty,
+    /** In a character game, the characters holding a seat in this challenge. Derived on read like `takenRoles`.
+      *
+      * An acceptance names the player who made it, so a character accepted by one player and then transferred to
+      * another holds a seat its new owner does not: that owner is not "already in" the challenge, and yet cannot accept
+      * as that character again. This is what lets the screen choose one of their other characters instead, or say that
+      * none is left.
+      */
+    seatedCharacters: Seq[CharacterId] = Seq.empty
 )
