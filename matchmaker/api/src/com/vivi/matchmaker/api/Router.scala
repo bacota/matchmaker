@@ -159,6 +159,13 @@ object Router {
             case ("GET", "games" :: gameId :: "characters" :: Nil) =>
                 withGameId(gameId)(id => ok(services.characters.listForGame(id, caller)))
 
+            // Another player's characters in one game, by name and without their state: what the
+            // challenger needs in order to invite one of them (V25).
+            case ("GET", "games" :: gameId :: "players" :: playerId :: "characters" :: Nil) =>
+                withGameId(gameId) { gid =>
+                    withPlayerId(playerId)(player => ok(services.characters.namesFor(gid, player, caller)))
+                }
+
             case ("POST", "games" :: gameId :: "characters" :: Nil) =>
                 withGameId(gameId) { id =>
                     body[Json.CharacterRequest](request).flatMap { r =>
@@ -192,7 +199,7 @@ object Router {
              */
             case ("POST", "challenges" :: Nil) =>
                 body[Json.CreateChallenge](request).flatMap(r =>
-                    created(services.challenges.create(r.challenge, caller, r.invitations))
+                    created(services.challenges.create(r.challenge, caller, r.invitations, r.characterInvitations))
                 )
 
             // What the caller has been asked to play, across every game: the home page's question,
@@ -213,6 +220,17 @@ object Router {
             case ("DELETE", "me" :: "invitations" :: gameId :: challengeId :: Nil) =>
                 withGameId(gameId) { gid =>
                     withChallengeId(challengeId)(id => noContent(services.challenges.reject(gid, id, caller)))
+                }
+
+            // A character game's invitation is to a character (V25), and one player may own several
+            // characters invited to the same challenge, so the character is in the path.
+            case ("DELETE", "me" :: "character-invitations" :: gameId :: challengeId :: characterId :: Nil) =>
+                withGameId(gameId) { gid =>
+                    withChallengeId(challengeId) { id =>
+                        withCharacterId(characterId)(cid =>
+                            noContent(services.challenges.rejectCharacter(gid, id, cid, caller))
+                        )
+                    }
                 }
 
             /* Inviting somebody to a challenge that already exists, and taking it back. Only the
@@ -238,6 +256,28 @@ object Router {
                     withChallengeId(challengeId) { challenge =>
                         withPlayerId(playerId)(player =>
                             noContent(services.challenges.revoke(gid, challenge, player, caller))
+                        )
+                    }
+                }
+
+            // The same pair for a character game (V25), where the invitation names a character.
+            case ("POST", "challenges" :: gameId :: challengeId :: "character-invitations" :: Nil) =>
+                withGameId(gameId) { gid =>
+                    withChallengeId(challengeId) { id =>
+                        body[CharacterInvite](request).flatMap(invite =>
+                            created(services.challenges.inviteCharacter(gid, id, invite, caller))
+                        )
+                    }
+                }
+
+            case (
+                  "DELETE",
+                  "challenges" :: gameId :: challengeId :: "character-invitations" :: characterId :: Nil
+                ) =>
+                withGameId(gameId) { gid =>
+                    withChallengeId(challengeId) { challenge =>
+                        withCharacterId(characterId)(cid =>
+                            noContent(services.challenges.revokeCharacter(gid, challenge, cid, caller))
                         )
                     }
                 }

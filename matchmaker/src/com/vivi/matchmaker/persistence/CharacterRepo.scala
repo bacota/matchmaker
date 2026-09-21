@@ -6,7 +6,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.{Character, CharacterId, Game, GameId, GameType, Player, PlayerId}
+import com.vivi.matchmaker.model.{Character, CharacterId, CharacterName, Game, GameId, GameType, Player, PlayerId}
 
 /** A character together with its owning player and the game it belongs to. */
 case class CharacterWithOwnerAndGame[T](character: Character[T], owner: Player, game: Game)
@@ -51,6 +51,36 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
             .map(_.map { case (gameId, name, description, state, playerId) =>
                 Character(id, gameId, name, description, state, playerId)
             })
+
+    private val selectCharacterForShare: Query[CharacterId, (GameId, String, String, T, Option[PlayerId])] =
+        sql"""SELECT game_id, name, description, state, player_id FROM character WHERE character_id = $characterId
+          FOR SHARE""".query(characterRow)
+
+    /** As `read`, holding the row against deletion until the transaction ends without queuing other readers behind it.
+      *
+      * For an existence check that has to outlive the insert relying on it — a `character_invitation` references the
+      * character it names (see `ChallengeService.inviteCharacter`). `FOR SHARE` rather than `FOR UPDATE` because the
+      * row is not written here, and two invitations to one character need not wait on each other.
+      */
+    def readForShare(id: CharacterId): IO[Option[Character[T]]] =
+        session
+            .option(selectCharacterForShare)(id)
+            .map(_.map { case (gameId, name, description, state, playerId) =>
+                Character(id, gameId, name, description, state, playerId)
+            })
+
+    private val selectCharacterNamesForPlayerAndGame: Query[(PlayerId, GameId), (CharacterId, String)] =
+        sql"""SELECT character_id, name FROM character
+          WHERE player_id = $playerId AND game_id = $gameId
+          ORDER BY name""".query(characterId *: text)
+
+    /** The names of one player's characters in one game, without their state — what another player may see of them in
+      * order to invite one (V25). Ordered by name for the reason `listForPlayerAndGame` is.
+      */
+    def listNamesForPlayerAndGame(playerId: PlayerId, gameId: GameId): IO[List[CharacterName]] =
+        session
+            .execute(selectCharacterNamesForPlayerAndGame)((playerId, gameId))
+            .map(_.map((id, name) => CharacterName(id, gameId, name)))
 
     private val withOwnerAndGameRow: Codec[
       (

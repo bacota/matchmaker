@@ -315,6 +315,8 @@ locals {
     # invitation -- there is no player id for the path to carry. The challenger's side is the
     # revoke below, on the challenge itself.
     "DELETE /me/invitations/{gameId}/{challengeId}",
+    # The same for a character game's invitation, which names a character (V25).
+    "DELETE /me/character-invitations/{gameId}/{challengeId}/{characterId}",
     "GET /me/matches",
     "GET /me/matches/due",
     "GET /me/matches/completed",
@@ -332,6 +334,8 @@ locals {
     "POST /games",
     "GET /games/{gameId}/challenges",
     "GET /games/{gameId}/characters",
+    # Another player's characters by name, for inviting one (V25). No state.
+    "GET /games/{gameId}/players/{playerId}/characters",
     "POST /games/{gameId}/characters",
 
     "PUT /characters/{characterId}",
@@ -348,6 +352,9 @@ locals {
     # revoke it. The create route above carries the invitations a challenge starts with.
     "POST /challenges/{gameId}/{challengeId}/invitations",
     "DELETE /challenges/{gameId}/{challengeId}/invitations/{playerId}",
+    # A character game's invitations name characters, not players (V25).
+    "POST /challenges/{gameId}/{challengeId}/character-invitations",
+    "DELETE /challenges/{gameId}/{challengeId}/character-invitations/{characterId}",
     # Turning a challenge into a match, and the two match routes that go with it. All three are
     # player actions: the challenger starts, and a participant reads or refreshes.
     "POST /challenges/{gameId}/{challengeId}/start",

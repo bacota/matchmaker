@@ -113,6 +113,22 @@ class AcceptanceRepo(session: Session[IO]) {
     def hasAccepted(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId): IO[Boolean] =
         session.unique(selectHasAccepted)((gameId, challengeId, playerId))
 
+    private val selectCharacterHasAccepted: Query[(GameId, ChallengeId, CharacterId), Boolean] =
+        sql"""SELECT EXISTS (
+            SELECT 1 FROM character_acceptance
+             WHERE game_id = $gameId AND challenge_id = $challengeId AND character_id = $characterId
+          )""".query(bool)
+
+    /** Whether this character already holds a seat in this challenge.
+      *
+      * [[hasAccepted]] asked of the character rather than its player, and not the same question: the acceptance names
+      * the player who made it, while the character can change hands afterwards. A character accepted by one owner and
+      * transferred to another would otherwise pass the per-player check a second time, and take a second seat under the
+      * new owner — `character_acceptance` is keyed by role, so nothing in the schema refuses it.
+      */
+    def characterHasAccepted(gameId: GameId, challengeId: ChallengeId, character: CharacterId): IO[Boolean] =
+        session.unique(selectCharacterHasAccepted)((gameId, challengeId, character))
+
     private val selectRolesForChallenge: Query[(GameId, ChallengeId), GameRoleId] =
         sql"""SELECT game_role_id FROM acceptance
           WHERE game_id = $gameId AND challenge_id = $challengeId

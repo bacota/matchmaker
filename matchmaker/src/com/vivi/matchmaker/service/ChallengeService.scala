@@ -7,6 +7,7 @@ import skunk.Session
 import com.vivi.matchmaker.notify.Notifications
 import com.vivi.matchmaker.persistence.{
     AcceptanceRepo,
+    CharacterInvitationRepo,
     CharacterRepo,
     GameRepo,
     ChallengeRepo,
@@ -153,7 +154,92 @@ class ChallengeService[T](
         } yield ()
     }
 
-    def create(challenge: Challenge, callerExternalId: String, invitations: Seq[Invite] = Seq.empty): IO[Challenge] =
+    /** [[validateInvitations]] for a character game's invitations (V25), which name characters.
+      *
+      * The same rules, asked of characters: each named once, each a character of this game, none of them the
+      * challenger's, and no role held twice or held when it is already gone. A character with no owner is refused too —
+      * nobody could answer its invitation.
+      *
+      * Each character is read `FOR SHARE`: the invitation row inserted next references it, and it must not be deleted
+      * in between. Its owner may still change afterwards, which is the point — the invitation follows the character.
+      *
+      * @return
+      *   each invited character's current owner and the name of the seat offered, for the mail telling them
+      */
+    private def validateCharacterInvitations(
+        game: Game,
+        characterRepo: CharacterRepo[T],
+        playerRepo: PlayerRepo,
+        challenger: PlayerId,
+        invitations: Seq[CharacterInvite],
+        taken: Set[GameRoleId]
+    ): IO[List[(Player, Option[String])]] = {
+        val duplicated =
+            invitations.groupBy(_.characterId).collect { case (character, invites) if invites.sizeIs > 1 => character }
+        val reserved = invitations.flatMap(_.gameRoleId)
+
+        for {
+            _ <- IO.raiseWhen(duplicated.nonEmpty)(
+              ValidationError(s"character ${duplicated.head.value} is invited more than once to the same challenge")
+            )
+            _ <- IO.raiseWhen(reserved.distinct.sizeIs < reserved.size)(
+              ValidationError("two invitations to the same challenge cannot hold the same role")
+            )
+            owners <- invitations.toList.traverse { invite =>
+                for {
+                    character <- characterRepo.readForShare(invite.characterId).flatMap {
+                        case Some(c) => IO.pure(c)
+                        case None => IO.raiseError(NotFoundError(s"no character with id ${invite.characterId.value}"))
+                    }
+                    _ <- IO.raiseUnless(character.gameId == game.gameId)(
+                      ValidationError(s"character ${invite.characterId.value} is not from game ${game.gameId.value}")
+                    )
+                    ownerId <- IO.fromOption(character.playerId)(
+                      ValidationError(s"character ${invite.characterId.value} has no player to answer an invitation")
+                    )
+                    // A player holds one seat per challenge, and the challenger already holds theirs, so an
+                    // invitation to another of their own characters is permission nobody could use.
+                    _ <- IO.raiseWhen(ownerId == challenger)(
+                      ValidationError("a challenger cannot invite their own characters to their own challenge")
+                    )
+                    owner <- requirePlayer(playerRepo, ownerId)
+                    _ <- invite.gameRoleId.traverse_ { role =>
+                        for {
+                            _ <- IO.raiseUnless(game.roles.exists(_.gameRoleId == role))(
+                              ValidationError(s"game ${game.gameId.value} has no role ${role.value}")
+                            )
+                            _ <- IO.raiseWhen(taken.contains(role))(
+                              ConflictError(s"role ${role.value} is not free to be offered to another character")
+                            )
+                        } yield ()
+                    }
+                } yield (owner, invite.gameRoleId.flatMap(roleNameOf(game, _)))
+            }
+        } yield owners
+    }
+
+    /* Which of the two kinds of invitation a game takes. A plain game invites players and a character
+     * game invites characters; a request carrying the other kind is refused rather than half-honoured. */
+    private def requireInvitationKind(game: Game, players: Int, characters: Int): IO[Unit] =
+        game.gameType match {
+            case GameType.Character =>
+                IO.raiseWhen(players > 0)(
+                  ValidationError(
+                    s"game ${game.gameId.value} is played by characters: invite a character, not a player"
+                  )
+                )
+            case GameType.Plain =>
+                IO.raiseWhen(characters > 0)(
+                  ValidationError(s"game ${game.gameId.value} has no characters to invite: invite a player")
+                )
+        }
+
+    def create(
+        challenge: Challenge,
+        callerExternalId: String,
+        invitations: Seq[Invite] = Seq.empty,
+        characterInvitations: Seq[CharacterInvite] = Seq.empty
+    ): IO[Challenge] =
         sessionPool.use { session =>
             val gameRepo = new GameRepo[T](session)
             val characterRepo = new CharacterRepo[T](session)
@@ -161,6 +247,7 @@ class ChallengeService[T](
             val challengeRepo = new ChallengeRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
             val invitationRepo = new InvitationRepo(session)
+            val characterInvitationRepo = new CharacterInvitationRepo(session)
             // Creating a challenge is itself an acceptance of it: the challenger is the first
             // participant. Both rows go in together so a challenge can never exist with its creator
             // missing from its own acceptances.
@@ -231,8 +318,17 @@ class ChallengeService[T](
                     // A challenge nobody may accept is not a challenge. Refused here rather than left to
                     // be noticed later, because the only thing that could rescue it is an invitation, and
                     // the caller who meant to send one is right here to be told.
-                    _ <- IO.raiseWhen(!challenge.isOpen && invitations.isEmpty)(
+                    _ <- requireInvitationKind(game, invitations.size, characterInvitations.size)
+                    _ <- IO.raiseWhen(!challenge.isOpen && invitations.isEmpty && characterInvitations.isEmpty)(
                       ValidationError("a challenge that is not open must invite at least one player")
+                    )
+                    invitedOwners <- validateCharacterInvitations(
+                      game,
+                      characterRepo,
+                      playerRepo,
+                      challenge.challenger,
+                      characterInvitations,
+                      taken = Set(challenge.gameRoleId)
                     )
                     _ <- validateInvitations(
                       game,
@@ -256,13 +352,24 @@ class ChallengeService[T](
                           Invitation(created.gameId, created.challengeId, invite.playerId, invite.gameRoleId)
                         )
                     )
+                    _ <- characterInvitations.traverse_(invite =>
+                        characterInvitationRepo.create(
+                          CharacterInvitation(
+                            created.gameId,
+                            created.challengeId,
+                            invite.characterId,
+                            invite.gameRoleId
+                          )
+                        )
+                    )
                     // Carried out of the transaction because the mail needs the invitee's own address and
                     // the name of the seat they were offered, and `game` is in hand here where it is not
                     // afterwards. Read rather than passed for the same reason `accept` reads its actor.
+                    // A character's invitation is mailed to whoever owns the character now.
                     invited <- invitations.traverse(invite =>
                         requirePlayer(playerRepo, invite.playerId).map(player => (player, roleName(game, invite)))
                     )
-                } yield (created, invited)
+                } yield (created, invited ++ invitedOwners)
             }
 
             /* After the commit, and nothing about it can fail the create -- see `Notifications`. One
@@ -281,7 +388,10 @@ class ChallengeService[T](
      * hand rather than a query: the roles are what `validateInvitations` has just checked the id
      * against, so a `None` here means the invitation named no role rather than that a role is missing. */
     private def roleName(game: Game, invite: Invite): Option[String] =
-        invite.gameRoleId.flatMap(id => game.roles.find(_.gameRoleId == id).map(_.name))
+        invite.gameRoleId.flatMap(roleNameOf(game, _))
+
+    private def roleNameOf(game: Game, role: GameRoleId): Option[String] =
+        game.roles.find(_.gameRoleId == role).map(_.name)
 
     /** Accepts `challengeId` in game `gameId`, authorized by `callerExternalId`. For a `'C'`-type game's challenge,
       * `characterId` must be `Some`, naming the character accepting on the caller's behalf, and is authorized the same
@@ -307,6 +417,7 @@ class ChallengeService[T](
             val challengeRepo = new ChallengeRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
             val invitationRepo = new InvitationRepo(session)
+            val characterInvitationRepo = new CharacterInvitationRepo(session)
             val accepted = session.transaction.use { _ =>
                 for {
                     challengeInfo <- challengeRepo.readForUpdate(gameId, challengeId).flatMap {
@@ -354,6 +465,7 @@ class ChallengeService[T](
                     // asked their friend to play the defender and left the rest open would have that
                     // seat taken by a passer-by. Under the challenge's lock, like the check above it.
                     reserved <- invitationRepo.reservedRoles(gameId, challengeId)
+                    reservedForCharacters <- characterInvitationRepo.reservedRoles(gameId, challengeId)
                     acceptance <- (gameType, characterId) match {
                         case (GameType.Character, Some(cid)) =>
                             for {
@@ -404,11 +516,18 @@ class ChallengeService[T](
                     // open is accepted only by the players invited to it, and the invitation is read under
                     // the same lock as the acceptance, so a revoke cannot land between the two.
                     //
-                    // Resolved against the acceptance's playerId rather than the caller: a character
-                    // game's invitation is answered by the character's owner, because an invitation is to
-                    // a person and a character is not one.
-                    invitation <- invitationRepo.read(gameId, challengeId, acceptance.playerId)
-                    _ <- IO.raiseWhen(!challengeInfo.isOpen && invitation.isEmpty)(
+                    // A character game's invitation is to the character (V25): it is answered by
+                    // accepting *as that character*, by whoever owns it now -- ownership was checked,
+                    // under the character's lock, when the acceptance was built above. A plain game's is
+                    // to the player. Either way what matters below is whether there is one and which
+                    // seat it holds.
+                    invitedAs <- acceptance match {
+                        case ca: CharacterAcceptance =>
+                            characterInvitationRepo.read(gameId, challengeId, ca.characterId).map(_.map(_.gameRoleId))
+                        case pa: PlainAcceptance =>
+                            invitationRepo.read(gameId, challengeId, pa.playerId).map(_.map(_.gameRoleId))
+                    }
+                    _ <- IO.raiseWhen(!challengeInfo.isOpen && invitedAs.isEmpty)(
                       // Said the same way to a player who was never invited and to one whose invitation
                       // has been withdrawn, because by now those are the same state: withdrawing deletes
                       // the row, and there is nothing left to tell them apart by. The sentence covers
@@ -422,18 +541,25 @@ class ChallengeService[T](
                     // play *that*. Refused rather than quietly honoured as something else: the challenger
                     // asked for a defender, and a challenge that fills up with the wrong roles is not the
                     // one either of them agreed to.
-                    _ <- invitation.flatMap(_.gameRoleId).traverse_ { asked =>
+                    _ <- invitedAs.flatten.traverse_ { asked =>
                         IO.raiseUnless(asked == gameRoleId)(
-                          ValidationError(
-                            s"player ${acceptance.playerId.value} was invited to challenge ${challengeId.value} as role ${asked.value}"
-                          )
+                          ValidationError(acceptance match {
+                              case ca: CharacterAcceptance =>
+                                  s"character ${ca.characterId.value} was invited to challenge ${challengeId.value} as role ${asked.value}"
+                              case _ =>
+                                  s"player ${acceptance.playerId.value} was invited to challenge ${challengeId.value} as role ${asked.value}"
+                          })
                         )
                     }
                     // The other side of the same fact: a seat held for somebody else is not free, however
                     // this player came by it.
-                    _ <- IO.raiseWhen(
-                      reserved.exists((role, held) => role == gameRoleId && held != acceptance.playerId)
-                    )(
+                    heldForAnother = acceptance match {
+                        case ca: CharacterAcceptance =>
+                            reservedForCharacters.exists((role, held) => role == gameRoleId && held != ca.characterId)
+                        case pa: PlainAcceptance =>
+                            reserved.exists((role, held) => role == gameRoleId && held != pa.playerId)
+                    }
+                    _ <- IO.raiseWhen(heldForAnother)(
                       ConflictError(
                         s"role ${gameRoleId.value} in challenge ${challengeId.value} is held for another player"
                       )
@@ -453,11 +579,26 @@ class ChallengeService[T](
                         s"player ${acceptance.playerId.value} has already accepted challenge ${challengeId.value}"
                       )
                     )
+                    // And one seat per *character*, which the check above does not imply: the acceptance
+                    // names the player who made it, and a character accepted by one owner and then
+                    // transferred would pass that check again under its new one. Not a rule to relax --
+                    // a character is one participant -- and under the same challenge lock.
+                    _ <- acceptance match {
+                        case ca: CharacterAcceptance =>
+                            acceptanceRepo.characterHasAccepted(gameId, challengeId, ca.characterId).flatMap { seated =>
+                                IO.raiseWhen(seated)(
+                                  ConflictError(
+                                    s"character ${ca.characterId.value} has already accepted challenge ${challengeId.value}"
+                                  )
+                                )
+                            }
+                        case _: PlainAcceptance => IO.unit
+                    }
                     created <- acceptanceRepo.create(acceptance)
                     // Carried out of the transaction because it is the one thing the notification
                     // cannot read for itself: it addresses the other players by saying who accepted.
                     actor <- requirePlayer(playerRepo, created.playerId)
-                } yield (created, actor, invitation.isDefined)
+                } yield (created, actor, invitedAs.isDefined)
             }
 
             /* After the commit, and nothing about it can fail the accept -- see `Notifications`.
@@ -519,11 +660,13 @@ class ChallengeService[T](
                 // the listing query: invitations are rows in another table, and that query is already
                 // asking three questions of `challenge`.
                 invitations <- new InvitationRepo(session).listForGame(gameId)
+                characterInvitations <- new CharacterInvitationRepo(session).listForGame(gameId)
             } yield challenges.map { summary =>
                 val invited = invitations.getOrElse(summary.challenge.challengeId, Nil)
                 summary.copy(
                   invitations = invited.map(_.invitation),
-                  acceptedInvitees = invited.filter(_.accepted).map(_.invitation.playerId)
+                  acceptedInvitees = invited.filter(_.accepted).map(_.invitation.playerId),
+                  invitedCharacters = characterInvitations.getOrElse(summary.challenge.challengeId, Nil)
                 )
             }
         }
@@ -542,7 +685,10 @@ class ChallengeService[T](
                     case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
                 }
                 invitations <- new InvitationRepo(session).listForPlayer(caller.playerId)
-            } yield invitations
+                // Through the characters the caller owns now (V25), so one transferred to them since it was
+                // invited is theirs to answer, and one transferred away is not.
+                characterInvitations <- new CharacterInvitationRepo(session).listForOwner(caller.playerId)
+            } yield (invitations ++ characterInvitations).sorted(ChallengeService.newestInvitationFirst)
         }
 
     def delete(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Unit] =
@@ -602,6 +748,7 @@ class ChallengeService[T](
                     // Before the challenge, because `invitation` has a foreign key to it. Deleted here
                     // rather than by a cascade so that the rows going is something this code says.
                     _ <- new InvitationRepo(session).deleteAllForChallenge(gameId, challengeId)
+                    _ <- new CharacterInvitationRepo(session).deleteAllForChallenge(gameId, challengeId)
                     _ <- challengeRepo.delete(gameId, challengeId)
                 } yield ()
             }
@@ -640,6 +787,7 @@ class ChallengeService[T](
                     challenge <- requireChallenge(challengeRepo, gameId, challengeId)
                     _ <- requireChallenger(playerRepo, challenge, callerExternalId, "invite to")
                     game <- requireGame(gameRepo, gameId)
+                    _ <- requireInvitationKind(game, players = 1, characters = 0)
                     accepted <- acceptanceRepo.rolesForChallenge(gameId, challengeId)
                     reserved <- invitationRepo.reservedRoles(gameId, challengeId)
                     _ <- validateInvitations(
@@ -685,6 +833,70 @@ class ChallengeService[T](
              * not undone by a mail that could not be sent. */
             invited.flatMap { (created, player, role) =>
                 notifications.invitationMade(session, gameId, challengeId, player, role).as(created)
+            }
+        }
+
+    /** Invites a character to an existing challenge in a character game (V25) — [[invite]], addressed to a character.
+      *
+      * The same rules as [[invite]]: only the challenger, not after a start, one invitation per character, a named role
+      * must be free, and nobody already seated. "Already seated" is asked of the character's owner, since a player
+      * holds one seat per challenge whichever character they took it with. The mail goes to that owner.
+      */
+    def inviteCharacter(
+        gameId: GameId,
+        challengeId: ChallengeId,
+        invite: CharacterInvite,
+        callerExternalId: String
+    ): IO[CharacterInvitation] =
+        sessionPool.use { session =>
+            val gameRepo = new GameRepo[T](session)
+            val playerRepo = new PlayerRepo(session)
+            val characterRepo = new CharacterRepo[T](session)
+            val challengeRepo = new ChallengeRepo(session)
+            val acceptanceRepo = new AcceptanceRepo(session)
+            val characterInvitationRepo = new CharacterInvitationRepo(session)
+            val invited = session.transaction.use { _ =>
+                for {
+                    locked <- requireLocked(challengeRepo, gameId, challengeId)
+                    _ <- refuseStarted(locked)
+                    challenge <- requireChallenge(challengeRepo, gameId, challengeId)
+                    _ <- requireChallenger(playerRepo, challenge, callerExternalId, "invite to")
+                    // Unlocked, per the note on `requireGame`.
+                    game <- requireGame(gameRepo, gameId)
+                    _ <- requireInvitationKind(game, players = 0, characters = 1)
+                    accepted <- acceptanceRepo.rolesForChallenge(gameId, challengeId)
+                    reserved <- characterInvitationRepo.reservedRoles(gameId, challengeId)
+                    owners <- validateCharacterInvitations(
+                      game,
+                      characterRepo,
+                      playerRepo,
+                      challenge.challenger,
+                      Seq(invite),
+                      taken = accepted.toSet ++ reserved.map((role, _) => role)
+                    )
+                    (owner, role) = owners.head
+                    already <- characterInvitationRepo.read(gameId, challengeId, invite.characterId)
+                    _ <- IO.raiseWhen(already.isDefined)(
+                      ConflictError(
+                        s"character ${invite.characterId.value} has already been invited to challenge ${challengeId.value}"
+                      )
+                    )
+                    // [[invite]]'s reason: an invitation to somebody already in the challenge is a row
+                    // neither reject nor revoke could remove.
+                    seated <- acceptanceRepo.hasAccepted(gameId, challengeId, owner.playerId)
+                    _ <- IO.raiseWhen(seated)(
+                      ConflictError(
+                        s"the player of character ${invite.characterId.value} has already accepted challenge ${challengeId.value}"
+                      )
+                    )
+                    created <- characterInvitationRepo.create(
+                      CharacterInvitation(gameId, challengeId, invite.characterId, invite.gameRoleId)
+                    )
+                } yield (created, owner, role)
+            }
+
+            invited.flatMap { (created, owner, role) =>
+                notifications.invitationMade(session, gameId, challengeId, owner, role).as(created)
             }
         }
 
@@ -741,6 +953,55 @@ class ChallengeService[T](
             rejected.flatMap(caller => notifications.invitationRejected(session, gameId, challengeId, caller))
         }
 
+    /** Turns down a character's invitation (V25) — [[reject]], answered by whoever owns the character now.
+      *
+      * The character is read `FOR UPDATE`: its owner is what authorizes the delete, and a transfer landing between the
+      * check and the delete would let the previous owner turn down the new one's invitation.
+      */
+    def rejectCharacter(
+        gameId: GameId,
+        challengeId: ChallengeId,
+        characterId: CharacterId,
+        callerExternalId: String
+    ): IO[Unit] =
+        sessionPool.use { session =>
+            val characterRepo = new CharacterRepo[T](session)
+            val challengeRepo = new ChallengeRepo(session)
+            val characterInvitationRepo = new CharacterInvitationRepo(session)
+            val rejected = session.transaction.use { _ =>
+                for {
+                    locked <- requireLocked(challengeRepo, gameId, challengeId)
+                    _ <- refuseStarted(locked)
+                    owner <- characterRepo.readWithOwnerAndGameForUpdate(characterId).flatMap {
+                        case Some(joined) => IO.pure(joined.owner)
+                        case None         => IO.raiseError(NotFoundError(s"no character with id ${characterId.value}"))
+                    }
+                    _ <- IO.raiseUnless(callerExternalId == owner.externalId)(
+                      UnauthorizedError(
+                        s"caller '$callerExternalId' may not answer invitations for character ${characterId.value}"
+                      )
+                    )
+                    _ <- characterInvitationRepo.read(gameId, challengeId, characterId).flatMap {
+                        case Some(_) => IO.unit
+                        case None =>
+                            IO.raiseError(
+                              NotFoundError("That invitation is no longer there. It may have been withdrawn.")
+                            )
+                    }
+                    accepted <- new AcceptanceRepo(session).characterHasAccepted(gameId, challengeId, characterId)
+                    _ <- IO.raiseWhen(accepted)(
+                      ConflictError(
+                        "You have already accepted this challenge, so there is no invitation left to turn down. " +
+                            "Back out of the challenge instead."
+                      )
+                    )
+                    _ <- characterInvitationRepo.delete(gameId, challengeId, characterId)
+                } yield owner
+            }
+
+            rejected.flatMap(owner => notifications.invitationRejected(session, gameId, challengeId, owner))
+        }
+
     /** Takes an invitation back. The challenger's mirror of [[reject]], and the only way to correct one that was sent
       * to the wrong player or for the wrong seat.
       *
@@ -783,6 +1044,45 @@ class ChallengeService[T](
                       )
                     )
                     _ <- invitationRepo.delete(gameId, challengeId, playerId)
+                } yield ()
+            }
+        }
+
+    /** Takes a character's invitation back (V25) — [[revoke]] for a character game, refused once that character has
+      * accepted for [[revoke]]'s reason.
+      */
+    def revokeCharacter(
+        gameId: GameId,
+        challengeId: ChallengeId,
+        characterId: CharacterId,
+        callerExternalId: String
+    ): IO[Unit] =
+        sessionPool.use { session =>
+            val playerRepo = new PlayerRepo(session)
+            val challengeRepo = new ChallengeRepo(session)
+            val characterInvitationRepo = new CharacterInvitationRepo(session)
+            session.transaction.use { _ =>
+                for {
+                    locked <- requireLocked(challengeRepo, gameId, challengeId)
+                    _ <- refuseStarted(locked)
+                    challenge <- requireChallenge(challengeRepo, gameId, challengeId)
+                    _ <- requireChallenger(playerRepo, challenge, callerExternalId, "revoke an invitation to")
+                    _ <- characterInvitationRepo.read(gameId, challengeId, characterId).flatMap {
+                        case Some(_) => IO.unit
+                        case None =>
+                            IO.raiseError(
+                              NotFoundError(
+                                "That invitation is no longer there. It may already have been turned down."
+                              )
+                            )
+                    }
+                    accepted <- new AcceptanceRepo(session).characterHasAccepted(gameId, challengeId, characterId)
+                    _ <- IO.raiseWhen(accepted)(
+                      ConflictError(
+                        "That character has already accepted this challenge. Remove their acceptance instead."
+                      )
+                    )
+                    _ <- characterInvitationRepo.delete(gameId, challengeId, characterId)
                 } yield ()
             }
         }
@@ -843,4 +1143,18 @@ class ChallengeService[T](
             )
         }
 
+}
+
+object ChallengeService {
+
+    /* How `invitationsFor` merges its two sources, each already newest-first on its own: newest first
+     * across both, then by challenge and character, which is the tie-break each repo query uses. A plain
+     * invitation has no character and sorts before a character one on a full tie -- which cannot happen
+     * in practice, since one game is either kind and a challenge belongs to one game. */
+    val newestInvitationFirst: Ordering[ChallengeInvitation] =
+        Ordering
+            .by[ChallengeInvitation, java.time.Instant](_.invitedAt)
+            .reverse
+            .orElseBy(_.invitation.challengeId.value)
+            .orElseBy(_.character.fold(0L)(_.characterId.value))
 }

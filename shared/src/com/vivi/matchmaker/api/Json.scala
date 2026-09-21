@@ -85,6 +85,10 @@ object Json {
         ReadWriter.merge(summon[ReadWriter[PlainChallenge]], summon[ReadWriter[CharacterChallenge]])
     given ReadWriter[Invitation] = macroRW
     given ReadWriter[Invite] = macroRW
+    given ReadWriter[CharacterInvitation] = macroRW
+    given ReadWriter[InvitedCharacter] = macroRW
+    given ReadWriter[CharacterInvite] = macroRW
+    given ReadWriter[CharacterName] = macroRW
     given ReadWriter[ChallengeInvitation] = macroRW
     given ReadWriter[ChallengeSummary] = macroRW
 
@@ -197,8 +201,15 @@ object Json {
       * nesting is what a client written before invitations existed does not have, which is why the route takes this
       * shape rather than accepting both: a bare challenge would parse as a `CreateChallenge` with no `challenge` field
       * and fail, loudly, instead of silently creating something.
+      *
+      * `characterInvitations` is the character game's list (V25), and the service refuses whichever of the two does not
+      * suit the game: a plain game invites players, a character game invites characters.
       */
-    case class CreateChallenge(challenge: Challenge, invitations: Seq[Invite] = Seq.empty)
+    case class CreateChallenge(
+        challenge: Challenge,
+        invitations: Seq[Invite] = Seq.empty,
+        characterInvitations: Seq[CharacterInvite] = Seq.empty
+    )
 
     /** The game engine's callbacks, from `interaction-design.txt`.
       *
