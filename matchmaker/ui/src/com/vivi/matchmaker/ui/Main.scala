@@ -2096,22 +2096,21 @@ object Views {
                       div(
                         // A button rather than a form standing open: offering a challenge is one of several
                         // things to do on this screen, and a form is what the screen looks like it is for.
+                        // The form itself is a dialog over the screen, so the lists stay where they were.
                         button(
+                          htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
                           aria.expanded <-- Store.showChallengeForm.signal,
-                          child.text <-- Store.showChallengeForm.signal.map(if (_) "Close" else "Create Challenge"),
-                          onClick --> { _ =>
-                              // Closing the form abandons the invitation it was opened for. Left set, it
-                              // would address the next challenge offered from this screen to whoever was
-                              // looked at before -- and nothing on the closed form would say so.
-                              if (Store.showChallengeForm.now()) Store.invitee.set(None)
-                              Store.showChallengeForm.update(!_)
-                          }
+                          "Create Challenge",
+                          onMountCallback(context => challengeTrigger = Some(context.thisNode.ref)),
+                          onUnmountCallback(_ => challengeTrigger = None),
+                          onClick --> (_ => Store.showChallengeForm.set(true))
                         ),
                         // Built from the slot as it stands when the form opens: a challenge is composed
                         // for one player, and one being looked up while the form is open is a different
                         // challenge, offered by opening it again.
                         child <-- Store.showChallengeForm.signal.map {
-                            if (_) newChallengeForm(game, player, characterId, Store.invitee.now()) else emptyNode
+                            if (_) challengeDialog(newChallengeForm(game, player, characterId, Store.invitee.now()))
+                            else emptyNode
                         },
                         refreshableSection(
                           "Your Open Challenges",
@@ -2136,6 +2135,44 @@ object Views {
           }
         )
     }
+
+    /* The button the challenge dialog is opened from, so closing it can put focus back. A dialog
+     * opened from somebody's page (`Store.showGameToInvite`) returns focus here too: it is where the
+     * form lives on this screen. */
+    private var challengeTrigger: Option[dom.html.Element] = None
+
+    /* Closing the form abandons the invitation it was opened for. Left set, it would address the next
+     * challenge offered from this screen to whoever was looked at before -- and nothing on the closed
+     * form would say so. */
+    private def closeChallengeForm(): Unit = {
+        Store.invitee.set(None)
+        Store.showChallengeForm.set(false)
+        challengeTrigger.foreach(_.focus())
+    }
+
+    /* The offer form as a modal dialog: the same scrim and card the notification cascade uses, closed
+     * by Escape, by a click on the backdrop, or by its own Close button. */
+    private def challengeDialog(form: HtmlElement): HtmlElement =
+        div(
+          cls := "modal-scrim",
+          onClick --> (event => if (event.target == event.currentTarget) closeChallengeForm()),
+          form.amend(
+            cls := "modal",
+            role := "dialog",
+            htmlAttr("aria-modal", com.raquo.laminar.codecs.StringAsIsCodec) := "true",
+            aria.labelledBy := "offer-challenge-heading",
+            tabIndex := -1,
+            inContext(node => onMountCallback(_ => node.ref.focus())),
+            onKeyDown.filter(_.key == "Escape") --> { event =>
+                event.stopPropagation()
+                closeChallengeForm()
+            },
+            div(
+              cls := "alternatives",
+              button(tpe := "button", cls := "link", "Close", onClick --> (_ => closeChallengeForm()))
+            )
+          )
+        )
 
     private def myChallengeRow(game: Game, summary: ChallengeSummary): HtmlElement = {
         val challenge = summary.challenge
@@ -2879,10 +2916,10 @@ object Views {
         // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
         // has been claimed yet, so every role of the game is on offer and the first stands selected.
         val role = Var(game.roles.headOption.map(_.gameRoleId))
-        // Whether anybody may accept this, or only the players invited to it. Open unless somebody is
-        // being invited, which is the case the flag exists for -- a challenge with nobody invited and
-        // closed is one nobody can accept at all, and the server refuses it.
-        val isOpen = Var(invitee.isEmpty)
+        // Whether anybody may accept this, or only the player invited to it. A challenge offered to
+        // somebody in particular is theirs alone; one offered to nobody is open, since closed it is
+        // one nobody could accept at all, and the server refuses it.
+        val isOpen = invitee.isEmpty
         // The seat being held for the invited player, or `None` for "any that is still free". Their
         // own choice of role is what `None` leaves them, and it is the default: holding a particular
         // seat is the stronger statement of the two, so it is the one the challenger has to make.
@@ -2893,7 +2930,7 @@ object Views {
 
         div(
           cls := "card",
-          h3("Offer a Challenge"),
+          h3(idAttr := "offer-challenge-heading", "Offer a Challenge"),
           field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
           roleSelect(game.roles, role),
           // Everything about the one player this is being offered to, and nothing at all when it is
@@ -2924,15 +2961,6 @@ object Views {
                             .map(r => option(value := r.gameRoleId.value.toString, r.name))
                     )
                   )
-                ),
-                // Ticked leaves the challenge open to anybody, with the invitation as a nudge; unticked
-                // -- the default when inviting -- makes the invitations the only way in.
-                label(
-                  input(
-                    tpe := "checkbox",
-                    controlled(checked <-- isOpen.signal, onClick.mapToChecked --> isOpen)
-                  ),
-                  "Anyone may accept this, not only the players invited"
                 )
               )
           },
@@ -3041,7 +3069,7 @@ object Views {
                             timeLimitKind = timeLimitKind.now(),
                             timeLimitUnit = timeLimitUnit.now(),
                             autoStart = autoStart.now(),
-                            isOpen = isOpen.now()
+                            isOpen = isOpen
                           )
                       case None =>
                           PlainChallenge(
@@ -3057,7 +3085,7 @@ object Views {
                             timeLimitKind = timeLimitKind.now(),
                             timeLimitUnit = timeLimitUnit.now(),
                             autoStart = autoStart.now(),
-                            isOpen = isOpen.now()
+                            isOpen = isOpen
                           )
                   }
 
