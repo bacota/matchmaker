@@ -1169,7 +1169,7 @@ object Views {
             subsection = false
           )(
             listing(Store.games.signal, Store.loading(Store.Fetch.Games))(p(cls := "empty", "No games yet."))(games =>
-                ul(games.map(publicGameRow))
+                ul(games.map(publicGameRow(player, _)))
             )
           )
         )
@@ -1215,9 +1215,86 @@ object Views {
                       // `Store.show` clears the form and the invitee, so that arriving at a game any
                       // other way cannot inherit either.
                       onClick --> (_ => chosen.now().foreach(gameId => Store.showGameToInvite(gameId, invitee)))
+                    ),
+                    // Rebuilt per game, so the choice of challenge and seat starts over when the game does.
+                    child <-- chosen.signal.map(
+                      _.flatMap(id => games.find(_.gameId == id)) match {
+                          case Some(game) => addToExisting(game, invitee)
+                          case None       => emptyNode
+                      }
                     )
                   )
               }
+          }
+        )
+    }
+
+    /** Inviting this player to a challenge the reader has already offered in `game`, rather than composing a new one.
+      *
+      * Lists the reader's own challenges there that have not started. In a plain game one that already invites them is
+      * left out, since a second invitation is refused; in a character game the character picker leaves out whichever of
+      * their characters are already asked, and says so when none is left.
+      */
+    private def addToExisting(game: Game, invitee: PublicPlayer): HtmlElement = {
+        val picked = Var(Option.empty[ChallengeId])
+        val seat = Var(Option.empty[GameRoleId])
+        val character = Var(Option.empty[CharacterId])
+
+        div(
+          onMountCallback(_ => Store.refreshChallenges(game.gameId)),
+          child <-- currentPlayer.combineWith(Store.challengesByGame.signal).map {
+              case (Some(me), byGame) if byGame.contains(game.gameId) =>
+                  val mine = byGame(game.gameId).filter(summary =>
+                      summary.challenge.challenger == me.playerId &&
+                          (game.gameType == GameType.Character ||
+                              !summary.invitations.exists(_.playerId == invitee.playerId))
+                  )
+                  if (mine.isEmpty) emptyNode
+                  else {
+                      // Kept when the list is re-read, as long as the challenge is still in it.
+                      if (!picked.now().exists(id => mine.exists(_.challenge.challengeId == id)))
+                          picked.set(mine.headOption.map(_.challenge.challengeId))
+                      div(
+                        h4(s"Or add ${invitee.nickname} to a challenge you have already offered"),
+                        field(
+                          "Challenge",
+                          select(
+                            onChange.mapToValue --> { raw =>
+                                seat.set(None)
+                                picked.set(
+                                  raw.toLongOption
+                                      .map(ChallengeId.apply)
+                                      .filter(id => mine.exists(_.challenge.challengeId == id))
+                                )
+                            },
+                            value <-- picked.signal.map(_.map(_.value.toString).getOrElse("")),
+                            mine.map(summary =>
+                                option(
+                                  value := summary.challenge.challengeId.value.toString,
+                                  if (summary.challenge.message.trim.nonEmpty) summary.challenge.message
+                                  else s"challenge ${summary.challenge.challengeId.value}"
+                                )
+                            )
+                          )
+                        ),
+                        child <-- picked.signal.map(
+                          _.flatMap(id => mine.find(_.challenge.challengeId == id)) match {
+                              case Some(summary) =>
+                                  inviteCandidate(
+                                    game,
+                                    summary,
+                                    invitee,
+                                    seat,
+                                    character,
+                                    offerableSeats(game, summary),
+                                    summary.invitedCharacters.map(_.invitation.characterId).toSet
+                                  )()
+                              case None => emptyNode
+                          }
+                        )
+                      )
+                  }
+              case _ => emptyNode
           }
         )
     }
@@ -1227,7 +1304,7 @@ object Views {
       * The counts are drawn whether or not the row is open, and they are what makes a page of every game readable: a
       * row saying "0 being played, 0 finished" is one nobody needs to open, and that is most of them for most players.
       */
-    private def publicGameRow(game: Game): HtmlElement = {
+    private def publicGameRow(player: PublicPlayer, game: Game): HtmlElement = {
         val expanded = Store.expandedPublicGame.signal.map(_.contains(game.gameId))
         val running = Store.publicActive.signal.map(_.filter(_.gameId == game.gameId))
         val over = Store.publicCompleted.signal.map(_.filter(_.gameId == game.gameId))
@@ -1263,6 +1340,7 @@ object Views {
               if (_)
                   div(
                     cls := "detail-panel",
+                    offeredChallenges(game, player),
                     h3("Current Matches"),
                     publicMatches(running, "None being played in public."),
                     h3("Completed Matches"),
@@ -1270,6 +1348,58 @@ object Views {
                   )
               else emptyNode
           }
+        )
+    }
+
+    /** The challenges the reader has offered this player in this game and that have not started: the same rows as "Your
+      * Open Challenges" on the game's screen, so they can be started, deleted, or have their invitations changed from
+      * here.
+      *
+      * Addressed to them means a player invitation in a plain game, and in a character game an invitation to any
+      * character they own now -- which is why their characters are fetched: an invitation names the character, and the
+      * owner is whoever holds it at the moment (V25). Nothing at all on the reader's own page.
+      */
+    private def offeredChallenges(game: Game, invitee: PublicPlayer): HtmlElement = {
+        val characterGame = game.gameType == GameType.Character
+        // Their characters in this game; `None` until known (and always `Some(empty)` for a plain game).
+        val theirs = Var(if (characterGame) Option.empty[Set[CharacterId]] else Some(Set.empty[CharacterId]))
+        // Which mount is current, as in `characterPicker`: an answer for a panel since closed is dropped.
+        var mount = 0
+
+        div(
+          onMountCallback { _ =>
+              mount += 1
+              val asked = mount
+              Store.refreshChallenges(game.gameId)
+              if (characterGame) {
+                  val signIn = Store.currentSignIn
+                  ApiClient.characterNames(game.gameId, invitee.playerId).onComplete {
+                      case scala.util.Success(names) if asked == mount && Store.stillSignedInAs(signIn) =>
+                          theirs.set(Some(names.map(_.characterId).toSet))
+                      case scala.util.Failure(_) if asked == mount && Store.stillSignedInAs(signIn) =>
+                          theirs.set(Some(Set.empty))
+                      case _ => ()
+                  }
+              }
+          },
+          onUnmountCallback(_ => mount += 1),
+          child <-- currentPlayer
+              .combineWith(Store.challengesByGame.signal, theirs.signal)
+              .map {
+                  case (Some(me), _, _) if me.playerId == invitee.playerId => emptyNode
+                  case (Some(me), byGame, Some(characters)) if byGame.contains(game.gameId) =>
+                      val offered = byGame(game.gameId).filter { summary =>
+                          summary.challenge.challenger == me.playerId &&
+                          (summary.invitations.exists(_.playerId == invitee.playerId) ||
+                              summary.invitedCharacters.exists(c => characters.contains(c.invitation.characterId)))
+                      }
+                      div(
+                        h3(s"Your Challenges to ${invitee.nickname}"),
+                        if (offered.isEmpty) p(cls := "empty", "None waiting.")
+                        else ul(offered.map(myChallengeRow(game, _)))
+                      )
+                  case _ => p(cls := "detail", "Loading your challenges…")
+              }
         )
     }
 
@@ -2419,11 +2549,7 @@ object Views {
          *
          * "Any seat that is free" is not subject to it and is always offered: several invitations may
          * name no role at all, since none of them is holding anything for anybody. */
-        val held =
-            (summary.invitations.flatMap(_.gameRoleId) ++ summary.invitedCharacters.flatMap(
-              _.invitation.gameRoleId
-            )).toSet
-        val offerable = freeRoles(game, summary).filterNot(role => held.contains(role.gameRoleId))
+        val offerable = offerableSeats(game, summary)
 
         // Nobody who is already invited, and not the challenger themselves: the first is the
         // invitation table's primary key and the second a rule of the service, so both come back as
@@ -2547,64 +2673,7 @@ object Views {
                             )
 
                         case Some(candidate) =>
-                            div(
-                              p(cls := "detail", s"Inviting ${candidate.nickname}."),
-                              if (characterGame) characterPicker(game.gameId, candidate, charactersAsked, character)
-                              else emptyNode,
-                              field(
-                                "Their seat",
-                                select(
-                                  onChange.mapToValue --> { raw =>
-                                      seat.set(
-                                        raw.toIntOption
-                                            .map(GameRoleId.apply)
-                                            .filter(id => offerable.exists(_.gameRoleId == id))
-                                      )
-                                  },
-                                  value <-- seat.signal.map(_.map(_.value.toString).getOrElse("")),
-                                  // Always available, and the default: a role-less invitation holds
-                                  // nothing, so any number of them can stand together.
-                                  option(value := "", "any seat that is free"),
-                                  offerable.map(role => option(value := role.gameRoleId.value.toString, role.name))
-                                )
-                              ),
-                              // Said rather than left to be inferred from a short list: a challenger
-                              // who means to hold a particular seat and cannot see it needs to know
-                              // whether it is taken or promised, which are different problems with
-                              // different remedies -- one waits, the other is a revoke above.
-                              if (offerable.isEmpty)
-                                  p(
-                                    cls := "detail",
-                                    "Every role is either taken or already held for somebody, so this invitation " +
-                                        "can only be for any seat that comes free."
-                                  )
-                              else emptyNode,
-                              busyButton(
-                                "Send the invitation",
-                                disabledWhen = character.signal.map(_.isEmpty && characterGame)
-                              ) { busy =>
-                                  val sent: Future[Unit] = character.now() match {
-                                      case Some(asked) if characterGame =>
-                                          ApiClient
-                                              .inviteCharacter(
-                                                game.gameId,
-                                                summary.challenge.challengeId,
-                                                CharacterInvite(asked, seat.now())
-                                              )
-                                              .map(_ => ())
-                                      case _ =>
-                                          ApiClient
-                                              .invite(
-                                                game.gameId,
-                                                summary.challenge.challengeId,
-                                                Invite(candidate.playerId, seat.now())
-                                              )
-                                              .map(_ => ())
-                                  }
-                                  Store.run(sent, busy, invitationStale(game.gameId))(_ =>
-                                      Store.refreshChallenges(game.gameId)
-                                  )
-                              },
+                            inviteCandidate(game, summary, candidate, seat, character, offerable, charactersAsked)(
                               button(
                                 tpe := "button",
                                 cls := "link",
@@ -2618,6 +2687,90 @@ object Views {
                   )
           }
         )
+    }
+
+    /** The second half of inviting somebody to an existing challenge, once it is known who: which of their characters
+      * (in a character game), which seat, and the button that sends it. Shared by the invite panel on the challenger's
+      * own row and by the invited player's page. `after` is whatever the caller wants beneath the button.
+      */
+    private def inviteCandidate(
+        game: Game,
+        summary: ChallengeSummary,
+        candidate: PublicPlayer,
+        seat: Var[Option[GameRoleId]],
+        character: Var[Option[CharacterId]],
+        offerable: Seq[GameRole],
+        charactersAsked: Set[CharacterId]
+    )(after: Modifier[HtmlElement]*): HtmlElement = {
+        val characterGame = game.gameType == GameType.Character
+        div(
+          p(cls := "detail", s"Inviting ${candidate.nickname}."),
+          if (characterGame) characterPicker(game.gameId, candidate, charactersAsked, character)
+          else emptyNode,
+          field(
+            "Their seat",
+            select(
+              onChange.mapToValue --> { raw =>
+                  seat.set(
+                    raw.toIntOption
+                        .map(GameRoleId.apply)
+                        .filter(id => offerable.exists(_.gameRoleId == id))
+                  )
+              },
+              value <-- seat.signal.map(_.map(_.value.toString).getOrElse("")),
+              // Always available, and the default: a role-less invitation holds
+              // nothing, so any number of them can stand together.
+              option(value := "", "any seat that is free"),
+              offerable.map(role => option(value := role.gameRoleId.value.toString, role.name))
+            )
+          ),
+          // Said rather than left to be inferred from a short list: a challenger
+          // who means to hold a particular seat and cannot see it needs to know
+          // whether it is taken or promised, which are different problems with
+          // different remedies -- one waits, the other is a revoke above.
+          if (offerable.isEmpty)
+              p(
+                cls := "detail",
+                "Every role is either taken or already held for somebody, so this invitation " +
+                    "can only be for any seat that comes free."
+              )
+          else emptyNode,
+          busyButton(
+            "Send the invitation",
+            disabledWhen = character.signal.map(_.isEmpty && characterGame)
+          ) { busy =>
+              val sent: Future[Unit] = character.now() match {
+                  case Some(asked) if characterGame =>
+                      ApiClient
+                          .inviteCharacter(
+                            game.gameId,
+                            summary.challenge.challengeId,
+                            CharacterInvite(asked, seat.now())
+                          )
+                          .map(_ => ())
+                  case _ =>
+                      ApiClient
+                          .invite(
+                            game.gameId,
+                            summary.challenge.challengeId,
+                            Invite(candidate.playerId, seat.now())
+                          )
+                          .map(_ => ())
+              }
+              Store.run(sent, busy, invitationStale(game.gameId))(_ => Store.refreshChallenges(game.gameId))
+          },
+          after
+        )
+    }
+
+    /* The seats that may still be held for somebody: free, and not already held by another invitation.
+     * See the note on `held` in `invitePanel`. */
+    private def offerableSeats(game: Game, summary: ChallengeSummary): Seq[GameRole] = {
+        val held =
+            (summary.invitations.flatMap(_.gameRoleId) ++ summary.invitedCharacters.flatMap(
+              _.invitation.gameRoleId
+            )).toSet
+        freeRoles(game, summary).filterNot(role => held.contains(role.gameRoleId))
     }
 
     /** What to do when inviting or revoking is refused because the challenge has moved on.
