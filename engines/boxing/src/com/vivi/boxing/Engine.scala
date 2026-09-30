@@ -205,6 +205,11 @@ class Engine(
 
     /** Steps 2 and 3. Every plan is reported; the plan that resolves a round starts the next one for both corners; and
       * the plan that ends the bout is followed by the results.
+      *
+      * Neither callback may fail the plan. It is committed by the time they are sent, so a failure that escaped here
+      * would answer the player with a 500 for a plan that stands — and their retry would then be refused as "already
+      * planned". A lost callback is what matchmaker's `refresh` repairs, so each is logged and dropped on its own: the
+      * results must still be sent when the move before them could not be.
       */
     private def notify(applied: PlanApplied): Unit = {
         val m = applied.state
@@ -213,23 +218,32 @@ class Engine(
             else Nil
 
         m.moveCallbackUrl.foreach { url =>
-            matchmaker.recordMove(
-              url,
-              MoveNotification(
-                participantId = applied.moved.participantId,
-                next = next,
-                takenAt = applied.plan.takenAt,
-                startedAt = applied.plan.startedAt,
-                // The whole of who is to move now, numbered by how many plans the bout holds: what lets
-                // matchmaker ignore this callback if it lands after a later one. See `Protocol.MoveState`.
-                state =
-                    Some(MoveState(m.plans.size, m.pending.map(c => PendingSeat(c.participantId, m.roundStartedAt))))
+            bestEffort(s"reporting plan ${applied.plan.round} of match '${m.matchId}'")(
+              matchmaker.recordMove(
+                url,
+                MoveNotification(
+                  participantId = applied.moved.participantId,
+                  next = next,
+                  takenAt = applied.plan.takenAt,
+                  startedAt = applied.plan.startedAt,
+                  // The whole of who is to move now, numbered by how many plans the bout holds: what lets
+                  // matchmaker ignore this callback if it lands after a later one. See `Protocol.MoveState`.
+                  state =
+                      Some(MoveState(m.plans.size, m.pending.map(c => PendingSeat(c.participantId, m.roundStartedAt))))
+                )
               )
             )
         }
 
-        if (applied.finished) m.resultsCallbackUrl.foreach(url => matchmaker.recordResults(url, resultsOf(m)))
+        if (applied.finished)
+            m.resultsCallbackUrl.foreach(url =>
+                bestEffort(s"reporting the result of match '${m.matchId}'")(matchmaker.recordResults(url, resultsOf(m)))
+            )
     }
+
+    private def bestEffort(what: String)(call: => Unit): Unit =
+        try call
+        catch { case NonFatal(e) => Log.failure(e, what) }
 
     /** How a finished bout was won, as matchmaker records it and as the page says it. */
     def methodOf(m: Bout): Option[String] =

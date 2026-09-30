@@ -290,4 +290,19 @@ class EngineSpec extends FunSuite {
         )
         assertEquals(engine.status("m-1").toOption.get.sequence, Some(2L))
     }
+
+    test("a callback that fails does not fail the move, which stands, and the results are still sent") {
+        val (engine, recorder, store, _, m) = fixture()
+        val x = m.seatOf(Mark.X).get.cognitoId
+        val o = m.seatOf(Mark.O).get.cognitoId
+        recorder.failCallbacks = true
+
+        // X takes the top row.
+        List(x -> 0, o -> 3, x -> 1, o -> 4).foreach((who, cell) => assert(engine.move("m-1", who, cell).isRight))
+        val winning = engine.move("m-1", x, 2)
+        assert(winning.isRight, s"the move was committed, so it must not be reported as failing: $winning")
+        assert(store.get("m-1").get.completed)
+        assertEquals(recorder.moves.size, 5)
+        assertEquals(recorder.results.size, 1)
+    }
 }

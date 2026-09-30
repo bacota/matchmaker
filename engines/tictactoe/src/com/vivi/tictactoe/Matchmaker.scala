@@ -50,14 +50,21 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
     private val movesBuffer = scala.collection.mutable.ListBuffer[(String, Protocol.MoveNotification)]()
     private val resultsBuffer = scala.collection.mutable.ListBuffer[(String, Protocol.MatchResults)]()
 
+    /** While set, [[recordMove]] and [[recordResults]] fail as an unreachable matchmaker would, after recording the
+      * attempt — so a test can see that a call was made and that its failure went no further.
+      */
+    @volatile var failCallbacks: Boolean = false
+
     def recordMove(url: String, notification: Protocol.MoveNotification): Unit = synchronized {
         movesBuffer += (url -> notification)
         log(s"POST $url ${write(notification)}")
+        if (failCallbacks) throw AwsError(s"POST $url failed: unreachable")
     }
 
     def recordResults(url: String, results: Protocol.MatchResults): Unit = synchronized {
         resultsBuffer += (url -> results)
         log(s"POST $url ${write(results)}")
+        if (failCallbacks) throw AwsError(s"POST $url failed: unreachable")
     }
 
     def moves: List[(String, Protocol.MoveNotification)] = synchronized(movesBuffer.toList)

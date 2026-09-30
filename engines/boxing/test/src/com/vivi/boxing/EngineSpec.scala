@@ -385,4 +385,17 @@ class EngineSpec extends FunSuite {
         engine.plan("m-1", bob, Allocation(5, 0, 0))
         assertEquals(recorder.moves.last._2.state.map(_.pending), Some(Nil))
     }
+
+    test("a callback that fails does not fail the plan, which stands, and the results are still sent") {
+        val (engine, recorder, store, _, _) = fixture(createRequest(red = Some(slugger)))
+        recorder.failCallbacks = true
+
+        assert(engine.plan("m-1", alice, Allocation(0, 0, 10)).isRight)
+        // The knockout: its move callback fails, and the results are attempted all the same.
+        val finishing = engine.plan("m-1", bob, Allocation(5, 0, 0))
+        assert(finishing.isRight, s"the plan was committed, so it must not be reported as failing: $finishing")
+        assert(bout(store).isOver)
+        assertEquals(recorder.moves.size, 2)
+        assertEquals(recorder.results.size, 1)
+    }
 }
