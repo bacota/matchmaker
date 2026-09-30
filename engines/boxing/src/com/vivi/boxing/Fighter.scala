@@ -55,7 +55,12 @@ object Fighter {
 
 /** How a fighter spends their workrate in one round. */
 case class Allocation(offense: Int, defense: Int, power: Int) {
-    def total: Int = offense + defense + power
+
+    /** A `Long`, because the parts come off the wire: in `Int`, `Int.MaxValue + Int.MaxValue + 7` wraps to 5 and passes
+      * as a workrate of 5. Summed without wrapping, three non-negative parts adding up to the workrate are each at most
+      * the workrate, so nothing computed from them later can overflow either.
+      */
+    def total: Long = offense.toLong + defense.toLong + power.toLong
 }
 
 object Allocation {

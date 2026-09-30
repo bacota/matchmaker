@@ -174,6 +174,12 @@ class RoutesSpec extends FunSuite {
         assertEquals(store.get("m-9").get.plans.size, 1)
     }
 
+    test("a plan whose parts overflow an Int is a 400 over the wire, and changes nothing") {
+        val (routes, store, _, _) = fixture()
+        assertEquals(planning(routes, "sub-alice", Int.MaxValue, Int.MaxValue, 7).status, 400)
+        assertEquals(store.get("m-9").get.plans, Nil)
+    }
+
     test("a fighter is built over the wire, and saved to matchmaker") {
         val (routes, store, _, recorder) = fixture(blue = None)
 
