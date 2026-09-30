@@ -29,7 +29,7 @@ provider "aws" {
  *
  * One key each rather than one between them, so that the engines are not a single failure:
  * rotating one, or an engine leaking one, leaves the other alone. Rotating is
- * `terraform apply -replace='random_password.tictactoe_api_key[0]'` (or `rps_api_key`). Both
+ * `terraform apply -replace='random_password.tictactoe_api_key[0]'` (or `rps_api_key`, `boxing_api_key`). Both
  * functions are updated in the same apply, so there is a window of a few seconds in which one has
  * the new key and the other the old; a create-game call in that window fails and the player
  * retries.
@@ -49,6 +49,13 @@ resource "random_password" "tictactoe_api_key" {
 
 resource "random_password" "rps_api_key" {
   count = var.deploy_rps ? 1 : 0
+
+  length  = 48
+  special = false
+}
+
+resource "random_password" "boxing_api_key" {
+  count = var.deploy_boxing ? 1 : 0
 
   length  = 48
   special = false
@@ -88,6 +95,7 @@ module "api" {
     [module.ui.url],
     var.deploy_tictactoe ? [module.tictactoe[0].auth_callback_url] : [],
     var.deploy_rps ? [module.rps[0].auth_callback_url] : [],
+    var.deploy_boxing ? [module.boxing[0].auth_callback_url] : [],
     var.callback_urls
   )
   logout_urls          = concat([module.ui.url], var.logout_urls)
@@ -103,12 +111,14 @@ module "api" {
   engine_api_keys = merge(
     var.engine_api_keys,
     var.deploy_tictactoe ? { tictactoe = random_password.tictactoe_api_key[0].result } : {},
-    var.deploy_rps ? { rps = random_password.rps_api_key[0].result } : {}
+    var.deploy_rps ? { rps = random_password.rps_api_key[0].result } : {},
+    var.deploy_boxing ? { boxing = random_password.boxing_api_key[0].result } : {}
   )
   game_engine_api_keys = merge(
     var.game_engine_api_keys,
     var.deploy_tictactoe ? { (module.tictactoe[0].api_host) = random_password.tictactoe_api_key[0].result } : {},
-    var.deploy_rps ? { (module.rps[0].api_host) = random_password.rps_api_key[0].result } : {}
+    var.deploy_rps ? { (module.rps[0].api_host) = random_password.rps_api_key[0].result } : {},
+    var.deploy_boxing ? { (module.boxing[0].api_host) = random_password.boxing_api_key[0].result } : {}
   )
 
   # Where notifications are queued, and what they say they are from. Empty when deploy_mail is
@@ -259,6 +269,35 @@ module "rps" {
   lambda_jar_path = var.rps_jar_path
 
   matchmaker_api_key = random_password.rps_api_key[0].result
+
+  cognito_issuer    = module.api.jwt_issuer
+  cognito_client_id = module.api.user_pool_client_id
+  hosted_login_url  = module.api.hosted_login_url
+
+  log_retention_days = var.log_retention_days
+}
+
+/* The third bundled engine: boxing, the first character game among them.
+ *
+ * Every corner is a matchmaker character — a fighter — and the engine writes a fighter's
+ * characteristics back to matchmaker as the character's state once its player has built it. That
+ * write goes to `PUT /characters/{characterId}/state` with this engine's API key, which is why
+ * that route is among the api module's `engine_routes` rather than its player routes.
+ *
+ * Off by default and otherwise configured exactly like the two above: its own function, table,
+ * api and key.
+ *
+ * A `game` row still has to be created by hand, as a character game ('C'): its `url` is this
+ * module's create_game_url and its `external_id` is "boxing". See engines/boxing/README.md.
+ */
+module "boxing" {
+  count  = var.deploy_boxing ? 1 : 0
+  source = "./modules/boxing"
+
+  environment     = var.environment
+  lambda_jar_path = var.boxing_jar_path
+
+  matchmaker_api_key = random_password.boxing_api_key[0].result
 
   cognito_issuer    = module.api.jwt_issuer
   cognito_client_id = module.api.user_pool_client_id

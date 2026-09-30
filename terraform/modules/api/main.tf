@@ -339,9 +339,8 @@ locals {
     "POST /games/{gameId}/characters",
 
     "PUT /characters/{characterId}",
-    # X-External-Id carries the game's shared secret here, not a player's id — but the route is
-    # still behind the authorizer, so a signed-in caller is required either way.
-    "PUT /characters/{characterId}/state",
+    # Not "PUT /characters/{characterId}/state": that one is written by a game, not a player, and
+    # is among the engine routes below.
 
     "POST /challenges",
     "DELETE /challenges/{gameId}/{challengeId}",
@@ -367,14 +366,14 @@ locals {
     "PUT /games/{gameId}/matches/{matchId}/notifications",
   ]
 
-  /* The game engine's callbacks, which are not player actions at all: a game engine tells
-   * matchmaker that a player has moved, or that a match is over.
+  /* The game engine's calls, which are not player actions at all: a game engine tells
+   * matchmaker that a player has moved, or that a match is over, or writes a character's state.
    *
    * These carry no authorizer. The engine authenticates with the API key it and matchmaker
    * share, which the function checks itself (see `Authenticator.ApiKey`) — an HTTP API has no
    * built-in API key support, that being a REST API feature. The engine has no Cognito identity
    * of its own, and giving it one to impersonate would be a password shared between two systems
-   * with a great deal more reach than a key scoped to two routes.
+   * with a great deal more reach than a key scoped to these routes.
    *
    * Matchmaker holds a different key per engine, so the key also says *which* engine is calling:
    * it is filed under the name that must be the game's `external_id`. See `engine_api_keys`.
@@ -382,6 +381,11 @@ locals {
   engine_routes = [
     "POST /games/{gameId}/matches/{matchId}/moves",
     "POST /games/{gameId}/matches/{matchId}/results",
+    # A character's state, which only the character's game may write (CharacterService.updateState
+    # compares the caller with the game's external_id). Behind the JWT authorizer it could never
+    # succeed: an engine has no token, and a player's token names a player, not the game. The boxing
+    # engine writes a fighter's characteristics here once its player has built it.
+    "PUT /characters/{characterId}/state",
   ]
 }
 

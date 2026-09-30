@@ -92,8 +92,11 @@ ${signInScript}
   // Urls are derived from this page's own, not built from a base: behind API Gateway the path
   // carries a stage prefix, and a page that assumed "/matches/..." would 404 there.
   const here = location.pathname.replace(new RegExp("/(play|board)$$"), "");
-  const stateUrl = publicView ? here + "/board/state" : here + "/state";
-  const movesUrl = here + "/moves";
+  // The page's own query goes along too: in the trusted local mode `?as=` is who the player is,
+  // and a fetch without it would be nobody's. Deployed, there is no query and this adds nothing.
+  const query = location.search;
+  const stateUrl = (publicView ? here + "/board/state" : here + "/state") + query;
+  const movesUrl = here + "/moves" + query;
 
   // Present when the server already knew whose seat this is; null when the player has yet to
   // sign in, in which case the first fetch below fills it.
