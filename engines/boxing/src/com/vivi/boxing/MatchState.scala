@@ -165,8 +165,8 @@ object Bout {
     /** How many rounds this bout is scheduled for: `rounds` in the challenge's settings if it names one, else the
       * game's `rounds` parameter, else [[DefaultRounds]].
       *
-      * Settings first because they are the challenge's own and a parameter is the game's default; matchmaker's
-      * challenge form does not offer settings yet, so in practice it is the parameter that decides.
+      * Settings first because they are the challenge's own. Matchmaker's challenge form stores the challenger's pick
+      * there and also sends it as the parameter, so the two agree; the parameter alone is the game's default.
       */
     def scheduledRounds(request: Protocol.CreateGameRequest): Either[String, Int] = {
         val fromSettings =

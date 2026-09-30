@@ -2311,6 +2311,7 @@ object Views {
           div(cls := "title", challenge.message),
           div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
           timeLimitDetail(challenge),
+          parameterDetail(game, challenge),
           if (challenge.isPublic) div(cls := "detail", "public") else emptyNode,
           // Starting is the challenger's call rather than something that happens on the last
           // acceptance: a game whose remaining roles are optional may be worth starting without
@@ -2864,6 +2865,7 @@ object Views {
           div(cls := "title", challenge.message),
           div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
           timeLimitDetail(challenge),
+          parameterDetail(game, challenge),
           // A seat held for this player is said rather than offered: a picker with one entry asks a
           // question whose answer is already settled, and what they need to know is which seat they
           // were asked for.
@@ -2973,6 +2975,45 @@ object Views {
     private def timeLimitDetail(challenge: Challenge): HtmlElement =
         timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind, challenge.timeLimitUnit)
 
+    /** The values a challenger may pick for each of the game's parameters, by name, in the admin's order. Parameters
+      * with no values to choose between are left out: there is nothing to offer.
+      */
+    private def parameterChoices(game: Game): Seq[(String, Seq[String], Option[String])] =
+        game.parameters
+            .map(p => (p.name, p.values.map(_.value.toString), p.defaultValue.map(_.toString)))
+            .filter(_._2.nonEmpty)
+
+    /** A challenge's parameter choices as its `settings` carries them: `{"rounds":"12"}`. The same flat object of
+      * strings `ChallengeSettings` reads on the server.
+      */
+    private def settingsOf(choices: Map[String, String]): String =
+        ujson.write(ujson.Obj.from(choices.toSeq.sortBy(_._1).map((k, v) => k -> ujson.Str(v))))
+
+    /** What the challenger chose for each of the game's parameters, read back out of `settings`. */
+    private def chosenParameters(game: Game, challenge: Challenge): Seq[(String, String)] = {
+        val stored =
+            try
+                ujson.read(challenge.settings) match {
+                    case o: ujson.Obj =>
+                        o.value.toMap.collect {
+                            case (k, ujson.Str(v))              => k -> v
+                            case (k, ujson.Num(n)) if n.isWhole => k -> n.toLong.toString
+                        }
+                    case _ => Map.empty[String, String]
+                }
+            catch { case _: Throwable => Map.empty[String, String] }
+        parameterChoices(game).flatMap((name, _, _) => stored.get(name).map(name -> _))
+    }
+
+    /** The terms a challenge was offered on beyond its clock — "rounds: 12" — so that whoever accepts it knows what
+      * they are agreeing to. Nothing at all for a game with no parameters, or a challenge that chose none.
+      */
+    private def parameterDetail(game: Game, challenge: Challenge): Node =
+        chosenParameters(game, challenge) match {
+            case Seq()  => emptyNode
+            case chosen => div(cls := "detail", chosen.map((name, v) => s"$name: $v").mkString(" · "))
+        }
+
     /** The clock something is played under, said in full wherever it is said at all.
       *
       * Both halves matter and neither is guessable from the other: ten minutes per turn and ten minutes for the whole
@@ -3080,12 +3121,32 @@ object Views {
         // In a character game the invitation names one of the invitee's characters (V25).
         val characterGame = game.gameType == GameType.Character
         val inviteeCharacter = Var(Option.empty[CharacterId])
+        // One value per game parameter the challenger may choose — how many rounds a bout is, say —
+        // starting from the game's default, or its first value when it names none. Sent as the
+        // challenge's settings, and handed to the engine in place of the default when the match starts.
+        val parameters = Var(
+          parameterChoices(game)
+              .map((name, values, default) => name -> default.filter(values.contains).getOrElse(values.head))
+              .toMap
+        )
 
         div(
           cls := "card",
           h3(idAttr := "offer-challenge-heading", "Offer a Challenge"),
           field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
           roleSelect(game.roles, role),
+          // One picker per parameter, captioned with the parameter's own name. Built once: the game's
+          // parameters do not change while the form is open.
+          parameterChoices(game).map { (name, values, _) =>
+              field(
+                name.capitalize,
+                select(
+                  onChange.mapToValue --> (chosen => parameters.update(_.updated(name, chosen))),
+                  value <-- parameters.signal.map(_.getOrElse(name, "")),
+                  values.map(v => option(value := v, v))
+                )
+              )
+          },
           // Everything about the one player this is being offered to, and nothing at all when it is
           // being offered to whoever comes along.
           invitee.fold(emptyNode) { asked =>
@@ -3214,7 +3275,7 @@ object Views {
                             message = message.now().trim,
                             start = None,
                             timeLimit = durationOf(timeLimit.now(), timeLimitUnit.now()),
-                            settings = "{}",
+                            settings = settingsOf(parameters.now()),
                             gameId = game.gameId,
                             characterId = cid,
                             isPublic = isPublic.now(),
@@ -3231,7 +3292,7 @@ object Views {
                             message = message.now().trim,
                             start = None,
                             timeLimit = durationOf(timeLimit.now(), timeLimitUnit.now()),
-                            settings = "{}",
+                            settings = settingsOf(parameters.now()),
                             gameId = game.gameId,
                             isPublic = isPublic.now(),
                             gameRoleId = chosen,

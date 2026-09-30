@@ -60,11 +60,13 @@ local mode, keeps its fighters for that bout only.
 
 ### Rounds
 
-The number comes from `rounds` in the challenge's `settings` JSON if present. Otherwise it's the
-game's `rounds` parameter, otherwise 10. Anything outside 3–25 refuses the create. Matchmaker only
-sends a parameter's **default**, and its challenge form sends `settings` as `{}`. So in practice
-every bout uses the default set in `register-game.sql` (10), and changing the game's default in the
-admin form changes it for every new bout.
+The challenger picks it. Matchmaker's challenge form offers a dropdown for every game parameter,
+stores the pick in the challenge's `settings` (`{"rounds":"12"}`), refuses a value the game doesn't
+allow, and at start sends the engine the chosen value in `parameters` in place of the default. A
+challenge that chose nothing gets the game's default, 10 as registered.
+
+The engine reads `rounds` from the challenge's `settings`, then the `rounds` parameter, then falls
+back to 10. Anything outside 3–25 refuses the create.
 
 ## The four exchanges
 
