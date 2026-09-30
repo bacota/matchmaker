@@ -95,7 +95,8 @@ class Engine(
               turns = m.plans
                   .filter(p => since.forall(at => p.takenAt.isAfter(at)))
                   .sortBy(_.takenAt)
-                  .map(p => EngineTurn(p.participantId, p.takenAt, Some(p.startedAt)))
+                  .map(p => EngineTurn(p.participantId, p.takenAt, Some(p.startedAt))),
+              sequence = Some(m.plans.size.toLong)
             )
         }
 
@@ -218,7 +219,11 @@ class Engine(
                 participantId = applied.moved.participantId,
                 next = next,
                 takenAt = applied.plan.takenAt,
-                startedAt = applied.plan.startedAt
+                startedAt = applied.plan.startedAt,
+                // The whole of who is to move now, numbered by how many plans the bout holds: what lets
+                // matchmaker ignore this callback if it lands after a later one. See `Protocol.MoveState`.
+                state =
+                    Some(MoveState(m.plans.size, m.pending.map(c => PendingSeat(c.participantId, m.roundStartedAt))))
               )
             )
         }

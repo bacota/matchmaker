@@ -107,7 +107,10 @@ class Engine(
               turns = m.turns
                   .filter(t => since.forall(at => t.takenAt.isAfter(at)))
                   .sortBy(_.takenAt)
-                  .map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt)))
+                  .map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt))),
+              // Counted from the board rather than from `turns`, which is empty for a match stored
+              // before turns were recorded.
+              sequence = Some(m.board.moveCount.toLong)
             )
         }
 
@@ -186,7 +189,15 @@ class Engine(
                 participantId = applied.moved.participantId,
                 next = applied.next.map(_.participantId).toList,
                 takenAt = applied.turn.takenAt,
-                startedAt = applied.turn.startedAt
+                startedAt = applied.turn.startedAt,
+                // Who is to move now, numbered by the marks on the board: what lets matchmaker ignore
+                // this callback if the reply to it overtakes it. See `Protocol.MoveState`.
+                state = Some(
+                  MoveState(
+                    m.board.moveCount.toLong,
+                    applied.next.map(n => PendingSeat(n.participantId, applied.turn.takenAt)).toList
+                  )
+                )
               )
             )
         }

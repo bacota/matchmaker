@@ -118,7 +118,8 @@ class Engine(
               turns = m.throws
                   .filter(t => since.forall(at => t.takenAt.isAfter(at)))
                   .sortBy(_.takenAt)
-                  .map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt)))
+                  .map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt))),
+              sequence = Some(m.throws.size.toLong)
             )
         }
 
@@ -192,7 +193,11 @@ class Engine(
                 takenAt = applied.turn.takenAt,
                 // The match's own start, for either seat: both clocks began there, and saying so is
                 // what stops matchmaker charging the second thrower from the first one's throw.
-                startedAt = applied.turn.startedAt
+                startedAt = applied.turn.startedAt,
+                // The whole of who is still to throw, numbered by how many throws are in: what lets
+                // matchmaker ignore this callback if it lands after the other throw's. See
+                // `Protocol.MoveState`.
+                state = Some(MoveState(m.throws.size, m.pending.map(s => PendingSeat(s.participantId, m.createdAt))))
               )
             )
         }

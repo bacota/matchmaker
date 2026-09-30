@@ -144,4 +144,29 @@ class ProtocolSpec extends FunSuite {
         assert(asMatchmaker.results.forall(!_.isWinner))
         assert(asMatchmaker.results.forall(_.scores("outcome").str == "draw"))
     }
+
+    test("a numbered move callback reads as matchmaker's MoveNotification, state and all") {
+        val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
+        val notification =
+            Protocol.MoveNotification(
+              11L,
+              Nil,
+              at,
+              at.minusSeconds(90),
+              Some(Protocol.MoveState(3L, List(Protocol.PendingSeat(22L, at))))
+            )
+        val asMatchmaker =
+            read[Json.MoveNotification](write(notification))(using Json.given_ReadWriter_MoveNotification)
+
+        assertEquals(asMatchmaker.state.map(_.sequence), Some(3L))
+        assertEquals(
+          asMatchmaker.state.map(_.pending.map(p => (p.participantId, p.since))),
+          Some(List((ParticipantId(22L), at)))
+        )
+    }
+
+    test("a status answer's move number reads as matchmaker's") {
+        val status = Protocol.GameStatusResponse(completed = false, participants = Nil, sequence = Some(4L))
+        assertEquals(read[MmGameStatusResponse](write(status)).sequence, Some(4L))
+    }
 }

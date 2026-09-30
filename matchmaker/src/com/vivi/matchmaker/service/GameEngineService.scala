@@ -11,6 +11,17 @@ import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence._
 
+/** A seat that is to move, and when its clock started. */
+case class SeatClock(participantId: ParticipantId, since: Instant)
+
+/** Where a match stands after a move, as an engine that numbers its moves states it.
+  *
+  * `sequence` is the engine's number for the move, higher for every move it commits after this one; `pending` is every
+  * seat that is to move now — a seat left out is not pending. Stated whole rather than as a change, so that a callback
+  * which turns out to be older than one already applied can be ignored whole: see [[GameEngineService.recordMove]].
+  */
+case class MoveState(sequence: Long, pending: List[SeatClock])
+
 /** One participant's outcome as the game engine reports it at the end of a match. */
 case class ReportedResult(participantId: ParticipantId, rank: Int, scores: Map[String, Any], isWinner: Boolean)
 
@@ -362,7 +373,15 @@ class GameEngineService[T](
                                           since = None
                                         )
                                         used <- timeUsedIn(session, current)
-                                        _ <- status.participants.traverse { reported =>
+                                        // A numbered answer older than a move already applied describes seats
+                                        // that move has since changed: a callback committed while the engine
+                                        // was answering. Its turns are recorded above; its seats are not.
+                                        applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
+                                        seatsCurrent = status.sequence.forall(seq => applied.forall(_ <= seq))
+                                        _ <- status.sequence.filter(_ => seatsCurrent).traverse_ { seq =>
+                                            matchRepo.advanceMoveSequence(gameId, matchId, seq)
+                                        }
+                                        _ <- status.participants.filter(_ => seatsCurrent).traverse { reported =>
                                             byId.get(ParticipantId(reported.participantId)) match {
                                                 case Some(p) =>
                                                     participantRepo.update(
@@ -501,6 +520,14 @@ class GameEngineService[T](
       * `startedAt` is when the mover's own clock started for this move, and it is the engine's to state for the same
       * reason turn order is: only the engine knows whether this player was waiting for the move before. See
       * `Json.MoveNotification` for why matchmaker no longer guesses at it.
+      *
+      * `state`, from an engine that numbers its moves, replaces `next`: it names every seat that is to move now, and
+      * this move's number. An engine sends its callbacks after committing each move, from whichever request made it, so
+      * two can arrive in the opposite order to the moves — and applied in arrival order the late one undoes the early
+      * one, clearing a seat the later move had made pending again. So a move numbered no higher than the match's
+      * `move_sequence` (V26) is older than what the seats already say: its turn is recorded, since the time was really
+      * spent, and nothing else is touched or mailed. Without `state`, the callback is applied as it arrives, which is
+      * all matchmaker could do before and is still right for an engine whose callbacks cannot overtake each other.
       */
     def recordMove(
         gameId: GameId,
@@ -509,7 +536,8 @@ class GameEngineService[T](
         next: List[ParticipantId],
         takenAt: Instant,
         startedAt: Instant,
-        callerExternalId: String
+        callerExternalId: String,
+        state: Option[MoveState] = None
     ): IO[Unit] =
         sessionPool.use { session =>
             val gameRepo = new GameRepo[T](session)
@@ -540,23 +568,56 @@ class GameEngineService[T](
                         // deadline is what is left of their budget — and the mover's turn has just spent some
                         // of theirs.
                         used <- timeUsedIn(session, existing)
-                        _ <- participantRepo.update(withTurn(mover, pending = false, due = None))
-                        _ <- next.traverse { id =>
-                            requireParticipant(participantRepo, gameId, matchId, id)
-                                .flatMap(p =>
-                                    participantRepo.update(
-                                      withTurn(p, pending = true, due = dueFor(existing, used)(id, Some(takenAt)))
-                                    )
-                                )
+                        // Read under the match's row lock, taken above, which every writer of this
+                        // column holds: nothing can apply a later move between this read and the writes.
+                        applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
+                        current = state.forall(st => applied.forall(_ < st.sequence))
+                        _ <- (state, current) match {
+                            case (_, false) => IO.unit
+                            case (Some(st), true) =>
+                                for {
+                                    seats <- participantRepo.listForMatch(gameId, matchId)
+                                    since = st.pending.map(c => c.participantId -> c.since).toMap
+                                    _ <- seats.traverse { (p, _, _) =>
+                                        val clock = since.get(p.participantId)
+                                        participantRepo.update(
+                                          withTurn(
+                                            p,
+                                            pending = clock.isDefined,
+                                            due = clock.flatMap(at => dueFor(existing, used)(p.participantId, Some(at)))
+                                          )
+                                        )
+                                    }
+                                    _ <- matchRepo.advanceMoveSequence(gameId, matchId, st.sequence)
+                                } yield ()
+                            case (None, true) =>
+                                for {
+                                    _ <- participantRepo.update(withTurn(mover, pending = false, due = None))
+                                    _ <- next.traverse { id =>
+                                        requireParticipant(participantRepo, gameId, matchId, id)
+                                            .flatMap(p =>
+                                                participantRepo.update(
+                                                  withTurn(
+                                                    p,
+                                                    pending = true,
+                                                    due = dueFor(existing, used)(id, Some(takenAt))
+                                                  )
+                                                )
+                                            )
+                                    }
+                                } yield ()
                         }
-                    } yield existing
+                    } yield (existing, current)
                 }
-                .flatMap { played =>
+                .flatMap { (played, current) =>
                     /* After the commit, because whose turn it is now and when it is due are what was just
                      * written -- and they are most of what the mail says. Outside the match's lock and
                      * unable to fail the callback, on the same terms as every other notification here:
-                     * the engine has recorded the move and is owed a 204 whatever the queue is doing. */
-                    notifications.turnTaken(session, played, moved)
+                     * the engine has recorded the move and is owed a 204 whatever the queue is doing.
+                     *
+                     * Not for a move that arrived after a later one: the later one's mail has already said
+                     * whose turn it is, and this one would say it again, wrongly. */
+                    if (current) notifications.turnTaken(session, played, moved) else IO.unit
                 }
         }
 

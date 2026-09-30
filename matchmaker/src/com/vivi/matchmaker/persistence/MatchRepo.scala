@@ -214,6 +214,26 @@ class MatchRepo(session: Session[IO]) {
       * — `GameEngineService` does, under the row lock `readForUpdate` takes, which is also what makes the
       * read-then-write here safe.
       */
+    private val moveSequenceForUpdateQuery: Query[(GameId, MatchId), Option[Long]] =
+        sql"""SELECT move_sequence FROM match WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
+            .query(int8.opt)
+
+    /** The latest move sequence applied to this match's seats (V26), locked with the row. `None` when no numbered move
+      * or status has been applied, and also when there is no such match — the callers have already required it.
+      */
+    def moveSequenceForUpdate(gameId: GameId, matchId: MatchId): IO[Option[Long]] =
+        session.option(moveSequenceForUpdateQuery)((gameId, matchId)).map(_.flatten)
+
+    private val advanceMoveSequenceCommand: Command[(Long, Long, GameId, MatchId)] =
+        sql"""UPDATE match SET move_sequence = GREATEST(COALESCE(move_sequence, $int8), $int8)
+          WHERE game_id = $gameId AND match_id = $matchId""".command
+
+    /** Raises the match's move sequence to `sequence`, never lowering it: a number that arrives late is already
+      * accounted for by the one above it.
+      */
+    def advanceMoveSequence(gameId: GameId, matchId: MatchId, sequence: Long): IO[Unit] =
+        session.execute(advanceMoveSequenceCommand)((sequence, sequence, gameId, matchId)).void
+
     def complete(gameId: GameId, matchId: MatchId): IO[Instant] =
         session.unique(completeMatch)((gameId, matchId))
 

@@ -378,7 +378,10 @@ object Router {
                             r.next,
                             r.takenAt,
                             r.startedAt,
-                            caller
+                            caller,
+                            r.state.map(st =>
+                                MoveState(st.sequence, st.pending.map(p => SeatClock(p.participantId, p.since)))
+                            )
                           )
                         )
                     }

@@ -81,6 +81,11 @@ simultaneous rounds:
   contains `outcome`, `method` (`knockout`/`points`), `rounds`, `scheduledRounds`, `points`,
   `knockdowns` and `corner`. The winner is rank 1 and the loser rank 2. A draw is rank 1 for both.
 
+Every move callback also carries `state`: the plan's number (how many plans the bout holds) and
+every corner that is to plan now. Callbacks are sent after each commit, from whichever request made
+the plan, so two can reach matchmaker in the opposite order to the plans. Matchmaker uses the number
+to ignore the late one's effect on whose turn it is (V26), and status answers carry the same number.
+
 Nobody sees a plan for the current round except the corner that made it (`yourPlan`). Everyone else
 sees only `planned: true`. Once the round resolves, both plans are in `rounds` for everyone. This is
 enforced in `Engine.stateOf`, not in the page.

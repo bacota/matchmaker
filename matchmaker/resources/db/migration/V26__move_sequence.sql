@@ -1,0 +1,13 @@
+-- The engine's number for the latest move matchmaker has applied to this match's seats.
+--
+-- An engine sends its callbacks after committing each move, from whichever request made the move,
+-- so two callbacks for one match can arrive in the opposite order to the moves. Applied as they
+-- arrive, the late one undoes the early one's effect on whose turn it is: in a game where both
+-- seats move at once, the callback that starts the next round makes both seats pending, and the
+-- first seat's own callback, landing after it, clears that seat again.
+--
+-- An engine that numbers its moves (a callback's `state.sequence`) lets matchmaker tell. A move
+-- whose number is not above this one is older than what the seats already say, and only its turn
+-- is recorded. NULL until the first numbered move or status, which is every match an engine that
+-- does not number its moves plays.
+ALTER TABLE match ADD COLUMN move_sequence BIGINT;

@@ -273,4 +273,21 @@ class EngineSpec extends FunSuite {
         val m = store.get("m-1").get
         assertEquals(read[TicTacToeMatch](write(m)), m)
     }
+
+    test("every callback numbers its move and names who is to move now, since when") {
+        val (engine, recorder, _, _, m) = fixture()
+        val at = Instant.parse("2026-01-01T00:00:00Z")
+        val x = m.seatOf(Mark.X).get
+        val o = m.seatOf(Mark.O).get
+        engine.move("m-1", x.cognitoId, 4)
+        engine.move("m-1", o.cognitoId, 0)
+
+        val states = recorder.moves.map(_._2.state.get)
+        assertEquals(states.map(_.sequence), List(1L, 2L))
+        assertEquals(
+          states.map(_.pending),
+          List(List(Protocol.PendingSeat(o.participantId, at)), List(Protocol.PendingSeat(x.participantId, at)))
+        )
+        assertEquals(engine.status("m-1").toOption.get.sequence, Some(2L))
+    }
 }
