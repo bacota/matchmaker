@@ -28,7 +28,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
     playAuth: PlayAuth,
     matchmakerKey: Option[String],
     signIn: SignIn
-) {
+) extends (EngineRequest => EngineResponse) {
 
     /** The state a play page renders. `seat` is the viewer's own, absent on the public board — and what a viewer may
       * not see, such as a move the other player has yet to answer, must already be absent from it.
