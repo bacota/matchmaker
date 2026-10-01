@@ -128,8 +128,8 @@ Sign-in, the three `PLAY_AUTH` modes and the environment variables are exactly a
 
 ## Deployed
 
-`terraform/modules/boxing` is the `rps` module with one more player route
-(`POST /matches/{matchId}/fighter`). Enable it with `deploy_boxing = true` in
+The boxing engine uses `terraform/modules/engine`, the module shared by every bundled engine, with one
+additional player route (`POST /matches/{matchId}/fighter`). Enable it with `deploy_boxing = true` in
 `environments/<env>.settings.tfvars`.
 
 **The first deployment must be `./deploy-all.sh <env>`** (or `./deploy-boxing.sh <env> --full`).

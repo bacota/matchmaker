@@ -8,8 +8,13 @@ terraform {
   }
 }
 
+/* A game engine: its function, its match table, and the API matchmaker and its players reach it
+ * through. Every bundled engine is one of these, told apart by its name, its handler and any
+ * player route only it has.
+ */
+
 locals {
-  name = "tictactoe-${var.environment}"
+  name = "${var.name}-${var.environment}"
 
   # The engine's own base url, built from the api id rather than taken from the stage.
   #
@@ -26,18 +31,23 @@ locals {
     "GET /matches/{matchId}/status",
   ]
 
-  # A player's own routes: the board they see and the moves they make. Behind the same Cognito
-  # user pool matchmaker signs its players in with, because the seat a player may move in is
-  # found by the `sub` of their token.
-  player_routes = [
+  # A player's own routes: the state they see and the moves they make, and any the game adds — a
+  # boxer is built through one. Behind the same Cognito user pool matchmaker signs its players in
+  # with, because the seat a player may move in is found by the `sub` of their token — and in a
+  # game where both move at once a seat is also the right to see a move the other cannot, since
+  # the state route withholds the opponent's until it is answered.
+  player_routes = concat([
     "GET /matches/{matchId}/state",
     "POST /matches/{matchId}/moves",
-  ]
+  ], var.extra_player_routes)
 
   # Served to anyone. The play page carries no game state for a caller with no seat — it is the
   # shell that starts the sign-in — and the callback page redeems the code the hosted login comes
   # back with. Neither can require a token: a browser navigation cannot carry an Authorization
-  # header, so an authorizer here would make the board unreachable rather than protected.
+  # header, so an authorizer here would make the page unreachable rather than protected.
+  #
+  # The public board is open in the same way, and discloses no more than a watcher may know: that
+  # a player has moved, never what, while the move is still to be answered.
   open_routes = [
     "GET /matches/{matchId}/play",
     "GET /matches/{matchId}/board",
@@ -63,9 +73,13 @@ data "aws_region" "current" {}
 /* Where a match lives between invocations.
  *
  * On-demand billing because the load is a handful of writes per match and nothing between
- * matches; a provisioned table would be paying for an idle board. `version` is not a key — it is
+ * matches; a provisioned table would be paying for an idle match. `version` is not a key — it is
  * the attribute the engine's conditional write compares, so two players moving at once cannot
  * both write over the other (see DynamoDbMatchStore).
+ *
+ * That compare-and-set matters most in a game where both players are on the clock at once — rock-
+ * paper-scissors, a boxing round — where two moves arriving together is the ordinary case rather
+ * than a rare race, and a lost one would be a move a player believes they made.
  */
 resource "aws_dynamodb_table" "matches" {
   name         = "${local.name}-matches"
@@ -77,7 +91,7 @@ resource "aws_dynamodb_table" "matches" {
     type = "S"
   }
 
-  # A finished match is worth keeping only as long as someone might reload the board. The engine
+  # A finished match is worth keeping only as long as someone might reload the page. The engine
   # does not write this attribute, so nothing expires until it does — the setting is here so that
   # turning it on is a one-line change rather than a schema decision.
   ttl {
@@ -142,7 +156,7 @@ resource "aws_lambda_function" "engine" {
   function_name = local.name
   role          = aws_iam_role.lambda.arn
   runtime       = "java21"
-  handler       = "com.vivi.tictactoe.Handler::handleRequest"
+  handler       = var.handler
 
   filename         = var.lambda_jar_path
   source_code_hash = filebase64sha256(var.lambda_jar_path)
@@ -165,13 +179,14 @@ resource "aws_lambda_function" "engine" {
 
       # The secret this engine and matchmaker authenticate each other with, in both directions:
       # matchmaker presents it on the two routes above, and this engine presents it on its move
-      # and result callbacks, where it is also what tells matchmaker which engine is calling.
+      # and result callbacks (and, in a character game, on the write that keeps a character's
+      # state), where it is also what tells matchmaker which engine is calling.
       #
       # The function refuses to start without it when it is running in Lambda, so an empty value
       # here is a failed cold start rather than an engine that serves game creation to anyone.
       MATCHMAKER_API_KEY = var.matchmaker_api_key
 
-      # The sign-in the board page offers, and the pool whose claims the authorizer below
+      # The sign-in the play page offers, and the pool whose claims the authorizer below
       # verifies. The same three values matchmaker's own UI is configured with.
       COGNITO_ISSUER    = var.cognito_issuer
       COGNITO_CLIENT_ID = var.cognito_client_id

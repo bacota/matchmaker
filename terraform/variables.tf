@@ -321,7 +321,7 @@ variable "game_engine_api_keys" {
 
 variable "deploy_tictactoe" {
   description = <<-EOT
-    Deploy the bundled tic-tac-toe engine (modules/tictactoe) alongside matchmaker, and wire the
+    Deploy the bundled tic-tac-toe engine (modules/engine) alongside matchmaker, and wire the
     two grants between them.
 
     For development environments: it is a test fixture with a public play url, not a product.
@@ -338,7 +338,7 @@ variable "tictactoe_jar_path" {
 
 variable "deploy_rps" {
   description = <<-EOT
-    Deploy the bundled rock-paper-scissors engine (modules/rps) alongside matchmaker, and wire the
+    Deploy the bundled rock-paper-scissors engine (modules/engine) alongside matchmaker, and wire the
     two grants between them.
 
     For development environments, like deploy_tictactoe: a test fixture with a public play url,
@@ -356,7 +356,7 @@ variable "rps_jar_path" {
 
 variable "deploy_boxing" {
   description = <<-EOT
-    Deploy the bundled boxing engine (modules/boxing) alongside matchmaker, and wire the keys
+    Deploy the bundled boxing engine (modules/engine) alongside matchmaker, and wire the keys
     between them. Independent of the other two engines — any combination may be deployed.
   EOT
   type        = bool

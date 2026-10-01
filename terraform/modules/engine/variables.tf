@@ -8,8 +8,24 @@ variable "environment" {
   }
 }
 
+variable "name" {
+  description = "The engine's name — rps, tictactoe, boxing — which every resource here is named after, with the environment."
+  type        = string
+}
+
+variable "handler" {
+  description = "The Lambda handler: the engine's own `com.vivi.<game>.Handler::handleRequest`."
+  type        = string
+}
+
+variable "extra_player_routes" {
+  description = "Player routes only this game has, beside the state and moves every engine serves. Behind the same JWT authorizer."
+  type        = list(string)
+  default     = []
+}
+
 variable "lambda_jar_path" {
-  description = "Path to the assembled engine jar (`mill -j 4 engines.tictactoe.assembly`)."
+  description = "Path to the assembled engine jar (`mill -j 4 --ticker false engines.<name>.assembly`)."
   type        = string
 }
 
@@ -48,7 +64,7 @@ variable "cognito_issuer" {
   description = <<-EOT
     Token issuer of the user pool the players sign in to — matchmaker's `jwt_issuer` output.
 
-    The players' routes are behind a JWT authorizer configured with this, and the board page signs
+    The players' routes are behind a JWT authorizer configured with this, and the play page signs
     in against the same pool, so a player is the same identity here as in matchmaker and the `sub`
     the engine sees is the `cognitoId` matchmaker sent. Empty leaves those routes off the api
     altogether rather than open.
@@ -58,13 +74,13 @@ variable "cognito_issuer" {
 }
 
 variable "cognito_client_id" {
-  description = "App client the board page signs in with — matchmaker's `user_pool_client_id` output. Also the audience the authorizer requires."
+  description = "App client the play page signs in with — matchmaker's `user_pool_client_id` output. Also the audience the authorizer requires."
   type        = string
   default     = ""
 }
 
 variable "hosted_login_url" {
-  description = "Base url of the hosted login — matchmaker's `hosted_login_url` output. Where the board page sends a player to sign in."
+  description = "Base url of the hosted login — matchmaker's `hosted_login_url` output. Where the play page sends a player to sign in."
   type        = string
   default     = ""
 }
@@ -76,7 +92,7 @@ variable "lambda_memory_mb" {
 }
 
 variable "lambda_timeout_s" {
-  description = "Lambda timeout. A move is two DynamoDB calls and up to two callbacks to matchmaker."
+  description = "Lambda timeout. A move is two DynamoDB calls and up to two callbacks to matchmaker; building a boxer waits on matchmaker's answer."
   type        = number
   default     = 15
 }
@@ -88,7 +104,7 @@ variable "log_retention_days" {
 }
 
 variable "point_in_time_recovery" {
-  description = "Continuous backups for the match table. Off by default: a tic-tac-toe board is not worth restoring."
+  description = "Continuous backups for the match table. Off by default: a bundled engine's matches are short, and a character's state lives in matchmaker."
   type        = bool
   default     = false
 }
