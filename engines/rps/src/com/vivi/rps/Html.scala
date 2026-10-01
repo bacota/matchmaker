@@ -261,11 +261,26 @@ ${signInScript}
 <style>
   body { margin: 0; min-height: 100vh; display: grid; place-items: center;
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; color-scheme: light dark; }
-  #error { color: crimson; max-width: 32rem; text-align: center; padding: 1rem; }
+  main { max-width: 32rem; text-align: center; padding: 1rem; }
+  #error { color: crimson; }
+  /* 44px to tap, 16px text, and a visible focus ring: these are the only controls on the page. */
+  .actions { display: flex; gap: 1rem; justify-content: center; align-items: center; flex-wrap: wrap; }
+  .actions[hidden] { display: none; }
+  .actions button, .actions a { font: inherit; font-size: 16px; min-height: 44px; display: inline-flex; align-items: center; }
+  .actions button { padding: 0 1rem; border-radius: 6px; border: 1px solid #8886; background: none; color: inherit; cursor: pointer; }
+  .actions button[hidden] { display: none; }
+  :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
 </style>
 </head>
 <body>
-<p id="error">signing in…</p>
+<main>
+<!-- Announced: the page changes from "signing in…" to a failure without anything being pressed. -->
+<p id="error" role="status" aria-live="polite">signing in…</p>
+<div class="actions" id="actions" hidden>
+  <button type="button" id="retry" hidden>Try again</button>
+  <a id="back" href="/">Back to the match</a>
+</div>
+</main>
 <script>
 ${authScript(Some(login))}
 
@@ -277,7 +292,17 @@ ${authScript(Some(login))}
     const expected = sessionStorage.getItem(StateKey);
     const back = sessionStorage.getItem(ReturnKey) || "/";
 
-    function fail(message) { document.getElementById("error").textContent = message; }
+    /* Every failure offers the way back, to start the sign-in again from the match. `retryable` adds
+     * a retry of this very callback, which is only offered where it can work: the request never got
+     * an answer, so the code is unspent and the verifier is still here. A code Cognito refused is
+     * single-use, and retrying it would only fail again. */
+    function fail(message, retryable) {
+      document.getElementById("error").textContent = message;
+      document.getElementById("back").href = back;
+      document.getElementById("retry").hidden = !retryable;
+      document.getElementById("actions").hidden = false;
+    }
+    document.getElementById("retry").addEventListener("click", () => location.reload());
 
     if (failure) return fail(failure);
     if (!code) return fail("no authorization code came back");
@@ -295,15 +320,23 @@ ${authScript(Some(login))}
       redirect_uri: login.redirectUri
     });
 
-    const response = await fetch(login.hostedLoginUrl + "/oauth2/token", {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: body.toString()
-    });
+    let response;
+    try {
+      response = await fetch(login.hostedLoginUrl + "/oauth2/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: body.toString()
+      });
+    } catch (e) {
+      // Unreachable, rather than refused: without this the rejection escapes the function and the
+      // page says "signing in…" for ever.
+      return fail("the sign-in service could not be reached; check your connection and try again", true);
+    }
 
     if (!response.ok) return fail("the sign-in could not be completed: " + response.status);
 
-    const tokens = await response.json();
+    let tokens;
+    try { tokens = await response.json(); } catch (e) { tokens = {}; }
     if (!tokens.id_token) return fail("no id token came back");
 
     // Stored the same way a sign-in on the board stores them, refresh token included: a player who

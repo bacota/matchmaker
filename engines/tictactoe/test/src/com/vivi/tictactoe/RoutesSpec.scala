@@ -171,6 +171,8 @@ class RoutesSpec extends FunSuite {
         val page = get(withPool, "/auth/callback")
         assertEquals(page.status, 200)
         assert(page.body.contains("oauth2/token"), "the callback page redeems the authorization code")
+        // And says so when it cannot reach the token endpoint, rather than "signing in…" for ever.
+        assert(page.body.contains("could not be reached"), "an unreachable token endpoint must end in a failure")
 
         val (withoutPool, _, _) = fixture()
         assertEquals(get(withoutPool, "/auth/callback").status, 404)
