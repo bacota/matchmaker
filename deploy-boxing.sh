@@ -137,7 +137,10 @@ if [ "$skip_build" = true ]; then
 else
   if [ "$skip_tests" != true ]; then
     step "Testing the engine"
-    mill -j 4 --ticker false engines.boxing.test
+    # engines.common's tests too: the jar carries that code, and a dependency's tests are not
+    # run by testing the module that depends on it. `+` between them, or mill hands the second
+    # name to the first task as an argument and runs only the first.
+    mill -j 4 --ticker false engines.common.test + engines.boxing.test
   fi
 
   step "Building the engine jar"
