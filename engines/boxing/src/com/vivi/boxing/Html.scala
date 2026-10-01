@@ -363,16 +363,21 @@ ${playLive.script(liveUrl, matchId)}
   async function submit(url, body, button) {
     show("");
     button.disabled = true;
+    const ticket = ask();
     const response = await send(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     button.disabled = false;
     if (!response) return;
     const answer = await response.json();
-    if (response.ok) { state = answer; render(); } else { show(answer.error || response.statusText); render(); }
+    // Kept only if nothing asked for since has been shown: that would already include this.
+    if (response.ok) { if (latest(ticket)) state = answer; render(); } else { show(answer.error || response.statusText); render(); }
   }
 
   async function refresh() {
+    const ticket = ask();
     const response = await send(stateUrl, {});
-    if (response && response.ok) { state = await response.json(); render(); }
+    if (!response || !response.ok) return;
+    const answer = await response.json();
+    if (latest(ticket)) { state = answer; render(); }
   }
 
   /* Every call carries the ID token when there is one, and the two refusals mean different things.

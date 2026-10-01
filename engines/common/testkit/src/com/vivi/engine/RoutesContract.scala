@@ -344,4 +344,19 @@ abstract class RoutesContract extends FunSuite {
         assert(page.contains("const liveUrl = null;"), "no url, no switch")
         assert(page.contains("keepCurrent(refresh,"), "without Play Live the page still keeps itself current")
     }
+
+    /* An answer overtaken by one asked for later must not be shown over it: with Play Live on, an
+     * older state shown over a newer one would stay until the minute check. Every answer the page
+     * shows — its refresh and its own move's — takes a ticket for that. */
+    test("the page shows its answers in the order it asked for them") {
+        val (routes, _) = fixture()
+        val page = get(routes, "/matches/m-9/play", as("sub-alice")).body
+        assert(page.contains("function latest(ticket)"))
+        def count(text: String) = java.util.regex.Pattern.quote(text).r.findAllMatchIn(page).size
+        // Less the function's own definition.
+        val guarded = count("latest(ticket)") - 1
+        val asked = count("const ticket = ask();")
+        assert(asked >= 2, s"the refresh and the move should both ask for a ticket; $asked do")
+        assertEquals(guarded, asked, "every ticket asked for must be checked before its answer is shown")
+    }
 }

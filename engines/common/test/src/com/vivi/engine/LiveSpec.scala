@@ -48,6 +48,30 @@ class LiveSpec extends FunSuite {
         assertEquals(channel.sent.toList, List("c-2"))
     }
 
+    /* Pushed inside the request that made the move, so a stalled connection must not hold that
+     * request: its answer would otherwise be a timeout for a move that stands. */
+    test("a push that never answers is abandoned at the deadline, and the others are still sent") {
+        val delivered = java.util.concurrent.ConcurrentLinkedQueue[String]()
+        val stalled = new LiveChannel {
+            def send(connectionId: String, message: String): Boolean = {
+                if (connectionId == "c-stalled") Thread.sleep(60000)
+                delivered.add(connectionId)
+                true
+            }
+        }
+        val live = Live("ws://x", PlayAuth.Trusted, InMemorySubscriptions(), stalled, java.time.Duration.ofMillis(300))
+        (1 to 20).foreach(i => live.subscribe(Subscription(s"c-$i", "m-1")))
+        live.subscribe(Subscription("c-stalled", "m-1"))
+
+        val started = System.nanoTime()
+        live.changed("m-1")
+        val took = java.time.Duration.ofNanos(System.nanoTime() - started)
+
+        assert(took.toMillis < 2000, s"took $took")
+        assertEquals(delivered.size, 20)
+        assert(!delivered.contains("c-stalled"))
+    }
+
     test("a WebSocket API's connection events decode to the requests the local server builds") {
         def event(eventType: String, query: ujson.Value = ujson.Null) =
             ujson.Obj(

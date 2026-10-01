@@ -17,6 +17,22 @@ import HtmlText.escapeJs
   * before and reconnects with a growing pause, so turning Play Live on can make a page slower to hear of a move only
   * for as long as a connection is failing, and never stops it hearing at all.
   *
+  * Every answer a page shows — a refresh, a move's answer, the first fetch — is asked for with a ticket from `ask()`
+  * and shown only if `latest(ticket)`:
+  *
+  * {{{
+  * const ticket = ask();
+  * const response = await send(stateUrl, {});
+  * ...
+  * if (latest(ticket)) { state = answer; render(); }
+  * }}}
+  *
+  * so that an answer overtaken by one asked for later is dropped rather than shown over it. Answers do arrive out of
+  * order — a push lands while a fetch is out, a move's answer comes back after the refresh its own push started — and
+  * with Play Live on, an older state shown over a newer one would stay until the minute check. Asked-for order is the
+  * right order because every change is pushed after it is committed: the fetch that push starts is asked for after the
+  * change, and so is never overtaken by an answer that predates it.
+  *
   * The choice is the player's and is remembered in `localStorage` under the game's name, like the sign-in's tokens are
   * kept under it: a player who wants it for one match of a game wants it for the next.
   *
@@ -32,6 +48,15 @@ class PlayLive(storagePrefix: String) {
         s"""  const liveUrl = ${liveUrl.map(u => s"\"${escapeJs(u)}\"").getOrElse("null")};
   const liveMatch = "${escapeJs(matchId)}";
   const LiveChoiceKey = "$storagePrefix.playLive";
+
+  /* Answers are shown in the order they were asked for. See PlayLive. */
+  let lastAsked = 0, lastShown = 0;
+  function ask() { return ++lastAsked; }
+  function latest(ticket) {
+    if (ticket < lastShown) return false;
+    lastShown = ticket;
+    return true;
+  }
 
   /* Keeps the page current: by polling, or with Play Live on, by being told. `refresh` fetches the
    * state; `active` says whether there is still anything to wait for. */
@@ -52,7 +77,18 @@ class PlayLive(storagePrefix: String) {
     function choose(on) { try { localStorage.setItem(LiveChoiceKey, on ? "on" : "off"); } catch (e) {} }
     // Only when it changes: the note is a live region, and repeating it would repeat the announcement.
     function say(text) { if (note.textContent !== text) note.textContent = text; }
-    function fetchNow() { lastFetch = Date.now(); refresh(); }
+    /* One refresh out at a time. A push that arrives while one is out asks for exactly one more
+     * after it, rather than being dropped — the one out may have been answered before the change
+     * the push reports — or starting a race with it. */
+    let fetching = false, again = false;
+    async function fetchNow() {
+      lastFetch = Date.now();
+      if (fetching) { again = true; return; }
+      fetching = true;
+      try {
+        do { again = false; await refresh(); } while (again);
+      } finally { fetching = false; }
+    }
     function wanted() { return !!liveUrl && toggle.checked && active(); }
 
     async function connect() {

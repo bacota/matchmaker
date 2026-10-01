@@ -3,7 +3,15 @@ package com.vivi.engine
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets.UTF_8
 import java.time.{Duration, Instant}
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.{
+    Callable,
+    ConcurrentHashMap,
+    ExecutionException,
+    Executors,
+    Future,
+    TimeUnit,
+    TimeoutException
+}
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
 
@@ -18,13 +26,30 @@ import scala.util.control.NonFatal
   * not retried. The page still checks once a minute while it is live, which is what bounds the cost of one that was
   * lost.
   *
+  * A push is made inside the request that made the change, so it is held to `deadline` as a whole — finding the
+  * watchers and every send to them — and the sends are made at once rather than one after another. Without that, a
+  * public board's crowd or two stalled connections could spend the function's whole timeout on a move that was already
+  * made, and the player would be answered with a failure for it. Whatever has not finished by then is abandoned and
+  * logged; the page's minute check covers it.
+  *
   * @param url
   *   where the page opens its connection: the deployed WebSocket API's `wss://` url, or the local server's `ws://`
   * @param auth
   *   who is opening a connection. Not the play routes' own [[PlayAuth]] when deployed: the WebSocket API has no JWT
   *   authorizer, so the token is verified here — see [[EngineConfig.liveAuth]]
+  * @param deadline
+  *   how long a change may spend being pushed, all told
   */
-class Live(val url: String, val auth: PlayAuth, subscriptions: Subscriptions, channel: LiveChannel) {
+class Live(
+    val url: String,
+    val auth: PlayAuth,
+    subscriptions: Subscriptions,
+    channel: LiveChannel,
+    deadline: Duration = Duration.ofSeconds(3)
+) {
+
+    // A thread per send: they spend their time waiting on the network, which is what virtual threads are for.
+    private val threads = Executors.newVirtualThreadPerTaskExecutor()
 
     def subscribe(subscription: Subscription): Unit = subscriptions.add(subscription)
 
@@ -36,14 +61,34 @@ class Live(val url: String, val auth: PlayAuth, subscriptions: Subscriptions, ch
       * Never fails the caller: by the time this runs the change it reports is committed, and a player must not be
       * answered with a 500 for a move that stands.
       */
-    def changed(matchId: String): Unit =
-        try {
-            val message = ujson.write(ujson.Obj("changed" -> matchId))
-            subscriptions.watching(matchId).foreach { s =>
-                try { if (!channel.send(s.connectionId, message)) subscriptions.remove(s.connectionId) }
-                catch { case NonFatal(e) => Log.failure(e, s"pushing a change in match '$matchId'") }
-            }
-        } catch { case NonFatal(e) => Log.failure(e, s"finding who watches match '$matchId'") }
+    def changed(matchId: String): Unit = {
+        val until = System.nanoTime() + deadline.toNanos
+        val message = ujson.write(ujson.Obj("changed" -> matchId))
+
+        val watchers = within(until, s"finding who watches match '$matchId'")(start(subscriptions.watching(matchId)))
+        val sends = watchers.getOrElse(Nil).map { s =>
+            s.connectionId -> start(if (!channel.send(s.connectionId, message)) subscriptions.remove(s.connectionId))
+        }
+        sends.foreach((connectionId, send) =>
+            within(until, s"pushing a change in match '$matchId' to '$connectionId'")(send)
+        )
+    }
+
+    private def start[A](work: => A): Future[A] = threads.submit((() => work): Callable[A])
+
+    /** `work`'s answer if it arrives by `until`. Otherwise — late or failed — logged, and a late one interrupted, so
+      * that nothing outlives the request it was started in.
+      */
+    private def within[A](until: Long, what: String)(work: Future[A]): Option[A] =
+        try Some(work.get(math.max(0L, until - System.nanoTime()), TimeUnit.NANOSECONDS))
+        catch {
+            case _: TimeoutException =>
+                work.cancel(true)
+                Log.failure(TimeoutException(s"not done within $deadline"), what)
+                None
+            case e: ExecutionException => Log.failure(e.getCause, what); None
+            case NonFatal(e)           => Log.failure(e, what); None
+        }
 }
 
 /** One open Play Live connection, and the match it watches. */
