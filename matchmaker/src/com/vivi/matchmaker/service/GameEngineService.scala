@@ -682,10 +682,52 @@ class GameEngineService[T](
                     } yield (existing, ended)
                 }
                 .flatMap { (played, ended) =>
+                    // Before the mail, so that anything it says about the match is said of every turn.
+                    val reconciled = if (ended) recoverTurns(session, played) else IO.unit
                     // Everyone in it, because nobody in it did this: the engine finished the game.
-                    if (ended) notifications.matchEnded(session, played, MatchEnding.Finished) else IO.unit
+                    reconciled *> (if (ended) notifications.matchEnded(session, played, MatchEnding.Finished)
+                                   else IO.unit)
                 }
         }
+
+    /* The last chance to record turns whose move callbacks never arrived.
+     *
+     * A move callback is best-effort, and while a match is running a lost one is repaired by
+     * `refresh`. Once the match is completed `refresh` no longer asks the engine anything, so a
+     * move lost before the end would be lost for good -- and the one most exposed is the last: the
+     * engine sends it and the results one after the other, and when only the results get through
+     * the match completes without its final turn. The turns are what a player's time across the
+     * match is summed from, so the result would be wrong without anything looking wrong.
+     *
+     * So the match's ending asks the engine once for every turn it has, and records them. Each
+     * insert is idempotent, so the turns matchmaker already has are dropped by the database.
+     *
+     * After the results' transaction rather than inside it, per the rule on external calls: the
+     * engine is asked with no transaction open, and the turns are written in a fresh one that takes
+     * the match's lock again. Nothing here may fail the results, which are committed and are the
+     * engine's due either way, so a failure is logged and dropped. */
+    private def recoverTurns(session: skunk.Session[IO], played: Match): IO[Unit] =
+        played.statusUrl
+            .fold(IO.unit) { url =>
+                engine.status(url, None).flatMap { status =>
+                    session.transaction.use { _ =>
+                        for {
+                            locked <- requireMatchForUpdate(new MatchRepo(session), played.gameId, played.matchId)
+                            seats <- new ParticipantRepo(session).listForMatch(played.gameId, played.matchId)
+                            known = seats.map(_._1.participantId.value).toSet
+                            _ <- recordTurns(
+                              session,
+                              locked,
+                              status.turns.filter(t => known(t.participantId)),
+                              since = None
+                            )
+                        } yield ()
+                    }
+                }
+            }
+            .handleErrorWith(error =>
+                IO(System.err.println(s"could not recover the turns of match ${played.matchId.value}: $error"))
+            )
 
     /** Step 4: re-check a running match with the engine, and apply whatever it says.
       *

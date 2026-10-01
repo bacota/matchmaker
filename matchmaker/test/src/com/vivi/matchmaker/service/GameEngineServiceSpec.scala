@@ -713,6 +713,85 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
+    // The move callback is best-effort, and so are the results: when the last move's callback is
+    // lost and the results get through, the match completes and `refresh` stops asking the engine.
+    property("the results callback recovers turns whose move callbacks never arrived") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine)
+                val created = Instant.parse("2030-01-01T00:00:00Z")
+                val result = for {
+                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    (fixture, started, mine, theirs) = seated
+                    // Only the first move's callback arrives.
+                    _ <- callback(
+                      services,
+                      fixture,
+                      started,
+                      mine,
+                      created.plusSeconds(10),
+                      created,
+                      1,
+                      List(theirs -> created.plusSeconds(10))
+                    )
+                    // The engine has both, the second being the move that ended the match.
+                    _ <- IO {
+                        engine.status = GameStatusResponse(
+                          completed = true,
+                          participants = Nil,
+                          turns = List(
+                            EngineTurn(mine.participantId.value, created.plusSeconds(10), Some(created)),
+                            EngineTurn(
+                              theirs.participantId.value,
+                              created.plusSeconds(40),
+                              Some(created.plusSeconds(10))
+                            )
+                          )
+                        )
+                    }
+                    _ <- services.engine.recordResults(
+                      fixture.game.gameId,
+                      started.matchId,
+                      List(
+                        ReportedResult(mine.participantId, rank = 1, scores = Map.empty, isWinner = true),
+                        ReportedResult(theirs.participantId, rank = 2, scores = Map.empty, isWinner = false)
+                      ),
+                      gameExternalId
+                    )
+                    turns <- turnsOf(started)
+                    ended <- matchOf(fixture.game.gameId, started.matchId)
+                } yield ended.exists(_.completed) &&
+                    turns.map(t => (t.participantId, t.takenAt, t.startedAt)).toSet == Set(
+                      (mine.participantId, created.plusSeconds(10), created),
+                      (theirs.participantId, created.plusSeconds(40), created.plusSeconds(10))
+                    )
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("an engine that cannot be asked for its turns does not fail the results") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val services = TestServices.servicesWith(
+              StubEngine(beforeStatus = IO.raiseError(GameEngineError("engine is down")))
+            )
+            val result = for {
+                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                challenge <- services.challenges.create(challengeFor(fixture), externalId)
+                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                seat <- participantsOf(started).map(_.head.participantId)
+                _ <- services.engine.recordResults(
+                  fixture.game.gameId,
+                  started.matchId,
+                  List(ReportedResult(seat, rank = 1, scores = Map.empty, isWinner = true)),
+                  gameExternalId
+                )
+                ended <- matchOf(fixture.game.gameId, started.matchId)
+            } yield ended.exists(_.completed)
+            result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
     property("a results callback completes the match and writes the result rows") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val services = TestServices.servicesWith(StubEngine())
