@@ -27,13 +27,18 @@ import HtmlText.escapeJs
   * if (latest(ticket)) { state = answer; render(); }
   * }}}
   *
-  * so that an answer overtaken by one asked for later is dropped rather than shown over it. A refusal is dropped the
-  * same way, with `if (overtaken(ticket)) return;`, but is not marked as shown: it carries no state, and marking it
-  * would drop a fetch asked for before it that may be newer than what the page is showing. Answers do arrive out of
+  * so that an answer overtaken by one asked for later is dropped rather than shown over it. Answers do arrive out of
   * order — a push lands while a fetch is out, a move's answer comes back after the refresh its own push started — and
   * with Play Live on, an older state shown over a newer one would stay until the minute check. Asked-for order is the
   * right order because every change is pushed after it is committed: the fetch that push starts is asked for after the
   * change, and so is never overtaken by an answer that predates it.
+  *
+  * The line a move's refusal is shown on is ordered separately, with `tell(ticket, message)`: a refusal, or the
+  * clearing of one by a success, reaches it only if no answer asked for later has written there. Separately, because
+  * the two orders differ. A refusal carries no state, so counting it as shown would drop a fetch asked for before it
+  * whose state may be newer than the page's; and a success whose state is the newest shown may still be older news than
+  * a refusal already on the line, which it must not clear. A refusal is also dropped under a newer state — `if
+  * (!overtaken(ticket))` — since what that state shows says more.
   *
   * The choice is the player's and is remembered in `localStorage` under the game's name, like the sign-in's tokens are
   * kept under it: a player who wants it for one match of a game wants it for the next.
@@ -43,25 +48,31 @@ import HtmlText.escapeJs
   */
 class PlayLive(storagePrefix: String) {
 
-    /** `liveUrl` is the engine's, when it offers Play Live. Expects `freshIdToken` from the sign-in's script and
-      * `publicView` from the page.
+    /** `liveUrl` is the engine's, when it offers Play Live. Expects `freshIdToken` from the sign-in's script, and
+      * `publicView` and `show` from the page.
       */
     def script(liveUrl: Option[String], matchId: String): String =
         s"""  const liveUrl = ${liveUrl.map(u => s"\"${escapeJs(u)}\"").getOrElse("null")};
   const liveMatch = "${escapeJs(matchId)}";
   const LiveChoiceKey = "$storagePrefix.playLive";
 
-  /* Answers are shown in the order they were asked for. See PlayLive. */
-  let lastAsked = 0, lastShown = 0;
+  /* Answers are shown in the order they were asked for: states by `latest`, and the message line
+   * by `tell`, each in its own order. See PlayLive. */
+  let lastAsked = 0, lastShown = 0, lastTold = 0;
   function ask() { return ++lastAsked; }
-  /* Whether something asked for later has been shown. Asks without marking, for a refusal: it
-   * carries no state, so marking it would drop a fetch asked for before it that may be newer than
-   * what is on the page. */
+  /* Whether a state asked for later has been shown, without marking anything. */
   function overtaken(ticket) { return ticket < lastShown; }
   function latest(ticket) {
     if (overtaken(ticket)) return false;
     lastShown = ticket;
     return true;
+  }
+  /* Shows `message` — a refusal, or "" to clear one — unless an answer asked for later already
+   * wrote to the line. */
+  function tell(ticket, message) {
+    if (ticket < lastTold) return;
+    lastTold = ticket;
+    show(message);
   }
 
   /* Keeps the page current: by polling, or with Play Live on, by being told. `refresh` fetches the
