@@ -207,8 +207,17 @@ abstract class RoutesContract extends FunSuite {
 
     test("a player route is not protected by matchmaker's key") {
         // The key guards the two routes that are matchmaker's, and only those: a player has no key
-        // and must still reach the play page.
-        val (routes, _) = fixture(matchmakerKey = Some("s3cret"))
-        assertEquals(routes(EngineRequest("GET", "/health")).status, 200)
+        // and must still reach the play page, their state and their moves. So the match is created
+        // with the key, as matchmaker would, and then played without it.
+        val served = routes(PlayAuth.Trusted, Some("s3cret"))
+        val keyed = Map("x-api-key" -> "s3cret")
+        val created =
+            served(EngineRequest("POST", "/games", Map.empty, write(createRequest("m-9", isPublic = true)), keyed))
+        assertEquals(created.status, 201)
+
+        assertEquals(get(served, "/matches/m-9/play", as("sub-alice")).status, 200)
+        assertEquals(get(served, "/matches/m-9/state", as("sub-alice")).status, 200)
+        assertEquals(moving(served, "sub-alice").status, 200)
+        assertEquals(get(served, "/health").status, 200)
     }
 }
