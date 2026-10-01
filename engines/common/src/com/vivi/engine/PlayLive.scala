@@ -22,7 +22,7 @@ import HtmlText.escapeJs
   *
   * {{{
   * const ticket = ask();
-  * const response = await send(stateUrl, {});
+  * const response = await send(stateUrl, {}, ticket);
   * ...
   * if (latest(ticket)) { state = answer; render(); }
   * }}}

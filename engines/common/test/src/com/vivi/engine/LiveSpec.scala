@@ -72,6 +72,41 @@ class LiveSpec extends FunSuite {
         assert(!delivered.contains("c-stalled"))
     }
 
+    /* A crowd must not open a connection to the management API per watcher at once. Sends past the
+     * limit wait their turn, and one still waiting at the deadline is never made. */
+    test("no more than fanOut sends are out at once, and one still waiting at the deadline is never made") {
+        val out = java.util.concurrent.atomic.AtomicInteger()
+        val most = java.util.concurrent.atomic.AtomicInteger()
+        val made = java.util.concurrent.atomic.AtomicInteger()
+        val slow = new LiveChannel {
+            def send(connectionId: String, message: String): Boolean = {
+                made.incrementAndGet()
+                most.accumulateAndGet(out.incrementAndGet(), math.max)
+                try Thread.sleep(60000)
+                finally out.decrementAndGet()
+                true
+            }
+        }
+        val live =
+            Live(
+              "ws://x",
+              PlayAuth.Trusted,
+              InMemorySubscriptions(),
+              slow,
+              java.time.Duration.ofMillis(300),
+              fanOut = 8
+            )
+        (1 to 100).foreach(i => live.subscribe(Subscription(s"c-$i", "m-1")))
+
+        val started = System.nanoTime()
+        live.changed("m-1")
+        val took = java.time.Duration.ofNanos(System.nanoTime() - started)
+
+        assert(took.toMillis < 1500, s"took $took")
+        assertEquals(most.get, 8)
+        assertEquals(made.get, 8)
+    }
+
     /* An outage on a crowded board: every send fails or stalls. Reported once, not once per watcher —
      * writing hundreds of stack traces would itself outlast the deadline. */
     test("a crowd of failed and late pushes is reported as one record, within the deadline") {
@@ -80,7 +115,14 @@ class LiveSpec extends FunSuite {
                 if (connectionId.startsWith("stalled")) { Thread.sleep(60000); true }
                 else throw AwsError("the management api is down")
         }
-        val live = Live("ws://x", PlayAuth.Trusted, InMemorySubscriptions(), failing, java.time.Duration.ofMillis(300))
+        val live = Live(
+          "ws://x",
+          PlayAuth.Trusted,
+          InMemorySubscriptions(),
+          failing,
+          java.time.Duration.ofMillis(300),
+          fanOut = 600
+        )
         (1 to 300).foreach(i => live.subscribe(Subscription(s"failing-$i", "m-crowd")))
         (1 to 300).foreach(i => live.subscribe(Subscription(s"stalled-$i", "m-crowd")))
 

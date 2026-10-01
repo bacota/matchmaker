@@ -9,6 +9,7 @@ import java.util.concurrent.{
     ExecutionException,
     Executors,
     Future,
+    Semaphore,
     TimeUnit,
     TimeoutException
 }
@@ -27,10 +28,11 @@ import scala.util.control.NonFatal
   * lost.
   *
   * A push is made inside the request that made the change, so it is held to `deadline` as a whole — finding the
-  * watchers and every send to them — and the sends are made at once rather than one after another. Without that, a
-  * public board's crowd or two stalled connections could spend the function's whole timeout on a move that was already
-  * made, and the player would be answered with a failure for it. Whatever has not finished by then is abandoned and
-  * logged; the page's minute check covers it.
+  * watchers and every send to them — and the sends are made side by side rather than one after another, up to `fanOut`
+  * at a time. Without that, a public board's crowd or two stalled connections could spend the function's whole timeout
+  * on a move that was already made, and the player would be answered with a failure for it; without the limit, a crowd
+  * would open a connection to the management API per watcher at once. Whatever has not finished by the deadline —
+  * including a send still waiting for its turn — is abandoned and logged; the page's minute check covers it.
   *
   * @param url
   *   where the page opens its connection: the deployed WebSocket API's `wss://` url, or the local server's `ws://`
@@ -39,17 +41,21 @@ import scala.util.control.NonFatal
   *   authorizer, so the token is verified here — see [[EngineConfig.liveAuth]]
   * @param deadline
   *   how long a change may spend being pushed, all told
+  * @param fanOut
+  *   how many sends may be out at once, across every change this instance is pushing
   */
 class Live(
     val url: String,
     val auth: PlayAuth,
     subscriptions: Subscriptions,
     channel: LiveChannel,
-    deadline: Duration = Duration.ofSeconds(3)
+    deadline: Duration = Duration.ofSeconds(3),
+    fanOut: Int = 64
 ) {
 
     // A thread per send: they spend their time waiting on the network, which is what virtual threads are for.
     private val threads = Executors.newVirtualThreadPerTaskExecutor()
+    private val sending = Semaphore(fanOut)
 
     def subscribe(subscription: Subscription): Unit = subscriptions.add(subscription)
 
@@ -66,10 +72,20 @@ class Live(
         val message = ujson.write(ujson.Obj("changed" -> matchId))
 
         val watchers = within(until, s"finding who watches match '$matchId'")(start(subscriptions.watching(matchId)))
-        val sends = watchers.getOrElse(Nil).map { s =>
-            start(if (!channel.send(s.connectionId, message)) subscriptions.remove(s.connectionId))
-        }
+        val sends = watchers.getOrElse(Nil).map(s => start(inTurn(push(s, message))))
         settle(until, sends, s"pushing a change in match '$matchId'")
+    }
+
+    private def push(watcher: Subscription, message: String): Unit =
+        if (!channel.send(watcher.connectionId, message)) subscriptions.remove(watcher.connectionId)
+
+    /** `work` once fewer than `fanOut` others are out. A send cancelled at the deadline while it waits is interrupted
+      * out of the wait, so one that never got its turn is never made.
+      */
+    private def inTurn(work: => Unit): Unit = {
+        sending.acquire()
+        try work
+        finally sending.release()
     }
 
     /** Waits for `sends` until `until`, then cancels whatever is left in one pass — no send is waited on past the
