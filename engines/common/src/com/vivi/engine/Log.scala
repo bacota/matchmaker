@@ -1,4 +1,4 @@
-package com.vivi.rps
+package com.vivi.engine
 
 /** Writes a failure to stderr, with its cause chain, as one record.
   *

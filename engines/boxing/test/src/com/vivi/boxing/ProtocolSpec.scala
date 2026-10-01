@@ -2,20 +2,16 @@ package com.vivi.boxing
 
 import munit.FunSuite
 import upickle.default.{read, write}
-import com.vivi.matchmaker.engine.{
-    EngineJson,
-    CreateGameRequest => MmCreateGameRequest,
-    CreateGameResponse => MmCreateGameResponse,
-    GameStatusResponse => MmGameStatusResponse
-}
+import com.vivi.matchmaker.engine.{EngineJson, GameStatusResponse => MmGameStatusResponse}
 import com.vivi.matchmaker.api.Json
 import com.vivi.matchmaker.model.ParticipantId
+import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker}
 
-/** The one place the engine and matchmaker are compared directly: every message is written by one side and read by the
-  * other.
+/** What this engine actually sends matchmaker, read back with matchmaker's own classes: a status answer from a bout in
+  * progress, and results with a bout's scores.
   *
-  * What this engine adds to the other two engines' versions of this suite is the character: a create request whose
-  * seats carry a character id and state, and the state write the engine makes once a fighter is built.
+  * The wire types themselves are compared in `com.vivi.engine.ProtocolSpec`, with messages built by hand — the
+  * characters a create request carries and the state write the engine makes once a fighter is built among them.
   *
   * A failure here means the wire format has changed. Fixing it means changing `Protocol` to match.
   */
@@ -48,35 +44,6 @@ class ProtocolSpec extends FunSuite {
         engine
     }
 
-    test("matchmaker's create request, characters and all, reads as the engine's") {
-        val fromMatchmaker = MmCreateGameRequest(
-          matchId = create.matchId,
-          gameName = create.gameName,
-          isPublic = create.isPublic,
-          parameters = create.parameters,
-          settings = create.settings,
-          timeLimitSeconds = create.timeLimitSeconds,
-          players = create.players.map(p =>
-              com.vivi.matchmaker.engine
-                  .EnginePlayer(p.cognitoId, p.participantId, p.role, p.characterId, p.characterState)
-          ),
-          moveCallbackUrl = create.moveCallbackUrl,
-          resultsCallbackUrl = create.resultsCallbackUrl
-        )
-
-        assertEquals(read[Protocol.CreateGameRequest](write(fromMatchmaker)), create)
-    }
-
-    test("the engine's create response reads as matchmaker's") {
-        val response =
-            Protocol.CreateGameResponse("http://engine/status", "http://engine/play", Some("http://engine/board"))
-        val asMatchmaker = read[MmCreateGameResponse](write(response))
-
-        assertEquals(asMatchmaker.statusUrl, response.statusUrl)
-        assertEquals(asMatchmaker.playUrl, response.playUrl)
-        assertEquals(asMatchmaker.publicUrl, response.publicUrl)
-    }
-
     test("a status answer mid-round reads as matchmaker's, turns and all") {
         val status = fought("sub-alice" -> Allocation(5, 0, 0)).status("m-1").toOption.get
         val asMatchmaker = read[MmGameStatusResponse](write(status))
@@ -85,19 +52,6 @@ class ProtocolSpec extends FunSuite {
         assertEquals(asMatchmaker.participants.map(p => p.participantId -> p.pending), List(11L -> false, 22L -> true))
         assertEquals(asMatchmaker.turns.map(_.participantId), List(11L))
         assertEquals(asMatchmaker.turns.head.startedAt, status.turns.head.startedAt)
-    }
-
-    test("a move callback that starts a new round, naming both corners, reads as matchmaker's MoveNotification") {
-        val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
-        val notification = Protocol.MoveNotification(11L, List(11L, 22L), at, at.minusSeconds(90))
-        val asMatchmaker =
-            read[Json.MoveNotification](write(notification))(using Json.given_ReadWriter_MoveNotification)
-
-        assertEquals(asMatchmaker.participantId, ParticipantId(11L))
-        // The mover among them: matchmaker clears the mover first and then makes `next` pending, so
-        // naming it is how its clock restarts for the next round.
-        assertEquals(asMatchmaker.next, List(ParticipantId(11L), ParticipantId(22L)))
-        assertEquals(asMatchmaker.startedAt, notification.startedAt)
     }
 
     test("the engine's results callback reads as matchmaker's MatchResults, scores and all") {
@@ -112,58 +66,5 @@ class ProtocolSpec extends FunSuite {
         assertEquals(winner.scores("outcome").str, "win")
         assertEquals(winner.scores("method").str, "points")
         assertEquals(asMatchmaker.results.filterNot(_.isWinner).map(_.rank), List(2))
-    }
-
-    test("the fighter the engine saves reads as matchmaker's character-state request") {
-        val request = Protocol.UpdateStateRequest(Fighter.toState(Fighter(4, 6, 5, 6, 4)))
-        val asMatchmaker =
-            read[Json.UpdateStateRequest](write(request))(using Json.given_ReadWriter_UpdateStateRequest)
-
-        assertEquals(asMatchmaker.state, request.state)
-        // And what matchmaker then hands back in a later create request is a fighter again.
-        assertEquals(Fighter.fromState(asMatchmaker.state), Some(Fighter(4, 6, 5, 6, 4)))
-    }
-
-    test("a numbered move callback reads as matchmaker's MoveNotification, state and all") {
-        val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
-        val notification =
-            Protocol.MoveNotification(
-              11L,
-              Nil,
-              at,
-              at.minusSeconds(90),
-              Some(Protocol.MoveState(3L, List(Protocol.PendingSeat(22L, at))))
-            )
-        val asMatchmaker =
-            read[Json.MoveNotification](write(notification))(using Json.given_ReadWriter_MoveNotification)
-
-        assertEquals(asMatchmaker.state.map(_.sequence), Some(3L))
-        assertEquals(
-          asMatchmaker.state.map(_.pending.map(p => (p.participantId, p.since))),
-          Some(List((ParticipantId(22L), at)))
-        )
-    }
-
-    test("a status answer's move number reads as matchmaker's") {
-        val status = Protocol.GameStatusResponse(completed = false, participants = Nil, sequence = Some(4L))
-        assertEquals(read[MmGameStatusResponse](write(status)).sequence, Some(4L))
-    }
-
-    test("results carrying the match's turns read as matchmaker's MatchResults, turns and all") {
-        val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
-        val results = Protocol.MatchResults(
-          Nil,
-          Some(
-            List(
-              Protocol.EngineTurn(11L, at.plusSeconds(10), Some(at)),
-              Protocol.EngineTurn(22L, at.plusSeconds(20), None)
-            )
-          )
-        )
-        val asMatchmaker = read[Json.MatchResults](write(results))(using Json.given_ReadWriter_MatchResults)
-        assertEquals(
-          asMatchmaker.turns.map(_.map(t => (t.participantId, t.takenAt, t.startedAt))),
-          Some(List((ParticipantId(11L), at.plusSeconds(10), Some(at)), (ParticipantId(22L), at.plusSeconds(20), None)))
-        )
     }
 }

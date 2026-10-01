@@ -1,4 +1,4 @@
-package com.vivi.tictactoe
+package com.vivi.engine
 
 import java.math.BigInteger
 import java.net.URI
@@ -119,7 +119,7 @@ class JwtVerifier(
         } catch { case NonFatal(_) => () /* keep whatever keys we had; the next token retries */ }
     }
 
-    private[tictactoe] def parseJwks(body: String): Map[String, java.security.PublicKey] = {
+    private[engine] def parseJwks(body: String): Map[String, java.security.PublicKey] = {
         val factory = KeyFactory.getInstance("RSA")
         ujson
             .read(body)("keys")

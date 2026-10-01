@@ -2,24 +2,8 @@ package com.vivi.boxing
 
 import java.time.Instant
 import scala.util.control.NonFatal
+import com.vivi.engine.{Log, MatchStore, Matchmaker, Refusal}
 import Protocol._
-
-/** Why a request was refused. Transport-independent so that the local server and the Lambda handler map it to a status
-  * code the same way.
-  */
-enum Refusal(val status: Int, val message: String) {
-    case NotFound(what: String) extends Refusal(404, what)
-
-    /** The caller could not be identified: no token, or one that does not verify. Signing in is the remedy. */
-    case Unauthenticated(what: String) extends Refusal(401, what)
-
-    /** The caller is known, and this is not theirs — no corner in this bout. Signing in again changes nothing. */
-    case NotYours(what: String) extends Refusal(403, what)
-    case Invalid(what: String) extends Refusal(400, what)
-
-    /** Something behind the engine — matchmaker — did not answer. The request was fine, and may be repeated. */
-    case Unavailable(what: String) extends Refusal(502, what)
-}
 
 /** What a successful plan produced, for the caller to answer with and for the callbacks below.
   *
@@ -44,7 +28,7 @@ case class PlanApplied(state: Bout, moved: Corner, plan: Plan, resolved: Option[
   *   called once with each new bout, which is how the local server prints the play url and who is in which corner.
   */
 class Engine(
-    store: MatchStore,
+    store: MatchStore[Bout],
     matchmaker: Matchmaker,
     baseUrl: String,
     now: () => Instant = () => Instant.now(),
@@ -157,7 +141,7 @@ class Engine(
             // bout only. That is the local, matchmaker-less case, and the only one.
             case None => Right(())
             case Some(url) =>
-                try Right(matchmaker.saveFighter(url, corner.characterId, fighter))
+                try Right(matchmaker.saveCharacterState(url, corner.characterId, Fighter.toState(fighter)))
                 catch {
                     case NonFatal(e) =>
                         Log.failure(e, s"saving fighter ${corner.characterId}")

@@ -1,29 +1,37 @@
-package com.vivi.boxing
+package com.vivi.engine
 
 import java.util.concurrent.ConcurrentHashMap
 import scala.jdk.CollectionConverters._
-import upickle.default.{read, write}
-import Bout.given
+import upickle.default.{read, write, ReadWriter}
 
 /** Raised when a match cannot be saved because someone else saved it first. The move that lost the race is retried
   * against the state that won it — see [[MatchStore.modify]].
   */
 class ConcurrentModification(matchId: String) extends RuntimeException(s"match $matchId changed underneath this update")
 
-/** Where matches live between requests.
+/** What a store needs of a match: the key it is kept under.
   *
-  * Two implementations for the two ways this engine runs: a map for the local server, whose process outlives every
-  * match it serves, and DynamoDB for Lambda, where nothing survives an invocation. The interface is the smaller of what
-  * those two can both do — get one match by id, and save it only if nobody else has changed it.
+  * Only an accessor, so a match that extends this is written to JSON exactly as it was before — which matters, because
+  * a DynamoDB table already holds matches in that shape.
   */
-trait MatchStore {
+trait HasMatchId {
+    def matchId: String
+}
 
-    def get(matchId: String): Option[Bout]
+/** Where matches live between requests, whatever the game.
+  *
+  * Two implementations for the two ways an engine runs: a map for the local server, whose process outlives every match
+  * it serves, and DynamoDB for Lambda, where nothing survives an invocation. The interface is the smaller of what those
+  * two can both do — get one match by id, and save it only if nobody else has changed it.
+  */
+trait MatchStore[M <: HasMatchId] {
+
+    def get(matchId: String): Option[M]
 
     /** Saves a new match. Fails if one with this id is already stored, since matchmaker generates a fresh match id per
-      * game and a collision would mean two matches sharing a table.
+      * game and a collision would mean two matches sharing one state.
       */
-    def create(m: Bout): Unit
+    def create(m: M): Unit
 
     /** Applies `f` to the stored match, saving whatever match it returns and answering with whatever else it returns.
       * `None` for the match means don't save — a rejected move changes nothing — and the answer is produced either way.
@@ -34,35 +42,37 @@ trait MatchStore {
       * stale one. So `f` must decide and nothing else; anything with an effect — a callback in particular — belongs
       * after this returns.
       */
-    def modify[A](matchId: String)(f: Bout => (Option[Bout], A)): Option[A]
+    def modify[A](matchId: String)(f: M => (Option[M], A)): Option[A]
 }
 
 object MatchStore {
 
-    /** How many times a losing writer re-reads and re-applies before giving up. Both corners plan every round at once,
-      * and may well submit at the same instant — which is the one contention this engine really expects. Needing more
-      * than this means something else.
+    /** How many times a losing writer re-reads and re-applies before giving up. Two players of one match moving at the
+      * same instant is the one contention an engine really expects — and in a game where both move at once, the
+      * ordinary case. Needing more than this means something else.
       */
     val maxAttempts = 5
 }
 
-class InMemoryMatchStore extends MatchStore {
+class InMemoryMatchStore[M <: HasMatchId] extends MatchStore[M] {
 
-    private val matches = ConcurrentHashMap[String, Bout]()
+    private val matches = ConcurrentHashMap[String, M]()
 
-    def get(matchId: String): Option[Bout] = Option(matches.get(matchId))
+    def get(matchId: String): Option[M] = Option(matches.get(matchId))
 
-    def create(m: Bout): Unit =
+    def create(m: M): Unit =
         if (matches.putIfAbsent(m.matchId, m) != null) throw ConcurrentModification(m.matchId)
 
-    def modify[A](matchId: String)(f: Bout => (Option[Bout], A)): Option[A] = {
+    def modify[A](matchId: String)(f: M => (Option[M], A)): Option[A] = {
         // compute() holds the map's lock for the key, so read-decide-write is atomic here and the
         // retry the DynamoDB store needs has nothing to do.
         var answer: Option[A] = None
         matches.compute(
           matchId,
           (_, stored) =>
-              if (stored == null) null
+              // Absent stays absent: answering with the null it was given, which is also how this
+              // type-checks for a generic M that the compiler cannot assume is nullable.
+              if (stored == null) stored
               else {
                   val (updated, a) = f(stored)
                   answer = Some(a)
@@ -72,16 +82,17 @@ class InMemoryMatchStore extends MatchStore {
         answer
     }
 
-    def all: List[Bout] = matches.values.asScala.toList
+    def all: List[M] = matches.values.asScala.toList
 }
 
 /** Matches in a DynamoDB table keyed by `matchId`, with the whole match as one JSON attribute.
   *
-  * Nothing here queries by anything but the match id, so modelling the rounds as attributes would buy nothing and would
-  * tie the table's shape to the game's. The `version` attribute is what makes [[modify]] safe: the conditional write
-  * fails rather than overwriting a move made between this container's read and its write.
+  * Nothing here queries by anything but the match id, so modelling a game's state as attributes would buy nothing and
+  * would tie the table's shape to the game's. The `version` attribute is what makes [[modify]] safe: the conditional
+  * write fails rather than overwriting a move made between this container's read and its write.
   */
-class DynamoDbMatchStore(http: SignedHttp, table: String, region: String) extends MatchStore {
+class DynamoDbMatchStore[M <: HasMatchId: ReadWriter](http: SignedHttp, table: String, region: String)
+    extends MatchStore[M] {
 
     private val endpoint = s"https://dynamodb.$region.amazonaws.com"
 
@@ -95,7 +106,7 @@ class DynamoDbMatchStore(http: SignedHttp, table: String, region: String) extend
           )
         )
 
-    private def load(matchId: String): Option[(Bout, Long)] = {
+    private def load(matchId: String): Option[(M, Long)] = {
         val response = call(
           "GetItem",
           ujson.Obj(
@@ -107,11 +118,11 @@ class DynamoDbMatchStore(http: SignedHttp, table: String, region: String) extend
           )
         )
         response.obj.get("Item").map { item =>
-            (read[Bout](item("state")("S").str), item("version")("N").str.toLong)
+            (read[M](item("state")("S").str), item("version")("N").str.toLong)
         }
     }
 
-    private def save(m: Bout, expected: Option[Long]): Unit = {
+    private def save(m: M, expected: Option[Long]): Unit = {
         val next = expected.getOrElse(0L) + 1
         val condition = expected match {
             case Some(v) =>
@@ -138,11 +149,11 @@ class DynamoDbMatchStore(http: SignedHttp, table: String, region: String) extend
         }
     }
 
-    def get(matchId: String): Option[Bout] = load(matchId).map(_._1)
+    def get(matchId: String): Option[M] = load(matchId).map(_._1)
 
-    def create(m: Bout): Unit = save(m, None)
+    def create(m: M): Unit = save(m, None)
 
-    def modify[A](matchId: String)(f: Bout => (Option[Bout], A)): Option[A] = {
+    def modify[A](matchId: String)(f: M => (Option[M], A)): Option[A] = {
         def attempt(remaining: Int): Option[A] =
             load(matchId).map { (current, version) =>
                 f(current) match {

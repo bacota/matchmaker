@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.util.concurrent.Executors
 import scala.jdk.CollectionConverters._
 import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
+import com.vivi.engine.{EngineConfig, EngineRequest, Log, PlayAuth}
 
 /** Runs the engine on a local port, with matches in memory and no AWS involved.
   *
@@ -60,7 +61,7 @@ object LocalServer {
           s"  identity  ${sys.env.getOrElse("GAME_EXTERNAL_ID", "<GAME_EXTERNAL_ID not set: matchmaker will refuse the callbacks>")}"
         )
 
-        Config.playAuth(sys.env.get, baseUrl) match {
+        EngineConfig.playAuth(sys.env.get, baseUrl) match {
             case _: PlayAuth.VerifiedToken =>
                 println(
                   s"  players   sign in against ${sys.env.getOrElse("HOSTED_LOGIN_URL", "?")}, tokens verified against ${sys.env

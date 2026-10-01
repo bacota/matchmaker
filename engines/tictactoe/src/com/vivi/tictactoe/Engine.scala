@@ -2,21 +2,8 @@ package com.vivi.tictactoe
 
 import java.time.Instant
 import scala.util.control.NonFatal
+import com.vivi.engine.{Log, MatchStore, Matchmaker, Refusal}
 import Protocol._
-
-/** Why a request was refused. Transport-independent so that the local server and the Lambda handler map it to a status
-  * code the same way.
-  */
-enum Refusal(val status: Int, val message: String) {
-    case NotFound(what: String) extends Refusal(404, what)
-
-    /** The caller could not be identified: no token, or one that does not verify. Signing in is the remedy. */
-    case Unauthenticated(what: String) extends Refusal(401, what)
-
-    /** The caller is known, and this is not theirs — no seat in this match. Signing in again changes nothing. */
-    case NotYours(what: String) extends Refusal(403, what)
-    case Invalid(what: String) extends Refusal(400, what)
-}
 
 /** What a successful move produced, for the caller to answer with and for the callbacks below.
   *
@@ -39,7 +26,7 @@ case class MoveApplied(state: TicTacToeMatch, moved: Seat, next: Option[Seat], f
   *   called once with each new match, which is how the local server prints the board's url and who is seated where.
   */
 class Engine(
-    store: MatchStore,
+    store: MatchStore[TicTacToeMatch],
     matchmaker: Matchmaker,
     baseUrl: String,
     now: () => Instant = () => Instant.now(),
@@ -181,6 +168,10 @@ class Engine(
     /** Steps 2 and 3, in that order: every move is reported, and the move that ends the match is followed by the
       * results.
       *
+      * `next` is the seat whose turn it now is, and `startedAt` is the move before this one, or the match's creation
+      * for the opening move. That is what matchmaker would have guessed — but a guess is only right for a game of
+      * alternating turns, and `engines/rps` is not one.
+      *
       * Sending the move callback for the last move too — with nobody in `next` — is deliberate: matchmaker clears the
       * mover's pending flag from it, and the results callback that follows completes every seat. A results callback
       * alone would leave the sequence uneven for no gain.
@@ -227,6 +218,8 @@ class Engine(
 
     /** The finished match as matchmaker records it: rank 1 for the winner and 2 for the loser, or rank 1 for both in a
       * draw, which is what a rank means when nobody placed above anyone else.
+      *
+      * The scores are `outcome` (win/loss/draw) and `moves` (how many marks the seat placed).
       */
     def resultsOf(m: TicTacToeMatch): MatchResults =
         MatchResults(

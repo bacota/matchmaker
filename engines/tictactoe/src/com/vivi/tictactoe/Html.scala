@@ -1,6 +1,7 @@
 package com.vivi.tictactoe
 
 import upickle.default.write
+import com.vivi.engine.LoginConfig
 import Protocol.given
 
 /** The board page, and the page the hosted login redirects back to.

@@ -2,21 +2,8 @@ package com.vivi.rps
 
 import java.time.Instant
 import scala.util.control.NonFatal
+import com.vivi.engine.{Log, MatchStore, Matchmaker, Refusal}
 import Protocol._
-
-/** Why a request was refused. Transport-independent so that the local server and the Lambda handler map it to a status
-  * code the same way.
-  */
-enum Refusal(val status: Int, val message: String) {
-    case NotFound(what: String) extends Refusal(404, what)
-
-    /** The caller could not be identified: no token, or one that does not verify. Signing in is the remedy. */
-    case Unauthenticated(what: String) extends Refusal(401, what)
-
-    /** The caller is known, and this is not theirs — no seat in this match. Signing in again changes nothing. */
-    case NotYours(what: String) extends Refusal(403, what)
-    case Invalid(what: String) extends Refusal(400, what)
-}
 
 /** What a successful throw produced, for the caller to answer with and for the callbacks below.
   *
@@ -46,7 +33,7 @@ case class MoveApplied(state: RpsMatch, moved: Seat, finished: Boolean, turn: Th
   *   called once with each new match, which is how the local server prints the play url and who is seated where.
   */
 class Engine(
-    store: MatchStore,
+    store: MatchStore[RpsMatch],
     matchmaker: Matchmaker,
     baseUrl: String,
     now: () => Instant = () => Instant.now(),

@@ -1,4 +1,4 @@
-package com.vivi.tictactoe
+package com.vivi.engine
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
