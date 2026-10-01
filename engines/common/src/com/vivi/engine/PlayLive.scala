@@ -92,8 +92,15 @@ class PlayLive(storagePrefix: String) {
       if (fetching) { again = true; return; }
       fetching = true;
       try {
-        do { again = false; await refresh(); } while (again);
+        do { again = false; await settled(refresh()); } while (again);
       } finally { fetching = false; }
+    }
+
+    /* A refresh, or ten seconds, whichever is first. A fetch has no deadline of its own, and one
+     * that never answers — a phone changing networks — must not hold every later refresh behind
+     * it for good. If it does answer late, its ticket drops it under anything newer. */
+    function settled(refreshing) {
+      return Promise.race([refreshing, new Promise(resolve => setTimeout(resolve, 10000))]);
     }
     function wanted() { return !!liveUrl && toggle.checked && active(); }
 

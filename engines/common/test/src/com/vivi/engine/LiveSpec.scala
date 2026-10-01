@@ -72,6 +72,32 @@ class LiveSpec extends FunSuite {
         assert(!delivered.contains("c-stalled"))
     }
 
+    /* An outage on a crowded board: every send fails or stalls. Reported once, not once per watcher —
+     * writing hundreds of stack traces would itself outlast the deadline. */
+    test("a crowd of failed and late pushes is reported as one record, within the deadline") {
+        val failing = new LiveChannel {
+            def send(connectionId: String, message: String): Boolean =
+                if (connectionId.startsWith("stalled")) { Thread.sleep(60000); true }
+                else throw AwsError("the management api is down")
+        }
+        val live = Live("ws://x", PlayAuth.Trusted, InMemorySubscriptions(), failing, java.time.Duration.ofMillis(300))
+        (1 to 300).foreach(i => live.subscribe(Subscription(s"failing-$i", "m-crowd")))
+        (1 to 300).foreach(i => live.subscribe(Subscription(s"stalled-$i", "m-crowd")))
+
+        val captured = java.io.ByteArrayOutputStream()
+        val original = System.err
+        System.setErr(java.io.PrintStream(captured, true))
+        val started = System.nanoTime()
+        try live.changed("m-crowd")
+        finally System.setErr(original)
+        val took = java.time.Duration.ofNanos(System.nanoTime() - started)
+
+        assert(took.toMillis < 1500, s"took $took")
+        val records = captured.toString.linesIterator.filter(_.startsWith("ERROR handling")).toList
+        assertEquals(records.size, 1, records.mkString("\n"))
+        assert(records.head.contains("300 of 600 failed and 300 were not done within PT0.3S"), records.head)
+    }
+
     test("a WebSocket API's connection events decode to the requests the local server builds") {
         def event(eventType: String, query: ujson.Value = ujson.Null) =
             ujson.Obj(

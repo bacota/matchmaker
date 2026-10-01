@@ -67,11 +67,33 @@ class Live(
 
         val watchers = within(until, s"finding who watches match '$matchId'")(start(subscriptions.watching(matchId)))
         val sends = watchers.getOrElse(Nil).map { s =>
-            s.connectionId -> start(if (!channel.send(s.connectionId, message)) subscriptions.remove(s.connectionId))
+            start(if (!channel.send(s.connectionId, message)) subscriptions.remove(s.connectionId))
         }
-        sends.foreach((connectionId, send) =>
-            within(until, s"pushing a change in match '$matchId' to '$connectionId'")(send)
-        )
+        settle(until, sends, s"pushing a change in match '$matchId'")
+    }
+
+    /** Waits for `sends` until `until`, then cancels whatever is left in one pass — no send is waited on past the
+      * deadline — and reports the failures and the late together, as one record carrying the first failure's trace.
+      * Once per change rather than once per watcher: a crowded board during an outage would otherwise spend longer
+      * writing stack traces than the deadline allows for sending.
+      */
+    private def settle(until: Long, sends: List[Future[?]], what: String): Unit = {
+        sends.foreach { send =>
+            val left = until - System.nanoTime()
+            // Its outcome, whatever it is, is read from the future below.
+            if (left > 0)
+                try send.get(left, TimeUnit.NANOSECONDS)
+                catch { case NonFatal(_) => () }
+        }
+        // `cancel` succeeds only on a send that is not yet done, so this counts exactly the late ones.
+        val late = sends.count(_.cancel(true))
+        val failures = sends.filter(_.state == Future.State.FAILED).map(_.exceptionNow)
+
+        if (failures.nonEmpty || late > 0)
+            Log.failure(
+              failures.headOption.getOrElse(TimeoutException(s"not done within $deadline")),
+              s"$what: ${failures.size} of ${sends.size} failed and $late were not done within $deadline"
+            )
     }
 
     private def start[A](work: => A): Future[A] = threads.submit((() => work): Callable[A])
