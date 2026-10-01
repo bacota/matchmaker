@@ -4,6 +4,7 @@ import com.vivi.engine.{
     EngineRequest,
     EngineResponse,
     InMemoryMatchStore,
+    Live,
     PlayAuth,
     RecordingMatchmaker,
     RoutesContract
@@ -16,8 +17,17 @@ class RoutesContractSpec extends RoutesContract {
 
     private val average = Fighter(5, 5, 5, 5, 5)
 
-    protected def routes(playAuth: PlayAuth, matchmakerKey: Option[String]): EngineRequest => EngineResponse =
-        Routes(Engine(InMemoryMatchStore[Bout](), RecordingMatchmaker(), "http://engine.test"), playAuth, matchmakerKey)
+    protected def routes(
+        playAuth: PlayAuth,
+        matchmakerKey: Option[String],
+        live: Option[Live]
+    ): EngineRequest => EngineResponse =
+        Routes(
+          Engine(InMemoryMatchStore[Bout](), RecordingMatchmaker(), "http://engine.test"),
+          playAuth,
+          matchmakerKey,
+          live
+        )
 
     protected def createRequest(matchId: String, isPublic: Boolean): Protocol.CreateGameRequest =
         Protocol.CreateGameRequest(

@@ -1,7 +1,7 @@
 package com.vivi.boxing
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, SignIn}
+import com.vivi.engine.{LoginConfig, PlayLive, SignIn}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -22,10 +22,14 @@ object Html {
     /** The sign-in this page offers, keeping its tokens under the game's name as it always has. */
     val signIn: SignIn = SignIn("boxing")
 
+    /** Play Live, its choice remembered under the same name. */
+    val playLive: PlayLive = PlayLive("boxing")
+
     def board(
         matchId: String,
         state: Option[Protocol.StateResponse],
         login: Option[LoginConfig],
+        liveUrl: Option[String] = None,
         publicView: Boolean = false
     ): String =
         s"""<!doctype html>
@@ -80,6 +84,7 @@ object Html {
   td .plans { display: block; opacity: .7; font-size: .75rem; }
   tfoot td, tfoot th { font-weight: 700; border-bottom: 0; }
 ${SignIn.css}
+${PlayLive.css}
   #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
 </style>
 </head>
@@ -113,6 +118,7 @@ ${SignIn.css}
   </section>
 
   <div id="signin" hidden></div>
+  ${PlayLive.markup}
   <div id="error" role="alert"></div>
 
   <section aria-label="corners"><div id="corners"></div></section>
@@ -121,6 +127,7 @@ ${SignIn.css}
 <script>
 ${signIn.authScript(login)}
 ${signIn.signInScript}
+${playLive.script(liveUrl, matchId)}
 
   const publicView = $publicView;
   // Urls are derived from this page's own, not built from a base: behind API Gateway the path
@@ -408,9 +415,9 @@ ${signIn.signInScript}
 
   render();
   if (!state && mayFetch()) refresh();
-  // Polled to the end: the other corner's plan, and so the round's result, arrive while this page
-  // is doing nothing.
-  setInterval(() => { if (mayFetch() && (!state || !state.completed)) refresh(); }, 2000);
+  // Kept current to the end — polled, or with Play Live told: the other corner's plan, and so the
+  // round's result, arrive while this page is doing nothing.
+  keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
 </script>
 </body>
 </html>

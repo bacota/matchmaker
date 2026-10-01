@@ -126,6 +126,9 @@ Sign-in, the three `PLAY_AUTH` modes and the environment variables are exactly a
 `tictactoe`. See `engines/tictactoe/README.md` under "Who a player is". The default port here is
 8092.
 
+Play Live is the same too (`engines/tictactoe/README.md`, "Play Live"), and served locally on 8192.
+Building a fighter is pushed to the other corner like a plan is.
+
 ## Deployed
 
 The boxing engine uses `terraform/modules/engine`, the module shared by every bundled engine, with one

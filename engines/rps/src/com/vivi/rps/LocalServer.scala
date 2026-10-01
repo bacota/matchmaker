@@ -22,10 +22,11 @@ object LocalServer {
     def main(args: Array[String]): Unit =
         // 8091 rather than tic-tac-toe's 8090, so that both engines can be run against one
         // matchmaker at once — which is the only way to see two games in one player's lists.
-        LocalEngineServer.run("rock-paper-scissors", defaultPort = 8091) { baseUrl =>
+        LocalEngineServer.run("rock-paper-scissors", defaultPort = 8091) { (baseUrl, live) =>
             Config.routes(
               sys.env.get,
               defaultBaseUrl = Some(baseUrl),
+              live = Some(live),
               announce = m => {
                   println(s"match ${m.matchId} created: $baseUrl/matches/${m.matchId}/play")
                   m.seats.foreach(seat =>

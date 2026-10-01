@@ -22,10 +22,11 @@ object LocalServer {
     def main(args: Array[String]): Unit =
         // 8092, after tic-tac-toe's 8090 and rock-paper-scissors' 8091, so that all three engines can
         // be run against one matchmaker at once.
-        LocalEngineServer.run("boxing", defaultPort = 8092) { baseUrl =>
+        LocalEngineServer.run("boxing", defaultPort = 8092) { (baseUrl, live) =>
             Config.routes(
               sys.env.get,
               defaultBaseUrl = Some(baseUrl),
+              live = Some(live),
               announce =
                   m => {
                       println(s"match ${m.matchId} created: $baseUrl/matches/${m.matchId}/play")

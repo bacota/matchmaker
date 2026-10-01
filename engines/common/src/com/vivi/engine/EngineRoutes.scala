@@ -20,6 +20,11 @@ import Protocol.given
   * Every engine serves the same routes. What a game supplies is what is its own: the state a player is shown and the
   * page that shows it, what its moves look like on the wire, and any route only it has.
   *
+  * With `live`, it also serves Play Live: a connection is admitted on the same terms as the state route — a seat in the
+  * match, or a public match's board — and every successful player `POST` on a match is followed by a push to whoever is
+  * watching it. A push follows the route rather than the move, so a route only one game has, like boxing's fighter, is
+  * pushed without that game having to say so.
+  *
   * @tparam V
   *   the game's play state, as the play page and a scripted client read it
   */
@@ -27,7 +32,8 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
     engine: GameEngine[M, S, ?],
     playAuth: PlayAuth,
     matchmakerKey: Option[String],
-    signIn: SignIn
+    signIn: SignIn,
+    live: Option[Live] = None
 ) extends (EngineRequest => EngineResponse) {
 
     /** The state a play page renders. `seat` is the viewer's own, absent on the public board — and what a viewer may
@@ -35,8 +41,16 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
       */
     protected def stateOf(m: M, seat: Option[S]): V
 
-    /** The play page, with `state` inlined when the viewer has a seat. `publicView` is the public board. */
-    protected def page(matchId: String, state: Option[V], login: Option[LoginConfig], publicView: Boolean): String
+    /** The play page, with `state` inlined when the viewer has a seat. `publicView` is the public board, and `liveUrl`
+      * where its Play Live connection is opened — absent when this engine offers none, and the switch with it.
+      */
+    protected def page(
+        matchId: String,
+        state: Option[V],
+        login: Option[LoginConfig],
+        liveUrl: Option[String],
+        publicView: Boolean
+    ): String
 
     /** `POST /matches/{matchId}/moves`: the body read as one of this game's moves, and made by the caller. Answered,
       * when it is made, with [[moved]].
@@ -67,15 +81,29 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                 }
         }
 
-    def apply(request: EngineRequest): EngineResponse =
-        try route(request)
-        catch {
-            case e: ConcurrentModification => error(409, e.getMessage)
-            case NonFatal(e)               =>
-                // A bug or a failure of something behind the engine. The caller gets the shape of it;
-                // the trace has to be on stderr or the 500 is not diagnosable.
-                Log.failure(e, s"${request.method} ${request.path}")
-                error(500, s"${e.getClass.getSimpleName}: ${e.getMessage}")
+    def apply(request: EngineRequest): EngineResponse = {
+        val response =
+            try route(request)
+            catch {
+                case e: ConcurrentModification => error(409, e.getMessage)
+                case NonFatal(e)               =>
+                    // A bug or a failure of something behind the engine. The caller gets the shape of it;
+                    // the trace has to be on stderr or the 500 is not diagnosable.
+                    Log.failure(e, s"${request.method} ${request.path}")
+                    error(500, s"${e.getClass.getSimpleName}: ${e.getMessage}")
+            }
+        pushIfChanged(request, response)
+        response
+    }
+
+    /* Every player route that changes a match is a POST on it, and only a success changed anything.
+     * Told after the change is committed, as matchmaker's callbacks are; `Live.changed` swallows its
+     * own failures, since the move it reports already stands. */
+    private def pushIfChanged(request: EngineRequest, response: EngineResponse): Unit =
+        (request.method.toUpperCase, request.segments) match {
+            case ("POST", "matches" :: matchId :: _ :: _) if response.status / 100 == 2 =>
+                live.foreach(_.changed(matchId))
+            case _ => ()
         }
 
     private def route(request: EngineRequest): EngineResponse =
@@ -124,7 +152,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                     case Right(m) =>
                         val seat = playAuth.callerOf(request).toOption.flatMap(engine.seatOf(m, _).toOption)
                         val state = Option.when(seat.isDefined)(stateOf(m, seat))
-                        html(page(matchId, state, playAuth.login, publicView = false))
+                        html(page(matchId, state, playAuth.login, live.map(_.url), publicView = false))
                 }
 
             case ("GET", "matches" :: matchId :: "state" :: Nil) =>
@@ -148,12 +176,26 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             // The public board, for a match created public. Nobody's seat, so no token, no moves, and
             // no sight of anything a seat would hide — see `stateOf`.
             case ("GET", "matches" :: matchId :: "board" :: Nil) =>
-                withPublic(matchId)(m => html(page(matchId, Some(stateOf(m, None)), None, publicView = true)))
+                withPublic(matchId)(m =>
+                    html(page(matchId, Some(stateOf(m, None)), None, live.map(_.url), publicView = true))
+                )
 
             case ("GET", "matches" :: matchId :: "board" :: "state" :: Nil) =>
                 withPublic(matchId)(m => EngineResponse(200, write(stateOf(m, None))))
 
             case ("GET", "health" :: Nil) => EngineResponse(200, """{"status":"ok"}""")
+
+            // Play Live. Only a connection's own events carry its id; see `EngineRequest`.
+            case ("CONNECT", "live" :: Nil) if request.connectionId.isDefined =>
+                connect(request, request.connectionId.get)
+
+            case ("DISCONNECT", "live" :: Nil) if request.connectionId.isDefined =>
+                live.foreach(_.unsubscribe(request.connectionId.get))
+                EngineResponse(200, "{}")
+
+            // The page's keep-alive, should one reach the function: deployed, the gateway answers it
+            // without invoking anything.
+            case ("MESSAGE", "live" :: Nil) if request.connectionId.isDefined => EngineResponse(200, "{}")
 
             case key if extra.isDefinedAt(key) => extra(key)(request)
 
@@ -169,6 +211,37 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
         playAuth.callerOf(request).flatMap(f) match {
             case Left(refusal)   => error(refusal)
             case Right(response) => response
+        }
+
+    /** Admits a Play Live connection to `?match=`, as a player — whose token comes as `?token=`, since a browser cannot
+      * put a header on a WebSocket — or, with `?board=1`, as a watcher of a public match. Refused on exactly the terms
+      * the state routes refuse, and a refusal here refuses the connection.
+      */
+    private def connect(request: EngineRequest, connectionId: String): EngineResponse =
+        live match {
+            case None => error(404, "this engine does not offer Play Live")
+            case Some(l) =>
+                val withToken = request.query.get("token").filter(_.nonEmpty) match {
+                    case Some(token) => request.copy(headers = request.headers + ("authorization" -> s"Bearer $token"))
+                    case None        => request
+                }
+                val admitted =
+                    for {
+                        matchId <- request.query
+                            .get("match")
+                            .filter(_.nonEmpty)
+                            .toRight(Refusal.Invalid("say which match to watch with ?match="))
+                        m <- engine.read(matchId)
+                        _ <-
+                            if (request.query.get("board").contains("1"))
+                                Either.cond(m.isPublic, (), Refusal.NotYours(s"match '$matchId' is not public"))
+                            else l.auth.callerOf(withToken).flatMap(engine.seatOf(m, _))
+                    } yield l.subscribe(Subscription(connectionId, matchId))
+
+                admitted match {
+                    case Left(refusal) => error(refusal)
+                    case Right(_)      => EngineResponse(200, "{}")
+                }
         }
 
     private def withSeat(request: EngineRequest, matchId: String)(f: (M, S) => EngineResponse): EngineResponse = {

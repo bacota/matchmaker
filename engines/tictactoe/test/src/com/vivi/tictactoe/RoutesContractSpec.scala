@@ -4,6 +4,7 @@ import com.vivi.engine.{
     EngineRequest,
     EngineResponse,
     InMemoryMatchStore,
+    Live,
     PlayAuth,
     RecordingMatchmaker,
     RoutesContract
@@ -12,11 +13,16 @@ import com.vivi.engine.{
 /** The routes every engine serves, as tic-tac-toe serves them. What a move does is `RoutesSpec`'s. */
 class RoutesContractSpec extends RoutesContract {
 
-    protected def routes(playAuth: PlayAuth, matchmakerKey: Option[String]): EngineRequest => EngineResponse =
+    protected def routes(
+        playAuth: PlayAuth,
+        matchmakerKey: Option[String],
+        live: Option[Live]
+    ): EngineRequest => EngineResponse =
         Routes(
           Engine(InMemoryMatchStore[TicTacToeMatch](), RecordingMatchmaker(), "http://engine.test"),
           playAuth,
-          matchmakerKey
+          matchmakerKey,
+          live
         )
 
     protected def createRequest(matchId: String, isPublic: Boolean): Protocol.CreateGameRequest =

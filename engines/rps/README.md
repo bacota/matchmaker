@@ -86,6 +86,12 @@ curl -s -X POST "http://localhost:8091/matches/$MATCH/moves?as=$SUB" \
      -H 'content-type: application/json' -d '{"shape":"r"}'
 ```
 
+## Play Live
+
+The page's **Play Live** switch, which swaps the two-second poll for a push, works here exactly as
+in every engine: see `engines/tictactoe/README.md` under "Play Live". Locally it is served on
+8191.
+
 ## Who a player is
 
 Exactly as in `tictactoe`, and deliberately unchanged: the play page signs in with **matchmaker's

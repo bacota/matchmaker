@@ -112,13 +112,39 @@ the redirect to come back — deployed, the terraform adds the engine's own call
 | `HOSTED_LOGIN_URL` | Base url of the hosted login, used for sign-up and password reset. |
 | `PLAY_AUTH` | `gateway`, `verify` or `trusted`, overriding the choice above. |
 | `MATCHMAKER_API_KEY` | The secret shared with matchmaker: required on `POST /games` and `GET /matches/{id}/status`, and sent on the callbacks. Optional locally, required in Lambda. |
+| `LIVE_URL`, `LIVE_ENDPOINT`, `LIVE_TABLE` | Play Live, deployed: the WebSocket url the page connects to, the stage url the engine pushes through, and the table of open connections. Set by the terraform; without `LIVE_URL` the page offers no switch. |
+| `LIVE_PORT` | Play Live's port when run locally. Defaults to the engine's port plus 100. |
+
+## Play Live
+
+Every engine's play page and public board carry a **Play Live** switch. It is off by default, the
+player turns it on, and the choice is remembered in the browser under the game's name. All of it is
+in `engines.common` (`Live`, `PlayLive`, `LocalLiveServer`); a game gives it nothing.
+
+- **Off**, the page polls its state every two seconds, as it always has.
+- **On**, the page opens a WebSocket and is sent `{"changed":"<matchId>"}` whenever a successful
+  player `POST` lands on the match — a move, or a route only one game has, like boxing's
+  fighter. It answers by fetching its state through the ordinary `state` route, so nothing a seat
+  would hide ever travels down the connection. It still checks once a minute in case a push was
+  lost, sends a keep-alive every five minutes, and falls back to two-second polling while the
+  connection is down, reconnecting with a growing pause.
+
+A connection is admitted on the state route's terms: a seat in the match (`?match=…&token=…`, the
+ID token in the url because a browser cannot put a header on a WebSocket), or a public match's
+board (`?match=…&board=1`). Deployed there is no JWT authorizer on a WebSocket API, so the engine
+verifies the token itself on connect.
+
+Locally the engine serves Play Live on its own port, its HTTP port plus 100 — `ws://localhost:8190/live`
+for this engine — since the JDK's HTTP server cannot upgrade a connection. The startup banner prints it.
 
 ## Deployed
 
 `terraform/modules/engine` — the module every bundled engine is deployed with — puts it behind an API Gateway HTTP API with matches in DynamoDB and
 three kinds of route: the matchmaker-facing ones (`POST /games`, `GET /matches/{id}/status`),
 which require the API key matchmaker and this engine share, the player's (`state`, `moves`) under
-a JWT authorizer on matchmaker's user pool, and the page shells open. The root module generates
+a JWT authorizer on matchmaker's user pool, and the page shells open. Beside it, a WebSocket API for Play
+Live, with its connections in a second table; the gateway answers the page's keep-alive itself, so
+only a connect, a disconnect and a push cost a Lambda invocation. The root module generates
 that key and gives it to both sides, so there is nothing to copy; it also adds the engine's
 `/auth/callback` to the user pool client's callback urls.
 
