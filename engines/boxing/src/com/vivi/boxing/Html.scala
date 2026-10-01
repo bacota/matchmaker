@@ -141,6 +141,8 @@ ${signInScript}
   const fighterUrl = here + "/fighter" + query;
 
   let state = ${state.map(s => scriptSafe(write(s))).getOrElse("null")};
+  // Set by a 403: signed in, but not to a corner of this bout. See `send`.
+  let noCorner = false;
 
   const traits = [
     ["strength", "Strength", "Added twice to power."],
@@ -240,7 +242,9 @@ ${signInScript}
 
     // Offered whenever there is a login to start and no corner to show for it — including after a
     // token expires mid-bout, which is what turns a 401 back into a form.
-    signin.hidden = !login || !!(state && state.you);
+    // Not offered to a player already signed in with no corner here: another sign-in would be the
+    // same player, refused the same way.
+    signin.hidden = !login || noCorner || !!(state && state.you);
 
     renderCorners();
     renderCard();
@@ -371,18 +375,29 @@ ${signInScript}
     if (response && response.ok) { state = await response.json(); render(); }
   }
 
-  /* Every call carries the ID token when there is one. A 401 means the session is over rather
-   * than the plan being wrong, so the token is dropped and the page offers a sign-in again. */
+  /* Every call carries the ID token when there is one, and the two refusals mean different things.
+   *
+   * A 401 is "who are you?": the session is over or never began, so the token is dropped and the
+   * page offers a sign-in again. A 403 is "not yours": the player is signed in, just not to a
+   * corner of this bout. Their session is kept — it is good for every bout they are in — and the
+   * page says so and stops asking, since signing in again would not give them a corner. */
   async function send(url, init) {
     const token = await freshIdToken();
     const headers = Object.assign({}, init.headers || {}, token ? { authorization: "Bearer " + token } : {});
     try {
       const response = await fetch(url, Object.assign({}, init, { headers }));
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401) {
         if (token) clearSession();
         state = null;
         render();
-        show(login ? "sign in to fight this bout" : "you have no corner in this bout");
+        show(login ? "sign in to fight this bout" : "say who you are with ?as=<cognito sub>");
+        return null;
+      }
+      if (response.status === 403) {
+        noCorner = true;
+        state = null;
+        render();
+        show("you have no corner in this bout");
         return null;
       }
       return response;
@@ -394,8 +409,9 @@ ${signInScript}
 
   function signedIn() { refresh(); }
 
-  /* With a login configured and no session the answer is a 401, so there is no point asking. */
-  function mayFetch() { return !login || publicView || isSignedIn(); }
+  /* With a login configured and no session the answer is a 401, so there is no point asking; and a
+   * signed-in player with no corner here will be refused every time. */
+  function mayFetch() { return !noCorner && (!login || publicView || isSignedIn()); }
 
   render();
   if (!state && mayFetch()) refresh();

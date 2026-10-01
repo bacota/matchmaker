@@ -9,6 +9,11 @@ import Protocol._
   */
 enum Refusal(val status: Int, val message: String) {
     case NotFound(what: String) extends Refusal(404, what)
+
+    /** The caller could not be identified: no token, or one that does not verify. Signing in is the remedy. */
+    case Unauthenticated(what: String) extends Refusal(401, what)
+
+    /** The caller is known, and this is not theirs — no corner in this bout. Signing in again changes nothing. */
     case NotYours(what: String) extends Refusal(403, what)
     case Invalid(what: String) extends Refusal(400, what)
 

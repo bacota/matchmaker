@@ -117,10 +117,29 @@ class RoutesSpec extends FunSuite {
     test("the state and move routes refuse a caller with no seat") {
         val (routes, _, _) = fixture()
         assertEquals(get(routes, "/matches/m-9/state", as("sub-carol")).status, 403)
-        assertEquals(get(routes, "/matches/m-9/state").status, 403)
         assertEquals(
           routes(EngineRequest("POST", "/matches/m-9/moves", as("sub-carol"), write(Protocol.MoveRequest(0)))).status,
           403
+        )
+    }
+
+    /* The page tells these apart: a 401 drops the session and offers a sign-in, which can help; a
+     * 403 keeps it and says there is no seat here, which a sign-in cannot change. */
+    test("a caller who cannot be identified is refused with 401, not 403") {
+        val (routes, _, _) = fixture()
+        assertEquals(get(routes, "/matches/m-9/state").status, 401)
+
+        // Deployed: no claims means no authorizer vouched for anyone; a stranger's claims are a 403.
+        val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1")
+        val (deployed, _, _) = fixture(playAuth = PlayAuth.GatewayClaims(Some(login)))
+        assertEquals(deployed(EngineRequest("GET", "/matches/m-9/state")).status, 401)
+        assertEquals(
+          deployed(EngineRequest("GET", "/matches/m-9/state", claims = Map("sub" -> "sub-carol"))).status,
+          403
+        )
+        assertEquals(
+          deployed(EngineRequest("GET", "/matches/m-9/state", claims = Map("sub" -> "sub-alice"))).status,
+          200
         )
     }
 

@@ -101,6 +101,8 @@ ${signInScript}
   // Present when the server already knew whose seat this is; null when the player has yet to
   // sign in, in which case the first fetch below fills it.
   let state = ${state.map(s => scriptSafe(write(s))).getOrElse("null")};
+  // Set by a 403: signed in, but not to a seat in this match. See `send`.
+  let noSeat = false;
 
   const grid = document.getElementById("grid");
   const cells = [];
@@ -135,7 +137,7 @@ ${signInScript}
 
     // Offered whenever there is a login to start and no seat to show for it — including after a
     // token expires mid-match, which is what turns a 401 back into a button.
-    signin.hidden = !login || (state && state.you);
+    signin.hidden = !login || noSeat || (state && state.you);
 
     document.getElementById("seats").innerHTML = state
       ? state.players.map(p => "<div>" + p.mark + " · " + escapeHtml(p.cognitoId) + (p.mark === (state.you || "") ? " (you)" : "") + "</div>").join("")
@@ -169,11 +171,22 @@ ${signInScript}
     const headers = Object.assign({}, init.headers || {}, token ? { authorization: "Bearer " + token } : {});
     try {
       const response = await fetch(url, Object.assign({}, init, { headers }));
-      if (response.status === 401 || response.status === 403) {
+      // A 401 is "who are you?": the session is over or never began, so it is dropped and a sign-in
+      // offered. A 403 is "not yours": signed in, just not to a seat here. The session is kept — it
+      // is good for every match the player is in — and the page stops asking, since another sign-in
+      // would be the same player refused the same way.
+      if (response.status === 401) {
         if (token) clearSession();
         state = null;
         render();
-        show(login ? "sign in to play this match" : "you have no seat in this match");
+        show(login ? "sign in to play this match" : "say who you are with ?as=<cognito sub>");
+        return null;
+      }
+      if (response.status === 403) {
+        noSeat = true;
+        state = null;
+        render();
+        show("you have no seat in this match");
         return null;
       }
       return response;
@@ -191,7 +204,7 @@ ${signInScript}
    * answer is a 401 — and asking every two seconds scrolls the console with them and, worse, kept
    * rebuilding the sign-in form under the player's cursor. Public boards and the trusted local mode
    * have no session to wait for and are fetched as before. */
-  function mayFetch() { return !login || publicView || isSignedIn(); }
+  function mayFetch() { return !noSeat && (!login || publicView || isSignedIn()); }
 
   render();
   if (!state && mayFetch()) refresh();
