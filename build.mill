@@ -254,13 +254,12 @@ object matchmaker extends ScalaModule {
   */
 object engines extends Module {
 
-  /** Two-player tic-tac-toe, implementing the game API of `interaction-design.txt`.
+  /** What every engine, and the library they share, is built with.
     *
-    * `mill -j 4 engines.tictactoe.runMain com.vivi.tictactoe.LocalServer` runs it locally;
-    * `mill -j 4 engines.tictactoe.assembly` builds the Lambda jar, whose handler is
-    * `com.vivi.tictactoe.Handler::handleRequest`.
+    * The dependencies are the engines' whole footprint, and kept that small on purpose: each one
+    * is a Lambda whose cold start is paid by a player waiting on a move.
     */
-  object tictactoe extends ScalaModule {
+  trait EngineModule extends ScalaModule {
     def scalaVersion = "3.3.8"
 
     def mvnDeps = Seq(
@@ -274,19 +273,40 @@ object engines extends Module {
 
     def assemblyRules = super.assemblyRules ++ Seq(Assembly.Rule.ExcludePattern(".*\\.tasty"))
 
-    /** The engine's tests, and only its tests, depend on matchmaker.
+    /** An engine's tests, and only its tests, depend on matchmaker.
       *
       * `ProtocolSpec` reads the engine's JSON with matchmaker's own classes and matchmaker's with
       * the engine's, which is the check the restated wire types exist for: it fails when a field
       * is renamed on one side, and it is the reason the engine itself can stay independent.
       */
-    object test extends ScalaTests with TestModule.Munit {
+    trait EngineTests extends ScalaTests with TestModule.Munit {
       def moduleDeps = super.moduleDeps ++ Seq(matchmaker.api)
       def mvnDeps = Seq(
         mvn"org.scalameta::munit:1.0.4",
         mvn"org.scalameta::munit-scalacheck:1.0.0"
       )
     }
+  }
+
+  /** What every engine has in common and no game decides: the wire format to and from matchmaker,
+    * the Lambda event, signed HTTP, the player sign-in, the match store and the callbacks.
+    *
+    * Like the engines, it does not depend on `matchmaker` — the wire types are restated here, once,
+    * rather than shared — and its `ProtocolSpec` is where the two statements are compared.
+    */
+  object common extends EngineModule {
+    object test extends EngineTests
+  }
+
+  /** Two-player tic-tac-toe, implementing the game API of `interaction-design.txt`.
+    *
+    * `mill -j 4 --ticker false engines.tictactoe.runMain com.vivi.tictactoe.LocalServer` runs it
+    * locally; `mill -j 4 --ticker false engines.tictactoe.assembly` builds the Lambda jar, whose
+    * handler is `com.vivi.tictactoe.Handler::handleRequest`.
+    */
+  object tictactoe extends EngineModule {
+    def moduleDeps = Seq(common)
+    object test extends EngineTests
   }
 
   /** Two-player rock-paper-scissors, implementing the same game API as `tictactoe`.
@@ -300,30 +320,9 @@ object engines extends Module {
     * `mill -j 4 --ticker false engines.rps.assembly` builds the Lambda jar, whose handler is
     * `com.vivi.rps.Handler::handleRequest`.
     */
-  object rps extends ScalaModule {
-    def scalaVersion = "3.3.8"
-
-    def mvnDeps = Seq(
-      mvn"com.lihaoyi::upickle:4.0.2",
-      mvn"com.amazonaws:aws-lambda-java-core:1.2.3",
-      // Signs the engine's calls to DynamoDB, and only those — its callbacks to matchmaker carry
-      // a shared API key instead. The signer only: a DynamoDB client would bring Netty with it.
-      mvn"software.amazon.awssdk:http-auth-aws:2.31.78",
-      mvn"org.slf4j:slf4j-nop:1.7.36"
-    )
-
-    def assemblyRules = super.assemblyRules ++ Seq(Assembly.Rule.ExcludePattern(".*\\.tasty"))
-
-    /** As in `tictactoe`: the tests, and only the tests, depend on matchmaker, so that
-      * `ProtocolSpec` can read each side's JSON with the other side's classes.
-      */
-    object test extends ScalaTests with TestModule.Munit {
-      def moduleDeps = super.moduleDeps ++ Seq(matchmaker.api)
-      def mvnDeps = Seq(
-        mvn"org.scalameta::munit:1.0.4",
-        mvn"org.scalameta::munit-scalacheck:1.0.0"
-      )
-    }
+  object rps extends EngineModule {
+    def moduleDeps = Seq(common)
+    object test extends EngineTests
   }
 
   /** Two fighters, each built by their player, trading simultaneous round plans over 3 to 25 rounds — the rules are
@@ -336,29 +335,8 @@ object engines extends Module {
     * `mill -j 4 --ticker false engines.boxing.assembly` builds the Lambda jar, whose handler is
     * `com.vivi.boxing.Handler::handleRequest`.
     */
-  object boxing extends ScalaModule {
-    def scalaVersion = "3.3.8"
-
-    def mvnDeps = Seq(
-      mvn"com.lihaoyi::upickle:4.0.2",
-      mvn"com.amazonaws:aws-lambda-java-core:1.2.3",
-      // Signs the engine's calls to DynamoDB, and only those — its calls to matchmaker carry the
-      // shared API key instead. The signer only: a DynamoDB client would bring Netty with it.
-      mvn"software.amazon.awssdk:http-auth-aws:2.31.78",
-      mvn"org.slf4j:slf4j-nop:1.7.36"
-    )
-
-    def assemblyRules = super.assemblyRules ++ Seq(Assembly.Rule.ExcludePattern(".*\\.tasty"))
-
-    /** As in `tictactoe`: the tests, and only the tests, depend on matchmaker, so that
-      * `ProtocolSpec` can read each side's JSON with the other side's classes.
-      */
-    object test extends ScalaTests with TestModule.Munit {
-      def moduleDeps = super.moduleDeps ++ Seq(matchmaker.api)
-      def mvnDeps = Seq(
-        mvn"org.scalameta::munit:1.0.4",
-        mvn"org.scalameta::munit-scalacheck:1.0.0"
-      )
-    }
+  object boxing extends EngineModule {
+    def moduleDeps = Seq(common)
+    object test extends EngineTests
   }
 }
