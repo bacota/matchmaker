@@ -72,7 +72,13 @@ case class EngineTurn(participantId: Long, takenAt: Instant, startedAt: Option[I
 case class GameStatusResponse(
     completed: Boolean,
     participants: List[EngineParticipantStatus],
-    turns: List[EngineTurn] = Nil
+    turns: List[EngineTurn] = Nil,
+    /** The number of the latest move this answer reflects, from an engine that numbers its moves — the same numbering
+      * as a move callback's `state.sequence`. It is how matchmaker tells an answer that a callback has since overtaken:
+      * the engine is asked outside any transaction, and a move committed while it was answering must not be undone by
+      * the answer.
+      */
+    sequence: Option[Long] = None
 )
 
 object EngineJson {

@@ -58,7 +58,11 @@ object Protocol {
     case class GameStatusResponse(
         completed: Boolean,
         participants: List[EngineParticipantStatus],
-        turns: List[EngineTurn] = Nil
+        turns: List[EngineTurn] = Nil,
+        /** The number of moves this answer reflects: the same numbering as a move callback's `state.sequence`, so that
+          * matchmaker can tell an answer a callback has since overtaken.
+          */
+        sequence: Option[Long] = None
     )
 
     // ---- what the engine calls back with --------------------------------------------------
@@ -79,8 +83,21 @@ object Protocol {
         participantId: Long,
         next: List[Long] = Nil,
         takenAt: Instant,
-        startedAt: Instant
+        startedAt: Instant,
+        state: Option[MoveState] = None
     )
+
+    /** Where the match stands after the move: `sequence` is the move's number, one more than the move before it, and
+      * `pending` is every seat that is to move now with when its clock started — a seat left out is not pending.
+      *
+      * Callbacks are sent after each move commits, from whichever request made it, so two can reach matchmaker in the
+      * opposite order to the moves. The number is how matchmaker recognises the late one, and the whole pending list is
+      * what lets it ignore the late one safely. With this present, matchmaker ignores `next`, which is still sent for a
+      * matchmaker that predates it.
+      */
+    case class MoveState(sequence: Long, pending: List[PendingSeat])
+
+    case class PendingSeat(participantId: Long, since: Instant)
 
     /** Step 3. `scores` is an open map — matchmaker stores whatever the game puts there. */
     case class ResultEntry(participantId: Long, rank: Int, scores: Map[String, ujson.Value], isWinner: Boolean)
@@ -98,6 +115,8 @@ object Protocol {
     given ReadWriter[EngineParticipantStatus] = macroRW
     given ReadWriter[EngineTurn] = macroRW
     given ReadWriter[GameStatusResponse] = macroRW
+    given ReadWriter[PendingSeat] = macroRW
+    given ReadWriter[MoveState] = macroRW
     given ReadWriter[MoveNotification] = macroRW
     given ReadWriter[ResultEntry] = macroRW
     given ReadWriter[MatchResults] = macroRW

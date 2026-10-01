@@ -238,8 +238,22 @@ object Json {
         participantId: ParticipantId,
         next: List[ParticipantId] = Nil,
         takenAt: Instant,
-        startedAt: Instant
+        startedAt: Instant,
+        state: Option[MoveState] = None
     )
+
+    /** Where the match stands after the move, from an engine that numbers its moves; `next` is ignored when this is
+      * present.
+      *
+      * `sequence` is the engine's number for this move — higher for every move it commits later — and `pending` is
+      * every seat that is to move now, with when its clock started; a seat left out is not pending. One object rather
+      * than two optional fields, as the note above asks of fields that only mean something together: a number is how a
+      * late callback is recognised, and the whole pending list is what makes a late one safe to ignore. A change
+      * ("clear the mover, make `next` pending") cannot be skipped without losing the half of it nothing later repeats.
+      */
+    case class MoveState(sequence: Long, pending: List[PendingSeat])
+
+    case class PendingSeat(participantId: ParticipantId, since: Instant)
 
     /** A player saving one level of their notification settings, and how far down they want it to reach.
       *
@@ -301,6 +315,8 @@ object Json {
     given ReadWriter[AcceptRequest] = macroRW
     given ReadWriter[CreateChallenge] = macroRW
     given ReadWriter[PreferencesRequest] = macroRW
+    given ReadWriter[PendingSeat] = macroRW
+    given ReadWriter[MoveState] = macroRW
     given ReadWriter[MoveNotification] = macroRW
     given ReadWriter[ResultEntry] = macroRW
     given ReadWriter[MatchResults] = macroRW

@@ -18,7 +18,7 @@ class PlayAuthSpec extends FunSuite {
 
     test("the gateway mode admits nobody when no authorizer ran") {
         val auth = PlayAuth.GatewayClaims(Some(login))
-        assertEquals(auth.callerOf(EngineRequest("GET", "/x")), Left(Refusal.NotYours("sign in to play")))
+        assertEquals(auth.callerOf(EngineRequest("GET", "/x")), Left(Refusal.Unauthenticated("sign in to play")))
         assertEquals(auth.callerOf(EngineRequest("GET", "/x", claims = Map("sub" -> ""))).isLeft, true)
         // A bearer token is not read here: in this mode the gateway is what verifies one, and reading
         // it unverified would accept a token the gateway would have rejected.

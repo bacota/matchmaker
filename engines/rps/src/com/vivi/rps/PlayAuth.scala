@@ -6,6 +6,10 @@ package com.vivi.rps
   * when it created the game. So the whole of authorization on the play routes is: verify who is calling, then find the
   * seat with that id.
   *
+  * The two steps fail differently, and the page depends on it: not knowing who is calling is a 401
+  * ([[Refusal.Unauthenticated]]), which a sign-in can fix, and a known caller with no seat is a 403, which it cannot.
+  * The deployed gateway's JWT authorizer answers a bad token with a 401 before the function runs, so this agrees.
+  *
   * Three implementations for the three situations, and an interface because which one is right is a property of the
   * deployment rather than of the game — the same argument matchmaker's own `Authenticator` makes.
   */
@@ -36,7 +40,7 @@ object PlayAuth {
       */
     class GatewayClaims(val login: Option[LoginConfig]) extends PlayAuth {
         def callerOf(request: EngineRequest): Either[Refusal, String] =
-            request.claims.get("sub").filter(_.nonEmpty).toRight(Refusal.NotYours("sign in to play"))
+            request.claims.get("sub").filter(_.nonEmpty).toRight(Refusal.Unauthenticated("sign in to play"))
     }
 
     /** Local, against a real user pool. Verifies the bearer token itself — see [[JwtVerifier]].
@@ -47,8 +51,9 @@ object PlayAuth {
     class VerifiedToken(verifier: JwtVerifier, val login: Option[LoginConfig]) extends PlayAuth {
         def callerOf(request: EngineRequest): Either[Refusal, String] =
             request.bearerToken match {
-                case None        => Left(Refusal.NotYours("sign in to play"))
-                case Some(token) => verifier.verify(token).left.map(why => Refusal.NotYours(s"sign in to play: $why"))
+                case None => Left(Refusal.Unauthenticated("sign in to play"))
+                case Some(token) =>
+                    verifier.verify(token).left.map(why => Refusal.Unauthenticated(s"sign in to play: $why"))
             }
     }
 
@@ -67,6 +72,6 @@ object PlayAuth {
                 .orElse(request.query.get("as"))
                 .map(_.trim)
                 .filter(_.nonEmpty)
-                .toRight(Refusal.NotYours("say who you are with ?as=<cognito sub> or an X-Player-Id header"))
+                .toRight(Refusal.Unauthenticated("say who you are with ?as=<cognito sub> or an X-Player-Id header"))
     }
 }

@@ -273,4 +273,36 @@ class EngineSpec extends FunSuite {
         val m = store.get("m-1").get
         assertEquals(read[TicTacToeMatch](write(m)), m)
     }
+
+    test("every callback numbers its move and names who is to move now, since when") {
+        val (engine, recorder, _, _, m) = fixture()
+        val at = Instant.parse("2026-01-01T00:00:00Z")
+        val x = m.seatOf(Mark.X).get
+        val o = m.seatOf(Mark.O).get
+        engine.move("m-1", x.cognitoId, 4)
+        engine.move("m-1", o.cognitoId, 0)
+
+        val states = recorder.moves.map(_._2.state.get)
+        assertEquals(states.map(_.sequence), List(1L, 2L))
+        assertEquals(
+          states.map(_.pending),
+          List(List(Protocol.PendingSeat(o.participantId, at)), List(Protocol.PendingSeat(x.participantId, at)))
+        )
+        assertEquals(engine.status("m-1").toOption.get.sequence, Some(2L))
+    }
+
+    test("a callback that fails does not fail the move, which stands, and the results are still sent") {
+        val (engine, recorder, store, _, m) = fixture()
+        val x = m.seatOf(Mark.X).get.cognitoId
+        val o = m.seatOf(Mark.O).get.cognitoId
+        recorder.failCallbacks = true
+
+        // X takes the top row.
+        List(x -> 0, o -> 3, x -> 1, o -> 4).foreach((who, cell) => assert(engine.move("m-1", who, cell).isRight))
+        val winning = engine.move("m-1", x, 2)
+        assert(winning.isRight, s"the move was committed, so it must not be reported as failing: $winning")
+        assert(store.get("m-1").get.completed)
+        assertEquals(recorder.moves.size, 5)
+        assertEquals(recorder.results.size, 1)
+    }
 }

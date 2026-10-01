@@ -505,6 +505,214 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // Numbered moves: callbacks that arrive in the opposite order to the moves
+    // ---------------------------------------------------------------------------
+
+    private def callback(
+        services: Services[String],
+        fixture: Fixture,
+        started: Match,
+        moved: Participant,
+        takenAt: Instant,
+        startedAt: Instant,
+        sequence: Long,
+        pending: List[(Participant, Instant)]
+    ): IO[Unit] =
+        services.engine.recordMove(
+          fixture.game.gameId,
+          started.matchId,
+          moved.participantId,
+          next = Nil,
+          takenAt = takenAt,
+          startedAt = startedAt,
+          callerExternalId = fixture.game.externalId,
+          state = Some(MoveState(sequence, pending.map((p, at) => SeatClock(p.participantId, at))))
+        )
+
+    property("a round's resolving move arriving before the round's first move leaves both seats pending") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val services = TestServices.servicesWith(StubEngine())
+                val roundOne = Instant.parse("2030-01-01T00:00:00Z")
+                val firstPlan = roundOne.plusSeconds(60)
+                val roundTwo = roundOne.plusSeconds(90)
+                val result = for {
+                    seated <- twoSeats(
+                      services,
+                      nickname,
+                      externalId,
+                      gameExternalId,
+                      otherExternalId,
+                      challenge = challengeFor(_, timeLimit = Some(Duration.ofMinutes(5)))
+                    )
+                    (fixture, started, mine, theirs) = seated
+                    // Theirs resolved round one and started round two for both seats...
+                    _ <- callback(
+                      services,
+                      fixture,
+                      started,
+                      theirs,
+                      roundTwo,
+                      roundOne,
+                      2,
+                      List(mine -> roundTwo, theirs -> roundTwo)
+                    )
+                    // ...and mine, the round's first plan, lands afterwards, saying only theirs was pending.
+                    _ <- callback(services, fixture, started, mine, firstPlan, roundOne, 1, List(theirs -> roundOne))
+                    after <- participantsOf(started)
+                    turns <- turnsOf(started)
+                } yield after.forall(_.pending) &&
+                    after.forall(_.due.contains(roundTwo.plusSeconds(300))) &&
+                    // The late move's time was still spent, so its turn is kept.
+                    turns.map(_.takenAt).toSet == Set(firstPlan, roundTwo)
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("numbered moves applied in order leave the seats as the latest move says") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val services = TestServices.servicesWith(StubEngine())
+                val roundOne = Instant.parse("2030-01-01T00:00:00Z")
+                val firstPlan = roundOne.plusSeconds(60)
+                val roundTwo = roundOne.plusSeconds(90)
+                val result = for {
+                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    (fixture, started, mine, theirs) = seated
+                    _ <- callback(services, fixture, started, mine, firstPlan, roundOne, 1, List(theirs -> roundOne))
+                    between <- participantsOf(started)
+                    _ <- callback(
+                      services,
+                      fixture,
+                      started,
+                      theirs,
+                      roundTwo,
+                      roundOne,
+                      2,
+                      List(mine -> roundTwo, theirs -> roundTwo)
+                    )
+                    after <- participantsOf(started)
+                } yield between.find(_.participantId == mine.participantId).exists(!_.pending) &&
+                    between.find(_.participantId == theirs.participantId).exists(_.pending) &&
+                    after.forall(_.pending)
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    // Rock-paper-scissors: nobody is ever made pending twice, so a late callback must still come out
+    // right. The second throw says nobody is pending, which already accounts for the first.
+    property("a first throw arriving after the second leaves nobody pending") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val services = TestServices.servicesWith(StubEngine())
+                val created = Instant.parse("2030-01-01T00:00:00Z")
+                val result = for {
+                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    (fixture, started, mine, theirs) = seated
+                    _ <- callback(services, fixture, started, theirs, created.plusSeconds(20), created, 2, Nil)
+                    _ <- callback(
+                      services,
+                      fixture,
+                      started,
+                      mine,
+                      created.plusSeconds(10),
+                      created,
+                      1,
+                      List(theirs -> created)
+                    )
+                    after <- participantsOf(started)
+                } yield after.forall(!_.pending)
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a repeated callback changes nothing the first delivery did not") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val services = TestServices.servicesWith(StubEngine())
+                val created = Instant.parse("2030-01-01T00:00:00Z")
+                val result = for {
+                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    (fixture, started, mine, theirs) = seated
+                    _ <- callback(
+                      services,
+                      fixture,
+                      started,
+                      mine,
+                      created.plusSeconds(10),
+                      created,
+                      1,
+                      List(theirs -> created)
+                    )
+                    _ <- callback(
+                      services,
+                      fixture,
+                      started,
+                      theirs,
+                      created.plusSeconds(20),
+                      created,
+                      2,
+                      List(mine -> created.plusSeconds(20))
+                    )
+                    _ <- callback(services, fixture, started, theirs, created.plusSeconds(20), created, 2, Nil)
+                    after <- participantsOf(started)
+                    turns <- turnsOf(started)
+                } yield after.find(_.participantId == mine.participantId).exists(_.pending) &&
+                    after.find(_.participantId == theirs.participantId).exists(!_.pending) &&
+                    turns.size == 2
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a status answer older than a move already applied does not overwrite the seats") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine)
+                val created = Instant.parse("2030-01-01T00:00:00Z")
+                val result = for {
+                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    (fixture, started, mine, theirs) = seated
+                    _ <- callback(
+                      services,
+                      fixture,
+                      started,
+                      theirs,
+                      created.plusSeconds(20),
+                      created,
+                      2,
+                      List(mine -> created.plusSeconds(20), theirs -> created.plusSeconds(20))
+                    )
+                    // The engine answered before move 2: only theirs pending.
+                    _ <- IO {
+                        engine.status = GameStatusResponse(
+                          completed = false,
+                          participants = List(
+                            EngineParticipantStatus(mine.participantId.value, pending = false, completed = false, None),
+                            EngineParticipantStatus(
+                              theirs.participantId.value,
+                              pending = true,
+                              completed = false,
+                              Some(created)
+                            )
+                          ),
+                          sequence = Some(1)
+                        )
+                    }
+                    _ <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                    stale <- participantsOf(started)
+                    // An answer as new as the move is applied.
+                    _ <- IO { engine.status = engine.status.copy(sequence = Some(3)) }
+                    _ <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                    fresh <- participantsOf(started)
+                } yield stale.forall(_.pending) &&
+                    fresh.find(_.participantId == mine.participantId).exists(!_.pending) &&
+                    fresh.find(_.participantId == theirs.participantId).exists(_.pending)
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
     property("a results callback completes the match and writes the result rows") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val services = TestServices.servicesWith(StubEngine())
@@ -718,6 +926,38 @@ class GameEngineServiceSpec extends PropertySuite {
     private def turnsOf(m: Match): IO[List[Turn]] =
         TestSession.resource.use(session => new TurnRepo(session).listForMatch(m.gameId, m.matchId))
 
+    /** A started match with two seats: the challenger's, and another player's accepting into the second role. */
+    private def twoSeats(
+        services: Services[String],
+        nickname: String,
+        externalId: String,
+        gameExternalId: String,
+        otherExternalId: String,
+        challenge: Fixture => Challenge = challengeFor(_)
+    ): IO[(Fixture, Match, Participant, Participant)] =
+        for {
+            fixture <- makeFixture(nickname, externalId, gameExternalId)
+            other <- services.registration.register(s"other-$nickname", otherExternalId)
+            otherCharacter <- TestSession.resource.use { session =>
+                new CharacterRepo[String](session)
+                    .create(
+                      Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId))
+                    )
+            }
+            offered <- services.challenges.create(challenge(fixture), externalId)
+            _ <- services.challenges.accept(
+              fixture.game.gameId,
+              offered.challengeId,
+              Some(otherCharacter.characterId),
+              fixture.game.roles(1).gameRoleId,
+              otherExternalId
+            )
+            started <- services.engine.start(fixture.game.gameId, offered.challengeId, externalId)
+            participants <- participantsOf(started)
+            mine = participants.find(_.playerId == fixture.owner.playerId).get
+            theirs = participants.find(_.playerId == other.playerId).get
+        } yield (fixture, started, mine, theirs)
+
     /* A two-seat match under a clock of a stated kind, started at a stated time, with two moves
      * already played through the move callback.
      *
@@ -744,29 +984,16 @@ class GameEngineServiceSpec extends PropertySuite {
         startedAt: Option[Instant] = None
     ): IO[(Fixture, Match, Participant, Participant)] =
         for {
-            fixture <- makeFixture(nickname, externalId, gameExternalId)
-            other <- services.registration.register(s"other-$nickname", otherExternalId)
-            otherCharacter <- TestSession.resource.use { session =>
-                new CharacterRepo[String](session)
-                    .create(
-                      Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId))
-                    )
-            }
-            challenge <- services.challenges.create(
-              challengeFor(fixture, timeLimit = Some(timeLimit), timeLimitKind = kind, start = Some(matchStart)),
-              externalId
+            seated <- twoSeats(
+              services,
+              nickname,
+              externalId,
+              gameExternalId,
+              otherExternalId,
+              challenge = fixture =>
+                  challengeFor(fixture, timeLimit = Some(timeLimit), timeLimitKind = kind, start = Some(matchStart))
             )
-            _ <- services.challenges.accept(
-              fixture.game.gameId,
-              challenge.challengeId,
-              Some(otherCharacter.characterId),
-              fixture.game.roles(1).gameRoleId,
-              otherExternalId
-            )
-            started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
-            participants <- participantsOf(started)
-            mine = participants.find(_.playerId == fixture.owner.playerId).get
-            theirs = participants.find(_.playerId == other.playerId).get
+            (fixture, started, mine, theirs) = seated
             // The challenger moves first, spending firstMoveAt - matchStart of their own budget...
             _ <- services.engine.recordMove(
               fixture.game.gameId,

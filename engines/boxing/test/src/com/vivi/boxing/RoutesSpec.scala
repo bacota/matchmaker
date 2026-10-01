@@ -125,6 +125,9 @@ class RoutesSpec extends FunSuite {
         assertEquals(page.status, 200)
         assertEquals(page.contentType, "text/html; charset=utf-8")
         assert(page.body.contains("<!doctype html>"))
+        // What changes while the page is idle is announced: the status as it moves on, and a refusal.
+        assert(page.body.contains("""<p id="status" role="status" aria-live="polite">"""))
+        assert(page.body.contains("""<div id="error" role="alert">"""))
         assert(page.body.contains("\"you\":\"Red\""), "the corner's own state should be inlined into the page")
         assert(page.body.contains("plan round 1"))
     }
@@ -140,12 +143,35 @@ class RoutesSpec extends FunSuite {
         assert(page.body.contains("client-1"), "the page needs the app client to start a sign-in")
     }
 
-    test("the state, move and fighter routes refuse a caller with no corner") {
+    test("a caller who is somebody, but not in this bout, is refused with 403") {
         val (routes, _, _, _) = fixture()
         assertEquals(get(routes, "/matches/m-9/state", as("sub-carol")).status, 403)
-        assertEquals(get(routes, "/matches/m-9/state").status, 403)
         assertEquals(planning(routes, "sub-carol", 5, 0, 0).status, 403)
         assertEquals(building(routes, "sub-carol", average).status, 403)
+    }
+
+    /* The page tells these apart: a 401 drops the session and offers a sign-in, which can help; a
+     * 403 keeps it and says there is no corner here, which a sign-in cannot change. */
+    test("a caller who cannot be identified is refused with 401, not 403") {
+        val (routes, _, _, _) = fixture()
+        assertEquals(get(routes, "/matches/m-9/state").status, 401)
+        assertEquals(
+          routes(EngineRequest("POST", "/matches/m-9/moves", body = """{"offense":5,"defense":0,"power":0}""")).status,
+          401
+        )
+
+        // Deployed: no claims means no authorizer vouched for anyone; a stranger's claims are a 403.
+        val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1")
+        val (deployed, _, _, _) = fixture(playAuth = PlayAuth.GatewayClaims(Some(login)))
+        assertEquals(deployed(EngineRequest("GET", "/matches/m-9/state")).status, 401)
+        assertEquals(
+          deployed(EngineRequest("GET", "/matches/m-9/state", claims = Map("sub" -> "sub-carol"))).status,
+          403
+        )
+        assertEquals(
+          deployed(EngineRequest("GET", "/matches/m-9/state", claims = Map("sub" -> "sub-alice"))).status,
+          200
+        )
     }
 
     test("a plan posted by a player is recorded and answered with the new state") {
@@ -172,6 +198,12 @@ class RoutesSpec extends FunSuite {
         assertEquals(planning(routes, "sub-alice", 5, 0, 0).status, 200)
         assertEquals(planning(routes, "sub-alice", 0, 5, 0).status, 400)
         assertEquals(store.get("m-9").get.plans.size, 1)
+    }
+
+    test("a plan whose parts overflow an Int is a 400 over the wire, and changes nothing") {
+        val (routes, store, _, _) = fixture()
+        assertEquals(planning(routes, "sub-alice", Int.MaxValue, Int.MaxValue, 7).status, 400)
+        assertEquals(store.get("m-9").get.plans, Nil)
     }
 
     test("a fighter is built over the wire, and saved to matchmaker") {
@@ -221,6 +253,12 @@ class RoutesSpec extends FunSuite {
         val page = get(withPool, "/auth/callback")
         assertEquals(page.status, 200)
         assert(page.body.contains("oauth2/token"), "the callback page redeems the authorization code")
+        // And says so when it cannot reach the token endpoint, rather than "signing in…" for ever.
+        assert(page.body.contains("could not be reached"), "an unreachable token endpoint must end in a failure")
+        // Its status changes from "signing in…" to a failure with nothing pressed, so it is announced.
+        assert(page.body.contains("""<p id="error" role="status" aria-live="polite">"""))
+        // Laid out for the phone it is most likely opened on, not shrunk from a desktop width.
+        assert(page.body.contains("""<meta name="viewport" content="width=device-width, initial-scale=1">"""))
 
         val (withoutPool, _, _, _) = fixture()
         assertEquals(get(withoutPool, "/auth/callback").status, 404)

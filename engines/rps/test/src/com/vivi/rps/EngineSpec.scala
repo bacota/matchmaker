@@ -321,4 +321,28 @@ class EngineSpec extends FunSuite {
         val m = store.get("m-1").get
         assertEquals(read[RpsMatch](write(m)), m)
     }
+
+    test("every callback numbers its throw and names who is still to throw") {
+        val (engine, recorder, _, _, _) = fixture()
+        engine.move("m-1", bob, Shape.Paper)
+        engine.move("m-1", alice, Shape.Rock)
+
+        val states = recorder.moves.map(_._2.state.get)
+        assertEquals(states.map(_.sequence), List(1L, 2L))
+        // Both clocks started when the match was created, and the second throw leaves nobody.
+        assertEquals(states.map(_.pending), List(List(Protocol.PendingSeat(11L, created)), Nil))
+        assertEquals(engine.status("m-1").toOption.get.sequence, Some(2L))
+    }
+
+    test("a callback that fails does not fail the throw, which stands, and the results are still sent") {
+        val (engine, recorder, store, _, _) = fixture()
+        recorder.failCallbacks = true
+
+        assert(engine.move("m-1", alice, Shape.Rock).isRight)
+        val resolving = engine.move("m-1", bob, Shape.Scissors)
+        assert(resolving.isRight, s"the throw was committed, so it must not be reported as failing: $resolving")
+        assert(store.get("m-1").get.completed)
+        assertEquals(recorder.moves.size, 2)
+        assertEquals(recorder.results.size, 1)
+    }
 }

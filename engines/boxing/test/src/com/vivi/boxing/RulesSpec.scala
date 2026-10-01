@@ -130,6 +130,15 @@ class RulesSpec extends ScalaCheckSuite {
         )
     }
 
+    test("a plan whose parts overflow an Int is refused, not wrapped into the workrate") {
+        val f = Fighter(5, 5, 5, 5, 5)
+        // In Int arithmetic this sums to 5, exactly the workrate.
+        assertEquals(
+          Allocation.validate(Allocation(Int.MaxValue, Int.MaxValue, 7), f),
+          Left(s"a round is planned with exactly your workrate of 5; these add up to ${2L * Int.MaxValue + 7}")
+        )
+    }
+
     // ---------------------------------------------------------------------------
     // Properties
     // ---------------------------------------------------------------------------
