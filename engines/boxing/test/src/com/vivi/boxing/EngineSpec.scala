@@ -363,4 +363,39 @@ class EngineSpec extends FunSuite {
         )
         assertEquals(engine.status("m-1", Some(b)).toOption.get.turns.map(_.takenAt), List(c))
     }
+
+    test("every callback numbers its plan and states the whole of who is to plan now") {
+        val (engine, recorder, _, clock, _) = fixture()
+        engine.plan("m-1", alice, Allocation(5, 0, 0))
+        val roundTwo = clock.advance(30)
+        engine.plan("m-1", bob, Allocation(0, 5, 0))
+
+        val states = recorder.moves.map(_._2.state.get)
+        assertEquals(states.map(_.sequence), List(1L, 2L))
+        // After Red's plan only Blue is to plan, since round one began; after Blue's, both are, since
+        // round two did.
+        assertEquals(states.head.pending, List(Protocol.PendingSeat(22L, created)))
+        assertEquals(states(1).pending, List(Protocol.PendingSeat(11L, roundTwo), Protocol.PendingSeat(22L, roundTwo)))
+        assertEquals(engine.status("m-1").toOption.get.sequence, Some(2L))
+    }
+
+    test("the plan that ends the bout leaves nobody to plan") {
+        val (engine, recorder, _, _, _) = fixture(createRequest(red = Some(slugger)))
+        engine.plan("m-1", alice, Allocation(0, 0, 10))
+        engine.plan("m-1", bob, Allocation(5, 0, 0))
+        assertEquals(recorder.moves.last._2.state.map(_.pending), Some(Nil))
+    }
+
+    test("a callback that fails does not fail the plan, which stands, and the results are still sent") {
+        val (engine, recorder, store, _, _) = fixture(createRequest(red = Some(slugger)))
+        recorder.failCallbacks = true
+
+        assert(engine.plan("m-1", alice, Allocation(0, 0, 10)).isRight)
+        // The knockout: its move callback fails, and the results are attempted all the same.
+        val finishing = engine.plan("m-1", bob, Allocation(5, 0, 0))
+        assert(finishing.isRight, s"the plan was committed, so it must not be reported as failing: $finishing")
+        assert(bout(store).isOver)
+        assertEquals(recorder.moves.size, 2)
+        assertEquals(recorder.results.size, 1)
+    }
 }

@@ -1,6 +1,7 @@
 package com.vivi.rps
 
 import java.time.Instant
+import scala.util.control.NonFatal
 import Protocol._
 
 /** Why a request was refused. Transport-independent so that the local server and the Lambda handler map it to a status
@@ -8,6 +9,11 @@ import Protocol._
   */
 enum Refusal(val status: Int, val message: String) {
     case NotFound(what: String) extends Refusal(404, what)
+
+    /** The caller could not be identified: no token, or one that does not verify. Signing in is the remedy. */
+    case Unauthenticated(what: String) extends Refusal(401, what)
+
+    /** The caller is known, and this is not theirs — no seat in this match. Signing in again changes nothing. */
     case NotYours(what: String) extends Refusal(403, what)
     case Invalid(what: String) extends Refusal(400, what)
 }
@@ -118,7 +124,8 @@ class Engine(
               turns = m.throws
                   .filter(t => since.forall(at => t.takenAt.isAfter(at)))
                   .sortBy(_.takenAt)
-                  .map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt)))
+                  .map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt))),
+              sequence = Some(m.throws.size.toLong)
             )
         }
 
@@ -179,26 +186,44 @@ class Engine(
       * the match was created and stays pending by not being named — matchmaker leaves a participant it is told nothing
       * about alone. Naming it would re-stamp its clock as starting at the other player's throw, and in a game where
       * nobody waits for anybody that would charge the slower player for the faster one's thinking.
+      *
+      * Neither callback may fail the move. It is committed by the time they are sent, so a failure that escaped here
+      * would answer the player with a 500 for a move that stands — and their retry would then be refused. A lost
+      * callback is what matchmaker's `refresh` repairs, so each is logged and dropped on its own: the results must
+      * still be sent when the move before them could not be.
       */
     private def notify(applied: MoveApplied): Unit = {
         val m = applied.state
 
         m.moveCallbackUrl.foreach { url =>
-            matchmaker.recordMove(
-              url,
-              MoveNotification(
-                participantId = applied.moved.participantId,
-                next = Nil,
-                takenAt = applied.turn.takenAt,
-                // The match's own start, for either seat: both clocks began there, and saying so is
-                // what stops matchmaker charging the second thrower from the first one's throw.
-                startedAt = applied.turn.startedAt
+            bestEffort(s"reporting a move in match '${m.matchId}'")(
+              matchmaker.recordMove(
+                url,
+                MoveNotification(
+                  participantId = applied.moved.participantId,
+                  next = Nil,
+                  takenAt = applied.turn.takenAt,
+                  // The match's own start, for either seat: both clocks began there, and saying so is
+                  // what stops matchmaker charging the second thrower from the first one's throw.
+                  startedAt = applied.turn.startedAt,
+                  // The whole of who is still to throw, numbered by how many throws are in: what lets
+                  // matchmaker ignore this callback if it lands after the other throw's. See
+                  // `Protocol.MoveState`.
+                  state = Some(MoveState(m.throws.size, m.pending.map(s => PendingSeat(s.participantId, m.createdAt))))
+                )
               )
             )
         }
 
-        if (applied.finished) m.resultsCallbackUrl.foreach(url => matchmaker.recordResults(url, resultsOf(m)))
+        if (applied.finished)
+            m.resultsCallbackUrl.foreach(url =>
+                bestEffort(s"reporting the result of match '${m.matchId}'")(matchmaker.recordResults(url, resultsOf(m)))
+            )
     }
+
+    private def bestEffort(what: String)(call: => Unit): Unit =
+        try call
+        catch { case NonFatal(e) => Log.failure(e, what) }
 
     /** The finished match as matchmaker records it: rank 1 for the winner and 2 for the loser, or rank 1 for both in a
       * draw, which is what a rank means when nobody placed above anyone else.

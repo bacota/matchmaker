@@ -12,6 +12,17 @@ import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence._
 import com.vivi.matchmaker.util.ChallengeSettings
 
+/** A seat that is to move, and when its clock started. */
+case class SeatClock(participantId: ParticipantId, since: Instant)
+
+/** Where a match stands after a move, as an engine that numbers its moves states it.
+  *
+  * `sequence` is the engine's number for the move, higher for every move it commits after this one; `pending` is every
+  * seat that is to move now — a seat left out is not pending. Stated whole rather than as a change, so that a callback
+  * which turns out to be older than one already applied can be ignored whole: see [[GameEngineService.recordMove]].
+  */
+case class MoveState(sequence: Long, pending: List[SeatClock])
+
 /** One participant's outcome as the game engine reports it at the end of a match. */
 case class ReportedResult(participantId: ParticipantId, rank: Int, scores: Map[String, Any], isWinner: Boolean)
 
@@ -363,7 +374,24 @@ class GameEngineService[T](
                                           since = None
                                         )
                                         used <- timeUsedIn(session, current)
-                                        _ <- status.participants.traverse { reported =>
+                                        /* Whether the answer still describes this match, now that it is locked.
+                                         *
+                                         * Every caller asks only about a match it found not yet completed, so one
+                                         * that is completed here was completed while the engine was answering --
+                                         * by the results callback, or by a forfeit the engine knows nothing about.
+                                         * An answer from before that may still say the match is running, and it
+                                         * must not undo the ending. Likewise a numbered answer older than a move
+                                         * already applied describes seats that move has since changed.
+                                         *
+                                         * Either way the answer's turns are recorded above, since they were really
+                                         * taken, and nothing else of it is written. */
+                                        applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
+                                        seatsCurrent = !current.completed &&
+                                            status.sequence.forall(seq => applied.forall(_ <= seq))
+                                        _ <- status.sequence.filter(_ => seatsCurrent).traverse_ { seq =>
+                                            matchRepo.advanceMoveSequence(gameId, matchId, seq)
+                                        }
+                                        _ <- status.participants.filter(_ => seatsCurrent).traverse { reported =>
                                             byId.get(ParticipantId(reported.participantId)) match {
                                                 case Some(p) =>
                                                     participantRepo.update(
@@ -383,13 +411,14 @@ class GameEngineService[T](
                                         // the time it finished, rather than being restamped by every later status the engine
                                         // answers with. Nothing else about the match changes here, so completion is the only
                                         // reason to write at all.
-                                        completedAt <- (status.completed, current.completedAt) match {
-                                            case (true, None)    => matchRepo.complete(gameId, matchId).map(Some(_))
-                                            case (true, already) => IO.pure(already)
-                                            case (false, None)   => IO.pure(None)
-                                            case (false, Some(_)) =>
-                                                matchRepo.update(current.copy(completedAt = None)).as(None)
-                                        }
+                                        //
+                                        // Only ever towards completed. An answer saying a completed match is still running
+                                        // is one from before it ended (see `seatsCurrent`), and reopening it would undo a
+                                        // result or a forfeit that has already been recorded and mailed.
+                                        completedAt <-
+                                            if (status.completed && current.completedAt.isEmpty)
+                                                matchRepo.complete(gameId, matchId).map(Some(_))
+                                            else IO.pure(current.completedAt)
                                         updated = current.copy(completedAt = completedAt)
                                         // The first of those four cases, which is the one where this call is what ended
                                         // the match: the engine says it is over and matchmaker had not heard. It happens
@@ -502,6 +531,14 @@ class GameEngineService[T](
       * `startedAt` is when the mover's own clock started for this move, and it is the engine's to state for the same
       * reason turn order is: only the engine knows whether this player was waiting for the move before. See
       * `Json.MoveNotification` for why matchmaker no longer guesses at it.
+      *
+      * `state`, from an engine that numbers its moves, replaces `next`: it names every seat that is to move now, and
+      * this move's number. An engine sends its callbacks after committing each move, from whichever request made it, so
+      * two can arrive in the opposite order to the moves — and applied in arrival order the late one undoes the early
+      * one, clearing a seat the later move had made pending again. So a move numbered no higher than the match's
+      * `move_sequence` (V26) is older than what the seats already say: its turn is recorded, since the time was really
+      * spent, and nothing else is touched or mailed. Without `state`, the callback is applied as it arrives, which is
+      * all matchmaker could do before and is still right for an engine whose callbacks cannot overtake each other.
       */
     def recordMove(
         gameId: GameId,
@@ -510,7 +547,8 @@ class GameEngineService[T](
         next: List[ParticipantId],
         takenAt: Instant,
         startedAt: Instant,
-        callerExternalId: String
+        callerExternalId: String,
+        state: Option[MoveState] = None
     ): IO[Unit] =
         sessionPool.use { session =>
             val gameRepo = new GameRepo[T](session)
@@ -541,23 +579,56 @@ class GameEngineService[T](
                         // deadline is what is left of their budget — and the mover's turn has just spent some
                         // of theirs.
                         used <- timeUsedIn(session, existing)
-                        _ <- participantRepo.update(withTurn(mover, pending = false, due = None))
-                        _ <- next.traverse { id =>
-                            requireParticipant(participantRepo, gameId, matchId, id)
-                                .flatMap(p =>
-                                    participantRepo.update(
-                                      withTurn(p, pending = true, due = dueFor(existing, used)(id, Some(takenAt)))
-                                    )
-                                )
+                        // Read under the match's row lock, taken above, which every writer of this
+                        // column holds: nothing can apply a later move between this read and the writes.
+                        applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
+                        current = state.forall(st => applied.forall(_ < st.sequence))
+                        _ <- (state, current) match {
+                            case (_, false) => IO.unit
+                            case (Some(st), true) =>
+                                for {
+                                    seats <- participantRepo.listForMatch(gameId, matchId)
+                                    since = st.pending.map(c => c.participantId -> c.since).toMap
+                                    _ <- seats.traverse { (p, _, _) =>
+                                        val clock = since.get(p.participantId)
+                                        participantRepo.update(
+                                          withTurn(
+                                            p,
+                                            pending = clock.isDefined,
+                                            due = clock.flatMap(at => dueFor(existing, used)(p.participantId, Some(at)))
+                                          )
+                                        )
+                                    }
+                                    _ <- matchRepo.advanceMoveSequence(gameId, matchId, st.sequence)
+                                } yield ()
+                            case (None, true) =>
+                                for {
+                                    _ <- participantRepo.update(withTurn(mover, pending = false, due = None))
+                                    _ <- next.traverse { id =>
+                                        requireParticipant(participantRepo, gameId, matchId, id)
+                                            .flatMap(p =>
+                                                participantRepo.update(
+                                                  withTurn(
+                                                    p,
+                                                    pending = true,
+                                                    due = dueFor(existing, used)(id, Some(takenAt))
+                                                  )
+                                                )
+                                            )
+                                    }
+                                } yield ()
                         }
-                    } yield existing
+                    } yield (existing, current)
                 }
-                .flatMap { played =>
+                .flatMap { (played, current) =>
                     /* After the commit, because whose turn it is now and when it is due are what was just
                      * written -- and they are most of what the mail says. Outside the match's lock and
                      * unable to fail the callback, on the same terms as every other notification here:
-                     * the engine has recorded the move and is owed a 204 whatever the queue is doing. */
-                    notifications.turnTaken(session, played, moved)
+                     * the engine has recorded the move and is owed a 204 whatever the queue is doing.
+                     *
+                     * Not for a move that arrived after a later one: the later one's mail has already said
+                     * whose turn it is, and this one would say it again, wrongly. */
+                    if (current) notifications.turnTaken(session, played, moved) else IO.unit
                 }
         }
 
@@ -622,10 +693,52 @@ class GameEngineService[T](
                     } yield (existing, ended)
                 }
                 .flatMap { (played, ended) =>
+                    // Before the mail, so that anything it says about the match is said of every turn.
+                    val reconciled = if (ended) recoverTurns(session, played) else IO.unit
                     // Everyone in it, because nobody in it did this: the engine finished the game.
-                    if (ended) notifications.matchEnded(session, played, MatchEnding.Finished) else IO.unit
+                    reconciled *> (if (ended) notifications.matchEnded(session, played, MatchEnding.Finished)
+                                   else IO.unit)
                 }
         }
+
+    /* The last chance to record turns whose move callbacks never arrived.
+     *
+     * A move callback is best-effort, and while a match is running a lost one is repaired by
+     * `refresh`. Once the match is completed `refresh` no longer asks the engine anything, so a
+     * move lost before the end would be lost for good -- and the one most exposed is the last: the
+     * engine sends it and the results one after the other, and when only the results get through
+     * the match completes without its final turn. The turns are what a player's time across the
+     * match is summed from, so the result would be wrong without anything looking wrong.
+     *
+     * So the match's ending asks the engine once for every turn it has, and records them. Each
+     * insert is idempotent, so the turns matchmaker already has are dropped by the database.
+     *
+     * After the results' transaction rather than inside it, per the rule on external calls: the
+     * engine is asked with no transaction open, and the turns are written in a fresh one that takes
+     * the match's lock again. Nothing here may fail the results, which are committed and are the
+     * engine's due either way, so a failure is logged and dropped. */
+    private def recoverTurns(session: skunk.Session[IO], played: Match): IO[Unit] =
+        played.statusUrl
+            .fold(IO.unit) { url =>
+                engine.status(url, None).flatMap { status =>
+                    session.transaction.use { _ =>
+                        for {
+                            locked <- requireMatchForUpdate(new MatchRepo(session), played.gameId, played.matchId)
+                            seats <- new ParticipantRepo(session).listForMatch(played.gameId, played.matchId)
+                            known = seats.map(_._1.participantId.value).toSet
+                            _ <- recordTurns(
+                              session,
+                              locked,
+                              status.turns.filter(t => known(t.participantId)),
+                              since = None
+                            )
+                        } yield ()
+                    }
+                }
+            }
+            .handleErrorWith(error =>
+                IO(System.err.println(s"could not recover the turns of match ${played.matchId.value}: $error"))
+            )
 
     /** Step 4: re-check a running match with the engine, and apply whatever it says.
       *

@@ -70,14 +70,21 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
     /** While set, [[saveFighter]] fails as an unreachable matchmaker would. */
     @volatile var failFighterSaves: Boolean = false
 
+    /** While set, [[recordMove]] and [[recordResults]] fail as an unreachable matchmaker would, after recording the
+      * attempt — so a test can see that a call was made and that its failure went no further.
+      */
+    @volatile var failCallbacks: Boolean = false
+
     def recordMove(url: String, notification: Protocol.MoveNotification): Unit = synchronized {
         movesBuffer += (url -> notification)
         log(s"POST $url ${write(notification)}")
+        if (failCallbacks) throw AwsError(s"POST $url failed: unreachable")
     }
 
     def recordResults(url: String, results: Protocol.MatchResults): Unit = synchronized {
         resultsBuffer += (url -> results)
         log(s"POST $url ${write(results)}")
+        if (failCallbacks) throw AwsError(s"POST $url failed: unreachable")
     }
 
     def saveFighter(matchmakerUrl: String, characterId: Long, fighter: Fighter): Unit = synchronized {

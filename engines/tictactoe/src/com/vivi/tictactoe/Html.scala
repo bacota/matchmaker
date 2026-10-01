@@ -37,8 +37,10 @@ object Html {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tic-tac-toe · ${escape(matchId)}</title>
 <style>
-  :root { color-scheme: light dark; --line: #8884; --ink: #222; --paper: #fafafa; }
-  @media (prefers-color-scheme: dark) { :root { --ink: #eee; --paper: #16181c; } }
+  /* --error is 6.3:1 on the light page and 7.8:1 on the dark one; crimson, which it replaces, was 3.6:1
+     in dark mode, under the 4.5:1 normal text needs. */
+  :root { color-scheme: light dark; --line: #8884; --ink: #222; --paper: #fafafa; --error: #b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #eee; --paper: #16181c; --error: #ff8a80; } }
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--paper); color: var(--ink);
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { text-align: center; padding: 2rem 1rem; }
@@ -67,22 +69,23 @@ object Html {
   #signin .alternatives button { font: inherit; min-height: 44px; padding: 0; border: 0; background: none;
                   color: inherit; text-decoration: underline; cursor: pointer; }
   #signin button:disabled { opacity: .45; cursor: default; }
-  #signin .problem { color: crimson; font-size: .875rem; margin-bottom: .5rem; }
+  #signin .problem { color: var(--error); font-size: .875rem; margin-bottom: .5rem; }
   #seats { margin-top: 1.25rem; font-size: .875rem; opacity: .7; }
   #seats div { margin: .125rem 0; }
-  #error { color: crimson; min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
+  #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
 </style>
 </head>
 <body>
 <main>
   <h1>tic-tac-toe</h1>
-  <p id="status">${escape(heading)}</p>
+  <!-- Announced: the other player's move, and the result, arrive while this page is idle. -->
+  <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   <div id="grid"></div>
   <!-- The sign-in form, rendered by renderSignIn() and shown whenever there is a login to
        offer and no seat to show for it. -->
   <div id="signin" hidden></div>
   <div id="seats"></div>
-  <div id="error"></div>
+  <div id="error" role="alert"></div>
 </main>
 <script>
 ${authScript(login)}
@@ -101,6 +104,8 @@ ${signInScript}
   // Present when the server already knew whose seat this is; null when the player has yet to
   // sign in, in which case the first fetch below fills it.
   let state = ${state.map(s => scriptSafe(write(s))).getOrElse("null")};
+  // Set by a 403: signed in, but not to a seat in this match. See `send`.
+  let noSeat = false;
 
   const grid = document.getElementById("grid");
   const cells = [];
@@ -135,7 +140,7 @@ ${signInScript}
 
     // Offered whenever there is a login to start and no seat to show for it — including after a
     // token expires mid-match, which is what turns a 401 back into a button.
-    signin.hidden = !login || (state && state.you);
+    signin.hidden = !login || noSeat || (state && state.you);
 
     document.getElementById("seats").innerHTML = state
       ? state.players.map(p => "<div>" + p.mark + " · " + escapeHtml(p.cognitoId) + (p.mark === (state.you || "") ? " (you)" : "") + "</div>").join("")
@@ -169,11 +174,22 @@ ${signInScript}
     const headers = Object.assign({}, init.headers || {}, token ? { authorization: "Bearer " + token } : {});
     try {
       const response = await fetch(url, Object.assign({}, init, { headers }));
-      if (response.status === 401 || response.status === 403) {
+      // A 401 is "who are you?": the session is over or never began, so it is dropped and a sign-in
+      // offered. A 403 is "not yours": signed in, just not to a seat here. The session is kept — it
+      // is good for every match the player is in — and the page stops asking, since another sign-in
+      // would be the same player refused the same way.
+      if (response.status === 401) {
         if (token) clearSession();
         state = null;
         render();
-        show(login ? "sign in to play this match" : "you have no seat in this match");
+        show(login ? "sign in to play this match" : "say who you are with ?as=<cognito sub>");
+        return null;
+      }
+      if (response.status === 403) {
+        noSeat = true;
+        state = null;
+        render();
+        show("you have no seat in this match");
         return null;
       }
       return response;
@@ -191,7 +207,7 @@ ${signInScript}
    * answer is a 401 — and asking every two seconds scrolls the console with them and, worse, kept
    * rebuilding the sign-in form under the player's cursor. Public boards and the trusted local mode
    * have no session to wait for and are fetched as before. */
-  function mayFetch() { return !login || publicView || isSignedIn(); }
+  function mayFetch() { return !noSeat && (!login || publicView || isSignedIn()); }
 
   render();
   if (!state && mayFetch()) refresh();
@@ -213,15 +229,33 @@ ${signInScript}
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>signing in</title>
 <style>
   body { margin: 0; min-height: 100vh; display: grid; place-items: center;
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; color-scheme: light dark; }
-  #error { color: crimson; max-width: 32rem; text-align: center; padding: 1rem; }
+  :root { --error: #b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --error: #ff8a80; } }
+  main { max-width: 32rem; text-align: center; padding: 1rem; }
+  #error { color: var(--error); }
+  /* 44px to tap, 16px text, and a visible focus ring: these are the only controls on the page. */
+  .actions { display: flex; gap: 1rem; justify-content: center; align-items: center; flex-wrap: wrap; }
+  .actions[hidden] { display: none; }
+  .actions button, .actions a { font: inherit; font-size: 16px; min-height: 44px; display: inline-flex; align-items: center; }
+  .actions button { padding: 0 1rem; border-radius: 6px; border: 1px solid #8886; background: none; color: inherit; cursor: pointer; }
+  .actions button[hidden] { display: none; }
+  :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
 </style>
 </head>
 <body>
-<p id="error">signing in…</p>
+<main>
+<!-- Announced: the page changes from "signing in…" to a failure without anything being pressed. -->
+<p id="error" role="status" aria-live="polite">signing in…</p>
+<div class="actions" id="actions" hidden>
+  <button type="button" id="retry" hidden>Try again</button>
+  <a id="back" href="/">Back to the match</a>
+</div>
+</main>
 <script>
 ${authScript(Some(login))}
 
@@ -233,7 +267,17 @@ ${authScript(Some(login))}
     const expected = sessionStorage.getItem(StateKey);
     const back = sessionStorage.getItem(ReturnKey) || "/";
 
-    function fail(message) { document.getElementById("error").textContent = message; }
+    /* Every failure offers the way back, to start the sign-in again from the match. `retryable` adds
+     * a retry of this very callback, which is only offered where it can work: the request never got
+     * an answer, so the code is unspent and the verifier is still here. A code Cognito refused is
+     * single-use, and retrying it would only fail again. */
+    function fail(message, retryable) {
+      document.getElementById("error").textContent = message;
+      document.getElementById("back").href = back;
+      document.getElementById("retry").hidden = !retryable;
+      document.getElementById("actions").hidden = false;
+    }
+    document.getElementById("retry").addEventListener("click", () => location.reload());
 
     if (failure) return fail(failure);
     if (!code) return fail("no authorization code came back");
@@ -251,15 +295,23 @@ ${authScript(Some(login))}
       redirect_uri: login.redirectUri
     });
 
-    const response = await fetch(login.hostedLoginUrl + "/oauth2/token", {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: body.toString()
-    });
+    let response;
+    try {
+      response = await fetch(login.hostedLoginUrl + "/oauth2/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: body.toString()
+      });
+    } catch (e) {
+      // Unreachable, rather than refused: without this the rejection escapes the function and the
+      // page says "signing in…" for ever.
+      return fail("the sign-in service could not be reached; check your connection and try again", true);
+    }
 
     if (!response.ok) return fail("the sign-in could not be completed: " + response.status);
 
-    const tokens = await response.json();
+    let tokens;
+    try { tokens = await response.json(); } catch (e) { tokens = {}; }
     if (!tokens.id_token) return fail("no id token came back");
 
     // Stored the same way a sign-in on the board stores them, refresh token included: a player who
