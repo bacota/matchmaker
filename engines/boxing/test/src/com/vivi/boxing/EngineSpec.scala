@@ -398,4 +398,28 @@ class EngineSpec extends FunSuite {
         assertEquals(recorder.moves.size, 2)
         assertEquals(recorder.results.size, 1)
     }
+
+    test("the results carry every plan of the bout as a turn, with when its round began") {
+        val (engine, recorder, _, clock, _) =
+            fixture(createRequest(red = Some(slugger), parameters = Map("rounds" -> "3")))
+        val first = clock.advance(10)
+        engine.plan("m-1", alice, Allocation(0, 5, 5))
+        val second = clock.advance(10)
+        engine.plan("m-1", bob, Allocation(5, 0, 0))
+        val third = clock.advance(10)
+        engine.plan("m-1", bob, Allocation(5, 0, 0))
+        val last = clock.advance(10)
+        engine.plan("m-1", alice, Allocation(0, 0, 10))
+
+        val turns = recorder.results.head._2.turns.get
+        assertEquals(
+          turns.map(t => (t.participantId, t.takenAt, t.startedAt)),
+          List(
+            (11L, first, Some(created)),
+            (22L, second, Some(created)),
+            (22L, third, Some(second)),
+            (11L, last, Some(second))
+          )
+        )
+    }
 }

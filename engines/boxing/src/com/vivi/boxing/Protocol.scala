@@ -102,7 +102,11 @@ object Protocol {
     /** Step 3. `scores` is an open map — matchmaker stores whatever the game puts there. */
     case class ResultEntry(participantId: Long, rank: Int, scores: Map[String, ujson.Value], isWinner: Boolean)
 
-    case class MatchResults(results: List[ResultEntry])
+    /** `turns` is every turn of the match, in the same shape as a status answer's. Matchmaker records them in the
+      * transaction that completes the match, so a turn whose move callback was lost is not lost with it — once a match
+      * is over, matchmaker does not ask the engine again.
+      */
+    case class MatchResults(results: List[ResultEntry], turns: Option[List[EngineTurn]] = None)
 
     /** What the engine writes to matchmaker's `PUT /characters/{id}/state` once a fighter is built. `state` is the
       * fighter as JSON, carried as a string: matchmaker stores a character's state without reading it.

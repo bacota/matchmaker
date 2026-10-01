@@ -245,7 +245,10 @@ class Engine(
                 ),
                 isWinner = outcome == Outcome.Win
               )
-          }
+          },
+          // Every turn, so that matchmaker records them with the results rather than relying on each
+          // move callback having arrived. See `Protocol.MatchResults`.
+          turns = Some(m.throws.sortBy(_.takenAt).map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt))))
         )
 
     /** The state a play page renders. `seat` is the viewer's own, absent on the public board.

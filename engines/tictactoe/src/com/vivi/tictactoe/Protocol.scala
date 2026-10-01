@@ -103,7 +103,11 @@ object Protocol {
       */
     case class ResultEntry(participantId: Long, rank: Int, scores: Map[String, ujson.Value], isWinner: Boolean)
 
-    case class MatchResults(results: List[ResultEntry])
+    /** `turns` is every turn of the match, in the same shape as a status answer's. Matchmaker records them in the
+      * transaction that completes the match, so a turn whose move callback was lost is not lost with it — once a match
+      * is over, matchmaker does not ask the engine again.
+      */
+    case class MatchResults(results: List[ResultEntry], turns: Option[List[EngineTurn]] = None)
 
     given ReadWriter[EnginePlayer] = macroRW
     given ReadWriter[CreateGameRequest] = macroRW

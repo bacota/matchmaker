@@ -345,4 +345,13 @@ class EngineSpec extends FunSuite {
         assertEquals(recorder.moves.size, 2)
         assertEquals(recorder.results.size, 1)
     }
+
+    test("the results carry both throws as turns") {
+        val (engine, recorder, _, _, _) = fixture()
+        engine.move("m-1", bob, Shape.Paper)
+        engine.move("m-1", alice, Shape.Rock)
+        val turns = recorder.results.head._2.turns.get
+        assertEquals(turns.map(_.participantId).toSet, Set(11L, 22L))
+        assert(turns.forall(_.startedAt.contains(created)))
+    }
 }
