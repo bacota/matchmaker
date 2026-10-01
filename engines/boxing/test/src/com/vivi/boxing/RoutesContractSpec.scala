@@ -1,0 +1,43 @@
+package com.vivi.boxing
+
+import com.vivi.engine.{
+    EngineRequest,
+    EngineResponse,
+    InMemoryMatchStore,
+    PlayAuth,
+    RecordingMatchmaker,
+    RoutesContract
+}
+
+/** The routes every engine serves, as boxing serves them: both fighters built, so a plan is a legal first move. What a
+  * plan does, and building a fighter, are `RoutesSpec`'s.
+  */
+class RoutesContractSpec extends RoutesContract {
+
+    private val average = Fighter(5, 5, 5, 5, 5)
+
+    protected def routes(playAuth: PlayAuth, matchmakerKey: Option[String]): EngineRequest => EngineResponse =
+        Routes(Engine(InMemoryMatchStore[Bout](), RecordingMatchmaker(), "http://engine.test"), playAuth, matchmakerKey)
+
+    protected def createRequest(matchId: String, isPublic: Boolean): Protocol.CreateGameRequest =
+        Protocol.CreateGameRequest(
+          matchId = matchId,
+          gameName = "boxing",
+          isPublic = isPublic,
+          parameters = Map("rounds" -> "3"),
+          settings = "{}",
+          timeLimitSeconds = None,
+          players = List(
+            Protocol.EnginePlayer("sub-alice", 1L, Some("Red"), Some(101L), Some(Fighter.toState(average))),
+            Protocol.EnginePlayer("sub-bob", 2L, Some("Blue"), Some(202L), Some(Fighter.toState(average)))
+          ),
+          moveCallbackUrl = Some(s"http://matchmaker.test/games/1/matches/$matchId/moves"),
+          resultsCallbackUrl = Some(s"http://matchmaker.test/games/1/matches/$matchId/results")
+        )
+
+    protected def firstMove: String = """{"offense":5,"defense":0,"power":0}"""
+
+    protected def aliceSeat: String = "Red"
+
+    protected def signInPrompt: String = "sign in to fight"
+}
