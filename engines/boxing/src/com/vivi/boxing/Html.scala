@@ -436,6 +436,7 @@ ${signInScript}
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>signing in</title>
 <style>
   body { margin: 0; min-height: 100vh; display: grid; place-items: center;

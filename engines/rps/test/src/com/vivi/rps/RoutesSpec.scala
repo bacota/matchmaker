@@ -195,6 +195,8 @@ class RoutesSpec extends FunSuite {
         assert(page.body.contains("oauth2/token"), "the callback page redeems the authorization code")
         // And says so when it cannot reach the token endpoint, rather than "signing in…" for ever.
         assert(page.body.contains("could not be reached"), "an unreachable token endpoint must end in a failure")
+        // Laid out for the phone it is most likely opened on, not shrunk from a desktop width.
+        assert(page.body.contains("""<meta name="viewport" content="width=device-width, initial-scale=1">"""))
 
         val (withoutPool, _, _) = fixture()
         assertEquals(get(withoutPool, "/auth/callback").status, 404)
