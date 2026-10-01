@@ -1,14 +1,20 @@
 package com.vivi.boxing
 
 import upickle.default.write
-import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, LoginConfig, PlayAuth}
+import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, Live, LoginConfig, PlayAuth}
 import Protocol.given
 
 /** The engine's HTTP surface: the routes every engine serves, which are [[EngineRoutes]]'s, what a round plan looks
   * like on the wire, and the one route only this game has — building a fighter.
   */
-class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String])
-    extends EngineRoutes[Bout, Corner, Protocol.StateResponse](engine.core, playAuth, matchmakerKey, Html.signIn) {
+class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], live: Option[Live] = None)
+    extends EngineRoutes[Bout, Corner, Protocol.StateResponse](
+      engine.core,
+      playAuth,
+      matchmakerKey,
+      Html.signIn,
+      live
+    ) {
 
     protected def stateOf(m: Bout, corner: Option[Corner]): Protocol.StateResponse = engine.stateOf(m, corner)
 
@@ -16,8 +22,9 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String])
         matchId: String,
         state: Option[Protocol.StateResponse],
         login: Option[LoginConfig],
+        liveUrl: Option[String],
         publicView: Boolean
-    ): String = Html.board(matchId, state, login, publicView)
+    ): String = Html.board(matchId, state, login, liveUrl, publicView)
 
     protected def move(request: EngineRequest, matchId: String): EngineResponse =
         parse[Protocol.PlanRequest](request.body) match {

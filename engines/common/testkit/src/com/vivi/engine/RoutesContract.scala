@@ -17,8 +17,15 @@ import Protocol.given
   */
 abstract class RoutesContract extends FunSuite {
 
-    /** This game's routes, over a fresh in-memory store, at `http://engine.test`. */
-    protected def routes(playAuth: PlayAuth, matchmakerKey: Option[String]): EngineRequest => EngineResponse
+    /** This game's routes, over a fresh in-memory store, at `http://engine.test`, offering Play Live through `live`. */
+    protected def routes(
+        playAuth: PlayAuth,
+        matchmakerKey: Option[String],
+        live: Option[Live]
+    ): EngineRequest => EngineResponse
+
+    private def routes(playAuth: PlayAuth, matchmakerKey: Option[String]): EngineRequest => EngineResponse =
+        routes(playAuth, matchmakerKey, None)
 
     /** A create request for match `matchId` seating `sub-alice` as participant 1 and `sub-bob` as participant 2, with
       * whatever else a match of this game needs to be played from its first move.
@@ -219,5 +226,122 @@ abstract class RoutesContract extends FunSuite {
         assertEquals(get(served, "/matches/m-9/state", as("sub-alice")).status, 200)
         assertEquals(moving(served, "sub-alice").status, 200)
         assertEquals(get(served, "/health").status, 200)
+    }
+
+    // ---------------------------------------------------------------------------
+    // Play Live
+    // ---------------------------------------------------------------------------
+
+    /** Every push, by connection, and a connection that can be made to have gone. */
+    private class RecordingChannel extends LiveChannel {
+        val sent = scala.collection.mutable.ListBuffer[(String, String)]()
+        var gone = Set.empty[String]
+        def send(connectionId: String, message: String): Boolean =
+            synchronized {
+                if (gone(connectionId)) false
+                else {
+                    sent += connectionId -> message
+                    true
+                }
+            }
+    }
+
+    private def liveFixture(isPublic: Boolean = true, auth: PlayAuth = PlayAuth.Trusted) = {
+        val channel = RecordingChannel()
+        val live = Live("ws://engine.test/live", auth, InMemorySubscriptions(), channel)
+        val served = routes(PlayAuth.Trusted, None, Some(live))
+        assertEquals(
+          served(EngineRequest("POST", "/games", Map.empty, write(createRequest("m-9", isPublic)))).status,
+          201
+        )
+        (served, channel)
+    }
+
+    private def connecting(routes: EngineRequest => EngineResponse, id: String, query: Map[String, String]) =
+        routes(EngineRequest("CONNECT", "/live", query, connectionId = Some(id)))
+
+    test("Play Live admits a seat of the match, and a watcher of a public one") {
+        val (routes, _) = liveFixture()
+        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9", "as" -> "sub-alice")).status, 200)
+        assertEquals(connecting(routes, "c-2", Map("match" -> "m-9", "board" -> "1")).status, 200)
+    }
+
+    /* Refused on the terms the state routes refuse on, since a connection is told when the match
+     * moves — which in a private match is the players' business. */
+    test("Play Live refuses a connection the state routes would refuse") {
+        val (routes, _) = liveFixture(isPublic = false)
+        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9")).status, 401)
+        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9", "as" -> "sub-carol")).status, 403)
+        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9", "board" -> "1")).status, 403)
+        assertEquals(connecting(routes, "c-1", Map("match" -> "nope", "as" -> "sub-alice")).status, 404)
+        assertEquals(connecting(routes, "c-1", Map("as" -> "sub-alice")).status, 400)
+    }
+
+    test("Play Live reads a player's token from the query, where a browser has to put it") {
+        // A stand-in for the token verification the deployed connection does: the bearer token is
+        // who the caller is.
+        val byToken = new PlayAuth {
+            val login: Option[LoginConfig] = None
+            def callerOf(request: EngineRequest): Either[Refusal, String] =
+                request.bearerToken.toRight(Refusal.Unauthenticated("no token"))
+        }
+        val (routes, _) = liveFixture(auth = byToken)
+        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9", "token" -> "sub-alice")).status, 200)
+        assertEquals(connecting(routes, "c-2", Map("match" -> "m-9")).status, 401)
+    }
+
+    test("a move is pushed to every connection watching the match, and only as the fact of a change") {
+        val (routes, channel) = liveFixture()
+        connecting(routes, "alice", Map("match" -> "m-9", "as" -> "sub-alice"))
+        connecting(routes, "bob", Map("match" -> "m-9", "as" -> "sub-bob"))
+        connecting(routes, "watcher", Map("match" -> "m-9", "board" -> "1"))
+
+        assertEquals(moving(routes, "sub-alice").status, 200)
+        assertEquals(channel.sent.map(_._1).toSet, Set("alice", "bob", "watcher"))
+        // Nothing a seat would hide can go down a connection, because nothing about the match does.
+        channel.sent.foreach((_, message) => assertEquals(message, """{"changed":"m-9"}"""))
+    }
+
+    test("nothing is pushed for a read, or for a move that was refused") {
+        val (routes, channel) = liveFixture()
+        connecting(routes, "alice", Map("match" -> "m-9", "as" -> "sub-alice"))
+
+        assertEquals(get(routes, "/matches/m-9/state", as("sub-alice")).status, 200)
+        assertEquals(moving(routes, "sub-carol").status, 403)
+        assertEquals(channel.sent.toList, Nil)
+    }
+
+    test("a disconnected connection, or one the channel reports gone, is pushed to no more") {
+        val (routes, channel) = liveFixture()
+        connecting(routes, "alice", Map("match" -> "m-9", "as" -> "sub-alice"))
+        connecting(routes, "bob", Map("match" -> "m-9", "as" -> "sub-bob"))
+        assertEquals(routes(EngineRequest("DISCONNECT", "/live", connectionId = Some("alice"))).status, 200)
+        channel.gone = Set("bob")
+
+        assertEquals(moving(routes, "sub-alice").status, 200)
+        assertEquals(channel.sent.toList, Nil)
+    }
+
+    test("a connection event is only ever a connection's: a plain request with its method is not found") {
+        val (routes, _) = liveFixture()
+        assertEquals(routes(EngineRequest("CONNECT", "/live", Map("match" -> "m-9", "as" -> "sub-alice"))).status, 404)
+        // And an engine without Play Live refuses the connection itself.
+        val (plain, _) = fixture()
+        assertEquals(connecting(plain, "c-1", Map("match" -> "m-9", "as" -> "sub-alice")).status, 404)
+    }
+
+    test("the page offers the Play Live switch only when the engine has somewhere to connect it") {
+        val (live, _) = liveFixture()
+        val offered = get(live, "/matches/m-9/play", as("sub-alice")).body
+        assert(offered.contains("""const liveUrl = "ws://engine.test/live";"""))
+        assert(offered.contains("""<input type="checkbox" id="live-toggle""""))
+        assert(offered.contains("> Play Live</label>"), "the switch is called Play Live")
+        assert(offered.contains("""id="live-status" role="status" aria-live="polite""""))
+        assert(get(live, "/matches/m-9/board").body.contains("""const liveUrl = "ws://engine.test/live";"""))
+
+        val (plain, _) = fixture()
+        val page = get(plain, "/matches/m-9/play", as("sub-alice")).body
+        assert(page.contains("const liveUrl = null;"), "no url, no switch")
+        assert(page.contains("keepCurrent(refresh,"), "without Play Live the page still keeps itself current")
     }
 }

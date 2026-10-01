@@ -1,6 +1,6 @@
 package com.vivi.boxing
 
-import com.vivi.engine.EngineConfig
+import com.vivi.engine.{EngineConfig, Live}
 
 /** How this engine is assembled from its environment, shared by the two ways it runs.
   *
@@ -13,10 +13,16 @@ object Config {
     def routes(
         env: String => Option[String],
         defaultBaseUrl: Option[String] = None,
-        announce: Bout => Unit = _ => ()
+        announce: Bout => Unit = _ => (),
+        live: Option[Live] = None
     ): Routes = {
         val baseUrl = EngineConfig.requiredBaseUrl(env, defaultBaseUrl)
-        Routes(engine(env, baseUrl, announce), EngineConfig.playAuth(env, baseUrl), EngineConfig.matchmakerKey(env))
+        Routes(
+          engine(env, baseUrl, announce),
+          EngineConfig.playAuth(env, baseUrl),
+          EngineConfig.matchmakerKey(env),
+          live.orElse(EngineConfig.live(env, baseUrl))
+        )
     }
 
     def engine(env: String => Option[String], baseUrl: String, announce: Bout => Unit = _ => ()): Engine =

@@ -23,12 +23,22 @@ object LocalEngineServer {
       *   each engine's own, so that all of them can run against one matchmaker at once — which is the only way to see
       *   several games in one player's lists
       * @param routes
-      *   the engine's routes, given the base url the outside world reaches it on
+      *   the engine's routes, given the base url the outside world reaches it on and the Play Live channel to push
+      *   through
       */
-    def run(title: String, defaultPort: Int)(routes: String => EngineRequest => EngineResponse): Unit = {
+    def run(title: String, defaultPort: Int)(routes: (String, Live) => EngineRequest => EngineResponse): Unit = {
         val port = sys.env.get("PORT").flatMap(_.toIntOption).getOrElse(defaultPort)
         val baseUrl = sys.env.getOrElse("BASE_URL", s"http://localhost:$port").stripSuffix("/")
-        serve(port, baseUrl, title, routes(baseUrl))
+        // Play Live on a port of its own, a hundred above the engine's so that every engine's pair
+        // stays clear of every other's. See LocalLiveServer for why it cannot share one.
+        val livePort = sys.env.get("LIVE_PORT").flatMap(_.toIntOption).getOrElse(port + 100)
+        val liveServer = LocalLiveServer(livePort)
+        val live =
+            Live(liveServer.url, EngineConfig.playAuth(sys.env.get, baseUrl), InMemorySubscriptions(), liveServer)
+        val served = routes(baseUrl, live)
+        liveServer.serve(served)
+        serve(port, baseUrl, title, served)
+        println(s"  live      ${liveServer.url} (Play Live)")
     }
 
     private def serve(port: Int, baseUrl: String, title: String, routes: EngineRequest => EngineResponse): Unit = {
@@ -87,16 +97,17 @@ object LocalEngineServer {
                     exchange.sendResponseHeaders(500, bytes.length.toLong)
                     exchange.getResponseBody.write(bytes)
             } finally exchange.close()
-
-        private def queryOf(raw: Option[String]): Map[String, String] =
-            raw.filter(_.nonEmpty)
-                .toList
-                .flatMap(_.split("&"))
-                .flatMap(_.split("=", 2) match {
-                    case Array(k, v) => Some(URLDecoder.decode(k, UTF_8) -> URLDecoder.decode(v, UTF_8))
-                    case Array(k)    => Some(URLDecoder.decode(k, UTF_8) -> "")
-                    case _           => None
-                })
-                .toMap
     }
+
+    /** A raw query string as the routes read one, for this server and the Play Live one. */
+    private[engine] def queryOf(raw: Option[String]): Map[String, String] =
+        raw.filter(_.nonEmpty)
+            .toList
+            .flatMap(_.split("&"))
+            .flatMap(_.split("=", 2) match {
+                case Array(k, v) => Some(URLDecoder.decode(k, UTF_8) -> URLDecoder.decode(v, UTF_8))
+                case Array(k)    => Some(URLDecoder.decode(k, UTF_8) -> "")
+                case _           => None
+            })
+            .toMap
 }

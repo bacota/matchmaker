@@ -55,6 +55,21 @@ class SignedHttp(
         service: String,
         headers: Map[String, String]
     ): String = {
+        val (status, answer) = exchange(method, url, body, service, headers)
+        if (status >= 200 && status < 300) answer
+        else throw AwsError(s"$method $url returned $status: $answer")
+    }
+
+    /** [[send]], answering with the status rather than refusing every one that is not a success — for a caller to whom
+      * a particular refusal means something, as a 410 from a closed Play Live connection does.
+      */
+    def exchange(
+        method: String,
+        url: String,
+        body: Option[String],
+        service: String,
+        headers: Map[String, String]
+    ): (Int, String) = {
         val uri = URI.create(url)
         val payload = body.getOrElse("")
         val signed = credentials match {
@@ -77,8 +92,7 @@ class SignedHttp(
             try httpClient.send(request, HttpResponse.BodyHandlers.ofString())
             catch { case e: Exception => throw AwsError(s"$method $url failed: ${e.getMessage}", e) }
 
-        if (response.statusCode >= 200 && response.statusCode < 300) response.body
-        else throw AwsError(s"$method $url returned ${response.statusCode}: ${response.body}")
+        (response.statusCode, response.body)
     }
 
     private def sign(
@@ -115,4 +129,22 @@ class SignedHttp(
 
         result.request.headers.asScala.view.mapValues(_.asScala.mkString(",")).toMap
     }
+}
+
+/** DynamoDB's JSON API, one signed call at a time — for the match store and Play Live's connections, which between them
+  * need five of its operations and none of its client's machinery.
+  */
+class DynamoDb(http: SignedHttp, region: String) {
+
+    private val endpoint = s"https://dynamodb.$region.amazonaws.com"
+
+    def call(target: String, payload: ujson.Obj): ujson.Value =
+        ujson.read(
+          http.post(
+            endpoint,
+            ujson.write(payload),
+            "dynamodb",
+            Map("content-type" -> "application/x-amz-json-1.0", "x-amz-target" -> s"DynamoDB_20120810.$target")
+          )
+        )
 }

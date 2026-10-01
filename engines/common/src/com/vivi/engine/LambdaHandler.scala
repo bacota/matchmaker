@@ -5,7 +5,8 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.util.Base64
 import com.amazonaws.services.lambda.runtime.{Context, RequestStreamHandler}
 
-/** Lambda entry point, behind an API Gateway HTTP API using payload format 2.0.
+/** Lambda entry point, behind an API Gateway HTTP API using payload format 2.0 — and behind the Play Live WebSocket
+  * API, whose connection events are decoded into the same requests.
   *
   * Each engine names its own subclass as the function's handler — `com.vivi.<game>.Handler::handleRequest` — and
   * supplies [[respond]]; everything between the event and the routes is here.
@@ -44,7 +45,7 @@ abstract class LambdaHandler extends RequestStreamHandler {
     }
 }
 
-/** The API Gateway payload format 2.0 event, in and out. */
+/** The API Gateway payload format 2.0 event, in and out — or a WebSocket API's connection event, in. */
 object LambdaEvent {
 
     /** Payload format 2.0: the method, the path, the query, the body, the headers, and the claims the JWT authorizer
@@ -108,13 +109,23 @@ object LambdaEvent {
             case _             => false
         }
 
+        // A WebSocket API's event names its connection and what happened to it — CONNECT, DISCONNECT
+        // or MESSAGE — where an HTTP event has a method and a path. It is decoded into the request
+        // the local Play Live server builds for the same event, so the routes cannot tell them apart.
+        val connection = for {
+            context <- event.obj.get("requestContext")
+            id <- context.obj.get("connectionId").flatMap(str)
+            eventType <- context.obj.get("eventType").flatMap(str)
+        } yield (id, eventType)
+
         EngineRequest(
-          method,
-          path,
+          connection.map(_._2).getOrElse(method),
+          if (connection.isDefined) "/live" else path,
           query,
           if (isBase64 && rawBody.nonEmpty) String(Base64.getDecoder.decode(rawBody), UTF_8) else rawBody,
           headers,
-          claims
+          claims,
+          connection.map(_._1)
         )
     }
 

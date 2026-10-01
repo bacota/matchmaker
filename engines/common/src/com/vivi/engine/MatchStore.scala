@@ -94,17 +94,9 @@ class InMemoryMatchStore[M <: HasMatchId] extends MatchStore[M] {
 class DynamoDbMatchStore[M <: HasMatchId: ReadWriter](http: SignedHttp, table: String, region: String)
     extends MatchStore[M] {
 
-    private val endpoint = s"https://dynamodb.$region.amazonaws.com"
+    private val dynamoDb = DynamoDb(http, region)
 
-    private def call(target: String, payload: ujson.Obj): ujson.Value =
-        ujson.read(
-          http.post(
-            endpoint,
-            ujson.write(payload),
-            "dynamodb",
-            Map("content-type" -> "application/x-amz-json-1.0", "x-amz-target" -> s"DynamoDB_20120810.$target")
-          )
-        )
+    private def call(target: String, payload: ujson.Obj): ujson.Value = dynamoDb.call(target, payload)
 
     private def load(matchId: String): Option[(M, Long)] = {
         val response = call(

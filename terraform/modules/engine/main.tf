@@ -24,6 +24,14 @@ locals {
   # would report.
   base_url = "https://${aws_apigatewayv2_api.engine.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
 
+  # Play Live's WebSocket API, on a named stage — a WebSocket API has no $default stage to hide
+  # behind. Built from the api's id for the same reason as the base url above: the function's
+  # environment names it, and the stage depends on the function.
+  live_stage    = "live"
+  live_host     = "${aws_apigatewayv2_api.live.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
+  live_url      = "wss://${local.live_host}/${local.live_stage}"
+  live_endpoint = "https://${local.live_host}/${local.live_stage}"
+
   # Matchmaker's calls in. These are the only routes it makes, and the only ones that require
   # the shared API key.
   matchmaker_routes = [
@@ -143,6 +151,31 @@ resource "aws_iam_role_policy" "matches" {
   policy = data.aws_iam_policy_document.matches.json
 }
 
+/* Play Live: the connections table, by connection and by match, and pushing down this stage's
+ * connections — no other api's, and no other stage's. */
+data "aws_iam_policy_document" "live" {
+  statement {
+    actions   = ["dynamodb:PutItem", "dynamodb:DeleteItem"]
+    resources = [aws_dynamodb_table.connections.arn]
+  }
+
+  statement {
+    actions   = ["dynamodb:Query"]
+    resources = ["${aws_dynamodb_table.connections.arn}/index/byMatch"]
+  }
+
+  statement {
+    actions   = ["execute-api:ManageConnections"]
+    resources = ["${aws_apigatewayv2_api.live.execution_arn}/${local.live_stage}/POST/@connections/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "live" {
+  name   = "${local.name}-live"
+  role   = aws_iam_role.lambda.id
+  policy = data.aws_iam_policy_document.live.json
+}
+
 # ---------------------------------------------------------------------------
 # Function
 # ---------------------------------------------------------------------------
@@ -191,6 +224,12 @@ resource "aws_lambda_function" "engine" {
       COGNITO_ISSUER    = var.cognito_issuer
       COGNITO_CLIENT_ID = var.cognito_client_id
       HOSTED_LOGIN_URL  = var.hosted_login_url
+
+      # Play Live: where the page connects, where the engine pushes, and where it remembers who
+      # is connected. LIVE_URL is what puts the switch on the play page.
+      LIVE_URL      = local.live_url
+      LIVE_ENDPOINT = local.live_endpoint
+      LIVE_TABLE    = aws_dynamodb_table.connections.name
     }
   }
 
@@ -307,4 +346,112 @@ resource "aws_lambda_permission" "api_gateway" {
   function_name = aws_lambda_function.engine.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.engine.execution_arn}/*/*"
+}
+
+# ---------------------------------------------------------------------------
+# Play Live
+# ---------------------------------------------------------------------------
+
+/* Who is watching which match, for the play pages a player has switched Play Live on in.
+ *
+ * Keyed by connection, since that is what a disconnect names, with an index by match, since that
+ * is what a move names. The index is eventually consistent, which the page allows for — see
+ * DynamoDbSubscriptions. `expiresAt` cleans up after a disconnect that never arrived: API Gateway
+ * closes every connection within two hours, and the engine sets three.
+ */
+resource "aws_dynamodb_table" "connections" {
+  name         = "${local.name}-connections"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "connectionId"
+
+  attribute {
+    name = "connectionId"
+    type = "S"
+  }
+
+  attribute {
+    name = "matchId"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "byMatch"
+    hash_key        = "matchId"
+    projection_type = "KEYS_ONLY"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+}
+
+/* The WebSocket API a Play Live page connects to.
+ *
+ * Nothing is sent down it but "this match changed"; the page answers by fetching its state from
+ * the HTTP API above, through the JWT authorizer, so what a player may see is decided there and
+ * only there.
+ *
+ * A WebSocket API has no JWT authorizer, so $connect is open at the gateway and the function
+ * verifies the token the page sends with it — the same checks against the same pool. A refused
+ * connect is a refused connection.
+ */
+resource "aws_apigatewayv2_api" "live" {
+  name                       = "${local.name}-live"
+  protocol_type              = "WEBSOCKET"
+  route_selection_expression = "$request.body.action"
+}
+
+resource "aws_apigatewayv2_integration" "live" {
+  api_id             = aws_apigatewayv2_api.live.id
+  integration_type   = "AWS_PROXY"
+  integration_method = "POST"
+  integration_uri    = aws_lambda_function.engine.invoke_arn
+}
+
+resource "aws_apigatewayv2_route" "live" {
+  for_each = toset(["$connect", "$disconnect"])
+
+  api_id             = aws_apigatewayv2_api.live.id
+  route_key          = each.value
+  target             = "integrations/${aws_apigatewayv2_integration.live.id}"
+  authorization_type = "NONE"
+}
+
+/* The page's keep-alive, `{"action":"ping"}` every five minutes, which keeps a quiet match's
+ * connection inside the gateway's ten-minute idle limit. Answered by the gateway itself: a ping is
+ * nothing for the function to do, and invoking it for one would cost more than the message. */
+resource "aws_apigatewayv2_integration" "ping" {
+  api_id                        = aws_apigatewayv2_api.live.id
+  integration_type              = "MOCK"
+  template_selection_expression = "\\$default"
+  request_templates = {
+    "$default" = jsonencode({ statusCode = 200 })
+  }
+}
+
+resource "aws_apigatewayv2_route" "ping" {
+  api_id    = aws_apigatewayv2_api.live.id
+  route_key = "ping"
+  target    = "integrations/${aws_apigatewayv2_integration.ping.id}"
+}
+
+resource "aws_apigatewayv2_stage" "live" {
+  api_id      = aws_apigatewayv2_api.live.id
+  name        = local.live_stage
+  auto_deploy = true
+
+  # Every message is billed, so a client that floods one is capped rather than paid for.
+  default_route_settings {
+    throttling_burst_limit = 100
+    throttling_rate_limit  = 50
+  }
+}
+
+resource "aws_lambda_permission" "live" {
+  statement_id  = "AllowExecutionFromLiveApi"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.engine.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.live.execution_arn}/*"
 }

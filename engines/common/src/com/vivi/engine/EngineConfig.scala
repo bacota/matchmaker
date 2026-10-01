@@ -113,4 +113,40 @@ object EngineConfig {
                 throw IllegalStateException(s"unknown PLAY_AUTH '$other'; expected 'gateway', 'verify' or 'trusted'")
         }
     }
+
+    /** Play Live, deployed: when `LIVE_URL` names the WebSocket API the page connects to, the stage's management url to
+      * push through (`LIVE_ENDPOINT`) and the table connections are kept in (`LIVE_TABLE`). Without `LIVE_URL`, none —
+      * and the play page offers no Play Live switch. The local server makes its own; see [[LocalEngineServer]].
+      */
+    def live(env: String => Option[String], baseUrl: String): Option[Live] =
+        env("LIVE_URL").map(_.trim).filter(_.nonEmpty).map { url =>
+            def required(name: String) =
+                env(name).getOrElse(throw IllegalStateException(s"LIVE_URL is set but $name is not"))
+            val http = SignedHttp(AwsCredentials.fromEnvironment(env), region(env))
+            Live(
+              url,
+              liveAuth(env, baseUrl),
+              DynamoDbSubscriptions(http, required("LIVE_TABLE"), region(env)),
+              ApiGatewayChannel(http, required("LIVE_ENDPOINT"))
+            )
+        }
+
+    /** Who is opening a Play Live connection.
+      *
+      * The play routes' own auth, except where that is the gateway's: a WebSocket API has no JWT authorizer, so no
+      * claims arrive with a connection, and the token the page sends with it is verified here instead — the same checks
+      * against the same pool, done by the function rather than in front of it. Without a pool to verify against there
+      * is nobody to admit, and the gateway's auth, finding no claims, refuses every player; a public board's watchers
+      * need no identity and are admitted either way.
+      */
+    def liveAuth(env: String => Option[String], baseUrl: String): PlayAuth =
+        playAuth(env, baseUrl) match {
+            case gateway: PlayAuth.GatewayClaims =>
+                (env("COGNITO_ISSUER"), env("COGNITO_CLIENT_ID")) match {
+                    case (Some(issuer), Some(clientId)) =>
+                        PlayAuth.VerifiedToken(JwtVerifier(issuer, clientId), gateway.login)
+                    case _ => gateway
+                }
+            case other => other
+        }
 }

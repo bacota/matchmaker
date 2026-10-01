@@ -1,7 +1,7 @@
 package com.vivi.rps
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, SignIn}
+import com.vivi.engine.{LoginConfig, PlayLive, SignIn}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -24,10 +24,14 @@ object Html {
     /** The sign-in this page offers, keeping its tokens under the game's name as it always has. */
     val signIn: SignIn = SignIn("rps")
 
+    /** Play Live, its choice remembered under the same name. */
+    val playLive: PlayLive = PlayLive("rps")
+
     def board(
         matchId: String,
         state: Option[Protocol.StateResponse],
         login: Option[LoginConfig],
+        liveUrl: Option[String] = None,
         publicView: Boolean = false
     ): String = {
         val heading = state match {
@@ -64,6 +68,7 @@ object Html {
   button.throw:not(:disabled):hover { background: color-mix(in srgb, var(--paper) 85%, var(--ink)); }
   :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
 ${SignIn.css}
+${PlayLive.css}
   #seats { margin-top: 1.25rem; font-size: .875rem; opacity: .8; }
   #seats div { margin: .125rem 0; }
   #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
@@ -80,11 +85,13 @@ ${SignIn.css}
        offer and no seat to show for it. -->
   <div id="signin" hidden></div>
   <div id="seats" aria-label="seats"></div>
+  ${PlayLive.markup}
   <div id="error" role="alert"></div>
 </main>
 <script>
 ${signIn.authScript(login)}
 ${signIn.signInScript}
+${playLive.script(liveUrl, matchId)}
 
   const publicView = $publicView;
   // Urls are derived from this page's own, not built from a base: behind API Gateway the path
@@ -225,9 +232,9 @@ ${signIn.signInScript}
 
   render();
   if (!state && mayFetch()) refresh();
-  // Polled to the end, and for the same reason as tic-tac-toe's board: the other player's throw
-  // arrives while this page is doing nothing.
-  setInterval(() => { if (mayFetch() && (!state || !state.completed)) refresh(); }, 2000);
+  // Kept current to the end — polled, or with Play Live told — and for the same reason as
+  // tic-tac-toe's board: the other player's throw arrives while this page is doing nothing.
+  keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
 </script>
 </body>
 </html>

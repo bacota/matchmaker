@@ -20,10 +20,11 @@ import com.vivi.engine.LocalEngineServer
 object LocalServer {
 
     def main(args: Array[String]): Unit =
-        LocalEngineServer.run("tic-tac-toe", defaultPort = 8090) { baseUrl =>
+        LocalEngineServer.run("tic-tac-toe", defaultPort = 8090) { (baseUrl, live) =>
             Config.routes(
               sys.env.get,
               defaultBaseUrl = Some(baseUrl),
+              live = Some(live),
               announce = m => {
                   println(s"match ${m.matchId} created: $baseUrl/matches/${m.matchId}/play")
                   m.seats.foreach(seat =>

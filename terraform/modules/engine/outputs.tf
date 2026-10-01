@@ -45,3 +45,13 @@ output "match_table_name" {
   description = "The DynamoDB table holding matches in progress."
   value       = aws_dynamodb_table.matches.name
 }
+
+output "live_url" {
+  description = "Where a play page opens its Play Live connection. The engine is told it as LIVE_URL; nothing else needs it."
+  value       = local.live_url
+}
+
+output "connection_table_name" {
+  description = "The DynamoDB table of open Play Live connections."
+  value       = aws_dynamodb_table.connections.name
+}

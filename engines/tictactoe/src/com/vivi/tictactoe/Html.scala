@@ -1,7 +1,7 @@
 package com.vivi.tictactoe
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, SignIn}
+import com.vivi.engine.{LoginConfig, PlayLive, SignIn}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -20,10 +20,14 @@ object Html {
     /** The sign-in this page offers, keeping its tokens under the game's name as it always has. */
     val signIn: SignIn = SignIn("tictactoe")
 
+    /** Play Live, its choice remembered under the same name. */
+    val playLive: PlayLive = PlayLive("tictactoe")
+
     def board(
         matchId: String,
         state: Option[Protocol.StateResponse],
         login: Option[LoginConfig],
+        liveUrl: Option[String] = None,
         publicView: Boolean = false
     ): String = {
         val heading = state match {
@@ -56,6 +60,7 @@ object Html {
   button.cell:not(:disabled):hover { background: color-mix(in srgb, var(--paper) 85%, var(--ink)); }
   button.cell.win { background: color-mix(in srgb, var(--paper) 70%, seagreen); }
 ${SignIn.css}
+${PlayLive.css}
   #seats { margin-top: 1.25rem; font-size: .875rem; opacity: .7; }
   #seats div { margin: .125rem 0; }
   #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
@@ -71,11 +76,13 @@ ${SignIn.css}
        offer and no seat to show for it. -->
   <div id="signin" hidden></div>
   <div id="seats"></div>
+  ${PlayLive.markup}
   <div id="error" role="alert"></div>
 </main>
 <script>
 ${signIn.authScript(login)}
 ${signIn.signInScript}
+${playLive.script(liveUrl, matchId)}
 
   const publicView = $publicView;
   // Urls are derived from this page's own, not built from a base: behind API Gateway the path
@@ -197,7 +204,7 @@ ${signIn.signInScript}
 
   render();
   if (!state && mayFetch()) refresh();
-  setInterval(() => { if (mayFetch() && (!state || !state.completed)) refresh(); }, 2000);
+  keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
 </script>
 </body>
 </html>
