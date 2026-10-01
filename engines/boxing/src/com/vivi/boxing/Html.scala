@@ -363,16 +363,25 @@ ${playLive.script(liveUrl, matchId)}
   async function submit(url, body, button) {
     show("");
     button.disabled = true;
-    const response = await send(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const ticket = ask();
+    const response = await send(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, ticket);
     button.disabled = false;
     if (!response) return;
     const answer = await response.json();
-    if (response.ok) { state = answer; render(); } else { show(answer.error || response.statusText); render(); }
+    // A refusal is dropped under a newer state, which says more; see PlayLive for the two orders.
+    if (!response.ok) { if (!overtaken(ticket)) tell(ticket, answer.error || response.statusText); render(); return; }
+    if (latest(ticket)) state = answer;
+    // Clears an earlier submission's refusal, but not a later one's: that is still the news.
+    tell(ticket, "");
+    render();
   }
 
   async function refresh() {
-    const response = await send(stateUrl, {});
-    if (response && response.ok) { state = await response.json(); render(); }
+    const ticket = ask();
+    const response = await send(stateUrl, {}, ticket);
+    if (!response || !response.ok) return;
+    const answer = await response.json();
+    if (latest(ticket)) { state = answer; render(); }
   }
 
   /* Every call carries the ID token when there is one, and the two refusals mean different things.
@@ -381,28 +390,34 @@ ${playLive.script(liveUrl, matchId)}
    * page offers a sign-in again. A 403 is "not yours": the player is signed in, just not to a
    * corner of this bout. Their session is kept — it is good for every bout they are in — and the
    * page says so and stops asking, since signing in again would not give them a corner. */
-  async function send(url, init) {
+  /* `ticket` is the caller's, from `ask()`: a refusal answered here is ordered like any other
+   * answer, so a late 401 or 403 cannot blank a board a newer request has already shown, nor a
+   * stale failure overwrite a newer message. If the session really is over, the next request is
+   * refused too, with a newer ticket, and that one is acted on. */
+  async function send(url, init, ticket) {
     const token = await freshIdToken();
     const headers = Object.assign({}, init.headers || {}, token ? { authorization: "Bearer " + token } : {});
     try {
       const response = await fetch(url, Object.assign({}, init, { headers }));
       if (response.status === 401) {
+        if (!latest(ticket)) return null;
         if (token) clearSession();
         state = null;
         render();
-        show(login ? "sign in to fight this bout" : "say who you are with ?as=<cognito sub>");
+        tell(ticket, login ? "sign in to fight this bout" : "say who you are with ?as=<cognito sub>");
         return null;
       }
       if (response.status === 403) {
+        if (!latest(ticket)) return null;
         noCorner = true;
         state = null;
         render();
-        show("you have no corner in this bout");
+        tell(ticket, "you have no corner in this bout");
         return null;
       }
       return response;
     } catch (e) {
-      show("could not reach the engine");
+      if (!overtaken(ticket)) tell(ticket, "could not reach the engine");
       return null;
     }
   }

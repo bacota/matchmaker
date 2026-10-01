@@ -1,5 +1,6 @@
 package com.vivi.engine
 
+import java.time.Duration
 import upickle.default.ReadWriter
 
 /** The settings every engine reads from its environment the same way, whatever its game.
@@ -127,7 +128,12 @@ object EngineConfig {
               url,
               liveAuth(env, baseUrl),
               DynamoDbSubscriptions(http, required("LIVE_TABLE"), region(env)),
-              ApiGatewayChannel(http, required("LIVE_ENDPOINT"))
+              // A push that has not landed in two seconds is not going to be worth waiting for: the
+              // page checks for itself within the minute. See `Live`'s deadline.
+              ApiGatewayChannel(
+                SignedHttp(AwsCredentials.fromEnvironment(env), region(env), timeout = Duration.ofSeconds(2)),
+                required("LIVE_ENDPOINT")
+              )
             )
         }
 

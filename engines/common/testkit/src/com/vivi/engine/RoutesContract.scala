@@ -344,4 +344,36 @@ abstract class RoutesContract extends FunSuite {
         assert(page.contains("const liveUrl = null;"), "no url, no switch")
         assert(page.contains("keepCurrent(refresh,"), "without Play Live the page still keeps itself current")
     }
+
+    /* An answer overtaken by one asked for later must not be shown over it: with Play Live on, an
+     * older state shown over a newer one would stay until the minute check. Every answer the page
+     * shows — its refresh and its own move's — takes a ticket for that. */
+    test("the page shows its answers in the order it asked for them") {
+        val (routes, _) = fixture()
+        val page = get(routes, "/matches/m-9/play", as("sub-alice")).body
+        assert(page.contains("function latest(ticket)"))
+        val sendStarts = page.indexOf("async function send(url, init, ticket) {")
+        assert(sendStarts >= 0, "send must take the caller's ticket")
+        val sendBody = page.substring(sendStarts, page.indexOf("\n  }\n", sendStarts))
+        // Counted outside `send`, whose own refusals are checked separately below.
+        val rest = page.replace(sendBody, "")
+        def count(text: String) = java.util.regex.Pattern.quote(text).r.findAllMatchIn(rest).size
+        // Less the function's own definition.
+        val guarded = count("latest(ticket)") - 1
+        val asked = count("const ticket = ask();")
+        assert(asked >= 2, s"the refresh and the move should both ask for a ticket; $asked do")
+        assertEquals(guarded, asked, "every ticket asked for must be checked before its answer is shown")
+        // A move's refusal, and the clearing of one, are ordered on the message line; see PlayLive.
+        val moves = asked - 1
+        assertEquals(count("if (!overtaken(ticket)) tell(ticket, "), moves, "every move must order its refusal")
+        assertEquals(count("tell(ticket, \"\");"), moves, "every move must clear a refusal only in order")
+        // And the refusals `send` answers itself — a 401, a 403, an engine it cannot reach.
+        assertEquals(count(", ticket);"), asked, "every request must hand its ticket to send")
+        assert(!sendBody.contains("show("), "send must write its messages in order, through tell")
+        assertEquals(
+          "if \\(!latest\\(ticket\\)\\) return null;".r.findAllMatchIn(sendBody).size,
+          2,
+          "a 401 or a 403 may change the page only in order"
+        )
+    }
 }
