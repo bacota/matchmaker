@@ -2,7 +2,7 @@ package com.vivi.rps
 
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
-import com.vivi.engine.HasMatchId
+import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnLike}
 
 /** One player's seat in a match.
   *
@@ -10,7 +10,7 @@ import com.vivi.engine.HasMatchId
   * how the engine recognises them. `participantId` is matchmaker's key for the seat and is what every callback quotes
   * back.
   */
-case class Seat(side: Side, cognitoId: String, participantId: Long)
+case class Seat(side: Side, cognitoId: String, participantId: Long) extends SeatLike
 
 /** One throw that was made: by whom, what it was, when it was made, and when that player's clock started for it.
   *
@@ -18,7 +18,7 @@ case class Seat(side: Side, cognitoId: String, participantId: Long)
   * for both seats rather than the move before, because nobody here waits for anybody: both clocks start when the match
   * does.
   */
-case class ThrowRecord(participantId: Long, shape: Shape, takenAt: Instant, startedAt: Instant)
+case class ThrowRecord(participantId: Long, shape: Shape, takenAt: Instant, startedAt: Instant) extends TurnLike
 
 /** A match in progress, and everything needed to answer for it or to call matchmaker back.
   *
@@ -39,7 +39,7 @@ case class RpsMatch(
     createdAt: Instant,
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String]
-) extends HasMatchId {
+) extends MatchLike {
 
     def seatOf(side: Side): Option[Seat] = seats.find(_.side == side)
 
@@ -89,7 +89,15 @@ case class RpsMatch(
 
 }
 
-object RpsMatch {
+/** Rock-paper-scissors as matchmaker sees it.
+  *
+  * Nobody waits for anybody: both seats are pending from the moment the match is created, either may throw first, and
+  * the match resolves on the second throw rather than on anybody's move in particular. So both clocks start when the
+  * match does and stay that way, however late either player throws — the move before says nothing about when a player
+  * who was never waiting began to think, and charging the slower player from the faster one's throw would bill them for
+  * somebody else's thinking.
+  */
+object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
 
     /** Seats the players, honouring the roles matchmaker sent when it sent usable ones.
       *
@@ -112,6 +120,31 @@ object RpsMatch {
                 else List(Side.One, Side.Two)
             Right(players.zip(sides).map((p, side) => Seat(side, p.cognitoId, p.participantId)))
         }
+
+    def seats(m: RpsMatch): List[Seat] = m.seats
+
+    def isOver(m: RpsMatch): Boolean = m.isOver
+
+    def markCompleted(m: RpsMatch): RpsMatch = m.copy(completed = true)
+
+    def pending(m: RpsMatch): List[Seat] = m.pending
+
+    def clockStartedAt(m: RpsMatch): Instant = m.createdAt
+
+    def turns(m: RpsMatch): List[ThrowRecord] = m.throws
+
+    def sequence(m: RpsMatch): Long = m.throws.size.toLong
+
+    def outcome(m: RpsMatch, seat: Seat): Outcome = m.outcomeFor(seat)
+
+    /** The throws are in the scores, because this is the first moment they may be told at all and because a result
+      * nobody can read back is not much of a record.
+      */
+    def scores(m: RpsMatch, seat: Seat): Map[String, ujson.Value] =
+        Map(
+          "throw" -> m.throwOf(seat).map(t => ujson.Str(t.shape.toString)).getOrElse(ujson.Null),
+          "side" -> ujson.Str(seat.side.toString)
+        )
 
     def create(request: Protocol.CreateGameRequest, now: Instant): Either[String, RpsMatch] =
         seat(request.players).map { seats =>
