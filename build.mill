@@ -296,6 +296,17 @@ object engines extends Module {
     */
   object common extends EngineModule {
     object test extends EngineTests
+
+    /** What every engine's tests check the same way, for each engine's own tests to run against
+      * its game: `RoutesContract`, the routes every engine serves.
+      *
+      * A module rather than part of `common.test` so that an engine's tests can depend on it
+      * without taking common's own suites with them.
+      */
+    object testkit extends EngineModule {
+      def moduleDeps = Seq(common)
+      def mvnDeps = super.mvnDeps() ++ Seq(mvn"org.scalameta::munit:1.0.4")
+    }
   }
 
   /** Two-player tic-tac-toe, implementing the game API of `interaction-design.txt`.
@@ -306,7 +317,9 @@ object engines extends Module {
     */
   object tictactoe extends EngineModule {
     def moduleDeps = Seq(common)
-    object test extends EngineTests
+    object test extends EngineTests {
+      def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
+    }
   }
 
   /** Two-player rock-paper-scissors, implementing the same game API as `tictactoe`.
@@ -322,7 +335,9 @@ object engines extends Module {
     */
   object rps extends EngineModule {
     def moduleDeps = Seq(common)
-    object test extends EngineTests
+    object test extends EngineTests {
+      def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
+    }
   }
 
   /** Two fighters, each built by their player, trading simultaneous round plans over 3 to 25 rounds — the rules are
@@ -337,6 +352,8 @@ object engines extends Module {
     */
   object boxing extends EngineModule {
     def moduleDeps = Seq(common)
-    object test extends EngineTests
+    object test extends EngineTests {
+      def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
+    }
   }
 }

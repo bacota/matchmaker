@@ -2,7 +2,7 @@ package com.vivi.rps
 
 import munit.FunSuite
 import upickle.default.{read, write}
-import com.vivi.engine.{EngineRequest, InMemoryMatchStore, LoginConfig, PlayAuth, RecordingMatchmaker}
+import com.vivi.engine.{EngineRequest, InMemoryMatchStore, PlayAuth, RecordingMatchmaker}
 import Protocol.given
 
 /** Drives the engine the way the outside world does: as requests.
@@ -16,21 +16,17 @@ class RoutesSpec extends FunSuite {
       * routes do with the identity — find the seat, refuse if there is none — is the same whichever mode established
       * it, and the modes themselves are `PlayAuthSpec`.
       */
-    private def fixture(
-        isPublic: Boolean = true,
-        playAuth: PlayAuth = PlayAuth.Trusted,
-        matchmakerKey: Option[String] = None
-    ) = {
+    private def fixture(isPublic: Boolean = true) = {
         val store = InMemoryMatchStore[RpsMatch]()
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
-        val routes = Routes(engine, playAuth, matchmakerKey)
+        val routes = Routes(engine, PlayAuth.Trusted, None)
         val created = routes(EngineRequest("POST", "/games", Map.empty, write(createRequest(isPublic))))
         (routes, store, created)
     }
 
-    private def createRequest(isPublic: Boolean = true, matchId: String = "m-9") =
+    private def createRequest(isPublic: Boolean) =
         Protocol.CreateGameRequest(
-          matchId = matchId,
+          matchId = "m-9",
           gameName = "rock-paper-scissors",
           isPublic = isPublic,
           parameters = Map.empty,
@@ -52,98 +48,11 @@ class RoutesSpec extends FunSuite {
     private def throwing(routes: Routes, player: String, shape: String, matchId: String = "m-9") =
         routes(EngineRequest("POST", s"/matches/$matchId/moves", as(player), write(Protocol.MoveRequest(shape))))
 
-    test("POST /games creates a match and answers 201 with the urls") {
-        val (_, store, created) = fixture()
-        assertEquals(created.status, 201)
-        val response = read[Protocol.CreateGameResponse](created.body)
-        assertEquals(response.statusUrl, "http://engine.test/matches/m-9/status")
-        assertEquals(response.playUrl, "http://engine.test/matches/m-9/play")
-        assertEquals(response.publicUrl, Some("http://engine.test/matches/m-9/board"))
-        assert(store.get("m-9").isDefined)
-    }
-
-    test("POST /games with a body that is not a create request is a 400, not a 500") {
-        val (routes, _, _) = fixture()
-        val answer = routes(EngineRequest("POST", "/games", Map.empty, """{"nonsense":true}"""))
-        assertEquals(answer.status, 400)
-        assert(ujson.read(answer.body).obj.contains("error"))
-    }
-
     test("GET /matches/:id/status answers matchmaker's status call, with both seats pending") {
         val (routes, _, _) = fixture()
         val status = read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status").body)
         assertEquals(status.completed, false)
         assertEquals(status.participants.filter(_.pending).map(_.participantId), List(1L, 2L))
-    }
-
-    test("GET /matches/:id/status passes `since` through, and refuses one it cannot read") {
-        val (routes, _, _) = fixture()
-        throwing(routes, "sub-alice", "rock")
-
-        val all = read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status").body)
-        assertEquals(all.turns.map(_.participantId), List(1L))
-
-        // From after the only throw there is: nothing left to report.
-        val since = all.turns.head.takenAt.toString
-        val later = read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status", Map("since" -> since)).body)
-        assertEquals(later.turns, Nil)
-
-        // Not a time at all. Answered as a bad request rather than as "send everything", which
-        // would report turns matchmaker already has and charge them twice.
-        assertEquals(get(routes, "/matches/m-9/status", Map("since" -> "yesterday")).status, 400)
-    }
-
-    test("the play page renders the state for the player whose seat it is") {
-        val (routes, _, _) = fixture()
-
-        val page = get(routes, "/matches/m-9/play", as("sub-alice"))
-        assertEquals(page.status, 200)
-        assertEquals(page.contentType, "text/html; charset=utf-8")
-        assert(page.body.contains("<!doctype html>"))
-        // What changes while the page is idle is announced: the status as it moves on, and a refusal.
-        assert(page.body.contains("""<p id="status" role="status" aria-live="polite">"""))
-        assert(page.body.contains("""<div id="error" role="alert">"""))
-        assert(page.body.contains("\"you\":\"One\""), "the seat's own state should be inlined into the page")
-    }
-
-    /* The page is served to anyone, signed in or not: it is a shell that offers a sign-in and then
-     * fetches the state, so a player following the url from matchmaker gets somewhere to sign in
-     * rather than a bare 401. It must not carry the match with it, which is what this checks. */
-    test("the play page for a stranger carries no state and offers a sign-in") {
-        val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1")
-        val (routes, _, _) = fixture(playAuth = PlayAuth.GatewayClaims(Some(login)))
-
-        val page = get(routes, "/matches/m-9/play")
-        assertEquals(page.status, 200)
-        assert(page.body.contains("let state = null"), "a stranger's page must not carry the match")
-        assert(page.body.contains("sign in to play"))
-        assert(page.body.contains("client-1"), "the page needs the app client to start a sign-in")
-    }
-
-    test("the state and move routes refuse a caller with no seat") {
-        val (routes, _, _) = fixture()
-        assertEquals(get(routes, "/matches/m-9/state", as("sub-carol")).status, 403)
-        assertEquals(throwing(routes, "sub-carol", "rock").status, 403)
-    }
-
-    /* The page tells these apart: a 401 drops the session and offers a sign-in, which can help; a
-     * 403 keeps it and says there is no seat here, which a sign-in cannot change. */
-    test("a caller who cannot be identified is refused with 401, not 403") {
-        val (routes, _, _) = fixture()
-        assertEquals(get(routes, "/matches/m-9/state").status, 401)
-
-        // Deployed: no claims means no authorizer vouched for anyone; a stranger's claims are a 403.
-        val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1")
-        val (deployed, _, _) = fixture(playAuth = PlayAuth.GatewayClaims(Some(login)))
-        assertEquals(deployed(EngineRequest("GET", "/matches/m-9/state")).status, 401)
-        assertEquals(
-          deployed(EngineRequest("GET", "/matches/m-9/state", claims = Map("sub" -> "sub-carol"))).status,
-          403
-        )
-        assertEquals(
-          deployed(EngineRequest("GET", "/matches/m-9/state", claims = Map("sub" -> "sub-alice"))).status,
-          200
-        )
     }
 
     test("a throw posted by a player is recorded and answered with the new state") {
@@ -191,30 +100,6 @@ class RoutesSpec extends FunSuite {
         assert(store.get("m-9").get.completed)
     }
 
-    test("the sign-in callback page is served when a pool is configured, and not otherwise") {
-        val login = LoginConfig("https://login.test", "client-1", "http://engine.test/auth/callback", "us-east-1")
-        val (withPool, _, _) = fixture(playAuth = PlayAuth.GatewayClaims(Some(login)))
-        val page = get(withPool, "/auth/callback")
-        assertEquals(page.status, 200)
-        assert(page.body.contains("oauth2/token"), "the callback page redeems the authorization code")
-        // And says so when it cannot reach the token endpoint, rather than "signing in…" for ever.
-        assert(page.body.contains("could not be reached"), "an unreachable token endpoint must end in a failure")
-        // Its status changes from "signing in…" to a failure with nothing pressed, so it is announced.
-        assert(page.body.contains("""<p id="error" role="status" aria-live="polite">"""))
-        // Laid out for the phone it is most likely opened on, not shrunk from a desktop width.
-        assert(page.body.contains("""<meta name="viewport" content="width=device-width, initial-scale=1">"""))
-
-        val (withoutPool, _, _) = fixture()
-        assertEquals(get(withoutPool, "/auth/callback").status, 404)
-    }
-
-    test("the public board is readable by anyone, and shows no seat as its own") {
-        val (routes, _, _) = fixture(isPublic = true)
-        val page = get(routes, "/matches/m-9/board")
-        assertEquals(page.status, 200)
-        assertEquals(read[Protocol.StateResponse](get(routes, "/matches/m-9/board/state").body).you, None)
-    }
-
     /* The one thing a watcher must not be able to do is see a throw before the player facing it
      * does — the public board is a url anybody may hold, including the other player. */
     test("the public board shows that a player has thrown, and not what") {
@@ -231,53 +116,5 @@ class RoutesSpec extends FunSuite {
         throwing(routes, "sub-bob", "paper")
         val resolved = read[Protocol.StateResponse](get(routes, "/matches/m-9/board/state").body)
         assertEquals(resolved.players.map(_.shape), List(Some("Rock"), Some("Paper")))
-    }
-
-    test("a private match has no public board") {
-        val (routes, _, _) = fixture(isPublic = false)
-        assertEquals(get(routes, "/matches/m-9/board").status, 403)
-        assertEquals(get(routes, "/matches/m-9/board/state").status, 403)
-    }
-
-    test("an unknown match and an unknown path are both 404") {
-        val (routes, _, _) = fixture()
-        assertEquals(get(routes, "/matches/nope/status").status, 404)
-        assertEquals(get(routes, "/nothing/here").status, 404)
-    }
-
-    // ---------------------------------------------------------------------------
-    // Matchmaker's own routes
-    // ---------------------------------------------------------------------------
-
-    test("with a key configured, matchmaker's routes need it") {
-        // The fixture's own create call is made with no key, so it is the refusal being asserted.
-        val (routes, _, created) = fixture(matchmakerKey = Some("s3cret"))
-        assertEquals(created.status, 401)
-        assertEquals(routes(EngineRequest("GET", "/matches/m-9/status")).status, 401)
-    }
-
-    test("a wrong key is refused exactly as a missing one is") {
-        val (routes, _, _) = fixture(matchmakerKey = Some("s3cret"))
-        val wrong = routes(EngineRequest("GET", "/matches/m-9/status", headers = Map("x-api-key" -> "s3crea")))
-        assertEquals(wrong.status, 401)
-        assertEquals(wrong.body, routes(EngineRequest("GET", "/matches/m-9/status")).body)
-    }
-
-    test("the right key gets in") {
-        val engine = Engine(InMemoryMatchStore(), RecordingMatchmaker(), "http://engine.test")
-        val routes = Routes(engine, PlayAuth.Trusted, Some("s3cret"))
-        val keyed = Map("x-api-key" -> "s3cret")
-        assertEquals(
-          routes(EngineRequest("POST", "/games", Map.empty, write(createRequest(matchId = "m-1")), keyed)).status,
-          201
-        )
-        assertEquals(routes(EngineRequest("GET", "/matches/m-1/status", headers = keyed)).status, 200)
-    }
-
-    test("a player route is not protected by matchmaker's key") {
-        // The key guards the two routes that are matchmaker's, and only those: a player has no key
-        // and must still reach the play page.
-        val (routes, _, _) = fixture()
-        assertEquals(routes(EngineRequest("GET", "/health")).status, 200)
     }
 }

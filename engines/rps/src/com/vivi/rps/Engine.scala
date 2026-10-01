@@ -25,7 +25,8 @@ class Engine(
     announce: RpsMatch => Unit = _ => ()
 ) {
 
-    private val core = GameEngine(RpsMatch, store, matchmaker, baseUrl, now, announce)
+    /** The calls every engine makes, which this one exports, and which the shared routes are served from. */
+    val core = GameEngine(RpsMatch, store, matchmaker, baseUrl, now, announce)
 
     export core.{createGame, playUrl, read, resultsOf, seatOf, status}
 

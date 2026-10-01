@@ -1,11 +1,6 @@
 package com.vivi.boxing
 
-import java.net.{InetSocketAddress, URLDecoder}
-import java.nio.charset.StandardCharsets.UTF_8
-import java.util.concurrent.Executors
-import scala.jdk.CollectionConverters._
-import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
-import com.vivi.engine.{EngineConfig, EngineRequest, Log, PlayAuth}
+import com.vivi.engine.LocalEngineServer
 
 /** Runs the engine on a local port, with matches in memory and no AWS involved.
   *
@@ -24,93 +19,25 @@ import com.vivi.engine.{EngineConfig, EngineRequest, Log, PlayAuth}
   */
 object LocalServer {
 
-    def main(args: Array[String]): Unit = {
+    def main(args: Array[String]): Unit =
         // 8092, after tic-tac-toe's 8090 and rock-paper-scissors' 8091, so that all three engines can
         // be run against one matchmaker at once.
-        val port = sys.env.get("PORT").flatMap(_.toIntOption).getOrElse(8092)
-        val baseUrl = sys.env.getOrElse("BASE_URL", s"http://localhost:$port").stripSuffix("/")
-        val routes = Config.routes(
-          sys.env.get,
-          defaultBaseUrl = Some(baseUrl),
-          announce = m => {
-              println(s"match ${m.matchId} created: $baseUrl/matches/${m.matchId}/play")
-              println(s"  ${m.scheduledRounds} rounds scheduled")
-              m.corners.foreach(c =>
-                  println(
-                    s"  ${c.side} ${c.cognitoId} (participant ${c.participantId}, fighter ${c.characterId}${
-                            if (c.fighter.isEmpty) ", not built yet" else ""
-                        })"
-                  )
-              )
-              if (m.isPublic) println(s"  public board $baseUrl/matches/${m.matchId}/board")
-          }
-        )
-
-        val server = HttpServer.create(InetSocketAddress("127.0.0.1", port), 0)
-        server.createContext("/", Dispatcher(routes))
-        server.setExecutor(Executors.newFixedThreadPool(4))
-        server.start()
-
-        println(s"boxing engine listening on http://localhost:$port")
-        println(s"  create    POST http://localhost:$port/games")
-        println(s"  callbacks ${
-                if (sys.env.get("MATCHMAKER_OFFLINE").contains("true")) "printed here (offline)"
-                else "posted to the urls matchmaker sends"
-            }")
-        println(
-          s"  identity  ${sys.env.getOrElse("GAME_EXTERNAL_ID", "<GAME_EXTERNAL_ID not set: matchmaker will refuse the callbacks>")}"
-        )
-
-        EngineConfig.playAuth(sys.env.get, baseUrl) match {
-            case _: PlayAuth.VerifiedToken =>
-                println(
-                  s"  players   sign in against ${sys.env.getOrElse("HOSTED_LOGIN_URL", "?")}, tokens verified against ${sys.env
-                          .getOrElse("COGNITO_ISSUER", "?")}"
-                )
-            case PlayAuth.Trusted =>
-                println("  players   TRUSTED: anyone may play any seat by naming it (?as=<cognito sub>).")
-                println(
-                  "            Set COGNITO_ISSUER, COGNITO_CLIENT_ID and HOSTED_LOGIN_URL to use the real sign-in."
-                )
-            case _ =>
-                println("  players   claims from an API Gateway JWT authorizer, which is not in front of this process")
+        LocalEngineServer.run("boxing", defaultPort = 8092) { baseUrl =>
+            Config.routes(
+              sys.env.get,
+              defaultBaseUrl = Some(baseUrl),
+              announce =
+                  m => {
+                      println(s"match ${m.matchId} created: $baseUrl/matches/${m.matchId}/play")
+                      println(s"  ${m.scheduledRounds} rounds scheduled")
+                      m.corners
+                          .foreach(c =>
+                              println(
+                                s"  ${c.side} ${c.cognitoId} (participant ${c.participantId}, fighter ${c.characterId}${if (c.fighter.isEmpty) ", not built yet" else ""})"
+                              )
+                          )
+                      if (m.isPublic) println(s"  public board $baseUrl/matches/${m.matchId}/board")
+                  }
+            )
         }
-    }
-
-    private class Dispatcher(routes: Routes) extends HttpHandler {
-        def handle(exchange: HttpExchange): Unit =
-            try {
-                val uri = exchange.getRequestURI
-                val body = String(exchange.getRequestBody.readAllBytes(), UTF_8)
-                val headers = exchange.getRequestHeaders.asScala.view
-                    .map((name, values) => name.toLowerCase -> values.asScala.mkString(","))
-                    .toMap
-
-                val response = routes(
-                  EngineRequest(exchange.getRequestMethod, uri.getPath, queryOf(Option(uri.getRawQuery)), body, headers)
-                )
-
-                val bytes = response.body.getBytes(UTF_8)
-                exchange.getResponseHeaders.add("content-type", response.contentType)
-                exchange.sendResponseHeaders(response.status, bytes.length.toLong)
-                exchange.getResponseBody.write(bytes)
-            } catch {
-                case e: Throwable =>
-                    Log.failure(e, s"${exchange.getRequestMethod} ${exchange.getRequestURI.getPath}")
-                    val bytes = s"""{"error":"${e.getClass.getSimpleName}"}""".getBytes(UTF_8)
-                    exchange.sendResponseHeaders(500, bytes.length.toLong)
-                    exchange.getResponseBody.write(bytes)
-            } finally exchange.close()
-
-        private def queryOf(raw: Option[String]): Map[String, String] =
-            raw.filter(_.nonEmpty)
-                .toList
-                .flatMap(_.split("&"))
-                .flatMap(_.split("=", 2) match {
-                    case Array(k, v) => Some(URLDecoder.decode(k, UTF_8) -> URLDecoder.decode(v, UTF_8))
-                    case Array(k)    => Some(URLDecoder.decode(k, UTF_8) -> "")
-                    case _           => None
-                })
-                .toMap
-    }
 }
