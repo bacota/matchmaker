@@ -3,6 +3,7 @@ package com.vivi.boxing
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
 import munit.FunSuite
+import com.vivi.engine.Refusal
 
 /** Fights whole bouts through the engine, checking both what a player is told and what matchmaker is told.
   *

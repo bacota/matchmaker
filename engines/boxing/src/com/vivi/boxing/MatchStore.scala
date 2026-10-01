@@ -3,6 +3,7 @@ package com.vivi.boxing
 import java.util.concurrent.ConcurrentHashMap
 import scala.jdk.CollectionConverters._
 import upickle.default.{read, write}
+import com.vivi.engine.{AwsError, SignedHttp}
 import Bout.given
 
 /** Raised when a match cannot be saved because someone else saved it first. The move that lost the race is retried

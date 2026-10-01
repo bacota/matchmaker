@@ -3,6 +3,7 @@ package com.vivi.rps
 import java.time.Instant
 import munit.FunSuite
 import upickle.default.{read, write}
+import com.vivi.engine.Refusal
 import Protocol.given
 
 /** Plays whole matches through the engine, checking both what a player is told and what matchmaker is told — the

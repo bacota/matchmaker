@@ -1,6 +1,7 @@
 package com.vivi.boxing
 
 import upickle.default.write
+import com.vivi.engine.{AwsError, SignedHttp}
 import Protocol.given
 
 /** The calls the engine makes *back* to matchmaker: steps 2 and 3 of `interaction-design.txt`, and the one this game

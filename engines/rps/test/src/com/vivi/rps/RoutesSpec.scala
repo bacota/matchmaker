@@ -2,6 +2,7 @@ package com.vivi.rps
 
 import munit.FunSuite
 import upickle.default.{read, write}
+import com.vivi.engine.{EngineRequest, LoginConfig, PlayAuth}
 import Protocol.given
 
 /** Drives the engine the way the outside world does: as requests.
@@ -244,33 +245,6 @@ class RoutesSpec extends FunSuite {
         assertEquals(get(routes, "/nothing/here").status, 404)
     }
 
-    test("a lambda event decodes to the same request the local server builds, claims included") {
-        val event = ujson.Obj(
-          "rawPath" -> "/matches/m-9/moves",
-          "requestContext" -> ujson.Obj(
-            "http" -> ujson.Obj("method" -> "POST"),
-            // What the JWT authorizer writes into the event once it has verified the token.
-            "authorizer" -> ujson.Obj(
-              "jwt" -> ujson.Obj("claims" -> ujson.Obj("sub" -> "sub-alice", "token_use" -> "id"))
-            )
-          ),
-          "headers" -> ujson.Obj("Content-Type" -> "application/json"),
-          "body" -> """{"shape":"rock"}""",
-          "isBase64Encoded" -> false
-        )
-        val decoded = Handler.decode(ujson.write(event))
-        assertEquals(decoded.method, "POST")
-        assertEquals(decoded.path, "/matches/m-9/moves")
-        assertEquals(decoded.body, """{"shape":"rock"}""")
-        assertEquals(decoded.claims.get("sub"), Some("sub-alice"))
-        // Lowercased on the way in, since payload v2 does and a lookup for "Authorization" must match.
-        assertEquals(decoded.headers.get("content-type"), Some("application/json"))
-
-        val encoded = ujson.read(Handler.encode(EngineResponse(201, """{"ok":true}""")))
-        assertEquals(encoded("statusCode").num, 201.0)
-        assertEquals(encoded("body").str, """{"ok":true}""")
-    }
-
     // ---------------------------------------------------------------------------
     // Matchmaker's own routes
     // ---------------------------------------------------------------------------
@@ -305,13 +279,5 @@ class RoutesSpec extends FunSuite {
         // and must still reach the play page.
         val (routes, _, _) = fixture()
         assertEquals(routes(EngineRequest("GET", "/health")).status, 200)
-    }
-
-    test("MATCHMAKER_API_KEY is required in Lambda and optional outside it") {
-        assertEquals(Config.matchmakerKey(Map("MATCHMAKER_API_KEY" -> "k").get), Some("k"))
-        assertEquals(Config.matchmakerKey(_ => None), None)
-        // Blank is the same as unset: a variable set to "" is a forgotten one, not an opt-out.
-        assertEquals(Config.matchmakerKey(Map("MATCHMAKER_API_KEY" -> "  ").get), None)
-        intercept[IllegalStateException](Config.matchmakerKey(Map("AWS_LAMBDA_FUNCTION_NAME" -> "engine").get))
     }
 }

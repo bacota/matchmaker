@@ -1,4 +1,4 @@
-package com.vivi.tictactoe
+package com.vivi.engine
 
 /** Establishes which Cognito user is making a play request.
   *

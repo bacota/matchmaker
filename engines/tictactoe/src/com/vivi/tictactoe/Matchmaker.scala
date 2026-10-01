@@ -1,6 +1,7 @@
 package com.vivi.tictactoe
 
 import upickle.default.write
+import com.vivi.engine.{AwsError, SignedHttp}
 import Protocol.given
 
 /** The calls the engine makes *back* to matchmaker: steps 2 and 3 of `interaction-design.txt`.

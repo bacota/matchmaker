@@ -1,4 +1,4 @@
-package com.vivi.tictactoe
+package com.vivi.engine
 
 import munit.FunSuite
 
@@ -72,18 +72,18 @@ class PlayAuthSpec extends FunSuite {
           "HOSTED_LOGIN_URL" -> "https://login.test"
         )
 
-        assert(Config.playAuth(pool.get, "http://engine.test").isInstanceOf[PlayAuth.VerifiedToken])
+        assert(EngineConfig.playAuth(pool.get, "http://engine.test").isInstanceOf[PlayAuth.VerifiedToken])
         assert(
-          Config
-              .playAuth((pool + ("AWS_LAMBDA_FUNCTION_NAME" -> "tictactoe-dev")).get, "http://engine.test")
+          EngineConfig
+              .playAuth((pool + ("AWS_LAMBDA_FUNCTION_NAME" -> "engine-dev")).get, "http://engine.test")
               .isInstanceOf[PlayAuth.GatewayClaims]
         )
-        assertEquals(Config.playAuth(Map.empty[String, String].get, "http://engine.test"), PlayAuth.Trusted)
-        assert(Config.playAuth((pool + ("PLAY_AUTH" -> "trusted")).get, "http://engine.test") == PlayAuth.Trusted)
+        assertEquals(EngineConfig.playAuth(Map.empty[String, String].get, "http://engine.test"), PlayAuth.Trusted)
+        assert(EngineConfig.playAuth((pool + ("PLAY_AUTH" -> "trusted")).get, "http://engine.test") == PlayAuth.Trusted)
     }
 
     test("the redirect the page uses is this engine's own callback path") {
-        val configured = Config.loginConfig(
+        val configured = EngineConfig.loginConfig(
           Map("HOSTED_LOGIN_URL" -> "https://login.test/", "COGNITO_CLIENT_ID" -> "client-1").get,
           "http://engine.test"
         )
@@ -95,8 +95,8 @@ class PlayAuthSpec extends FunSuite {
 
     test("half a login configuration is a startup failure, not a button that goes nowhere") {
         intercept[IllegalStateException](
-          Config.loginConfig(Map("COGNITO_CLIENT_ID" -> "client-1").get, "http://engine.test")
+          EngineConfig.loginConfig(Map("COGNITO_CLIENT_ID" -> "client-1").get, "http://engine.test")
         )
-        assertEquals(Config.loginConfig(Map.empty[String, String].get, "http://engine.test"), None)
+        assertEquals(EngineConfig.loginConfig(Map.empty[String, String].get, "http://engine.test"), None)
     }
 }
