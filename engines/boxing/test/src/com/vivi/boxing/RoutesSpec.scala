@@ -125,6 +125,9 @@ class RoutesSpec extends FunSuite {
         assertEquals(page.status, 200)
         assertEquals(page.contentType, "text/html; charset=utf-8")
         assert(page.body.contains("<!doctype html>"))
+        // What changes while the page is idle is announced: the status as it moves on, and a refusal.
+        assert(page.body.contains("""<p id="status" role="status" aria-live="polite">"""))
+        assert(page.body.contains("""<div id="error" role="alert">"""))
         assert(page.body.contains("\"you\":\"Red\""), "the corner's own state should be inlined into the page")
         assert(page.body.contains("plan round 1"))
     }
@@ -252,6 +255,8 @@ class RoutesSpec extends FunSuite {
         assert(page.body.contains("oauth2/token"), "the callback page redeems the authorization code")
         // And says so when it cannot reach the token endpoint, rather than "signing in…" for ever.
         assert(page.body.contains("could not be reached"), "an unreachable token endpoint must end in a failure")
+        // Its status changes from "signing in…" to a failure with nothing pressed, so it is announced.
+        assert(page.body.contains("""<p id="error" role="status" aria-live="polite">"""))
         // Laid out for the phone it is most likely opened on, not shrunk from a desktop width.
         assert(page.body.contains("""<meta name="viewport" content="width=device-width, initial-scale=1">"""))
 

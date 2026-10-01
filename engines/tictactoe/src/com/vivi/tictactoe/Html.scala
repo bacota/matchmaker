@@ -78,13 +78,14 @@ object Html {
 <body>
 <main>
   <h1>tic-tac-toe</h1>
-  <p id="status">${escape(heading)}</p>
+  <!-- Announced: the other player's move, and the result, arrive while this page is idle. -->
+  <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   <div id="grid"></div>
   <!-- The sign-in form, rendered by renderSignIn() and shown whenever there is a login to
        offer and no seat to show for it. -->
   <div id="signin" hidden></div>
   <div id="seats"></div>
-  <div id="error"></div>
+  <div id="error" role="alert"></div>
 </main>
 <script>
 ${authScript(login)}
