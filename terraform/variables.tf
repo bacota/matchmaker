@@ -354,6 +354,21 @@ variable "rps_jar_path" {
   default     = "../out/engines/rps/assembly.dest/out.jar"
 }
 
+variable "deploy_boxing" {
+  description = <<-EOT
+    Deploy the bundled boxing engine (modules/boxing) alongside matchmaker, and wire the keys
+    between them. Independent of the other two engines — any combination may be deployed.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "boxing_jar_path" {
+  description = "Path to the assembled boxing jar. Only read when deploy_boxing is true."
+  type        = string
+  default     = "../out/engines/boxing/assembly.dest/out.jar"
+}
+
 # ---------------------------------------------------------------------------
 # Mail
 # ---------------------------------------------------------------------------

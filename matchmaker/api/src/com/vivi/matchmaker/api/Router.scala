@@ -180,8 +180,9 @@ object Router {
                     }
                 }
 
-            // Authorized on behalf of the game rather than a player: here X-External-Id carries the
-            // game's shared secret, not a player's id. See CharacterService's class comment.
+            // Authorized on behalf of the game rather than a player: the caller is the game engine,
+            // identified by its API key (X-External-Id locally), not a player. See CharacterService's
+            // class comment. Deployed, this is one of `local.engine_routes`, not `local.routes`.
             case ("PUT", "characters" :: characterId :: "state" :: Nil) =>
                 withCharacterId(characterId) { id =>
                     body[Json.UpdateStateRequest](request).flatMap(r =>

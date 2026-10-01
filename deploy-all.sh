@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Deploys matchmaker and both bundled game engines in one apply.
+# Deploys matchmaker and the bundled game engines in one apply.
 #
 # The mailer, when the environment enables it, is built and applied by deploy.sh as part of
 # matchmaker itself — it is matchmaker's second function, not a third system — so there is
@@ -18,14 +18,14 @@
 # closes. It builds the artifacts terraform is about to read, then hands the whole deployment to
 # deploy.sh and reports what still has to be done by hand.
 #
-# The result is one plan and one apply covering all three, which is the reason to use this rather
-# than deploy.sh followed by the two per-engine scripts: those target their own module, so each
-# is a separate apply and the shared Cognito app client is written three times. Use the per-engine
-# scripts when only an engine changed — they are much faster and touch far less.
+# The result is one plan and one apply covering all of them, which is the reason to use this
+# rather than deploy.sh followed by the per-engine scripts: those target their own module, so each
+# is a separate apply and the shared Cognito app client is written once per engine. Use the
+# per-engine scripts when only an engine changed — they are much faster and touch far less.
 #
-# Which engines are deployed is not this script's decision. It is deploy_tictactoe and deploy_rps
-# in environments/<env>.settings.tfvars, the same flags terraform reads; an engine that is off
-# there is skipped here, and said so.
+# Which engines are deployed is not this script's decision. It is deploy_tictactoe, deploy_rps and
+# deploy_boxing in environments/<env>.settings.tfvars, the same flags terraform reads; an engine
+# that is off there is skipped here, and said so.
 
 set -euo pipefail
 
@@ -37,6 +37,7 @@ readonly TERRAFORM_DIR="terraform"
 readonly ENGINES=(
   "tictactoe:engines.tictactoe:out/engines/tictactoe/assembly.dest/out.jar:deploy_tictactoe"
   "rps:engines.rps:out/engines/rps/assembly.dest/out.jar:deploy_rps"
+  "boxing:engines.boxing:out/engines/boxing/assembly.dest/out.jar:deploy_boxing"
 )
 
 usage() {
@@ -194,7 +195,7 @@ fi
 # The deployment itself
 # ---------------------------------------------------------------------------
 #
-# deploy.sh does the rest, and does it for all three at once: it compiles, builds matchmaker's own
+# deploy.sh does the rest, and does it for all of them at once: it compiles, builds matchmaker's own
 # two artifacts, migrates, then plans and applies the whole configuration — which now includes the
 # engine modules, since their jars are in place. One plan, one apply, one confirmation.
 
