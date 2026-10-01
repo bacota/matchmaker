@@ -27,7 +27,9 @@ import HtmlText.escapeJs
   * if (latest(ticket)) { state = answer; render(); }
   * }}}
   *
-  * so that an answer overtaken by one asked for later is dropped rather than shown over it. Answers do arrive out of
+  * so that an answer overtaken by one asked for later is dropped rather than shown over it. A refusal is dropped the
+  * same way, with `if (overtaken(ticket)) return;`, but is not marked as shown: it carries no state, and marking it
+  * would drop a fetch asked for before it that may be newer than what the page is showing. Answers do arrive out of
   * order — a push lands while a fetch is out, a move's answer comes back after the refresh its own push started — and
   * with Play Live on, an older state shown over a newer one would stay until the minute check. Asked-for order is the
   * right order because every change is pushed after it is committed: the fetch that push starts is asked for after the
@@ -52,8 +54,12 @@ class PlayLive(storagePrefix: String) {
   /* Answers are shown in the order they were asked for. See PlayLive. */
   let lastAsked = 0, lastShown = 0;
   function ask() { return ++lastAsked; }
+  /* Whether something asked for later has been shown. Asks without marking, for a refusal: it
+   * carries no state, so marking it would drop a fetch asked for before it that may be newer than
+   * what is on the page. */
+  function overtaken(ticket) { return ticket < lastShown; }
   function latest(ticket) {
-    if (ticket < lastShown) return false;
+    if (overtaken(ticket)) return false;
     lastShown = ticket;
     return true;
   }

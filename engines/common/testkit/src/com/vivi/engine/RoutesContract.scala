@@ -358,5 +358,7 @@ abstract class RoutesContract extends FunSuite {
         val asked = count("const ticket = ask();")
         assert(asked >= 2, s"the refresh and the move should both ask for a ticket; $asked do")
         assertEquals(guarded, asked, "every ticket asked for must be checked before its answer is shown")
+        // A move's refusal is ordered too, but without being marked shown; see PlayLive.
+        assertEquals(count("if (overtaken(ticket)) return;"), asked - 1, "every move must drop an overtaken refusal")
     }
 }

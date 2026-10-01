@@ -152,8 +152,14 @@ ${playLive.script(liveUrl, matchId)}
     const response = await send(movesUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cell }) });
     if (!response) return;
     const answer = await response.json();
-    // Kept only if nothing asked for since has been shown: that would already include this move.
-    if (response.ok) { if (latest(ticket)) state = answer; render(); } else show(answer.error || response.statusText);
+    // Dropped if something asked for since has been shown, refusal or not: that already says more.
+    if (overtaken(ticket)) return;
+    if (!response.ok) { show(answer.error || response.statusText); return; }
+    latest(ticket);
+    state = answer;
+    // An earlier move's refusal is no longer the news.
+    show("");
+    render();
   }
 
   async function refresh() {

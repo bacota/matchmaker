@@ -368,8 +368,14 @@ ${playLive.script(liveUrl, matchId)}
     button.disabled = false;
     if (!response) return;
     const answer = await response.json();
-    // Kept only if nothing asked for since has been shown: that would already include this.
-    if (response.ok) { if (latest(ticket)) state = answer; render(); } else { show(answer.error || response.statusText); render(); }
+    // Dropped if something asked for since has been shown, refusal or not: that already says more.
+    if (overtaken(ticket)) return;
+    if (!response.ok) { show(answer.error || response.statusText); render(); return; }
+    latest(ticket);
+    state = answer;
+    // An earlier submission's refusal is no longer the news.
+    show("");
+    render();
   }
 
   async function refresh() {
