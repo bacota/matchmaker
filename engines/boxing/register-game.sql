@@ -41,9 +41,9 @@ RETURNING game_id \gset
 INSERT INTO game_role (game_id, name, optional)
 VALUES (:game_id, 'Red', false), (:game_id, 'Blue', false);
 
--- How many rounds a bout is scheduled for. The engine accepts 3 to 25 and falls back to 10; the
--- default here is what every bout gets, since matchmaker sends a game's parameter defaults and has
--- no way yet for a challenge to choose among the values.
+-- How many rounds a bout is scheduled for. The challenger picks one of these values on the
+-- challenge form; the default is what a challenge that picked nothing gets. The engine accepts 3
+-- to 25 and falls back to 10.
 --
 -- The default is set last: game_parameter.default_value is a foreign key to the value rows.
 INSERT INTO game_parameter (game_id, name) VALUES (:game_id, 'rounds')

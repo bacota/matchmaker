@@ -111,7 +111,12 @@ class GameEngineServiceSpec extends PropertySuite {
 
     private case class Fixture(owner: Player, game: Game, character: Character[String])
 
-    private def makeFixture(nickname: String, externalId: String, gameExternalId: String): IO[Fixture] =
+    private def makeFixture(
+        nickname: String,
+        externalId: String,
+        gameExternalId: String,
+        parameters: Seq[GameParameter[?]] = Seq.empty
+    ): IO[Fixture] =
         TestSession.resource.use { session =>
             for {
                 owner <- TestServices.services.registration.register(nickname, externalId)
@@ -130,7 +135,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false),
                       GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = true)
                     ),
-                    Seq.empty,
+                    parameters,
                     gameExternalId
                   )
                 )
@@ -147,7 +152,8 @@ class GameEngineServiceSpec extends PropertySuite {
         message: String = "message",
         timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
         timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
-        start: Option[Instant] = None
+        start: Option[Instant] = None,
+        settings: String = "{}"
     ): Challenge =
         CharacterChallenge(
           ChallengeId(0),
@@ -155,7 +161,7 @@ class GameEngineServiceSpec extends PropertySuite {
           message,
           start = start,
           timeLimit = timeLimit,
-          settings = "{}",
+          settings = settings,
           gameId = fixture.game.gameId,
           characterId = fixture.character.characterId,
           isPublic = isPublic,
@@ -201,6 +207,52 @@ class GameEngineServiceSpec extends PropertySuite {
                 participants.head.playerId == fixture.owner.playerId &&
                 remaining.forall(_.challenge.challengeId != challenge.challengeId)
             }
+            result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    /** A game parameter a challenger chooses among: `rounds`, 3 to 5, defaulting to 4. */
+    private val roundsParameter: GameParameter[?] =
+        GameParameter[String](
+          GameId.unassigned,
+          GameParameterId(0),
+          "rounds",
+          Some("4"),
+          Seq("3", "4", "5").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
+        )
+
+    property("start sends the engine the parameter value the challenger chose, in place of the default") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val engine = StubEngine()
+            val services = TestServices.servicesWith(engine)
+            val result = for {
+                fixture <- makeFixture(nickname, externalId, gameExternalId, Seq(roundsParameter))
+                chosen <- services.challenges.create(challengeFor(fixture, settings = """{"rounds":"5"}"""), externalId)
+                _ <- services.engine.start(fixture.game.gameId, chosen.challengeId, externalId)
+                withChoice = engine.lastRequest.get
+                plain <- services.challenges.create(challengeFor(fixture), externalId)
+                _ <- services.engine.start(fixture.game.gameId, plain.challengeId, externalId)
+                withoutChoice = engine.lastRequest.get
+            } yield withChoice.parameters == Map("rounds" -> "5") &&
+                withChoice.settings.contains("\"rounds\"") &&
+                withoutChoice.parameters == Map("rounds" -> "4")
+            result.timeout(60.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a challenge choosing a value its game does not allow is refused when it is made") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val services = TestServices.servicesWith(StubEngine())
+            val result = for {
+                fixture <- makeFixture(nickname, externalId, gameExternalId, Seq(roundsParameter))
+                refused <- services.challenges
+                    .create(challengeFor(fixture, settings = """{"rounds":"9"}"""), externalId)
+                    .attempt
+                notObject <- services.challenges.create(challengeFor(fixture, settings = "[]"), externalId).attempt
+            } yield refused.left.toOption.exists {
+                case ValidationError(msg) => msg == "'9' is not a value of rounds; expected one of 3, 4, 5"
+                case _                    => false
+            } && notObject.left.toOption.exists(_.isInstanceOf[ValidationError])
             result.timeout(15.seconds).unsafeRunSync()
         }
     }

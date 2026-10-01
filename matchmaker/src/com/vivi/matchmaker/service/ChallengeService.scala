@@ -5,6 +5,7 @@ import cats.syntax.all._
 import com.vivi.matchmaker.model._
 import skunk.Session
 import com.vivi.matchmaker.notify.Notifications
+import com.vivi.matchmaker.util.ChallengeSettings
 import com.vivi.matchmaker.persistence.{
     AcceptanceRepo,
     CharacterInvitationRepo,
@@ -72,6 +73,10 @@ class ChallengeService[T](
             case Some(g) => IO.pure(g)
             case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
         }
+
+    /** Each of the game's parameters by name, with the values a challenger may choose for it. */
+    private def parameterValues(game: Game): Map[String, Seq[String]] =
+        game.parameters.map(p => p.name -> p.values.map(v => codec.encode(v.value.asInstanceOf[T]))).toMap
 
     /** The player a challenge is being created or deleted for, locked for the rest of the transaction so the
       * authorization decided from it cannot be invalidated before the write.
@@ -315,6 +320,12 @@ class ChallengeService[T](
                     _ <- IO.raiseUnless(game.roles.exists(_.gameRoleId == challenge.gameRoleId))(
                       ValidationError(s"game ${game.gameId.value} has no role ${challenge.gameRoleId.value}")
                     )
+                    // The challenger's choice of each game parameter, which `settings` carries: held to the
+                    // values the game allows here, where the challenger can be told, rather than found out
+                    // when the match starts and the engine is sent something it cannot play.
+                    _ <- ChallengeSettings
+                        .problem(challenge.settings, parameterValues(game))
+                        .fold(IO.unit)(why => IO.raiseError(ValidationError(why)))
                     // A challenge nobody may accept is not a challenge. Refused here rather than left to
                     // be noticed later, because the only thing that could rescue it is an invitation, and
                     // the caller who meant to send one is right here to be told.

@@ -10,6 +10,7 @@ import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence._
+import com.vivi.matchmaker.util.ChallengeSettings
 
 /** A seat that is to move, and when its clock started. */
 case class SeatClock(participantId: ParticipantId, since: Instant)
@@ -981,9 +982,16 @@ class GameEngineService[T](
           matchId = matchId.value,
           gameName = game.name,
           isPublic = challenge.isPublic,
-          parameters = game.parameters
-              .map(p => p.name -> p.defaultValue.map(v => codec.encode(v.asInstanceOf[T])).getOrElse(""))
-              .toMap,
+          // Each parameter's default, except where the challenger chose one of its values — see
+          // `ChallengeSettings`, which is how that choice travels in the challenge's settings.
+          parameters = ChallengeSettings.resolve(
+            defaults = game.parameters
+                .map(p => p.name -> p.defaultValue.map(v => codec.encode(v.asInstanceOf[T])).getOrElse(""))
+                .toMap,
+            allowed =
+                game.parameters.map(p => p.name -> p.values.map(v => codec.encode(v.value.asInstanceOf[T]))).toMap,
+            settings = challenge.settings
+          ),
           settings = challenge.settings,
           timeLimitSeconds = challenge.timeLimit.map(_.getSeconds),
           players = players,
