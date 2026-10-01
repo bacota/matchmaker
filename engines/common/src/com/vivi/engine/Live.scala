@@ -72,19 +72,23 @@ class Live(
         val message = ujson.write(ujson.Obj("changed" -> matchId))
 
         val watchers = within(until, s"finding who watches match '$matchId'")(start(subscriptions.watching(matchId)))
-        val sends = watchers.getOrElse(Nil).map(s => start(inTurn(push(s, message))))
+        val sends = watchers.getOrElse(Nil).map(s => start(inTurn(until)(push(s, message))))
         settle(until, sends, s"pushing a change in match '$matchId'")
     }
 
     private def push(watcher: Subscription, message: String): Unit =
         if (!channel.send(watcher.connectionId, message)) subscriptions.remove(watcher.connectionId)
 
-    /** `work` once fewer than `fanOut` others are out. A send cancelled at the deadline while it waits is interrupted
-      * out of the wait, so one that never got its turn is never made.
+    /** `work` once fewer than `fanOut` others are out, provided that is before `until`; otherwise [[Live.NoTurn]].
+      *
+      * Checked again once the turn is had, and not left to the deadline's cancel: `settle` cancels one send after
+      * another, and cancelling one that holds a turn hands the turn on, perhaps to a waiter it has not reached yet.
       */
-    private def inTurn(work: => Unit): Unit = {
-        sending.acquire()
-        try work
+    private def inTurn(until: Long)(work: => Unit): Unit = {
+        if (!sending.tryAcquire(math.max(0L, until - System.nanoTime()), TimeUnit.NANOSECONDS)) throw Live.NoTurn()
+        try
+            if (System.nanoTime() < until) work
+            else throw Live.NoTurn()
         finally sending.release()
     }
 
@@ -101,9 +105,11 @@ class Live(
                 try send.get(left, TimeUnit.NANOSECONDS)
                 catch { case NonFatal(_) => () }
         }
-        // `cancel` succeeds only on a send that is not yet done, so this counts exactly the late ones.
-        val late = sends.count(_.cancel(true))
-        val failures = sends.filter(_.state == Future.State.FAILED).map(_.exceptionNow)
+        // `cancel` succeeds only on a send that is not yet done; with those that never had a turn, these are the late.
+        val cancelled = sends.count(_.cancel(true))
+        val (missed, failures) =
+            sends.filter(_.state == Future.State.FAILED).map(_.exceptionNow).partition(_.isInstanceOf[Live.NoTurn])
+        val late = cancelled + missed.size
 
         if (failures.nonEmpty || late > 0)
             Log.failure(
@@ -127,6 +133,12 @@ class Live(
             case e: ExecutionException => Log.failure(e.getCause, what); None
             case NonFatal(e)           => Log.failure(e, what); None
         }
+}
+
+object Live {
+
+    /** A send that did not get its turn before the deadline, and so was never made: late, not failed. */
+    private class NoTurn extends Exception(null, null, false, false)
 }
 
 /** One open Play Live connection, and the match it watches. */
