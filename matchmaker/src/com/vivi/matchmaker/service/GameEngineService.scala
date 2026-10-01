@@ -640,12 +640,18 @@ class GameEngineService[T](
       * A cancelled match is refused rather than ignored. Its creator called it off, so a result arriving afterwards is
       * a real disagreement between the two systems — the engine let the game finish on a board matchmaker had stopped
       * following — and saying so is more useful than silently discarding it.
+      *
+      * `turns`, from an engine that sends them, is every turn of the match, recorded in the same transaction that
+      * completes it: a turn whose move callback was lost lands with the results or not at all, and there is nothing to
+      * retry. They are recorded on a repeated callback too, since each insert is idempotent. An engine that sends none
+      * is asked for them once the results are committed — see `recoverTurns`, and its limits.
       */
     def recordResults(
         gameId: GameId,
         matchId: MatchId,
         results: List[ReportedResult],
-        callerExternalId: String
+        callerExternalId: String,
+        turns: Option[List[EngineTurn]] = None
     ): IO[Unit] =
         sessionPool.use { session =>
             val gameRepo = new GameRepo[T](session)
@@ -662,6 +668,19 @@ class GameEngineService[T](
                         _ <- IO.raiseWhen(existing.cancelled)(
                           ConflictError(s"match ${matchId.value} was cancelled and can have no result")
                         )
+                        _ <- turns.traverse_ { reported =>
+                            for {
+                                seats <- participantRepo.listForMatch(gameId, matchId)
+                                known = seats.map(_._1.participantId.value).toSet
+                                strangers = reported.map(_.participantId).filterNot(known).distinct
+                                _ <- IO.raiseUnless(strangers.isEmpty)(
+                                  ValidationError(
+                                    s"turn(s) by participant(s) ${strangers.mkString(", ")}, who are not in match ${matchId.value}"
+                                  )
+                                )
+                                _ <- recordTurns(session, existing, reported, since = None)
+                            } yield ()
+                        }
                         // Whether this call is what ended the match, rather than a retry of a callback
                         // that already did: only the first one is news, and the check is the same
                         // `completed` guard that makes the write idempotent.
@@ -693,14 +712,17 @@ class GameEngineService[T](
                 }
                 .flatMap { (played, ended) =>
                     // Before the mail, so that anything it says about the match is said of every turn.
-                    val reconciled = if (ended) recoverTurns(session, played) else IO.unit
+                    // Only for an engine that did not send its turns: one that did had them recorded above.
+                    val reconciled = if (ended && turns.isEmpty) recoverTurns(session, played) else IO.unit
                     // Everyone in it, because nobody in it did this: the engine finished the game.
                     reconciled *> (if (ended) notifications.matchEnded(session, played, MatchEnding.Finished)
                                    else IO.unit)
                 }
         }
 
-    /* The last chance to record turns whose move callbacks never arrived.
+    /* The last chance to record turns whose move callbacks never arrived, for an engine whose results
+     * do not carry its turns. One that sends them has them recorded with the results, atomically, and
+     * never comes here.
      *
      * A move callback is best-effort, and while a match is running a lost one is repaired by
      * `refresh`. Once the match is completed `refresh` no longer asks the engine anything, so a
@@ -715,7 +737,9 @@ class GameEngineService[T](
      * After the results' transaction rather than inside it, per the rule on external calls: the
      * engine is asked with no transaction open, and the turns are written in a fresh one that takes
      * the match's lock again. Nothing here may fail the results, which are committed and are the
-     * engine's due either way, so a failure is logged and dropped. */
+     * engine's due either way, so a failure is logged and dropped -- and is not retried: nothing in
+     * matchmaker runs on a timer, and a completed match is not asked about again. That limit is why
+     * an engine should send its turns with its results. */
     private def recoverTurns(session: skunk.Session[IO], played: Match): IO[Unit] =
         played.statusUrl
             .fold(IO.unit) { url =>

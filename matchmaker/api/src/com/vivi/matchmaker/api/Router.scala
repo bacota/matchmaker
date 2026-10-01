@@ -398,7 +398,12 @@ object Router {
                               entry.isWinner
                             )
                         )
-                        noContent(services.engine.recordResults(gid, MatchId(matchId), results, caller))
+                        val turns = r.turns.map(
+                          _.map(t =>
+                              com.vivi.matchmaker.engine.EngineTurn(t.participantId.value, t.takenAt, t.startedAt)
+                          )
+                        )
+                        noContent(services.engine.recordResults(gid, MatchId(matchId), results, caller, turns))
                     }
                 }
 
