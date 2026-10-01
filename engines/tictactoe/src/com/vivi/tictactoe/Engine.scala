@@ -168,6 +168,10 @@ class Engine(
     /** Steps 2 and 3, in that order: every move is reported, and the move that ends the match is followed by the
       * results.
       *
+      * `next` is the seat whose turn it now is, and `startedAt` is the move before this one, or the match's creation
+      * for the opening move. That is what matchmaker would have guessed — but a guess is only right for a game of
+      * alternating turns, and `engines/rps` is not one.
+      *
       * Sending the move callback for the last move too — with nobody in `next` — is deliberate: matchmaker clears the
       * mover's pending flag from it, and the results callback that follows completes every seat. A results callback
       * alone would leave the sequence uneven for no gain.
@@ -214,6 +218,8 @@ class Engine(
 
     /** The finished match as matchmaker records it: rank 1 for the winner and 2 for the loser, or rank 1 for both in a
       * draw, which is what a rank means when nobody placed above anyone else.
+      *
+      * The scores are `outcome` (win/loss/draw) and `moves` (how many marks the seat placed).
       */
     def resultsOf(m: TicTacToeMatch): MatchResults =
         MatchResults(
