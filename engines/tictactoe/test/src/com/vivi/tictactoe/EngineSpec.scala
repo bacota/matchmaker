@@ -305,4 +305,13 @@ class EngineSpec extends FunSuite {
         assertEquals(recorder.moves.size, 5)
         assertEquals(recorder.results.size, 1)
     }
+
+    test("the results carry every move of the game as a turn") {
+        val (engine, recorder, _, _, m) = fixture()
+        val x = m.seatOf(Mark.X).get
+        val o = m.seatOf(Mark.O).get
+        List(x -> 0, o -> 3, x -> 1, o -> 4, x -> 2).foreach((seat, cell) => engine.move("m-1", seat.cognitoId, cell))
+        val turns = recorder.results.head._2.turns.get
+        assertEquals(turns.map(_.participantId), List(x, o, x, o, x).map(_.participantId))
+    }
 }

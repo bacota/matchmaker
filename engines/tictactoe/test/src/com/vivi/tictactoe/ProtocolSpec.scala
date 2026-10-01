@@ -158,4 +158,22 @@ class ProtocolSpec extends FunSuite {
         val status = Protocol.GameStatusResponse(completed = false, participants = Nil, sequence = Some(4L))
         assertEquals(read[MmGameStatusResponse](write(status)).sequence, Some(4L))
     }
+
+    test("results carrying the match's turns read as matchmaker's MatchResults, turns and all") {
+        val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
+        val results = Protocol.MatchResults(
+          Nil,
+          Some(
+            List(
+              Protocol.EngineTurn(11L, at.plusSeconds(10), Some(at)),
+              Protocol.EngineTurn(22L, at.plusSeconds(20), None)
+            )
+          )
+        )
+        val asMatchmaker = read[Json.MatchResults](write(results))(using Json.given_ReadWriter_MatchResults)
+        assertEquals(
+          asMatchmaker.turns.map(_.map(t => (t.participantId, t.takenAt, t.startedAt))),
+          Some(List((ParticipantId(11L), at.plusSeconds(10), Some(at)), (ParticipantId(22L), at.plusSeconds(20), None)))
+        )
+    }
 }

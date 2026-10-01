@@ -281,7 +281,15 @@ object Json {
       */
     case class ResultEntry(participantId: ParticipantId, rank: Int, scores: Map[String, ujson.Value], isWinner: Boolean)
 
-    case class MatchResults(results: List[ResultEntry])
+    /** `turns` is every turn the match had, from an engine that sends them: what lets matchmaker complete the match and
+      * record its turns in one transaction. A move callback is best-effort, and a turn whose callback was lost is
+      * otherwise found only by asking the engine afterwards — which can fail in turn, and is never asked again once the
+      * match is over. Absent from an engine that does not send them; matchmaker then asks.
+      */
+    case class MatchResults(results: List[ResultEntry], turns: Option[List[ResultTurn]] = None)
+
+    /** One turn, as a status answer reports it: who, when it was taken, and when that player's clock started for it. */
+    case class ResultTurn(participantId: ParticipantId, takenAt: Instant, startedAt: Option[Instant] = None)
 
     /** One line of a finished match's result table, on the way back out to the UI.
       *
@@ -319,6 +327,7 @@ object Json {
     given ReadWriter[MoveState] = macroRW
     given ReadWriter[MoveNotification] = macroRW
     given ReadWriter[ResultEntry] = macroRW
+    given ReadWriter[ResultTurn] = macroRW
     given ReadWriter[MatchResults] = macroRW
     given ReadWriter[ParticipantResultView] = macroRW
 }

@@ -767,7 +767,7 @@ class GameEngineServiceSpec extends PropertySuite {
 
     // The move callback is best-effort, and so are the results: when the last move's callback is
     // lost and the results get through, the match completes and `refresh` stops asking the engine.
-    property("the results callback recovers turns whose move callbacks never arrived") {
+    property("for an engine that sends no turns, the results callback asks for those whose callbacks never arrived") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
@@ -819,6 +819,81 @@ class GameEngineServiceSpec extends PropertySuite {
                       (theirs.participantId, created.plusSeconds(40), created.plusSeconds(10))
                     )
                 result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("turns sent with the results are recorded with them, and the engine is not asked") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                @volatile var asked = 0
+                val services = TestServices.servicesWith(StubEngine(beforeStatus = IO { asked += 1 }))
+                val created = Instant.parse("2030-01-01T00:00:00Z")
+                val result = for {
+                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    (fixture, started, mine, theirs) = seated
+                    // Only the first move's callback arrived; the results carry both.
+                    _ <- callback(
+                      services,
+                      fixture,
+                      started,
+                      mine,
+                      created.plusSeconds(10),
+                      created,
+                      1,
+                      List(theirs -> created.plusSeconds(10))
+                    )
+                    // `start` asks once, for the opening seats; what matters is the results asking nothing.
+                    askedBefore = asked
+                    _ <- services.engine.recordResults(
+                      fixture.game.gameId,
+                      started.matchId,
+                      List(
+                        ReportedResult(mine.participantId, rank = 1, scores = Map.empty, isWinner = true),
+                        ReportedResult(theirs.participantId, rank = 2, scores = Map.empty, isWinner = false)
+                      ),
+                      gameExternalId,
+                      turns = Some(
+                        List(
+                          EngineTurn(mine.participantId.value, created.plusSeconds(10), Some(created)),
+                          EngineTurn(theirs.participantId.value, created.plusSeconds(40), Some(created.plusSeconds(10)))
+                        )
+                      )
+                    )
+                    turns <- turnsOf(started)
+                    ended <- matchOf(fixture.game.gameId, started.matchId)
+                } yield ended.exists(_.completed) &&
+                    asked == askedBefore &&
+                    turns.map(t => (t.participantId, t.takenAt, t.startedAt)).toSet == Set(
+                      (mine.participantId, created.plusSeconds(10), created),
+                      (theirs.participantId, created.plusSeconds(40), created.plusSeconds(10))
+                    )
+                result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("results whose turns name someone not in the match are refused, and nothing is written") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val services = TestServices.servicesWith(StubEngine())
+            val result = for {
+                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                challenge <- services.challenges.create(challengeFor(fixture), externalId)
+                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                seat <- participantsOf(started).map(_.head.participantId)
+                refused <- services.engine
+                    .recordResults(
+                      fixture.game.gameId,
+                      started.matchId,
+                      List(ReportedResult(seat, rank = 1, scores = Map.empty, isWinner = true)),
+                      gameExternalId,
+                      turns = Some(List(EngineTurn(Long.MaxValue, Instant.parse("2030-01-01T00:00:00Z"))))
+                    )
+                    .attempt
+                ended <- matchOf(fixture.game.gameId, started.matchId)
+                turns <- turnsOf(started)
+            } yield refused.left.exists(_.isInstanceOf[ValidationError]) &&
+                ended.exists(!_.completed) &&
+                turns.isEmpty
+            result.timeout(15.seconds).unsafeRunSync()
         }
     }
 
