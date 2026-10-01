@@ -171,12 +171,15 @@ if [ "$skip_build" = true ]; then
 elif [ ${#enabled_engines[@]} -gt 0 ]; then
   if [ "$skip_tests" != true ]; then
     step "Testing the engines"
-    mill_modules=()
+    # engines.common first, since every jar carries it and testing an engine does not run a
+    # dependency's tests. Then each engine, joined by `+`: without it mill passes every name after
+    # the first to the first task as an argument, and only that one suite runs.
+    mill_tasks=(engines.common.test)
     for engine in "${enabled_engines[@]}"; do
       IFS=: read -r _ module _ _ <<<"$engine"
-      mill_modules+=("$module.test")
+      mill_tasks+=(+ "$module.test")
     done
-    mill -j 4 --ticker false "${mill_modules[@]}"
+    mill -j 4 --ticker false "${mill_tasks[@]}"
   fi
 
   step "Building the engine jars"
