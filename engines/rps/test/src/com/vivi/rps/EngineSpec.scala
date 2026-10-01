@@ -3,7 +3,7 @@ package com.vivi.rps
 import java.time.Instant
 import munit.FunSuite
 import upickle.default.{read, write}
-import com.vivi.engine.Refusal
+import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker, Refusal}
 import Protocol.given
 
 /** Plays whole matches through the engine, checking both what a player is told and what matchmaker is told — the
@@ -35,7 +35,7 @@ class EngineSpec extends FunSuite {
         )
 
     private def fixture(isPublic: Boolean = false, roles: List[Option[String]] = List(None, None)) = {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[RpsMatch]()
         val recorder = RecordingMatchmaker()
         val engine = Engine(store, recorder, "http://engine.test", () => created)
         val response = engine.createGame(createRequest(isPublic, roles)).toOption.get
@@ -232,7 +232,7 @@ class EngineSpec extends FunSuite {
         )
 
         expected.foreach { (mine, theirs, winner) =>
-            val store = InMemoryMatchStore()
+            val store = InMemoryMatchStore[RpsMatch]()
             val engine = Engine(store, RecordingMatchmaker(), "http://engine.test", () => created)
             engine.createGame(createRequest())
             engine.move("m-1", alice, mine)
@@ -244,7 +244,7 @@ class EngineSpec extends FunSuite {
     test("status reports both throws as turns, each charged from the match's own start") {
         // A clock that moves, unlike the fixture's: what is being checked here is the times on the
         // turns, and a frozen clock would make every one of them identical.
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[RpsMatch]()
         var elapsed = 0L
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test", () => created.plusSeconds(elapsed))
         engine.createGame(createRequest())
@@ -288,7 +288,7 @@ class EngineSpec extends FunSuite {
     }
 
     test("a match with no callback urls is still playable") {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[RpsMatch]()
         val recorder = RecordingMatchmaker()
         val engine = Engine(store, recorder, "http://engine.test")
         engine.createGame(createRequest().copy(moveCallbackUrl = None, resultsCallbackUrl = None))

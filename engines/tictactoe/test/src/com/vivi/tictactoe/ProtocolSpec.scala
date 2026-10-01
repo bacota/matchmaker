@@ -5,6 +5,7 @@ import upickle.default.{read, write}
 import com.vivi.matchmaker.engine.{EngineJson, GameStatusResponse => MmGameStatusResponse}
 import com.vivi.matchmaker.api.Json
 import com.vivi.matchmaker.model.ParticipantId
+import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker}
 
 /** What this engine actually sends matchmaker, read back with matchmaker's own classes.
   *
@@ -35,7 +36,7 @@ class ProtocolSpec extends FunSuite {
     )
 
     test("the engine's status response reads as matchmaker's, prevMoveAt included") {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[TicTacToeMatch]()
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
         engine.createGame(create)
         val status = engine.status("m-1").toOption.get
@@ -50,7 +51,7 @@ class ProtocolSpec extends FunSuite {
     }
 
     test("the turns in a status answer read as matchmaker's EngineTurn, timestamps and all") {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[TicTacToeMatch]()
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
         engine.createGame(create)
         engine.move("m-1", "sub-alice", 0)
@@ -64,7 +65,7 @@ class ProtocolSpec extends FunSuite {
     }
 
     test("the engine's results callback reads as matchmaker's MatchResults, scores and all") {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[TicTacToeMatch]()
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
         engine.createGame(create)
         val m = store.get("m-1").get

@@ -2,7 +2,7 @@ package com.vivi.rps
 
 import java.time.Instant
 import scala.util.control.NonFatal
-import com.vivi.engine.{Log, Refusal}
+import com.vivi.engine.{Log, MatchStore, Matchmaker, Refusal}
 import Protocol._
 
 /** What a successful throw produced, for the caller to answer with and for the callbacks below.
@@ -33,7 +33,7 @@ case class MoveApplied(state: RpsMatch, moved: Seat, finished: Boolean, turn: Th
   *   called once with each new match, which is how the local server prints the play url and who is seated where.
   */
 class Engine(
-    store: MatchStore,
+    store: MatchStore[RpsMatch],
     matchmaker: Matchmaker,
     baseUrl: String,
     now: () => Instant = () => Instant.now(),

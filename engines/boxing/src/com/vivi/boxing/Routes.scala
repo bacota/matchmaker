@@ -4,7 +4,7 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import scala.util.control.NonFatal
 import upickle.default.{read, write}
-import com.vivi.engine.{EngineRequest, EngineResponse, Log, PlayAuth, Refusal}
+import com.vivi.engine.{ConcurrentModification, EngineRequest, EngineResponse, Log, PlayAuth, Refusal}
 import Protocol.given
 
 /** The engine's HTTP surface, as a function from request to response.

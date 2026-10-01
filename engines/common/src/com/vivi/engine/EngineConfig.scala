@@ -1,5 +1,7 @@
 package com.vivi.engine
 
+import upickle.default.ReadWriter
+
 /** The settings every engine reads from its environment the same way, whatever its game.
   *
   * `BASE_URL` is the only setting with no sensible default: it is what matchmaker and the players are handed in step 1,
@@ -37,6 +39,24 @@ object EngineConfig {
 
     def region(env: String => Option[String]): String =
         env("AWS_REGION").orElse(env("AWS_DEFAULT_REGION")).getOrElse("us-east-1")
+
+    /** Where matches are kept: a DynamoDB table when `MATCH_TABLE` names one, and memory otherwise. */
+    def matchStore[M <: HasMatchId: ReadWriter](env: String => Option[String]): MatchStore[M] =
+        env("MATCH_TABLE") match {
+            case Some(table) =>
+                DynamoDbMatchStore[M](SignedHttp(AwsCredentials.fromEnvironment(env), region(env)), table, region(env))
+            // Fine for the local server, whose process outlives its matches, and wrong for Lambda,
+            // where the next invocation may be a different container — hence the table.
+            case None => InMemoryMatchStore[M]()
+        }
+
+    /** How matchmaker is called back: over HTTP, or — with `MATCHMAKER_OFFLINE=true` — not at all, the calls printed.
+      */
+    def matchmaker(env: String => Option[String]): Matchmaker =
+        if (env("MATCHMAKER_OFFLINE").contains("true")) RecordingMatchmaker(println)
+        // Unsigned: matchmaker's callback routes take an API key now, not a SigV4 signature. The
+        // signed client stays for DynamoDB above, which is still AWS and still needs one.
+        else HttpMatchmaker(SignedHttp(None, region(env)), matchmakerKey(env), env("GAME_EXTERNAL_ID"))
 
     /** The sign-in the board page offers, when there is a user pool to offer it against.
       *

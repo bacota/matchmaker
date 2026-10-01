@@ -2,7 +2,7 @@ package com.vivi.boxing
 
 import java.time.Instant
 import scala.util.control.NonFatal
-import com.vivi.engine.{Log, Refusal}
+import com.vivi.engine.{Log, MatchStore, Matchmaker, Refusal}
 import Protocol._
 
 /** What a successful plan produced, for the caller to answer with and for the callbacks below.
@@ -28,7 +28,7 @@ case class PlanApplied(state: Bout, moved: Corner, plan: Plan, resolved: Option[
   *   called once with each new bout, which is how the local server prints the play url and who is in which corner.
   */
 class Engine(
-    store: MatchStore,
+    store: MatchStore[Bout],
     matchmaker: Matchmaker,
     baseUrl: String,
     now: () => Instant = () => Instant.now(),
@@ -141,7 +141,7 @@ class Engine(
             // bout only. That is the local, matchmaker-less case, and the only one.
             case None => Right(())
             case Some(url) =>
-                try Right(matchmaker.saveFighter(url, corner.characterId, fighter))
+                try Right(matchmaker.saveCharacterState(url, corner.characterId, Fighter.toState(fighter)))
                 catch {
                     case NonFatal(e) =>
                         Log.failure(e, s"saving fighter ${corner.characterId}")

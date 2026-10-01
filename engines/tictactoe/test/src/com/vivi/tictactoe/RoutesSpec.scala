@@ -2,7 +2,7 @@ package com.vivi.tictactoe
 
 import munit.FunSuite
 import upickle.default.{read, write}
-import com.vivi.engine.{EngineRequest, LoginConfig, PlayAuth}
+import com.vivi.engine.{EngineRequest, InMemoryMatchStore, LoginConfig, PlayAuth, RecordingMatchmaker}
 import Protocol.given
 
 /** Drives the engine the way the outside world does: as requests.
@@ -21,7 +21,7 @@ class RoutesSpec extends FunSuite {
         playAuth: PlayAuth = PlayAuth.Trusted,
         matchmakerKey: Option[String] = None
     ) = {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[TicTacToeMatch]()
         val recorder = RecordingMatchmaker()
         val engine = Engine(store, recorder, "http://engine.test")
         val routes = Routes(engine, playAuth, matchmakerKey)
@@ -224,7 +224,7 @@ class RoutesSpec extends FunSuite {
     }
 
     test("the right key gets in") {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[TicTacToeMatch]()
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
         val routes = Routes(engine, PlayAuth.Trusted, Some("s3cret"))
         val create = Protocol.CreateGameRequest(

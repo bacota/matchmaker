@@ -3,7 +3,7 @@ package com.vivi.tictactoe
 import java.time.Instant
 import munit.FunSuite
 import upickle.default.{read, write}
-import com.vivi.engine.Refusal
+import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker, Refusal}
 import Protocol.given
 
 /** Plays whole matches through the engine, checking both what a player is told and what matchmaker is told — the
@@ -31,7 +31,7 @@ class EngineSpec extends FunSuite {
         )
 
     private def fixture(isPublic: Boolean = false, roles: List[Option[String]] = List(None, None)) = {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[TicTacToeMatch]()
         val recorder = RecordingMatchmaker()
         val engine = Engine(store, recorder, "http://engine.test", () => Instant.parse("2026-01-01T00:00:00Z"))
         val created = engine.createGame(createRequest(isPublic, roles)).toOption.get
@@ -68,7 +68,7 @@ class EngineSpec extends FunSuite {
     }
 
     test("a game for anything but two players is refused") {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[TicTacToeMatch]()
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
         val solo = createRequest().copy(players = createRequest().players.take(1))
         assertEquals(
@@ -93,7 +93,7 @@ class EngineSpec extends FunSuite {
     }
 
     test("each move callback says when that player's clock started: the move before it") {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[TicTacToeMatch]()
         val recorder = RecordingMatchmaker()
         val start = Instant.parse("2026-01-01T00:00:00Z")
         var elapsed = 0L
@@ -134,7 +134,7 @@ class EngineSpec extends FunSuite {
     }
 
     test("a match whose two seats are the same player is refused, since a seat is found by subject") {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[TicTacToeMatch]()
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
         val both = createRequest()
         val doubled = both.copy(players = both.players.map(_.copy(cognitoId = "sub-alice")))
@@ -224,7 +224,7 @@ class EngineSpec extends FunSuite {
     test("status reports the turns taken, with what each one cost, and only those after `since`") {
         // A clock that moves, unlike the fixture's: what is being checked here is the times on the
         // turns, and a frozen clock would make every one of them identical.
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[TicTacToeMatch]()
         val start = Instant.parse("2026-01-01T00:00:00Z")
         var elapsed = 0L
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test", () => start.plusSeconds(elapsed))
@@ -259,7 +259,7 @@ class EngineSpec extends FunSuite {
     }
 
     test("a match with no callback urls is still playable") {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[TicTacToeMatch]()
         val recorder = RecordingMatchmaker()
         val engine = Engine(store, recorder, "http://engine.test")
         engine.createGame(createRequest().copy(moveCallbackUrl = None, resultsCallbackUrl = None))

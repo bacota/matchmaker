@@ -5,6 +5,7 @@ import upickle.default.{read, write}
 import com.vivi.matchmaker.engine.{EngineJson, GameStatusResponse => MmGameStatusResponse}
 import com.vivi.matchmaker.api.Json
 import com.vivi.matchmaker.model.ParticipantId
+import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker}
 
 /** What this engine actually sends matchmaker, read back with matchmaker's own classes: a status answer from a bout in
   * progress, and results with a bout's scores.

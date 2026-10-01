@@ -2,7 +2,7 @@ package com.vivi.tictactoe
 
 import java.time.Instant
 import scala.util.control.NonFatal
-import com.vivi.engine.{Log, Refusal}
+import com.vivi.engine.{Log, MatchStore, Matchmaker, Refusal}
 import Protocol._
 
 /** What a successful move produced, for the caller to answer with and for the callbacks below.
@@ -26,7 +26,7 @@ case class MoveApplied(state: TicTacToeMatch, moved: Seat, next: Option[Seat], f
   *   called once with each new match, which is how the local server prints the board's url and who is seated where.
   */
 class Engine(
-    store: MatchStore,
+    store: MatchStore[TicTacToeMatch],
     matchmaker: Matchmaker,
     baseUrl: String,
     now: () => Instant = () => Instant.now(),

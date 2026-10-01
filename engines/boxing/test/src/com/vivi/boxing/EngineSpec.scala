@@ -3,7 +3,7 @@ package com.vivi.boxing
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
 import munit.FunSuite
-import com.vivi.engine.Refusal
+import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker, Refusal}
 
 /** Fights whole bouts through the engine, checking both what a player is told and what matchmaker is told.
   *
@@ -54,7 +54,7 @@ class EngineSpec extends FunSuite {
     }
 
     private def fixture(request: Protocol.CreateGameRequest = createRequest()) = {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[Bout]()
         val recorder = RecordingMatchmaker()
         val clock = Clock(created)
         val engine = Engine(store, recorder, "http://engine.test", () => clock.now)
@@ -62,7 +62,7 @@ class EngineSpec extends FunSuite {
         (engine, recorder, store, clock, response)
     }
 
-    private def bout(store: InMemoryMatchStore) = store.get("m-1").get
+    private def bout(store: InMemoryMatchStore[Bout]) = store.get("m-1").get
 
     // ---------------------------------------------------------------------------
     // Creating a bout
@@ -140,7 +140,7 @@ class EngineSpec extends FunSuite {
         val built = Fighter(4, 6, 5, 6, 4)
 
         assert(engine.build("m-1", bob, built).isRight)
-        assertEquals(recorder.fighters, List(202L -> built))
+        assertEquals(recorder.characterStates, List(202L -> Fighter.toState(built)))
         assertEquals(bout(store).cornerOf(Side.Blue).flatMap(_.fighter), Some(built))
         // And now it can fight.
         assert(engine.plan("m-1", bob, Allocation(2, 2, 2)).isRight)
@@ -151,7 +151,7 @@ class EngineSpec extends FunSuite {
         assertEquals(engine.build("m-1", alice, average), Left(Refusal.Invalid("your fighter is already built")))
         assert(engine.build("m-1", bob, average).isRight)
         assertEquals(engine.build("m-1", bob, slugger), Left(Refusal.Invalid("your fighter is already built")))
-        assertEquals(recorder.fighters.size, 1)
+        assertEquals(recorder.characterStates.size, 1)
     }
 
     test("a fighter that breaks the build rules is refused, and nothing is saved") {
@@ -160,19 +160,19 @@ class EngineSpec extends FunSuite {
           engine.build("m-1", bob, Fighter(10, 10, 10, 10, 10)),
           Left(Refusal.Invalid("a fighter is built from exactly 25 points; these add up to 50"))
         )
-        assertEquals(recorder.fighters, Nil)
+        assertEquals(recorder.characterStates, Nil)
         assertEquals(bout(store).cornerOf(Side.Blue).flatMap(_.fighter), None)
     }
 
     test("when matchmaker cannot be reached the build is refused as retryable, and the bout is unchanged") {
         val (engine, recorder, store, _, _) = fixture(createRequest(blue = None))
-        recorder.failFighterSaves = true
+        recorder.failStateSaves = true
 
         val refused = engine.build("m-1", bob, average)
         assertEquals(refused.left.map(_.status), Left(502))
         assertEquals(bout(store).cornerOf(Side.Blue).flatMap(_.fighter), None)
 
-        recorder.failFighterSaves = false
+        recorder.failStateSaves = false
         assert(engine.build("m-1", bob, average).isRight)
     }
 

@@ -2,7 +2,7 @@ package com.vivi.rps
 
 import munit.FunSuite
 import upickle.default.{read, write}
-import com.vivi.engine.{EngineRequest, LoginConfig, PlayAuth}
+import com.vivi.engine.{EngineRequest, InMemoryMatchStore, LoginConfig, PlayAuth, RecordingMatchmaker}
 import Protocol.given
 
 /** Drives the engine the way the outside world does: as requests.
@@ -21,7 +21,7 @@ class RoutesSpec extends FunSuite {
         playAuth: PlayAuth = PlayAuth.Trusted,
         matchmakerKey: Option[String] = None
     ) = {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[RpsMatch]()
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
         val routes = Routes(engine, playAuth, matchmakerKey)
         val created = routes(EngineRequest("POST", "/games", Map.empty, write(createRequest(isPublic))))

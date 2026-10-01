@@ -3,6 +3,7 @@ package com.vivi.boxing
 import scala.util.control.NonFatal
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
+import com.vivi.engine.HasMatchId
 
 /** One corner of a bout.
   *
@@ -53,7 +54,7 @@ case class Bout(
       * kept. `None` when matchmaker sent no callback urls to derive it from.
       */
     matchmakerUrl: Option[String]
-) {
+) extends HasMatchId {
 
     def cornerOf(side: Side): Option[Corner] = corners.find(_.side == side)
 

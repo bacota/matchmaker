@@ -2,6 +2,7 @@ package com.vivi.rps
 
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
+import com.vivi.engine.HasMatchId
 
 /** One player's seat in a match.
   *
@@ -38,7 +39,7 @@ case class RpsMatch(
     createdAt: Instant,
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String]
-) {
+) extends HasMatchId {
 
     def seatOf(side: Side): Option[Seat] = seats.find(_.side == side)
 

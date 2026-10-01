@@ -2,6 +2,7 @@ package com.vivi.tictactoe
 
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
+import com.vivi.engine.HasMatchId
 
 /** One player's seat in a match.
   *
@@ -39,7 +40,7 @@ case class TicTacToeMatch(
     // Defaulted so a match stored before turns were recorded still reads back: it simply has
     // none, and matchmaker charges nothing for the moves made before this existed.
     turns: List[TurnRecord] = Nil
-) {
+) extends HasMatchId {
 
     def seatOf(mark: Mark): Option[Seat] = seats.find(_.mark == mark)
 

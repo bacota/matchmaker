@@ -2,7 +2,7 @@ package com.vivi.boxing
 
 import munit.FunSuite
 import upickle.default.{read, write}
-import com.vivi.engine.{EngineRequest, LoginConfig, PlayAuth}
+import com.vivi.engine.{EngineRequest, InMemoryMatchStore, LoginConfig, PlayAuth, RecordingMatchmaker}
 import Protocol.given
 
 /** Drives the engine the way the outside world does: as requests.
@@ -21,7 +21,7 @@ class RoutesSpec extends FunSuite {
         matchmakerKey: Option[String] = None,
         blue: Option[Fighter] = Some(average)
     ) = {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[Bout]()
         val recorder = RecordingMatchmaker()
         val engine = Engine(store, recorder, "http://engine.test")
         val routes = Routes(engine, playAuth, matchmakerKey)
@@ -221,7 +221,7 @@ class RoutesSpec extends FunSuite {
           state.corners.find(_.side == "Blue").flatMap(_.fighter),
           Some(Protocol.BuildRequest(3, 6, 6, 6, 4))
         )
-        assertEquals(recorder.fighters, List(202L -> built))
+        assertEquals(recorder.characterStates, List(202L -> Fighter.toState(built)))
         assertEquals(store.get("m-9").get.cornerOf(Side.Blue).flatMap(_.fighter), Some(built))
 
         assertEquals(building(routes, "sub-bob", built).status, 400)
@@ -229,9 +229,9 @@ class RoutesSpec extends FunSuite {
 
     test("a build matchmaker could not save is a 502, which the player may retry") {
         val (routes, _, _, recorder) = fixture(blue = None)
-        recorder.failFighterSaves = true
+        recorder.failStateSaves = true
         assertEquals(building(routes, "sub-bob", average).status, 502)
-        recorder.failFighterSaves = false
+        recorder.failStateSaves = false
         assertEquals(building(routes, "sub-bob", average).status, 200)
     }
 

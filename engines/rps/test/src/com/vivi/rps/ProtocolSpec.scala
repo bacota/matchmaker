@@ -5,6 +5,7 @@ import upickle.default.{read, write}
 import com.vivi.matchmaker.engine.{EngineJson, GameStatusResponse => MmGameStatusResponse}
 import com.vivi.matchmaker.api.Json
 import com.vivi.matchmaker.model.ParticipantId
+import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker}
 
 /** What this engine actually sends matchmaker, read back with matchmaker's own classes.
   *
@@ -37,7 +38,7 @@ class ProtocolSpec extends FunSuite {
     )
 
     private def played(throws: (String, Shape)*): Engine = {
-        val store = InMemoryMatchStore()
+        val store = InMemoryMatchStore[RpsMatch]()
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
         engine.createGame(create)
         throws.foreach((player, shape) => engine.move("m-1", player, shape))
