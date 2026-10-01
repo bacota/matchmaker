@@ -1,27 +1,13 @@
 package com.vivi.tictactoe
 
 import java.time.Instant
-import scala.util.control.NonFatal
-import com.vivi.engine.{Log, MatchStore, Matchmaker, Refusal}
+import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal}
 import Protocol._
 
-/** What a successful move produced, for the caller to answer with and for the callbacks below.
+/** Tic-tac-toe: the four exchanges of `interaction-design.txt`, which [[GameEngine]] makes for any game, and the two
+  * things that are this game's own — what a move is, and what a player is shown. How it tells matchmaker whose turn it
+  * is is [[TicTacToeMatch$]]'s.
   *
-  * `turn` is the record the move just wrote — when it was made and when the mover's clock started for it. Carried here
-  * rather than looked up again, since the callback that reports it is the next thing that happens.
-  */
-case class MoveApplied(state: TicTacToeMatch, moved: Seat, next: Option[Seat], finished: Boolean, turn: TurnRecord)
-
-/** The game itself: the four exchanges of `interaction-design.txt` from the engine's side.
-  *
-  * Knows nothing about HTTP — [[Routes]] is what turns requests into these calls — and nothing about where matches are
-  * kept or how matchmaker is reached, which is what lets the whole thing be played through in a test with a map and a
-  * recorder.
-  *
-  * @param baseUrl
-  *   the engine's own public base url, which is what the urls handed back to matchmaker in step 1 are built from. The
-  *   engine cannot infer it: behind API Gateway the request's host is the gateway's, and matchmaker must be given a url
-  *   that it and the players can actually reach.
   * @param announce
   *   called once with each new match, which is how the local server prints the board's url and who is seated where.
   */
@@ -33,214 +19,39 @@ class Engine(
     announce: TicTacToeMatch => Unit = _ => ()
 ) {
 
-    private val base = baseUrl.stripSuffix("/")
+    private val core = GameEngine(TicTacToeMatch, store, matchmaker, baseUrl, now, announce)
 
-    /** Step 1: create a game. The urls handed back are where matchmaker checks status, where the players play, and —
-      * for a public game — where anyone may watch.
-      *
-      * One play url serves both players: it names the match and nothing else, and the engine works out whose seat it is
-      * from whoever signed in. So matchmaker can hand the same url to everyone in the match, and a url that leaks is
-      * not a seat that leaks.
-      */
-    def createGame(request: CreateGameRequest): Either[Refusal, CreateGameResponse] =
-        TicTacToeMatch.create(request, now()) match {
-            case Left(why) => Left(Refusal.Invalid(why))
-            case Right(created) =>
-                store.create(created)
-                announce(created)
-                Right(
-                  CreateGameResponse(
-                    statusUrl = s"$base/matches/${created.matchId}/status",
-                    playUrl = playUrl(created),
-                    publicUrl = Option.when(created.isPublic)(s"$base/matches/${created.matchId}/board")
-                  )
+    export core.{createGame, playUrl, read, resultsOf, seatOf, status}
+
+    /** A player's move: a mark placed in `cell`, by whoever's turn it is. */
+    def move(
+        matchId: String,
+        cognitoId: String,
+        cell: Int
+    ): Either[Refusal, MoveApplied[TicTacToeMatch, Seat, TurnRecord]] =
+        core.applyMove(matchId, cognitoId) { (current, seat, at) =>
+            for {
+                _ <- Either.cond(!current.isOver, (), Refusal.Invalid("this match is already over"))
+                _ <- Either.cond(
+                  current.turn == seat.mark,
+                  (),
+                  Refusal.Invalid(s"it is ${current.turn}'s turn, not ${seat.mark}'s")
                 )
-        }
-
-    def playUrl(m: TicTacToeMatch): String = s"$base/matches/${m.matchId}/play"
-
-    def read(matchId: String): Either[Refusal, TicTacToeMatch] =
-        store.get(matchId).toRight(Refusal.NotFound(s"no match '$matchId'"))
-
-    /** The signed-in player's seat in this match.
-      *
-      * Not found is a 403 rather than a 404: the caller is somebody, just not somebody playing this match, and a
-      * spectator asking for a player's view is refused rather than told the match does not exist.
-      */
-    def seatOf(m: TicTacToeMatch, cognitoId: String): Either[Refusal, Seat] =
-        m.seatFor(cognitoId).toRight(Refusal.NotYours(s"'$cognitoId' has no seat in match '${m.matchId}'"))
-
-    /** Step 4's other half: what matchmaker asks for when a participant hits refresh.
-      *
-      * `pending` is the seat whose turn it is, and `prevMoveAt` is when the move before it was made — matchmaker turns
-      * that into a deadline using the match's own time limit. A seat that has not been reached yet reports the match's
-      * creation time, so the first player's clock starts when the game was created rather than never.
-      *
-      * `since` is the last turn matchmaker has recorded; the moves made after it come back in `turns`. That is how a
-      * chess-clock limit is charged — matchmaker needs every move's cost, not just the current one — and it is also how
-      * a move callback that was lost is recovered as more than a corrected deadline.
-      */
-    def status(matchId: String, since: Option[Instant] = None): Either[Refusal, GameStatusResponse] =
-        read(matchId).map { m =>
-            val over = m.isOver
-            GameStatusResponse(
-              completed = over,
-              participants = m.seats.map { seat =>
-                  EngineParticipantStatus(
-                    participantId = seat.participantId,
-                    pending = !over && m.turn == seat.mark,
-                    completed = over,
-                    prevMoveAt = Some(m.lastMoveAt.getOrElse(m.createdAt))
-                  )
-              },
-              // Strictly after `since`, so the turn matchmaker already has is not sent again — it
-              // would be discarded there anyway, and the point of asking is to send what was missed.
-              // No `since` means the whole game, which is what a matchmaker with nothing recorded for
-              // this match is asking for.
-              turns = m.turns
-                  .filter(t => since.forall(at => t.takenAt.isAfter(at)))
-                  .sortBy(_.takenAt)
-                  .map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt))),
-              // Counted from the board rather than from `turns`, which is empty for a match stored
-              // before turns were recorded.
-              sequence = Some(m.board.moveCount.toLong)
-            )
-        }
-
-    /** A player's move. Decides against the stored board — atomically, so that two players moving at once cannot both
-      * be told they were first — and then, having committed, calls matchmaker.
-      *
-      * The callbacks are made after the write rather than inside it: the store may run the decision more than once
-      * under contention, and a callback is not something to make twice. The cost is that a crash between the two leaves
-      * matchmaker behind, which is exactly what its `refresh` exists to repair — step 4 is the engine's permission to
-      * be imperfect here.
-      */
-    def move(matchId: String, cognitoId: String, cell: Int): Either[Refusal, MoveApplied] = {
-        val at = now()
-
-        val outcome = store.modify(matchId) { current =>
-            val decision =
-                for {
-                    seat <- seatOf(current, cognitoId)
-                    _ <- Either.cond(!current.isOver, (), Refusal.Invalid("this match is already over"))
-                    _ <- Either.cond(
-                      current.turn == seat.mark,
-                      (),
-                      Refusal.Invalid(s"it is ${current.turn}'s turn, not ${seat.mark}'s")
+                board <- current.board.place(cell, seat.mark).left.map(Refusal.Invalid.apply)
+            } yield {
+                // The clock for this move started when the move before it was made, or when the
+                // match was created for the first move of the game.
+                val turn = TurnRecord(seat.participantId, at, TicTacToeMatch.clockStartedAt(current))
+                val played =
+                    current.copy(
+                      board = board,
+                      turn = seat.mark.other,
+                      lastMoveAt = Some(at),
+                      turns = current.turns :+ turn
                     )
-                    board <- current.board.place(cell, seat.mark).left.map(Refusal.Invalid.apply)
-                } yield {
-                    // The clock for this move started when the move before it was made, or when the
-                    // match was created for the first move of the game.
-                    val turn = TurnRecord(seat.participantId, at, current.lastMoveAt.getOrElse(current.createdAt))
-                    val played =
-                        current.copy(
-                          board = board,
-                          turn = seat.mark.other,
-                          lastMoveAt = Some(at),
-                          turns = current.turns :+ turn
-                        )
-                    val finished = played.isOver
-                    // `completed` is stored so a finished match stays finished even though it is also
-                    // derivable — it is what the results callback keys off, and it is written once.
-                    val settled = played.copy(completed = finished)
-                    MoveApplied(
-                      settled,
-                      seat,
-                      Option.unless(finished)(settled.seatOf(settled.turn)).flatten,
-                      finished,
-                      turn
-                    )
-                }
-
-            decision match {
-                case Right(applied) => (Some(applied.state), Right(applied))
-                case Left(refusal)  => (None, Left(refusal))
+                (played, turn)
             }
         }
-
-        outcome.toRight(Refusal.NotFound(s"no match '$matchId'")).flatten.map { applied =>
-            notify(applied)
-            applied
-        }
-    }
-
-    /** Steps 2 and 3, in that order: every move is reported, and the move that ends the match is followed by the
-      * results.
-      *
-      * `next` is the seat whose turn it now is, and `startedAt` is the move before this one, or the match's creation
-      * for the opening move. That is what matchmaker would have guessed — but a guess is only right for a game of
-      * alternating turns, and `engines/rps` is not one.
-      *
-      * Sending the move callback for the last move too — with nobody in `next` — is deliberate: matchmaker clears the
-      * mover's pending flag from it, and the results callback that follows completes every seat. A results callback
-      * alone would leave the sequence uneven for no gain.
-      *
-      * Neither callback may fail the move. It is committed by the time they are sent, so a failure that escaped here
-      * would answer the player with a 500 for a move that stands — and their retry would then be refused. A lost
-      * callback is what matchmaker's `refresh` repairs, so each is logged and dropped on its own: the results must
-      * still be sent when the move before them could not be.
-      */
-    private def notify(applied: MoveApplied): Unit = {
-        val m = applied.state
-
-        m.moveCallbackUrl.foreach { url =>
-            bestEffort(s"reporting a move in match '${m.matchId}'")(
-              matchmaker.recordMove(
-                url,
-                MoveNotification(
-                  participantId = applied.moved.participantId,
-                  next = applied.next.map(_.participantId).toList,
-                  takenAt = applied.turn.takenAt,
-                  startedAt = applied.turn.startedAt,
-                  // Who is to move now, numbered by the marks on the board: what lets matchmaker ignore
-                  // this callback if the reply to it overtakes it. See `Protocol.MoveState`.
-                  state = Some(
-                    MoveState(
-                      m.board.moveCount.toLong,
-                      applied.next.map(n => PendingSeat(n.participantId, applied.turn.takenAt)).toList
-                    )
-                  )
-                )
-              )
-            )
-        }
-
-        if (applied.finished)
-            m.resultsCallbackUrl.foreach(url =>
-                bestEffort(s"reporting the result of match '${m.matchId}'")(matchmaker.recordResults(url, resultsOf(m)))
-            )
-    }
-
-    private def bestEffort(what: String)(call: => Unit): Unit =
-        try call
-        catch { case NonFatal(e) => Log.failure(e, what) }
-
-    /** The finished match as matchmaker records it: rank 1 for the winner and 2 for the loser, or rank 1 for both in a
-      * draw, which is what a rank means when nobody placed above anyone else.
-      *
-      * The scores are `outcome` (win/loss/draw) and `moves` (how many marks the seat placed).
-      */
-    def resultsOf(m: TicTacToeMatch): MatchResults =
-        MatchResults(
-          m.seats.map { seat =>
-              val won = m.winner.contains(seat.mark)
-              val drew = m.isDraw
-              ResultEntry(
-                participantId = seat.participantId,
-                rank = if (won || drew) 1 else 2,
-                scores = Map(
-                  "outcome" -> ujson.Str(if (won) "win" else if (drew) "draw" else "loss"),
-                  "moves" -> ujson.Num(m.moveCount(seat.mark).toDouble),
-                  "mark" -> ujson.Str(seat.mark.toString)
-                ),
-                isWinner = won
-              )
-          },
-          // Every turn, so that matchmaker records them with the results rather than relying on each
-          // move callback having arrived. See `Protocol.MatchResults`.
-          turns = Some(m.turns.sortBy(_.takenAt).map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt))))
-        )
 
     /** The state a board page renders. `seat` is the viewer's own, absent on the public board. */
     def stateOf(m: TicTacToeMatch, seat: Option[Seat]): StateResponse =

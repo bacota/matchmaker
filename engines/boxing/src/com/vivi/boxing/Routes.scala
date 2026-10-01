@@ -172,7 +172,7 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String]) 
             for {
                 m <- engine.read(matchId)
                 caller <- playAuth.callerOf(request)
-                corner <- engine.cornerOf(m, caller)
+                corner <- engine.seatOf(m, caller)
             } yield f(m, corner)
 
         answer match {

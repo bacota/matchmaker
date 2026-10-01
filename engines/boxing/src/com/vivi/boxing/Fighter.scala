@@ -194,10 +194,3 @@ object Side {
             case _                                    => None
         }
 }
-
-/** How a bout came out for one corner. */
-enum Outcome {
-    case Win, Loss, Draw
-
-    def label: String = toString.toLowerCase
-}

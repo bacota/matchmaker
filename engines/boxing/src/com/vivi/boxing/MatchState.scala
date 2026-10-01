@@ -3,7 +3,7 @@ package com.vivi.boxing
 import scala.util.control.NonFatal
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
-import com.vivi.engine.HasMatchId
+import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnLike}
 
 /** One corner of a bout.
   *
@@ -12,11 +12,13 @@ import com.vivi.engine.HasMatchId
   * `fighter` its characteristics: `None` until the player has built it, which a fighter's first bout is where they do.
   */
 case class Corner(side: Side, cognitoId: String, participantId: Long, characterId: Long, fighter: Option[Fighter])
+    extends SeatLike
 
 /** One corner's plan for one round: how the workrate was spent, when it was submitted, and when that player's clock
   * started for it — the moment the round began, for both corners, since neither waits for the other.
   */
 case class Plan(participantId: Long, round: Int, allocation: Allocation, takenAt: Instant, startedAt: Instant)
+    extends TurnLike
 
 /** A round both corners have planned, and therefore resolved. */
 case class Round(
@@ -54,7 +56,7 @@ case class Bout(
       * kept. `None` when matchmaker sent no callback urls to derive it from.
       */
     matchmakerUrl: Option[String]
-) extends HasMatchId {
+) extends MatchLike {
 
     def cornerOf(side: Side): Option[Corner] = corners.find(_.side == side)
 
@@ -118,6 +120,9 @@ case class Bout(
 
     def isDraw: Boolean = isOver && winner.isEmpty
 
+    /** How a finished bout was won — "knockout" or "points" — as matchmaker records it and as the page says it. */
+    def method: Option[String] = Option.when(isOver)(if (knockout.isDefined) "knockout" else "points")
+
     def outcomeFor(corner: Corner): Outcome =
         winner match {
             case Some(w) if w.participantId == corner.participantId => Outcome.Win
@@ -126,7 +131,14 @@ case class Bout(
         }
 }
 
-object Bout {
+/** Boxing as matchmaker sees it: rounds that are each simultaneous, one after another.
+  *
+  * Both corners are pending from the moment a round begins, either may plan first, and the round resolves on the second
+  * plan. Their clocks start when the round does — the bout's creation for round one, and the moment the round before it
+  * resolved after that — however late either of them plans. So the first plan of a round names nobody, and the plan
+  * that resolves one names both corners, the mover included, because that is a new round starting.
+  */
+object Bout extends Game[Bout, Corner, Plan] {
 
     /** How many rounds a bout is scheduled for, when nothing says otherwise. */
     val DefaultRounds = 10
@@ -196,6 +208,35 @@ object Bout {
             val at = url.lastIndexOf("/games/")
             Option.when(at > 0 && url.endsWith("/moves"))(url.substring(0, at))
         }
+
+    override def seatName: String = "corner"
+
+    def seats(m: Bout): List[Corner] = m.corners
+
+    def isOver(m: Bout): Boolean = m.isOver
+
+    def markCompleted(m: Bout): Bout = m.copy(completed = true)
+
+    def pending(m: Bout): List[Corner] = m.pending
+
+    def clockStartedAt(m: Bout): Instant = m.roundStartedAt
+
+    def turns(m: Bout): List[Plan] = m.plans
+
+    def sequence(m: Bout): Long = m.plans.size.toLong
+
+    def outcome(m: Bout, corner: Corner): Outcome = m.outcomeFor(corner)
+
+    /** What a record of a fight would carry: how it ended and when, and each corner's points and knockdowns. */
+    def scores(m: Bout, corner: Corner): Map[String, ujson.Value] =
+        Map(
+          "method" -> m.method.map(ujson.Str(_)).getOrElse(ujson.Null),
+          "rounds" -> ujson.Num(m.rounds.size),
+          "scheduledRounds" -> ujson.Num(m.scheduledRounds),
+          "points" -> ujson.Num(m.points(corner.side)),
+          "knockdowns" -> ujson.Num(m.knockdownsScored(corner.side)),
+          "corner" -> ujson.Str(corner.side.toString)
+        )
 
     def create(request: Protocol.CreateGameRequest, now: Instant): Either[String, Bout] =
         for {
