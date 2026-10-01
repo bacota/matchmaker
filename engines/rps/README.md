@@ -117,7 +117,7 @@ unset here), `MATCH_TABLE`, `GAME_EXTERNAL_ID`, `MATCHMAKER_OFFLINE`, `COGNITO_I
 
 ## Deployed
 
-`terraform/modules/rps` puts it behind an API Gateway HTTP API with matches in DynamoDB and three
+`terraform/modules/engine` — the module every bundled engine is deployed with — puts it behind an API Gateway HTTP API with matches in DynamoDB and three
 kinds of route: the matchmaker-facing ones (`POST /games`, `GET /matches/{id}/status`), which
 require the API key matchmaker and this engine share, the player's (`state`, `moves`) under a JWT
 authorizer on matchmaker's user pool, and the page shells open. The root module generates that key

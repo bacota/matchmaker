@@ -227,7 +227,10 @@ module "ui" {
  */
 module "tictactoe" {
   count  = var.deploy_tictactoe ? 1 : 0
-  source = "./modules/tictactoe"
+  source = "./modules/engine"
+
+  name    = "tictactoe"
+  handler = "com.vivi.tictactoe.Handler::handleRequest"
 
   environment     = var.environment
   lambda_jar_path = var.tictactoe_jar_path
@@ -263,7 +266,10 @@ module "tictactoe" {
  */
 module "rps" {
   count  = var.deploy_rps ? 1 : 0
-  source = "./modules/rps"
+  source = "./modules/engine"
+
+  name    = "rps"
+  handler = "com.vivi.rps.Handler::handleRequest"
 
   environment     = var.environment
   lambda_jar_path = var.rps_jar_path
@@ -292,7 +298,12 @@ module "rps" {
  */
 module "boxing" {
   count  = var.deploy_boxing ? 1 : 0
-  source = "./modules/boxing"
+  source = "./modules/engine"
+
+  name    = "boxing"
+  handler = "com.vivi.boxing.Handler::handleRequest"
+  # Building the fighter in a corner, before its first round.
+  extra_player_routes = ["POST /matches/{matchId}/fighter"]
 
   environment     = var.environment
   lambda_jar_path = var.boxing_jar_path

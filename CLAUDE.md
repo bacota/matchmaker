@@ -3,6 +3,13 @@
 Conventions that are not visible from the code alone. Everything here is the kind of thing that
 gets silently undone by someone who did not know it was a decision.
 
+## Commits and pull requests are the user's
+
+Do not `git commit`, `git push` or `gh pr create` unless the user explicitly asks for it in that
+request. Finish the work, run the tests, report what changed and what is uncommitted, and stop.
+Permission to commit covers only the request that gave it; it is not standing permission for the
+next task.
+
 ## Build and test
 
 Always pass both flags: `mill -j 4 --ticker false <target>`. The ticker's progress redraws make
