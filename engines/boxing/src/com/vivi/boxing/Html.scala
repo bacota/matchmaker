@@ -31,8 +31,10 @@ object Html {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>boxing — ${escape(matchId)}</title>
 <style>
-  :root { color-scheme: light dark; --line: #8886; --ink: #222; --paper: #fafafa; --red: #b3261e; --blue: #1f5fae; }
-  @media (prefers-color-scheme: dark) { :root { --ink: #eee; --paper: #16181c; --red: #ff8a80; --blue: #8ab4f8; } }
+  /* --error is 6.3:1 on the light page and 7.8:1 on the dark one; crimson, which it replaces, was 3.6:1
+     in dark mode, under the 4.5:1 normal text needs. */
+  :root { color-scheme: light dark; --line: #8886; --ink: #222; --paper: #fafafa; --red: #b3261e; --blue: #1f5fae; --error: #b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #eee; --paper: #16181c; --red: #ff8a80; --blue: #8ab4f8; --error: #ff8a80; } }
   body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { margin: 0 auto; padding: 1.5rem 1rem 3rem; max-width: 34rem; }
@@ -55,7 +57,7 @@ object Html {
                    color: var(--ink); cursor: pointer; }
   button.primary:disabled { opacity: .45; cursor: default; }
   .left { margin: .5rem 0 0; font-weight: 600; }
-  .left.off { color: crimson; }
+  .left.off { color: var(--error); }
   .preview { font-size: .875rem; opacity: .85; margin: .25rem 0 0; }
   :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
   #corners { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
@@ -86,8 +88,8 @@ object Html {
   #signin .alternatives button { font: inherit; min-height: 44px; padding: 0; border: 0; background: none;
                   color: inherit; text-decoration: underline; cursor: pointer; }
   #signin button:disabled { opacity: .45; cursor: default; }
-  #signin .problem { color: crimson; font-size: .875rem; margin-bottom: .5rem; }
-  #error { color: crimson; min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
+  #signin .problem { color: var(--error); font-size: .875rem; margin-bottom: .5rem; }
+  #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
 </style>
 </head>
 <body>
@@ -438,8 +440,10 @@ ${signInScript}
 <style>
   body { margin: 0; min-height: 100vh; display: grid; place-items: center;
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; color-scheme: light dark; }
+  :root { --error: #b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --error: #ff8a80; } }
   main { max-width: 32rem; text-align: center; padding: 1rem; }
-  #error { color: crimson; }
+  #error { color: var(--error); }
   /* 44px to tap, 16px text, and a visible focus ring: these are the only controls on the page. */
   .actions { display: flex; gap: 1rem; justify-content: center; align-items: center; flex-wrap: wrap; }
   .actions[hidden] { display: none; }
