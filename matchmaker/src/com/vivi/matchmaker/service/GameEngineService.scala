@@ -373,11 +373,20 @@ class GameEngineService[T](
                                           since = None
                                         )
                                         used <- timeUsedIn(session, current)
-                                        // A numbered answer older than a move already applied describes seats
-                                        // that move has since changed: a callback committed while the engine
-                                        // was answering. Its turns are recorded above; its seats are not.
+                                        /* Whether the answer still describes this match, now that it is locked.
+                                         *
+                                         * Every caller asks only about a match it found not yet completed, so one
+                                         * that is completed here was completed while the engine was answering --
+                                         * by the results callback, or by a forfeit the engine knows nothing about.
+                                         * An answer from before that may still say the match is running, and it
+                                         * must not undo the ending. Likewise a numbered answer older than a move
+                                         * already applied describes seats that move has since changed.
+                                         *
+                                         * Either way the answer's turns are recorded above, since they were really
+                                         * taken, and nothing else of it is written. */
                                         applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
-                                        seatsCurrent = status.sequence.forall(seq => applied.forall(_ <= seq))
+                                        seatsCurrent = !current.completed &&
+                                            status.sequence.forall(seq => applied.forall(_ <= seq))
                                         _ <- status.sequence.filter(_ => seatsCurrent).traverse_ { seq =>
                                             matchRepo.advanceMoveSequence(gameId, matchId, seq)
                                         }
@@ -401,13 +410,14 @@ class GameEngineService[T](
                                         // the time it finished, rather than being restamped by every later status the engine
                                         // answers with. Nothing else about the match changes here, so completion is the only
                                         // reason to write at all.
-                                        completedAt <- (status.completed, current.completedAt) match {
-                                            case (true, None)    => matchRepo.complete(gameId, matchId).map(Some(_))
-                                            case (true, already) => IO.pure(already)
-                                            case (false, None)   => IO.pure(None)
-                                            case (false, Some(_)) =>
-                                                matchRepo.update(current.copy(completedAt = None)).as(None)
-                                        }
+                                        //
+                                        // Only ever towards completed. An answer saying a completed match is still running
+                                        // is one from before it ended (see `seatsCurrent`), and reopening it would undo a
+                                        // result or a forfeit that has already been recorded and mailed.
+                                        completedAt <-
+                                            if (status.completed && current.completedAt.isEmpty)
+                                                matchRepo.complete(gameId, matchId).map(Some(_))
+                                            else IO.pure(current.completedAt)
                                         updated = current.copy(completedAt = completedAt)
                                         // The first of those four cases, which is the one where this call is what ended
                                         // the match: the engine says it is over and matchmaker had not heard. It happens

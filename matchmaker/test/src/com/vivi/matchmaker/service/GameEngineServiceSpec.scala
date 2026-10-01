@@ -792,6 +792,94 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
+    // The engine answers a status call; while it is answering, the match ends. The answer then says the
+    // match is still running, and must not reopen it -- whether or not the engine numbers its moves.
+    property("a status answer from before the match ended neither reopens it nor reseats it") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val created = Instant.parse("2030-01-01T00:00:00Z")
+                // One run per kind of engine: one that does not number its moves, and one whose answer is
+                // numbered below the final move's.
+                def run(sequence: Option[Long], suffix: String): IO[Boolean] = {
+                    @volatile var duringStatus: IO[Unit] = IO.unit
+                    val engine = StubEngine(beforeStatus = IO.defer {
+                        // Once: the results callback asks the engine for its turns too.
+                        val once = duringStatus
+                        duringStatus = IO.unit
+                        once
+                    })
+                    val services = TestServices.servicesWith(engine)
+                    for {
+                        seated <- twoSeats(
+                          services,
+                          s"$nickname-$suffix",
+                          s"$externalId-$suffix",
+                          s"$gameExternalId-$suffix",
+                          s"$otherExternalId-$suffix"
+                        )
+                        (fixture, started, mine, theirs) = seated
+                        _ <- IO {
+                            engine.status = GameStatusResponse(
+                              completed = false,
+                              participants = List(
+                                EngineParticipantStatus(
+                                  mine.participantId.value,
+                                  pending = true,
+                                  completed = false,
+                                  Some(created)
+                                ),
+                                EngineParticipantStatus(
+                                  theirs.participantId.value,
+                                  pending = true,
+                                  completed = false,
+                                  Some(created)
+                                )
+                              ),
+                              sequence = sequence
+                            )
+                            duringStatus = for {
+                                _ <- sequence.traverse_(_ =>
+                                    callback(
+                                      services,
+                                      fixture,
+                                      started,
+                                      theirs,
+                                      created.plusSeconds(30),
+                                      created,
+                                      2,
+                                      Nil
+                                    )
+                                )
+                                _ <- services.engine.recordResults(
+                                  fixture.game.gameId,
+                                  started.matchId,
+                                  List(
+                                    ReportedResult(mine.participantId, rank = 1, scores = Map.empty, isWinner = true),
+                                    ReportedResult(theirs.participantId, rank = 2, scores = Map.empty, isWinner = false)
+                                  ),
+                                  fixture.game.externalId
+                                )
+                            } yield ()
+                        }
+                        refreshed <- services.engine.refresh(
+                          fixture.game.gameId,
+                          started.matchId,
+                          s"$externalId-$suffix"
+                        )
+                        ended <- matchOf(fixture.game.gameId, started.matchId)
+                        seats <- participantsOf(started)
+                    } yield refreshed.completed &&
+                        ended.exists(_.completed) &&
+                        seats.forall(p => p.completed && !p.pending)
+                }
+                val result = for {
+                    unnumbered <- run(None, "u")
+                    numbered <- run(Some(1L), "n")
+                } yield unnumbered && numbered
+                result.timeout(30.seconds).unsafeRunSync()
+        }
+    }
+
     property("a results callback completes the match and writes the result rows") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val services = TestServices.servicesWith(StubEngine())
