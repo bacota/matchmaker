@@ -149,7 +149,7 @@ ${playLive.script(liveUrl, matchId)}
   async function play(cell) {
     show("");
     const ticket = ask();
-    const response = await send(movesUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cell }) });
+    const response = await send(movesUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cell }) }, ticket);
     if (!response) return;
     const answer = await response.json();
     // A refusal is dropped under a newer state, which says more; see PlayLive for the two orders.
@@ -162,7 +162,7 @@ ${playLive.script(liveUrl, matchId)}
 
   async function refresh() {
     const ticket = ask();
-    const response = await send(stateUrl, {});
+    const response = await send(stateUrl, {}, ticket);
     if (!response || !response.ok) return;
     const answer = await response.json();
     if (latest(ticket)) { state = answer; render(); }
@@ -171,7 +171,11 @@ ${playLive.script(liveUrl, matchId)}
   /* Every call carries the ID token when there is one. A 401 means the session is over rather
    * than the move being wrong, so the token is dropped and the page falls back to offering a
    * sign-in — a stale token must not leave the board looking merely broken. */
-  async function send(url, init) {
+  /* `ticket` is the caller's, from `ask()`: a refusal answered here is ordered like any other
+   * answer, so a late 401 or 403 cannot blank a board a newer request has already shown, nor a
+   * stale failure overwrite a newer message. If the session really is over, the next request is
+   * refused too, with a newer ticket, and that one is acted on. */
+  async function send(url, init, ticket) {
     const token = await freshIdToken();
     const headers = Object.assign({}, init.headers || {}, token ? { authorization: "Bearer " + token } : {});
     try {
@@ -181,22 +185,24 @@ ${playLive.script(liveUrl, matchId)}
       // is good for every match the player is in — and the page stops asking, since another sign-in
       // would be the same player refused the same way.
       if (response.status === 401) {
+        if (!latest(ticket)) return null;
         if (token) clearSession();
         state = null;
         render();
-        show(login ? "sign in to play this match" : "say who you are with ?as=<cognito sub>");
+        tell(ticket, login ? "sign in to play this match" : "say who you are with ?as=<cognito sub>");
         return null;
       }
       if (response.status === 403) {
+        if (!latest(ticket)) return null;
         noSeat = true;
         state = null;
         render();
-        show("you have no seat in this match");
+        tell(ticket, "you have no seat in this match");
         return null;
       }
       return response;
     } catch (e) {
-      show("could not reach the engine");
+      if (!overtaken(ticket)) tell(ticket, "could not reach the engine");
       return null;
     }
   }
