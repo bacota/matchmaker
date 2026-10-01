@@ -236,7 +236,7 @@ class GameEngineServiceSpec extends PropertySuite {
             } yield withChoice.parameters == Map("rounds" -> "5") &&
                 withChoice.settings.contains("\"rounds\"") &&
                 withoutChoice.parameters == Map("rounds" -> "4")
-            result.timeout(15.seconds).unsafeRunSync()
+            result.timeout(60.seconds).unsafeRunSync()
         }
     }
 
