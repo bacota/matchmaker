@@ -44,8 +44,9 @@ variable "lambda_memory_mb" {
 variable "lambda_snap_start" {
   description = <<-EOT
     Snapshot the initialized JVM at publish time so cold starts resume it rather than booting one.
-    The largest cold-start win available to a JVM Lambda, and the reason the function is published
-    and invoked through an alias.
+    The largest cold-start win available to a JVM Lambda, and the reason the functions are
+    published and invoked through an alias. Applies to matchmaker's api function and to every
+    deployed game engine.
 
     Per-environment because it is a trade: publishing a version takes a minute or two longer, since
     AWS runs the init phase and snapshots it before the version is usable. Worth turning off in an

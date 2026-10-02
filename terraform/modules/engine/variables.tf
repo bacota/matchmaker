@@ -108,6 +108,12 @@ variable "lambda_memory_mb" {
   default     = 1024
 }
 
+variable "lambda_snap_start" {
+  description = "Resume a snapshot of the initialized JVM on a cold start rather than booting one. The root's lambda_snap_start, shared with matchmaker's api function."
+  type        = bool
+  default     = true
+}
+
 variable "lambda_timeout_s" {
   description = "Lambda timeout. A move is two DynamoDB calls and up to two callbacks to matchmaker; building a boxer waits on matchmaker's answer."
   type        = number

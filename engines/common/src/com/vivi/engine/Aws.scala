@@ -6,19 +6,31 @@ import java.time.Duration
 import scala.jdk.CollectionConverters._
 import software.amazon.awssdk.http.{ContentStreamProvider, SdkHttpMethod, SdkHttpRequest}
 import software.amazon.awssdk.http.auth.aws.signer.{AwsV4FamilyHttpSigner, AwsV4HttpSigner}
-import software.amazon.awssdk.identity.spi.{AwsCredentialsIdentity, AwsSessionCredentialsIdentity}
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
+import software.amazon.awssdk.identity.spi.{AwsCredentialsIdentity, IdentityProvider}
 
-/** The credentials the engine signs with, from the standard environment variables the Lambda runtime populates from the
-  * execution role. `None` anywhere else, which is what makes the local server work with no AWS involved at all.
-  */
-case class AwsCredentials(accessKeyId: String, secretAccessKey: String, sessionToken: Option[String])
-
+/** Where the engine's signing credentials come from. */
 object AwsCredentials {
-    def fromEnvironment(env: String => Option[String] = k => Option(System.getenv(k))): Option[AwsCredentials] =
-        for {
-            accessKeyId <- env("AWS_ACCESS_KEY_ID")
-            secretAccessKey <- env("AWS_SECRET_ACCESS_KEY")
-        } yield AwsCredentials(accessKeyId, secretAccessKey, env("AWS_SESSION_TOKEN"))
+
+    /** The SDK's default credential chain when there are AWS credentials to be had, and `None` otherwise — which is
+      * what makes the local server work with no AWS involved at all.
+      *
+      * A provider asked at each signature rather than credentials read once, because of SnapStart. Java fixes
+      * `System.getenv` at JVM start, and under SnapStart JVM start is publish time: a restored engine that had read the
+      * execution role's keys from the environment would sign with credentials that were never there or have long
+      * expired, and DynamoDB would refuse every call. A SnapStart function is not given those keys at all; it gets a
+      * container credentials endpoint instead, which the SDK's chain knows how to ask, caches and refreshes. It is the
+      * same reason matchmaker's `SqsNotifier` uses the SDK's provider rather than signing by hand.
+      *
+      * "There are credentials" is being in Lambda, or having keys in the environment for a local run against real AWS.
+      * Nothing is resolved here: the chain does its first lookup at the first signature, which is after any restore.
+      */
+    def provider(
+        env: String => Option[String] = k => Option(System.getenv(k))
+    ): Option[IdentityProvider[? <: AwsCredentialsIdentity]] =
+        Option.when(env("AWS_LAMBDA_FUNCTION_NAME").isDefined || env("AWS_ACCESS_KEY_ID").isDefined)(
+          DefaultCredentialsProvider.builder().build()
+        )
 }
 
 class AwsError(message: String, cause: Throwable = null) extends RuntimeException(message, cause)
@@ -31,7 +43,7 @@ class AwsError(message: String, cause: Throwable = null) extends RuntimeExceptio
   * beyond the one below.
   */
 class SignedHttp(
-    credentials: Option[AwsCredentials],
+    credentials: Option[IdentityProvider[? <: AwsCredentialsIdentity]],
     region: String,
     httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
     timeout: Duration = Duration.ofSeconds(10)
@@ -73,8 +85,11 @@ class SignedHttp(
         val uri = URI.create(url)
         val payload = body.getOrElse("")
         val signed = credentials match {
-            case Some(creds) => sign(method, uri, headers, payload, service, creds)
-            case None        => Map.empty[String, String]
+            case Some(provider) =>
+                // `join` on a provider that answers from its cache almost always; a refresh is a
+                // local call to the Lambda credentials endpoint.
+                sign(method, uri, headers, payload, service, provider.resolveIdentity().join())
+            case None => Map.empty[String, String]
         }
 
         val builder = HttpRequest.newBuilder(uri).timeout(timeout)
@@ -101,12 +116,8 @@ class SignedHttp(
         headers: Map[String, String],
         body: String,
         service: String,
-        creds: AwsCredentials
+        identity: AwsCredentialsIdentity
     ): Map[String, String] = {
-        val identity = creds.sessionToken match {
-            case Some(token) => AwsSessionCredentialsIdentity.create(creds.accessKeyId, creds.secretAccessKey, token)
-            case None        => AwsCredentialsIdentity.create(creds.accessKeyId, creds.secretAccessKey)
-        }
 
         val request = headers
             .foldLeft(SdkHttpRequest.builder().uri(uri).method(SdkHttpMethod.fromValue(method.toUpperCase))) {

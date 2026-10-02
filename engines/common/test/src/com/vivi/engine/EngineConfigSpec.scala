@@ -14,4 +14,14 @@ class EngineConfigSpec extends FunSuite {
           EngineConfig.matchmakerKey(Map("AWS_LAMBDA_FUNCTION_NAME" -> "engine").get)
         )
     }
+
+    /* Signing is decided by where the engine runs, not by whether the environment holds keys: under
+     * SnapStart a Lambda is given no AWS_ACCESS_KEY_ID at all, and an engine that looked for one would
+     * write to DynamoDB unsigned and be refused. */
+    test("AWS credentials come from the SDK's chain in Lambda, and are absent locally") {
+        assert(AwsCredentials.provider(Map("AWS_LAMBDA_FUNCTION_NAME" -> "engine").get).isDefined)
+        // A local run pointed at real AWS by keys in its environment still signs.
+        assert(AwsCredentials.provider(Map("AWS_ACCESS_KEY_ID" -> "AKIA").get).isDefined)
+        assertEquals(AwsCredentials.provider(_ => None), None)
+    }
 }
