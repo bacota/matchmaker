@@ -21,15 +21,15 @@ import java.security.MessageDigest
   *   - Outbound, matchmaker has the url it is about to call and no engine identity in hand: the entries are keyed by
   *     host.
   *
-  * Both are parsed by this class; the two settings are `ENGINE_API_KEYS` and `GAME_ENGINE_API_KEYS` respectively (see
-  * `Handler`).
+  * Both are read from the database, where an admin sets each game's key on its form (V34) — see `GameApiKeyRepo`. A
+  * list of pairs rather than a map, because two games may share an engine identity and each has a key of its own.
   */
-case class ApiKeys(entries: Map[String, String]) {
+case class ApiKeys(entries: Iterable[(String, String)]) {
 
     def isEmpty: Boolean = entries.isEmpty
 
     /** The key to present when calling `name`. */
-    def keyFor(name: String): Option[String] = entries.get(name)
+    def keyFor(name: String): Option[String] = entries.collectFirst { case (`name`, key) => key }
 
     /** The name the presented key belongs to, or `None` if it belongs to no one.
       *
@@ -53,29 +53,4 @@ object ApiKeys {
     val Header = "x-api-key"
 
     val empty: ApiKeys = ApiKeys(Map.empty)
-
-    /** Parses `name=key,name=key`.
-      *
-      * Split on the *first* `=` only: a key is opaque and may well contain one (base64 padding), where a name is chosen
-      * by whoever writes the setting. Blank entries are skipped, so a trailing comma is not an error, and an entry with
-      * no `=` is — it is far more likely to be a key someone pasted without its name than a name they meant to leave
-      * keyless.
-      */
-    def parse(setting: Option[String]): ApiKeys =
-        ApiKeys(
-          setting.toList
-              .flatMap(_.split(',').toList)
-              .map(_.trim)
-              .filter(_.nonEmpty)
-              .map { entry =>
-                  entry.indexOf('=') match {
-                      case -1 =>
-                          throw IllegalStateException(
-                            s"api key entry '${entry.take(8)}...' has no name; expected name=key"
-                          )
-                      case at => entry.take(at).trim -> entry.drop(at + 1).trim
-                  }
-              }
-              .toMap
-        )
 }

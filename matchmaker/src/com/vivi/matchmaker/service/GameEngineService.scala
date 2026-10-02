@@ -288,12 +288,15 @@ class GameEngineService[T](
                             .create(toParticipant(matchId, acceptance))
                             .flatMap(p => enginePlayer(characterRepo)(p, acceptance, externalId, roleName))
                     }
-                } yield (saved, game, challenge, participants)
+                    // The key the engine is called with. Read plainly, like the game itself: it decides
+                    // nothing written here, and is only handed to the engine below.
+                    apiKey <- new GameApiKeyRepo(session).forGame(gameId)
+                } yield (saved, game, challenge, participants, apiKey)
             }
-            (saved, game, challenge, players) = prepared
+            (saved, game, challenge, players, apiKey) = prepared
 
             response <- engine
-                .createGame(game.url, createRequest(matchId, game, challenge, players))
+                .createGame(game.url, apiKey, createRequest(matchId, game, challenge, players))
                 .onError(_ => undo(session, gameId, challengeId, matchId))
 
             withUrls = saved.copy(
@@ -359,10 +362,10 @@ class GameEngineService[T](
         // Asked outside the transaction, like the engine call it is an argument to: it is the point
         // the engine reports turns from, and a turn arriving between this read and the write below
         // is simply reported again by the next status call.
-        turnRepo
-            .latestTakenAt(gameId, matchId)
-            .flatMap { _ =>
-                engine.status(statusUrl, None).flatMap { status =>
+        // The key on the session already held, rather than one borrowed for the purpose.
+        (turnRepo.latestTakenAt(gameId, matchId), new GameApiKeyRepo(session).forGame(gameId)).tupled
+            .flatMap { (_, apiKey) =>
+                engine.status(statusUrl, apiKey, None).flatMap { status =>
                     session.transaction.use { _ =>
                         for {
                             current <- requireMatchForUpdate(matchRepo, gameId, matchId)
@@ -776,21 +779,24 @@ class GameEngineService[T](
     private def recoverTurns(session: skunk.Session[IO], played: Match): IO[Unit] =
         played.statusUrl
             .fold(IO.unit) { url =>
-                engine.status(url, None).flatMap { status =>
-                    session.transaction.use { _ =>
-                        for {
-                            locked <- requireMatchForUpdate(new MatchRepo(session), played.gameId, played.matchId)
-                            seats <- new ParticipantRepo(session).listForMatch(played.gameId, played.matchId)
-                            known = seats.map(_._1.participantId.value).toSet
-                            _ <- recordTurns(
-                              session,
-                              locked,
-                              status.turns.filter(t => known(t.participantId)),
-                              since = None
-                            )
-                        } yield ()
+                new GameApiKeyRepo(session)
+                    .forGame(played.gameId)
+                    .flatMap(apiKey => engine.status(url, apiKey, None))
+                    .flatMap { status =>
+                        session.transaction.use { _ =>
+                            for {
+                                locked <- requireMatchForUpdate(new MatchRepo(session), played.gameId, played.matchId)
+                                seats <- new ParticipantRepo(session).listForMatch(played.gameId, played.matchId)
+                                known = seats.map(_._1.participantId.value).toSet
+                                _ <- recordTurns(
+                                  session,
+                                  locked,
+                                  status.turns.filter(t => known(t.participantId)),
+                                  since = None
+                                )
+                            } yield ()
+                        }
                     }
-                }
             }
             .handleErrorWith(error =>
                 IO(System.err.println(s"could not recover the turns of match ${played.matchId.value}: $error"))

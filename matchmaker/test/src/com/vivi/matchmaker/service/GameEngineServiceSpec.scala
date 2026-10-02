@@ -15,6 +15,7 @@ import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{
     AcceptanceRepo,
     CharacterRepo,
+    GameApiKeyRepo,
     GameRepo,
     MatchRepo,
     ChallengeRepo,
@@ -51,13 +52,15 @@ class GameEngineServiceSpec extends PropertySuite {
     ) extends GameEngineClient {
         @volatile var lastRequest: Option[CreateGameRequest] = None
         @volatile var lastUrl: Option[String] = None
+        @volatile var lastCreateKey: Option[String] = None
+        @volatile var lastStatusKey: Option[String] = None
 
-        def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+        def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
             if (fail) IO.raiseError(GameEngineError("engine is down"))
-            else IO { lastRequest = Some(request); lastUrl = Some(gameUrl) }.as(response)
+            else IO { lastRequest = Some(request); lastUrl = Some(gameUrl); lastCreateKey = apiKey }.as(response)
 
-        def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] =
-            beforeStatus.as(status)
+        def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
+            IO { lastStatusKey = apiKey } *> beforeStatus.as(status)
     }
 
     /** An engine that answers a status call by naming the seat it was given first as the one to move, which is what a
@@ -68,11 +71,11 @@ class GameEngineServiceSpec extends PropertySuite {
     private class FirstTurnEngine extends GameEngineClient {
         @volatile private var firstSeat: Option[Long] = None
 
-        def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+        def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
             IO { firstSeat = request.players.headOption.map(_.participantId) }
                 .as(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
 
-        def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] =
+        def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
             IO.pure(
               GameStatusResponse(
                 completed = false,
@@ -94,13 +97,13 @@ class GameEngineServiceSpec extends PropertySuite {
         private val response = CreateGameResponse("https://engine/status/1", "https://engine/play/1", None)
         @volatile var calls: Int = 0
 
-        def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+        def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
             IO { calls += 1; calls == 1 }.flatMap { first =>
                 if (first) entered.complete(()).attempt *> release.get.as(response)
                 else IO.pure(response)
             }
 
-        def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] =
+        def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
             IO.pure(GameStatusResponse(completed = false, participants = Nil))
     }
 
@@ -227,6 +230,29 @@ class GameEngineServiceSpec extends PropertySuite {
           Seq("3", "4", "5").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v)),
           "Rounds"
         )
+
+    // Every fixture's game is on the same engine host, which is the case a key filed by host could
+    // not tell apart: each game has to present its own key, not whichever was stored first.
+    property("start presents the starting game's own API key, though another game shares its engine host") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val engine = StubEngine()
+            val services = TestServices.servicesWith(engine)
+            // Fresh for each case: keys are unique across games (V34), and the database outlives a run.
+            val (otherKey, thisKey) = (s"other-$gameExternalId", s"this-$gameExternalId")
+            val result = for {
+                other <- makeFixture(s"$nickname-o", s"$externalId-o", s"$gameExternalId-o")
+                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                _ <- TestSession.resource.use { session =>
+                    val keys = new GameApiKeyRepo(session)
+                    keys.set(other.game.gameId, otherKey) *> keys.set(fixture.game.gameId, thisKey)
+                }
+                challenge <- services.challenges.create(challengeFor(fixture), externalId)
+                _ <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+            } yield (engine.lastCreateKey, engine.lastStatusKey)
+
+            result.timeout(15.seconds).unsafeRunSync() == (Some(thisKey), Some(thisKey))
+        }
+    }
 
     property("start sends the engine the parameter value the challenger chose, in place of the default") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
@@ -1461,9 +1487,17 @@ class GameEngineServiceSpec extends PropertySuite {
                     // The status call now fails, with the deadline long past and matchmaker's own copy
                     // still saying it is the challenger's turn.
                     unreachable = TestServices.servicesWith(new GameEngineClient {
-                        def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+                        def createGame(
+                            gameUrl: String,
+                            apiKey: Option[String],
+                            request: CreateGameRequest
+                        ): IO[CreateGameResponse] =
                             IO.raiseError(GameEngineError("engine is down"))
-                        def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] =
+                        def status(
+                            statusUrl: String,
+                            apiKey: Option[String],
+                            since: Option[Instant] = None
+                        ): IO[GameStatusResponse] =
                             IO.raiseError(GameEngineError("engine is down"))
                     })
                     // `read` is the path that rechecks — `refresh` would fail on the status call itself.
@@ -2023,9 +2057,17 @@ class GameEngineServiceSpec extends PropertySuite {
     property("a start still succeeds when the engine will not say whose turn it is") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val engine = new GameEngineClient {
-                def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+                def createGame(
+                    gameUrl: String,
+                    apiKey: Option[String],
+                    request: CreateGameRequest
+                ): IO[CreateGameResponse] =
                     IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
-                def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] =
+                def status(
+                    statusUrl: String,
+                    apiKey: Option[String],
+                    since: Option[Instant] = None
+                ): IO[GameStatusResponse] =
                     IO.raiseError(GameEngineError("status is down"))
             }
             val services = TestServices.servicesWith(engine)

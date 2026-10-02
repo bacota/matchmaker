@@ -227,13 +227,18 @@ output() {
   (cd "$TERRAFORM_DIR" && ./tf.sh "$env" output -raw "$1" 2>/dev/null || true)
 }
 
-step "Registering the engines as games"
+step "Games to add on matchmaker's admin page"
 
+# A deploy never creates a game: an admin adds each one on matchmaker's admin page ("Add a Game"),
+# or edits the game if it is already there, with these values. register-game.sql is for the local
+# database the unit tests run against, and refuses any other. Each API key is printed as the command
+# that reads it, not as the key, so that it is not left in a terminal's scrollback.
 for engine in "${enabled_engines[@]}"; do
   IFS=: read -r name _ _ _ <<<"$engine"
 
   create_game_url=$(output "${name}_create_game_url")
   external_id=$(output "${name}_external_id")
+  character_url=$(output "${name}_character_url")
 
   if [ -z "$create_game_url" ] || [ -z "$external_id" ]; then
     echo "    $name: outputs not available; check the apply above" >&2
@@ -243,18 +248,20 @@ for engine in "${enabled_engines[@]}"; do
   cat <<EOF
 
     $name
-      create game   $create_game_url
-      identity      $external_id
-
-    psql "\$DATABASE_URL" \\
-      -v url="$create_game_url" \\
-      -v external_id="$external_id" \\
-      -f engines/$name/register-game.sql
+      Game engine url       $create_game_url
+      Engine identity       $external_id
+      API key               ./terraform/tf.sh $env output -raw ${name}_api_key
 EOF
+  if [ -n "$character_url" ]; then
+    cat <<EOF
+      Requires characters   yes
+      Character page url    $character_url
+EOF
+  fi
 done
 
 cat <<'EOF'
 
-Already registered? Update the existing rows instead, or matchmaker will keep calling the old
-urls — each engine's README names the row its script inserts.
+A game already there that points at an old url goes on calling it, so edit it rather than adding
+a second. The roles and parameters each game needs are in its engine's README.
 EOF

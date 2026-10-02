@@ -27,15 +27,6 @@ output "lambda_role_arn" {
   value       = aws_iam_role.lambda.arn
 }
 
-output "api_host" {
-  description = <<-EOT
-    The host matchmaker calls this engine on. Matchmaker files an engine's API key by host, since
-    the host is all its client knows about the engine it is about to call — pass this as the key
-    of an entry in matchmaker's `game_engine_api_keys`.
-  EOT
-  value       = "${aws_apigatewayv2_api.engine.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
-}
-
 output "lambda_function_name" {
   description = "For `aws logs tail` and manual invocation."
   value       = aws_lambda_function.engine.function_name

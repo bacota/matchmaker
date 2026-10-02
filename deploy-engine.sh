@@ -16,11 +16,11 @@
 # credentials. The engines are independent of each other too: they share nothing but the user pool
 # they authenticate players against.
 #
-# An engine's first deployment needs matchmaker to change as well — every engine's does, since
-# matchmaker must hold the engine's API key, and boxing's also needs its
-# `PUT /characters/{characterId}/state` route to be an engine route, which is how a built fighter
-# is kept — and the targeted plan below leaves matchmaker's function alone. Use ./deploy-all.sh
-# for that, or --full here.
+# Boxing's first deployment needs matchmaker to change as well — its
+# `PUT /characters/{characterId}/state` route has to be an engine route, which is how a built
+# fighter is kept — and the targeted plan below leaves matchmaker's function alone. Use
+# ./deploy-all.sh for that, or --full here. The others need nothing of matchmaker's deployment:
+# matchmaker learns an engine's API key from its game's admin form, not from terraform.
 #
 # By default the plan is limited to the engine's own module plus the one resource outside it that
 # the engine changes: the Cognito app client, whose callback urls have to include the engine's
@@ -54,7 +54,7 @@ engine=$1
 env=$2
 shift 2
 
-# What each engine is called, in the messages below and in its `game` row, and what this script
+# What each engine is called, in the messages below and as the name to give its game, and what this script
 # says about deploying it to prod. Everything else about an engine follows from its name: its
 # module, its mill module, its jar, its settings flag and its outputs.
 case "$engine" in
@@ -225,14 +225,17 @@ step "Applying to $env"
 # What still has to be done by hand
 # ---------------------------------------------------------------------------
 #
-# Matchmaker has no route that creates a game — a game is an administrative fact, not something a
-# player does — so the engine is deployed but unreachable until a `game` row points at it. The two
-# values that row needs are outputs of the apply above. external_id must be the name matchmaker
-# files this engine's API key under, because that key is how a deployed matchmaker tells which
-# engine a callback came from; the terraform files it under the engine's name.
+# A deploy never creates a game — a game is an administrative fact, not something a deploy does —
+# so the engine is deployed but unreachable until an admin adds a game pointing at it, on
+# matchmaker's admin page ("Add a Game", or the game's own edit form if it is already there). The
+# values that form needs are outputs of the apply above, and this prints them. Engine identity must
+# be the name matchmaker files this engine's API key under, because that key is how a deployed
+# matchmaker tells which engine a callback came from; the terraform files it under the engine's
+# name. The API key is printed as the command that reads it rather than as the key, so that it is
+# not left in a terminal's scrollback; matchmaker stores it with the game and never shows it again.
 #
-# The database is inside the VPC, so this script cannot run the insert itself from an arbitrary
-# laptop — the same limitation deploy.sh notes around Flyway. It prints the exact command instead.
+# register-game.sql is not the way: it is for the local database the unit tests run against, and
+# it refuses any other.
 
 output() {
   (cd "$TERRAFORM_DIR" && ./tf.sh "$env" output -raw "$1" 2>/dev/null || true)
@@ -242,10 +245,6 @@ create_game_url=$(output "${engine}_create_game_url")
 external_id=$(output "${engine}_external_id")
 # Only a character game has one: where its players build a character.
 character_url=$(output "${engine}_character_url")
-character_url_set=""
-if [ -n "$character_url" ]; then
-  character_url_set=", character_url = '$character_url'"
-fi
 
 step "Deployed"
 
@@ -253,19 +252,22 @@ if [ -z "$create_game_url" ] || [ -z "$external_id" ]; then
   echo "    the engine's outputs are not available; check the apply above" >&2
 else
   cat <<EOF
-    create game   $create_game_url
-    identity      $external_id
+Add it on matchmaker's admin page ("Add a Game"), or edit the game if it is already there — a game
+pointing at an old url goes on calling it:
 
-To register it as a game in matchmaker — from somewhere with a route to the database:
+    Name                  $game_name
+    Game engine url       $create_game_url
+    Engine identity       $external_id
+    API key               ./terraform/tf.sh $env output -raw ${engine}_api_key
+EOF
+  if [ -n "$character_url" ]; then
+    cat <<EOF
+    Requires characters   yes
+    Character page url    $character_url
+EOF
+  fi
+  cat <<EOF
 
-    psql "\$DATABASE_URL" \\
-      -v url="$create_game_url" \\
-      -v external_id="$external_id" \\
-      -f engines/$engine/register-game.sql
-
-Already registered? Update the existing row instead, or matchmaker will keep calling the old url:
-
-    UPDATE game SET url = '$create_game_url', external_id = '$external_id'$character_url_set
-     WHERE name = '$game_name';
+The roles and parameters to give it are in engines/$engine/README.md.
 EOF
 fi

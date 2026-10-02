@@ -110,7 +110,7 @@ AUTH_MODE=header mill -j 4 --ticker false matchmaker.api.runMain com.vivi.matchm
 PORT=8092 GAME_EXTERNAL_ID=boxing-dev mill -j 4 --ticker false engines.boxing.runMain com.vivi.boxing.LocalServer
 
 # 3. register it as a game
-psql "$DATABASE_URL" -v url="http://localhost:8092/games" -v external_id="boxing-dev" \
+psql -h localhost -U matchmaker matchmaker -v url="http://localhost:8092/games" -v external_id="boxing-dev" \
      -f engines/boxing/register-game.sql
 ```
 
@@ -142,9 +142,9 @@ with `deploy_boxing = true` in
 `environments/<env>.settings.tfvars`.
 
 **The first deployment must be `./deploy-all.sh <env>`** (or `./deploy-boxing.sh <env> --full`).
-This engine needs two changes on matchmaker's side that the targeted per-engine plan doesn't touch:
+This engine needs a change on matchmaker's side that the targeted per-engine plan doesn't touch —
+its API key does not count, since matchmaker learns that from the game's admin form:
 
-- matchmaker has to hold the engine's API key
 - `POST /characters`, `GET /characters`, `PUT /characters/{characterId}` and
   `PUT /characters/{characterId}/owner` (and `PUT /characters/{characterId}/state`) have to be
   engine routes
@@ -153,10 +153,22 @@ This engine needs two changes on matchmaker's side that the targeted per-engine 
 
 After that, `./deploy-boxing.sh <env>` redeploys the engine alone.
 
-Then register the game with the outputs: `boxing_create_game_url` as `url` and `boxing` as
-`external_id`. Both deploy scripts print the exact `psql` command, which also sets `character_url`.
-A game registered before V28 got its `character_url` from that migration if its name is `Boxing`.
-Otherwise, set it to `boxing_character_url`.
+Then add the game on matchmaker's admin page ("Add a Game"), or edit it if it is already there.
+A deploy never creates a game, and `register-game.sql` is for the local database only — it refuses
+any other. The deploy scripts print the urls; the form wants:
+
+- **Name**: Boxing
+- **Game engine url**: the `boxing_create_game_url` output
+- **Engine identity**: `boxing` — the name matchmaker files this engine's API key under, and so
+  how it tells which engine a callback came from. A game naming anything else has its callbacks
+  refused.
+- **API key**: the key the engine was deployed with, which
+  `./terraform/tf.sh <env> output -raw boxing_api_key` prints. Matchmaker stores it with the game and
+  never shows it again; entering a new one on the game's edit form replaces it.
+- **Type**: requires characters
+- **Roles**: `Red` and `Blue`, neither optional
+- **Character page url**: the `boxing_character_url` output — where a player builds a fighter
+- **Parameters**: `rounds`, display name `Rounds`, values `3, 4, … 25`, default `10`
 
 ## Known limits
 

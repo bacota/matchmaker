@@ -23,11 +23,11 @@ class ChallengeNotificationSpec extends PropertySuite {
     private val caseTimeout = 60.seconds
 
     private class StubEngine(fail: Boolean = false) extends GameEngineClient {
-        def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+        def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
             if (fail) IO.raiseError(new RuntimeException("engine says no"))
             else IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
 
-        def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] =
+        def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
             IO.pure(GameStatusResponse(completed = false, participants = Nil))
     }
 

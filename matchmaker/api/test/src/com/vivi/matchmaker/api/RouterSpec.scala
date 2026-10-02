@@ -94,7 +94,8 @@ class RouterSpec extends FunSuite {
     // test fails rather than a rejected request quietly paying for a database pool it never uses.
     test("a rejected request never forces the services") {
         val alwaysRejects = new Authenticator {
-            def callerOf(request: Request): Either[ApiGateway.Response, String] = Left(Errors.response(401, "no"))
+            def callerOf(request: Request): IO[Either[ApiGateway.Response, String]] =
+                IO.pure(Left(Errors.response(401, "no")))
         }
 
         val response =
@@ -305,7 +306,7 @@ class RouterSpec extends FunSuite {
         // Stands in for GatewayClaims, which will take the caller from a verified token rather than a
         // header: the routes must not care where the identity came from.
         val fromElsewhere = new Authenticator {
-            def callerOf(request: Request): Either[ApiGateway.Response, String] = Right("sub-from-token")
+            def callerOf(request: Request): IO[Either[ApiGateway.Response, String]] = IO.pure(Right("sub-from-token"))
         }
 
         val response =
@@ -319,8 +320,8 @@ class RouterSpec extends FunSuite {
 
     test("an authenticator's rejection is returned as it wrote it") {
         val alwaysExpired = new Authenticator {
-            def callerOf(request: Request): Either[ApiGateway.Response, String] =
-                Left(Errors.response(401, "token has expired"))
+            def callerOf(request: Request): IO[Either[ApiGateway.Response, String]] =
+                IO.pure(Left(Errors.response(401, "token has expired")))
         }
 
         val response = Router.dispatch(services, request("GET", "/me"), alwaysExpired).unsafeRunSync()
@@ -330,9 +331,9 @@ class RouterSpec extends FunSuite {
     }
 
     // The game engine's callbacks carry the key matchmaker and that engine share. The key names
-    // the engine, because matchmaker holds a different one for each — that name is the game's
-    // externalId, which is what the services authorize a game-authorized caller by.
-    private val keys = () => ApiKeys(Map("tictactoe" -> "s3cret"))
+    // the engine, because each game stores its own — filed under the game's externalId, which is
+    // what the services authorize a game-authorized caller by.
+    private val keys = () => IO.pure(ApiKeys(Map("tictactoe" -> "s3cret")))
 
     test("the gateway authenticator turns an engine's API key into that engine's name") {
         val request = ApiGateway.Request(
@@ -343,7 +344,7 @@ class RouterSpec extends FunSuite {
           "{}"
         )
 
-        assertEquals(Authenticator.Gateway(keys).callerOf(request), Right("tictactoe"))
+        assertEquals(Authenticator.Gateway(keys).callerOf(request).unsafeRunSync(), Right("tictactoe"))
     }
 
     test("a key nobody was issued is refused, exactly as a missing one is") {
@@ -351,9 +352,22 @@ class RouterSpec extends FunSuite {
             Authenticator
                 .Gateway(keys)
                 .callerOf(ApiGateway.Request("POST", "/games/1/matches/m1/results", headers, Map.empty, "{}"))
+                .unsafeRunSync()
 
         assertEquals(callerOf(Map(ApiKeys.Header -> "guess")), Left(Errors.unauthenticated))
         assertEquals(callerOf(Map(ApiKeys.Header -> "")), Left(Errors.unauthenticated))
+    }
+
+    // A request with no key has nothing to look up, and asking the database on its behalf would let
+    // anyone make matchmaker read every key just by calling an engine route.
+    test("a request presenting no key is refused without the keys being read") {
+        val unread = () => IO.raiseError[ApiKeys](new AssertionError("the keys were read"))
+        val outcome = Authenticator
+            .ApiKey(unread)
+            .callerOf(ApiGateway.Request("POST", "/games/1/matches/m1/results", Map.empty, Map.empty, "{}"))
+            .unsafeRunSync()
+
+        assertEquals(outcome, Left(Errors.unauthenticated))
     }
 
     test("the gateway authenticator prefers a verified token over anything else on the request") {
@@ -368,20 +382,20 @@ class RouterSpec extends FunSuite {
           claims = Map("sub" -> "sub-from-token")
         )
 
-        assertEquals(Authenticator.Gateway(keys).callerOf(request), Right("sub-from-token"))
+        assertEquals(Authenticator.Gateway(keys).callerOf(request).unsafeRunSync(), Right("sub-from-token"))
     }
 
     test("a request the gateway authenticated in neither way is unauthenticated") {
         val request =
             ApiGateway.Request("GET", "/me", Map(ApiGateway.ExternalIdHeader.toLowerCase -> "sub-1"), Map.empty, "{}")
-        assertEquals(Authenticator.Gateway(keys).callerOf(request).map(identity), Left(Errors.unauthenticatedToken))
+        assertEquals(Authenticator.Gateway(keys).callerOf(request).unsafeRunSync(), Left(Errors.unauthenticatedToken))
     }
 
     test("the gateway authenticator takes the caller from the verified sub claim") {
         val request =
             Request("GET", "/me", Map.empty, Map.empty, "{}", Map("sub" -> "sub-from-token", "email" -> "a@b.c"))
 
-        assertEquals(Authenticator.GatewayClaims.callerOf(request), Right("sub-from-token"))
+        assertEquals(Authenticator.GatewayClaims.callerOf(request).unsafeRunSync(), Right("sub-from-token"))
     }
 
     test("the gateway authenticator ignores the identity header entirely") {
@@ -389,7 +403,7 @@ class RouterSpec extends FunSuite {
         // and become any player, which is exactly what the JWT authorizer is there to prevent.
         val request = Request("GET", "/me", Map("x-external-id" -> "someone-else"), Map.empty, "{}")
 
-        assert(Authenticator.GatewayClaims.callerOf(request).isLeft)
+        assert(Authenticator.GatewayClaims.callerOf(request).unsafeRunSync().isLeft)
     }
 
     test("a request with no claims is unauthenticated under the gateway authenticator") {

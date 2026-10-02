@@ -21,16 +21,22 @@ object Router {
       * database pool on first touch, and an unauthenticated request is answered before any route is chosen — a 401 has
       * no business constructing a pool, and on a cold container it would pay the whole initialization to do it.
       */
-    def dispatch(services: => Services[String], request: Request, authenticator: Authenticator): IO[Response] =
-        authenticator.callerOf(request) match {
-            case Left(rejection) => IO.pure(rejection)
-            case Right(caller) =>
-                val where = s"${request.method} ${request.path}"
-                // `route` is called inside the IO rather than before it: it forces the by-name
-                // `services`, and a pool that fails to open would otherwise throw while this IO is being
-                // built — outside the `handleError` below, and so unlogged.
-                IO(route(services, request, caller)).flatten.handleError(Errors.toResponse(_, where))
-        }
+    def dispatch(services: => Services[String], request: Request, authenticator: Authenticator): IO[Response] = {
+        val where = s"${request.method} ${request.path}"
+        // An authenticator that has to look a key up can fail as any database read can, and that
+        // failure is answered and logged like a route's rather than escaping unhandled.
+        authenticator
+            .callerOf(request)
+            .flatMap {
+                case Left(rejection) => IO.pure(rejection)
+                case Right(caller)   =>
+                    // `route` is called inside the IO rather than before it: it forces the by-name
+                    // `services`, and a pool that fails to open would otherwise throw while this IO is
+                    // being built — outside the `handleError` below, and so unlogged.
+                    IO(route(services, request, caller)).flatten
+            }
+            .handleError(Errors.toResponse(_, where))
+    }
 
     /* A case added here is only half of a new endpoint.
      *
@@ -151,7 +157,11 @@ object Router {
                 ok(services.games.list(caller, activeOnly = request.query.get("activeOnly").contains("true")))
 
             case ("POST", "games" :: Nil) =>
-                body[Game](request).flatMap(game => ok(services.games.createOrUpdate(caller, game)))
+                // The engine's API key travels in the same object as the game, and is read apart from
+                // it so that the game itself never holds one.
+                (body[Game](request), body[Json.GameApiKeyField](request)).tupled.flatMap((game, key) =>
+                    ok(services.games.createOrUpdate(caller, game, key.apiKey))
+                )
 
             case ("GET", "games" :: gameId :: "challenges" :: Nil) =>
                 withGameId(gameId)(id => ok(services.challenges.listByGame(id, caller)))

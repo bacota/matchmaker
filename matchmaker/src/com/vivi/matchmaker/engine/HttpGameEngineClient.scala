@@ -14,26 +14,22 @@ import EngineJson.given
   * `java.net.http` rather than a library, because this module is deployed as a Lambda whose cold start is proportional
   * to the size of its jar, and the JDK's own client costs nothing to add.
   *
-  * The key is looked up by the host of the url being called, which is all this client knows about the engine it is
-  * talking to — see [[ApiKeys]]. A host with no key configured is called without one, which is what makes a local stub
-  * engine work with no setup at all; a *deployed* engine with no key would answer 401, so the missing key is reported
-  * here instead, where what is actually missing can be said.
-  *
-  * `keys` is a function, and is called once per request rather than once per client, so that rotating a key is a matter
-  * of changing the function's environment rather than rebuilding everything that holds a client.
+  * Each call is given the key to present: the stored key of the game it is about (V34), which the caller reads with the
+  * game. A call with no key is made without one, which is what makes a local stub engine work with no setup at all; a
+  * *deployed* engine would answer 401, so the missing key is reported here instead, where what is actually missing can
+  * be said.
   */
 class HttpGameEngineClient(
-    keys: () => ApiKeys,
     timeout: Duration = Duration.ofSeconds(10),
     httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
 ) extends GameEngineClient {
 
-    def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
-        send("POST", gameUrl, Some(write(request))).map(parse[CreateGameResponse](gameUrl, _))
+    def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
+        send("POST", gameUrl, apiKey, Some(write(request))).map(parse[CreateGameResponse](gameUrl, _))
 
-    def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] = {
+    def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] = {
         val url = withSince(statusUrl, since)
-        send("GET", url, None).map(parse[GameStatusResponse](url, _))
+        send("GET", url, apiKey, None).map(parse[GameStatusResponse](url, _))
     }
 
     /* `since` goes on the query string rather than in a body, because this is a GET and the engine
@@ -54,10 +50,9 @@ class HttpGameEngineClient(
                 throw GameEngineError(s"unreadable response from game engine at $url: ${e.getMessage}", e)
         }
 
-    private def send(method: String, url: String, body: Option[String]): IO[String] =
+    private def send(method: String, url: String, key: Option[String], body: Option[String]): IO[String] =
         IO(URI.create(url)).flatMap { uri =>
             val host = Option(uri.getHost).getOrElse("")
-            val key = keys().keyFor(host)
 
             val headers =
                 body.map(_ => "content-type" -> "application/json").toMap ++ key.map(ApiKeys.Header -> _)
@@ -78,8 +73,8 @@ class HttpGameEngineClient(
 
             IO.raiseWhen(mustBeKeyed && key.isEmpty)(
               GameEngineError(
-                s"$method $url has no API key: nothing in GAME_ENGINE_API_KEYS is filed under '$host'. " +
-                    "A deployed game engine answers an unauthenticated request with 401."
+                s"$method $url has no API key: its game has none stored. Set it on the game's admin form; " +
+                    "a deployed game engine answers an unauthenticated request with 401."
               )
             ) *>
                 IO.blocking(httpClient.send(request, HttpResponse.BodyHandlers.ofString()))
@@ -100,15 +95,4 @@ class HttpGameEngineClient(
                             )
                     }
         }
-}
-
-object HttpGameEngineClient {
-
-    /** A client configured from the environment.
-      *
-      * `GAME_ENGINE_API_KEYS` is `host=key` per engine — see [[ApiKeys]]. It is re-read for every request rather than
-      * parsed once, so that a rotated key takes effect without the execution environment having to be recycled.
-      */
-    def fromEnvironment(env: String => Option[String] = k => Option(System.getenv(k))): HttpGameEngineClient =
-        new HttpGameEngineClient(keys = () => ApiKeys.parse(env("GAME_ENGINE_API_KEYS")))
 }

@@ -185,8 +185,8 @@ class GameServiceSpec extends PropertySuite {
         assertEquals(unshown.map(_._2), unshown.map(_._1))
     }
 
-    // Renaming a registered game for players is what the display name is for: the name is how its
-    // registration script and migrations find it, so it has to survive the rename unchanged.
+    // Renaming a game for players is what the display name is for: the name is what the engine is
+    // told and what migrations find it by, so it has to survive the rename unchanged.
     test("createOrUpdate changes a game's display name and leaves its name alone") {
         val result = for {
             admin <- makeAdmin()
@@ -210,6 +210,92 @@ class GameServiceSpec extends PropertySuite {
         } yield attempt.left.exists(_.isInstanceOf[ValidationError])
 
         assert(result.unsafeRunSync())
+    }
+
+    // The key's only way back out of the database is as an engine's credential: a save stores it and
+    // reports that one is stored, and the authenticator resolves it to the game's engine identity.
+    test("createOrUpdate stores the engine's API key, and the stored key identifies the engine") {
+        val key = s"key-${java.util.UUID.randomUUID()}"
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGameWithRole.sample.get)
+            created <- gameService.createOrUpdate(admin.externalId, base, Some(s"  $key "))
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            keys <- gameService.engineKeys
+        } yield (created.hasApiKey, listed.map(_.hasApiKey), keys.nameOf(key), created.externalId)
+
+        val (createdHas, listedHas, identity, externalId) = result.unsafeRunSync()
+        assert(createdHas)
+        assertEquals(listedHas, Some(true))
+        assertEquals(identity, Some(externalId))
+    }
+
+    test("an edit that sends no key keeps the stored one, and one that sends a key replaces it") {
+        val first = s"key-${java.util.UUID.randomUUID()}"
+        val second = s"key-${java.util.UUID.randomUUID()}"
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGameWithRole.sample.get)
+            created <- gameService.createOrUpdate(admin.externalId, base, Some(first))
+            // Blank is what an untouched form field sends.
+            _ <- gameService.createOrUpdate(admin.externalId, created.copy(description = "edited"), Some("  "))
+            kept <- gameService.engineKeys
+            _ <- gameService.createOrUpdate(admin.externalId, created, Some(second))
+            replaced <- gameService.engineKeys
+        } yield (kept.nameOf(first), replaced.nameOf(first), replaced.nameOf(second), created.externalId)
+
+        val (kept, oldAfter, newAfter, externalId) = result.unsafeRunSync()
+        assertEquals(kept, Some(externalId))
+        assertEquals(oldAfter, None)
+        assertEquals(newAfter, Some(externalId))
+    }
+
+    test("an API key shorter than the minimum is refused, and nothing is saved") {
+        val result = for {
+            admin <- makeAdmin()
+            game = Generators.genGameWithRole.sample.get
+            attempt <- gameService.createOrUpdate(admin.externalId, game, Some("x" * 23)).attempt
+            listed <- gameService.list(admin.externalId).map(_.exists(_.name == game.name))
+        } yield (attempt.left.exists(_.isInstanceOf[ValidationError]), listed)
+
+        assertEquals(result.unsafeRunSync(), (true, false))
+    }
+
+    // A key is how a callback says which game's engine sent it, so no two games may hold the same
+    // one. The refusal is a conflict, and rolls back the game it came with.
+    test("a key another game already holds is refused, and the game is not saved") {
+        val key = s"key-${java.util.UUID.randomUUID()}"
+        val result = for {
+            admin <- makeAdmin()
+            _ <- gameService.createOrUpdate(admin.externalId, Generators.genGameWithRole.sample.get, Some(key))
+            second = Generators.genGameWithRole.sample.get
+            attempt <- gameService.createOrUpdate(admin.externalId, second, Some(key)).attempt
+            listed <- gameService.list(admin.externalId).map(_.exists(_.name == second.name))
+        } yield (attempt.left.exists(_.isInstanceOf[ConflictError]), listed)
+
+        assertEquals(result.unsafeRunSync(), (true, false))
+    }
+
+    // Saving an edit with the key the game already has is not a clash with itself.
+    test("a game may be saved again with the key it already holds") {
+        val key = s"key-${java.util.UUID.randomUUID()}"
+        val result = for {
+            admin <- makeAdmin()
+            created <- gameService.createOrUpdate(admin.externalId, Generators.genGameWithRole.sample.get, Some(key))
+            again <- gameService.createOrUpdate(admin.externalId, created, Some(key)).attempt
+        } yield again.isRight
+
+        assert(result.unsafeRunSync())
+    }
+
+    test("a game saved without a key reports none") {
+        val result = for {
+            admin <- makeAdmin()
+            created <- gameService.createOrUpdate(admin.externalId, Generators.genGameWithRole.sample.get)
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+        } yield (created.hasApiKey, listed.map(_.hasApiKey))
+
+        assertEquals(result.unsafeRunSync(), (false, Some(false)))
     }
 
     test("createOrUpdate refuses a game that defines no roles") {

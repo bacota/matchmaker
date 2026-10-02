@@ -121,7 +121,9 @@ object Json {
         // that omits it still creates a game — with the action every existing game already has.
         timeoutAction: TimeoutAction = TimeoutAction.Forfeit,
         // Where a player makes a character, for a character game whose engine has a page for it (V28).
-        characterUrl: Option[String] = None
+        characterUrl: Option[String] = None,
+        // Whether a key is stored, for the admin form; never the key. Ignored on a save.
+        hasApiKey: Boolean = false
     )
 
     private given ReadWriter[GameDto] = macroRW
@@ -140,7 +142,8 @@ object Json {
             game.parameters.map(_.asInstanceOf[GameParameter[String]]),
             game.externalId,
             game.timeoutAction,
-            game.characterUrl
+            game.characterUrl,
+            game.hasApiKey
           ),
       dto =>
           Game(
@@ -155,12 +158,20 @@ object Json {
             dto.parameters,
             dto.externalId,
             dto.timeoutAction,
-            dto.characterUrl
+            dto.characterUrl,
+            dto.hasApiKey
           )
     )
 
     // Request bodies. Each carries only what the caller supplies; the caller's own identity always
     // comes from the X-External-Id header, never from the body.
+
+    /** The part of a game save that is not the game: its engine's API key, sent alongside the game's own fields in the
+      * same object and never returned by anything. Absent or blank leaves the stored key as it is.
+      */
+    case class GameApiKeyField(apiKey: Option[String] = None)
+    given ReadWriter[GameApiKeyField] = macroRW
+
     /** @param email
       *   the address the new player signs in with, as the client read it out of its own token. Optional: a client with
       *   no Cognito identity behind it has none to send, and one that omits it registers a player matchmaker cannot

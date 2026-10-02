@@ -156,9 +156,15 @@ object ApiClient {
     /** Creates a game, or updates one when `gameId` is already assigned. The same route does both, which is why this is
       * `POST /games` rather than a `PUT` on an id that does not exist yet. The server refuses this to anyone who is not
       * an admin, so the button is admin-only too — but the check that matters is the server's.
+      *
+      * `apiKey` is the game engine's key, sent in the same object as the game's fields — the server reads it apart from
+      * the game, stores it, and never sends it back. `None` leaves the stored key as it is.
       */
-    def createGame(game: Game): Future[Game] =
-        send[Game](HttpMethod.POST, "/games", Some(write(game)))
+    def createGame(game: Game, apiKey: Option[String] = None): Future[Game] = {
+        val body = upickle.default.writeJs(game).obj
+        apiKey.foreach(key => body("apiKey") = ujson.Str(key))
+        send[Game](HttpMethod.POST, "/games", Some(ujson.write(ujson.Obj(body))))
+    }
 
     def challenges(gameId: GameId): Future[Seq[ChallengeSummary]] =
         get[Seq[ChallengeSummary]](s"/games/${gameId.value}/challenges")

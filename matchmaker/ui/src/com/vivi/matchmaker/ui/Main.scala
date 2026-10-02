@@ -2053,11 +2053,11 @@ object Views {
       * to set — a game's roles are its seats, so adding one in [[roleEditor]] is how a game gets bigger. What edit
       * cannot do is delete a role.
       *
-      * `externalId` is asked for as the engine's identity: the name its API key is filed under in matchmaker's
-      * `ENGINE_API_KEYS`, which is how a callback from the engine is recognised as coming from this game. It cannot be
-      * generated — the key is configured where matchmaker is deployed, not here — so a game created with anything else
-      * could never hear from its engine. `active` is not on this form at all, so editing preserves it and creating sets
-      * it true.
+      * `externalId` is asked for as the engine's identity: the name a callback carrying this game's API key is taken to
+      * come from, and what game-authorized requests are matched against. The API key itself is asked for too — the
+      * secret the engine was deployed with — and is write-only: required to create a game, left as it is by an edit
+      * that leaves the field blank, and never shown, since nothing sends it back. `active` is not on this form at all,
+      * so editing preserves it and creating sets it true.
       */
     private def gameForm(existing: Option[Game]): HtmlElement = {
         val name = Var(existing.map(_.name).getOrElse(""))
@@ -2065,6 +2065,8 @@ object Views {
         val description = Var(existing.map(_.description).getOrElse(""))
         val url = Var(existing.map(_.url).getOrElse(""))
         val engineIdentity = Var(existing.map(_.externalId).getOrElse(""))
+        // Write-only: starts empty whether or not a key is stored, because the stored one is never sent here.
+        val apiKey = Var("")
         // Where a player makes a character: the engine's page, since characters are made there.
         val characterUrl = Var(existing.flatMap(_.characterUrl).getOrElse(""))
         // Plain by default: requiring characters is the additional commitment, so it is the box an
@@ -2091,8 +2093,8 @@ object Views {
             // Inside the label so it is read with the field, as the engine identity's hint is.
             span(
               cls := "detail hint",
-              "What players see. Left blank, it is the name. Change this rather than the name to rename a " +
-                  "registered game: the registration scripts find a game by its name."
+              "What players see. Left blank, it is the name. Rename a game by changing this rather than the " +
+                  "name, which is what the game engine is told."
             ),
             input(controlled(value <-- displayName.signal, onInput.mapToValue --> displayName))
           ),
@@ -2105,13 +2107,40 @@ object Views {
             // own, and getting it wrong fails nowhere near this form.
             span(
               cls := "detail hint",
-              "The name the engine's API key is filed under in matchmaker's ENGINE_API_KEYS, such as " +
-                  "\"boxing\". Moves, results and characters the engine reports are accepted only from that key."
+              "Who the engine is, such as \"boxing\". Moves, results and characters reported with this " +
+                  "game's API key are taken to come from it."
             ),
             input(
               autoComplete := "off",
               spellCheck := false,
               controlled(value <-- engineIdentity.signal, onInput.mapToValue --> engineIdentity)
+            )
+          ),
+          label(
+            cls := "field",
+            "API key",
+            // Said in the label, so it is read with the field: whether a key is stored is the one thing
+            // about it this form can tell, since the key itself never comes back.
+            span(
+              cls := "detail hint",
+              existing match {
+                  case Some(game) if game.hasApiKey =>
+                      "A key is set. Leave this blank to keep it, or enter a new one to replace it."
+                  case Some(_) =>
+                      "No key is set, so a deployed engine will refuse every call. Enter the key the engine " +
+                          "was deployed with."
+                  case None =>
+                      "The key the engine was deployed with, at least 24 characters. It is stored, never shown " +
+                          "again, and can be replaced here later."
+              }
+            ),
+            // A password field, so it is not shown while it is typed, and new-password so that no browser
+            // offers to fill it with something saved for this site.
+            input(
+              tpe := "password",
+              autoComplete := "new-password",
+              spellCheck := false,
+              controlled(value <-- apiKey.signal, onInput.mapToValue --> apiKey)
             )
           ),
           label(
@@ -2149,9 +2178,14 @@ object Views {
           parameterEditor(parameters),
           busyButton(
             if (existing.isDefined) "Save Changes" else "Create Game",
+            // A new game needs its key; an edit may leave the stored one alone. A key that is typed has
+            // to be long enough, as the server checks too.
             disabledWhen = name.signal
-                .combineWith(engineIdentity.signal)
-                .map((n, identity) => n.trim.isEmpty || identity.trim.isEmpty)
+                .combineWith(engineIdentity.signal, apiKey.signal)
+                .map((n, identity, key) =>
+                    n.trim.isEmpty || identity.trim.isEmpty || (existing.isEmpty && key.trim.isEmpty) ||
+                        (key.trim.nonEmpty && key.trim.length < 24)
+                )
           ) { busy =>
               val drafted = for {
                   roleModels <- rolesOf(roles.now())
@@ -2186,33 +2220,36 @@ object Views {
                             .filter(_.nonEmpty)
                       )
 
-                      Store.run(ApiClient.createGame(game), busy) { saved =>
-                          if (existing.isEmpty) {
-                              name.set("")
-                              displayName.set("")
-                              description.set("")
-                              url.set("")
-                              engineIdentity.set("")
-                              characterUrl.set("")
-                              roles.set(List(emptyRole))
-                              parameters.set(Nil)
-                              // Straight to the game that was just created: it is now in the menu, and its own
-                              // screen is where anything else is done with it.
-                              Store.show(Store.Page.OneGame(saved.gameId))
-                          } else {
-                              // Re-drafted from what came back, so that roles added by this save carry the ids
-                              // the insert gave them — without which saving twice would ask to add them again.
-                              roles.set(saved.roles.map(draftOf).toList)
-                              parameters.set(
-                                saved.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList
-                              )
-                              Store.editingGame.set(None)
-                          }
-                          // Both copies of the game list, because a game saved while deactivated is in
-                          // neither the active one nor reachable by `ensureGame` — its own screen would
-                          // otherwise go on showing what it was before this save, and reopening this
-                          // form would submit that. See `Store.gameSaved`.
-                          Store.gameSaved(saved)
+                      Store.run(ApiClient.createGame(game, Option(apiKey.now().trim).filter(_.nonEmpty)), busy) {
+                          saved =>
+                              // Cleared either way: it has been sent, and an edit saved again should not resend it.
+                              apiKey.set("")
+                              if (existing.isEmpty) {
+                                  name.set("")
+                                  displayName.set("")
+                                  description.set("")
+                                  url.set("")
+                                  engineIdentity.set("")
+                                  characterUrl.set("")
+                                  roles.set(List(emptyRole))
+                                  parameters.set(Nil)
+                                  // Straight to the game that was just created: it is now in the menu, and its own
+                                  // screen is where anything else is done with it.
+                                  Store.show(Store.Page.OneGame(saved.gameId))
+                              } else {
+                                  // Re-drafted from what came back, so that roles added by this save carry the ids
+                                  // the insert gave them — without which saving twice would ask to add them again.
+                                  roles.set(saved.roles.map(draftOf).toList)
+                                  parameters.set(
+                                    saved.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList
+                                  )
+                                  Store.editingGame.set(None)
+                              }
+                              // Both copies of the game list, because a game saved while deactivated is in
+                              // neither the active one nor reachable by `ensureGame` — its own screen would
+                              // otherwise go on showing what it was before this save, and reopening this
+                              // form would submit that. See `Store.gameSaved`.
+                              Store.gameSaved(saved)
                       }
               }
           }

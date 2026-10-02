@@ -46,7 +46,7 @@ object Services {
     def resource[T](
         config: DbConfig,
         poolSize: Int = defaultPoolSize,
-        engineClient: GameEngineClient = HttpGameEngineClient.fromEnvironment(),
+        engineClient: GameEngineClient = new HttpGameEngineClient(),
         callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
         notifier: Notifier = SqsNotifier.fromEnvironment(),
         mail: MailSettings = MailSettings.fromEnvironment()
@@ -62,7 +62,7 @@ object Services {
       */
     def fromPool[T](
         pool: SessionPool,
-        engineClient: GameEngineClient = HttpGameEngineClient.fromEnvironment(),
+        engineClient: GameEngineClient = new HttpGameEngineClient(),
         callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
         notifier: Notifier = SqsNotifier.fromEnvironment(),
         mail: MailSettings = MailSettings.fromEnvironment()
