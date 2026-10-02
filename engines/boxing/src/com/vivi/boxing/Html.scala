@@ -577,16 +577,41 @@ ${signIn.signInScript}
     if (!signedIn) renderSignIn();
   }
 
-  function signedIn() { show(""); render(); loadMine(); }
+  /* Which session the page is in, and which load of the list is the latest. Both only count up.
+   *
+   * An answer can arrive after the player who asked has gone -- a 401 ended their session, and
+   * somebody else has signed in on this page since. A list answer is drawn only if it is the latest
+   * load's, and any form's answer only if its session is still this one, so one player's fighters
+   * are never shown, or announced, to the next. */
+  let session = 0;
+  let loads = 0;
 
-  /* A call with the player's token. A 401 is a session that is over: it is dropped and the sign-in
-   * offered again, and the caller gets nothing. */
+  /* The session is over: nothing it asked for may land, and its list is taken off the page now. */
+  function forget() {
+    session++;
+    loads++;
+    document.getElementById("fighters").replaceChildren();
+    const note = document.getElementById("yours-note");
+    note.textContent = "Loading your fighters…";
+    note.hidden = false;
+  }
+
+  function signedIn() { forget(); show(""); render(); loadMine(); }
+
+  /* A call with the player's token. A 401 is a session that is over -- if it is still this one: it
+   * is dropped and the sign-in offered again, and the caller gets nothing. */
   async function send(url, init) {
+    const asked = session;
     const token = await freshIdToken();
     const headers = Object.assign({ "content-type": "application/json" }, token ? { authorization: "Bearer " + token } : {});
     const response = await fetch(url, Object.assign({}, init, { headers }));
     if (response.status === 401) {
+      // Only a refusal of the session that is here ends it. One sent with an earlier player's token,
+      // answering after somebody else has signed in on this page, is about nobody here: clearing
+      // the session now would sign the new player out.
+      if (asked !== session || (token && sessionStorage.getItem(TokenKey) !== token)) return null;
       if (token) clearSession();
+      forget();
       render();
       show(login ? "Sign in to see your fighters." : "Say who you are with ?as=<cognito sub>.");
       return null;
@@ -594,16 +619,23 @@ ${signIn.signInScript}
     return response;
   }
 
+  /* The list is cleared as a load starts, so nothing from before it can be left showing, and only
+   * the latest load may draw -- an earlier one answering late is dropped, success or failure. */
   async function loadMine() {
+    const ticket = ++loads;
     const note = document.getElementById("yours-note");
+    document.getElementById("fighters").replaceChildren();
+    note.textContent = "Loading your fighters…";
+    note.hidden = false;
     try {
       const response = await send(mineUrl, {});
-      if (!response) return;
+      if (!response || ticket !== loads) return;
       const answer = await response.json().catch(() => ({}));
+      if (ticket !== loads) return;
       if (!response.ok) { note.textContent = answer.error || response.statusText; return; }
       showMine(answer);
     } catch (err) {
-      note.textContent = "Could not reach the engine.";
+      if (ticket === loads) note.textContent = "Could not reach the engine.";
     }
   }
 
@@ -687,15 +719,17 @@ ${signIn.signInScript}
       sending = true;
       refresh();
       show("");
+      const asked = session;
       try {
         const response = await request();
-        if (!response) return;
+        if (!response || asked !== session) return;
         const answer = await response.json().catch(() => ({}));
+        if (asked !== session) return;
         if (!response.ok) { show(answer.error || response.statusText); return; }
         await loadMine();
-        announce(done(answer));
+        if (asked === session) announce(done(answer));
       } catch (err) {
-        show("Could not reach the engine.");
+        if (asked === session) show("Could not reach the engine.");
       } finally {
         sending = false;
         refresh();
@@ -742,17 +776,19 @@ ${signIn.signInScript}
     const body = { name: nameInput.value.trim(), description: descriptionInput.value.trim() };
     traits.forEach(([key]) => { body[key] = value(inputs[key]); });
     document.getElementById("build-submit").disabled = true;
+    const asked = session;
     try {
       const response = await send(buildUrl, { method: "POST", body: JSON.stringify(body) });
-      if (!response) return;
+      if (!response || asked !== session) return;
       const answer = await response.json().catch(() => ({}));
+      if (asked !== session) return;
       if (!response.ok) { show(answer.error || response.statusText); return; }
       reset();
       await loadMine();
-      announce(answer.name + " is built. Back in matchmaker, choose “I’ve made one — check again”" +
+      if (asked === session) announce(answer.name + " is built. Back in matchmaker, choose “I’ve made one — check again”" +
         " and offer or accept a bout with them.");
     } catch (err) {
-      show("Could not reach the engine.");
+      if (asked === session) show("Could not reach the engine.");
     } finally {
       building = false;
       left();
