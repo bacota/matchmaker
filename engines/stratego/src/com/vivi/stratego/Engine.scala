@@ -86,8 +86,9 @@ class Engine(
                   (),
                   Refusal.Invalid(s"it is ${current.toMove}'s turn, not ${seat.side}'s")
                 )
-                // Checked before the board's own rules so that it is only ever said of a move the board allows.
-                _ <- current.board(from).filter(_.side == seat.side) match {
+                // Checked before the board's own rules so that it is only ever said of a move the board allows. A
+                // square off the board finds no piece here, and is refused by `Board.move` below.
+                _ <- current.board.cells.lift(from).flatten.filter(_.side == seat.side) match {
                     case Some(p)
                         if current.board.targets(seat.side, from).contains(to) &&
                             Rules.shuttles(current.history(seat.side), Step(p.id, from, to)) =>

@@ -73,6 +73,18 @@ class RoutesSpec extends FunSuite {
         assertEquals(post(routes, "sub-alice", """{"from":30}""").status, 400)
     }
 
+    test("a move from a square off the board is a 400, not a 500") {
+        val (routes, _) = fixture()
+        deploy(routes, "sub-alice", Side.Red)
+        deploy(routes, "sub-bob", Side.Blue)
+        val answer = post(routes, "sub-alice", """{"from":100,"to":0}""")
+        assertEquals(answer.status, 400)
+        assertEquals(
+          ujson.read(answer.body)("error").str,
+          "square 100 is not on the board; squares are numbered 0 to 99"
+        )
+    }
+
     test("the public board shows only what both players have seen") {
         val (routes, _) = fixture()
         deploy(routes, "sub-alice", Side.Red)

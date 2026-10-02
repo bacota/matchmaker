@@ -213,6 +213,25 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(f.state(None).legalMoves, Nil)
     }
 
+    test("a move from a square off the board is refused, not a failure of the engine") {
+        val f = deployed()
+        assertEquals(
+          f.engine.move("m-1", alice, 100, 0),
+          Left(Refusal.Invalid("square 100 is not on the board; squares are numbered 0 to 99"))
+        )
+        assertEquals(
+          f.engine.move("m-1", alice, -1, 0),
+          Left(Refusal.Invalid("square -1 is not on the board; squares are numbered 0 to 99"))
+        )
+    }
+
+    test("a match keeps the move cap it was created with, even one equal to the default") {
+        val explicit = Fixture(createRequest(parameters = Map("maxMoves" -> StrategoMatch.defaultMaxMoves.toString)))
+        assert(write(explicit.m).contains(s"\"maxMoves\":${StrategoMatch.defaultMaxMoves}"))
+        // And one created without the parameter stores the default it was given, rather than following it.
+        assert(write(Fixture().m).contains(s"\"maxMoves\":${StrategoMatch.defaultMaxMoves}"))
+    }
+
     test("a fourth consecutive move between the same two squares is refused") {
         val f = deployed()
         List((alice, 30, 40), (bob, 69, 59), (alice, 40, 30), (bob, 59, 69), (alice, 30, 40), (bob, 69, 59))
