@@ -46,7 +46,7 @@ AUTH_MODE=header mill -j 4 --ticker false matchmaker.api.runMain com.vivi.matchm
 GAME_EXTERNAL_ID=tictactoe-dev mill -j 4 --ticker false engines.tictactoe.runMain com.vivi.tictactoe.LocalServer
 
 # 3. register it as a game
-psql "$DATABASE_URL" -v url="http://localhost:8090/games" -v external_id="tictactoe-dev" \
+psql -h localhost -U matchmaker matchmaker -v url="http://localhost:8090/games" -v external_id="tictactoe-dev" \
      -f engines/tictactoe/register-game.sql
 ```
 
@@ -163,10 +163,18 @@ mill -j 4 --ticker false engines.tictactoe.assembly
 `./deploy-tictactoe.sh dev` does that in one step, and `./deploy-all.sh dev` deploys matchmaker
 and every enabled engine together in a single plan and apply.
 
-Then register the game with the outputs — `create_game_url` as `url`, and `tictactoe_external_id`
-(that is, `tictactoe`) as `external_id`. That name is what matchmaker files this engine's API key
-under, and so is how it tells which engine a callback came from; a row whose `external_id` says
-anything else has its callbacks refused. `./deploy-tictactoe.sh dev` prints the exact command.
+Then add the game on matchmaker's admin page ("Add a Game"), or edit it if it is already there.
+A deploy never creates a game, and `register-game.sql` is for the local database only — it refuses
+any other. The deploy scripts print the urls; the form wants:
+
+- **Name**: Tic-tac-toe
+- **Game engine url**: the `tictactoe_create_game_url` output
+- **Engine identity**: `tictactoe` — the name matchmaker files this engine's API key under, and so
+  how it tells which engine a callback came from. A game naming anything else has its callbacks
+  refused.
+- **Type**: plain (leave "Requires characters" unticked)
+- **Roles**: `X` and `O`, neither optional
+- **Parameters**: none
 
 ## What this engine is not
 

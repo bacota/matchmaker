@@ -185,8 +185,8 @@ class GameServiceSpec extends PropertySuite {
         assertEquals(unshown.map(_._2), unshown.map(_._1))
     }
 
-    // Renaming a registered game for players is what the display name is for: the name is how its
-    // registration script and migrations find it, so it has to survive the rename unchanged.
+    // Renaming a game for players is what the display name is for: the name is what the engine is
+    // told and what migrations find it by, so it has to survive the rename unchanged.
     test("createOrUpdate changes a game's display name and leaves its name alone") {
         val result = for {
             admin <- makeAdmin()

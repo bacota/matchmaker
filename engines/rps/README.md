@@ -66,7 +66,7 @@ AUTH_MODE=header mill -j 4 --ticker false matchmaker.api.runMain com.vivi.matchm
 PORT=8091 GAME_EXTERNAL_ID=rps-dev mill -j 4 --ticker false engines.rps.runMain com.vivi.rps.LocalServer
 
 # 3. register it as a game
-psql "$DATABASE_URL" -v url="http://localhost:8091/games" -v external_id="rps-dev" \
+psql -h localhost -U matchmaker matchmaker -v url="http://localhost:8091/games" -v external_id="rps-dev" \
      -f engines/rps/register-game.sql
 ```
 
@@ -153,10 +153,18 @@ To deploy matchmaker and both engines together — one plan, one apply — use `
 instead; it builds every enabled engine's jar before planning, which a plain `./deploy.sh` does
 not.
 
-Then register the game with the outputs — `rps_create_game_url` as `url`, and `rps_external_id`
-(that is, `rps`) as `external_id`. That name is what matchmaker files this engine's API key under,
-and so is how it tells which engine a callback came from; a row whose `external_id` says anything
-else has its callbacks refused. `./deploy-rps.sh` prints the exact command at the end.
+Then add the game on matchmaker's admin page ("Add a Game"), or edit it if it is already there.
+A deploy never creates a game, and `register-game.sql` is for the local database only — it refuses
+any other. The deploy scripts print the urls; the form wants:
+
+- **Name**: Rock-paper-scissors
+- **Game engine url**: the `rps_create_game_url` output
+- **Engine identity**: `rps` — the name matchmaker files this engine's API key under, and so
+  how it tells which engine a callback came from. A game naming anything else has its callbacks
+  refused.
+- **Type**: plain (leave "Requires characters" unticked)
+- **Roles**: `One` and `Two`, neither optional
+- **Parameters**: none
 
 ## What this engine is not
 

@@ -2091,8 +2091,8 @@ object Views {
             // Inside the label so it is read with the field, as the engine identity's hint is.
             span(
               cls := "detail hint",
-              "What players see. Left blank, it is the name. Change this rather than the name to rename a " +
-                  "registered game: the registration scripts find a game by its name."
+              "What players see. Left blank, it is the name. Rename a game by changing this rather than the " +
+                  "name, which is what the game engine is told."
             ),
             input(controlled(value <-- displayName.signal, onInput.mapToValue --> displayName))
           ),
