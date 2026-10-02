@@ -143,6 +143,20 @@ object Protocol {
       */
     case class UpdateStateRequest(state: String)
 
+    /** What an engine sends matchmaker's `POST /characters` once a player has made a character in it. Characters are
+      * made in their engine, so this is how matchmaker learns one exists: from then on it can be offered in challenges
+      * and seated in matches, and its `state` comes back in each create request's `characterState`. Which game it is in
+      * is not said: matchmaker takes it from the engine's own identity, as it does for every callback.
+      *
+      * `ownerExternalId` is the `sub` of the player who made it — the same id matchmaker sends as `cognitoId`.
+      */
+    case class RegisterCharacterRequest(name: String, description: String, ownerExternalId: String, state: String)
+
+    /** The part of matchmaker's answer to a registration an engine needs: the id the character is known by, which is
+      * the `characterId` it will be seated with.
+      */
+    case class RegisteredCharacter(characterId: Long)
+
     given ReadWriter[EnginePlayer] = macroRW
     given ReadWriter[LiveTerms] = macroRW
     given ReadWriter[CreateGameRequest] = macroRW
@@ -156,4 +170,6 @@ object Protocol {
     given ReadWriter[ResultEntry] = macroRW
     given ReadWriter[MatchResults] = macroRW
     given ReadWriter[UpdateStateRequest] = macroRW
+    given ReadWriter[RegisterCharacterRequest] = macroRW
+    given ReadWriter[RegisteredCharacter] = macroRW
 }

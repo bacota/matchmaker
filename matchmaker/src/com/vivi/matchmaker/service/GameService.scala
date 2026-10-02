@@ -109,6 +109,8 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       */
     private def normalize(game: Game): Game =
         game.copy(
+          // A blank url is no url: the form sends what was typed, and an empty field means there is none.
+          characterUrl = game.characterUrl.map(_.trim).filter(_.nonEmpty),
           roles = game.roles.map(role => role.copy(name = role.name.trim)),
           parameters = game.parameters.map { p =>
               // The same cast GameRepo makes: `parameters` is existential in its value type, and

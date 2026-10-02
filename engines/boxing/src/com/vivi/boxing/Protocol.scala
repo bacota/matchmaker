@@ -18,6 +18,23 @@ object Protocol {
     /** A round plan as the play page submits it. Whose it is comes from who signed in, not from the body. */
     case class PlanRequest(offense: Int, defense: Int, power: Int)
 
+    /** A new fighter as the build page submits it. Whose it is comes from who signed in, not from the body. */
+    case class BuildRequest(
+        name: String,
+        description: String,
+        strength: Int,
+        speed: Int,
+        agility: Int,
+        workrate: Int,
+        chin: Int
+    )
+
+    /** A fighter just built and registered: the character id matchmaker gave it, and what it was built as. */
+    case class BuiltFighter(characterId: Long, name: String, fighter: FighterView)
+
+    /** The rules a build is checked against, so the page can say them rather than restate them. */
+    case class BuildRules(budget: Int, min: Int, max: Int)
+
     /** A fighter's characteristics, as a corner shows them. */
     case class FighterView(strength: Int, speed: Int, agility: Int, workrate: Int, chin: Int)
 
@@ -78,6 +95,9 @@ object Protocol {
 
     given ReadWriter[PlanRequest] = macroRW
     given ReadWriter[FighterView] = macroRW
+    given ReadWriter[BuildRequest] = macroRW
+    given ReadWriter[BuiltFighter] = macroRW
+    given ReadWriter[BuildRules] = macroRW
     given ReadWriter[CornerView] = macroRW
     given ReadWriter[Numbers] = macroRW
     given ReadWriter[RoundView] = macroRW

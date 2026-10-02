@@ -2024,6 +2024,8 @@ object Views {
         val name = Var(existing.map(_.name).getOrElse(""))
         val description = Var(existing.map(_.description).getOrElse(""))
         val url = Var(existing.map(_.url).getOrElse(""))
+        // Where a player makes a character: the engine's page, since characters are made there.
+        val characterUrl = Var(existing.flatMap(_.characterUrl).getOrElse(""))
         // Plain by default: requiring characters is the additional commitment, so it is the box an
         // admin ticks rather than the one they have to remember to untick.
         val gameType: Var[GameType] = Var(existing.map(_.gameType).getOrElse(GameType.Plain))
@@ -2061,6 +2063,19 @@ object Views {
                   gameType.update(gt => if (gt == GameType.Character) GameType.Plain else GameType.Character)
               )
             )
+          ),
+          // Only a character game has characters to make. Kept in `characterUrl` while hidden, so
+          // unticking and reticking the box does not lose what was typed; a plain game saves none.
+          child.maybe <-- gameType.signal.map(gt =>
+              Option.when(gt == GameType.Character)(
+                field(
+                  "Character page url",
+                  input(
+                    tpe := "url",
+                    controlled(value <-- characterUrl.signal, onInput.mapToValue --> characterUrl)
+                  )
+                )
+              )
           ),
           field(
             "When a turn runs out",
@@ -2125,7 +2140,10 @@ object Views {
                         // regenerating it would silently lock the game engine out.
                         externalId = existing.map(_.externalId).getOrElse(Pkce.newSecret()),
                         timeoutAction = timeoutAction.now(),
-                        notifications = notificationDefaults
+                        notifications = notificationDefaults,
+                        characterUrl = Option
+                            .when(gameType.now() == GameType.Character)(characterUrl.now().trim)
+                            .filter(_.nonEmpty)
                       )
 
                       Store.run(ApiClient.createGame(game), busy) { saved =>
@@ -2133,6 +2151,7 @@ object Views {
                               name.set("")
                               description.set("")
                               url.set("")
+                              characterUrl.set("")
                               roles.set(List(emptyRole))
                               parameters.set(Nil)
                               notifications.set(NotificationPreferences.unset)
@@ -2178,28 +2197,51 @@ object Views {
                                      case None => p(cls := "empty", "Loading…")
                                      // A character is needed before this player can either offer or accept a
                                      // challenge, so there is nothing to show until there is one.
-                                     case Some(Nil) => characterForm(game, player)
+                                     case Some(Nil) => characterPrompt(game)
                                      case Some(characters) =>
                                          challengePanel(game, player, characters.map(_.characterId))
                                  }
                          })
         )
 
-    private def characterForm(game: Game, player: Player): HtmlElement = {
-        val name = Var("")
-        val description = Var("")
+    /** Where a player with no character in this game is sent to make one.
+      *
+      * Characters are made in their game engine, not here: the engine builds one with the player and then reports it to
+      * matchmaker, which is how it comes to be in [[Store.charactersByGame]]. So all this offers is the way there — the
+      * game's `characterUrl`, opened beside this page — and a way to look again once the player is back. A game nobody
+      * has given a url says so rather than offering a button that goes nowhere.
+      */
+    private def characterPrompt(game: Game): HtmlElement = {
+        // Said after a check that found nothing, so that pressing it visibly did something. A live
+        // region, since what changes is text and not where the player's focus is.
+        val checked = Var(Option.empty[String])
 
         div(
           cls := "card",
-          h3(s"Create Your Character for ${game.name}"),
-          p("You need a character in this game before you can offer or accept a challenge."),
-          field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
-          field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
-          busyButton("Create Character", disabledWhen = name.signal.map(_.trim.isEmpty)) { busy =>
-              val created =
-                  ApiClient.createCharacter(game.gameId, name.now().trim, description.now().trim, player.externalId)
-              Store.run(created, busy)(_ => Store.refreshCharacters(game.gameId))
-          }
+          h3(s"Make Your Character for ${game.name}"),
+          p(
+            s"You need a character in ${game.name} before you can offer or accept a challenge. " +
+                "Characters are made in the game itself, which tells matchmaker once yours exists."
+          ),
+          game.characterUrl match {
+              case Some(url) =>
+                  div(
+                    button(
+                      s"Make a character in ${game.name}",
+                      onClick --> (_ => dom.window.open(url, "_blank", "noopener,noreferrer"))
+                    ),
+                    busyButton("I've made one — check again", classes = Some("link")) { busy =>
+                        checked.set(None)
+                        Store.run(ApiClient.characters(game.gameId), busy) { found =>
+                            if (found.isEmpty) checked.set(Some("No character yet. Finish making one in the game."))
+                            Store.refreshCharacters(game.gameId)
+                        }
+                    }
+                  )
+              case None =>
+                  p(cls := "detail", "This game has no page to make a character on yet; ask an administrator.")
+          },
+          p(role := "status", child.text <-- checked.signal.map(_.getOrElse("")))
         )
     }
 

@@ -166,18 +166,20 @@ object Router {
                     withPlayerId(playerId)(player => ok(services.characters.namesFor(gid, player, caller)))
                 }
 
-            case ("POST", "games" :: gameId :: "characters" :: Nil) =>
-                withGameId(gameId) { id =>
-                    body[Json.CharacterRequest](request).flatMap { r =>
-                        created(services.characters.create(id, r.name, r.description, r.externalId, caller))
-                    }
-                }
-
             case ("PUT", "characters" :: characterId :: Nil) =>
                 withCharacterId(characterId) { id =>
                     body[Json.CharacterRequest](request).flatMap { r =>
                         ok(services.characters.update(id, r.name, r.description, r.externalId, caller))
                     }
+                }
+
+            // A character a game engine has made, reported so it can be challenged with and seated.
+            // The engine's, not a player's: characters are made in their engine, and the game they are
+            // in is the one the caller's identity names. Deployed, this is one of
+            // `local.engine_routes`, not `local.routes`, as is the state route below.
+            case ("POST", "characters" :: Nil) =>
+                body[Json.RegisterCharacterRequest](request).flatMap { r =>
+                    created(services.characters.create(r.name, r.description, r.ownerExternalId, r.state, caller))
                 }
 
             // Authorized on behalf of the game rather than a player: the caller is the game engine,

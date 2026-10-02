@@ -1,10 +1,11 @@
 package com.vivi.engine
 
-import upickle.default.write
+import upickle.default.{read, write}
 import Protocol.given
 
 /** The calls an engine makes *back* to matchmaker: steps 2 and 3 of `interaction-design.txt`, and, for a game whose
-  * seats are characters, keeping what the game knows about one as the character's state.
+  * seats are characters, telling matchmaker about a character a player has made here and keeping what the game knows
+  * about one as the character's state.
   *
   * An interface because the tests must be able to see what the engine would have sent without a matchmaker to send it
   * to — [[RecordingMatchmaker]] is what every test drives.
@@ -18,6 +19,12 @@ trait Matchmaker {
       * character's next match, and the player making it is there to be told.
       */
     def saveCharacterState(matchmakerUrl: String, characterId: Long, state: String): Unit
+
+    /** `POST {matchmakerUrl}/characters`: a character a player has made in this engine, answered with the id matchmaker
+      * gives it. Not best-effort either — a character matchmaker never heard of cannot be challenged with, so the
+      * player making it has to be told it did not take.
+      */
+    def registerCharacter(matchmakerUrl: String, request: Protocol.RegisterCharacterRequest): Long
 }
 
 /** Posts the callbacks over HTTP, to the urls matchmaker itself supplied when it created the game.
@@ -54,6 +61,31 @@ class HttpMatchmaker(http: SignedHttp, apiKey: Option[String], externalId: Optio
           "execute-api",
           headers
         )
+
+    def registerCharacter(matchmakerUrl: String, request: Protocol.RegisterCharacterRequest): Long = {
+        val url = s"${matchmakerUrl.stripSuffix("/")}/characters"
+        http.exchange("POST", url, Some(write(request)), "execute-api", headers) match {
+            case (status, answer) if status >= 200 && status < 300 =>
+                read[Protocol.RegisteredCharacter](answer).characterId
+            // Matchmaker's own refusal, with its reason, so that the engine can tell the player what it
+            // was; anything else is matchmaker failing, and the AwsError says so.
+            case (status, answer) if status >= 400 && status < 500 =>
+                throw MatchmakerRefusal(status, MatchmakerRefusal.reason(answer))
+            case (status, answer) => throw AwsError(s"POST $url returned $status: $answer")
+        }
+    }
+}
+
+/** Matchmaker answering a call with a 4xx: it heard the request and turned it down. `reason` is the `error` it gave. */
+case class MatchmakerRefusal(status: Int, reason: String)
+    extends RuntimeException(s"matchmaker refused the call ($status): $reason")
+
+object MatchmakerRefusal {
+
+    /** The `error` of matchmaker's `{"error": "..."}`, or the body as it came if it is not that. */
+    def reason(body: String): String =
+        try ujson.read(body).obj.get("error").map(_.str).getOrElse(body)
+        catch { case scala.util.control.NonFatal(_) => body }
 }
 
 /** Keeps the callbacks instead of sending them.
@@ -66,6 +98,13 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
     private val movesBuffer = scala.collection.mutable.ListBuffer[(String, Protocol.MoveNotification)]()
     private val resultsBuffer = scala.collection.mutable.ListBuffer[(String, Protocol.MatchResults)]()
     private val statesBuffer = scala.collection.mutable.ListBuffer[(Long, String)]()
+    private val registrationsBuffer = scala.collection.mutable.ListBuffer[(Long, Protocol.RegisterCharacterRequest)]()
+
+    /** The id the next registered character is given. Counted up, as matchmaker's identity column would. */
+    private var nextCharacterId = 1L
+
+    /** While set, [[registerCharacter]] fails as an unreachable matchmaker would, and records nothing. */
+    @volatile var failRegistrations: Boolean = false
 
     /** While set, [[saveCharacterState]] fails as an unreachable matchmaker would, and records nothing. */
     @volatile var failStateSaves: Boolean = false
@@ -93,9 +132,22 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
         log(s"PUT $matchmakerUrl/characters/$characterId/state $state")
     }
 
+    def registerCharacter(matchmakerUrl: String, request: Protocol.RegisterCharacterRequest): Long =
+        synchronized {
+            if (failRegistrations) throw AwsError(s"POST $matchmakerUrl/characters failed: unreachable")
+            val id = nextCharacterId
+            nextCharacterId += 1
+            registrationsBuffer += (id -> request)
+            log(s"POST $matchmakerUrl/characters ${write(request)} -> character $id")
+            id
+        }
+
     def moves: List[(String, Protocol.MoveNotification)] = synchronized(movesBuffer.toList)
     def results: List[(String, Protocol.MatchResults)] = synchronized(resultsBuffer.toList)
 
     /** Each character's state as saved, by character id, oldest first. */
     def characterStates: List[(Long, String)] = synchronized(statesBuffer.toList)
+
+    /** Each character registered, with the id it was given, oldest first. */
+    def registrations: List[(Long, Protocol.RegisterCharacterRequest)] = synchronized(registrationsBuffer.toList)
 }

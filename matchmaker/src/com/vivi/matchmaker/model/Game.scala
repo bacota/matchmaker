@@ -81,5 +81,10 @@ case class Game(
      * cannot -- and so is the admin's to set, which is why the game form requires all eight.
      * Defaulted here for the same reason `timeoutAction` is: V13 decided it for every game that
      * already existed, and it decided "send it". */
-    notifications: NotificationDefaults = NotificationDefaults.all(true)
+    notifications: NotificationDefaults = NotificationDefaults.all(true),
+    /* Where a player makes a character for this game (V28), for a character game whose engine offers
+     * a page for it. Characters are made in their engine, which then reports each one to matchmaker,
+     * so this is where matchmaker's UI sends a player who has none. `None` for a plain game, and for
+     * a character game nobody has given one. */
+    characterUrl: Option[String] = None
 )

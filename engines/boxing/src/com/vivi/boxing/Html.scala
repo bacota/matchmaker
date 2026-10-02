@@ -393,6 +393,210 @@ ${TurnTimer.script}
 </html>
 """
 
+    /** The page a player builds a new fighter on: sign in, spend the points, name it, and it is registered with
+      * matchmaker as one of their characters.
+      *
+      * Served to anyone, like the play page, and for the same reason: a browser navigation carries no token, so this is
+      * the shell that signs the player in and then posts the build with one. Without a login configured — the local,
+      * trusted mode — the form is shown straight away and the player is whoever `?as=` says.
+      */
+    def buildPage(login: Option[LoginConfig], rules: Protocol.BuildRules): String =
+        s"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>boxing — build a fighter</title>
+<style>
+  :root { color-scheme: light dark; --line: #8886; --ink: #222; --paper: #fafafa; --error: #b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #eee; --paper: #16181c; --error: #ff8a80; } }
+  body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
+         font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
+  main { margin: 0 auto; padding: 1.5rem 1rem 3rem; max-width: 34rem; }
+  h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; text-align: center; }
+  h2 { font-size: 1.25rem; margin: 0 0 .5rem; }
+  section[hidden], div[hidden] { display: none; }
+  form .field { display: grid; grid-template-columns: 1fr 6.5rem; align-items: center; gap: .5rem; margin-bottom: .5rem; }
+  form .field.wide { grid-template-columns: 1fr; gap: .25rem; }
+  form .field label { font-weight: 600; }
+  form .field .hint { grid-column: 1 / -1; font-size: .875rem; opacity: .75; margin-top: -.375rem; }
+  /* 16px on the fields, or iOS zooms the page the moment one takes focus; 44px on everything that
+     can be tapped. */
+  input[type="number"], input[type="text"] { font: inherit; font-size: 16px; min-height: 44px; width: 100%; box-sizing: border-box;
+                         padding: .5rem .625rem; border-radius: 6px; border: 1px solid var(--line);
+                         background: var(--paper); color: var(--ink); }
+  button.primary { font: inherit; font-weight: 600; width: 100%; min-height: 44px; margin-top: .5rem; border-radius: 6px;
+                   border: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 80%, var(--ink));
+                   color: var(--ink); cursor: pointer; }
+  button.primary:disabled { opacity: .45; cursor: default; }
+  .left { margin: .5rem 0 0; font-weight: 600; }
+  .left.off { color: var(--error); }
+  :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
+${SignIn.css}
+  #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>boxing</h1>
+
+  <section id="build" hidden aria-labelledby="build-heading">
+    <form id="build-form" novalidate>
+      <h2 id="build-heading">Build a fighter</h2>
+      <p>Spread ${rules.budget} points across five characteristics, each from ${rules.min} to ${rules.max}.
+         A fighter is built once: these are the numbers it fights every bout with.</p>
+      <div class="field wide">
+        <label for="f-name">Name</label>
+        <input id="f-name" type="text" autocomplete="off" required maxlength="80">
+      </div>
+      <div class="field wide">
+        <label for="f-description">Description <span class="hint">(optional)</span></label>
+        <input id="f-description" type="text" autocomplete="off" maxlength="280">
+      </div>
+      <div id="build-fields"></div>
+      <p id="build-left" class="left" aria-live="polite"></p>
+      <button type="submit" class="primary" id="build-submit">Build this fighter</button>
+    </form>
+  </section>
+
+  <!-- Where the result is said: focus moves here on success, and it is a live region for anyone
+       whose reader does not follow focus. -->
+  <section id="built" hidden aria-labelledby="built-heading">
+    <h2 id="built-heading" tabindex="-1">Fighter built</h2>
+    <p id="built-text" role="status" aria-live="polite"></p>
+    <button type="button" class="primary" id="build-another">Build another fighter</button>
+  </section>
+
+  <div id="signin" hidden></div>
+  <div id="error" role="alert"></div>
+</main>
+<script>
+${signIn.authScript(login)}
+${signIn.signInScript}
+
+  const rules = { budget: ${rules.budget}, min: ${rules.min}, max: ${rules.max} };
+  // Derived from this page's own url, as the board's are: behind API Gateway the path carries a
+  // stage prefix. The query goes along for the local `?as=`.
+  const buildUrl = location.pathname.replace(new RegExp("/new/?$$"), "") + location.search;
+
+  const traits = [
+    ["strength", "Strength", "Added twice to power."],
+    ["speed", "Speed", "Added twice to offense."],
+    ["agility", "Agility", "Added twice to defense."],
+    ["workrate", "Workrate", "Points to spend on every round."],
+    ["chin", "Chin", "You are knocked out only by power above your defense plus three times this."]
+  ];
+
+  const inputs = {};
+  const box = document.getElementById("build-fields");
+  traits.forEach(([key, label, hint]) => {
+    const row = document.createElement("div");
+    row.className = "field";
+    row.innerHTML =
+      '<label for="f-' + key + '">' + label + '</label>' +
+      '<input id="f-' + key + '" type="number" inputmode="numeric" step="1" required min="' + rules.min +
+      '" max="' + rules.max + '" aria-describedby="f-' + key + '-hint">' +
+      '<span class="hint" id="f-' + key + '-hint">' + hint + '</span>';
+    box.appendChild(row);
+    inputs[key] = row.querySelector("input");
+  });
+  const nameInput = document.getElementById("f-name");
+  const descriptionInput = document.getElementById("f-description");
+
+  function value(input) { const n = parseInt(input.value, 10); return isNaN(n) ? 0 : n; }
+
+  // An even spread to start from, so the form is valid as it stands and a player who wants a
+  // particular kind of fighter moves points rather than typing five numbers.
+  function reset() {
+    const each = Math.floor(rules.budget / traits.length);
+    traits.forEach(([key], i) => { inputs[key].value = each + (i < rules.budget - each * traits.length ? 1 : 0); });
+    nameInput.value = "";
+    descriptionInput.value = "";
+    left();
+  }
+
+  function left() {
+    const values = traits.map(([key]) => value(inputs[key]));
+    const out = traits.find(([key]) => value(inputs[key]) < rules.min || value(inputs[key]) > rules.max);
+    const remaining = rules.budget - values.reduce((a, b) => a + b, 0);
+    const line = document.getElementById("build-left");
+    line.textContent = out
+      ? out[1] + " must be from " + rules.min + " to " + rules.max + "."
+      : remaining === 0 ? "All " + rules.budget + " points spent."
+      : remaining > 0 ? remaining + " points left to spend." : -remaining + " points too many.";
+    const bad = !!out || remaining !== 0;
+    line.classList.toggle("off", bad);
+    document.getElementById("build-submit").disabled = bad || nameInput.value.trim() === "";
+  }
+
+  Object.values(inputs).forEach(i => i.addEventListener("input", left));
+  nameInput.addEventListener("input", left);
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  }
+
+  function show(message) { document.getElementById("error").textContent = message || ""; }
+
+  // Which of the three the page is showing: the sign-in, the form, or the fighter just built.
+  let built = null;
+  function render() {
+    const signedIn = !login || isSignedIn();
+    document.getElementById("signin").hidden = signedIn;
+    document.getElementById("build").hidden = !signedIn || !!built;
+    document.getElementById("built").hidden = !built;
+    if (!signedIn) renderSignIn();
+  }
+
+  function signedIn() { show(""); render(); }
+
+  document.getElementById("build-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    show("");
+    const body = { name: nameInput.value.trim(), description: descriptionInput.value.trim() };
+    traits.forEach(([key]) => { body[key] = value(inputs[key]); });
+    const submit = document.getElementById("build-submit");
+    submit.disabled = true;
+    try {
+      const token = await freshIdToken();
+      const headers = Object.assign({ "content-type": "application/json" }, token ? { authorization: "Bearer " + token } : {});
+      const response = await fetch(buildUrl, { method: "POST", headers, body: JSON.stringify(body) });
+      const answer = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        if (token) clearSession();
+        render();
+        show(login ? "Sign in to build a fighter." : "Say who you are with ?as=<cognito sub>.");
+      } else if (!response.ok) {
+        show(answer.error || response.statusText);
+      } else {
+        built = answer;
+        render();
+        document.getElementById("built-text").textContent =
+          answer.name + " is ready. Back in matchmaker, choose “I’ve made one — check again”" +
+          " and offer or accept a bout with them.";
+        document.getElementById("built-heading").focus();
+      }
+    } catch (err) {
+      show("Could not reach the engine.");
+    } finally {
+      left();
+    }
+  });
+
+  document.getElementById("build-another").addEventListener("click", () => {
+    built = null;
+    reset();
+    render();
+    nameInput.focus();
+  });
+
+  reset();
+  render();
+</script>
+</body>
+</html>
+"""
+
     /* The heading as first served, before any script runs; `describe()` in the page says the same thing. */
     private def heading(state: Option[Protocol.StateResponse]): String =
         state match {

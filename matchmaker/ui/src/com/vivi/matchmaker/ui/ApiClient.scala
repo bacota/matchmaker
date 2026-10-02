@@ -290,21 +290,6 @@ object ApiClient {
           None
         )
 
-    def createCharacter(
-        gameId: GameId,
-        name: String,
-        description: String,
-        playerExternalId: String
-    ): Future[Character[String]] =
-        send[Character[String]](
-          HttpMethod.POST,
-          s"/games/${gameId.value}/characters",
-          // `externalId` on this route names the player the character is being created for, and the
-          // server refuses any value but the caller's own. It is the caller's `sub`, which is exactly
-          // what the token already says — the field is redundant here and simply echoed back.
-          Some(write(Json.CharacterRequest(name, description, playerExternalId)))
-        )
-
     private def get[A: ReadWriter](path: String): Future[A] = send[A](HttpMethod.GET, path, None)
 
     private def send[A: ReadWriter](method: HttpMethod, path: String, body: Option[String]): Future[A] =

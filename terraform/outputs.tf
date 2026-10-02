@@ -145,6 +145,11 @@ output "boxing_create_game_url" {
   value       = var.deploy_boxing ? one(module.boxing[*].create_game_url) : ""
 }
 
+output "boxing_character_url" {
+  description = "What to record as the game's `character_url`: the page a player builds a fighter on. Empty when the engine is not deployed."
+  value       = var.deploy_boxing ? "${trimsuffix(one(module.boxing[*].api_endpoint), "/")}/fighters/new" : ""
+}
+
 output "boxing_external_id" {
   description = <<-EOT
     What to record as the game's `external_id`: the name matchmaker files this engine's API key
