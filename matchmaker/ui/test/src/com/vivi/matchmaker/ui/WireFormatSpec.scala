@@ -308,4 +308,16 @@ class FormatSpec extends FunSuite {
     test("sub-second precision is dropped rather than shown") {
         assertEquals(Format.instant(Instant.parse("2026-08-07T12:34:56.789Z")), "2026-08-07 12:34:56 UTC")
     }
+    test("numeric parameter values are offered low to high, not in text order") {
+        assertEquals(Format.parameterValues(Seq("10", "25", "3", "12", "9")), Seq("3", "9", "10", "12", "25"))
+    }
+
+    test("decimals and negatives are numbers too") {
+        assertEquals(Format.parameterValues(Seq("1.5", "-2", "10", "0.25")), Seq("-2", "0.25", "1.5", "10"))
+    }
+
+    test("parameter values that are not all numbers are offered in text order") {
+        assertEquals(Format.parameterValues(Seq("5x5", "3x3", "4x4")), Seq("3x3", "4x4", "5x5"))
+        assertEquals(Format.parameterValues(Seq("10", "fast", "3")), Seq("10", "3", "fast"))
+    }
 }

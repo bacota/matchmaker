@@ -3085,13 +3085,18 @@ object Views {
       */
     private case class ParameterChoice(name: String, label: String, values: Seq[String], default: Option[String])
 
-    /** The values a challenger may pick for each of the game's parameters, in the admin's order. Parameters with no
-      * values to choose between are left out: there is nothing to offer.
+    /** The values a challenger may pick for each of the game's parameters, in the order [[Format.parameterValues]] puts
+      * them. Parameters with no values to choose between are left out: there is nothing to offer.
       */
     private def parameterChoices(game: Game): Seq[ParameterChoice] =
         game.parameters
             .map(p =>
-                ParameterChoice(p.name, p.displayName, p.values.map(_.value.toString), p.defaultValue.map(_.toString))
+                ParameterChoice(
+                  p.name,
+                  p.displayName,
+                  Format.parameterValues(p.values.map(_.value.toString)),
+                  p.defaultValue.map(_.toString)
+                )
             )
             .filter(_.values.nonEmpty)
 
@@ -3530,6 +3535,20 @@ object Views {
 
 /** Formatting that has to be readable rather than exact. */
 object Format {
+
+    /** A parameter's values in the order a dropdown should offer them.
+      *
+      * Values are stored as text and come back in no order of their own, so text order is what they fell into — which
+      * for numbers is wrong: 3 to 25 rounds would read 10, 11, ... 19, 20, ... 25, 3, 4, ... 9. When every value is a
+      * number they are sorted as numbers, low to high. Anything else — board sizes like "3x3", or a mix of words and
+      * numbers — is sorted as text, which is the order it was already being shown in.
+      */
+    def parameterValues(values: Seq[String]): Seq[String] = {
+        val numbers = values.map(v => v.trim.toDoubleOption)
+        if (values.nonEmpty && numbers.forall(_.isDefined))
+            values.zip(numbers.flatten).sortBy((text, number) => (number, text)).map(_._1)
+        else values.sorted
+    }
 
     /** `Instant.toString` is ISO-8601 in UTC, which is precise and unpleasant to read. This trims it to the minute and
       * marks it as UTC rather than pretending to know the user's zone — Scala.js has no time-zone database unless one
