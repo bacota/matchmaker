@@ -515,6 +515,12 @@ ${signIn.signInScript}
     left();
   }
 
+  /* True while a build is on its way to the engine. Editing a field re-runs `left()`, which would
+   * otherwise re-enable the button mid-request and let a second click register a second fighter;
+   * the submit handler checks it too, since Enter in a field submits without the button. Not the
+   * sign-in's `busy`, which is about the sign-in form. */
+  let building = false;
+
   function left() {
     const values = traits.map(([key]) => value(inputs[key]));
     const out = traits.find(([key]) => value(inputs[key]) < rules.min || value(inputs[key]) > rules.max);
@@ -526,7 +532,7 @@ ${signIn.signInScript}
       : remaining > 0 ? remaining + " points left to spend." : -remaining + " points too many.";
     const bad = !!out || remaining !== 0;
     line.classList.toggle("off", bad);
-    document.getElementById("build-submit").disabled = bad || nameInput.value.trim() === "";
+    document.getElementById("build-submit").disabled = bad || nameInput.value.trim() === "" || building;
   }
 
   Object.values(inputs).forEach(i => i.addEventListener("input", left));
@@ -552,11 +558,12 @@ ${signIn.signInScript}
 
   document.getElementById("build-form").addEventListener("submit", async e => {
     e.preventDefault();
+    if (building) return;
+    building = true;
     show("");
     const body = { name: nameInput.value.trim(), description: descriptionInput.value.trim() };
     traits.forEach(([key]) => { body[key] = value(inputs[key]); });
-    const submit = document.getElementById("build-submit");
-    submit.disabled = true;
+    document.getElementById("build-submit").disabled = true;
     try {
       const token = await freshIdToken();
       const headers = Object.assign({ "content-type": "application/json" }, token ? { authorization: "Bearer " + token } : {});
@@ -579,6 +586,7 @@ ${signIn.signInScript}
     } catch (err) {
       show("Could not reach the engine.");
     } finally {
+      building = false;
       left();
     }
   });

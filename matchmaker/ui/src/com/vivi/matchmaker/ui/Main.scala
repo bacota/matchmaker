@@ -2183,26 +2183,43 @@ object Views {
       * one.
       */
     private def gameChallenges(game: Game): HtmlElement =
-        div(
-          child <-- (if (game.gameType == GameType.Plain)
-                         currentPlayer.map {
-                             case None         => p(cls := "empty", "Loading…")
-                             case Some(player) => challengePanel(game, player, Seq.empty)
-                         }
-                     else
-                         currentPlayer.combineWith(Store.charactersByGame.signal).map {
-                             case (None, _) => p(cls := "empty", "Loading…")
-                             case (Some(player), byGame) =>
-                                 byGame.get(game.gameId) match {
-                                     case None => p(cls := "empty", "Loading…")
-                                     // A character is needed before this player can either offer or accept a
-                                     // challenge, so there is nothing to show until there is one.
-                                     case Some(Nil) => characterPrompt(game)
-                                     case Some(characters) =>
-                                         challengePanel(game, player, characters.map(_.characterId))
-                                 }
-                         })
-        )
+        if (game.gameType == GameType.Plain)
+            div(
+              child <-- currentPlayer.map {
+                  case None         => p(cls := "empty", "Loading…")
+                  case Some(player) => challengePanel(game, player, Seq.empty)
+              }
+            )
+        else {
+            /* What the last "check again" found. Said here, outside the panel it is about, because a
+             * check that finds a character replaces that panel with the challenge panel -- taking any
+             * message it held, and the button that had focus, with it. */
+            val checked = Var(Option.empty[String])
+            var status: Option[dom.html.Element] = None
+
+            div(
+              child <-- currentPlayer.combineWith(Store.charactersByGame.signal).map {
+                  case (None, _) => p(cls := "empty", "Loading…")
+                  case (Some(player), byGame) =>
+                      byGame.get(game.gameId) match {
+                          case None => p(cls := "empty", "Loading…")
+                          // A character is needed before this player can either offer or accept a
+                          // challenge, so there is nothing to show until there is one.
+                          case Some(Nil) => characterPrompt(game, checked, () => status.foreach(_.focus()))
+                          case Some(characters) =>
+                              challengePanel(game, player, characters.map(_.characterId))
+                      }
+              },
+              // Focusable but not tabbable: focus is put here when the button that had it goes away.
+              p(
+                role := "status",
+                tabIndex := -1,
+                onMountCallback(context => status = Some(context.thisNode.ref)),
+                onUnmountCallback(_ => status = None),
+                child.text <-- checked.signal.map(_.getOrElse(""))
+              )
+            )
+        }
 
     /** Where a player with no character in this game is sent to make one.
       *
@@ -2210,12 +2227,15 @@ object Views {
       * matchmaker, which is how it comes to be in [[Store.charactersByGame]]. So all this offers is the way there — the
       * game's `characterUrl`, opened beside this page — and a way to look again once the player is back. A game nobody
       * has given a url says so rather than offering a button that goes nowhere.
+      *
+      * What a check finds is said in `checked`, which [[gameChallenges]] shows outside this panel; `focusStatus` moves
+      * focus there before a successful check replaces the panel.
       */
-    private def characterPrompt(game: Game): HtmlElement = {
-        // Said after a check that found nothing, so that pressing it visibly did something. A live
-        // region, since what changes is text and not where the player's focus is.
-        val checked = Var(Option.empty[String])
-
+    private def characterPrompt(
+        game: Game,
+        checked: Var[Option[String]],
+        focusStatus: () => Unit
+    ): HtmlElement =
         div(
           cls := "card",
           h3(s"Make Your Character for ${game.name}"),
@@ -2231,19 +2251,32 @@ object Views {
                       onClick --> (_ => dom.window.open(url, "_blank", "noopener,noreferrer"))
                     ),
                     busyButton("I've made one — check again", classes = Some("link")) { busy =>
+                        // Cleared first, so that a second "no character yet" is a change the live
+                        // region announces rather than the same text it already holds.
                         checked.set(None)
                         Store.run(ApiClient.characters(game.gameId), busy) { found =>
+                            // Nothing found is what the store already holds, so there is nothing to
+                            // reload -- and reloading would only re-render this panel for no reason.
                             if (found.isEmpty) checked.set(Some("No character yet. Finish making one in the game."))
-                            Store.refreshCharacters(game.gameId)
+                            else {
+                                checked.set(
+                                  Some(
+                                    s"Found ${found.map(_.name).mkString(", ")}. " +
+                                        "You can now offer or accept a challenge."
+                                  )
+                                )
+                                focusStatus()
+                                // Through the store's own load, which drops the answer if the player has
+                                // signed out meanwhile; this request's answer is only used to say so.
+                                Store.refreshCharacters(game.gameId)
+                            }
                         }
                     }
                   )
               case None =>
                   p(cls := "detail", "This game has no page to make a character on yet; ask an administrator.")
-          },
-          p(role := "status", child.text <-- checked.signal.map(_.getOrElse("")))
+          }
         )
-    }
 
     /* `characters` is every character this player has in the game, empty for a plain game. Offering a
      * challenge is done as the first of them; accepting one is done as whichever of them was invited
