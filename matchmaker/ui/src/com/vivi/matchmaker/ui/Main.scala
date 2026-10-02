@@ -878,7 +878,7 @@ object Views {
           listing(Store.active.signal.map(matchesIn(game)), Store.loading(Store.Fetch.Active))(
             p(
               cls := "empty",
-              if (game.isDefined) "You are not in any matches of this." else "You are not in any matches."
+              game.fold("You are not in any matches.")(g => s"You are not in any matches of ${g.displayName}.")
             )
           )(matches => ul(matches.map(matchRow(_, showDue = false))))
         )
