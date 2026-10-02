@@ -25,6 +25,22 @@ trait Matchmaker {
       * player making it has to be told it did not take.
       */
     def registerCharacter(matchmakerUrl: String, request: Protocol.RegisterCharacterRequest): Long
+
+    /** `GET {matchmakerUrl}/characters?owner=`: the player's characters in this engine's game, which the engine shows
+      * them since it keeps none itself.
+      */
+    def listCharacters(matchmakerUrl: String, ownerExternalId: String): List[Protocol.OwnedCharacter]
+
+    /** `PUT {matchmakerUrl}/characters/{characterId}`: a player changing one of their characters' name and description
+      * here. A character that is not theirs is refused by matchmaker, which owns that fact, as a 404
+      * [[MatchmakerRefusal]].
+      */
+    def editCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.EditCharacterRequest): Unit
+
+    /** `PUT {matchmakerUrl}/characters/{characterId}/owner`: a player giving one of their characters to another. A
+      * nickname nobody has is a 400 [[MatchmakerRefusal]], whose reason says so.
+      */
+    def transferCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.TransferCharacterRequest): Unit
 }
 
 /** Posts the callbacks over HTTP, to the urls matchmaker itself supplied when it created the game.
@@ -62,18 +78,34 @@ class HttpMatchmaker(http: SignedHttp, apiKey: Option[String], externalId: Optio
           headers
         )
 
-    def registerCharacter(matchmakerUrl: String, request: Protocol.RegisterCharacterRequest): Long = {
-        val url = s"${matchmakerUrl.stripSuffix("/")}/characters"
-        http.exchange("POST", url, Some(write(request)), "execute-api", headers) match {
-            case (status, answer) if status >= 200 && status < 300 =>
-                read[Protocol.RegisteredCharacter](answer).characterId
-            // Matchmaker's own refusal, with its reason, so that the engine can tell the player what it
-            // was; anything else is matchmaker failing, and the AwsError says so.
+    def registerCharacter(matchmakerUrl: String, request: Protocol.RegisterCharacterRequest): Long =
+        read[Protocol.RegisteredCharacter](
+          call("POST", s"${matchmakerUrl.stripSuffix("/")}/characters", Some(write(request)))
+        ).characterId
+
+    def listCharacters(matchmakerUrl: String, ownerExternalId: String): List[Protocol.OwnedCharacter] = {
+        val owner = java.net.URLEncoder.encode(ownerExternalId, java.nio.charset.StandardCharsets.UTF_8)
+        read[List[Protocol.OwnedCharacter]](
+          call("GET", s"${matchmakerUrl.stripSuffix("/")}/characters?owner=$owner", None)
+        )
+    }
+
+    def editCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.EditCharacterRequest): Unit =
+        call("PUT", s"${matchmakerUrl.stripSuffix("/")}/characters/$characterId", Some(write(request)))
+
+    def transferCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.TransferCharacterRequest): Unit =
+        call("PUT", s"${matchmakerUrl.stripSuffix("/")}/characters/$characterId/owner", Some(write(request)))
+
+    /* A call whose answer the engine reads. Matchmaker's own refusal is raised with its reason, so
+     * that the engine can tell the player what it was; anything else is matchmaker failing, and the
+     * AwsError says so. */
+    private def call(method: String, url: String, body: Option[String]): String =
+        http.exchange(method, url, body, "execute-api", headers) match {
+            case (status, answer) if status >= 200 && status < 300 => answer
             case (status, answer) if status >= 400 && status < 500 =>
                 throw MatchmakerRefusal(status, MatchmakerRefusal.reason(answer))
-            case (status, answer) => throw AwsError(s"POST $url returned $status: $answer")
+            case (status, answer) => throw AwsError(s"$method $url returned $status: $answer")
         }
-    }
 }
 
 /** Matchmaker answering a call with a 4xx: it heard the request and turned it down. `reason` is the `error` it gave. */
@@ -132,15 +164,59 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
         log(s"PUT $matchmakerUrl/characters/$characterId/state $state")
     }
 
+    /* What `registerCharacter` was given, as it stands now: edits and transfers apply to it, and the listing reads
+     * it, as matchmaker would. */
+    private val heldBuffer = scala.collection.mutable.LinkedHashMap[Long, Protocol.RegisterCharacterRequest]()
+
     def registerCharacter(matchmakerUrl: String, request: Protocol.RegisterCharacterRequest): Long =
         synchronized {
             if (failRegistrations) throw AwsError(s"POST $matchmakerUrl/characters failed: unreachable")
             val id = nextCharacterId
             nextCharacterId += 1
             registrationsBuffer += (id -> request)
+            heldBuffer(id) = request
             log(s"POST $matchmakerUrl/characters ${write(request)} -> character $id")
             id
         }
+
+    def listCharacters(matchmakerUrl: String, ownerExternalId: String): List[Protocol.OwnedCharacter] =
+        synchronized {
+            log(s"GET $matchmakerUrl/characters?owner=$ownerExternalId")
+            heldBuffer.toList
+                .collect {
+                    case (id, c) if c.ownerExternalId == ownerExternalId =>
+                        Protocol.OwnedCharacter(id, c.name, c.description, c.state)
+                }
+                .sortBy(_.name)
+        }
+
+    /** Who each nickname is, for [[transferCharacter]] — matchmaker knows its players, and this has to be told. */
+    @volatile var players: Map[String, String] = Map.empty
+
+    def editCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.EditCharacterRequest): Unit =
+        synchronized {
+            log(s"PUT $matchmakerUrl/characters/$characterId ${write(request)}")
+            val c = owned(characterId, request.ownerExternalId)
+            heldBuffer(characterId) = c.copy(name = request.name, description = request.description)
+        }
+
+    def transferCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.TransferCharacterRequest): Unit =
+        synchronized {
+            log(s"PUT $matchmakerUrl/characters/$characterId/owner ${write(request)}")
+            val c = owned(characterId, request.ownerExternalId)
+            val to = players.getOrElse(
+              request.toNickname,
+              throw MatchmakerRefusal(400, s"no player is called '${request.toNickname}'")
+            )
+            heldBuffer(characterId) = c.copy(ownerExternalId = to)
+        }
+
+    /* As matchmaker answers: a character that is not the owner's is one that does not exist. */
+    private def owned(characterId: Long, ownerExternalId: String): Protocol.RegisterCharacterRequest =
+        heldBuffer
+            .get(characterId)
+            .filter(_.ownerExternalId == ownerExternalId)
+            .getOrElse(throw MatchmakerRefusal(404, s"no character with id $characterId"))
 
     def moves: List[(String, Protocol.MoveNotification)] = synchronized(movesBuffer.toList)
     def results: List[(String, Protocol.MatchResults)] = synchronized(resultsBuffer.toList)

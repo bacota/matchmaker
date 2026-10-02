@@ -8,8 +8,8 @@
 --        -f engines/boxing/register-game.sql
 --
 -- url          where matchmaker POSTs the create-game request. Locally the engine's /games;
---              deployed, the engine's own create-game url. The page a player builds a fighter on
---              is /fighters/new beside it, and is recorded as the game's character_url.
+--              deployed, the engine's own create-game url. The page a player builds and renames
+--              fighters on is /fighters beside it, and is recorded as the game's character_url.
 -- external_id  who matchmaker will accept the callbacks and fighter writes from. Locally whatever
 --              GAME_EXTERNAL_ID the engine is started with; deployed, "boxing" — the name
 --              matchmaker files this engine's API key under.
@@ -33,7 +33,7 @@ VALUES (
     'workrate and chin, then plan each round''s offense, defense and power.',
   :'url',
   -- Where matchmaker's UI sends a player who has no fighter yet.
-  regexp_replace(:'url', '/games$', '/fighters/new'),
+  regexp_replace(:'url', '/games$', '/fighters'),
   true,
   :'external_id'
 )

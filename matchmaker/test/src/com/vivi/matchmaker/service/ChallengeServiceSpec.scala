@@ -1464,12 +1464,11 @@ class ChallengeServiceSpec extends PropertySuite {
                       role,
                       formerExternalId
                     )
-                    _ <- TestServices.services.characters.update(
+                    _ <- TestServices.services.characters.transfer(
                       character.characterId,
-                      character.name,
-                      character.description,
-                      newExternalId,
-                      formerExternalId
+                      newNickname,
+                      formerExternalId,
+                      fixture.game.externalId
                     )
                     listed <- challengeService.invitationsFor(newExternalId)
                     // Nor shows them the challenge: it is closed, and not full (the third role is
@@ -1556,12 +1555,11 @@ class ChallengeServiceSpec extends PropertySuite {
                       externalId,
                       characterInvitations = Seq(CharacterInvite(invitedCharacter.characterId, Some(role)))
                     )
-                    _ <- TestServices.services.characters.update(
+                    _ <- TestServices.services.characters.transfer(
                       invitedCharacter.characterId,
-                      invitedCharacter.name,
-                      invitedCharacter.description,
-                      newExternalId,
-                      formerExternalId
+                      newNickname,
+                      formerExternalId,
+                      fixture.game.externalId
                     )
                     formerList <- challengeService.invitationsFor(formerExternalId)
                     newList <- challengeService.invitationsFor(newExternalId)
@@ -1684,12 +1682,11 @@ class ChallengeServiceSpec extends PropertySuite {
                       fixture.game.roles(1).gameRoleId,
                       formerExternalId
                     )
-                    _ <- TestServices.services.characters.update(
+                    _ <- TestServices.services.characters.transfer(
                       character.characterId,
-                      character.name,
-                      character.description,
-                      newExternalId,
-                      formerExternalId
+                      newNickname,
+                      formerExternalId,
+                      fixture.game.externalId
                     )
                     again <- challengeService
                         .accept(
@@ -2083,12 +2080,11 @@ class ChallengeServiceSpec extends PropertySuite {
                       fixture.game.roles(1).gameRoleId,
                       seatedExternalId
                     )
-                    _ <- TestServices.services.characters.update(
+                    _ <- TestServices.services.characters.transfer(
                       invitedCharacter.characterId,
-                      invitedCharacter.name,
-                      invitedCharacter.description,
-                      seatedExternalId,
-                      formerExternalId
+                      seatedNickname,
+                      formerExternalId,
+                      fixture.game.externalId
                     )
                     whileSeated <- challengeService.invitationsFor(seatedExternalId)
                     _ <- TestServices.services.acceptances
@@ -2128,12 +2124,11 @@ class ChallengeServiceSpec extends PropertySuite {
                       fixture.game.roles(1).gameRoleId,
                       formerExternalId
                     )
-                    _ <- TestServices.services.characters.update(
+                    _ <- TestServices.services.characters.transfer(
                       transferred.characterId,
-                      transferred.name,
-                      transferred.description,
-                      newExternalId,
-                      formerExternalId
+                      newNickname,
+                      formerExternalId,
+                      fixture.game.externalId
                     )
                     listed <- challengeService.listByGame(fixture.game.gameId, newExternalId)
                     asTransferred <- challengeService

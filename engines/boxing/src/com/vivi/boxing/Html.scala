@@ -393,20 +393,21 @@ ${TurnTimer.script}
 </html>
 """
 
-    /** The page a player builds a new fighter on: sign in, spend the points, name it, and it is registered with
-      * matchmaker as one of their characters.
+    /** The fighters page: a player's fighters, each of which they may edit or give away here, and the form a new one is
+      * built with. Every change to a fighter is made in this engine; matchmaker is told of each, and is where the list
+      * comes from, since this engine keeps no fighters of its own.
       *
       * Served to anyone, like the play page, and for the same reason: a browser navigation carries no token, so this is
-      * the shell that signs the player in and then posts the build with one. Without a login configured — the local,
-      * trusted mode — the form is shown straight away and the player is whoever `?as=` says.
+      * the shell that signs the player in and then fetches and posts with one. Without a login configured — the local,
+      * trusted mode — it goes straight on, and the player is whoever `?as=` says.
       */
-    def buildPage(login: Option[LoginConfig], rules: Protocol.BuildRules): String =
+    def fightersPage(login: Option[LoginConfig], rules: Protocol.BuildRules): String =
         s"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>boxing — build a fighter</title>
+<title>boxing — your fighters</title>
 <style>
   :root { color-scheme: light dark; --line: #8886; --ink: #222; --paper: #fafafa; --error: #b3261e; }
   @media (prefers-color-scheme: dark) { :root { --ink: #eee; --paper: #16181c; --error: #ff8a80; } }
@@ -414,8 +415,9 @@ ${TurnTimer.script}
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { margin: 0 auto; padding: 1.5rem 1rem 3rem; max-width: 34rem; }
   h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; text-align: center; }
-  h2 { font-size: 1.25rem; margin: 0 0 .5rem; }
-  section[hidden], div[hidden] { display: none; }
+  h2 { font-size: 1.25rem; margin: 1.5rem 0 .5rem; }
+  h3 { font-size: 1.0625rem; margin: 0 0 .25rem; overflow-wrap: anywhere; }
+  section[hidden], div[hidden], p[hidden] { display: none; }
   form .field { display: grid; grid-template-columns: 1fr 6.5rem; align-items: center; gap: .5rem; margin-bottom: .5rem; }
   form .field.wide { grid-template-columns: 1fr; gap: .25rem; }
   form .field label { font-weight: 600; }
@@ -431,8 +433,16 @@ ${TurnTimer.script}
   button.primary:disabled { opacity: .45; cursor: default; }
   .left { margin: .5rem 0 0; font-weight: 600; }
   .left.off { color: var(--error); }
+  #fighters { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
+  #fighters li { border: 1px solid var(--line); border-radius: 8px; padding: .75rem; }
+  #fighters .about { margin: 0 0 .25rem; opacity: .8; overflow-wrap: anywhere; }
+  #fighters dl { display: grid; grid-template-columns: repeat(5, auto); gap: 0 .5rem; margin: .25rem 0 .5rem; font-size: .875rem; }
+  #fighters dt { opacity: .75; }
+  #fighters dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .detail { opacity: .8; }
   :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
 ${SignIn.css}
+  #status { min-height: 1.5rem; margin: .75rem 0 0; font-weight: 600; }
   #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
 </style>
 </head>
@@ -440,35 +450,39 @@ ${SignIn.css}
 <main>
   <h1>boxing</h1>
 
-  <section id="build" hidden aria-labelledby="build-heading">
-    <form id="build-form" novalidate>
-      <h2 id="build-heading">Build a fighter</h2>
-      <p>Spread ${rules.budget} points across five characteristics, each from ${rules.min} to ${rules.max}.
-         A fighter is built once: these are the numbers it fights every bout with.</p>
-      <div class="field wide">
-        <label for="f-name">Name</label>
-        <input id="f-name" type="text" autocomplete="off" required maxlength="80">
-      </div>
-      <div class="field wide">
-        <label for="f-description">Description <span class="hint">(optional)</span></label>
-        <input id="f-description" type="text" autocomplete="off" maxlength="280">
-      </div>
-      <div id="build-fields"></div>
-      <p id="build-left" class="left" aria-live="polite"></p>
-      <button type="submit" class="primary" id="build-submit">Build this fighter</button>
-    </form>
-  </section>
+  <!-- What the last change or build did. Focus is moved here when it is said, since the list it is
+       about is redrawn; it is a live region as well, for readers that do not follow focus. -->
+  <p id="status" role="status" aria-live="polite" tabindex="-1"></p>
+  <div id="error" role="alert"></div>
 
-  <!-- Where the result is said: focus moves here on success, and it is a live region for anyone
-       whose reader does not follow focus. -->
-  <section id="built" hidden aria-labelledby="built-heading">
-    <h2 id="built-heading" tabindex="-1">Fighter built</h2>
-    <p id="built-text" role="status" aria-live="polite"></p>
-    <button type="button" class="primary" id="build-another">Build another fighter</button>
-  </section>
+  <div id="content" hidden>
+    <section aria-labelledby="yours-heading">
+      <h2 id="yours-heading">Your fighters</h2>
+      <p id="yours-note" class="detail">Loading your fighters…</p>
+      <ul id="fighters"></ul>
+    </section>
+
+    <section aria-labelledby="build-heading">
+      <form id="build-form" novalidate>
+        <h2 id="build-heading">Build a new fighter</h2>
+        <p>Spread ${rules.budget} points across five characteristics, each from ${rules.min} to ${rules.max}.
+           A fighter is built once: these are the numbers it fights every bout with. Its name and description you can change later.</p>
+        <div class="field wide">
+          <label for="f-name">Name</label>
+          <input id="f-name" type="text" autocomplete="off" required maxlength="80">
+        </div>
+        <div class="field wide">
+          <label for="f-description">Description <span class="hint">(optional)</span></label>
+          <input id="f-description" type="text" autocomplete="off" maxlength="280">
+        </div>
+        <div id="build-fields"></div>
+        <p id="build-left" class="left" aria-live="polite"></p>
+        <button type="submit" class="primary" id="build-submit">Build this fighter</button>
+      </form>
+    </section>
+  </div>
 
   <div id="signin" hidden></div>
-  <div id="error" role="alert"></div>
 </main>
 <script>
 ${signIn.authScript(login)}
@@ -477,7 +491,12 @@ ${signIn.signInScript}
   const rules = { budget: ${rules.budget}, min: ${rules.min}, max: ${rules.max} };
   // Derived from this page's own url, as the board's are: behind API Gateway the path carries a
   // stage prefix. The query goes along for the local `?as=`.
-  const buildUrl = location.pathname.replace(new RegExp("/new/?$$"), "") + location.search;
+  const base = location.pathname.replace(new RegExp("/+$$"), "");
+  const query = location.search;
+  const mineUrl = base + "/mine" + query;
+  const buildUrl = base + query;
+  const fighterUrl = id => base + "/" + encodeURIComponent(id) + query;
+  const ownerUrl = id => base + "/" + encodeURIComponent(id) + "/owner" + query;
 
   const traits = [
     ["strength", "Strength", "Added twice to power."],
@@ -544,17 +563,210 @@ ${signIn.signInScript}
 
   function show(message) { document.getElementById("error").textContent = message || ""; }
 
-  // Which of the three the page is showing: the sign-in, the form, or the fighter just built.
-  let built = null;
+  /* Said, and focused, after something the player did: the list it is about is redrawn under them. */
+  function announce(message) {
+    const status = document.getElementById("status");
+    status.textContent = message;
+    status.focus();
+  }
+
   function render() {
     const signedIn = !login || isSignedIn();
     document.getElementById("signin").hidden = signedIn;
-    document.getElementById("build").hidden = !signedIn || !!built;
-    document.getElementById("built").hidden = !built;
+    document.getElementById("content").hidden = !signedIn;
     if (!signedIn) renderSignIn();
   }
 
-  function signedIn() { show(""); render(); }
+  /* Which session the page is in, and which load of the list is the latest. Both only count up.
+   *
+   * An answer can arrive after the player who asked has gone -- a 401 ended their session, and
+   * somebody else has signed in on this page since. A list answer is drawn only if it is the latest
+   * load's, and any form's answer only if its session is still this one, so one player's fighters
+   * are never shown, or announced, to the next. */
+  let session = 0;
+  let loads = 0;
+
+  /* The session is over: nothing it asked for may land, and its list is taken off the page now. */
+  function forget() {
+    session++;
+    loads++;
+    document.getElementById("fighters").replaceChildren();
+    const note = document.getElementById("yours-note");
+    note.textContent = "Loading your fighters…";
+    note.hidden = false;
+  }
+
+  function signedIn() { forget(); show(""); render(); loadMine(); }
+
+  /* A call with the player's token. A 401 is a session that is over -- if it is still this one: it
+   * is dropped and the sign-in offered again, and the caller gets nothing. */
+  async function send(url, init) {
+    const asked = session;
+    const token = await freshIdToken();
+    const headers = Object.assign({ "content-type": "application/json" }, token ? { authorization: "Bearer " + token } : {});
+    const response = await fetch(url, Object.assign({}, init, { headers }));
+    if (response.status === 401) {
+      // Only a refusal of the session that is here ends it. One sent with an earlier player's token,
+      // answering after somebody else has signed in on this page, is about nobody here: clearing
+      // the session now would sign the new player out.
+      if (asked !== session || (token && sessionStorage.getItem(TokenKey) !== token)) return null;
+      if (token) clearSession();
+      forget();
+      render();
+      show(login ? "Sign in to see your fighters." : "Say who you are with ?as=<cognito sub>.");
+      return null;
+    }
+    return response;
+  }
+
+  /* The list is cleared as a load starts, so nothing from before it can be left showing, and only
+   * the latest load may draw -- an earlier one answering late is dropped, success or failure. */
+  async function loadMine() {
+    const ticket = ++loads;
+    const note = document.getElementById("yours-note");
+    document.getElementById("fighters").replaceChildren();
+    note.textContent = "Loading your fighters…";
+    note.hidden = false;
+    try {
+      const response = await send(mineUrl, {});
+      if (!response || ticket !== loads) return;
+      const answer = await response.json().catch(() => ({}));
+      if (ticket !== loads) return;
+      if (!response.ok) { note.textContent = answer.error || response.statusText; return; }
+      showMine(answer);
+    } catch (err) {
+      if (ticket === loads) note.textContent = "Could not reach the engine.";
+    }
+  }
+
+  /* Built from elements rather than markup: a name is whatever a player typed. */
+  function showMine(fighters) {
+    const note = document.getElementById("yours-note");
+    note.textContent = fighters.length ? "" : "You have no fighters yet. Build one below.";
+    note.hidden = fighters.length > 0;
+    const list = document.getElementById("fighters");
+    list.replaceChildren(...fighters.map(fighterItem));
+  }
+
+  function fighterItem(f) {
+    const item = document.createElement("li");
+    const heading = document.createElement("h3");
+    heading.textContent = f.name;
+    item.appendChild(heading);
+    if (f.description) {
+      const about = document.createElement("p");
+      about.className = "about";
+      about.textContent = f.description;
+      item.appendChild(about);
+    }
+    if (f.fighter) {
+      const stats = document.createElement("dl");
+      traits.forEach(([key, label]) => {
+        const term = document.createElement("dt");
+        term.textContent = label;
+        const figure = document.createElement("dd");
+        figure.textContent = f.fighter[key];
+        stats.append(term, figure);
+      });
+      item.appendChild(stats);
+    } else {
+      const unbuilt = document.createElement("p");
+      unbuilt.className = "detail";
+      unbuilt.textContent = "Not a built fighter, so it cannot box.";
+      item.appendChild(unbuilt);
+    }
+
+    item.append(editForm(f), giveForm(f));
+    return item;
+  }
+
+  /* One labelled text field, as every form here lays them out. */
+  function textField(id, caption, value, maxLength) {
+    const field = document.createElement("div");
+    field.className = "field wide";
+    const label = document.createElement("label");
+    label.htmlFor = id;
+    label.textContent = caption;
+    const input = document.createElement("input");
+    input.id = id;
+    input.type = "text";
+    input.autocomplete = "off";
+    input.maxLength = maxLength;
+    input.value = value;
+    field.append(label, input);
+    return { field, input };
+  }
+
+  /* A form that sends one change about a fighter. `ready` says whether what is typed is worth
+   * sending, `request` makes the call, and `done` says what happened. Each has its own in-flight
+   * flag, for the reason `building` is the build form's: editing a field must not re-enable a
+   * button whose request has not answered. */
+  function changeForm(fields, buttonText, ready, request, done) {
+    const form = document.createElement("form");
+    form.noValidate = true;
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.className = "primary";
+    button.textContent = buttonText;
+    let sending = false;
+    const refresh = () => { button.disabled = sending || !ready(); };
+    fields.forEach(f => f.input.addEventListener("input", refresh));
+    refresh();
+    form.append(...fields.map(f => f.field), button);
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      if (sending || !ready()) return;
+      sending = true;
+      refresh();
+      show("");
+      const asked = session;
+      try {
+        const response = await request();
+        if (!response || asked !== session) return;
+        const answer = await response.json().catch(() => ({}));
+        if (asked !== session) return;
+        if (!response.ok) { show(answer.error || response.statusText); return; }
+        await loadMine();
+        if (asked === session) announce(done(answer));
+      } catch (err) {
+        if (asked === session) show("Could not reach the engine.");
+      } finally {
+        sending = false;
+        refresh();
+      }
+    });
+    return form;
+  }
+
+  function editForm(f) {
+    const name = textField("name-" + f.characterId, "Name of " + f.name, f.name, 80);
+    const about = textField("about-" + f.characterId, "Description of " + f.name, f.description || "", 280);
+    return changeForm(
+      [name, about],
+      "Save changes",
+      () => name.input.value.trim() !== "" &&
+        (name.input.value.trim() !== f.name || about.input.value.trim() !== (f.description || "")),
+      () => send(fighterUrl(f.characterId), {
+        method: "PUT",
+        body: JSON.stringify({ name: name.input.value.trim(), description: about.input.value.trim() })
+      }),
+      answer => "Saved " + answer.name + "."
+    );
+  }
+
+  /* Giving a fighter away cannot be taken back from here, so the button asks first. */
+  function giveForm(f) {
+    const to = textField("give-" + f.characterId, "Give " + f.name + " to (matchmaker nickname)", "", 80);
+    return changeForm(
+      [to],
+      "Give away",
+      () => to.input.value.trim() !== "",
+      () => window.confirm("Give " + f.name + " to " + to.input.value.trim() + "? It will be theirs, not yours.")
+        ? send(ownerUrl(f.characterId), { method: "PUT", body: JSON.stringify({ toNickname: to.input.value.trim() }) })
+        : Promise.resolve(null),
+      answer => f.name + " now belongs to " + answer.toNickname + "."
+    );
+  }
 
   document.getElementById("build-form").addEventListener("submit", async e => {
     e.preventDefault();
@@ -564,42 +776,28 @@ ${signIn.signInScript}
     const body = { name: nameInput.value.trim(), description: descriptionInput.value.trim() };
     traits.forEach(([key]) => { body[key] = value(inputs[key]); });
     document.getElementById("build-submit").disabled = true;
+    const asked = session;
     try {
-      const token = await freshIdToken();
-      const headers = Object.assign({ "content-type": "application/json" }, token ? { authorization: "Bearer " + token } : {});
-      const response = await fetch(buildUrl, { method: "POST", headers, body: JSON.stringify(body) });
+      const response = await send(buildUrl, { method: "POST", body: JSON.stringify(body) });
+      if (!response || asked !== session) return;
       const answer = await response.json().catch(() => ({}));
-      if (response.status === 401) {
-        if (token) clearSession();
-        render();
-        show(login ? "Sign in to build a fighter." : "Say who you are with ?as=<cognito sub>.");
-      } else if (!response.ok) {
-        show(answer.error || response.statusText);
-      } else {
-        built = answer;
-        render();
-        document.getElementById("built-text").textContent =
-          answer.name + " is ready. Back in matchmaker, choose “I’ve made one — check again”" +
-          " and offer or accept a bout with them.";
-        document.getElementById("built-heading").focus();
-      }
+      if (asked !== session) return;
+      if (!response.ok) { show(answer.error || response.statusText); return; }
+      reset();
+      await loadMine();
+      if (asked === session) announce(answer.name + " is built. Back in matchmaker, choose “I’ve made one — check again”" +
+        " and offer or accept a bout with them.");
     } catch (err) {
-      show("Could not reach the engine.");
+      if (asked === session) show("Could not reach the engine.");
     } finally {
       building = false;
       left();
     }
   });
 
-  document.getElementById("build-another").addEventListener("click", () => {
-    built = null;
-    reset();
-    render();
-    nameInput.focus();
-  });
-
   reset();
   render();
+  if (!login || isSignedIn()) loadMine();
 </script>
 </body>
 </html>

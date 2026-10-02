@@ -157,6 +157,22 @@ object Protocol {
       */
     case class RegisteredCharacter(characterId: Long)
 
+    /** What an engine sends matchmaker's `PUT /characters/{characterId}` when a player changes a character's name or
+      * description in it. `ownerExternalId` is who signed in to ask; matchmaker changes the character only if that
+      * player owns it, and answers a character they do not own as though there were none.
+      */
+    case class EditCharacterRequest(name: String, description: String, ownerExternalId: String)
+
+    /** What an engine sends matchmaker's `PUT /characters/{characterId}/owner` when a player gives a character to
+      * another, named by their matchmaker nickname. Checked against `ownerExternalId` as an edit is.
+      */
+    case class TransferCharacterRequest(toNickname: String, ownerExternalId: String)
+
+    /** One of a player's characters, as matchmaker's `GET /characters?owner=` lists them for the engine to show — the
+      * engine keeps no characters of its own. Matchmaker's answer carries more fields; these are the ones read.
+      */
+    case class OwnedCharacter(characterId: Long, name: String, description: String, state: String)
+
     given ReadWriter[EnginePlayer] = macroRW
     given ReadWriter[LiveTerms] = macroRW
     given ReadWriter[CreateGameRequest] = macroRW
@@ -172,4 +188,7 @@ object Protocol {
     given ReadWriter[UpdateStateRequest] = macroRW
     given ReadWriter[RegisterCharacterRequest] = macroRW
     given ReadWriter[RegisteredCharacter] = macroRW
+    given ReadWriter[EditCharacterRequest] = macroRW
+    given ReadWriter[TransferCharacterRequest] = macroRW
+    given ReadWriter[OwnedCharacter] = macroRW
 }

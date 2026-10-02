@@ -32,6 +32,23 @@ object Protocol {
     /** A fighter just built and registered: the character id matchmaker gave it, and what it was built as. */
     case class BuiltFighter(characterId: Long, name: String, fighter: FighterView)
 
+    /** One of the signed-in player's fighters, as the fighters page lists them. `fighter` is absent for a character
+      * whose state is not a fighter this engine could have built.
+      */
+    case class MyFighter(characterId: Long, name: String, description: String, fighter: Option[FighterView])
+
+    /** A fighter's new name and description, as the fighters page submits them. */
+    case class EditRequest(name: String, description: String)
+
+    /** A fighter edited. */
+    case class Edited(characterId: Long, name: String, description: String)
+
+    /** Who a fighter is given to, by matchmaker nickname, as the fighters page submits it. */
+    case class GiveRequest(toNickname: String)
+
+    /** A fighter given away. */
+    case class Given(characterId: Long, toNickname: String)
+
     /** The rules a build is checked against, so the page can say them rather than restate them. */
     case class BuildRules(budget: Int, min: Int, max: Int)
 
@@ -98,6 +115,11 @@ object Protocol {
     given ReadWriter[BuildRequest] = macroRW
     given ReadWriter[BuiltFighter] = macroRW
     given ReadWriter[BuildRules] = macroRW
+    given ReadWriter[MyFighter] = macroRW
+    given ReadWriter[EditRequest] = macroRW
+    given ReadWriter[Edited] = macroRW
+    given ReadWriter[GiveRequest] = macroRW
+    given ReadWriter[Given] = macroRW
     given ReadWriter[CornerView] = macroRW
     given ReadWriter[Numbers] = macroRW
     given ReadWriter[RoundView] = macroRW

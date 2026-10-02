@@ -184,7 +184,7 @@ object Json {
       * answered — only to record it. See `PlayerService.updateEmail`.
       */
     case class EmailRequest(email: String)
-    case class CharacterRequest(name: String, description: String, externalId: String)
+
     case class UpdateStateRequest(state: String)
 
     /** A character its game engine has made, as the engine tells matchmaker about it: `POST /characters`, in the game
@@ -194,6 +194,17 @@ object Json {
       * the character.
       */
     case class RegisterCharacterRequest(name: String, description: String, ownerExternalId: String, state: String)
+
+    /** A character's name and description, changed in its game engine: `PUT /characters/{characterId}`, the engine's
+      * call. The engine says which signed-in player asked, as `ownerExternalId`; matchmaker changes it only if that
+      * player owns it.
+      */
+    case class EditCharacterRequest(name: String, description: String, ownerExternalId: String)
+
+    /** A character handed by its owner to another player, in its game engine: `PUT /characters/{characterId}/owner`.
+      * `toNickname` is who it goes to; `ownerExternalId` is who asked, and must own it.
+      */
+    case class TransferCharacterRequest(toNickname: String, ownerExternalId: String)
 
     // characterId is present iff the challenge being accepted belongs to a 'C'-type game; the
     // service layer checks that correspondence rather than trusting the caller to get it right.
@@ -339,9 +350,10 @@ object Json {
     given ReadWriter[RegisterRequest] = macroRW
     given ReadWriter[NicknameRequest] = macroRW
     given ReadWriter[EmailRequest] = macroRW
-    given ReadWriter[CharacterRequest] = macroRW
     given ReadWriter[UpdateStateRequest] = macroRW
     given ReadWriter[RegisterCharacterRequest] = macroRW
+    given ReadWriter[EditCharacterRequest] = macroRW
+    given ReadWriter[TransferCharacterRequest] = macroRW
     given ReadWriter[AcceptRequest] = macroRW
     given ReadWriter[CreateChallenge] = macroRW
     given ReadWriter[PreferencesRequest] = macroRW

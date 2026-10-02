@@ -37,6 +37,12 @@ class PlayerRepo(session: Session[IO]) {
         sql"""SELECT player_id, nickname, is_admin, email FROM player WHERE external_id = $text FOR SHARE"""
             .query(playerId *: text *: bool *: text.opt)
 
+    /* By nickname, exactly as stored -- the column's own uniqueness, not the search's folding -- and
+     * held as the two above hold a player. */
+    private val selectPlayerByNicknameForShare: Query[String, (PlayerId, Boolean, String, Option[String])] =
+        sql"""SELECT player_id, is_admin, external_id, email FROM player WHERE nickname = $text FOR SHARE"""
+            .query(playerId *: bool *: text *: text.opt)
+
     /* FOR UPDATE, unlike the two above: for a caller modifying the player row itself rather than
      * referencing it. `PlayerService` reads the row to build the row it writes back, and two such
      * calls at once must queue rather than both diffing against the state before either wrote. */
@@ -96,6 +102,16 @@ class PlayerRepo(session: Session[IO]) {
         session
             .option(selectPlayerByExternalIdForShare)(externalId)
             .map(_.map { case (id, nickname, isAdmin, email) =>
+                Player(id, nickname, isAdmin, externalId, email)
+            })
+
+    /** The player with exactly this nickname, held against concurrent modification until the transaction ends — for
+      * naming the player a character is handed to, whom the write that follows references.
+      */
+    def readByNicknameForShare(nickname: String): IO[Option[Player]] =
+        session
+            .option(selectPlayerByNicknameForShare)(nickname)
+            .map(_.map { case (id, isAdmin, externalId, email) =>
                 Player(id, nickname, isAdmin, externalId, email)
             })
 

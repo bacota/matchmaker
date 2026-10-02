@@ -217,4 +217,30 @@ class ProtocolSpec extends FunSuite {
             """{"characterId":42,"gameId":3,"name":"Iron Mike","description":"a slugger","state":"{}","playerId":7}"""
         assertEquals(read[Protocol.RegisteredCharacter](answer).characterId, 42L)
     }
+
+    test("an engine's edits read as matchmaker's, and matchmaker's characters read as the engine's") {
+        val edit = Protocol.EditCharacterRequest("Kid Dynamite", "fast", "sub-1")
+        val editRead = read[Json.EditCharacterRequest](write(edit))(using Json.given_ReadWriter_EditCharacterRequest)
+        assertEquals((editRead.name, editRead.description, editRead.ownerExternalId), ("Kid Dynamite", "fast", "sub-1"))
+
+        val transfer = Protocol.TransferCharacterRequest("bob", "sub-1")
+        val transferRead =
+            read[Json.TransferCharacterRequest](write(transfer))(using Json.given_ReadWriter_TransferCharacterRequest)
+        assertEquals((transferRead.toNickname, transferRead.ownerExternalId), ("bob", "sub-1"))
+
+        // What GET /characters answers with is matchmaker's own Character JSON, written by its codecs.
+        val character = com.vivi.matchmaker.model.Character[String](
+          com.vivi.matchmaker.model.CharacterId(5L),
+          com.vivi.matchmaker.model.GameId(3),
+          "Iron Mike",
+          "a slugger",
+          """{"strength":9}""",
+          Some(com.vivi.matchmaker.model.PlayerId(7L))
+        )
+        val written = "[" + write(character)(using Json.given_ReadWriter_Character) + "]"
+        assertEquals(
+          read[List[Protocol.OwnedCharacter]](written),
+          List(Protocol.OwnedCharacter(5L, "Iron Mike", "a slugger", """{"strength":9}"""))
+        )
+    }
 }

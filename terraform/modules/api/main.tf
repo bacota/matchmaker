@@ -339,9 +339,8 @@ locals {
     # No route that creates a character: a character is made in its game engine, which tells
     # matchmaker about it with "POST /characters", among the engine's routes below.
 
-    "PUT /characters/{characterId}",
-    # Not "PUT /characters/{characterId}/state": that one is written by a game, not a player, and
-    # is among the engine routes below.
+    # No route that changes a character either: every edit — name, description, owner, state — is
+    # made in the character's game engine, and is among the engine's routes below.
 
     "POST /challenges",
     "DELETE /challenges/{gameId}/{challengeId}",
@@ -390,6 +389,12 @@ locals {
     # (CharacterService.create finds it by external_id). Characters are made in their engine — the
     # boxing engine builds fighters — not through matchmaker's UI.
     "POST /characters",
+    # And the rest of what the engine manages: a player's characters, listed for the engine to show
+    # (it keeps none of its own), and its edits of one — name and description, and owner — which
+    # matchmaker applies only for the player who owns it.
+    "GET /characters",
+    "PUT /characters/{characterId}",
+    "PUT /characters/{characterId}/owner",
   ]
 }
 

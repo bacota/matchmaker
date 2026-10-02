@@ -166,13 +166,6 @@ object Router {
                     withPlayerId(playerId)(player => ok(services.characters.namesFor(gid, player, caller)))
                 }
 
-            case ("PUT", "characters" :: characterId :: Nil) =>
-                withCharacterId(characterId) { id =>
-                    body[Json.CharacterRequest](request).flatMap { r =>
-                        ok(services.characters.update(id, r.name, r.description, r.externalId, caller))
-                    }
-                }
-
             // A character a game engine has made, reported so it can be challenged with and seated.
             // The engine's, not a player's: characters are made in their engine, and the game they are
             // in is the one the caller's identity names. Deployed, this is one of
@@ -180,6 +173,31 @@ object Router {
             case ("POST", "characters" :: Nil) =>
                 body[Json.RegisterCharacterRequest](request).flatMap { r =>
                     created(services.characters.create(r.name, r.description, r.ownerExternalId, r.state, caller))
+                }
+
+            // One player's characters in the calling engine's game, for the engine to show them: it
+            // keeps none of its own. The engine's, like the two below.
+            case ("GET", "characters" :: Nil) =>
+                request.query.get("owner").filter(_.nonEmpty) match {
+                    case None        => IO.pure(Errors.badRequest("say whose characters with ?owner="))
+                    case Some(owner) => ok(services.characters.listForOwner(owner, caller))
+                }
+
+            // A character edited in its game engine on behalf of the player who owns it: its name and
+            // description, and below, who owns it. Every edit of a character is its engine's; players
+            // only read characters here. Deployed, both are among `local.engine_routes`.
+            case ("PUT", "characters" :: characterId :: Nil) =>
+                withCharacterId(characterId) { id =>
+                    body[Json.EditCharacterRequest](request).flatMap(r =>
+                        ok(services.characters.edit(id, r.name, r.description, r.ownerExternalId, caller))
+                    )
+                }
+
+            case ("PUT", "characters" :: characterId :: "owner" :: Nil) =>
+                withCharacterId(characterId) { id =>
+                    body[Json.TransferCharacterRequest](request).flatMap(r =>
+                        ok(services.characters.transfer(id, r.toNickname, r.ownerExternalId, caller))
+                    )
                 }
 
             // Authorized on behalf of the game rather than a player: the caller is the game engine,

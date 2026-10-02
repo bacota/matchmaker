@@ -146,8 +146,8 @@ output "boxing_create_game_url" {
 }
 
 output "boxing_character_url" {
-  description = "What to record as the game's `character_url`: the page a player builds a fighter on. Empty when the engine is not deployed."
-  value       = var.deploy_boxing ? "${trimsuffix(one(module.boxing[*].api_endpoint), "/")}/fighters/new" : ""
+  description = "What to record as the game's `character_url`: the page a player builds and edits fighters on. Empty when the engine is not deployed."
+  value       = var.deploy_boxing ? "${trimsuffix(one(module.boxing[*].api_endpoint), "/")}/fighters" : ""
 }
 
 output "boxing_external_id" {
