@@ -7,7 +7,8 @@
 #   ./deploy-engine.sh boxing dev --full           # plan the whole configuration, not just the engine
 #   ./deploy-engine.sh rps dev --skip-build        # the jar must already exist
 #
-# deploy-rps.sh, deploy-tictactoe.sh and deploy-boxing.sh are this, with the engine named.
+# deploy-rps.sh, deploy-tictactoe.sh, deploy-boxing.sh and deploy-stratego.sh are this, with the
+# engine named.
 #
 # Separate from deploy.sh because an engine has a separate lifecycle: it is rebuilt and redeployed
 # far more often than matchmaker itself, and it touches neither the database nor the UI. Nothing
@@ -15,10 +16,11 @@
 # credentials. The engines are independent of each other too: they share nothing but the user pool
 # they authenticate players against.
 #
-# An engine's first deployment may need matchmaker to change as well — boxing's does: matchmaker
-# must hold the engine's API key, and its `PUT /characters/{characterId}/state` route must be an
-# engine route, which is how a built fighter is kept — and the targeted plan below leaves
-# matchmaker's function alone. Use ./deploy-all.sh for that, or --full here.
+# An engine's first deployment needs matchmaker to change as well — every engine's does, since
+# matchmaker must hold the engine's API key, and boxing's also needs its
+# `PUT /characters/{characterId}/state` route to be an engine route, which is how a built fighter
+# is kept — and the targeted plan below leaves matchmaker's function alone. Use ./deploy-all.sh
+# for that, or --full here.
 #
 # By default the plan is limited to the engine's own module plus the one resource outside it that
 # the engine changes: the Cognito app client, whose callback urls have to include the engine's
@@ -35,7 +37,7 @@ readonly TERRAFORM_DIR="terraform"
 
 usage() {
   cat >&2 <<EOF
-usage: $0 <rps|tictactoe|boxing> <dev|prod> [--yes] [--full] [--skip-build] [--skip-tests]
+usage: $0 <rps|tictactoe|boxing|stratego> <dev|prod> [--yes] [--full] [--skip-build] [--skip-tests]
 
   --yes         apply without asking for confirmation
   --full        plan the whole configuration instead of just the engine; needs
@@ -74,8 +76,14 @@ case "$engine" in
     prod_question="Deploy the boxing engine to prod?"
     game_name="Boxing"
     ;;
+  stratego)
+    title="stratego"
+    about="a game of hidden information with a simultaneous setup"
+    prod_question="Deploy the stratego engine to prod?"
+    game_name="Stratego"
+    ;;
   *)
-    echo "unknown engine '$engine'; expected rps, tictactoe or boxing" >&2
+    echo "unknown engine '$engine'; expected rps, tictactoe, boxing or stratego" >&2
     exit 2
     ;;
 esac

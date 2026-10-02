@@ -369,6 +369,21 @@ variable "boxing_jar_path" {
   default     = "../out/engines/boxing/assembly.dest/out.jar"
 }
 
+variable "deploy_stratego" {
+  description = <<-EOT
+    Deploy the bundled Stratego engine (modules/engine) alongside matchmaker, and wire the keys
+    between them. Independent of the other engines — any combination may be deployed.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "stratego_jar_path" {
+  description = "Path to the assembled stratego jar. Only read when deploy_stratego is true."
+  type        = string
+  default     = "../out/engines/stratego/assembly.dest/out.jar"
+}
+
 # ---------------------------------------------------------------------------
 # Mail
 # ---------------------------------------------------------------------------

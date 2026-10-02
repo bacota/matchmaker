@@ -359,4 +359,21 @@ object engines extends Module {
       def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
     }
   }
+
+  /** Two-player Stratego — classic rules, a 10x10 board and 40 pieces a side — implementing the same game API.
+    *
+    * The engine that exercises hidden information for a whole match rather than for one throw: what each player and
+    * the public board may see is decided per square, on every read. It also has two phases, a simultaneous setup and
+    * then alternating turns, so both shapes of pending list occur in one match.
+    *
+    * `mill -j 4 --ticker false engines.stratego.runMain com.vivi.stratego.LocalServer` runs it locally;
+    * `mill -j 4 --ticker false engines.stratego.assembly` builds the Lambda jar, whose handler is
+    * `com.vivi.stratego.Handler::handleRequest`.
+    */
+  object stratego extends EngineModule {
+    def moduleDeps = Seq(common)
+    object test extends EngineTests {
+      def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
+    }
+  }
 }

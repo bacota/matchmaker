@@ -23,8 +23,8 @@
 # is a separate apply and the shared Cognito app client is written once per engine. Use the
 # per-engine scripts when only an engine changed — they are much faster and touch far less.
 #
-# Which engines are deployed is not this script's decision. It is deploy_tictactoe, deploy_rps and
-# deploy_boxing in environments/<env>.settings.tfvars, the same flags terraform reads; an engine
+# Which engines are deployed is not this script's decision. It is deploy_tictactoe, deploy_rps,
+# deploy_boxing and deploy_stratego in environments/<env>.settings.tfvars, the same flags terraform reads; an engine
 # that is off there is skipped here, and said so.
 
 set -euo pipefail
@@ -38,6 +38,7 @@ readonly ENGINES=(
   "tictactoe:engines.tictactoe:out/engines/tictactoe/assembly.dest/out.jar:deploy_tictactoe"
   "rps:engines.rps:out/engines/rps/assembly.dest/out.jar:deploy_rps"
   "boxing:engines.boxing:out/engines/boxing/assembly.dest/out.jar:deploy_boxing"
+  "stratego:engines.stratego:out/engines/stratego/assembly.dest/out.jar:deploy_stratego"
 )
 
 usage() {

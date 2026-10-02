@@ -170,6 +170,37 @@ output "boxing_api_endpoint" {
   value       = one(module.boxing[*].api_endpoint)
 }
 
+# ---------------------------------------------------------------------------
+# Stratego engine
+# ---------------------------------------------------------------------------
+#
+# As above: empty strings when deploy_stratego is false, since deploy-stratego.sh reads these.
+
+output "stratego_create_game_url" {
+  description = "What to record as the game's `url` in matchmaker. Empty when the engine is not deployed."
+  value       = var.deploy_stratego ? one(module.stratego[*].create_game_url) : ""
+}
+
+output "stratego_external_id" {
+  description = <<-EOT
+    What to record as the game's `external_id`: the name matchmaker files this engine's API key
+    under, which is the identity it attributes the engine's callbacks to. Empty when the engine
+    is not deployed.
+  EOT
+  value       = var.deploy_stratego ? "stratego" : ""
+}
+
+output "stratego_api_key" {
+  description = "The secret matchmaker and the Stratego engine authenticate each other with. See rps_api_key."
+  value       = one(random_password.stratego_api_key[*].result)
+  sensitive   = true
+}
+
+output "stratego_api_endpoint" {
+  description = "Base url of the engine's API, whose /matches/<id>/play is where a player plays."
+  value       = one(module.stratego[*].api_endpoint)
+}
+
 output "mail_queue_url" {
   description = "The queue notifications are put on, when deploy_mail is on."
   value       = var.deploy_mail ? module.mail[0].queue_url : ""

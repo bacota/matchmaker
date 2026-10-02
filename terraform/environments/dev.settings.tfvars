@@ -33,8 +33,10 @@ advanced_security_mode = "OFF"
 refresh_token_validity_days = 30
 
 // The bundled engines. Independent of each other — tic-tac-toe is a game of alternating turns,
-// rps one where both players move at once, and boxing a character game played in rounds.
+// rps one where both players move at once, boxing a character game played in rounds, and stratego
+// a game of hidden information with a simultaneous setup.
 deploy_tictactoe = true
 deploy_rps       = true
 deploy_boxing    = true
+deploy_stratego  = true
 deploy_mail      = true
