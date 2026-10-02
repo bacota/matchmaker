@@ -499,6 +499,59 @@ label.field > .hint {
   margin-bottom: 0.5rem;
 }
 
+/* A checkbox with a "?" beside it that explains it (`withTip`). The tip opens below the row and is
+   pinned to its left edge, so on a phone it stays on the screen rather than running off the side of
+   it. It opens on hover where there is a mouse, on keyboard focus, and on a tap (`.open`), which is
+   the only one of the three a touch screen has. */
+.with-tip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+.card .with-tip > label:has(> input[type="checkbox"]) {
+  margin-bottom: 0;
+}
+.tip-toggle {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: help;
+}
+.tip-toggle:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -6px;
+  border-radius: 50%;
+}
+.tip {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  width: max-content;
+  max-width: min(22rem, calc(100vw - 2rem));
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: #1a1a1a;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+.tip.open,
+.tip-toggle:hover + .tip,
+.tip-toggle:focus-visible + .tip {
+  display: block;
+}
+
 .card label input[type="checkbox"] {
   margin: 0;
   flex: none;

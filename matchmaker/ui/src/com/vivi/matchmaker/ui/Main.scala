@@ -3080,6 +3080,33 @@ object Views {
     private def timeLimitDetail(challenge: Challenge): HtmlElement =
         timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind, challenge.timeLimitUnit, challenge.live)
 
+    /** A control with a tip beside it: a "?" button that shows `text` on hover, on keyboard focus, and on a tap, which
+      * is the only one of the three a phone has. The tip is the element `id` names, so the control can point
+      * `aria-describedby` at it and have it read out whether or not it is showing.
+      *
+      * A button rather than a `title`: a title never appears on a touch screen and is not reliably read out. Outside
+      * the label, because a tap on anything inside a label toggles its checkbox.
+      */
+    private def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement = {
+        val open = Var(false)
+        div(
+          cls := "with-tip",
+          control,
+          button(
+            tpe := "button",
+            cls := "tip-toggle",
+            aria.label := s"About $subject",
+            aria.expanded <-- open.signal,
+            aria.controls := id,
+            "?",
+            onClick --> (_ => open.update(!_)),
+            onBlur --> (_ => open.set(false)),
+            onKeyDown.filter(_.key == "Escape") --> (_ => open.set(false))
+          ),
+          span(idAttr := id, role := "tooltip", cls := "tip", cls.toggle("open") <-- open.signal, text)
+        )
+    }
+
     /** One of a game's parameters as a challenger picks it: `name` is the key it is stored and sent to the engine
       * under, `label` what the challenger is shown for it.
       */
@@ -3311,7 +3338,7 @@ object Views {
           // The number and the unit it is in, in one field: they are one answer, and a caption
           // over each would read as two questions.
           field(
-            "Time Limit",
+            "Time Limit (Leave blank for unlimited)",
             div(
               cls := "compound",
               input(
@@ -3329,7 +3356,6 @@ object Views {
               )
             )
           ),
-          p(cls := "detail", "Leave it blank for no time limit."),
           // Offered whatever the limit says, including blank: choosing the kind first and then
           // typing the number is at least as natural as the other order, and a kind with no limit
           // to apply it to simply does nothing.
@@ -3358,40 +3384,52 @@ object Views {
                 .combineWith(live.signal)
                 .map((raw, isLive) => limitProblem(raw, isLive).getOrElse(""))
           ),
-          // A real label with the box inside it, like Public and the auto-start box below; the hint is
-          // tied to it so that a reader hears what "live" commits the players to.
-          label(
-            input(
-              tpe := "checkbox",
-              aria.describedBy := "live-hint",
-              controlled(
-                checked <-- live.signal,
-                onClick.mapToChecked --> { on =>
-                    live.set(on)
-                    if (on) {
-                        // A live turn is usually seconds long. Only when nothing has been typed yet:
-                        // a number already there was typed in the unit beside it.
-                        if (timeLimit.now().trim.isEmpty) timeLimitUnit.set(TimeLimitUnit.Seconds)
-                    }
-                }
-              )
-            ),
-            "Live match"
-          ),
-          p(
-            idAttr := "live-hint",
-            cls := "detail",
-            "Played in real time: the game keeps the clock, and a player who runs out of time loses the match."
+          // A real label with the box inside it, like Public and the auto-start box below. The full
+          // description is a tip beside it, tied to the box so that a reader hears what "live"
+          // commits the players to.
+          withTip(
+            "live-tip",
+            "Live",
+            "Played in real time. The game engine runs the turns and keeps the clock itself, so the time " +
+                "limit is required. Each player's clock starts once they have opened the board, and a " +
+                "player who runs out of time loses the match."
+          )(
+            label(
+              input(
+                tpe := "checkbox",
+                aria.describedBy := "live-tip",
+                controlled(
+                  checked <-- live.signal,
+                  onClick.mapToChecked --> { on =>
+                      live.set(on)
+                      if (on) {
+                          // A live turn is usually seconds long. Only when nothing has been typed yet:
+                          // a number already there was typed in the unit beside it.
+                          if (timeLimit.now().trim.isEmpty) timeLimitUnit.set(TimeLimitUnit.Seconds)
+                      }
+                  }
+                )
+              ),
+              "Live"
+            )
           ),
           // Public means anyone may watch the match, which the game engine implements by issuing a
           // url that needs no sign-in. It is decided here because it is a property of the game being
           // offered, not of any one player's part in it.
-          label(
-            input(
-              tpe := "checkbox",
-              controlled(checked <-- isPublic.signal, onClick.mapToChecked --> isPublic)
-            ),
-            "Public"
+          withTip(
+            "public-tip",
+            "Public",
+            "Anyone may watch the match, without signing in, and it is listed among the public matches " +
+                "on each player's page. It does not change who may accept the challenge."
+          )(
+            label(
+              input(
+                tpe := "checkbox",
+                aria.describedBy := "public-tip",
+                controlled(checked <-- isPublic.signal, onClick.mapToChecked --> isPublic)
+              ),
+              "Public"
+            )
           ),
           // The same shape as the Public box above it: a box and a short caption, which is all
           // either of them needs.
