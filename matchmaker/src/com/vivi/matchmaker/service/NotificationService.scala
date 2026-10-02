@@ -12,8 +12,8 @@ import com.vivi.matchmaker.persistence.{NotificationRepo, PlayerRepo, Suppressio
   * not something another player, or an admin, has any business changing — so, like `AcceptanceService.mine`, most of
   * these take no player id and there is nothing to refuse.
   *
-  * The fourth level, a game's defaults, is not here: it belongs to the game's definition, is set by the admin who
-  * registers it, and travels with the rest of `Game` through `GameService`.
+  * There is no fourth level. A game used to carry defaults of its own for the chain to end at; since V30 it ends at
+  * "send it" (`NotificationLevels.unsaid`), the same for every game.
   *
   * The three read as a chain only when a seat is created: since V14 a seat carries its own eleven answers and nothing
   * reads past it, so changing a game's settings does not change a match already being played. What makes that sayable

@@ -452,7 +452,7 @@ object Account {
               p(
                 cls := "detail",
                 "Answers for a single game, which win over the ones above. " +
-                    "Anything left on \"Use Default\" falls back to them, and then to what the game itself asks for."
+                    "Anything left on \"Use Default\" falls back to them, and is sent if they leave it unsaid too."
               ),
               label(
                 cls := "field",
@@ -511,7 +511,8 @@ object Account {
           suppressionNotice(settings.suppressed),
           Notifications.form(
             "Notification Preferences",
-            "What we email you about, unless you say otherwise for a particular game or match.",
+            "What we email you about, unless you say otherwise for a particular game or match. " +
+                "Anything left on \"Use Default\" is sent.",
             overall,
             saveLabel = "Save notifications",
             cascades = Seq(allGames, allMatches),

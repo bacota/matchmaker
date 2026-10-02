@@ -269,15 +269,12 @@ class ChallengeNotificationSpec extends PropertySuite {
         }
     }
 
-    // The game is the end of the chain here as everywhere else.
-    property("a game that asks for silence about acceptances gets it") {
+    // The player's own settings are the whole chain here: there is no game level to fall through to.
+    property("a challenger who asks for silence about acceptances gets it") {
         forAll(genUniqueString) { seed =>
             val result = for {
                 f <- fixture(seed)
-                _ <- f.services.games.createOrUpdate(
-                  adminOf(f),
-                  f.game.copy(notifications = NotificationDefaults.all(false))
-                )
+                _ <- f.services.notifications.updateMine(f.challenger.externalId, silent)
                 _ <- IO(f.notifier.clear())
                 _ <- accept(f, f.second, 1)
             } yield f.notifier.messages.isEmpty
@@ -567,14 +564,12 @@ class ChallengeNotificationSpec extends PropertySuite {
         }
     }
 
-    property("a game that asks for silence about invitations gets it") {
+    property("players who ask for silence about invitations get it") {
         forAll(genUniqueString) { seed =>
             val result = for {
                 f <- fixture(seed)
-                _ <- f.services.games.createOrUpdate(
-                  adminOf(f),
-                  f.game.copy(notifications = NotificationDefaults.all(false))
-                )
+                _ <- f.services.notifications.updateMine(f.challenger.externalId, silent)
+                _ <- f.services.notifications.updateMine(f.second.externalId, silent)
                 _ <- IO(f.notifier.clear())
                 _ <- invite(f, f.second, Some(1))
                 afterInvite = f.notifier.messages.isEmpty
@@ -584,14 +579,7 @@ class ChallengeNotificationSpec extends PropertySuite {
         }
     }
 
-    private def adminOf(f: Fixture): String = {
-        val externalId = s"admin-${f.game.externalId}"
-        TestSession.resource
-            .use { session =>
-                val repo = new com.vivi.matchmaker.persistence.PlayerRepo(session)
-                repo.create(Player(PlayerId(0), s"admin-${f.game.externalId}", isAdmin = true, externalId, None))
-            }
-            .unsafeRunSync()
-        externalId
-    }
+    /** Every kind answered no. */
+    private val silent: NotificationPreferences =
+        NotificationType.values.foldLeft(NotificationPreferences.unset)(_.updated(_, Some(false)))
 }

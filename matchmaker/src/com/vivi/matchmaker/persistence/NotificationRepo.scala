@@ -20,12 +20,12 @@ import com.vivi.matchmaker.model._
   */
 case class Seat(participantId: ParticipantId, player: Player, preferences: SeatNotifications)
 
-/** A game as the notification path needs it: what to call it, and what it says its players should hear.
+/** A game as the notification path needs it: what to call it.
   *
   * Not a `Game`, which cannot be read without naming the type of its parameter values — and the services that send mail
-  * have no business naming that. These are the two facts about a game that writing to its players actually uses.
+  * have no business naming that. Its name is the one fact about a game that writing to its players actually uses.
   */
-case class GameNotice(gameId: GameId, name: String, notifications: NotificationDefaults)
+case class GameNotice(gameId: GameId, name: String)
 
 /** One acceptor of a challenge, with everything that bears on writing to them about it.
   *
@@ -33,8 +33,8 @@ case class GameNotice(gameId: GameId, name: String, notifications: NotificationD
   * and the address to send to, and a challenge's roster is small enough that fetching them with the preferences costs
   * one join rather than a query per recipient.
   *
-  * Two levels and the game's, which is all there is to ask: nobody is a participant in anything until the challenge is
-  * started, so the level that would otherwise answer does not exist yet.
+  * Two levels, which is all there is to ask: nobody is a participant in anything until the challenge is started, so the
+  * level that would otherwise answer does not exist yet.
   */
 case class AcceptorNotifications(player: Player, roleName: String, levels: NotificationLevels)
 
@@ -43,14 +43,13 @@ case class AcceptorNotifications(player: Player, roleName: String, levels: Notif
   * A repo of its own rather than eleven more columns on `PlayerRepo` and `ParticipantRepo`, for the same reason
   * `player.email` has exactly one writer: this is a concern that touches three tables and is read by two callers — the
   * settings screens and whatever is about to send a mail — while every other query against those tables is about
-  * playing the game and would be carrying eleven columns it never looks at. The game's own defaults are the exception
-  * and live on `Game`: they are part of what an admin registers, so they travel with the rest of the game's definition.
+  * playing the game and would be carrying eleven columns it never looks at.
   *
   * Nothing here decides who hears about what; that is a seat's own eleven columns, or
-  * [[com.vivi.matchmaker.model.NotificationLevels.resolve]] for an audience that has no seat yet. What this does hold
-  * is the two statements that carry a player's answers downwards when they ask for it — see `alignGamesWithPlayer` and
-  * `applyToMatches`, which resolve the same chain `resolve` describes, in SQL, because they resolve it for many rows at
-  * once.
+  * [[com.vivi.matchmaker.model.NotificationLevels]] for an audience that has no seat yet. What this does hold is the
+  * two statements that carry a player's answers downwards when they ask for it — see `alignGamesWithPlayer` and
+  * `applyToMatches`, which resolve the same chain `NotificationLevels.apply` describes, in SQL, because they resolve it
+  * for many rows at once.
   */
 class NotificationRepo(session: Session[IO]) {
     private val playerId = SkunkIdCodecs.playerId
@@ -59,7 +58,6 @@ class NotificationRepo(session: Session[IO]) {
     private val participantId = SkunkIdCodecs.participantId
     private val challengeId = SkunkIdCodecs.challengeId
     private val preferences = SkunkCodecs.notificationPreferences
-    private val defaults = SkunkCodecs.notificationDefaults
     private val seatAnswers = SkunkCodecs.seatNotifications
 
     private val selectPlayerPreferences: Query[PlayerId, NotificationPreferences] =
@@ -321,14 +319,10 @@ class NotificationRepo(session: Session[IO]) {
             update_date = now()
           FROM (
               SELECT g.game_id,
-                     COALESCE(pg.notify_match_started, pl.notify_match_started,
-                              g.notify_match_started) AS notify_match_started,
-                     COALESCE(pg.notify_turn_taken, pl.notify_turn_taken,
-                              g.notify_turn_taken) AS notify_turn_taken,
-                     COALESCE(pg.notify_your_turn, pl.notify_your_turn,
-                              g.notify_your_turn) AS notify_your_turn,
-                     COALESCE(pg.notify_match_ended, pl.notify_match_ended,
-                              g.notify_match_ended) AS notify_match_ended
+                     COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE) AS notify_match_started,
+                     COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE) AS notify_turn_taken,
+                     COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE) AS notify_your_turn,
+                     COALESCE(pg.notify_match_ended, pl.notify_match_ended, TRUE) AS notify_match_ended
               FROM player pl
                   CROSS JOIN game g
                   LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = g.game_id
@@ -363,18 +357,14 @@ class NotificationRepo(session: Session[IO]) {
 
     def gameExists(id: GameId): IO[Boolean] = session.option(selectGameExists)(id).map(_.isDefined)
 
-    /* A game's name and its notification defaults, for the same reason as above: the notification
-     * path needs a game, and `GameRepo` cannot be built without naming the type of its parameter
-     * values. */
+    /* A game's name, for the same reason as above: the notification path needs a game, and
+     * `GameRepo` cannot be built without naming the type of its parameter values. */
     private val selectGameNotice: Query[GameId, GameNotice] =
-        sql"""SELECT game_id, name,
-                 notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
-                 notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
-                 notify_your_turn, notify_match_ended
+        sql"""SELECT game_id, name
           FROM game
           WHERE game_id = $gameId"""
-            .query(gameId *: text *: SkunkCodecs.notificationDefaults)
-            .map { case (id, name, defaults) => GameNotice(id, name, defaults) }
+            .query(gameId *: text)
+            .map { case (id, name) => GameNotice(id, name) }
 
     /** What writing to a game's players needs to know about the game. */
     def gameNotice(id: GameId): IO[Option[GameNotice]] = session.option(selectGameNotice)(id)
@@ -496,23 +486,15 @@ class NotificationRepo(session: Session[IO]) {
     def applyToMatches(id: PlayerId, game: Option[GameId], changed: Set[NotificationType]): IO[Unit] =
         session.execute(restampParticipants)((changed, id, game)).void
 
-    /** Everyone who has accepted a challenge, with what each of them wants to hear about it.
-      *
-      * Takes the game's defaults rather than reading them, because the caller has the `Game` in hand — it needed it to
-      * compose the mail.
-      */
-    def levelsForChallenge(
-        gameId: GameId,
-        challengeId: ChallengeId,
-        defaults: NotificationDefaults
-    ): IO[List[AcceptorNotifications]] =
+    /** Everyone who has accepted a challenge, with what each of them wants to hear about it. */
+    def levelsForChallenge(gameId: GameId, challengeId: ChallengeId): IO[List[AcceptorNotifications]] =
         session
             .execute(selectLevelsForChallenge)((gameId, challengeId))
             .map(_.map { case (id, nickname, isAdmin, externalId, email, roleName, perGame, overall) =>
                 AcceptorNotifications(
                   Player(id, nickname, isAdmin, externalId, email),
                   roleName,
-                  NotificationLevels(playerGame = perGame, player = overall, game = defaults)
+                  NotificationLevels(playerGame = perGame, player = overall)
                 )
             })
 
@@ -546,18 +528,18 @@ class NotificationRepo(session: Session[IO]) {
             .query(preferences *: preferences)
             .contramap { case (player, game) => (game, player) }
 
-    /** The chain for one player in one game, ending at `defaults`.
+    /** The chain for one player in one game.
       *
       * For an event about a player who has not accepted anything -- an invitation made, or turned down -- where
-      * [[levelsForChallenge]] has no row to find them by. `NotificationLevels.unset` throughout if the player is gone,
-      * which resolves to the game's own answers: a notification is not the place to discover a missing row.
+      * [[levelsForChallenge]] has no row to find them by. both levels unset if the player is gone, which resolves to
+      * sending everything: a notification is not the place to discover a missing row.
       */
-    def levelsForPlayer(player: PlayerId, game: GameId, defaults: NotificationDefaults): IO[NotificationLevels] =
+    def levelsForPlayer(player: PlayerId, game: GameId): IO[NotificationLevels] =
         session
             .option(selectLevelsForPlayer)((player, game))
             .map {
-                case Some((playerGame, playerLevel)) => NotificationLevels(playerGame, playerLevel, defaults)
-                case None                            => NotificationLevels(game = defaults)
+                case Some((playerGame, playerLevel)) => NotificationLevels(playerGame, playerLevel)
+                case None                            => NotificationLevels()
             }
 
     def preferencesForMatch(gameId: GameId, matchId: MatchId): IO[List[Seat]] =
