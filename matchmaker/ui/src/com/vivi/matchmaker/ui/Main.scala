@@ -2053,14 +2053,17 @@ object Views {
       * to set — a game's roles are its seats, so adding one in [[roleEditor]] is how a game gets bigger. What edit
       * cannot do is delete a role.
       *
-      * Two fields are never shown. `externalId` is the game's own credential: kept as it is when editing, generated
-      * when creating, and in neither case something to type. `active` is not on this form at all, so editing preserves
-      * it and creating sets it true.
+      * `externalId` is asked for as the engine's identity: the name its API key is filed under in matchmaker's
+      * `ENGINE_API_KEYS`, which is how a callback from the engine is recognised as coming from this game. It cannot be
+      * generated — the key is configured where matchmaker is deployed, not here — so a game created with anything else
+      * could never hear from its engine. `active` is not on this form at all, so editing preserves it and creating sets
+      * it true.
       */
     private def gameForm(existing: Option[Game]): HtmlElement = {
         val name = Var(existing.map(_.name).getOrElse(""))
         val description = Var(existing.map(_.description).getOrElse(""))
         val url = Var(existing.map(_.url).getOrElse(""))
+        val engineIdentity = Var(existing.map(_.externalId).getOrElse(""))
         // Where a player makes a character: the engine's page, since characters are made there.
         val characterUrl = Var(existing.flatMap(_.characterUrl).getOrElse(""))
         // Plain by default: requiring characters is the additional commitment, so it is the box an
@@ -2083,6 +2086,22 @@ object Views {
           field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
           field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
           field("Game engine url", input(tpe := "url", controlled(value <-- url.signal, onInput.mapToValue --> url))),
+          label(
+            cls := "field",
+            "Engine identity",
+            // Inside the label, so that it is read out with the field: the name means nothing on its
+            // own, and getting it wrong fails nowhere near this form.
+            span(
+              cls := "detail hint",
+              "The name the engine's API key is filed under in matchmaker's ENGINE_API_KEYS, such as " +
+                  "\"boxing\". Moves, results and characters the engine reports are accepted only from that key."
+            ),
+            input(
+              autoComplete := "off",
+              spellCheck := false,
+              controlled(value <-- engineIdentity.signal, onInput.mapToValue --> engineIdentity)
+            )
+          ),
           label(
             "Requires characters ",
             input(
@@ -2118,7 +2137,9 @@ object Views {
           parameterEditor(parameters),
           busyButton(
             if (existing.isDefined) "Save Changes" else "Create Game",
-            disabledWhen = name.signal.map(_.trim.isEmpty)
+            disabledWhen = name.signal
+                .combineWith(engineIdentity.signal)
+                .map((n, identity) => n.trim.isEmpty || identity.trim.isEmpty)
           ) { busy =>
               val drafted = for {
                   roleModels <- rolesOf(roles.now())
@@ -2142,11 +2163,9 @@ object Views {
                         active = existing.map(_.active).getOrElse(true),
                         roles = roleModels,
                         parameters = parameterModels,
-                        // The game's own shared secret, used to authorize requests the game makes on its own
-                        // behalf. Generated rather than typed: it is a credential, and one an admin inventing
-                        // it by hand would invent badly. An edit keeps the one the game already has —
-                        // regenerating it would silently lock the game engine out.
-                        externalId = existing.map(_.externalId).getOrElse(Pkce.newSecret()),
+                        // Who the engine is: the name its API key is filed under, which is what a callback
+                        // from it is matched against.
+                        externalId = engineIdentity.now().trim,
                         timeoutAction = timeoutAction.now(),
                         characterUrl = Option
                             .when(gameType.now() == GameType.Character)(characterUrl.now().trim)
@@ -2158,6 +2177,7 @@ object Views {
                               name.set("")
                               description.set("")
                               url.set("")
+                              engineIdentity.set("")
                               characterUrl.set("")
                               roles.set(List(emptyRole))
                               parameters.set(Nil)
