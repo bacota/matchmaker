@@ -259,7 +259,7 @@ class GameEngineService[T](
                     _ <- IO.raiseUnless(unfilled.isEmpty)(
                       ValidationError(
                         s"challenge ${challengeId.value} cannot start until every role is filled; nobody is playing " +
-                            unfilled.map(_.name).mkString(", ")
+                            unfilled.map(_.displayName).mkString(", ")
                       )
                     )
                     newMatch = Match(

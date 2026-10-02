@@ -412,7 +412,7 @@ class ChallengeService[T](
         invite.gameRoleId.flatMap(roleNameOf(game, _))
 
     private def roleNameOf(game: Game, role: GameRoleId): Option[String] =
-        game.roles.find(_.gameRoleId == role).map(_.name)
+        game.roles.find(_.gameRoleId == role).map(_.displayName)
 
     /** Accepts `challengeId` in game `gameId`, authorized by `callerExternalId`. For a `'C'`-type game's challenge,
       * `characterId` must be `Some`, naming the character accepting on the caller's behalf, and is authorized the same

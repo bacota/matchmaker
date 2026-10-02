@@ -91,7 +91,7 @@ class CharacterInvitationRepo(session: Session[IO]) {
       )
     ] =
         sql"""SELECT i.game_id, i.challenge_id, i.character_id, c.name, i.game_role_id,
-                 g.name, g.game_type, challenger.nickname, ch.message, r.name, i.create_date
+                 g.name, g.game_type, challenger.nickname, ch.message, r.display_name, i.create_date
           FROM character_invitation i
           JOIN character c ON c.game_id = i.game_id AND c.character_id = i.character_id
           JOIN challenge ch ON ch.game_id = i.game_id AND ch.challenge_id = i.challenge_id

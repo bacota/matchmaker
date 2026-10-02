@@ -106,7 +106,15 @@ class GameServiceSpec extends PropertySuite {
             admin <- makeAdmin()
             base <- IO(Generators.genGameWithRole.sample.get)
             game = base.copy(
-              roles = Seq(GameRole(GameRoleId(0), GameId.unassigned, "  attacker  ", optional = false)),
+              roles = Seq(
+                GameRole(
+                  GameRoleId(0),
+                  GameId.unassigned,
+                  "  attacker  ",
+                  optional = false,
+                  displayName = "  attacker  "
+                )
+              ),
               parameters = Seq(
                 GameParameter[String](
                   GameId.unassigned,
@@ -135,8 +143,8 @@ class GameServiceSpec extends PropertySuite {
             base <- IO(Generators.genGameWithRole.sample.get)
             game = base.copy(roles =
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false),
-                  GameRole(GameRoleId(0), GameId.unassigned, "  attacker", optional = false)
+                  GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false, displayName = "attacker"),
+                  GameRole(GameRoleId(0), GameId.unassigned, "  attacker", optional = false, displayName = "  attacker")
                 )
             )
             attempt <- gameService.createOrUpdate(admin.externalId, game).attempt
@@ -213,6 +221,56 @@ class GameServiceSpec extends PropertySuite {
         assertEquals(result.unsafeRunSync(), Map("board_size" -> "Board size", "rounds" -> "rounds"))
     }
 
+    test("createOrUpdate stores a role's display name trimmed, and a blank one as the name") {
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGame().sample.get)
+            game = base.copy(roles =
+                Seq(
+                  GameRole(GameRoleId(0), GameId.unassigned, "red", optional = false, displayName = "  Red corner "),
+                  GameRole(GameRoleId(0), GameId.unassigned, "blue", optional = false, displayName = "   ")
+                )
+            )
+            created <- gameService.createOrUpdate(admin.externalId, game)
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+        } yield listed.get.roles.map(r => r.name -> r.displayName).toMap
+
+        assertEquals(result.unsafeRunSync(), Map("red" -> "Red corner", "blue" -> "blue"))
+    }
+
+    test("createOrUpdate changes an existing role's display name and keeps its id") {
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGameWithRole.sample.get)
+            created <- gameService.createOrUpdate(admin.externalId, base)
+            role = created.roles.head
+            _ <- gameService.createOrUpdate(
+              admin.externalId,
+              created.copy(roles = Seq(role.copy(displayName = "Renamed seat")))
+            )
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+        } yield (role, listed.get.roles)
+
+        val (before, after) = result.unsafeRunSync()
+        assertEquals(after, Seq(before.copy(displayName = "Renamed seat")))
+    }
+
+    test("createOrUpdate refuses two roles that would be shown under the same name") {
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGame().sample.get)
+            game = base.copy(roles =
+                Seq(
+                  GameRole(GameRoleId(0), GameId.unassigned, "red", optional = false, displayName = "Red"),
+                  GameRole(GameRoleId(0), GameId.unassigned, "Red", optional = false, displayName = "Red")
+                )
+            )
+            attempt <- gameService.createOrUpdate(admin.externalId, game).attempt
+        } yield attempt.left.exists(_.isInstanceOf[ValidationError])
+
+        assert(result.unsafeRunSync())
+    }
+
     // The names differ, so the engine could tell them apart; a player shown two pickers captioned
     // alike could not.
     test("createOrUpdate refuses two parameters that would be shown under the same name") {
@@ -282,7 +340,13 @@ class GameServiceSpec extends PropertySuite {
             created <- gameService.createOrUpdate(admin.externalId, base)
             // Unassigned marks it as new; every other role carries the id it already has.
             edited = created.copy(roles =
-                created.roles :+ GameRole(GameRoleId.unassigned, created.gameId, "added", optional = true)
+                created.roles :+ GameRole(
+                  GameRoleId.unassigned,
+                  created.gameId,
+                  "added",
+                  optional = true,
+                  displayName = "added"
+                )
             )
             updated <- gameService.createOrUpdate(admin.externalId, edited)
         } yield updated.roles.sizeIs == created.roles.size + 1 &&

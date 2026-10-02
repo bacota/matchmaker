@@ -131,9 +131,11 @@ class GameEngineServiceSpec extends PropertySuite {
                     // attacker is required, defender is not: a start waits for the first to be taken and
                     // never for the second, which is what lets these tests start a match with the
                     // challenger alone and still have a second role for a second player to accept as.
+                    // Each is shown as something other than its name, so that what reaches the engine
+                    // (the name) and what reaches a player (the display name) can be told apart.
                     Seq(
-                      GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false),
-                      GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = true)
+                      GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false, "Attacker side"),
+                      GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = true, "Defender side")
                     ),
                     parameters,
                     gameExternalId
@@ -200,7 +202,8 @@ class GameEngineServiceSpec extends PropertySuite {
                 request.isPublic &&
                 request.matchId == started.matchId.value &&
                 // The engine is told the participant ids it will quote back in its callbacks, the
-                // player's Cognito id, and the role they are playing.
+                // player's Cognito id, and the role they are playing -- by its name, not the display
+                // name players see.
                 request.players.map(_.participantId).toSet == participants.map(_.participantId.value).toSet &&
                 request.players.map(_.cognitoId) == List(externalId) &&
                 request.players.flatMap(_.role) == List("attacker") &&
@@ -267,6 +270,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
                 // The challenger takes 'defender', which is optional, leaving the required 'attacker'
                 // with nobody playing it — the only thing standing between this challenge and a match.
+                // The refusal is read by a player, so it names the seat the way they see it.
                 challenge <- services.challenges.create(
                   challengeFor(fixture) match {
                       case c: CharacterChallenge => c.copy(gameRoleId = fixture.game.roles(1).gameRoleId)
@@ -276,7 +280,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 )
                 attempt <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
             } yield attempt.left.exists {
-                case e: ValidationError => e.getMessage.contains("attacker")
+                case e: ValidationError => e.getMessage.contains("Attacker side")
                 case _                  => false
             }
             result.timeout(15.seconds).unsafeRunSync()

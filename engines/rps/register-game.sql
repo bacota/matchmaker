@@ -34,7 +34,7 @@ WITH game AS (
 -- O, neither side is anything in particular: both throw at the same time and neither moves first.
 -- The names exist because matchmaker seats a player by accepting *into* a role, and because the
 -- play page has to call the two seats something.
-INSERT INTO game_role (game_id, name, optional)
-SELECT game_id, role, false FROM game, (VALUES ('One'), ('Two')) AS roles(role);
+INSERT INTO game_role (game_id, name, optional, display_name)
+SELECT game_id, role, false, role FROM game, (VALUES ('One'), ('Two')) AS roles(role);
 
 SELECT game_id, name, url, external_id FROM game WHERE name = 'Rock-paper-scissors' ORDER BY game_id DESC LIMIT 1;

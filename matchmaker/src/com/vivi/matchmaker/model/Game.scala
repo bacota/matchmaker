@@ -21,11 +21,16 @@ case class GameParameter[T](
     displayName: String
 )
 
+/** A seat in a match. `name` is what the engine is told the seat is — the role it is sent with each player at a start.
+  * `displayName` is what a player is shown for it, wherever matchmaker itself names the seat. Often the two are the
+  * same, but both are always there.
+  */
 case class GameRole(
     gameRoleId: GameRoleId,
     gameId: GameId,
     name: String,
-    optional: Boolean
+    optional: Boolean,
+    displayName: String
 )
 
 /** Whether a game's challenges/acceptances/participants require an attached character. Mirrors the `game_type`

@@ -22,7 +22,7 @@ class JsonSpec extends FunSuite {
           "description",
           "url",
           active = true,
-          roles = Seq(GameRole(GameRoleId(2), GameId(1), "role", optional = false)),
+          roles = Seq(GameRole(GameRoleId(2), GameId(1), "role", optional = false, displayName = "role")),
           parameters = Seq(
             GameParameter[String](
               GameId(1),

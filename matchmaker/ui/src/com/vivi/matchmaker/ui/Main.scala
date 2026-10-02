@@ -1857,7 +1857,12 @@ object Views {
     /* A role draft carries the id of the role it edits, because that is what tells an edit from an
      * addition on the way back — and an existing role can never be removed, only renamed or made
      * optional. Parameters carry no id: they are replaced wholesale, and deleting one is allowed. */
-    private case class RoleDraft(gameRoleId: GameRoleId, name: Var[String], optional: Var[Boolean])
+    private case class RoleDraft(
+        gameRoleId: GameRoleId,
+        name: Var[String],
+        displayName: Var[String],
+        optional: Var[Boolean]
+    )
     private case class ParameterDraft(
         name: Var[String],
         displayName: Var[String],
@@ -1865,11 +1870,11 @@ object Views {
         default: Var[String]
     )
 
-    private def emptyRole: RoleDraft = RoleDraft(GameRoleId.unassigned, Var(""), Var(false))
+    private def emptyRole: RoleDraft = RoleDraft(GameRoleId.unassigned, Var(""), Var(""), Var(false))
     private def emptyParameter: ParameterDraft = ParameterDraft(Var(""), Var(""), Var(""), Var(""))
 
     private def draftOf(role: GameRole): RoleDraft =
-        RoleDraft(role.gameRoleId, Var(role.name), Var(role.optional))
+        RoleDraft(role.gameRoleId, Var(role.name), Var(role.displayName), Var(role.optional))
 
     private def draftOf(parameter: GameParameter[String]): ParameterDraft =
         ParameterDraft(
@@ -1893,7 +1898,8 @@ object Views {
             "Every seat in a match names a role, so a game needs at least one. An optional role is one " +
                 "a match does not wait to see filled before it can start. A role that already exists can " +
                 "be renamed but not removed — acceptances and played matches name it, so retire one by " +
-                "making it optional."
+                "making it optional. The name is what the engine is sent; the display name is what " +
+                "players see, and is the name if left blank."
           ),
           children <-- roles.signal.map(_.map { draft =>
               div(
@@ -1905,6 +1911,11 @@ object Views {
                   aria.label := "role name",
                   placeholder := "role name",
                   controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)
+                ),
+                input(
+                  aria.label := "role display name, what players see; left blank, the name",
+                  placeholder := "display name (blank: the name)",
+                  controlled(value <-- draft.displayName.signal, onInput.mapToValue --> draft.displayName)
                 ),
                 label(
                   input(
@@ -1983,7 +1994,12 @@ object Views {
       * trip — the server is still the one that decides, since nothing stops a request being made without this form.
       */
     private def rolesOf(drafts: List[RoleDraft]): Either[String, Seq[GameRole]] = {
-        val all = drafts.map(d => (d.gameRoleId, d.name.now().trim, d.optional.now()))
+        val all = drafts.map { d =>
+            val name = d.name.now().trim
+            // Left blank, a role is shown by its name -- the server does the same.
+            val displayName = Option(d.displayName.now().trim).filter(_.nonEmpty).getOrElse(name)
+            (d.gameRoleId, name, d.optional.now(), displayName)
+        }
         // A blank new row is one the admin added and did not fill in, and is dropped. A blank
         // existing row is a role whose name has been cleared -- dropping that would ask the server to
         // delete a role, which it refuses, so it is answered here as what it is.
@@ -1992,7 +2008,13 @@ object Views {
             Left("A role that already exists cannot be left without a name.")
         else if (named.isEmpty) Left("A game needs at least one role: every player accepting a challenge takes one.")
         else if (named.map(_._2).distinct.sizeIs != named.size) Left("Two roles cannot have the same name.")
-        else Right(named.map((id, name, optional) => GameRole(id, GameId.unassigned, name, optional)))
+        else if (named.map(_._4).distinct.sizeIs != named.size) Left("Two roles cannot be shown under the same name.")
+        else
+            Right(
+              named.map((id, name, optional, displayName) =>
+                  GameRole(id, GameId.unassigned, name, optional, displayName)
+              )
+            )
     }
 
     private def parametersOf(drafts: List[ParameterDraft]): Either[String, Seq[GameParameter[String]]] = {
@@ -2476,7 +2498,7 @@ object Views {
                       invited.map { invitation =>
                           val seat = invitation.seat
                               .flatMap(role => game.roles.find(_.gameRoleId == role))
-                              .fold("any seat that is free")(role => role.name)
+                              .fold("any seat that is free")(role => role.displayName)
 
                           li(
                             cls := "row",
@@ -2805,7 +2827,7 @@ object Views {
               // Always available, and the default: a role-less invitation holds
               // nothing, so any number of them can stand together.
               option(value := "", "any seat that is free"),
-              offerable.map(role => option(value := role.gameRoleId.value.toString, role.name))
+              offerable.map(role => option(value := role.gameRoleId.value.toString, role.displayName))
             )
           ),
           // Said rather than left to be inferred from a short list: a challenger
@@ -2959,7 +2981,7 @@ object Views {
               .fold(emptyNode)(i => div(cls := "detail", s"${i.characterName} was invited")),
           mySeat.flatMap(seat => game.roles.find(_.gameRoleId == seat)) match {
               case _ if noCharacterLeft => emptyNode
-              case Some(seat)           => div(cls := "detail", s"invited as ${seat.name}")
+              case Some(seat)           => div(cls := "detail", s"invited as ${seat.displayName}")
               case None                 => roleSelect(choices, role)
           },
           if (noCharacterLeft)
@@ -3163,7 +3185,7 @@ object Views {
                   selected.set(raw.toIntOption.map(GameRoleId.apply).filter(id => choices.exists(_.gameRoleId == id)))
               },
               value <-- selected.signal.map(_.map(_.value.toString).getOrElse("")),
-              choices.map(r => option(value := r.gameRoleId.value.toString, r.name))
+              choices.map(r => option(value := r.gameRoleId.value.toString, r.displayName))
             )
 
     /** The form that offers a challenge, and — when `invitee` is set — invites one player to it in the same request.
@@ -3275,7 +3297,7 @@ object Views {
                     children <-- role.signal.map(mine =>
                         game.roles
                             .filterNot(r => mine.contains(r.gameRoleId))
-                            .map(r => option(value := r.gameRoleId.value.toString, r.name))
+                            .map(r => option(value := r.gameRoleId.value.toString, r.displayName))
                     )
                   )
                 )

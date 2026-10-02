@@ -17,8 +17,8 @@ class GameRepoSpec extends PropertySuite {
         val values = Seq("a", "b", "c").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
         base.copy(
           roles = Seq(
-            GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false),
-            GameRole(GameRoleId(0), GameId.unassigned, "second", optional = true)
+            GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false, displayName = "first"),
+            GameRole(GameRoleId(0), GameId.unassigned, "second", optional = true, displayName = "second")
           ),
           parameters = Seq(
             GameParameter(GameId.unassigned, GameParameterId(0), "parameter", Some("a"), values, "Parameter")

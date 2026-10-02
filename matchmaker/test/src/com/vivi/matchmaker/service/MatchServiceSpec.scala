@@ -74,7 +74,7 @@ class MatchServiceSpec extends PropertySuite {
                 "url",
                 active = true,
                 // One role, because every participant names one.
-                Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false)),
+                Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false, displayName = "only")),
                 Seq.empty,
                 genUniqueString.sample.get
               )

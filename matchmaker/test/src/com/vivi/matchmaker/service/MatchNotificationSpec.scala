@@ -49,8 +49,8 @@ class MatchNotificationSpec extends PropertySuite {
                 "https://engine.example.com/games",
                 active = true,
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false),
-                  GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = false)
+                  GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false, displayName = "attacker"),
+                  GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = false, displayName = "defender")
                 ),
                 Seq.empty,
                 s"game-$seed",
