@@ -197,6 +197,28 @@ resource "aws_lambda_function" "engine" {
   memory_size = var.lambda_memory_mb
   timeout     = var.lambda_timeout_s
 
+  /* SnapStart, as on matchmaker's api function and with the same two conditions.
+   *
+   * - It applies to published versions only, so `publish` is on and both gateways invoke the
+   *   alias below rather than the function: an unqualified invoke reaches $LATEST, which has no
+   *   snapshot.
+   * - Nothing per-execution-environment may be captured. Each `Handler` builds its routes behind a
+   *   lazy val, after any restore, and the DynamoDB signer asks the SDK's credential provider at
+   *   every signature rather than reading the execution role's keys from the environment once --
+   *   see `AwsCredentials.provider` in engines/common, and the api function's comment for what
+   *   happened when matchmaker did the latter.
+   */
+  dynamic "snap_start" {
+    for_each = var.lambda_snap_start ? [1] : []
+    content {
+      apply_on = "PublishedVersions"
+    }
+  }
+
+  # Unconditional, as on the api function, so that toggling lambda_snap_start does not also
+  # rearrange how the gateways reach the function.
+  publish = true
+
   # Not in a VPC: the engine reaches DynamoDB and matchmaker's public API, both over the
   # internet. Attaching it to one would add ENI setup to every cold start for nothing.
 
@@ -240,6 +262,21 @@ resource "aws_lambda_function" "engine" {
   depends_on = [aws_cloudwatch_log_group.lambda]
 }
 
+/* The alias both gateways invoke, always pointing at the version this apply published.
+ *
+ * Named "current" rather than "live", which is what the api function's alias is called, because
+ * "live" already means Play Live in this module.
+ *
+ * Publishing with SnapStart on is not instant -- AWS runs the init phase and snapshots it before
+ * the version is usable -- so an apply that changes the jar waits here for a minute or two.
+ */
+resource "aws_lambda_alias" "current" {
+  name             = "current"
+  description      = "Version currently serving the engine's HTTP and Play Live APIs."
+  function_name    = aws_lambda_function.engine.function_name
+  function_version = aws_lambda_function.engine.version
+}
+
 # ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------
@@ -255,7 +292,7 @@ resource "aws_apigatewayv2_api" "engine" {
 resource "aws_apigatewayv2_integration" "lambda" {
   api_id                 = aws_apigatewayv2_api.engine.id
   integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.engine.invoke_arn
+  integration_uri        = aws_lambda_alias.current.invoke_arn
   payload_format_version = "2.0"
 }
 
@@ -350,6 +387,10 @@ resource "aws_lambda_permission" "api_gateway" {
   function_name = aws_lambda_function.engine.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.engine.execution_arn}/*/*"
+
+  # Scoped to the alias the integration invokes. A permission on the unqualified function does
+  # not authorize a qualified invoke, and every request would come back 500.
+  qualifier = aws_lambda_alias.current.name
 }
 
 # ---------------------------------------------------------------------------
@@ -416,7 +457,7 @@ resource "aws_apigatewayv2_integration" "live" {
   api_id             = aws_apigatewayv2_api.live.id
   integration_type   = "AWS_PROXY"
   integration_method = "POST"
-  integration_uri    = aws_lambda_function.engine.invoke_arn
+  integration_uri    = aws_lambda_alias.current.invoke_arn
 }
 
 resource "aws_apigatewayv2_route" "live" {
@@ -464,4 +505,7 @@ resource "aws_lambda_permission" "live" {
   function_name = aws_lambda_function.engine.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.live.execution_arn}/*"
+
+  # As above: the Play Live integration invokes the alias too.
+  qualifier = aws_lambda_alias.current.name
 }

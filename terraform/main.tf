@@ -257,6 +257,7 @@ module "tictactoe" {
   cognito_client_id = module.api.user_pool_client_id
   hosted_login_url  = module.api.hosted_login_url
 
+  lambda_snap_start  = var.lambda_snap_start
   log_retention_days = var.log_retention_days
 }
 
@@ -291,6 +292,7 @@ module "rps" {
   cognito_client_id = module.api.user_pool_client_id
   hosted_login_url  = module.api.hosted_login_url
 
+  lambda_snap_start  = var.lambda_snap_start
   log_retention_days = var.log_retention_days
 }
 
@@ -334,6 +336,7 @@ module "boxing" {
   cognito_client_id = module.api.user_pool_client_id
   hosted_login_url  = module.api.hosted_login_url
 
+  lambda_snap_start  = var.lambda_snap_start
   log_retention_days = var.log_retention_days
 }
 
@@ -365,5 +368,6 @@ module "stratego" {
   cognito_client_id = module.api.user_pool_client_id
   hosted_login_url  = module.api.hosted_login_url
 
+  lambda_snap_start  = var.lambda_snap_start
   log_retention_days = var.log_retention_days
 }

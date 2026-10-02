@@ -268,6 +268,10 @@ object engines extends Module {
       // Signs the engine's calls to DynamoDB, and only those — its callbacks to matchmaker carry
       // a shared API key instead. The signer only: a DynamoDB client would bring Netty with it.
       mvn"software.amazon.awssdk:http-auth-aws:2.31.78",
+      // The credential chain the signer is handed: the one source of credentials that survives a
+      // SnapStart restore. No HTTP client comes with it; the container endpoint is asked over the
+      // JDK's own.
+      mvn"software.amazon.awssdk:auth:2.31.78",
       mvn"org.slf4j:slf4j-nop:1.7.36"
     )
 

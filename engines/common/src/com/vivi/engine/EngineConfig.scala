@@ -45,7 +45,7 @@ object EngineConfig {
     def matchStore[M <: HasMatchId: ReadWriter](env: String => Option[String]): MatchStore[M] =
         env("MATCH_TABLE") match {
             case Some(table) =>
-                DynamoDbMatchStore[M](SignedHttp(AwsCredentials.fromEnvironment(env), region(env)), table, region(env))
+                DynamoDbMatchStore[M](SignedHttp(AwsCredentials.provider(env), region(env)), table, region(env))
             // Fine for the local server, whose process outlives its matches, and wrong for Lambda,
             // where the next invocation may be a different container — hence the table.
             case None => InMemoryMatchStore[M]()
@@ -130,7 +130,7 @@ object EngineConfig {
         env("LIVE_URL").map(_.trim).filter(_.nonEmpty).map { url =>
             def required(name: String) =
                 env(name).getOrElse(throw IllegalStateException(s"LIVE_URL is set but $name is not"))
-            val http = SignedHttp(AwsCredentials.fromEnvironment(env), region(env))
+            val http = SignedHttp(AwsCredentials.provider(env), region(env))
             Live(
               url,
               liveAuth(env, baseUrl),
@@ -138,7 +138,7 @@ object EngineConfig {
               // A push that has not landed in two seconds is not going to be worth waiting for: the
               // page checks for itself within the minute. See `Live`'s deadline.
               ApiGatewayChannel(
-                SignedHttp(AwsCredentials.fromEnvironment(env), region(env), timeout = Duration.ofSeconds(2)),
+                SignedHttp(AwsCredentials.provider(env), region(env), timeout = Duration.ofSeconds(2)),
                 required("LIVE_ENDPOINT")
               )
             )
