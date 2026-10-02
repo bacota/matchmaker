@@ -1784,12 +1784,23 @@ object Views {
                         gameChallenges(game),
                         gameHistory(game)
                       )
+              },
+          // The edit dialog, outside the screen drawn above it: that is rebuilt whenever the game is emitted again --
+          // a refresh, or the answer to a save made from an earlier opening -- and a dialog inside it would be rebuilt
+          // with it, losing whatever was being typed. Built once per opening, from the game as it was when opened.
+          child <-- Store.editingGame.signal
+              .combineWith(Store.game(gameId))
+              .map {
+                  case (Some(editing), Some(game)) if editing == gameId => Some(game)
+                  case _                                                => None
               }
+              .distinctBy(_.map(_.gameId))
+              .map(_.fold(emptyNode)(editGameDialog))
         )
     }
 
-    /** The admin's edit form for a game, opened as a dialog from a link on the game's own screen, as the challenge form
-      * is. Nothing for anyone else: the server answers a non-admin with a 403, so the link is not there to press.
+    /** The link to the admin's edit form for a game, which opens as a dialog, as the challenge form does. Nothing for
+      * anyone else: the server answers a non-admin with a 403, so the link is not there to press.
       */
     private def editGamePanel(game: Game): HtmlElement =
         div(
@@ -1804,10 +1815,8 @@ object Views {
                       onMountCallback(context => editGameTrigger = Some(context.thisNode.ref)),
                       onUnmountCallback(_ => editGameTrigger = None),
                       onClick --> (_ => Store.editingGame.set(Some(game.gameId)))
-                    ),
-                    // Keyed on the game so that the form is rebuilt when a different game is opened:
-                    // its fields are initialised from `game` once, not bound to it.
-                    if (editing.contains(game.gameId)) editGameDialog(game) else emptyNode
+                    )
+                    // The dialog it opens is drawn by `gamePage`, which outlasts this.
                   )
               case _ => emptyNode
           }
@@ -3323,9 +3332,11 @@ object Views {
             onMouseEnter --> (_ => dismissed.set(false)),
             onBlur --> (_ => open.set(false)),
             // A tip that is showing takes the Escape that hides it, so a dialog the tip is in stays open. Showing by
-            // `open`, or by the CSS, which shows it for keyboard focus and hover without telling `open`.
+            // `open`, or by the CSS, which shows it for keyboard focus and hover without telling `open` -- and a
+            // hovered tip's Escape comes from wherever focus is, not from this button. So it is heard on the document,
+            // while capturing, which is before anything on the way to that focus can hear it.
             inContext(node =>
-                onKeyDown
+                documentEvents(_.onKeyDown.useCapture)
                     .filter(event =>
                         event.key == "Escape" && !dismissed.now() &&
                             (open.now() || node.ref.matches(":focus-visible") || node.ref.matches(":hover"))
