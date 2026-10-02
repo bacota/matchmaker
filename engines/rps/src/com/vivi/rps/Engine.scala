@@ -83,7 +83,8 @@ class Engine(
                 thrown = m.hasThrown(s),
                 shape = Option.when(over)(m.throwOf(s).map(_.shape.toString)).flatten
               )
-          )
+          ),
+          clock = core.clockView(m)
         )
     }
 }

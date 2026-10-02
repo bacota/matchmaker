@@ -153,7 +153,8 @@ class GameEngineServiceSpec extends PropertySuite {
         timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
         timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
         start: Option[Instant] = None,
-        settings: String = "{}"
+        settings: String = "{}",
+        live: Boolean = false
     ): Challenge =
         CharacterChallenge(
           ChallengeId(0),
@@ -167,7 +168,8 @@ class GameEngineServiceSpec extends PropertySuite {
           isPublic = isPublic,
           gameRoleId = fixture.game.roles.head.gameRoleId,
           timeLimitKind = timeLimitKind,
-          timeLimitUnit = timeLimitUnit
+          timeLimitUnit = timeLimitUnit,
+          live = live
         )
 
     private def participantsOf(m: Match): IO[List[Participant]] =
@@ -2027,6 +2029,115 @@ class GameEngineServiceSpec extends PropertySuite {
                 started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
                 participants <- participantsOf(started)
             } yield started.playUrl.contains("https://engine/play/1") && participants.forall(!_.pending)
+            result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    private def liveChallenge(fixture: Fixture): Challenge =
+        challengeFor(
+          fixture,
+          timeLimit = Some(Duration.ofSeconds(30)),
+          timeLimitUnit = TimeLimitUnit.Seconds,
+          live = true
+        )
+
+    property("a live challenge starts a live match, and the engine is told so with the turn timeout") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val engine = StubEngine()
+            val services = TestServices.servicesWith(engine, callbackBaseUrl = Some("https://matchmaker.example.com"))
+            val result = for {
+                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                challenge <- services.challenges.create(liveChallenge(fixture), externalId)
+                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                reread <- matchOf(fixture.game.gameId, started.matchId)
+            } yield {
+                val request = engine.lastRequest.get
+                challenge.live && started.live && reread.exists(_.live) &&
+                request.live.contains(LiveTerms(30L)) &&
+                // Still sent: the engine sends no moves to it, but boxing finds matchmaker by it.
+                request.moveCallbackUrl.isDefined && request.resultsCallbackUrl.isDefined
+            }
+            result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a match that is not live does not tell the engine it is") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val engine = StubEngine()
+            val services = TestServices.servicesWith(engine)
+            val result = for {
+                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                challenge <- services.challenges.create(
+                  challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(10))),
+                  externalId
+                )
+                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+            } yield !started.live && engine.lastRequest.exists(_.live.isEmpty)
+            result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a live challenge needs a per-turn time limit") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val services = TestServices.servicesWith(StubEngine())
+            val result = for {
+                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                noLimit <- services.challenges.create(challengeFor(fixture, live = true), externalId).attempt
+                total <- services.challenges
+                    .create(
+                      challengeFor(
+                        fixture,
+                        timeLimit = Some(Duration.ofMinutes(10)),
+                        timeLimitKind = TimeLimitKind.Total,
+                        live = true
+                      ),
+                      externalId
+                    )
+                    .attempt
+            } yield noLimit.left.exists(_.isInstanceOf[ValidationError]) &&
+                total.left.exists(_.isInstanceOf[ValidationError])
+            result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    // The engine runs a live match's turns and says nothing about them, so a seat matchmaker marked
+    // pending would stay pending -- and on the "waiting on you" list -- for the rest of the match.
+    property("matchmaker keeps no turn of a live match, and enforces no clock on it") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            // Names the first seat as the one to move, which an ordinary match would record.
+            val engine = new FirstTurnEngine
+            val services = TestServices.servicesWith(engine)
+            val result = for {
+                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                challenge <- services.challenges.create(liveChallenge(fixture), externalId)
+                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                participants <- participantsOf(started)
+                due <- services.matches.due(externalId)
+                active <- services.matches.active(externalId)
+            } yield !refreshed.completed &&
+                participants.forall(p => !p.pending && p.due.isEmpty) &&
+                due.isEmpty &&
+                active.find(_.matchId == started.matchId).exists(_.live)
+            result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a live match the engine ends by forfeit is recorded as a forfeit") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val services = TestServices.servicesWith(StubEngine())
+            val result = for {
+                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                challenge <- services.challenges.create(liveChallenge(fixture), externalId)
+                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                participants <- participantsOf(started)
+                seat = participants.head.participantId
+                reported = ReportedResult(seat, rank = 2, scores = Map.empty, isWinner = false, forfeit = true)
+                _ <- services.engine.recordResults(fixture.game.gameId, started.matchId, List(reported), gameExternalId)
+                results <- resultsOf(started)
+                reread <- matchOf(fixture.game.gameId, started.matchId)
+            } yield results.exists(r => r.participantId == seat && r.forfeit && !r.isWinner) &&
+                reread.exists(_.completed)
             result.timeout(15.seconds).unsafeRunSync()
         }
     }

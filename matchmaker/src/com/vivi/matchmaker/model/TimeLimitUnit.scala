@@ -12,6 +12,9 @@ import java.time.Duration
   * (an API caller's 90 seconds) is displayed as what it is instead; see the UI's `Format.duration`.
   */
 enum TimeLimitUnit(val code: String, val label: String, val perUnit: Duration) {
+
+    /** What a live match's turns are measured in (V27). */
+    case Seconds extends TimeLimitUnit("SECONDS", "seconds", Duration.ofSeconds(1))
     case Minutes extends TimeLimitUnit("MINUTES", "minutes", Duration.ofMinutes(1))
     case Hours extends TimeLimitUnit("HOURS", "hours", Duration.ofHours(1))
     case Days extends TimeLimitUnit("DAYS", "days", Duration.ofDays(1))

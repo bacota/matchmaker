@@ -23,8 +23,16 @@ case class SeatClock(participantId: ParticipantId, since: Instant)
   */
 case class MoveState(sequence: Long, pending: List[SeatClock])
 
-/** One participant's outcome as the game engine reports it at the end of a match. */
-case class ReportedResult(participantId: ParticipantId, rank: Int, scores: Map[String, Any], isWinner: Boolean)
+/** One participant's outcome as the game engine reports it at the end of a match. `forfeit` is a live match the engine
+  * ended because a turn ran out — the engine's own forfeit, recorded as matchmaker records its own.
+  */
+case class ReportedResult(
+    participantId: ParticipantId,
+    rank: Int,
+    scores: Map[String, Any],
+    isWinner: Boolean,
+    forfeit: Boolean = false
+)
 
 /** The four exchanges between matchmaker and a game engine, as described in `interaction-design.txt`:
   *
@@ -269,7 +277,8 @@ class GameEngineService[T](
                       timeLimitKind = challenge.timeLimitKind,
                       timeLimitUnit = challenge.timeLimitUnit,
                       settings = challenge.settings,
-                      isPublic = challenge.isPublic
+                      isPublic = challenge.isPublic,
+                      live = challenge.live
                     )
                     saved <- matchRepo.create(newMatch)
                     // Under the lock taken above, so the next start of this challenge sees the claim.
@@ -306,6 +315,9 @@ class GameEngineService[T](
             // Best effort, and deliberately last: the match exists and the start has already
             // succeeded, so failing to read the first turn is not a reason to fail the call. It
             // leaves exactly the state this used to leave always, which `refresh` still corrects.
+            //
+            // A live match's seats are not written from the answer -- see `applyEngineStatus` -- so
+            // for one of those this only notices a match that is somehow over already.
             _ <- applyEngineStatus(session, gameId, matchId, response.statusUrl).attempt
 
             // Last, and best effort for the same reason as the status call above: the match exists
@@ -386,7 +398,11 @@ class GameEngineService[T](
                                          * Either way the answer's turns are recorded above, since they were really
                                          * taken, and nothing else of it is written. */
                                         applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
-                                        seatsCurrent = !current.completed &&
+                                        // And a live match's seats are never written at all: its turns are
+                                        // the engine's to run, nothing tells matchmaker when they change,
+                                        // and a seat marked pending here would stay pending -- and due --
+                                        // long after the engine had moved on. Only its ending is news.
+                                        seatsCurrent = !current.completed && !current.live &&
                                             status.sequence.forall(seq => applied.forall(_ <= seq))
                                         _ <- status.sequence.filter(_ => seatsCurrent).traverse_ { seq =>
                                             matchRepo.advanceMoveSequence(gameId, matchId, seq)
@@ -582,7 +598,10 @@ class GameEngineService[T](
                         // Read under the match's row lock, taken above, which every writer of this
                         // column holds: nothing can apply a later move between this read and the writes.
                         applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
-                        current = state.forall(st => applied.forall(_ < st.sequence))
+                        // A live match's engine sends no move callbacks, so one arriving is an engine that
+                        // does not know the match is live. Its turn is recorded, since the time was spent,
+                        // and its seats are left as `applyEngineStatus` leaves them: never pending.
+                        current = !existing.live && state.forall(st => applied.forall(_ < st.sequence))
                         _ <- (state, current) match {
                             case (_, false) => IO.unit
                             case (Some(st), true) =>
@@ -703,7 +722,9 @@ class GameEngineService[T](
                                         )
                                     )
                                     _ <- results.traverse(r =>
-                                        resultRepo.create(Result(gameId, r.participantId, r.rank, r.scores, r.isWinner))
+                                        resultRepo.create(
+                                          Result(gameId, r.participantId, r.rank, r.scores, r.isWinner, r.forfeit)
+                                        )
                                     )
                                     // Guarded by the `existing.completed` check above, under the lock, so this
                                     // stamps the match once — with the database's clock, not the lambda's.
@@ -715,9 +736,10 @@ class GameEngineService[T](
                     // Before the mail, so that anything it says about the match is said of every turn.
                     // Only for an engine that did not send its turns: one that did had them recorded above.
                     val reconciled = if (ended && turns.isEmpty) recoverTurns(session, played) else IO.unit
-                    // Everyone in it, because nobody in it did this: the engine finished the game.
-                    reconciled *> (if (ended) notifications.matchEnded(session, played, MatchEnding.Finished)
-                                   else IO.unit)
+                    // Everyone in it, because nobody in it did this: the engine finished the game -- or,
+                    // in a live match, ended it on a clock, which is told as a forfeit is.
+                    val ending = if (results.exists(_.forfeit)) MatchEnding.Forfeited else MatchEnding.Finished
+                    reconciled *> (if (ended) notifications.matchEnded(session, played, ending) else IO.unit)
                 }
         }
 
@@ -846,7 +868,8 @@ class GameEngineService[T](
       * somebody's match on evidence matchmaker could not confirm.
       *
       * A match with no time limit has no deadline to miss, and one already over has nothing left to decide — both are
-      * returned untouched without a query.
+      * returned untouched without a query. Nor does a live match: its clock is the engine's, which ends the match
+      * itself and reports the forfeit as its result.
       */
     private def enforceTimeouts(
         session: skunk.Session[IO],
@@ -855,7 +878,7 @@ class GameEngineService[T](
         current: Match,
         recheck: Boolean = true
     ): IO[Match] =
-        if (current.completed || current.cancelled || current.timeLimit.isEmpty) IO.pure(current)
+        if (current.completed || current.cancelled || current.timeLimit.isEmpty || current.live) IO.pure(current)
         else
             overdueIn(session, gameId, matchId).flatMap {
                 case Nil => IO.pure(current)
@@ -995,6 +1018,10 @@ class GameEngineService[T](
           settings = challenge.settings,
           timeLimitSeconds = challenge.timeLimit.map(_.getSeconds),
           players = players,
+          // The limit again, as the turn timeout the engine itself enforces. A live challenge always has
+          // one, per turn (V27); `filter` rather than `get` so that a row that somehow has none starts
+          // an ordinary match rather than failing the start.
+          live = challenge.timeLimit.filter(_ => challenge.live).map(limit => LiveTerms(limit.getSeconds)),
           moveCallbackUrl =
               callbackBaseUrl.map(base => s"$base/games/${game.gameId.value}/matches/${matchId.value}/moves"),
           resultsCallbackUrl =

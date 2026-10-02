@@ -30,6 +30,9 @@ object Protocol {
         characterState: Option[String]
     )
 
+    /** `live` makes the match a live one: see [[LiveTerms]]. Absent from a matchmaker that predates live matches, and
+      * for every match that is not one.
+      */
     case class CreateGameRequest(
         matchId: String,
         gameName: String,
@@ -39,8 +42,18 @@ object Protocol {
         timeLimitSeconds: Option[Long],
         players: List[EnginePlayer],
         moveCallbackUrl: Option[String],
-        resultsCallbackUrl: Option[String]
+        resultsCallbackUrl: Option[String],
+        live: Option[LiveTerms] = None
     )
+
+    /** The terms of a live match, which the engine keeps rather than matchmaker.
+      *
+      * In a live match the engine runs the turns and their clock itself: it sends no move callbacks, and when a turn
+      * runs out it ends the match by forfeit and reports the result. Matchmaker hears about the match when it is over,
+      * and not before. `turnTimeoutSeconds` is how long each turn may take, and is required — a live match is one
+      * played against a clock.
+      */
+    case class LiveTerms(turnTimeoutSeconds: Long)
 
     case class CreateGameResponse(statusUrl: String, playUrl: String, publicUrl: Option[String])
 
@@ -101,8 +114,19 @@ object Protocol {
 
     case class PendingSeat(participantId: Long, since: Instant)
 
-    /** Step 3. `scores` is an open map — matchmaker stores whatever the game puts there. */
-    case class ResultEntry(participantId: Long, rank: Int, scores: Map[String, ujson.Value], isWinner: Boolean)
+    /** Step 3. `scores` is an open map — matchmaker stores whatever the game puts there.
+      *
+      * `forfeit` says the match was ended by a turn's clock rather than by play, which only happens in a live match: it
+      * is on every seat's entry, as matchmaker's own forfeits are, and `isWinner` tells "won by forfeit" from
+      * "forfeited".
+      */
+    case class ResultEntry(
+        participantId: Long,
+        rank: Int,
+        scores: Map[String, ujson.Value],
+        isWinner: Boolean,
+        forfeit: Boolean = false
+    )
 
     /** `turns` is every turn of the match, in the same shape as a status answer's. Matchmaker records them in the
       * transaction that completes the match, so a turn whose move callback was lost is not lost with it — once a match
@@ -117,6 +141,7 @@ object Protocol {
     case class UpdateStateRequest(state: String)
 
     given ReadWriter[EnginePlayer] = macroRW
+    given ReadWriter[LiveTerms] = macroRW
     given ReadWriter[CreateGameRequest] = macroRW
     given ReadWriter[CreateGameResponse] = macroRW
     given ReadWriter[EngineParticipantStatus] = macroRW

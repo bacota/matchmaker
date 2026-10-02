@@ -2,7 +2,7 @@ package com.vivi.tictactoe
 
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
-import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnLike}
+import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
 
 /** One player's seat in a match.
   *
@@ -25,6 +25,8 @@ case class TurnRecord(participantId: Long, takenAt: Instant, startedAt: Instant)
   * The callback urls are stored per match rather than configured once because matchmaker sends them with the game: they
   * carry its game id and match id, and an engine serving several matchmaker installations would get different bases for
   * each.
+  *
+  * `clock` is a live match's turn clock, and `None` for every other match.
   */
 case class TicTacToeMatch(
     matchId: String,
@@ -39,7 +41,9 @@ case class TicTacToeMatch(
     resultsCallbackUrl: Option[String],
     // Defaulted so a match stored before turns were recorded still reads back: it simply has
     // none, and matchmaker charges nothing for the moves made before this existed.
-    turns: List[TurnRecord] = Nil
+    turns: List[TurnRecord] = Nil,
+    // Defaulted for the same reason: a match stored before live matches existed is not one.
+    clock: Option[TurnClock] = None
 ) extends MatchLike {
 
     def seatOf(mark: Mark): Option[Seat] = seats.find(_.mark == mark)
@@ -47,14 +51,21 @@ case class TicTacToeMatch(
     /** The seat belonging to a signed-in player, if they have one in this match. */
     def seatFor(cognitoId: String): Option[Seat] = seats.find(_.cognitoId == cognitoId)
 
-    def winner: Option[Mark] = board.winner
+    /** Whoever has three in a row — or, in a live match the clock ended, whoever did not run out. */
+    def winner: Option[Mark] =
+        if (ranOut)
+            seats.find(s => clock.flatMap(_.outcomeOf(s.participantId)).contains(Outcome.Win)).map(_.mark)
+        else board.winner
 
-    /** A finished match is one that is won or has no empty cell left. Kept derived rather than stored so a board and a
-      * completion flag cannot disagree.
+    /** A finished match is one that is won or has no empty cell left, or one whose clock ran out. Kept derived rather
+      * than stored so a board and a completion flag cannot disagree.
       */
-    def isOver: Boolean = winner.isDefined || board.isFull
+    def isOver: Boolean = ranOut || winner.isDefined || board.isFull
 
-    def isDraw: Boolean = winner.isEmpty && board.isFull
+    def isDraw: Boolean = !ranOut && winner.isEmpty && board.isFull
+
+    /** Whether a live match's clock ended this one. */
+    def ranOut: Boolean = clock.exists(_.ranOut)
 
     /** How many marks a seat has placed — the one thing worth scoring in a game this small, and enough to show that an
       * open `scores` map survives the round trip into matchmaker.
@@ -108,7 +119,15 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
     def sequence(m: TicTacToeMatch): Long = m.board.moveCount.toLong
 
     def outcome(m: TicTacToeMatch, seat: Seat): Outcome =
-        if (m.winner.contains(seat.mark)) Outcome.Win else if (m.isDraw) Outcome.Draw else Outcome.Loss
+        m.clock
+            .flatMap(_.outcomeOf(seat.participantId))
+            .getOrElse(
+              if (m.winner.contains(seat.mark)) Outcome.Win else if (m.isDraw) Outcome.Draw else Outcome.Loss
+            )
+
+    def clock(m: TicTacToeMatch): Option[TurnClock] = m.clock
+
+    def withClock(m: TicTacToeMatch, clock: TurnClock): TicTacToeMatch = m.copy(clock = Some(clock))
 
     /** `moves` is how many marks the seat placed. */
     def scores(m: TicTacToeMatch, seat: Seat): Map[String, ujson.Value] =

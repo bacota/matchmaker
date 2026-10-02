@@ -37,7 +37,7 @@ object Json {
     /** Likewise: 'PER_TURN' or 'TOTAL'. */
     given ReadWriter[TimeLimitKind] = readwriter[String].bimap(_.code, TimeLimitKind.fromCode)
 
-    /** And 'MINUTES' / 'HOURS' / 'DAYS'. */
+    /** And 'SECONDS' / 'MINUTES' / 'HOURS' / 'DAYS'. */
     given ReadWriter[TimeLimitUnit] = readwriter[String].bimap(_.code, TimeLimitUnit.fromCode)
 
     given ReadWriter[Instant] = readwriter[String].bimap(_.toString, Instant.parse)
@@ -278,8 +278,17 @@ object Json {
 
     /** One participant's outcome. `scores` is an open map because what a game scores on is the game's business: it is
       * stored as-is in `result.scores`.
+      *
+      * `forfeit` is a live match the engine ended because a turn ran out, and is recorded as matchmaker's own forfeits
+      * are. Defaulted, so an engine that predates live matches is read as it always was.
       */
-    case class ResultEntry(participantId: ParticipantId, rank: Int, scores: Map[String, ujson.Value], isWinner: Boolean)
+    case class ResultEntry(
+        participantId: ParticipantId,
+        rank: Int,
+        scores: Map[String, ujson.Value],
+        isWinner: Boolean,
+        forfeit: Boolean = false
+    )
 
     /** `turns` is every turn the match had, from an engine that sends them: what lets matchmaker complete the match and
       * record its turns in one transaction. A move callback is best-effort, and a turn whose callback was lost is

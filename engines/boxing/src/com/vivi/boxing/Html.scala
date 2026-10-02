@@ -1,7 +1,7 @@
 package com.vivi.boxing
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, PlayLive, SignIn}
+import com.vivi.engine.{LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -85,6 +85,7 @@ object Html {
   tfoot td, tfoot th { font-weight: 700; border-bottom: 0; }
 ${SignIn.css}
 ${PlayLive.css}
+${TurnTimer.css}
   #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
 </style>
 </head>
@@ -95,16 +96,7 @@ ${PlayLive.css}
        did, so what happened is announced rather than left to be found. -->
   <p id="status" role="status" aria-live="polite">${escape(heading(state))}</p>
   <p id="round"></p>
-
-  <section id="build" hidden aria-labelledby="build-heading">
-    <form id="build-form" novalidate>
-      <h2 id="build-heading">Build your fighter</h2>
-      <p id="build-intro"></p>
-      <div id="build-fields"></div>
-      <p id="build-left" class="left" aria-live="polite"></p>
-      <button type="submit" class="primary" id="build-submit">Build fighter</button>
-    </form>
-  </section>
+  ${TurnTimer.markup}
 
   <section id="plan" hidden aria-labelledby="plan-heading">
     <form id="plan-form" novalidate>
@@ -128,6 +120,7 @@ ${PlayLive.css}
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
+${TurnTimer.script}
 
   const publicView = $publicView;
   // Urls are derived from this page's own, not built from a base: behind API Gateway the path
@@ -138,7 +131,6 @@ ${playLive.script(liveUrl, matchId)}
   const query = location.search;
   const stateUrl = (publicView ? here + "/board/state" : here + "/state") + query;
   const movesUrl = here + "/moves" + query;
-  const fighterUrl = here + "/fighter" + query;
 
   let state = ${state.map(s => scriptSafe(write(s))).getOrElse("null")};
   // Set by a 403: signed in, but not to a corner of this bout. See `send`.
@@ -157,7 +149,7 @@ ${playLive.script(liveUrl, matchId)}
     ["power", "Power", "Beats defense for a telling blow, defense plus chin for a knockdown."]
   ];
 
-  /* Built once and then only shown, hidden and relabelled: the page polls, and rebuilding a form
+  /* Built once and then only shown, hidden and relabelled: the page polls, and rebuilding the form
    * on every poll would throw away what the player was typing and move their focus. */
   function fields(box, prefix, rows) {
     const inputs = {};
@@ -175,17 +167,16 @@ ${playLive.script(liveUrl, matchId)}
     return inputs;
   }
 
-  const buildInputs = fields(document.getElementById("build-fields"), "b-", traits);
   const planInputs = fields(document.getElementById("plan-fields"), "p-", aims);
   const value = input => { const n = parseInt(input.value, 10); return isNaN(n) ? 0 : n; };
 
   // Every round starts from an even split, so the form is valid as it stands and a player who
   // only wants to lean one way changes one or two numbers rather than typing three.
   let planPrefilledFor = null;
-  let buildPrefilled = false;
 
   const signin = document.getElementById("signin");
   renderSignIn();
+  const showClock = turnClock(refresh);
 
   function mine() {
     return state && state.you ? state.corners.find(c => c.side === state.you) : null;
@@ -194,32 +185,14 @@ ${playLive.script(liveUrl, matchId)}
   function render() {
     const corner = mine();
     const live = !!(state && !state.completed);
-    const needsBuild = !!(corner && !corner.fighter && live);
     const canPlan = !!(corner && corner.fighter && live && !state.yourPlan);
 
     document.getElementById("status").textContent = describe();
+    showClock(state && state.clock, corner ? corner.participantId : null);
     document.getElementById("round").textContent = state
       ? (state.completed ? "Scheduled for " + state.scheduledRounds + " rounds"
                          : "Round " + state.round + " of " + state.scheduledRounds)
       : "";
-
-    const build = document.getElementById("build");
-    build.hidden = !needsBuild;
-    if (needsBuild) {
-      const rules = state.buildRules;
-      document.getElementById("build-intro").textContent =
-        "This is your fighter's first bout. Spread " + rules.budget + " points over five characteristics, each from " +
-        rules.min + " to " + rules.max + ". A fighter is built once and keeps these for every bout.";
-      Object.values(buildInputs).forEach(i => { i.min = rules.min; i.max = rules.max; });
-      if (!buildPrefilled) {
-        const even = Math.floor(rules.budget / traits.length);
-        traits.forEach(([key], i) => {
-          buildInputs[key].value = even + (i < rules.budget - even * traits.length ? 1 : 0);
-        });
-        buildPrefilled = true;
-      }
-      buildLeft();
-    }
 
     const plan = document.getElementById("plan");
     plan.hidden = !canPlan;
@@ -250,20 +223,6 @@ ${playLive.script(liveUrl, matchId)}
     renderCard();
   }
 
-  function buildLeft() {
-    if (!state) return;
-    const rules = state.buildRules;
-    const spent = traits.reduce((sum, [key]) => sum + value(buildInputs[key]), 0);
-    const outOfRange = traits.some(([key]) => value(buildInputs[key]) < rules.min || value(buildInputs[key]) > rules.max);
-    const left = rules.budget - spent;
-    const line = document.getElementById("build-left");
-    line.textContent = outOfRange
-      ? "Each characteristic must be from " + rules.min + " to " + rules.max + "."
-      : left === 0 ? "All " + rules.budget + " points spent." : left > 0 ? left + " points left to spend." : -left + " points too many.";
-    line.classList.toggle("off", outOfRange || left !== 0);
-    document.getElementById("build-submit").disabled = outOfRange || left !== 0;
-  }
-
   function planLeft() {
     const corner = mine();
     if (!corner || !corner.fighter) return;
@@ -285,15 +244,7 @@ ${playLive.script(liveUrl, matchId)}
       ", knocked down by more than " + (defense + f.chin) + ", knocked out by more than " + (defense + 3 * f.chin) + ".";
   }
 
-  Object.values(buildInputs).forEach(i => i.addEventListener("input", buildLeft));
   Object.values(planInputs).forEach(i => i.addEventListener("input", planLeft));
-
-  document.getElementById("build-form").addEventListener("submit", async e => {
-    e.preventDefault();
-    const body = {};
-    traits.forEach(([key]) => { body[key] = value(buildInputs[key]); });
-    await submit(fighterUrl, body, document.getElementById("build-submit"));
-  });
 
   document.getElementById("plan-form").addEventListener("submit", async e => {
     e.preventDefault();
@@ -311,8 +262,8 @@ ${playLive.script(liveUrl, matchId)}
     box.innerHTML = state.corners.map(c => {
       const stats = c.fighter
         ? "<dl>" + traits.map(([key, label]) => "<dt>" + label + "</dt><dd>" + c.fighter[key] + "</dd>").join("") + "</dl>"
-        : "<p>Fighter not built yet.</p>";
-      const doing = state.completed ? "" : c.planned ? "Round planned." : c.fighter ? "Planning…" : "Building…";
+        : "";
+      const doing = state.completed ? "" : c.planned ? "Round planned." : "Planning…";
       return '<div class="corner ' + escapeHtml(c.side) + '"><h3>' + escapeHtml(cornerName(c.side)) + "</h3>" +
         "<p>" + c.points + " points" + (doing ? " · " + doing : "") + "</p>" + stats +
         '<p class="who">' + escapeHtml(c.cognitoId) + "</p></div>";
@@ -343,13 +294,17 @@ ${playLive.script(liveUrl, matchId)}
   function describe() {
     if (!state) return login ? "sign in to fight" : "not your bout";
     if (state.completed) {
+      if (state.method === "forfeit") {
+        const late = state.corners.filter(c => state.clock && state.clock.timedOut.includes(c.participantId)).map(c => c.side);
+        if (!state.you) return late.join(" and ") + " ran out of time";
+        return late.includes(state.you) ? "your time ran out — you lose" : "their time ran out — you win";
+      }
       if (state.draw) return "a draw on points";
       const how = state.method === "knockout" ? " by knockout" : " on points";
       if (!state.you) return state.winner + " wins" + how;
       return (state.winner === state.you ? "you win" : "you lose") + how;
     }
     const corner = mine();
-    if (corner && !corner.fighter) return "build your fighter";
     if (corner && !state.yourPlan) return "plan round " + state.round;
     return "waiting for " + state.waitingFor.join(" and ");
   }
@@ -441,7 +396,8 @@ ${playLive.script(liveUrl, matchId)}
     /* The heading as first served, before any script runs; `describe()` in the page says the same thing. */
     private def heading(state: Option[Protocol.StateResponse]): String =
         state match {
-            case None => "sign in to fight"
+            case None                                                   => "sign in to fight"
+            case Some(s) if s.completed && s.method.contains("forfeit") => "time ran out"
             case Some(s) if s.completed =>
                 val how = if (s.method.contains("knockout")) " by knockout" else " on points"
                 if (s.draw) "a draw on points"
@@ -451,8 +407,7 @@ ${playLive.script(liveUrl, matchId)}
                     }
             case Some(s) =>
                 val mine = s.you.flatMap(you => s.corners.find(_.side == you))
-                if (mine.exists(_.fighter.isEmpty)) "build your fighter"
-                else if (mine.isDefined && s.yourPlan.isEmpty) s"plan round ${s.round}"
+                if (mine.isDefined && s.yourPlan.isEmpty) s"plan round ${s.round}"
                 else s"waiting for ${s.waitingFor.mkString(" and ")}"
         }
 }

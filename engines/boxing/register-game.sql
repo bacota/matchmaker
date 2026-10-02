@@ -23,9 +23,9 @@ BEGIN;
 
 INSERT INTO game (game_type, name, description, url, active, external_id)
 VALUES (
-  -- 'C' — a character game: every corner is a character, which this game calls a fighter. A
-  -- player creates their fighter in matchmaker and builds its characteristics on the engine's page
-  -- at its first bout; the engine writes them back as the character's state.
+  -- 'C' — a character game: every corner is a character, which this game calls a fighter. Its
+  -- characteristics are the character's state, and a bout refuses a character that is not yet a
+  -- built fighter: building one is not part of a bout.
   'C',
   'Boxing',
   'Two fighters trade punches over 3 to 25 rounds. Build a fighter from strength, speed, agility, '

@@ -1,6 +1,7 @@
 package com.vivi.boxing
 
 import upickle.default.{ReadWriter, macroRW}
+import com.vivi.engine.ClockView
 
 /** This engine's messages: matchmaker's wire format, which is the same for every engine and is stated once in
   * [[com.vivi.engine.Protocol]], and the play API between the engine and its own play page, which is this game's.
@@ -17,11 +18,8 @@ object Protocol {
     /** A round plan as the play page submits it. Whose it is comes from who signed in, not from the body. */
     case class PlanRequest(offense: Int, defense: Int, power: Int)
 
-    /** A fighter as the build form submits it. */
-    case class BuildRequest(strength: Int, speed: Int, agility: Int, workrate: Int, chin: Int)
-
-    /** The limits the build form enforces, sent with the state so the page and the engine cannot disagree. */
-    case class BuildRules(budget: Int, min: Int, max: Int)
+    /** A fighter's characteristics, as a corner shows them. */
+    case class FighterView(strength: Int, speed: Int, agility: Int, workrate: Int, chin: Int)
 
     /** The state the play page renders, and what a scripted client polls.
       *
@@ -30,6 +28,8 @@ object Protocol {
       * resolves, and then it is in `rounds` for everyone.
       *
       * `waitingFor` is who has yet to plan the current round, by corner — plural, and empty once the bout is over.
+      *
+      * `clock` is a live bout's turn clock, and absent from any other.
       */
     case class StateResponse(
         matchId: String,
@@ -41,11 +41,11 @@ object Protocol {
         completed: Boolean,
         winner: Option[String],
         draw: Boolean,
-        /** "knockout" or "points", once the bout is over. */
+        /** "knockout", "points" or "forfeit", once the bout is over. */
         method: Option[String],
-        buildRules: BuildRules,
         corners: List[CornerView],
-        rounds: List[RoundView]
+        rounds: List[RoundView],
+        clock: Option[ClockView] = None
     )
 
     /** One corner as a viewer may see it. `fighter` is the fighter's characteristics once built — public, as a
@@ -56,7 +56,7 @@ object Protocol {
         cognitoId: String,
         participantId: Long,
         characterId: Long,
-        fighter: Option[BuildRequest],
+        fighter: Option[FighterView],
         planned: Boolean,
         points: Int
     )
@@ -77,8 +77,7 @@ object Protocol {
     )
 
     given ReadWriter[PlanRequest] = macroRW
-    given ReadWriter[BuildRequest] = macroRW
-    given ReadWriter[BuildRules] = macroRW
+    given ReadWriter[FighterView] = macroRW
     given ReadWriter[CornerView] = macroRW
     given ReadWriter[Numbers] = macroRW
     given ReadWriter[RoundView] = macroRW

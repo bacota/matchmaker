@@ -63,6 +63,15 @@ sealed trait Challenge {
       * same — and a closed one may be re-opened without anybody's invitation being touched.
       */
     def isOpen: Boolean
+
+    /** Whether the match this becomes is played live (V27): its turns, and the clock on each, are the game engine's to
+      * run, and matchmaker hears from the engine only when the match is over.
+      *
+      * The challenger's choice, like the time limit it depends on — a live challenge must have one, and it is per turn,
+      * since it is what the engine is told each turn may take. A total budget is a chess clock matchmaker keeps over
+      * the turns it is told about, and in a live match it is told about none.
+      */
+    def live: Boolean
 }
 
 case class PlainChallenge(
@@ -78,7 +87,8 @@ case class PlainChallenge(
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
     autoStart: Boolean = false,
-    isOpen: Boolean = true
+    isOpen: Boolean = true,
+    live: Boolean = false
 ) extends Challenge
 
 case class CharacterChallenge(
@@ -95,7 +105,8 @@ case class CharacterChallenge(
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
     autoStart: Boolean = false,
-    isOpen: Boolean = true
+    isOpen: Boolean = true,
+    live: Boolean = false
 ) extends Challenge
 
 /** An open challenge together with how many players have accepted it so far.

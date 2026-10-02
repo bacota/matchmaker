@@ -395,7 +395,8 @@ object Router {
                               entry.participantId,
                               entry.rank,
                               entry.scores.view.mapValues(JsonValues.toScala).toMap,
-                              entry.isWinner
+                              entry.isWinner,
+                              entry.forfeit
                             )
                         )
                         val turns = r.turns.map(

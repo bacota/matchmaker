@@ -96,14 +96,36 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
         response
     }
 
-    /* Every player route that changes a match is a POST on it, and only a success changed anything.
-     * Told after the change is committed, as matchmaker's callbacks are; `Live.changed` swallows its
-     * own failures, since the move it reports already stands. */
+    /* Every player route that changes a match is a POST on it, and only a success changed anything --
+     * or a 409, which is a move refused because its turn had run out, and which recorded the forfeit
+     * in its place (`Refusal.TimedOut`). The other 409, a write that lost a race too many times, changed
+     * nothing, and costs its watchers one needless fetch. Told after the change is committed, as
+     * matchmaker's callbacks are; `Live.changed` swallows its own failures, since the move it reports
+     * already stands. */
     private def pushIfChanged(request: EngineRequest, response: EngineResponse): Unit =
         (request.method.toUpperCase, request.segments) match {
-            case ("POST", "matches" :: matchId :: _ :: _) if response.status / 100 == 2 =>
+            case ("POST", "matches" :: matchId :: _ :: _) if response.status / 100 == 2 || response.status == 409 =>
                 live.foreach(_.changed(matchId))
             case _ => ()
+        }
+
+    /** The match as it stands now — and, if this read is what found that a live match's turn had run out, every watcher
+      * told so. A read changing a match is what a live match's clock costs: nothing else runs to end it. See
+      * [[GameEngine.current]].
+      */
+    protected def currentMatch(matchId: String): Either[Refusal, M] =
+        engine.current(matchId).map { settled =>
+            if (settled.changed) live.foreach(_.changed(matchId))
+            settled.state
+        }
+
+    /** The match once `seat` has been seen to open its board — which, in a live match, is when that player's clock may
+      * start — with every watcher told if this is the first time.
+      */
+    private def openedBy(m: M, seat: S): Either[Refusal, M] =
+        engine.opened(m.matchId, seat).map { settled =>
+            if (settled.changed) live.foreach(_.changed(m.matchId))
+            settled.state
         }
 
     private def route(request: EngineRequest): EngineResponse =
@@ -132,7 +154,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                 parseSince(request) match {
                     case Left(why) => error(400, why)
                     case Right(since) =>
-                        engine.status(matchId, since) match {
+                        currentMatch(matchId).map(engine.statusOf(_, since)) match {
                             case Left(refusal) => error(refusal)
                             case Right(status) => EngineResponse(200, write(status))
                         }
@@ -147,16 +169,24 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
              * matchmaker gets a bare 401 with nowhere to sign in.
              */
             case ("GET", "matches" :: matchId :: "play" :: Nil) =>
-                engine.read(matchId) match {
+                currentMatch(matchId) match {
                     case Left(refusal) => error(refusal)
-                    case Right(m) =>
-                        val seat = playAuth.callerOf(request).toOption.flatMap(engine.seatOf(m, _).toOption)
+                    case Right(found) =>
+                        val seat = playAuth.callerOf(request).toOption.flatMap(engine.seatOf(found, _).toOption)
+                        val m = seat.flatMap(openedBy(found, _).toOption).getOrElse(found)
                         val state = Option.when(seat.isDefined)(stateOf(m, seat))
                         html(page(matchId, state, playAuth.login, live.map(_.url), publicView = false))
                 }
 
+            // A seat's player fetching its state has the board open: it is what the page does first, and deployed it is
+            // the first the engine hears of them, since the page itself is served before anyone has signed in.
             case ("GET", "matches" :: matchId :: "state" :: Nil) =>
-                withSeat(request, matchId)((m, seat) => EngineResponse(200, write(stateOf(m, Some(seat)))))
+                withSeat(request, matchId) { (found, seat) =>
+                    openedBy(found, seat) match {
+                        case Left(refusal) => error(refusal)
+                        case Right(m)      => EngineResponse(200, write(stateOf(m, Some(seat))))
+                    }
+                }
 
             case ("POST", "matches" :: matchId :: "moves" :: Nil) => move(request, matchId)
 
@@ -231,7 +261,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                             .get("match")
                             .filter(_.nonEmpty)
                             .toRight(Refusal.Invalid("say which match to watch with ?match="))
-                        m <- engine.read(matchId)
+                        m <- currentMatch(matchId)
                         _ <-
                             if (request.query.get("board").contains("1"))
                                 Either.cond(m.isPublic, (), Refusal.NotYours(s"match '$matchId' is not public"))
@@ -247,7 +277,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
     private def withSeat(request: EngineRequest, matchId: String)(f: (M, S) => EngineResponse): EngineResponse = {
         val answer =
             for {
-                m <- engine.read(matchId)
+                m <- currentMatch(matchId)
                 caller <- playAuth.callerOf(request)
                 seat <- engine.seatOf(m, caller)
             } yield f(m, seat)
@@ -259,7 +289,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
     }
 
     private def withPublic(matchId: String)(f: M => EngineResponse): EngineResponse =
-        engine.read(matchId) match {
+        currentMatch(matchId) match {
             case Left(refusal) => error(refusal)
             // Not 404: the match exists, and saying so tells a would-be watcher nothing they could not
             // learn by being in it. What they may not do is watch.

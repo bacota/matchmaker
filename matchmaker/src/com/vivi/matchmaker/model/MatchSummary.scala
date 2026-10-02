@@ -44,6 +44,10 @@ case class MatchSummary(
     timeLimit: Option[Duration] = None,
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
+    // Whether the match is played live: its turns and their clock are the game engine's, so for
+    // one of these `pending`, `due`, `whoseTurn` and `turnDue` are always empty — matchmaker is
+    // not told whose turn it is — and the list says so rather than leave them looking stalled.
+    live: Boolean = false,
     // Everyone whose turn it is, by nickname — usually one, but a game where several players
     // move at once has several, and an empty list means the match is waiting on nobody (it is
     // over, or matchmaker has not yet heard who moves first).

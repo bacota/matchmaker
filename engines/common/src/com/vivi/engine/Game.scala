@@ -88,9 +88,22 @@ trait Game[M <: MatchLike, S <: SeatLike, T <: TurnLike] {
       */
     def sequence(m: M): Long
 
-    /** Only meaningful once the match is over. */
+    /** Only meaningful once the match is over. A match ended by its [[TurnClock]] must answer as the clock says — see
+      * [[TurnClock.outcomeOf]].
+      */
     def outcome(m: M, seat: S): Outcome
 
     /** What the game records about a seat beside its outcome. Matchmaker stores the map without reading it. */
     def scores(m: M, seat: S): Map[String, ujson.Value]
+
+    /** The turn clock of a live match, and `None` for a match that is not live. */
+    def clock(m: M): Option[TurnClock]
+
+    /** The match with its clock replaced: set on a live match when it is created, and again when a turn runs out.
+      *
+      * Storing the clock is the whole of what a game does for it. What it must also do is honour it: a match whose
+      * clock has [[TurnClock.ranOut run out]] is over, with nobody pending, and comes out as [[TurnClock.outcomeOf]]
+      * says, whatever the game's own rules would make of the position.
+      */
+    def withClock(m: M, clock: TurnClock): M
 }

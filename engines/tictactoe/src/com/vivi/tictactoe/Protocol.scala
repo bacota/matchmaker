@@ -1,6 +1,7 @@
 package com.vivi.tictactoe
 
 import upickle.default.{ReadWriter, macroRW}
+import com.vivi.engine.ClockView
 
 /** This engine's messages: matchmaker's wire format, which is the same for every engine and is stated once in
   * [[com.vivi.engine.Protocol]], and the play API between the engine and its own play page, which is this game's.
@@ -21,7 +22,8 @@ object Protocol {
 
     /** The state the board page renders, and what a scripted client polls.
       *
-      * `you` is the mark belonging to the seat that asked; absent on the public view, which belongs to nobody.
+      * `you` is the mark belonging to the seat that asked; absent on the public view, which belongs to nobody. `clock`
+      * is a live match's turn clock, and absent from any other.
       */
     case class StateResponse(
         matchId: String,
@@ -32,7 +34,8 @@ object Protocol {
         winner: Option[String],
         draw: Boolean,
         winningLine: Option[Seq[Int]],
-        players: List[SeatView]
+        players: List[SeatView],
+        clock: Option[ClockView] = None
     )
 
     case class SeatView(mark: String, cognitoId: String, participantId: Long, moves: Int)

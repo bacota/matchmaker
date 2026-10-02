@@ -1,7 +1,7 @@
 package com.vivi.tictactoe
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, PlayLive, SignIn}
+import com.vivi.engine.{LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -61,6 +61,7 @@ object Html {
   button.cell.win { background: color-mix(in srgb, var(--paper) 70%, seagreen); }
 ${SignIn.css}
 ${PlayLive.css}
+${TurnTimer.css}
   #seats { margin-top: 1.25rem; font-size: .875rem; opacity: .7; }
   #seats div { margin: .125rem 0; }
   #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
@@ -71,6 +72,7 @@ ${PlayLive.css}
   <h1>tic-tac-toe</h1>
   <!-- Announced: the other player's move, and the result, arrive while this page is idle. -->
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
+  ${TurnTimer.markup}
   <div id="grid"></div>
   <!-- The sign-in form, rendered by renderSignIn() and shown whenever there is a login to
        offer and no seat to show for it. -->
@@ -83,6 +85,7 @@ ${PlayLive.css}
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
+${TurnTimer.script}
 
   const publicView = $publicView;
   // Urls are derived from this page's own, not built from a base: behind API Gateway the path
@@ -112,6 +115,7 @@ ${playLive.script(liveUrl, matchId)}
 
   const signin = document.getElementById("signin");
   renderSignIn();
+  const showClock = turnClock(refresh);
 
   function render() {
     const board = state ? state.board : ".........";
@@ -127,9 +131,17 @@ ${playLive.script(liveUrl, matchId)}
 
     const status = document.getElementById("status");
     if (!state) status.textContent = login ? "sign in to play" : "not your match";
+    else if (state.completed && ranOut().length) {
+      const late = ranOut();
+      status.textContent = !state.you ? late.join(" and ") + " ran out of time"
+        : late.includes(state.you) ? "your time ran out — you lose" : "their time ran out — you win";
+    }
     else if (state.completed) status.textContent = state.draw ? "drawn" : state.winner + " wins";
     else if (state.you) status.textContent = state.turn === state.you ? "your move (" + state.you + ")" : state.turn + " to move";
     else status.textContent = state.turn + " to move";
+
+    const me = state && state.you ? state.players.find(p => p.mark === state.you) : null;
+    showClock(state && state.clock, me ? me.participantId : null);
 
     // Offered whenever there is a login to start and no seat to show for it — including after a
     // token expires mid-match, which is what turns a 401 back into a button.
@@ -138,6 +150,12 @@ ${playLive.script(liveUrl, matchId)}
     document.getElementById("seats").innerHTML = state
       ? state.players.map(p => "<div>" + p.mark + " · " + escapeHtml(p.cognitoId) + (p.mark === (state.you || "") ? " (you)" : "") + "</div>").join("")
       : "";
+  }
+
+  /* The marks whose clock ran out in a live match, which is how it ended if there are any. */
+  function ranOut() {
+    if (!state || !state.clock) return [];
+    return state.players.filter(p => state.clock.timedOut.includes(p.participantId)).map(p => p.mark);
   }
 
   function escapeHtml(s) {
@@ -227,5 +245,7 @@ ${playLive.script(liveUrl, matchId)}
     }
 
     private def outcome(state: Protocol.StateResponse): String =
-        if (state.draw) "drawn" else state.winner.map(w => s"$w wins").getOrElse("over")
+        if (state.clock.exists(_.timedOut.nonEmpty)) "time ran out"
+        else if (state.draw) "drawn"
+        else state.winner.map(w => s"$w wins").getOrElse("over")
 }

@@ -2,7 +2,7 @@ package com.vivi.rps
 
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
-import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnLike}
+import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
 
 /** One player's seat in a match.
   *
@@ -29,6 +29,9 @@ case class ThrowRecord(participantId: Long, shape: Shape, takenAt: Instant, star
   * The callback urls are stored per match rather than configured once because matchmaker sends them with the game: they
   * carry its game id and match id, and an engine serving several matchmaker installations would get different bases for
   * each.
+  *
+  * `clock` is a live match's turn clock, and `None` for every other match — defaulted, so that a match stored before
+  * live matches existed reads back as the match it was.
   */
 case class RpsMatch(
     matchId: String,
@@ -38,7 +41,8 @@ case class RpsMatch(
     completed: Boolean,
     createdAt: Instant,
     moveCallbackUrl: Option[String],
-    resultsCallbackUrl: Option[String]
+    resultsCallbackUrl: Option[String],
+    clock: Option[TurnClock] = None
 ) extends MatchLike {
 
     def seatOf(side: Side): Option[Seat] = seats.find(_.side == side)
@@ -59,33 +63,42 @@ case class RpsMatch(
     def pending: List[Seat] = if (isOver) Nil else seats.filterNot(hasThrown)
 
     /** Over the moment both players have thrown, which is the rule the game is: nobody waits for a turn, so there is
-      * nothing to end but the pair being complete.
+      * nothing to end but the pair being complete. Or, in a live match, the moment the clock ran out on whoever had
+      * not.
       */
-    def isOver: Boolean = seats.forall(hasThrown)
+    def isOver: Boolean = ranOut || seats.forall(hasThrown)
+
+    /** Whether a live match's clock ended this one. */
+    def ranOut: Boolean = clock.exists(_.ranOut)
 
     /** The winning seat, once there is one. `None` while a throw is still to come, and `None` for a draw — which
-      * [[isDraw]] is how to tell apart from an unfinished match.
+      * [[isDraw]] is how to tell apart from an unfinished match. In a match the clock ended, whoever threw in time.
       */
     def winner: Option[Seat] =
-        seats match {
-            case a :: b :: Nil =>
-                (throwOf(a), throwOf(b)) match {
-                    case (Some(x), Some(y)) if x.shape.beats(y.shape) => Some(a)
-                    case (Some(x), Some(y)) if y.shape.beats(x.shape) => Some(b)
-                    case _                                            => None
-                }
-            case _ => None
-        }
+        if (ranOut) seats.find(s => clock.flatMap(_.outcomeOf(s.participantId)).contains(Outcome.Win))
+        else
+            seats match {
+                case a :: b :: Nil =>
+                    (throwOf(a), throwOf(b)) match {
+                        case (Some(x), Some(y)) if x.shape.beats(y.shape) => Some(a)
+                        case (Some(x), Some(y)) if y.shape.beats(x.shape) => Some(b)
+                        case _                                            => None
+                    }
+                case _ => None
+            }
 
-    def isDraw: Boolean = isOver && winner.isEmpty
+    /** Not a match the clock ended with nobody winning: two players who both ran out both lost. */
+    def isDraw: Boolean = isOver && !ranOut && winner.isEmpty
 
     /** How the match came out for one seat. Only meaningful once it is over. */
     def outcomeFor(seat: Seat): Outcome =
-        winner match {
-            case Some(w) if w.participantId == seat.participantId => Outcome.Win
-            case Some(_)                                          => Outcome.Loss
-            case None                                             => Outcome.Draw
-        }
+        clock
+            .flatMap(_.outcomeOf(seat.participantId))
+            .getOrElse(winner match {
+                case Some(w) if w.participantId == seat.participantId => Outcome.Win
+                case Some(_)                                          => Outcome.Loss
+                case None                                             => Outcome.Draw
+            })
 
 }
 
@@ -136,6 +149,10 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
     def sequence(m: RpsMatch): Long = m.throws.size.toLong
 
     def outcome(m: RpsMatch, seat: Seat): Outcome = m.outcomeFor(seat)
+
+    def clock(m: RpsMatch): Option[TurnClock] = m.clock
+
+    def withClock(m: RpsMatch, clock: TurnClock): RpsMatch = m.copy(clock = Some(clock))
 
     /** The throws are in the scores, because this is the first moment they may be told at all and because a result
       * nobody can read back is not much of a record.
