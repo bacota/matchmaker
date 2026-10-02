@@ -856,7 +856,7 @@ object Views {
           listing(Store.due.signal.map(matchesIn(game)), Store.loading(Store.Fetch.Due))(
             p(
               cls := "empty",
-              if (game.isDefined) "Nothing is waiting on you in this game." else "Nothing is waiting on you."
+              game.fold("Nothing is waiting on you.")(g => s"Nothing is waiting on you in ${g.displayName}.")
             )
           )(matches => ul(matches.map(matchRow(_, showDue = true))))
         )
