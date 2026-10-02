@@ -378,10 +378,16 @@ resource "aws_dynamodb_table" "connections" {
     type = "S"
   }
 
+  # The index's key as a key_schema block: the provider deprecated `hash_key` inside an index (not on
+  # the table) in favour of it. The same key, so the index itself is unchanged.
   global_secondary_index {
     name            = "byMatch"
-    hash_key        = "matchId"
     projection_type = "KEYS_ONLY"
+
+    key_schema {
+      attribute_name = "matchId"
+      key_type       = "HASH"
+    }
   }
 
   ttl {
