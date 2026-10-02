@@ -811,7 +811,7 @@ object Views {
                 busy,
                 cancelStale(acceptance.gameId)
               ) { _ =>
-                  Store.reloadAcceptances()
+                  reloadAcceptanceSections()
                   if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
                       Store.refreshChallenges(acceptance.gameId)
               }
@@ -836,7 +836,7 @@ object Views {
                 reloadAfterStart()
                 onItsPage()
             case ApiError(404, _) =>
-                refresh(refreshingAcceptances, () => Store.reloadAcceptances())
+                reloadAcceptanceSections()
                 onItsPage()
             case _ => ()
         }
