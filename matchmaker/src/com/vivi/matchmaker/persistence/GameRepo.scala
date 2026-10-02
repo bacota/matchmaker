@@ -20,29 +20,30 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private val value: Codec[T] = SkunkCodecs.plainText[T]
 
     private val insertGameRow: Query[
-      (GameType, String, String, String, Option[String], Boolean, String, TimeoutAction),
+      (GameType, String, String, String, String, Option[String], Boolean, String, TimeoutAction),
       GameId
     ] =
-        sql"""INSERT INTO game (game_type, name, description, url, character_url, active, external_id, timeout_action)
-          VALUES ($gameType, $text, $text, $text, ${text.opt}, $bool, $text, $timeoutAction)
+        sql"""INSERT INTO game (game_type, name, display_name, description, url, character_url, active, external_id,
+                                timeout_action)
+          VALUES ($gameType, $text, $text, $text, $text, ${text.opt}, $bool, $text, $timeoutAction)
           RETURNING game_id""".query(gameId)
 
     private val updateGameRow: Command[
-      (GameType, String, String, String, Option[String], Boolean, String, TimeoutAction, GameId)
+      (GameType, String, String, String, String, Option[String], Boolean, String, TimeoutAction, GameId)
     ] =
-        sql"""UPDATE game SET game_type = $gameType, name = $text, description = $text, url = $text,
+        sql"""UPDATE game SET game_type = $gameType, name = $text, display_name = $text, description = $text, url = $text,
           character_url = ${text.opt}, active = $bool,
           external_id = $text, timeout_action = $timeoutAction
           WHERE game_id = $gameId""".command
 
     private val selectGameRow: Query[
       GameId,
-      (GameType, String, String, String, Option[String], Boolean, String, TimeoutAction)
+      (GameType, String, String, String, String, Option[String], Boolean, String, TimeoutAction)
     ] =
-        sql"""SELECT game_type, name, description, url, character_url, active, external_id, timeout_action
+        sql"""SELECT game_type, name, display_name, description, url, character_url, active, external_id, timeout_action
           FROM game
           WHERE game_id = $gameId"""
-            .query(gameType *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction)
+            .query(gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction)
 
     /* Confirms a game exists and holds it that way for the rest of the transaction.
      *
@@ -113,6 +114,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
               (
                 game.gameType,
                 game.name,
+                game.displayName,
                 game.description,
                 game.url,
                 game.characterUrl,
@@ -154,7 +156,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         session.option(selectGameRow)(id).flatMap {
             case None => IO.pure(None)
             case Some(
-                  (gameType, name, description, url, characterUrl, active, externalId, timeoutAction)
+                  (gameType, name, displayName, description, url, characterUrl, active, externalId, timeoutAction)
                 ) =>
                 for {
                     roles <- readRoles(id)
@@ -164,6 +166,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                     id,
                     gameType,
                     name,
+                    displayName,
                     description,
                     url,
                     active,
@@ -182,6 +185,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
               (
                 game.gameType,
                 game.name,
+                game.displayName,
                 game.description,
                 game.url,
                 game.characterUrl,
@@ -267,6 +271,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         gameId: GameId,
         gameType: GameType,
         name: String,
+        displayName: String,
         description: String,
         url: String,
         characterUrl: Option[String],
@@ -290,7 +295,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     // collections stay small — which the schema encourages, since both describe a game's rules
     // rather than its activity — but it is the reason to revisit this if they ever grow.
     private val selectGameAggregate =
-        sql"""SELECT g.game_id, g.game_type, g.name, g.description, g.url, g.character_url, g.active, g.external_id,
+        sql"""SELECT g.game_id, g.game_type, g.name, g.display_name, g.description, g.url, g.character_url, g.active, g.external_id,
                  g.timeout_action,
                  r.game_role_id, r.name, r.optional, r.display_name,
                  p.game_parameter_id, p.name, p.default_value, p.display_name,
@@ -303,13 +308,13 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           WHERE (NOT $bool OR g.active)
           ORDER BY g.game_id"""
             .query(
-              gameId *: gameType *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *:
+              gameId *: gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *:
                   int4.opt *: text.opt *: bool.opt *: text.opt *:
                   int4.opt *: text.opt *: value.opt *: text.opt *: value.opt
             )
 
-    /** All games with their roles and parameters, sorted by name, in a single query regardless of how many games there
-      * are.
+    /** All games with their roles and parameters, sorted by the name players see, in a single query regardless of how
+      * many games there are.
       *
       * The sort is applied here rather than in the query for two reasons. The database would be sorting the join's
       * cross product, where this sorts one entry per game, after the rows have been collapsed. And `ORDER BY name`
@@ -368,6 +373,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                       id,
                       head.gameType,
                       head.name,
+                      head.displayName,
                       head.description,
                       head.url,
                       head.active,
@@ -379,7 +385,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                     )
                 }
                 // game_id breaks ties, so games sharing a name still come back in a stable order.
-                .sortBy(game => (game.name, game.gameId.value))
+                .sortBy(game => (game.displayName, game.gameId.value))
         }
 
     /** Writes a game's parameters by replacing them wholesale, which — unlike [[upsertRoles]] — may delete. Nothing

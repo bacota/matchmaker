@@ -45,6 +45,7 @@ class MatchNotificationSpec extends PropertySuite {
                 GameId.unassigned,
                 GameType.Plain,
                 "Tic-Tac-Toe",
+                "Tic-Tac-Toe",
                 "description",
                 "https://engine.example.com/games",
                 active = true,

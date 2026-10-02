@@ -352,7 +352,7 @@ object Views {
           // entry after it is an entry that has to be scrolled to.
           menuItem("Find Players", Store.Page.FindPlayers),
           listing(Store.games.signal, Store.loading(Store.Fetch.Games))(p(cls := "empty", "No games yet."))(games =>
-              div(games.map(game => menuItem(game.name, Store.Page.OneGame(game.gameId))))
+              div(games.map(game => menuItem(game.displayName, Store.Page.OneGame(game.gameId))))
           ),
           // Only for admins, because only an admin can create a game: the server answers anyone else
           // with a 403, and a menu entry that always fails is worse than no entry.
@@ -771,7 +771,7 @@ object Views {
                   }
                   if (mine.isEmpty) emptyNode
                   else {
-                      val namesById = games.map(game => game.gameId -> game.name).toMap
+                      val namesById = games.map(game => game.gameId -> game.displayName).toMap
                       refreshableSection(
                         "Ready to Start",
                         refreshingAcceptances,
@@ -866,7 +866,7 @@ object Views {
                           .filterNot(p => p.readyToStart && player.exists(_.playerId == p.challenger))
                   if (waiting.isEmpty) emptyNode
                   else {
-                      val namesById = games.map(game => game.gameId -> game.name).toMap
+                      val namesById = games.map(game => game.gameId -> game.displayName).toMap
                       refreshableSection(
                         "Waiting to Start",
                         refreshingAcceptances,
@@ -1204,7 +1204,7 @@ object Views {
                             chosen.set(raw.toIntOption.map(GameId.apply).filter(id => games.exists(_.gameId == id)))
                         },
                         value <-- chosen.signal.map(_.map(_.value.toString).getOrElse("")),
-                        games.map(game => option(value := game.gameId.value.toString, game.name))
+                        games.map(game => option(value := game.gameId.value.toString, game.displayName))
                       )
                     ),
                     button(
@@ -1317,7 +1317,7 @@ object Views {
             // The state is announced rather than spelled into the label, so the label stays the name
             // of the game — which is what the reader is scanning the list for.
             aria.expanded <-- expanded,
-            game.name,
+            game.displayName,
             onClick --> { _ =>
                 Store.expandedPublicGame.update(current =>
                     if (current.contains(game.gameId)) None else Some(game.gameId)
@@ -1767,7 +1767,7 @@ object Views {
                   case (None, _) => emptyNode
                   case (Some(game), _) =>
                       div(
-                        h2(game.name),
+                        h2(game.displayName),
                         p(cls := "detail", game.description),
                         editGamePanel(game),
                         // What is waiting on this player in this game, before what they could join: a turn
@@ -2061,6 +2061,7 @@ object Views {
       */
     private def gameForm(existing: Option[Game]): HtmlElement = {
         val name = Var(existing.map(_.name).getOrElse(""))
+        val displayName = Var(existing.map(_.displayName).getOrElse(""))
         val description = Var(existing.map(_.description).getOrElse(""))
         val url = Var(existing.map(_.url).getOrElse(""))
         val engineIdentity = Var(existing.map(_.externalId).getOrElse(""))
@@ -2084,6 +2085,17 @@ object Views {
         div(
           cls := "card",
           field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
+          label(
+            cls := "field",
+            "Display name",
+            // Inside the label so it is read with the field, as the engine identity's hint is.
+            span(
+              cls := "detail hint",
+              "What players see. Left blank, it is the name. Change this rather than the name to rename a " +
+                  "registered game: the registration scripts find a game by its name."
+            ),
+            input(controlled(value <-- displayName.signal, onInput.mapToValue --> displayName))
+          ),
           field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
           field("Game engine url", input(tpe := "url", controlled(value <-- url.signal, onInput.mapToValue --> url))),
           label(
@@ -2155,6 +2167,8 @@ object Views {
                         gameId = existing.map(_.gameId).getOrElse(GameId.unassigned),
                         gameType = gameType.now(),
                         name = name.now().trim,
+                        // Left blank, the game is shown by its name -- the server does the same.
+                        displayName = Option(displayName.now().trim).filter(_.nonEmpty).getOrElse(name.now().trim),
                         description = description.now().trim,
                         url = url.now().trim,
                         // A game nobody can see is not what "create a game" means, and `refreshGames` only
@@ -2175,6 +2189,7 @@ object Views {
                       Store.run(ApiClient.createGame(game), busy) { saved =>
                           if (existing.isEmpty) {
                               name.set("")
+                              displayName.set("")
                               description.set("")
                               url.set("")
                               engineIdentity.set("")
@@ -2239,7 +2254,7 @@ object Views {
                                 game.characterUrl.fold(emptyNode)(url =>
                                     button(
                                       cls := "link",
-                                      s"Manage your characters in ${game.name}",
+                                      s"Manage your characters in ${game.displayName}",
                                       onClick --> (_ => dom.window.open(url, "_blank", "noopener,noreferrer"))
                                     )
                                 ),
@@ -2275,16 +2290,16 @@ object Views {
     ): HtmlElement =
         div(
           cls := "card",
-          h3(s"Make Your Character for ${game.name}"),
+          h3(s"Make Your Character for ${game.displayName}"),
           p(
-            s"You need a character in ${game.name} before you can offer or accept a challenge. " +
+            s"You need a character in ${game.displayName} before you can offer or accept a challenge. " +
                 "Characters are made in the game itself, which tells matchmaker once yours exists."
           ),
           game.characterUrl match {
               case Some(url) =>
                   div(
                     button(
-                      s"Make a character in ${game.name}",
+                      s"Make a character in ${game.displayName}",
                       onClick --> (_ => dom.window.open(url, "_blank", "noopener,noreferrer"))
                     ),
                     busyButton("I've made one — check again", classes = Some("link")) { busy =>
@@ -2450,7 +2465,7 @@ object Views {
                       reloadAfterStart()
                   }
               }
-          else div(cls := "detail", s"waiting for ${unfilledRoles(game, summary).map(_.name).mkString(", ")}"),
+          else div(cls := "detail", s"waiting for ${unfilledRoles(game, summary).map(_.displayName).mkString(", ")}"),
           busyButton("Delete") { busy =>
               Store.run(ApiClient.deleteChallenge(game.gameId, challenge.challengeId), busy)(_ =>
                   Store.refreshChallenges(game.gameId)

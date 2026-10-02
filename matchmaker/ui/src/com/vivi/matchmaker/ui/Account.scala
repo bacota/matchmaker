@@ -464,7 +464,7 @@ object Account {
                   },
                   option(value := "", "Choose a game"),
                   children <-- Store.games.signal.map(
-                    _.map(game => option(value := game.gameId.value.toString, game.name)).toList
+                    _.map(game => option(value := game.gameId.value.toString, game.displayName)).toList
                   )
                 )
               ),
@@ -480,7 +480,7 @@ object Account {
                         "Only the questions you change. Matches you have already finished are left alone."
                       )
                       Notifications.form(
-                        Store.games.now().find(_.gameId == gameId).map(_.name).getOrElse("This game"),
+                        Store.games.now().find(_.gameId == gameId).map(_.displayName).getOrElse("This game"),
                         "Leave a question on \"Use Default\" to answer it from your settings above.",
                         forGame,
                         saveLabel = "Save for this game",

@@ -107,14 +107,16 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       * stored as "3x3 " is not a default at all. Done here rather than in the form, because the form is not the only
       * thing that can post a game.
       *
-      * A role's or parameter's display name is trimmed too, and a blank one is its name: the form sends what was typed,
-      * and an empty field means it is shown by its name.
+      * The game's, a role's and a parameter's display names are trimmed too, and a blank one is the name: the form
+      * sends what was typed, and an empty field means it is shown by its name.
       */
     private def normalize(game: Game): Game =
         game.copy(
           // A blank url is no url: the form sends what was typed, and an empty field means there is none.
           characterUrl = game.characterUrl.map(_.trim).filter(_.nonEmpty),
           externalId = game.externalId.trim,
+          name = game.name.trim,
+          displayName = Option(game.displayName.trim).filter(_.nonEmpty).getOrElse(game.name.trim),
           roles = game.roles.map(role =>
               role.copy(
                 name = role.name.trim,
@@ -152,6 +154,9 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                 s"game '${game.name}' defines no roles; every acceptance names one, so a game needs at least one"
               )
             )
+            // Its display name falls back to it, and a blank one is a constraint violation rather
+            // than an explanation.
+            _ <- IO.raiseWhen(game.name.isEmpty)(ValidationError("a game needs a name"))
             // The engine's identity: what its callbacks are matched against. A game without one can be
             // started but never heard from again.
             _ <- IO.raiseWhen(game.externalId.isEmpty)(

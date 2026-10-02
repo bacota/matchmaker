@@ -340,7 +340,7 @@ class MatchRepo(session: Session[IO]) {
      * fragments: a query that has to be pieced together to be read is harder to check against the
      * plan the database actually runs. */
     private val selectActiveForPlayer =
-        sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed, m.cancelled,
                  ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
@@ -378,7 +378,7 @@ class MatchRepo(session: Session[IO]) {
      * completion time at all, so NULLS LAST puts those after the played-out ones rather than
      * ahead of everything, and `start` orders them among themselves. */
     private val selectOverForPlayer =
-        sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed, m.cancelled,
                  ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
@@ -417,7 +417,7 @@ class MatchRepo(session: Session[IO]) {
      * The caller-relative columns are still relative to the player being asked about: `p.pending` is
      * whether it is their turn, and `ch.challenger = p.player_id` whether the match is theirs. */
     private val selectPublicActiveForPlayer =
-        sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed, m.cancelled,
                  ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
@@ -451,7 +451,7 @@ class MatchRepo(session: Session[IO]) {
             .query(seatRow)
 
     private val selectPublicOverForPlayer =
-        sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed, m.cancelled,
                  ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
@@ -474,7 +474,7 @@ class MatchRepo(session: Session[IO]) {
             .query(seatRow)
 
     private val selectDueForPlayer =
-        sql"""SELECT m.game_id, m.match_id, g.name, m.description, m.completed, m.cancelled,
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed, m.cancelled,
                  ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,

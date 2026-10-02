@@ -125,6 +125,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     GameId.unassigned,
                     GameType.Character,
                     "game",
+                    "game",
                     "description",
                     "https://engine.example.com/games",
                     active = true,

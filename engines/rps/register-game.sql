@@ -17,11 +17,14 @@
 \set external_id :external_id
 
 WITH game AS (
-  INSERT INTO game (game_type, name, description, url, active, external_id)
+  INSERT INTO game (game_type, name, display_name, description, url, active, external_id)
   VALUES (
     -- 'P' — plain: a seat here is a player, not a character. The engine accepts a
     -- character-carrying seat too (it ignores the character), but nothing here needs one.
     'P',
+    'Rock-paper-scissors',
+    -- What players see; an admin may change it later. The name above is how this script, and
+    -- anything else, finds the game again, so that stays as it is.
     'Rock-paper-scissors',
     'Two players throw at once. A test engine for matchmaker''s simultaneous-turn handling.',
     :'url',

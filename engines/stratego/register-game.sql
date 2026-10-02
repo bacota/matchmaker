@@ -17,11 +17,14 @@
 \set external_id :external_id
 
 WITH game AS (
-  INSERT INTO game (game_type, name, description, url, active, external_id)
+  INSERT INTO game (game_type, name, display_name, description, url, active, external_id)
   VALUES (
     -- 'P' — plain: a seat in Stratego is a player, not a character. The engine accepts a
     -- character-carrying seat too (it ignores the character), but nothing here needs one.
     'P',
+    'Stratego',
+    -- What players see; an admin may change it later. The name above is how this script, and
+    -- anything else, finds the game again, so that stays as it is.
     'Stratego',
     'Two armies of forty, ranks hidden from the other side. Deploy, then capture the enemy flag.',
     :'url',

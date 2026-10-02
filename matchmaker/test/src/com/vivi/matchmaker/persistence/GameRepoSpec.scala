@@ -74,7 +74,7 @@ class GameRepoSpec extends PropertySuite {
         )
     }
 
-    test("list returns games sorted by name, with game id breaking ties") {
+    test("list returns games sorted by display name, with game id breaking ties") {
         // Names are suffixed with a shared unique token so this run's games can be picked out of a
         // database these tests never clean up, while still sorting among themselves.
         val token = java.util.UUID.randomUUID().toString
@@ -84,24 +84,28 @@ class GameRepoSpec extends PropertySuite {
             .use { session =>
                 val repo = new GameRepo[String](session)
                 for {
-                    created <- names.traverse(n =>
-                        repo.create(Generators.genGame().sample.get.copy(name = s"$n-$token"))
+                    // Each game's name sorts the opposite way to its display name, so the order that comes
+                    // back says which of the two it was sorted by.
+                    created <- names.zipWithIndex.traverse((n, i) =>
+                        repo.create(
+                          Generators.genGame().sample.get.copy(name = s"${9 - i}-$token", displayName = s"$n-$token")
+                        )
                     )
                     listed <- repo.list(activeOnly = false)
                 } yield (created, listed)
             }
             .unsafeRunSync()
 
-        val ours = listed.filter(_.name.endsWith(token))
+        val ours = listed.filter(_.displayName.endsWith(token))
         assertEquals(ours.size, 4)
 
-        // Sorted by name...
-        assertEquals(ours.map(_.name), ours.map(_.name).sorted)
+        // Sorted by display name...
+        assertEquals(ours.map(_.displayName), ours.map(_.displayName).sorted)
 
         // ...and the two games named "alpha" are ordered by id, not left to chance.
-        val alphas = ours.filter(_.name.startsWith("alpha")).map(_.gameId.value)
+        val alphas = ours.filter(_.displayName.startsWith("alpha")).map(_.gameId.value)
         assertEquals(alphas, alphas.sorted)
-        assertEquals(alphas.toSet, created.filter(_.name.startsWith("alpha")).map(_.gameId.value).toSet)
+        assertEquals(alphas.toSet, created.filter(_.displayName.startsWith("alpha")).map(_.gameId.value).toSet)
     }
 
     test("list keeps a game that has neither roles nor parameters") {

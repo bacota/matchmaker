@@ -22,12 +22,15 @@
 
 BEGIN;
 
-INSERT INTO game (game_type, name, description, url, character_url, active, external_id)
+INSERT INTO game (game_type, name, display_name, description, url, character_url, active, external_id)
 VALUES (
   -- 'C' — a character game: every corner is a character, which this game calls a fighter. Its
   -- characteristics are the character's state. A fighter is built on the engine's own page, which
   -- reports it to matchmaker; a bout refuses a character that is not a built fighter.
   'C',
+  'Boxing',
+  -- What players see; an admin may change it later. The name above is how this script, and
+  -- anything else, finds the game again, so that stays as it is.
   'Boxing',
   'Two fighters trade punches over 3 to 25 rounds. Build a fighter from strength, speed, agility, '
     'workrate and chin, then plan each round''s offense, defense and power.',

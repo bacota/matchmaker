@@ -91,7 +91,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                         case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
                     }
                     _ <- IO.raiseUnless(game.gameType == GameType.Character)(
-                      ValidationError(s"${game.name} is not played with characters")
+                      ValidationError(s"${game.displayName} is not played with characters")
                     )
                     owner <- playerRepo.readByExternalIdForShare(ownerExternalId).flatMap {
                         case Some(p) => IO.pure(p)

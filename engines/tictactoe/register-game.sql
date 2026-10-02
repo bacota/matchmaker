@@ -17,11 +17,14 @@
 \set external_id :external_id
 
 WITH game AS (
-  INSERT INTO game (game_type, name, description, url, active, external_id)
+  INSERT INTO game (game_type, name, display_name, description, url, active, external_id)
   VALUES (
     -- 'P' — plain: a seat in tic-tac-toe is a player, not a character. The engine accepts a
     -- character-carrying seat too (it ignores the character), but nothing here needs one.
     'P',
+    'Tic-tac-toe',
+    -- What players see; an admin may change it later. The name above is how this script, and
+    -- anything else, finds the game again, so that stays as it is.
     'Tic-tac-toe',
     'Two players, three in a row. A test engine for matchmaker''s game interaction.',
     :'url',

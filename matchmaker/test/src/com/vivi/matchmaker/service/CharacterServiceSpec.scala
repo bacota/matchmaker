@@ -28,6 +28,7 @@ class CharacterServiceSpec extends PropertySuite {
                 GameId.unassigned,
                 GameType.Character,
                 "game",
+                "game",
                 "description",
                 "url",
                 active = true,
@@ -44,6 +45,7 @@ class CharacterServiceSpec extends PropertySuite {
               Game(
                 GameId.unassigned,
                 GameType.Plain,
+                "game",
                 "game",
                 "description",
                 "url",
