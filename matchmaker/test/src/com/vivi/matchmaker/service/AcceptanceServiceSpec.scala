@@ -32,6 +32,7 @@ class AcceptanceServiceSpec extends PropertySuite {
                     GameId.unassigned,
                     GameType.Character,
                     "game",
+                    "game",
                     "description",
                     "url",
                     active = true,

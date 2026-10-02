@@ -71,6 +71,7 @@ case class Invite(playerId: PlayerId, gameRoleId: Option[GameRoleId] = None)
   */
 case class ChallengeInvitation(
     invitation: Invitation,
+    // The game's display name: this is for showing.
     gameName: String,
     gameType: GameType,
     challengerNickname: String,

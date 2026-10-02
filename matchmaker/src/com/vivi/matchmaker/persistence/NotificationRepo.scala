@@ -359,10 +359,10 @@ class NotificationRepo(session: Session[IO]) {
 
     def gameExists(id: GameId): IO[Boolean] = session.option(selectGameExists)(id).map(_.isDefined)
 
-    /* A game's name, for the same reason as above: the notification path needs a game, and
-     * `GameRepo` cannot be built without naming the type of its parameter values. */
+    /* A game's name as players see it, for the same reason as above: the notification path needs
+     * a game, and `GameRepo` cannot be built without naming the type of its parameter values. */
     private val selectGameNotice: Query[GameId, GameNotice] =
-        sql"""SELECT game_id, name
+        sql"""SELECT game_id, display_name
           FROM game
           WHERE game_id = $gameId"""
             .query(gameId *: text)

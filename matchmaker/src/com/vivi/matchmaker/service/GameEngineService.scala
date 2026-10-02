@@ -1013,6 +1013,8 @@ class GameEngineService[T](
     ): CreateGameRequest =
         CreateGameRequest(
           matchId = matchId.value,
+          // The name, not the display name: the engine is told the game's stable handle, which an
+          // admin renaming the game for players does not change.
           gameName = game.name,
           isPublic = challenge.isPublic,
           // Each parameter's default, except where the challenger chose one of its values — see

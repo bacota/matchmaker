@@ -39,6 +39,7 @@ class ChallengeServiceSpec extends PropertySuite {
                     GameId.unassigned,
                     GameType.Character,
                     "game",
+                    "game",
                     "description",
                     "url",
                     active = true,
@@ -515,6 +516,7 @@ class ChallengeServiceSpec extends PropertySuite {
               Game(
                 GameId.unassigned,
                 GameType.Plain,
+                "plain game",
                 "plain game",
                 "description",
                 "url",

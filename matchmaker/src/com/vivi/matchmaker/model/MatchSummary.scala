@@ -27,6 +27,7 @@ import java.time.{Duration, Instant}
 case class MatchSummary(
     gameId: GameId,
     matchId: MatchId,
+    // The game's display name: this is for showing.
     gameName: String,
     description: String,
     completedAt: Option[Instant],

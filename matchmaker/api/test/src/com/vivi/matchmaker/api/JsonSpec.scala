@@ -19,6 +19,7 @@ class JsonSpec extends FunSuite {
           GameId(1),
           GameType.Character,
           "name",
+          "name",
           "description",
           "url",
           active = true,

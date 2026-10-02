@@ -105,7 +105,7 @@ class InvitationRepo(session: Session[IO]) {
       (GameId, ChallengeId, Option[GameRoleId], String, GameType, String, String, Option[String], Instant)
     ] =
         sql"""SELECT i.game_id, i.challenge_id, i.game_role_id,
-                 g.name, g.game_type, challenger.nickname, ch.message, r.display_name, i.create_date
+                 g.display_name, g.game_type, challenger.nickname, ch.message, r.display_name, i.create_date
           FROM invitation i
           JOIN challenge ch ON ch.game_id = i.game_id AND ch.challenge_id = i.challenge_id
           JOIN game g ON g.game_id = i.game_id

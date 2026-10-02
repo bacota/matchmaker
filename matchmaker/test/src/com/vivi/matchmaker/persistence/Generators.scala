@@ -51,6 +51,7 @@ object Generators {
           GameId.unassigned,
           gameType,
           name,
+          name,
           description,
           url,
           active,

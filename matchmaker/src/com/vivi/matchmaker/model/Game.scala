@@ -72,7 +72,11 @@ object TimeoutAction {
 case class Game(
     gameId: GameId,
     gameType: GameType,
+    // The game's stable handle: what its registration script, deploy instructions and migrations
+    // find it by. Players are shown `displayName`, which an admin may change without detaching
+    // the game from any of those.
     name: String,
+    displayName: String,
     description: String,
     url: String,
     active: Boolean,

@@ -97,13 +97,14 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           String,
           String,
           String,
+          String,
           Boolean,
           String
       )
     ] =
         gameId *: text *: text *: state *: playerId *:
             text *: bool *: text *: text.opt *:
-            gameType *: text *: text *: text *: bool *: text
+            gameType *: text *: text *: text *: text *: bool *: text
 
     private val selectCharacterWithOwnerAndGame: Query[
       CharacterId,
@@ -121,13 +122,14 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           String,
           String,
           String,
+          String,
           Boolean,
           String
       )
     ] =
         sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
                  p.nickname, p.is_admin, p.external_id, p.email,
-                 g.game_type, g.name, g.description, g.url, g.active, g.external_id
+                 g.game_type, g.name, g.display_name, g.description, g.url, g.active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           JOIN player p ON p.player_id = c.player_id
@@ -154,13 +156,14 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           String,
           String,
           String,
+          String,
           Boolean,
           String
       )
     ] =
         sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
                  p.nickname, p.is_admin, p.external_id, p.email,
-                 g.game_type, g.name, g.description, g.url, g.active, g.external_id
+                 g.game_type, g.name, g.display_name, g.description, g.url, g.active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           JOIN player p ON p.player_id = c.player_id
@@ -197,6 +200,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
             String,
             String,
             String,
+            String,
             Boolean,
             String
         )
@@ -213,6 +217,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
               email,
               gameType,
               gameName,
+              gameDisplayName,
               gameDescription,
               gameUrl,
               gameActive,
@@ -224,6 +229,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
               charGameId,
               gameType,
               gameName,
+              gameDisplayName,
               gameDescription,
               gameUrl,
               gameActive,
@@ -235,15 +241,15 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     }
 
     private val withGameRow: Codec[
-      (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String)
-    ] = gameId *: text *: text *: state *: playerId.opt *: gameType *: text *: text *: text *: bool *: text
+      (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, String, Boolean, String)
+    ] = gameId *: text *: text *: state *: playerId.opt *: gameType *: text *: text *: text *: text *: bool *: text
 
     private val selectCharacterWithGame: Query[
       CharacterId,
-      (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String)
+      (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, String, Boolean, String)
     ] =
         sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
-                 g.game_type, g.name, g.description, g.url, g.active, g.external_id
+                 g.game_type, g.name, g.display_name, g.description, g.url, g.active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           WHERE c.character_id = $characterId"""
@@ -253,10 +259,10 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
      * read here, not written. */
     private val selectCharacterWithGameForUpdate: Query[
       CharacterId,
-      (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String)
+      (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, String, Boolean, String)
     ] =
         sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
-                 g.game_type, g.name, g.description, g.url, g.active, g.external_id
+                 g.game_type, g.name, g.display_name, g.description, g.url, g.active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           WHERE c.character_id = $characterId
@@ -275,7 +281,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
 
     private def toCharacterWithGame(
         id: CharacterId,
-        row: (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, Boolean, String)
+        row: (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, String, Boolean, String)
     ): CharacterWithGame[T] = row match {
         case (
               charGameId,
@@ -285,6 +291,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
               charPlayerId,
               gameType,
               gameName,
+              gameDisplayName,
               gameDescription,
               gameUrl,
               gameActive,
@@ -295,6 +302,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
               charGameId,
               gameType,
               gameName,
+              gameDisplayName,
               gameDescription,
               gameUrl,
               gameActive,

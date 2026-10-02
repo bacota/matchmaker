@@ -171,6 +171,7 @@ class RouterSpec extends FunSuite {
         GameId.unassigned,
         GameType.Character,
         "name",
+        "name",
         "description",
         "url",
         active = true,

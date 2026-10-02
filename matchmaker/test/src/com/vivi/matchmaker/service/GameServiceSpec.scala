@@ -165,6 +165,53 @@ class GameServiceSpec extends PropertySuite {
         assert(result.unsafeRunSync())
     }
 
+    test("createOrUpdate stores a game's display name trimmed, and a blank one as the name") {
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGameWithRole.sample.get)
+            shown <- gameService.createOrUpdate(admin.externalId, base.copy(displayName = "  Simple Boxing "))
+            unshown <- gameService.createOrUpdate(
+              admin.externalId,
+              Generators.genGameWithRole.sample.get.copy(displayName = "   ")
+            )
+            listed <- gameService.list(admin.externalId)
+        } yield (
+          listed.find(_.gameId == shown.gameId).map(g => g.name -> g.displayName),
+          listed.find(_.gameId == unshown.gameId).map(g => g.name -> g.displayName)
+        )
+
+        val (shown, unshown) = result.unsafeRunSync()
+        assertEquals(shown.map(_._2), Some("Simple Boxing"))
+        assertEquals(unshown.map(_._2), unshown.map(_._1))
+    }
+
+    // Renaming a registered game for players is what the display name is for: the name is how its
+    // registration script and migrations find it, so it has to survive the rename unchanged.
+    test("createOrUpdate changes a game's display name and leaves its name alone") {
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGameWithRole.sample.get)
+            created <- gameService.createOrUpdate(admin.externalId, base)
+            _ <- gameService.createOrUpdate(admin.externalId, created.copy(displayName = "Renamed"))
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+        } yield (created.name, listed.map(g => g.name -> g.displayName))
+
+        val (name, after) = result.unsafeRunSync()
+        assertEquals(after, Some(name -> "Renamed"))
+    }
+
+    test("createOrUpdate refuses a game with a blank name") {
+        val result = for {
+            admin <- makeAdmin()
+            game <- IO(Generators.genGameWithRole.sample.get)
+            attempt <- gameService
+                .createOrUpdate(admin.externalId, game.copy(name = "  ", displayName = "Shown"))
+                .attempt
+        } yield attempt.left.exists(_.isInstanceOf[ValidationError])
+
+        assert(result.unsafeRunSync())
+    }
+
     test("createOrUpdate refuses a game that defines no roles") {
         val result = for {
             admin <- makeAdmin()

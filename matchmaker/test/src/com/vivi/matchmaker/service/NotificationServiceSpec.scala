@@ -33,6 +33,7 @@ class NotificationServiceSpec extends PropertySuite {
                 GameId.unassigned,
                 GameType.Plain,
                 s"game-$seed",
+                s"game-$seed",
                 "description",
                 "https://engine.example.com/games",
                 active = true,
