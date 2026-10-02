@@ -114,6 +114,7 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
         game.copy(
           // A blank url is no url: the form sends what was typed, and an empty field means there is none.
           characterUrl = game.characterUrl.map(_.trim).filter(_.nonEmpty),
+          externalId = game.externalId.trim,
           roles = game.roles.map(role =>
               role.copy(
                 name = role.name.trim,
@@ -149,6 +150,13 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             _ <- IO.raiseWhen(game.roles.isEmpty)(
               ValidationError(
                 s"game '${game.name}' defines no roles; every acceptance names one, so a game needs at least one"
+              )
+            )
+            // The engine's identity: what its callbacks are matched against. A game without one can be
+            // started but never heard from again.
+            _ <- IO.raiseWhen(game.externalId.isEmpty)(
+              ValidationError(
+                s"game '${game.name}' names no engine identity; it is the name the engine's API key is filed under"
               )
             )
             _ <- IO.raiseWhen(game.roles.exists(_.name.trim.isEmpty))(

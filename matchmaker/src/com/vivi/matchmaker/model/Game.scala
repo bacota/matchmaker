@@ -78,8 +78,9 @@ case class Game(
     active: Boolean,
     roles: Seq[GameRole],
     parameters: Seq[GameParameter[_]],
-    // Shared secret identifying the game itself, used to authorize requests made on the
-    // game's behalf (e.g. creating or updating a character).
+    // The engine's identity: the name its API key is filed under in ENGINE_API_KEYS. A request
+    // made on the game's behalf (a move, a result, a character it made) is authorized by its key
+    // resolving to this name.
     externalId: String,
     // What happens when a player's turn runs out. Defaulted rather than required, because every
     // game had this behaviour decided for it by the migration that added the column, and

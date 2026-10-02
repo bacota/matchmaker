@@ -153,6 +153,18 @@ class GameServiceSpec extends PropertySuite {
         assert(result.unsafeRunSync())
     }
 
+    // Every callback from the engine is matched against it, so a game saved without one could be
+    // started but never hear from its engine.
+    test("createOrUpdate refuses a game with a blank engine identity") {
+        val result = for {
+            admin <- makeAdmin()
+            game <- IO(Generators.genGameWithRole.sample.get)
+            attempt <- gameService.createOrUpdate(admin.externalId, game.copy(externalId = "   ")).attempt
+        } yield attempt.left.exists(_.isInstanceOf[ValidationError])
+
+        assert(result.unsafeRunSync())
+    }
+
     test("createOrUpdate refuses a game that defines no roles") {
         val result = for {
             admin <- makeAdmin()
