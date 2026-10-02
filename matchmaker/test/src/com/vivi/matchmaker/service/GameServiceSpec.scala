@@ -261,6 +261,33 @@ class GameServiceSpec extends PropertySuite {
         assertEquals(result.unsafeRunSync(), (true, false))
     }
 
+    // A key is how a callback says which game's engine sent it, so no two games may hold the same
+    // one. The refusal is a conflict, and rolls back the game it came with.
+    test("a key another game already holds is refused, and the game is not saved") {
+        val key = s"key-${java.util.UUID.randomUUID()}"
+        val result = for {
+            admin <- makeAdmin()
+            _ <- gameService.createOrUpdate(admin.externalId, Generators.genGameWithRole.sample.get, Some(key))
+            second = Generators.genGameWithRole.sample.get
+            attempt <- gameService.createOrUpdate(admin.externalId, second, Some(key)).attempt
+            listed <- gameService.list(admin.externalId).map(_.exists(_.name == second.name))
+        } yield (attempt.left.exists(_.isInstanceOf[ConflictError]), listed)
+
+        assertEquals(result.unsafeRunSync(), (true, false))
+    }
+
+    // Saving an edit with the key the game already has is not a clash with itself.
+    test("a game may be saved again with the key it already holds") {
+        val key = s"key-${java.util.UUID.randomUUID()}"
+        val result = for {
+            admin <- makeAdmin()
+            created <- gameService.createOrUpdate(admin.externalId, Generators.genGameWithRole.sample.get, Some(key))
+            again <- gameService.createOrUpdate(admin.externalId, created, Some(key)).attempt
+        } yield again.isRight
+
+        assert(result.unsafeRunSync())
+    }
+
     test("a game saved without a key reports none") {
         val result = for {
             admin <- makeAdmin()
