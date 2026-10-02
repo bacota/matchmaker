@@ -4,11 +4,13 @@ import cats.effect.IO
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, PlayerRepo, TextCodec}
 
-/** Creates and updates characters. `create` and `update` are authorized by `callerExternalId`, which identifies the
-  * player making the request: for `create` it must match `externalId` (the player the character is being created for),
-  * and for `update` it must match the externalId of the character's current owner, i.e. before the update is applied.
-  * `updateState` is instead authorized on behalf of the game itself: its `callerExternalId` must match the externalId
-  * of the game the character belongs to.
+/** Records and updates characters.
+  *
+  * A character is made in its game engine, not here: the engine is what knows what a character of its game is, builds
+  * one with the player, and then tells matchmaker it exists so that it can be offered in challenges and seated in
+  * matches. So `create` and `updateState` are authorized on behalf of the game: their `callerExternalId` must match the
+  * externalId of the game the character belongs to. `update` is still a player's, and its `callerExternalId` must match
+  * the externalId of the character's current owner, i.e. before the update is applied.
   */
 class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 
@@ -51,11 +53,21 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             } yield names
         }
 
+    /** A character a game engine has made, recorded for `ownerExternalId` with the state the engine gave it.
+      *
+      * The caller is the engine — its API key deployed, `X-External-Id` locally — and the game is the one whose
+      * externalId that is. An engine is not told its matchmaker game id, which is only assigned once the game is
+      * registered, after the engine is deployed; the identity it already presents names the game instead.
+      *
+      * A player cannot call this to any effect: their identity is never a game's externalId. Refused for a game that
+      * does not take characters, since nothing could ever seat one there, and for an owner who has not registered with
+      * matchmaker, since a character is somebody's.
+      */
     def create(
-        gameId: GameId,
         name: String,
         description: String,
-        externalId: String,
+        ownerExternalId: String,
+        state: T,
         callerExternalId: String
     ): IO[Character[T]] =
         sessionPool.use { session =>
@@ -66,21 +78,36 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             // transaction as the insert keeps that decision from going stale before it lands.
             session.transaction.use { _ =>
                 for {
-                    _ <- IO.raiseUnless(callerExternalId == externalId)(
-                      UnauthorizedError(s"caller '$callerExternalId' may not create a character for '$externalId'")
-                    )
-                    // Locked, not just read: the insert below references both rows, and without the lock
-                    // either could be deleted between the check and the insert.
-                    _ <- gameRepo.lockForShare(gameId).flatMap {
+                    _ <- IO.raiseWhen(name.trim.isEmpty)(ValidationError("a character needs a name"))
+                    // Locked, not just read: the insert below references the game, and without the lock it
+                    // could be deleted, or given to another engine, between the check and the insert.
+                    gameId <- gameRepo.lockForShareByExternalId(callerExternalId).flatMap {
+                        case List(id) => IO.pure(id)
+                        case Nil      => IO.raiseError(UnauthorizedError("only a game may create its characters"))
+                        case several =>
+                            IO.raiseError(
+                              ConflictError(
+                                s"games ${several.map(_.value).mkString(", ")} share this engine's identity, " +
+                                    "so which one the character is in cannot be told"
+                              )
+                            )
+                    }
+                    // A plain read, of the row just locked: FOR SHARE already keeps an admin's edit of the
+                    // game's type from landing until this transaction ends, so what is checked here is what
+                    // holds at the insert.
+                    game <- gameRepo.read(gameId).flatMap {
                         case Some(g) => IO.pure(g)
                         case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
                     }
-                    player <- playerRepo.readByExternalIdForShare(externalId).flatMap {
+                    _ <- IO.raiseUnless(game.gameType == GameType.Character)(
+                      ValidationError(s"${game.name} is not played with characters")
+                    )
+                    owner <- playerRepo.readByExternalIdForShare(ownerExternalId).flatMap {
                         case Some(p) => IO.pure(p)
-                        case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
+                        case None    => IO.raiseError(NotFoundError(s"no player with externalId '$ownerExternalId'"))
                     }
                     character <- characterRepo.create(
-                      Character(CharacterId(0), gameId, name, description, codec.decode(""), Some(player.playerId))
+                      Character(CharacterId(0), gameId, name.trim, description.trim, state, Some(owner.playerId))
                     )
                 } yield character
             }

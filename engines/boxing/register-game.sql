@@ -8,7 +8,8 @@
 --        -f engines/boxing/register-game.sql
 --
 -- url          where matchmaker POSTs the create-game request. Locally the engine's /games;
---              deployed, the engine's own create-game url.
+--              deployed, the engine's own create-game url. The page a player builds a fighter on
+--              is /fighters/new beside it, and is recorded as the game's character_url.
 -- external_id  who matchmaker will accept the callbacks and fighter writes from. Locally whatever
 --              GAME_EXTERNAL_ID the engine is started with; deployed, "boxing" — the name
 --              matchmaker files this engine's API key under.
@@ -21,16 +22,18 @@
 
 BEGIN;
 
-INSERT INTO game (game_type, name, description, url, active, external_id)
+INSERT INTO game (game_type, name, description, url, character_url, active, external_id)
 VALUES (
   -- 'C' — a character game: every corner is a character, which this game calls a fighter. Its
-  -- characteristics are the character's state, and a bout refuses a character that is not yet a
-  -- built fighter: building one is not part of a bout.
+  -- characteristics are the character's state. A fighter is built on the engine's own page, which
+  -- reports it to matchmaker; a bout refuses a character that is not a built fighter.
   'C',
   'Boxing',
   'Two fighters trade punches over 3 to 25 rounds. Build a fighter from strength, speed, agility, '
     'workrate and chin, then plan each round''s offense, defense and power.',
   :'url',
+  -- Where matchmaker's UI sends a player who has no fighter yet.
+  regexp_replace(:'url', '/games$', '/fighters/new'),
   true,
   :'external_id'
 )
@@ -57,4 +60,4 @@ UPDATE game_parameter SET default_value = '10'
 
 COMMIT;
 
-SELECT game_id, name, url, external_id FROM game WHERE game_id = :game_id;
+SELECT game_id, name, url, character_url, external_id FROM game WHERE game_id = :game_id;

@@ -16,6 +16,9 @@ import com.vivi.engine.LocalEngineServer
   * # or with nothing to call back to, to just fight the bout:
   * MATCHMAKER_OFFLINE=true mill -j 4 --ticker false engines.boxing.runMain com.vivi.boxing.LocalServer
   * }}}
+  *
+  * Fighters are built at `/fighters/new?as=<cognito sub>` and reported to matchmaker at `MATCHMAKER_URL`, which
+  * defaults to matchmaker's own local server on 8080.
   */
 object LocalServer {
 
@@ -24,7 +27,7 @@ object LocalServer {
         // be run against one matchmaker at once.
         LocalEngineServer.run("boxing", defaultPort = 8092) { (baseUrl, live) =>
             Config.routes(
-              sys.env.get,
+              k => sys.env.get(k).orElse(Option.when(k == "MATCHMAKER_URL")("http://localhost:8080")),
               defaultBaseUrl = Some(baseUrl),
               live = Some(live),
               announce =

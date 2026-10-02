@@ -51,6 +51,13 @@ object EngineConfig {
             case None => InMemoryMatchStore[M]()
         }
 
+    /** Where matchmaker's API is, for a call an engine makes on its own account rather than about a match — a character
+      * game reporting a character a player has made. A match's callbacks arrive with their urls, so an engine with no
+      * characters to report needs no `MATCHMAKER_URL`.
+      */
+    def matchmakerUrl(env: String => Option[String]): Option[String] =
+        env("MATCHMAKER_URL").map(_.trim).filter(_.nonEmpty)
+
     /** How matchmaker is called back: over HTTP, or — with `MATCHMAKER_OFFLINE=true` — not at all, the calls printed.
       */
     def matchmaker(env: String => Option[String]): Matchmaker =

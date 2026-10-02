@@ -23,33 +23,37 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     /* The eleven notify_* columns are written as one `$notifications`, which expands to eleven
      * placeholders in the order NotificationType.values gives -- the same order the column list
      * above is written in. See SkunkCodecs.notificationDefaults. */
-    private val insertGameRow
-        : Query[(GameType, String, String, String, Boolean, String, TimeoutAction, NotificationDefaults), GameId] =
-        sql"""INSERT INTO game (game_type, name, description, url, active, external_id, timeout_action,
+    private val insertGameRow: Query[
+      (GameType, String, String, String, Option[String], Boolean, String, TimeoutAction, NotificationDefaults),
+      GameId
+    ] =
+        sql"""INSERT INTO game (game_type, name, description, url, character_url, active, external_id, timeout_action,
                             notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
                             notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
                             notify_your_turn, notify_match_ended)
-          VALUES ($gameType, $text, $text, $text, $bool, $text, $timeoutAction, $notifications)
+          VALUES ($gameType, $text, $text, $text, ${text.opt}, $bool, $text, $timeoutAction, $notifications)
           RETURNING game_id""".query(gameId)
 
     /* Where insert and select splice `$notifications` once, a SET list needs a placeholder per
      * `column = ?`, so the eleven are named individually and the whole value is taken apart here --
      * once, rather than at the call site, which would leave every caller restating the order. */
     private val updateGameRow: Command[
-      (GameType, String, String, String, Boolean, String, TimeoutAction, NotificationDefaults, GameId)
+      (GameType, String, String, String, Option[String], Boolean, String, TimeoutAction, NotificationDefaults, GameId)
     ] =
-        sql"""UPDATE game SET game_type = $gameType, name = $text, description = $text, url = $text, active = $bool,
+        sql"""UPDATE game SET game_type = $gameType, name = $text, description = $text, url = $text,
+          character_url = ${text.opt}, active = $bool,
           external_id = $text, timeout_action = $timeoutAction,
           notify_challenge_accepted = $bool, notify_challenge_ready = $bool, notify_acceptance_changed = $bool,
           notify_accepted_challenge_ready = $bool, notify_invitation_received = $bool, notify_invitation_accepted = $bool, notify_invitation_rejected = $bool, notify_match_started = $bool, notify_turn_taken = $bool,
           notify_your_turn = $bool, notify_match_ended = $bool
           WHERE game_id = $gameId""".command
-            .contramap { case (gt, name, description, url, active, externalId, timeout, notify, id) =>
+            .contramap { case (gt, name, description, url, characterUrl, active, externalId, timeout, notify, id) =>
                 (
                   gt,
                   name,
                   description,
                   url,
+                  characterUrl,
                   active,
                   externalId,
                   timeout,
@@ -70,15 +74,15 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
 
     private val selectGameRow: Query[
       GameId,
-      (GameType, String, String, String, Boolean, String, TimeoutAction, NotificationDefaults)
+      (GameType, String, String, String, Option[String], Boolean, String, TimeoutAction, NotificationDefaults)
     ] =
-        sql"""SELECT game_type, name, description, url, active, external_id, timeout_action,
+        sql"""SELECT game_type, name, description, url, character_url, active, external_id, timeout_action,
                  notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
                  notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
                  notify_your_turn, notify_match_ended
           FROM game
           WHERE game_id = $gameId"""
-            .query(gameType *: text *: text *: text *: bool *: text *: timeoutAction *: notifications)
+            .query(gameType *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *: notifications)
 
     /* Confirms a game exists and holds it that way for the rest of the transaction.
      *
@@ -88,6 +92,10 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
      * same game do not queue behind each other. */
     private val lockGameRow: Query[GameId, GameId] =
         sql"SELECT game_id FROM game WHERE game_id = $gameId FOR SHARE".query(gameId)
+
+    /* The games an engine's identity names, held as `lockGameRow` holds one. */
+    private val lockGamesByExternalId: Query[String, GameId] =
+        sql"SELECT game_id FROM game WHERE external_id = $text ORDER BY game_id FOR SHARE".query(gameId)
 
     /* And the exclusive form, for the caller that is about to rewrite the game itself. A game is
      * its row plus its roles, parameters and values, and an edit reads all of that to decide what
@@ -143,6 +151,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                 game.name,
                 game.description,
                 game.url,
+                game.characterUrl,
                 game.active,
                 game.externalId,
                 game.timeoutAction,
@@ -160,6 +169,15 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       */
     def lockForShare(id: GameId): IO[Option[GameId]] = session.option(lockGameRow)(id)
 
+    /** The ids of every game whose `external_id` is this, each locked as [[lockForShare]] locks one.
+      *
+      * For a call made on behalf of a game rather than a player, where the caller's identity is the game's
+      * `external_id` and the game is not otherwise named — an engine reporting a character it made. A list, because
+      * nothing in the schema makes the column unique; one game is what a caller should find.
+      */
+    def lockForShareByExternalId(externalId: String): IO[List[GameId]] =
+        session.execute(lockGamesByExternalId)(externalId)
+
     /** As [[lockForShare]], but exclusively: for a caller that is about to modify the game, and whose decision about
       * what to write comes from reading it. Nothing else may read it for modification until the transaction ends.
       */
@@ -168,7 +186,9 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     def read(id: GameId): IO[Option[Game]] =
         session.option(selectGameRow)(id).flatMap {
             case None => IO.pure(None)
-            case Some((gameType, name, description, url, active, externalId, timeoutAction, notifications)) =>
+            case Some(
+                  (gameType, name, description, url, characterUrl, active, externalId, timeoutAction, notifications)
+                ) =>
                 for {
                     roles <- readRoles(id)
                     parameters <- readParameters(id)
@@ -184,7 +204,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                     parameters,
                     externalId,
                     timeoutAction,
-                    notifications
+                    notifications,
+                    characterUrl
                   )
                 )
         }
@@ -197,6 +218,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                 game.name,
                 game.description,
                 game.url,
+                game.characterUrl,
                 game.active,
                 game.externalId,
                 game.timeoutAction,
@@ -279,6 +301,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         name: String,
         description: String,
         url: String,
+        characterUrl: Option[String],
         active: Boolean,
         externalId: String,
         timeoutAction: TimeoutAction,
@@ -298,7 +321,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     // collections stay small — which the schema encourages, since both describe a game's rules
     // rather than its activity — but it is the reason to revisit this if they ever grow.
     private val selectGameAggregate =
-        sql"""SELECT g.game_id, g.game_type, g.name, g.description, g.url, g.active, g.external_id, g.timeout_action,
+        sql"""SELECT g.game_id, g.game_type, g.name, g.description, g.url, g.character_url, g.active, g.external_id,
+                 g.timeout_action,
                  g.notify_challenge_accepted, g.notify_challenge_ready, g.notify_acceptance_changed,
                  g.notify_accepted_challenge_ready, g.notify_invitation_received, g.notify_invitation_accepted, g.notify_invitation_rejected, g.notify_match_started, g.notify_turn_taken,
                  g.notify_your_turn, g.notify_match_ended,
@@ -313,7 +337,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           WHERE (NOT $bool OR g.active)
           ORDER BY g.game_id"""
             .query(
-              gameId *: gameType *: text *: text *: text *: bool *: text *: timeoutAction *: notifications *:
+              gameId *: gameType *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *: notifications *:
                   int4.opt *: text.opt *: bool.opt *:
                   int4.opt *: text.opt *: value.opt *: value.opt
             )
@@ -382,7 +406,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                       parameters,
                       head.externalId,
                       head.timeoutAction,
-                      head.notifications
+                      head.notifications,
+                      head.characterUrl
                     )
                 }
                 // game_id breaks ties, so games sharing a name still come back in a stable order.

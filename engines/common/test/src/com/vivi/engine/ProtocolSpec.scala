@@ -202,4 +202,19 @@ class ProtocolSpec extends FunSuite {
         // Carried as a string and not read: matchmaker hands back exactly this in a later create request.
         assertEquals(asMatchmaker.state, request.state)
     }
+
+    test("a character an engine registers reads as matchmaker's registration request, and its answer back") {
+        val request = Protocol.RegisterCharacterRequest("Iron Mike", "a slugger", "sub-1", """{"strength":9}""")
+        val asMatchmaker =
+            read[Json.RegisterCharacterRequest](write(request))(using Json.given_ReadWriter_RegisterCharacterRequest)
+        assertEquals(
+          (asMatchmaker.name, asMatchmaker.description, asMatchmaker.ownerExternalId, asMatchmaker.state),
+          (request.name, request.description, request.ownerExternalId, request.state)
+        )
+
+        // Matchmaker answers with the whole character; the engine reads the id from it and nothing else.
+        val answer =
+            """{"characterId":42,"gameId":3,"name":"Iron Mike","description":"a slugger","state":"{}","playerId":7}"""
+        assertEquals(read[Protocol.RegisteredCharacter](answer).characterId, 42L)
+    }
 }

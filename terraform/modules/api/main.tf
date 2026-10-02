@@ -336,7 +336,8 @@ locals {
     "GET /games/{gameId}/characters",
     # Another player's characters by name, for inviting one (V25). No state.
     "GET /games/{gameId}/players/{playerId}/characters",
-    "POST /games/{gameId}/characters",
+    # No route that creates a character: a character is made in its game engine, which tells
+    # matchmaker about it with "POST /characters", among the engine's routes below.
 
     "PUT /characters/{characterId}",
     # Not "PUT /characters/{characterId}/state": that one is written by a game, not a player, and
@@ -383,9 +384,12 @@ locals {
     "POST /games/{gameId}/matches/{matchId}/results",
     # A character's state, which only the character's game may write (CharacterService.updateState
     # compares the caller with the game's external_id). Behind the JWT authorizer it could never
-    # succeed: an engine has no token, and a player's token names a player, not the game. The boxing
-    # engine writes a fighter's characteristics here once its player has built it.
+    # succeed: an engine has no token, and a player's token names a player, not the game.
     "PUT /characters/{characterId}/state",
+    # A character the engine has made, recorded in the game the caller's key is filed under
+    # (CharacterService.create finds it by external_id). Characters are made in their engine — the
+    # boxing engine builds fighters — not through matchmaker's UI.
+    "POST /characters",
   ]
 }
 

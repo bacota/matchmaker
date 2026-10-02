@@ -239,7 +239,7 @@ class RouterSpec extends FunSuite {
       ("GET", "/games/1/challenges", "{}"),
       ("GET", "/games/1/characters", "{}"),
       ("GET", "/games/1/players/2/characters", "{}"),
-      ("POST", "/games/1/characters", """{"name":"n","description":"d","externalId":"sub-1"}"""),
+      ("POST", "/characters", """{"name":"n","description":"d","ownerExternalId":"sub-1","state":"{}"}"""),
       ("PUT", "/characters/1", """{"name":"n","description":"d","externalId":"sub-1"}"""),
       ("PUT", "/characters/1/state", """{"state":"s"}"""),
       ("POST", "/challenges", challengeBody),

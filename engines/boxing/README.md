@@ -48,9 +48,15 @@ A fighter is a matchmaker character, and its characteristics are the character's
   `characterState`. Building a fighter is not part of a bout: a corner whose state is empty, or
   isn't one this engine could have built (for example, over budget), refuses the bout.
 
-Where a fighter gets built is not settled yet. Matchmaker creates every character with empty state
-and only the character's game may write it (`PUT /characters/{id}/state`), so until a builder
-exists a new character cannot fight.
+A fighter is built here, not in matchmaker. A signed-in player builds one on this engine's
+`/fighters/new` page, which posts to `POST /fighters`. The engine checks the fighter against the
+rules above and then reports it to matchmaker with `POST {MATCHMAKER_URL}/characters`. That call
+carries the engine's API key, the player's `sub` as owner, and the characteristics as the
+character's state. Matchmaker takes the game from the key, records the character, and answers with
+its id. The engine keeps nothing itself, so the fighter's only record is matchmaker's.
+
+Matchmaker's UI has no character form of its own. A player with no fighter is sent to the game's
+`character_url`, which `register-game.sql` sets to `/fighters/new` beside the engine's `/games`.
 
 ### Rounds
 
@@ -100,9 +106,10 @@ psql "$DATABASE_URL" -v url="http://localhost:8092/games" -v external_id="boxing
      -f engines/boxing/register-game.sql
 ```
 
-Then run the normal character-game flow. Each player creates a fighter (a character) in
-matchmaker, a challenge is made and accepted with a fighter each, and the challenger starts it. The
-match's `playUrl` is the page. Both characters must already be built fighters (see "Fighters").
+Then run the normal character-game flow. Each player builds a fighter at
+`http://localhost:8092/fighters/new?as=<sub>`, which registers it with the matchmaker at
+`MATCHMAKER_URL` (by default `http://localhost:8080`). A challenge is then made and accepted with a
+fighter each, and the challenger starts it. The match's `playUrl` is the page.
 
 `MATCHMAKER_OFFLINE=true` runs with nothing to call back to. Callbacks are
 printed instead.
@@ -130,14 +137,16 @@ with `deploy_boxing = true` in
 This engine needs two changes on matchmaker's side that the targeted per-engine plan doesn't touch:
 
 - matchmaker has to hold the engine's API key
-- `PUT /characters/{characterId}/state` has to be an engine route (`local.engine_routes` in
-  `terraform/modules/api/main.tf`). Behind the JWT authorizer, no game could ever write a
-  character's state.
+- `POST /characters` (and `PUT /characters/{characterId}/state`) have to be engine routes
+  (`local.engine_routes` in `terraform/modules/api/main.tf`). Behind the JWT authorizer, no game
+  could ever report a fighter.
 
 After that, `./deploy-boxing.sh <env>` redeploys the engine alone.
 
 Then register the game with the outputs: `boxing_create_game_url` as `url` and `boxing` as
-`external_id`. Both deploy scripts print the exact `psql` command.
+`external_id`. Both deploy scripts print the exact `psql` command, which also sets `character_url`.
+A game registered before V28 got its `character_url` from that migration if its name is `Boxing`.
+Otherwise, set it to `boxing_character_url`.
 
 ## Known limits
 

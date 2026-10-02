@@ -286,9 +286,9 @@ module "rps" {
 /* The third bundled engine: boxing, the first character game among them.
  *
  * Every corner is a matchmaker character — a fighter — whose characteristics are the character's
- * state. A bout only fights fighters that are already built; it builds nothing. Writing that state
- * is `PUT /characters/{characterId}/state` with this engine's API key, which is why that route is
- * among the api module's `engine_routes` rather than its player routes.
+ * state. Fighters are built on the engine's own page and reported to matchmaker with
+ * `POST /characters` and this engine's API key, which is why that route is among the api module's
+ * `engine_routes` rather than its player routes. A bout only fights fighters already built.
  *
  * Off by default and otherwise configured exactly like the two above: its own function, table,
  * api and key.
@@ -307,6 +307,12 @@ module "boxing" {
   lambda_jar_path = var.boxing_jar_path
 
   matchmaker_api_key = random_password.boxing_api_key[0].result
+
+  # The build page, which signs the player in itself, and the build it posts with their token.
+  # Fighters are reported to matchmaker's own API.
+  extra_open_routes   = ["GET /fighters/new"]
+  extra_player_routes = ["POST /fighters"]
+  matchmaker_url      = module.api.api_endpoint
 
   cognito_issuer    = module.api.jwt_issuer
   cognito_client_id = module.api.user_pool_client_id

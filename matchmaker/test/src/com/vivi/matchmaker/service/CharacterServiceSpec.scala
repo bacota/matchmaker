@@ -37,26 +37,45 @@ class CharacterServiceSpec extends PropertySuite {
             )
         }
 
-    property("create creates a character owned by the given player with empty state") {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
-            (nickname, externalId, name, gameExternalId) =>
+    private def makePlainGame(gameExternalId: String): IO[Game] =
+        TestSession.resource.use { session =>
+            new GameRepo[String](session).create(
+              Game(
+                GameId.unassigned,
+                GameType.Plain,
+                "game",
+                "description",
+                "url",
+                active = true,
+                Seq.empty,
+                Seq.empty,
+                gameExternalId
+              )
+            )
+        }
+
+    property("create records a character the game made, owned by the given player with the state it was given") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, name, state, gameExternalId) =>
                 val result = for {
                     player <- registrationService.register(nickname, externalId)
                     game <- makeCharacterGame(gameExternalId)
-                    created <- characterService.create(game.gameId, name, "description", externalId, externalId)
-                } yield created.name == name && created.state == "" && created.playerId == Some(player.playerId)
+                    created <- characterService.create(name, "description", externalId, state, gameExternalId)
+                    found <- characterService.listForGame(game.gameId, externalId)
+                } yield created.name == name && created.state == state && created.playerId == Some(player.playerId) &&
+                    found.map(_.characterId) == List(created.characterId)
                 result.timeout(10.seconds).unsafeRunSync()
         }
     }
 
-    property("create rejects a caller acting on behalf of another player") {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
-            (nickname, externalId, callerExternalId, name, gameExternalId) =>
+    property("create rejects a player making a character for themselves: characters are made by their game") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, name, gameExternalId) =>
                 val result = for {
                     _ <- registrationService.register(nickname, externalId)
                     game <- makeCharacterGame(gameExternalId)
                     attempt <- characterService
-                        .create(game.gameId, name, "description", externalId, callerExternalId)
+                        .create(name, "description", externalId, "", externalId)
                         .attempt
                 } yield attempt match {
                     case Left(_: UnauthorizedError) => true
@@ -66,13 +85,61 @@ class CharacterServiceSpec extends PropertySuite {
         }
     }
 
+    property("create puts the character in the game whose identity made it, not another") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, name, gameExternalId, otherGameExternalId) =>
+                val result = for {
+                    _ <- registrationService.register(nickname, externalId)
+                    game <- makeCharacterGame(gameExternalId)
+                    other <- makeCharacterGame(otherGameExternalId)
+                    created <- characterService.create(name, "description", externalId, "", otherGameExternalId)
+                    inGame <- characterService.listForGame(game.gameId, externalId)
+                    inOther <- characterService.listForGame(other.gameId, externalId)
+                } yield created.gameId == other.gameId && inGame.isEmpty &&
+                    inOther.map(_.characterId) == List(created.characterId)
+                result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    property("create rejects a character in a game not played with characters") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, name, gameExternalId) =>
+                val result = for {
+                    _ <- registrationService.register(nickname, externalId)
+                    game <- makePlainGame(gameExternalId)
+                    attempt <- characterService
+                        .create(name, "description", externalId, "", gameExternalId)
+                        .attempt
+                } yield attempt match {
+                    case Left(_: ValidationError) => true
+                    case _                        => false
+                }
+                result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    property("create rejects an owner who has not registered with matchmaker") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (unknownExternalId, name, gameExternalId) =>
+            val result = for {
+                game <- makeCharacterGame(gameExternalId)
+                attempt <- characterService
+                    .create(name, "description", unknownExternalId, "", gameExternalId)
+                    .attempt
+            } yield attempt match {
+                case Left(_: NotFoundError) => true
+                case _                      => false
+            }
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
     property("update changes name and description but not state when authorized by the current owner") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, name, newName, gameExternalId) =>
                 val result = for {
                     player <- registrationService.register(nickname, externalId)
                     game <- makeCharacterGame(gameExternalId)
-                    created <- characterService.create(game.gameId, name, "description", externalId, externalId)
+                    created <- characterService.create(name, "description", externalId, "", gameExternalId)
                     updated <- characterService.update(
                       created.characterId,
                       newName,
@@ -94,7 +161,7 @@ class CharacterServiceSpec extends PropertySuite {
                 val result = for {
                     _ <- registrationService.register(nickname, externalId)
                     game <- makeCharacterGame(gameExternalId)
-                    created <- characterService.create(game.gameId, name, "description", externalId, externalId)
+                    created <- characterService.create(name, "description", externalId, "", gameExternalId)
                     attempt <- characterService
                         .update(created.characterId, name, "description", externalId, otherExternalId)
                         .attempt
@@ -112,7 +179,7 @@ class CharacterServiceSpec extends PropertySuite {
                 val result = for {
                     _ <- registrationService.register(nickname, externalId)
                     game <- makeCharacterGame(gameExternalId)
-                    created <- characterService.create(game.gameId, name, "description", externalId, externalId)
+                    created <- characterService.create(name, "description", externalId, "", gameExternalId)
                     updated <- characterService.updateState(created.characterId, newState, gameExternalId)
                 } yield updated.characterId == created.characterId && updated.state == newState
                 result.timeout(10.seconds).unsafeRunSync()
@@ -125,7 +192,7 @@ class CharacterServiceSpec extends PropertySuite {
                 val result = for {
                     _ <- registrationService.register(nickname, externalId)
                     game <- makeCharacterGame(gameExternalId)
-                    created <- characterService.create(game.gameId, name, "description", externalId, externalId)
+                    created <- characterService.create(name, "description", externalId, "", gameExternalId)
                     attempt <- characterService.updateState(created.characterId, newState, wrongGameExternalId).attempt
                 } yield attempt match {
                     case Left(_: UnauthorizedError) => true
@@ -141,7 +208,7 @@ class CharacterServiceSpec extends PropertySuite {
                 val result = for {
                     _ <- registrationService.register(nickname, externalId)
                     game <- makeCharacterGame(gameExternalId)
-                    created <- characterService.create(game.gameId, name, "description", externalId, externalId)
+                    created <- characterService.create(name, "description", externalId, "", gameExternalId)
                     found <- characterService.listForGame(game.gameId, externalId)
                 } yield found.map(_.characterId) == List(created.characterId)
                 result.timeout(10.seconds).unsafeRunSync()
@@ -155,7 +222,7 @@ class CharacterServiceSpec extends PropertySuite {
                     _ <- registrationService.register(nickname, externalId)
                     _ <- registrationService.register(otherNickname, otherExternalId)
                     game <- makeCharacterGame(gameExternalId)
-                    _ <- characterService.create(game.gameId, name, "description", externalId, externalId)
+                    _ <- characterService.create(name, "description", externalId, "", gameExternalId)
                     found <- characterService.listForGame(game.gameId, otherExternalId)
                 } yield found.isEmpty
                 result.timeout(10.seconds).unsafeRunSync()

@@ -40,7 +40,7 @@ locals {
   ]
 
   # A player's own routes: the state they see and the moves they make, and any the game adds — a
-  # boxer is built through one. Behind the same Cognito user pool matchmaker signs its players in
+  # fighter is built through one. Behind the same Cognito user pool matchmaker signs its players in
   # with, because the seat a player may move in is found by the `sub` of their token — and in a
   # game where both move at once a seat is also the right to see a move the other cannot, since
   # the state route withholds the opponent's until it is answered.
@@ -56,13 +56,13 @@ locals {
   #
   # The public board is open in the same way, and discloses no more than a watcher may know: that
   # a player has moved, never what, while the move is still to be answered.
-  open_routes = [
+  open_routes = concat([
     "GET /matches/{matchId}/play",
     "GET /matches/{matchId}/board",
     "GET /matches/{matchId}/board/state",
     "GET /auth/callback",
     "GET /health",
-  ]
+  ], var.extra_open_routes)
 
   # Player routes need somewhere to verify tokens against. Without a pool the module still
   # applies — useful for an engine driven only by tests — and those routes are simply absent
@@ -218,6 +218,10 @@ resource "aws_lambda_function" "engine" {
       # The function refuses to start without it when it is running in Lambda, so an empty value
       # here is a failed cold start rather than an engine that serves game creation to anyone.
       MATCHMAKER_API_KEY = var.matchmaker_api_key
+
+      # Where a character game reports a character a player has built here. Empty for a game
+      # without characters, which has nothing to report.
+      MATCHMAKER_URL = var.matchmaker_url
 
       # The sign-in the play page offers, and the pool whose claims the authorizer below
       # verifies. The same three values matchmaker's own UI is configured with.

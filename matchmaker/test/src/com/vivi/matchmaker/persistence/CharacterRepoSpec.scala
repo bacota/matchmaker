@@ -42,14 +42,14 @@ class CharacterRepoSpec extends PropertySuite {
                         )
                         created <- characterRepo.create(character)
                         found <- characterRepo.readWithOwnerAndGame(created.characterId)
-                        // The join reads the game's own columns and not its roles or parameters, which this
-                        // caller never looks at — so the game it returns has both empty, whatever the game
-                        // was created with.
+                        // The join reads the game's identifying columns and not its roles, parameters or
+                        // character url, which this caller never looks at — so the game it returns has them
+                        // empty, whatever the game was created with.
                     } yield found == Some(
                       CharacterWithOwnerAndGame(
                         created,
                         createdPlayer,
-                        createdGame.copy(roles = Seq.empty, parameters = Seq.empty)
+                        createdGame.copy(roles = Seq.empty, parameters = Seq.empty, characterUrl = None)
                       )
                     )
                 }

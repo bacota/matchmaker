@@ -24,6 +24,23 @@ variable "extra_player_routes" {
   default     = []
 }
 
+variable "extra_open_routes" {
+  description = "Routes only this game has that anyone may reach, beside the play page and board every engine serves — a page that signs the player in itself, as the play page does."
+  type        = list(string)
+  default     = []
+}
+
+variable "matchmaker_url" {
+  description = <<-EOT
+    Matchmaker's API base url — its `api_endpoint` output — for the calls this engine makes on its
+    own account rather than about a match: a character game reporting a character a player has
+    built here. A match's callbacks come with their own urls, so a game without characters can
+    leave it empty.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "lambda_jar_path" {
   description = "Path to the assembled engine jar (`mill -j 4 --ticker false engines.<name>.assembly`)."
   type        = string

@@ -232,6 +232,12 @@ output() {
 
 create_game_url=$(output "${engine}_create_game_url")
 external_id=$(output "${engine}_external_id")
+# Only a character game has one: where its players build a character.
+character_url=$(output "${engine}_character_url")
+character_url_set=""
+if [ -n "$character_url" ]; then
+  character_url_set=", character_url = '$character_url'"
+fi
 
 step "Deployed"
 
@@ -251,7 +257,7 @@ To register it as a game in matchmaker — from somewhere with a route to the da
 
 Already registered? Update the existing row instead, or matchmaker will keep calling the old url:
 
-    UPDATE game SET url = '$create_game_url', external_id = '$external_id'
+    UPDATE game SET url = '$create_game_url', external_id = '$external_id'$character_url_set
      WHERE name = '$game_name';
 EOF
 fi

@@ -1,28 +1,83 @@
 package com.vivi.boxing
 
 import java.time.Instant
-import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
+import scala.util.control.NonFatal
+import com.vivi.engine.{GameEngine, Log, MatchStore, MatchmakerRefusal, Matchmaker, MoveApplied, Refusal, TurnClock}
 import Protocol._
 
 /** Boxing: the four exchanges of `interaction-design.txt`, which [[GameEngine]] makes for any game, and what is this
-  * game's own — what a round plan is, and what a player is shown. How it tells matchmaker who is pending, round by
-  * round, is [[Bout$]]'s.
+  * game's own — building a fighter, what a round plan is, and what a player is shown. How it tells matchmaker who is
+  * pending, round by round, is [[Bout$]]'s.
   *
   * @param announce
   *   called once with each new bout, which is how the local server prints the play url and who is in which corner.
+  * @param matchmakerUrl
+  *   matchmaker's API, which a fighter is reported to once it is built. `None` refuses every build: a fighter
+  *   matchmaker never heard of could never be put in a bout.
   */
 class Engine(
     store: MatchStore[Bout],
     matchmaker: Matchmaker,
     baseUrl: String,
     now: () => Instant = () => Instant.now(),
-    announce: Bout => Unit = _ => ()
+    announce: Bout => Unit = _ => (),
+    matchmakerUrl: Option[String] = None
 ) {
 
     /** The calls every engine makes, which this one exports, and which the shared routes are served from. */
     val core = GameEngine(Bout, store, matchmaker, baseUrl, now, announce)
 
     export core.{createGame, playUrl, read, resultsOf, seatOf, status}
+
+    /** A player building a new fighter, which is made here and then reported to matchmaker as a character.
+      *
+      * A fighter is made in this engine, because this engine is what knows what a fighter is: the five characteristics,
+      * the budget they are built from, and the range each must be in. Matchmaker only learns that one exists, with its
+      * characteristics as the character's state, and from then on offers it in challenges and seats it in bouts — where
+      * that state comes back to [[Bout.seat]].
+      *
+      * Nothing is kept here: matchmaker's answer is the fighter's only record, so a build matchmaker refuses or never
+      * answers has made nothing, and the player can simply try again. The gap is the other way round — matchmaker
+      * recording it and the answer being lost — which leaves the player a fighter they were told did not take, and
+      * which they will find in matchmaker.
+      */
+    def buildFighter(cognitoId: String, request: BuildRequest): Either[Refusal, BuiltFighter] = {
+        val fighter = Fighter(request.strength, request.speed, request.agility, request.workrate, request.chin)
+        for {
+            name <- Option(request.name.trim).filter(_.nonEmpty).toRight(Refusal.Invalid("give your fighter a name"))
+            valid <- Fighter.validate(fighter).left.map(Refusal.Invalid(_))
+            url <- matchmakerUrl.toRight(
+              Refusal.Unavailable("this engine has no matchmaker to register fighters with")
+            )
+            characterId <- register(
+              url,
+              RegisterCharacterRequest(name, request.description.trim, cognitoId, Fighter.toState(valid))
+            )
+        } yield BuiltFighter(
+          characterId,
+          name,
+          FighterView(valid.strength, valid.speed, valid.agility, valid.workrate, valid.chin)
+        )
+    }
+
+    private def register(url: String, request: RegisterCharacterRequest): Either[Refusal, Long] =
+        try Right(matchmaker.registerCharacter(url, request))
+        catch {
+            // Matchmaker has no player for this sign-in: the one refusal that is the player's to fix.
+            case MatchmakerRefusal(404, _) =>
+                Left(
+                  Refusal.Invalid(
+                    "matchmaker does not know you yet: sign in to matchmaker once to register, then build your fighter"
+                  )
+                )
+            // Anything else it refuses is how this engine is set up, not anything the player did.
+            case e: MatchmakerRefusal =>
+                Log.failure(e, "registering a fighter")
+                Left(Refusal.Unavailable(s"matchmaker would not take the fighter: ${e.reason}"))
+            case NonFatal(e) =>
+                Log.failure(e, "registering a fighter")
+                Left(Refusal.Unavailable("your fighter could not be registered with matchmaker; please try again"))
+        }
 
     /** A player's plan for the current round. Both corners planning at the same moment is the ordinary case here, and
       * both plans must land.

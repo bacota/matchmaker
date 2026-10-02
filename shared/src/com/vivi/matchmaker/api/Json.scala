@@ -125,7 +125,9 @@ object Json {
         // The form that registers a game requires an admin to choose all eight, which is a rule about
         // the form — a client that says nothing here still creates a game, it just creates a talkative
         // one.
-        notifications: NotificationDefaults = NotificationDefaults.all(true)
+        notifications: NotificationDefaults = NotificationDefaults.all(true),
+        // Where a player makes a character, for a character game whose engine has a page for it (V28).
+        characterUrl: Option[String] = None
     )
 
     private given ReadWriter[GameDto] = macroRW
@@ -143,7 +145,8 @@ object Json {
             game.parameters.map(_.asInstanceOf[GameParameter[String]]),
             game.externalId,
             game.timeoutAction,
-            game.notifications
+            game.notifications,
+            game.characterUrl
           ),
       dto =>
           Game(
@@ -157,7 +160,8 @@ object Json {
             dto.parameters,
             dto.externalId,
             dto.timeoutAction,
-            dto.notifications
+            dto.notifications,
+            dto.characterUrl
           )
     )
 
@@ -182,6 +186,14 @@ object Json {
     case class EmailRequest(email: String)
     case class CharacterRequest(name: String, description: String, externalId: String)
     case class UpdateStateRequest(state: String)
+
+    /** A character its game engine has made, as the engine tells matchmaker about it: `POST /characters`, in the game
+      * the engine's identity names. Characters are made in the engine, not here, so this is the engine's call, not a
+      * player's. `ownerExternalId` is the Cognito `sub` of the player who made it, and `state` is what the engine keeps
+      * on it — a boxer's characteristics, say — which matchmaker stores without reading and hands back when it seats
+      * the character.
+      */
+    case class RegisterCharacterRequest(name: String, description: String, ownerExternalId: String, state: String)
 
     // characterId is present iff the challenge being accepted belongs to a 'C'-type game; the
     // service layer checks that correspondence rather than trusting the caller to get it right.
@@ -329,6 +341,7 @@ object Json {
     given ReadWriter[EmailRequest] = macroRW
     given ReadWriter[CharacterRequest] = macroRW
     given ReadWriter[UpdateStateRequest] = macroRW
+    given ReadWriter[RegisterCharacterRequest] = macroRW
     given ReadWriter[AcceptRequest] = macroRW
     given ReadWriter[CreateChallenge] = macroRW
     given ReadWriter[PreferencesRequest] = macroRW
