@@ -3,9 +3,9 @@ package com.vivi.matchmaker.model
 /** The kinds of thing matchmaker writes to a player about.
   *
   * One case per event that is worth an email, and the list is closed on purpose: each case is a column on the three
-  * levels a player states an opinion at — `player`, `player_game` and `game` (see V13) — and a paragraph in somebody's
-  * inbox, so adding one is a migration and a decision, not a string a caller can invent. The `code` is what travels on
-  * the wire and, with `notify_` in front of it in lower case, names the column.
+  * levels a player states an opinion at — `player` and `player_game` (see V13) — and a paragraph in somebody's inbox,
+  * so adding one is a migration and a decision, not a string a caller can invent. The `code` is what travels on the
+  * wire and, with `notify_` in front of it in lower case, names the column.
   *
   * `participant` is the exception, and holds only [[onSeat]] (V24): a seat is asked about the match it is in, and every
   * other kind is about a challenge that has already become one.
@@ -96,9 +96,9 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
     case MatchEnded
         extends NotificationType("MATCH_ENDED", "A match I am in ends", "However it ends, including cancellation.")
 
-    /** The column this kind is stored in, on `player`, `player_game` and `game` alike — and on `participant` for the
-      * [[onSeat]] kinds, which are the only ones it has a column for. Derived from the code rather than stated twice,
-      * so the two cannot drift.
+    /** The column this kind is stored in, on `player` and `player_game` alike — and on `participant` for the [[onSeat]]
+      * kinds, which are the only ones it has a column for. Derived from the code rather than stated twice, so the two
+      * cannot drift.
       */
     def column: String = s"notify_${code.toLowerCase}"
 
@@ -207,11 +207,8 @@ case class NotificationPreferences(
     /** The kinds this level has nothing to say about, i.e. the ones that fall through to the next. */
     def unsaid: Seq[NotificationType] = NotificationType.values.toSeq.filter(apply(_).isEmpty)
 
-    /** The four a seat holds, or `None` if any of those is unsaid. What the per-match form saves.
-      *
-      * Separate from [[complete]] because the two forms ask different questions: the game's asks all eleven and every
-      * one of them is a column, while a match's asks the four its seat can answer and must not be blocked by the seven
-      * it never shows.
+    /** The four a seat holds, or `None` if any of those is unsaid. What the per-match form saves: a match's form asks
+      * the four its seat can answer, and must not be blocked by the seven it never shows.
       */
     def completeForSeat: Option[SeatNotifications] =
         for {
@@ -220,28 +217,6 @@ case class NotificationPreferences(
             yours <- yourTurn
             ended <- matchEnded
         } yield SeatNotifications(started, taken, yours, ended)
-
-    /** Every kind answered, or `None` if any is still unsaid. What turns the game form's eleven controls into the
-      * eleven NOT NULL columns of `game`, and the reason the form cannot be submitted with one left blank.
-      */
-    def complete: Option[NotificationDefaults] =
-        if (unsaid.nonEmpty) None
-        else
-            Some(
-              NotificationDefaults(
-                challengeAccepted.get,
-                challengeReady.get,
-                acceptanceChanged.get,
-                acceptedChallengeReady.get,
-                invitationReceived.get,
-                invitationAccepted.get,
-                invitationRejected.get,
-                matchStarted.get,
-                turnTaken.get,
-                yourTurn.get,
-                matchEnded.get
-              )
-            )
 }
 
 object NotificationPreferences {
@@ -287,124 +262,45 @@ object SeatNotifications {
     def all(enabled: Boolean): SeatNotifications = SeatNotifications(enabled, enabled, enabled, enabled)
 }
 
-/** A game's answer for every kind — the end of the chain, and so the one level that cannot say "I have not said".
-  *
-  * A separate type from [[NotificationPreferences]] rather than one with a convention that all eleven are `Some`,
-  * because the difference is the whole point: this is what `game`'s eleven NOT NULL columns hold, and it is what
-  * [[NotificationPolicy]] can finish on.
-  */
-case class NotificationDefaults(
-    challengeAccepted: Boolean,
-    challengeReady: Boolean,
-    acceptanceChanged: Boolean,
-    acceptedChallengeReady: Boolean,
-    invitationReceived: Boolean,
-    invitationAccepted: Boolean,
-    invitationRejected: Boolean,
-    matchStarted: Boolean,
-    turnTaken: Boolean,
-    yourTurn: Boolean,
-    matchEnded: Boolean
-) {
-
-    def apply(kind: NotificationType): Boolean = kind match {
-        case NotificationType.ChallengeAccepted      => challengeAccepted
-        case NotificationType.ChallengeReady         => challengeReady
-        case NotificationType.AcceptanceChanged      => acceptanceChanged
-        case NotificationType.AcceptedChallengeReady => acceptedChallengeReady
-        case NotificationType.InvitationReceived     => invitationReceived
-        case NotificationType.InvitationAccepted     => invitationAccepted
-        case NotificationType.InvitationRejected     => invitationRejected
-        case NotificationType.MatchStarted           => matchStarted
-        case NotificationType.TurnTaken              => turnTaken
-        case NotificationType.YourTurn               => yourTurn
-        case NotificationType.MatchEnded             => matchEnded
-    }
-
-    /** The same answers as choices a form can edit, every one of them said. */
-    def asPreferences: NotificationPreferences =
-        NotificationPreferences(
-          Some(challengeAccepted),
-          Some(challengeReady),
-          Some(acceptanceChanged),
-          Some(acceptedChallengeReady),
-          Some(invitationReceived),
-          Some(invitationAccepted),
-          Some(invitationRejected),
-          Some(matchStarted),
-          Some(turnTaken),
-          Some(yourTurn),
-          Some(matchEnded)
-        )
-}
-
-object NotificationDefaults {
-
-    /** One answer for all eleven. `all(true)` is what V13 gave every game that already existed, and so what a `Game`
-      * built by a client that has never heard of notifications carries.
-      */
-    def all(enabled: Boolean): NotificationDefaults =
-        NotificationDefaults(
-          enabled,
-          enabled,
-          enabled,
-          enabled,
-          enabled,
-          enabled,
-          enabled,
-          enabled,
-          enabled,
-          enabled,
-          enabled
-        )
-}
-
 /** The levels a new seat inherits from, unresolved.
   *
-  * Carried as one value rather than resolved where it is read, so that the rule lives in exactly one place —
-  * [[resolve]] — and can be exercised without a database. `playerGame` is `unset` when there is no such row: a player
-  * who has never opened a game's settings has none.
+  * Carried as one value rather than resolved where it is read, so that the rule lives in exactly one place — [[apply]]
+  * — and can be exercised without a database. `playerGame` is `unset` when there is no such row: a player who has never
+  * opened a game's settings has none.
   *
   * Note what is *not* here: the participant level. Since V14 a seat's own answers are NOT NULL and are the whole answer
   * for anything about a match, so a chain is only ever walked in the two places one still has to be — creating a seat,
   * and writing to somebody about a challenge, which nobody is a participant in yet.
   *
-  * [[resolve]] still answers every kind, and has to: the second of those places is an audience of acceptors, who are
-  * asked about challenge kinds. Only the seat-shaped subset of it is ever written to `participant`.
+  * Nor, since V30, the game. A game used to carry an answer for every kind, which the chain ended at; it ends now at
+  * "send it", the same for every game. [[apply]] still answers every kind, and has to: the second of those places is an
+  * audience of acceptors, who are asked about challenge kinds. Only the seat-shaped subset of it is ever written to
+  * `participant`.
   */
 case class NotificationLevels(
     playerGame: NotificationPreferences = NotificationPreferences.unset,
-    player: NotificationPreferences = NotificationPreferences.unset,
-    game: NotificationDefaults
+    player: NotificationPreferences = NotificationPreferences.unset
 ) {
 
-    /** The chain collapsed: the most specifically stated answer for each kind, ending at the game, which always has
-      * one.
+    /** The chain collapsed for one kind: the most specifically stated answer, and `true` where nobody has said.
       *
       * Most specific first, which is also least durable first: what a player says about one game outlives their opinion
-      * of that afternoon, while what the game says outlives everyone's opinion of it.
+      * of that afternoon.
       *
       * This is what a seat is stamped with when it is created, and the same expression the database writes there —
       * `ParticipantRepo.create` does it in SQL so that a seat cannot exist unstamped. Here so that the rule can be read
-      * and tested as itself.
+      * and tested as itself. Pass it, as `levels.apply`, wherever [[NotificationPolicy]] wants answers.
       */
-    def resolve: NotificationDefaults =
-        NotificationDefaults(
-          answer(NotificationType.ChallengeAccepted),
-          answer(NotificationType.ChallengeReady),
-          answer(NotificationType.AcceptanceChanged),
-          answer(NotificationType.AcceptedChallengeReady),
-          answer(NotificationType.InvitationReceived),
-          answer(NotificationType.InvitationAccepted),
-          answer(NotificationType.InvitationRejected),
-          answer(NotificationType.MatchStarted),
-          answer(NotificationType.TurnTaken),
-          answer(NotificationType.YourTurn),
-          answer(NotificationType.MatchEnded)
-        )
+    def apply(kind: NotificationType): Boolean =
+        playerGame(kind).orElse(player(kind)).getOrElse(NotificationLevels.unsaid)
+}
 
-    private def answer(kind: NotificationType): Boolean =
-        playerGame(kind).orElse(player(kind)).getOrElse(game(kind))
+object NotificationLevels {
+
+    /** What a kind nobody has said anything about resolves to: send it. The end of the chain, and the `TRUE` that
+      * closes every `COALESCE` that resolves it in SQL.
+      */
+    val unsaid: Boolean = true
 }
 
 /** What one player has said about one game, as the settings screen lists it.
@@ -436,17 +332,12 @@ case class NotificationSettings(
     suppressed: Option[EmailSuppression.Notice] = None
 )
 
-/** Whether a particular player is to be told about a particular thing.
-  *
-  * Over one recipient's answers, already resolved: a seat's own [[SeatNotifications]], or
-  * [[NotificationLevels.resolve]] for an audience that has no seat yet.
-  */
 /** Which notification a recipient gets, given what they have said they want.
   *
-  * `answers` is a function rather than a type, so that a game's [[NotificationDefaults]] and a seat's
-  * [[SeatNotifications]] can both be asked without sharing a supertype. They must not share one: both travel on the
-  * wire, and upickle tags a case class that has a parent with a `$type` discriminator — which would silently change the
-  * shape of every game payload. Pass either one's `apply`.
+  * Over one recipient's answers, already resolved: a seat's own [[SeatNotifications]], or [[NotificationLevels]] for an
+  * audience that has no seat yet. `answers` is a function rather than a type, so that the two can both be asked without
+  * sharing a supertype — `SeatNotifications` travels on the wire, and upickle tags a case class that has a parent with
+  * a `$type` discriminator. Pass either one's `apply`.
   */
 object NotificationPolicy {
 

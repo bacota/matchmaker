@@ -26,7 +26,7 @@ class NotificationServiceSpec extends PropertySuite {
             .flatMap(n => Gen.listOfN(n, Gen.alphaNumChar).map(_.mkString))
             .map(s => s"$s-${java.util.UUID.randomUUID()}")
 
-    private def makeGame(seed: String, defaults: NotificationDefaults = NotificationDefaults.all(true)): IO[Game] =
+    private def makeGame(seed: String): IO[Game] =
         TestSession.resource.use { session =>
             new GameRepo[String](session).create(
               Game(
@@ -38,8 +38,7 @@ class NotificationServiceSpec extends PropertySuite {
                 active = true,
                 Seq(GameRole(GameRoleId(0), GameId.unassigned, "player", optional = false)),
                 Seq.empty,
-                s"game-$seed",
-                notifications = defaults
+                s"game-$seed"
               )
             )
         }

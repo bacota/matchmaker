@@ -73,15 +73,6 @@ case class Game(
     // game had this behaviour decided for it by the migration that added the column, and
     // Forfeit is what it decided.
     timeoutAction: TimeoutAction = TimeoutAction.Forfeit,
-    /* Which notifications this game's players get unless they say otherwise: the end of the chain
-     * in `NotificationPolicy`, and the only level of it that must answer every kind.
-     *
-     * On the game rather than in a constant somewhere because it is a property of how the game is
-     * played -- one finished in an evening can afford to mail every move, one played over weeks
-     * cannot -- and so is the admin's to set, which is why the game form requires all eight.
-     * Defaulted here for the same reason `timeoutAction` is: V13 decided it for every game that
-     * already existed, and it decided "send it". */
-    notifications: NotificationDefaults = NotificationDefaults.all(true),
     /* Where a player makes a character for this game (V28), for a character game whose engine offers
      * a page for it. Characters are made in their engine, which then reports each one to matchmaker,
      * so this is where matchmaker's UI sends a player who has none. `None` for a plain game, and for

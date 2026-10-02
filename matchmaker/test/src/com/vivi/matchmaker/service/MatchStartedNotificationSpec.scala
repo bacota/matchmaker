@@ -45,10 +45,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
 
     /* A two-role game: one required role for the challenger and one more for a second player, so
      * that a match can have somebody in it who is not the person who pressed Start. */
-    private def makeGame(
-        gameExternalId: String,
-        notifications: NotificationDefaults = NotificationDefaults.all(true)
-    ): IO[Game] =
+    private def makeGame(gameExternalId: String): IO[Game] =
         TestSession.resource.use { session =>
             new GameRepo[String](session).create(
               Game(
@@ -63,8 +60,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = true)
                 ),
                 Seq.empty,
-                gameExternalId,
-                notifications = notifications
+                gameExternalId
               )
             )
         }
@@ -75,18 +71,15 @@ class MatchStartedNotificationSpec extends PropertySuite {
       *   the address the challenger registered with, if any
       * @param accepterEmail
       *   the address the other player registered with, if any
-      * @param gameDefaults
-      *   what the game says its players should hear about, which is the bottom of the chain in `NotificationPolicy`
       * @param beforeStart
       *   a chance to say something about notifications before the match exists — the accepting player and the game are
-      *   handed over, because every level of the chain above the game's defaults is keyed by one or both
+      *   handed over, because every level of the chain is keyed by one or both
       */
     private def startedMatch(
         seed: String,
         notifier: RecordingNotifier,
         challengerEmail: Option[String],
         accepterEmail: Option[String],
-        gameDefaults: NotificationDefaults = NotificationDefaults.all(true),
         beforeStart: (Services[String], Player, Game) => IO[Unit] = (_, _, _) => IO.unit
     ): IO[Match] = {
         val services = TestServices.servicesWith(
@@ -99,7 +92,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
         val accepterId = s"accepter-$seed"
 
         for {
-            game <- makeGame(s"game-$seed", gameDefaults)
+            game <- makeGame(s"game-$seed")
             challenger <- services.registration.register(s"challenger-$seed", challengerId, challengerEmail)
             accepter <- services.registration.register(s"accepter-$seed", accepterId, accepterEmail)
             challenge <- services.challenges.create(
@@ -230,43 +223,6 @@ class MatchStartedNotificationSpec extends PropertySuite {
                     NotificationType.values.toSeq
                         .filter(_ != NotificationType.MatchStarted)
                         .foldLeft(NotificationPreferences.unset)((p, kind) => p.updated(kind, Some(false)))
-                  )
-            ).map(_ => notifier.recipients == Set(s"accepter-$seed@example.com"))
-            result.timeout(caseTimeout).unsafeRunSync()
-        }
-    }
-
-    // The bottom of the chain, and the only level that cannot abstain: a game that asks for silence
-    // gets it from a player who has said nothing.
-    property("a game whose defaults are silent sends nothing") {
-        forAll(genUniqueString) { seed =>
-            val notifier = new RecordingNotifier
-            val result = startedMatch(
-              seed,
-              notifier,
-              challengerEmail = Some(s"challenger-$seed@example.com"),
-              accepterEmail = Some(s"accepter-$seed@example.com"),
-              gameDefaults = NotificationDefaults.all(false)
-            ).map(_ => notifier.messages.isEmpty)
-            result.timeout(caseTimeout).unsafeRunSync()
-        }
-    }
-
-    // And the other direction, which is the point of the chain rather than a flag: a player may ask
-    // to hear about something the game would not have told them about.
-    property("a player may ask to hear about a game that would not have told them") {
-        forAll(genUniqueString) { seed =>
-            val notifier = new RecordingNotifier
-            val result = startedMatch(
-              seed,
-              notifier,
-              challengerEmail = Some(s"challenger-$seed@example.com"),
-              accepterEmail = Some(s"accepter-$seed@example.com"),
-              gameDefaults = NotificationDefaults.all(false),
-              beforeStart = (services, accepter, _) =>
-                  services.notifications.updateMine(
-                    accepter.externalId,
-                    NotificationPreferences.unset.updated(NotificationType.MatchStarted, Some(true))
                   )
             ).map(_ => notifier.recipients == Set(s"accepter-$seed@example.com"))
             result.timeout(caseTimeout).unsafeRunSync()

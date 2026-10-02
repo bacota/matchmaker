@@ -1618,8 +1618,7 @@ object Views {
           child <-- shown.signal.map {
               case false => emptyNode
               case true  =>
-                  // `withDefault = false`, as on the game form and for the same reason: this match's
-                  // seat answers every kind itself and there is nothing under it to defer to. The
+                  // `withDefault = false`: this match's seat answers every kind itself and there is nothing under it to defer to. The
                   // answers it opens with are what the seat was stamped with when the match started,
                   // so nothing is unanswered and the button is never disabled for want of a choice.
                   //
@@ -2034,14 +2033,6 @@ object Views {
         // be — the control does not have to change when the second arrives, only the enum.
         val timeoutAction: Var[TimeoutAction] =
             Var(existing.map(_.timeoutAction).getOrElse(TimeoutAction.Forfeit))
-        // What this game's players are emailed about unless they say otherwise. Held as
-        // preferences rather than as defaults because that is what the controls edit -- an
-        // unanswered question -- and a new game starts with all eight unanswered on purpose:
-        // these are the end of the chain every player's settings fall back to, so they are the
-        // admin's to decide rather than something to inherit from a form's initial state. The
-        // submit button stays disabled until all eight are answered.
-        val notifications: Var[NotificationPreferences] =
-            Var(existing.map(_.notifications.asPreferences).getOrElse(NotificationPreferences.unset))
         // A new game starts with one empty role, because it cannot be created without one, and no
         // parameters, because plenty of games have none. An existing one starts with what it has.
         val roles = Var(existing.map(_.roles.map(draftOf).toList).getOrElse(List(emptyRole)))
@@ -2087,39 +2078,18 @@ object Views {
           ),
           roleEditor(roles),
           parameterEditor(parameters),
-          div(
-            cls := "card",
-            h3("Notification Preferences"),
-            p(
-              cls := "detail",
-              "What this game's players are emailed about unless they choose otherwise. " +
-                  "Every question needs an answer: these are what a player's own settings fall back to."
-            ),
-            // No "Use Default" here, because this is the default: there is nothing below a game
-            // for it to defer to.
-            Notifications.editor(notifications, withDefault = false)
-          ),
           busyButton(
             if (existing.isDefined) "Save Changes" else "Create Game",
-            disabledWhen = name.signal
-                .combineWith(notifications.signal)
-                .map { case (gameName, chosen) => gameName.trim.isEmpty || chosen.unsaid.nonEmpty }
+            disabledWhen = name.signal.map(_.trim.isEmpty)
           ) { busy =>
               val drafted = for {
                   roleModels <- rolesOf(roles.now())
                   parameterModels <- parametersOf(parameters.now())
-                  // The button is disabled while any is unanswered, so this is the same rule said
-                  // where it can be enforced rather than only shown -- and it is what turns eight
-                  // tri-state controls into the eight NOT NULL columns of `game`.
-                  notificationDefaults <- notifications
-                      .now()
-                      .complete
-                      .toRight("Answer every notification question before saving the game.")
-              } yield (roleModels, parameterModels, notificationDefaults)
+              } yield (roleModels, parameterModels)
 
               drafted match {
                   case Left(problem) => Store.reportProblem(problem)
-                  case Right((roleModels, parameterModels, notificationDefaults)) =>
+                  case Right((roleModels, parameterModels)) =>
                       val game = Game(
                         // Unassigned means create and the server assigns the real id — the same sentinel
                         // the challenge form uses; a real id means update that game.
@@ -2140,7 +2110,6 @@ object Views {
                         // regenerating it would silently lock the game engine out.
                         externalId = existing.map(_.externalId).getOrElse(Pkce.newSecret()),
                         timeoutAction = timeoutAction.now(),
-                        notifications = notificationDefaults,
                         characterUrl = Option
                             .when(gameType.now() == GameType.Character)(characterUrl.now().trim)
                             .filter(_.nonEmpty)
@@ -2154,7 +2123,6 @@ object Views {
                               characterUrl.set("")
                               roles.set(List(emptyRole))
                               parameters.set(Nil)
-                              notifications.set(NotificationPreferences.unset)
                               // Straight to the game that was just created: it is now in the menu, and its own
                               // screen is where anything else is done with it.
                               Store.show(Store.Page.OneGame(saved.gameId))

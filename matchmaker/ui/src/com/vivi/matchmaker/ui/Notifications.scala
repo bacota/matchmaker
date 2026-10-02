@@ -27,8 +27,8 @@ object Notifications {
       * — the same reasoning as `Main.field`.
       *
       * @param withDefault
-      *   whether "Use Default" is offered. False on the game form, where the game is the default and there is nothing
-      *   below it to defer to.
+      *   whether "Use Default" is offered. False on the per-match form, where the seat holds every answer itself and
+      *   there is nothing below it to defer to.
       */
     private def question(
         kind: NotificationType,
@@ -56,8 +56,8 @@ object Notifications {
                 }
                 preferences.update(_.updated(kind, choice))
             },
-            // The unanswered option is first and is what an unanswered question shows. On the game
-            // form it is still present but says something else: an admin has not chosen yet, and a
+            // The unanswered option is first and is what an unanswered question shows. Without a
+            // default it is still present but says something else: nobody has chosen yet, and a
             // form that opened with "Yes" already selected would collect a choice nobody made.
             option(value := useDefault, if (withDefault) "Use Default" else "Choose…"),
             option(value := "yes", "Yes"),

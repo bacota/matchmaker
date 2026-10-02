@@ -172,7 +172,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                     mail <- challenger.traverse { offeredBy =>
                                         val (recipient, subject) = addressee(offeredBy)
                                         notificationRepo
-                                            .levelsForPlayer(recipient.playerId, gameId, notice.notifications)
+                                            .levelsForPlayer(recipient.playerId, gameId)
                                             .map { levels =>
                                                 val news = ChallengeNews(
                                                   gameName = notice.name,
@@ -185,7 +185,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                                 )
 
                                                 Option
-                                                    .when(NotificationPolicy.wants(kind, levels.resolve.apply))(())
+                                                    .when(NotificationPolicy.wants(kind, levels.apply))(())
                                                     .flatMap(_ =>
                                                         ChallengeMail.compose(from, uiBaseUrl, recipient, kind, news)
                                                     )
@@ -383,7 +383,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                         // commit, which is an ordinary race outside the lock.
                         challenge <- challengeRepo.read(gameId, challengeId)
                         waitingFor <- acceptanceRepo.unclaimedRoles(gameId, challengeId)
-                        audience <- notificationRepo.levelsForChallenge(gameId, challengeId, notice.notifications)
+                        audience <- notificationRepo.levelsForChallenge(gameId, challengeId)
                     } yield challenge.toSeq.flatMap { offered =>
                         val news = ChallengeNews(
                           gameName = notice.name,
@@ -416,7 +416,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                 NotificationPolicy
                                     .choose(
                                       kindsFor(recipient, offered, joined, waitingFor, wasInvited),
-                                      recipient.levels.resolve.apply
+                                      recipient.levels.apply
                                     )
                                     .flatMap(ChallengeMail.compose(from, uiBaseUrl, recipient.player, _, news))
                             )

@@ -45,16 +45,15 @@ object Json {
     // Seconds, matching how the persistence layer stores time_limit.
     given ReadWriter[Duration] = readwriter[Long].bimap(_.getSeconds, Duration.ofSeconds)
 
-    /** Preferences and defaults are plain objects of eleven named fields, so a client reads them by name rather than by
-      * position — the one thing about this wire format that must not depend on `NotificationType.values` order, since
-      * the database binding already does.
+    /** Preferences are plain objects of eleven named fields, so a client reads them by name rather than by position —
+      * the one thing about this wire format that must not depend on `NotificationType.values` order, since the database
+      * binding already does.
       *
       * The tri-state is upickle's `Option`, which writes the value itself and omits the field entirely when there is
       * none — so an absent field is "Use Default", exactly the absence the nullable column holds, and a client that
       * omits a field is saying what it means rather than saying nothing.
       */
     given ReadWriter[NotificationPreferences] = macroRW
-    given ReadWriter[NotificationDefaults] = macroRW
     given ReadWriter[SeatNotifications] = macroRW
     given ReadWriter[GameNotificationPreferences] = macroRW
 
@@ -120,12 +119,6 @@ object Json {
         // Defaulted so that a client written before turn timeouts existed still parses, and one
         // that omits it still creates a game — with the action every existing game already has.
         timeoutAction: TimeoutAction = TimeoutAction.Forfeit,
-        // Which notifications this game's players get unless they say otherwise. Defaulted for the
-        // same reason, and to the same thing V13 gave every game that already existed: send them all.
-        // The form that registers a game requires an admin to choose all eight, which is a rule about
-        // the form — a client that says nothing here still creates a game, it just creates a talkative
-        // one.
-        notifications: NotificationDefaults = NotificationDefaults.all(true),
         // Where a player makes a character, for a character game whose engine has a page for it (V28).
         characterUrl: Option[String] = None
     )
@@ -145,7 +138,6 @@ object Json {
             game.parameters.map(_.asInstanceOf[GameParameter[String]]),
             game.externalId,
             game.timeoutAction,
-            game.notifications,
             game.characterUrl
           ),
       dto =>
@@ -160,7 +152,6 @@ object Json {
             dto.parameters,
             dto.externalId,
             dto.timeoutAction,
-            dto.notifications,
             dto.characterUrl
           )
     )
