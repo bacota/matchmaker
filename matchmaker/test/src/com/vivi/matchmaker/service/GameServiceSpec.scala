@@ -271,6 +271,26 @@ class GameServiceSpec extends PropertySuite {
         assertEquals(result.unsafeRunSync(), (false, Some(false)))
     }
 
+    // What the admin form's "Disabled" box does: an edit that clears `active` takes the game out of
+    // the active list the menu is drawn from, and one that sets it again puts it back.
+    test("an edit can disable a game and enable it again") {
+        val result = for {
+            admin <- makeAdmin()
+            created <- gameService.createOrUpdate(admin.externalId, Generators.genGameWithRole.sample.get)
+            _ <- gameService.createOrUpdate(admin.externalId, created.copy(active = false))
+            whileDisabled <- gameService.list(admin.externalId, activeOnly = true)
+            everything <- gameService.list(admin.externalId)
+            _ <- gameService.createOrUpdate(admin.externalId, created.copy(active = true))
+            afterEnabling <- gameService.list(admin.externalId, activeOnly = true)
+        } yield (
+          whileDisabled.exists(_.gameId == created.gameId),
+          everything.find(_.gameId == created.gameId).map(_.active),
+          afterEnabling.exists(_.gameId == created.gameId)
+        )
+
+        assertEquals(result.unsafeRunSync(), (false, Some(false), true))
+    }
+
     test("createOrUpdate refuses a game that defines no roles") {
         val result = for {
             admin <- makeAdmin()

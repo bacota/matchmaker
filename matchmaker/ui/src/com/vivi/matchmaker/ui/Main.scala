@@ -1840,10 +1840,51 @@ object Views {
         div(
           h2("Add a Game"),
           child <-- currentPlayer.map {
-              case Some(player) if player.isAdmin => newGameForm
+              case Some(player) if player.isAdmin => div(newGameForm, disabledGames)
               case _                              => p(cls := "empty", "Only an administrator can add a game.")
           }
         )
+
+    /** The games an admin has disabled, each a link to its own screen, where its edit form can enable it again.
+      *
+      * Here because nowhere else lists them: a disabled game is out of the menu and every picker, which is the point of
+      * disabling it, and without this the only way back to one would be a link somebody kept. Fetched each time the
+      * page opens, into this page alone — it is the one screen that wants the disabled games as a list.
+      */
+    private def disabledGames: HtmlElement = {
+        val found = Var(Option.empty[Either[String, Seq[Game]]])
+        div(
+          cls := "detail-panel",
+          h3("Disabled Games"),
+          onMountCallback { _ =>
+              ApiClient.games(activeOnly = false).onComplete {
+                  case scala.util.Success(all) => found.set(Some(Right(all.filterNot(_.active))))
+                  case scala.util.Failure(e)   => found.set(Some(Left(s"Could not load them: ${e.getMessage}")))
+              }
+          },
+          div(
+            // Announced when it arrives, rather than left for a reader to find has changed.
+            aria.live := "polite",
+            child <-- found.signal.map {
+                case None               => p(cls := "detail", "Loading…")
+                case Some(Left(why))    => p(cls := "error", why)
+                case Some(Right(Seq())) => p(cls := "empty", "None.")
+                case Some(Right(games)) =>
+                    ul(
+                      games.map(game =>
+                          li(
+                            button(
+                              cls := "link",
+                              game.displayName,
+                              onClick --> (_ => Store.show(Store.Page.OneGame(game.gameId)))
+                            )
+                          )
+                      )
+                    )
+            }
+          )
+        )
+    }
 
     /** "An admin user should be able to create a new game."
       *
@@ -2056,8 +2097,10 @@ object Views {
       * `externalId` is asked for as the engine's identity: the name a callback carrying this game's API key is taken to
       * come from, and what game-authorized requests are matched against. The API key itself is asked for too — the
       * secret the engine was deployed with — and is write-only: required to create a game, left as it is by an edit
-      * that leaves the field blank, and never shown, since nothing sends it back. `active` is not on this form at all,
-      * so editing preserves it and creating sets it true.
+      * that leaves the field blank, and never shown, since nothing sends it back. `active` is asked only of an edit, as
+      * "Disabled": a new game is created active, and an edit may disable it, which takes it out of the menu and every
+      * game picker. It hides the game rather than closing it — its challenges, invitations and matches are left as they
+      * are, since `active` decides what is listed, not what may be played.
       */
     private def gameForm(existing: Option[Game]): HtmlElement = {
         val name = Var(existing.map(_.name).getOrElse(""))
@@ -2065,6 +2108,7 @@ object Views {
         val description = Var(existing.map(_.description).getOrElse(""))
         val url = Var(existing.map(_.url).getOrElse(""))
         val engineIdentity = Var(existing.map(_.externalId).getOrElse(""))
+        val disabled = Var(existing.exists(!_.active))
         // Write-only: starts empty whether or not a key is stored, because the stored one is never sent here.
         val apiKey = Var("")
         // Where a player makes a character: the engine's page, since characters are made there.
@@ -2174,6 +2218,27 @@ object Views {
               TimeoutAction.values.toSeq.map(action => option(value := action.code, action.label))
             )
           ),
+          // Only an existing game can be disabled: a new one is created active, since a game created
+          // hidden would look as though the button had done nothing.
+          existing.fold(emptyNode) { game =>
+              val hintId = s"disabled-hint-${game.gameId.value}"
+              div(
+                label(
+                  input(
+                    tpe := "checkbox",
+                    aria.describedBy := hintId,
+                    controlled(checked <-- disabled.signal, onClick.mapToChecked --> disabled)
+                  ),
+                  "Disabled"
+                ),
+                p(
+                  idAttr := hintId,
+                  cls := "detail",
+                  "A disabled game is taken out of the menu and every game list. Its challenges, invitations " +
+                      "and matches are left as they are. It is listed on Add a Game, where it can be enabled again."
+                )
+              )
+          },
           roleEditor(roles),
           parameterEditor(parameters),
           busyButton(
@@ -2207,8 +2272,8 @@ object Views {
                         url = url.now().trim,
                         // A game nobody can see is not what "create a game" means, and `refreshGames` only
                         // asks for active ones — creating it inactive would look like the button did nothing.
-                        // Editing leaves it as it was, since this form has no control for it.
-                        active = existing.map(_.active).getOrElse(true),
+                        // An edit says whether it is disabled.
+                        active = existing.isEmpty || !disabled.now(),
                         roles = roleModels,
                         parameters = parameterModels,
                         // Who the engine is: the name its API key is filed under, which is what a callback
