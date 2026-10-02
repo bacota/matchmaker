@@ -9,7 +9,7 @@ import munit.FunSuite
   * the local WebSocket server spoken to by a real WebSocket client. What the routes admit and push is
   * `RoutesContract`'s, for every engine.
   */
-class LiveSpec extends FunSuite {
+class LiveSpec extends FunSuite with QuietTests {
 
     private class Channel(gone: Set[String] = Set.empty, failing: Set[String] = Set.empty) extends LiveChannel {
         val sent = scala.collection.mutable.ListBuffer[String]()
@@ -38,7 +38,7 @@ class LiveSpec extends FunSuite {
 
     /* The move a push reports is already committed; a failure to report it must not become a 500 for
      * a move that stands, nor stop the other watchers hearing of it. */
-    test("a push that fails is logged, and neither fails the caller nor stops the others") {
+    test("a push that fails is logged, and neither fails the caller nor stops the others".tag(Quiet)) {
         val channel = Channel(failing = Set("c-1"))
         val live = Live("ws://x", PlayAuth.Trusted, InMemorySubscriptions(), channel)
         live.subscribe(Subscription("c-1", "m-1"))
@@ -50,7 +50,7 @@ class LiveSpec extends FunSuite {
 
     /* Pushed inside the request that made the move, so a stalled connection must not hold that
      * request: its answer would otherwise be a timeout for a move that stands. */
-    test("a push that never answers is abandoned at the deadline, and the others are still sent") {
+    test("a push that never answers is abandoned at the deadline, and the others are still sent".tag(Quiet)) {
         val delivered = java.util.concurrent.ConcurrentLinkedQueue[String]()
         val stalled = new LiveChannel {
             def send(connectionId: String, message: String): Boolean = {
@@ -74,7 +74,7 @@ class LiveSpec extends FunSuite {
 
     /* A crowd must not open a connection to the management API per watcher at once. Sends past the
      * limit wait their turn, and one still waiting at the deadline is never made. */
-    test("no more than fanOut sends are out at once, and one still waiting at the deadline is never made") {
+    test("no more than fanOut sends are out at once, and one still waiting at the deadline is never made".tag(Quiet)) {
         val out = java.util.concurrent.atomic.AtomicInteger()
         val most = java.util.concurrent.atomic.AtomicInteger()
         val made = java.util.concurrent.atomic.AtomicInteger()

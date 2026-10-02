@@ -331,7 +331,7 @@ class ChallengeNotificationSpec extends PropertySuite {
     /* An auto-start that does not happen, which is the case the ordinary mail must survive: the
      * challenge is still there and still startable by hand, so the challenger is owed the one
      * notification that says so. */
-    property("an auto-start that fails leaves the acceptance to be notified as usual") {
+    property("an auto-start that fails leaves the acceptance to be notified as usual".tag(Quiet)) {
         forAll(genUniqueString) { seed =>
             val result = fixture(seed, autoStart = true, engineFails = true).flatMap { f =>
                 for {
@@ -385,7 +385,7 @@ class ChallengeNotificationSpec extends PropertySuite {
      *
      * The failure is forced by the trigger `TestMigration` installs, which refuses the write that
      * records the engine's urls for a match described as 'explode'. */
-    property("a start that fails after the engine has its game sends no mail about the challenge") {
+    property("a start that fails after the engine has its game sends no mail about the challenge".tag(Quiet)) {
         forAll(genUniqueString) { seed =>
             val result = fixture(seed, autoStart = true, message = "explode").flatMap { f =>
                 for {

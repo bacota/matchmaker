@@ -1,6 +1,7 @@
 package com.vivi.boxing
 
 import munit.FunSuite
+import com.vivi.engine.QuietTests
 import upickle.default.{read, write}
 import com.vivi.engine.{EngineRequest, InMemoryMatchStore, MatchmakerRefusal, PlayAuth, RecordingMatchmaker}
 import Protocol.given
@@ -8,7 +9,7 @@ import Protocol.given
 /** Building a fighter: made here, checked against the rules, and reported to matchmaker as a character — which is how a
   * fighter comes to exist at all, since matchmaker no longer makes characters itself.
   */
-class FighterRoutesSpec extends FunSuite {
+class FighterRoutesSpec extends FunSuite with QuietTests {
 
     private val matchmakerUrl = "http://matchmaker.test"
 
@@ -96,7 +97,7 @@ class FighterRoutesSpec extends FunSuite {
         assertEquals(recorder.registrations, Nil)
     }
 
-    test("a matchmaker that cannot be reached is a 502 the player can try again after") {
+    test("a matchmaker that cannot be reached is a 502 the player can try again after".tag(Quiet)) {
         val recorder = RecordingMatchmaker()
         recorder.failRegistrations = true
         val (routes, _) = fixture(recorder)

@@ -3,6 +3,7 @@ package com.vivi.tictactoe
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
 import munit.FunSuite
+import com.vivi.engine.QuietTests
 import upickle.default.{read, write}
 import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker, Refusal}
 import Protocol.given
@@ -10,7 +11,7 @@ import Protocol.given
 /** Plays whole matches through the engine, checking both what a player is told and what matchmaker is told — the
   * callbacks are half of the engine's job, and the only half matchmaker actually depends on.
   */
-class EngineSpec extends FunSuite {
+class EngineSpec extends FunSuite with QuietTests {
 
     private val moveUrl = "http://matchmaker.test/games/1/matches/m-1/moves"
     private val resultsUrl = "http://matchmaker.test/games/1/matches/m-1/results"
@@ -293,7 +294,7 @@ class EngineSpec extends FunSuite {
         assertEquals(engine.status("m-1").toOption.get.sequence, Some(2L))
     }
 
-    test("a callback that fails does not fail the move, which stands, and the results are still sent") {
+    test("a callback that fails does not fail the move, which stands, and the results are still sent".tag(Quiet)) {
         val (engine, recorder, store, _, m) = fixture()
         val x = m.seatOf(Mark.X).get.cognitoId
         val o = m.seatOf(Mark.O).get.cognitoId

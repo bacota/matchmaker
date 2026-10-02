@@ -176,7 +176,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
 
     // The whole reason notification is the last thing `start` does: the match exists, the engine's
     // game exists, and the challenger is owed an answer whatever the queue is doing.
-    property("a queue that will not take the mail does not fail the start") {
+    property("a queue that will not take the mail does not fail the start".tag(Quiet)) {
         forAll(genUniqueString) { seed =>
             val notifier = new RecordingNotifier(fail = true)
             val result = startedMatch(

@@ -6,7 +6,7 @@ import munit.ScalaCheckSuite
   * in-memory logic, so ScalaCheck's default of 100 cases per property is far more than needed to catch regressions and
   * just slows the suite down.
   */
-trait PropertySuite extends ScalaCheckSuite {
+trait PropertySuite extends ScalaCheckSuite with QuietTests {
     override def scalaCheckTestParameters: org.scalacheck.Test.Parameters =
         super.scalaCheckTestParameters.withMinSuccessfulTests(3)
 

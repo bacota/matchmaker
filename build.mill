@@ -295,7 +295,10 @@ object engines extends Module {
     * rather than shared — and its `ProtocolSpec` is where the two statements are compared.
     */
   object common extends EngineModule {
-    object test extends EngineTests
+    // Takes the testkit for `QuietTests`, as the engines' tests do.
+    object test extends EngineTests {
+      def moduleDeps = super.moduleDeps ++ Seq(testkit)
+    }
 
     /** What every engine's tests check the same way, for each engine's own tests to run against
       * its game: `RoutesContract`, the routes every engine serves.

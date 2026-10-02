@@ -3,6 +3,7 @@ package com.vivi.boxing
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
 import munit.FunSuite
+import com.vivi.engine.QuietTests
 import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker, Refusal}
 
 /** Fights whole bouts through the engine, checking both what a player is told and what matchmaker is told.
@@ -11,7 +12,7 @@ import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker, Refusal}
   * numbers is its plan plus ten. [[slugger]] is all strength and workrate and no chin, and knocks an average fighter
   * out in one round with everything on power.
   */
-class EngineSpec extends FunSuite {
+class EngineSpec extends FunSuite with QuietTests {
 
     private val moveUrl = "http://matchmaker.test/games/1/matches/m-1/moves"
     private val resultsUrl = "http://matchmaker.test/games/1/matches/m-1/results"
@@ -341,7 +342,7 @@ class EngineSpec extends FunSuite {
         assertEquals(recorder.moves.last._2.state.map(_.pending), Some(Nil))
     }
 
-    test("a callback that fails does not fail the plan, which stands, and the results are still sent") {
+    test("a callback that fails does not fail the plan, which stands, and the results are still sent".tag(Quiet)) {
         val (engine, recorder, store, _, _) = fixture(createRequest(red = Some(slugger)))
         recorder.failCallbacks = true
 

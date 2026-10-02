@@ -486,7 +486,7 @@ class GameEngineServiceSpec extends PropertySuite {
     // challenge whose game exists must never be startable again, and the claim is now the permanent
     // mark of that rather than something to be cleaned up. What is left is the documented
     // recoverable state — a match with no urls, which `refresh` can fill in.
-    property("a database failure after the engine call leaves the challenge spent, not startable again") {
+    property("a database failure after the engine call leaves the challenge spent, not startable again".tag(Quiet)) {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val services = TestServices.servicesWith(StubEngine())
             // The trigger this leans on is installed once by `TestMigration`, not created here: DDL on
@@ -899,7 +899,7 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
-    property("an engine that cannot be asked for its turns does not fail the results") {
+    property("an engine that cannot be asked for its turns does not fail the results".tag(Quiet)) {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val services = TestServices.servicesWith(
               StubEngine(beforeStatus = IO.raiseError(GameEngineError("engine is down")))

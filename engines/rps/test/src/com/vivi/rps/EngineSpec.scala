@@ -2,6 +2,7 @@ package com.vivi.rps
 
 import java.time.Instant
 import munit.FunSuite
+import com.vivi.engine.QuietTests
 import upickle.default.{read, write}
 import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker, Refusal}
 import Protocol.given
@@ -12,7 +13,7 @@ import Protocol.given
   * Most of what is checked here is the thing tic-tac-toe cannot check: that neither player waits for the other, that
   * the throws stay hidden until both are in, and that the match resolves on whichever throw happens to be second.
   */
-class EngineSpec extends FunSuite {
+class EngineSpec extends FunSuite with QuietTests {
 
     private val moveUrl = "http://matchmaker.test/games/1/matches/m-1/moves"
     private val resultsUrl = "http://matchmaker.test/games/1/matches/m-1/results"
@@ -335,7 +336,7 @@ class EngineSpec extends FunSuite {
         assertEquals(engine.status("m-1").toOption.get.sequence, Some(2L))
     }
 
-    test("a callback that fails does not fail the throw, which stands, and the results are still sent") {
+    test("a callback that fails does not fail the throw, which stands, and the results are still sent".tag(Quiet)) {
         val (engine, recorder, store, _, _) = fixture()
         recorder.failCallbacks = true
 
