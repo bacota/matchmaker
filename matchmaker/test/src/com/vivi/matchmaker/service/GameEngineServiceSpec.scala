@@ -2142,4 +2142,26 @@ class GameEngineServiceSpec extends PropertySuite {
             result.timeout(15.seconds).unsafeRunSync()
         }
     }
+
+    // A live match's seats are never pending, so the status call is the only thing that can retire them
+    // when the engine's results callback was lost -- and once the match is complete, nothing asks again.
+    property("a live match that Refresh finds over has every seat retired, and leaves the active list") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val engine = StubEngine()
+            val services = TestServices.servicesWith(engine)
+            val result = for {
+                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                challenge <- services.challenges.create(liveChallenge(fixture), externalId)
+                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                _ <- IO { engine.status = GameStatusResponse(completed = true, participants = Nil) }
+                refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                participants <- participantsOf(started)
+                active <- services.matches.active(externalId)
+            } yield refreshed.completed &&
+                participants.nonEmpty &&
+                participants.forall(p => p.completed && !p.pending && p.due.isEmpty) &&
+                !active.exists(_.matchId == started.matchId)
+            result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
 }

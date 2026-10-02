@@ -398,12 +398,22 @@ class GameEngineService[T](
                                          * Either way the answer's turns are recorded above, since they were really
                                          * taken, and nothing else of it is written. */
                                         applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
-                                        // And a live match's seats are never written at all: its turns are
-                                        // the engine's to run, nothing tells matchmaker when they change,
-                                        // and a seat marked pending here would stay pending -- and due --
-                                        // long after the engine had moved on. Only its ending is news.
+                                        // And a live match's turns are never written at all: they are the
+                                        // engine's to run, nothing tells matchmaker when they change, and a
+                                        // seat marked pending here would stay pending -- and due -- long after
+                                        // the engine had moved on. Only its ending is news; see `liveEnded`.
                                         seatsCurrent = !current.completed && !current.live &&
                                             status.sequence.forall(seq => applied.forall(_ <= seq))
+                                        // A live match the engine says is over, and matchmaker had not heard
+                                        // was: its results callback went astray. Every seat is retired here,
+                                        // as `recordResults` would have retired them, or the finished match
+                                        // stays in everybody's active lists -- and no later refresh asks
+                                        // again, since the match itself is now complete.
+                                        liveEnded = current.live && status.completed && current.completedAt.isEmpty
+                                        _ <- participants.filter(_ => liveEnded).traverse_ { (p, _, _) =>
+                                            participantRepo
+                                                .update(withTurn(p, pending = false, due = None, completed = true))
+                                        }
                                         _ <- status.sequence.filter(_ => seatsCurrent).traverse_ { seq =>
                                             matchRepo.advanceMoveSequence(gameId, matchId, seq)
                                         }
