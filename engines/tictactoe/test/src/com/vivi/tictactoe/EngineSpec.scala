@@ -1,6 +1,7 @@
 package com.vivi.tictactoe
 
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicReference
 import munit.FunSuite
 import upickle.default.{read, write}
 import com.vivi.engine.{InMemoryMatchStore, RecordingMatchmaker, Refusal}
@@ -314,5 +315,38 @@ class EngineSpec extends FunSuite {
         List(x -> 0, o -> 3, x -> 1, o -> 4, x -> 2).foreach((seat, cell) => engine.move("m-1", seat.cognitoId, cell))
         val turns = recorder.results.head._2.turns.get
         assertEquals(turns.map(_.participantId), List(x, o, x, o, x).map(_.participantId))
+    }
+
+    /** X is left with 10 of 30 seconds after a 20-second first move, and then takes 10 more over its second. Under a
+      * chess clock that is the whole budget; under a per-turn clock, every turn has the whole 30 again.
+      */
+    private def secondTurnOfX(kind: String): TicTacToeMatch = {
+        val clock = AtomicReference(Instant.parse("2026-01-01T00:00:00Z"))
+        val store = InMemoryMatchStore[TicTacToeMatch]()
+        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test", () => clock.get)
+        engine.createGame(createRequest().copy(live = Some(Protocol.LiveTerms(30, kind))))
+        val m = store.get("m-1").get
+        m.seats.foreach(seat => engine.core.opened("m-1", seat))
+        def advance(seconds: Long) = clock.updateAndGet(_.plusSeconds(seconds))
+
+        advance(20)
+        assert(engine.move("m-1", playerOf(m, Mark.X), 0).isRight)
+        advance(5)
+        assert(engine.move("m-1", playerOf(m, Mark.O), 4).isRight)
+        advance(9)
+        assert(!engine.read("m-1").toOption.get.isOver, "X still has a second on its clock")
+        advance(1)
+        engine.read("m-1").toOption.get
+    }
+
+    test("under a live chess clock a player's turns spend one budget, and running it out forfeits the match") {
+        val ended = secondTurnOfX("TOTAL")
+        assert(ended.isOver)
+        assertEquals(ended.clock.map(_.timedOut), Some(List(11L)))
+        assertEquals(ended.winner, Some(Mark.O))
+    }
+
+    test("under a live per-turn clock the same turns run nobody out: each turn has the whole limit") {
+        assert(!secondTurnOfX("PER_TURN").isOver)
     }
 }

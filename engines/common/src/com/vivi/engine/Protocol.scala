@@ -48,12 +48,15 @@ object Protocol {
 
     /** The terms of a live match, which the engine keeps rather than matchmaker.
       *
-      * In a live match the engine runs the turns and their clock itself: it sends no move callbacks, and when a turn
-      * runs out it ends the match by forfeit and reports the result. Matchmaker hears about the match when it is over,
-      * and not before. `turnTimeoutSeconds` is how long each turn may take, and is required — a live match is one
-      * played against a clock.
+      * In a live match the engine runs the turns and their clock itself: it sends no move callbacks, and when a player
+      * runs out of time it ends the match by forfeit and reports the result. Matchmaker hears about the match when it
+      * is over, and not before.
+      *
+      * `timeLimitSeconds` is required — a live match is one played against a clock — and `kind` says what it limits, in
+      * matchmaker's own codes: `PER_TURN`, each turn afresh, or `TOTAL`, each player's budget for the whole match, like
+      * a chess clock.
       */
-    case class LiveTerms(turnTimeoutSeconds: Long)
+    case class LiveTerms(timeLimitSeconds: Long, kind: String = "PER_TURN")
 
     case class CreateGameResponse(statusUrl: String, playUrl: String, publicUrl: Option[String])
 

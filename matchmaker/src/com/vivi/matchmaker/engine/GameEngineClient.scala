@@ -35,17 +35,20 @@ case class CreateGameRequest(
       */
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String],
-    /** Present for a live match, and only then: what tells the engine the match is live, and how long each turn may
-      * take. Absent otherwise — so an engine that predates live matches is sent exactly what it always was.
+    /** Present for a live match, and only then: what tells the engine the match is live, and the clock it is played
+      * against. Absent otherwise — so an engine that predates live matches is sent exactly what it always was.
       */
     live: Option[LiveTerms] = None
 )
 
-/** What makes a match live, as the engine is told it: the engine runs the turns and the clock on each, sends no move
-  * callbacks, and ends a match whose turn has run out by forfeit — reporting that, as any other ending, through the
+/** What makes a match live, as the engine is told it: the engine runs the turns and their clock, sends no move
+  * callbacks, and ends a match whose clock has run out by forfeit — reporting that, as any other ending, through the
   * results callback.
+  *
+  * `timeLimitSeconds` is the match's time limit, and `kind` the `TimeLimitKind` code saying what it limits: each turn
+  * (`PER_TURN`), or each player's whole match like a chess clock (`TOTAL`).
   */
-case class LiveTerms(turnTimeoutSeconds: Long)
+case class LiveTerms(timeLimitSeconds: Long, kind: String)
 
 /** The response of step 1: where matchmaker checks status, where a player plays, and — only for a public game — where
   * anyone can watch.

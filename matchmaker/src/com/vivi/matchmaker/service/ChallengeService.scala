@@ -326,16 +326,14 @@ class ChallengeService[T](
                     _ <- ChallengeSettings
                         .problem(challenge.settings, parameterValues(game))
                         .fold(IO.unit)(why => IO.raiseError(ValidationError(why)))
-                    // A live match is played against the turn timeout the engine is given, which is this
-                    // limit: so there has to be one, of at least a second, and it has to be per turn. The
-                    // database refuses the rest too (V27); this is where the challenger can be told why.
-                    _ <- IO.raiseWhen(
-                      challenge.live && (challenge.timeLimitKind != TimeLimitKind.PerTurn ||
-                          !challenge.timeLimit.exists(_.getSeconds >= 1))
-                    )(
+                    // A live match is played against the clock the engine is given, which is this limit --
+                    // per turn or a chess clock, either -- so there has to be one, of at least a second. The
+                    // database refuses a live challenge without one too (V27); this is where the challenger can
+                    // be told why.
+                    _ <- IO.raiseWhen(challenge.live && !challenge.timeLimit.exists(_.getSeconds >= 1))(
                       ValidationError(
-                        "a live challenge needs a per-turn time limit of at least a second: it is how long the game " +
-                            "engine gives each turn"
+                        "a live challenge needs a time limit of at least a second: it is the clock the game engine " +
+                            "plays the match against"
                       )
                     )
                     // A challenge nobody may accept is not a challenge. Refused here rather than left to

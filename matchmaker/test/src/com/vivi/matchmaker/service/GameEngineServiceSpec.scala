@@ -2053,7 +2053,7 @@ class GameEngineServiceSpec extends PropertySuite {
             } yield {
                 val request = engine.lastRequest.get
                 challenge.live && started.live && reread.exists(_.live) &&
-                request.live.contains(LiveTerms(30L)) &&
+                request.live.contains(LiveTerms(30L, "PER_TURN")) &&
                 // Still sent: the engine sends no moves to it, but boxing finds matchmaker by it.
                 request.moveCallbackUrl.isDefined && request.resultsCallbackUrl.isDefined
             }
@@ -2077,25 +2077,26 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
-    property("a live challenge needs a per-turn time limit") {
+    property("a live challenge needs a time limit, and may make it a chess clock") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val services = TestServices.servicesWith(StubEngine())
+            val engine = StubEngine()
+            val services = TestServices.servicesWith(engine)
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
                 noLimit <- services.challenges.create(challengeFor(fixture, live = true), externalId).attempt
-                total <- services.challenges
-                    .create(
-                      challengeFor(
-                        fixture,
-                        timeLimit = Some(Duration.ofMinutes(10)),
-                        timeLimitKind = TimeLimitKind.Total,
-                        live = true
-                      ),
-                      externalId
-                    )
-                    .attempt
+                chess <- services.challenges.create(
+                  challengeFor(
+                    fixture,
+                    timeLimit = Some(Duration.ofMinutes(10)),
+                    timeLimitKind = TimeLimitKind.Total,
+                    live = true
+                  ),
+                  externalId
+                )
+                started <- services.engine.start(fixture.game.gameId, chess.challengeId, externalId)
             } yield noLimit.left.exists(_.isInstanceOf[ValidationError]) &&
-                total.left.exists(_.isInstanceOf[ValidationError])
+                started.live && started.timeLimitKind == TimeLimitKind.Total &&
+                engine.lastRequest.exists(_.live.contains(LiveTerms(600L, "TOTAL")))
             result.timeout(15.seconds).unsafeRunSync()
         }
     }

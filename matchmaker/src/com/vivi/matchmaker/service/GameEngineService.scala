@@ -1018,10 +1018,12 @@ class GameEngineService[T](
           settings = challenge.settings,
           timeLimitSeconds = challenge.timeLimit.map(_.getSeconds),
           players = players,
-          // The limit again, as the turn timeout the engine itself enforces. A live challenge always has
-          // one, per turn (V27); `filter` rather than `get` so that a row that somehow has none starts
+          // The limit again, with its kind, as the clock the engine itself enforces. A live challenge
+          // always has one (V27); `filter` rather than `get` so that a row that somehow has none starts
           // an ordinary match rather than failing the start.
-          live = challenge.timeLimit.filter(_ => challenge.live).map(limit => LiveTerms(limit.getSeconds)),
+          live = challenge.timeLimit
+              .filter(_ => challenge.live)
+              .map(limit => LiveTerms(limit.getSeconds, challenge.timeLimitKind.code)),
           moveCallbackUrl =
               callbackBaseUrl.map(base => s"$base/games/${game.gameId.value}/matches/${matchId.value}/moves"),
           resultsCallbackUrl =

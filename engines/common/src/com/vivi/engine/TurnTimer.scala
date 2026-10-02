@@ -21,6 +21,9 @@ package com.vivi.engine
   * until the engine agrees. That is what makes a live match end on time while anybody is looking at it, Play Live or
   * not: the page that saw the clock run out is the request that ends the match, and Play Live tells everybody else.
   *
+  * Under a chess clock (`kind` TOTAL) the face says what is left on the running clock, and adds the viewer's own budget
+  * while it is the other player's move.
+  *
   * Accessibility: the face is a `timer`, which is not announced as it ticks — a reader announcing every second would be
   * unusable. Instead one warning is spoken, politely, when ten seconds are left of the viewer's own move.
   */
@@ -43,7 +46,10 @@ object TurnTimer {
   function turnClock(refresh) {
     const face = document.getElementById("turn-clock");
     const warning = document.getElementById("turn-clock-warning");
-    let deadline = null, turn = null, yours = false, warned = false, asked = false, ticker = null;
+    let deadline = null, turn = null, yours = false, chess = false, warned = false, asked = false, ticker = null;
+    // Under a chess clock, the viewer's own budget while it is not running: what they will have
+    // when it is their move again.
+    let banked = null;
 
     function clockText(ms) {
       const s = Math.ceil(ms / 1000);
@@ -55,11 +61,13 @@ object TurnTimer {
     function tick() {
       if (deadline === null) return;
       const left = Math.max(0, deadline - Date.now());
-      say(left > 0 ? clockText(left) + (yours ? " left for your move" : " left for their move") : "time is up");
+      say(left > 0 ? clockText(left) + " left " + (chess ? (yours ? "on your clock" : "on their clock")
+                                                     : (yours ? "for your move" : "for their move"))
+                   : "time is up") + (banked != null ? " · you have " + clockText(banked) : "");
       face.classList.toggle("short", left <= 10000);
       if (yours && !warned && left > 0 && left <= 10000) {
         warned = true;
-        warning.textContent = "Ten seconds left for your move.";
+        warning.textContent = "Ten seconds left on your clock.";
       }
       // The engine ends the match when it is next asked, so the page that watched the clock run out
       // asks. Once per answer: the next state re-arms it, and says so if the engine's clock has not
@@ -78,11 +86,14 @@ object TurnTimer {
         face.hidden = !clock.timedOut.length;
         return;
       }
-      // The viewer's own clock when they are being waited on; otherwise whichever running clock runs
-      // out first, since that is the next thing that can happen.
-      const running = clock.seats.filter(s => s.remainingMillis != null);
+      chess = clock.kind === "TOTAL";
+      // The viewer's own clock when it is running; otherwise whichever running clock runs out first,
+      // since that is the next thing that can happen.
+      const running = clock.seats.filter(s => s.running);
       const mine = running.find(s => s.participantId === me);
       const shown = mine || running.sort((a, b) => a.remainingMillis - b.remainingMillis)[0];
+      const own = clock.seats.find(s => s.participantId === me);
+      banked = chess && own && !own.running && own.remainingMillis != null ? own.remainingMillis : null;
       if (!shown) {
         // Everyone being waited on has yet to open the board, and nobody's clock has started.
         stop();

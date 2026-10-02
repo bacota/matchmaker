@@ -125,7 +125,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
 
     /** When a seat's clock runs out on the turn now being played; `None` while its player has not opened the board. */
     private def deadlineOf(m: M, clock: TurnClock, seat: S): Option[Instant] =
-        clock.startedFor(seat.participantId, game.clockStartedAt(m)).map(clock.deadline)
+        clock.deadlineFor(seat.participantId, game.clockStartedAt(m), game.turns(m))
 
     /** A seated player has opened the board of match `matchId`: in a live match, the moment their clock may start.
       *
@@ -159,17 +159,33 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
     /** The clock of a live match as its play page shows it, as of now; `None` for a match that is not live. */
     def clockView(m: M): Option[ClockView] =
         game.clock(m).map { clock =>
-            val waiting = if (game.isOver(m)) Nil else game.pending(m)
+            val over = game.isOver(m)
+            val waiting = if (over) Set.empty[Long] else game.pending(m).map(_.participantId).toSet
+            // Every seat under a chess clock, whose budget is worth showing running or not; only the seats being
+            // waited on under a per-turn clock, since everyone else's next turn will get the whole limit anyway.
+            val shown =
+                if (over) Nil
+                else if (clock.kind == ClockKind.Total) game.seats(m)
+                else game.seats(m).filter(s => waiting(s.participantId))
             lazy val at = now()
+            def millis(d: java.time.Duration) = math.max(0L, d.toMillis)
             ClockView(
-              turnSeconds = clock.turnSeconds,
-              seats = waiting.map { seat =>
-                  val started = clock.startedFor(seat.participantId, game.clockStartedAt(m))
+              limitSeconds = clock.limitSeconds,
+              kind = clock.kind.code,
+              seats = shown.map { seat =>
+                  val id = seat.participantId
+                  val started = Option.when(waiting(id))(clock.startedFor(id, game.clockStartedAt(m))).flatten
+                  val deadline = Option.when(waiting(id))(deadlineOf(m, clock, seat)).flatten
                   SeatClock(
-                    participantId = seat.participantId,
+                    participantId = id,
+                    waiting = waiting(id),
+                    running = deadline.isDefined,
                     startedAt = started,
-                    remainingMillis =
-                        started.map(s => math.max(0L, java.time.Duration.between(at, clock.deadline(s)).toMillis))
+                    remainingMillis = deadline
+                        .map(d => millis(java.time.Duration.between(at, d)))
+                        .orElse(
+                          Option.when(clock.kind == ClockKind.Total)(millis(clock.allowance(id, game.turns(m))))
+                        )
                   )
               },
               timedOut = clock.timedOut
