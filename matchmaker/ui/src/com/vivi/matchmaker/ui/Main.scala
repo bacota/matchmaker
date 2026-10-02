@@ -2535,7 +2535,7 @@ object Views {
                                       onClick --> (_ => dom.window.open(url, "_blank", "noopener,noreferrer"))
                                     )
                                 ),
-                                challengePanel(game, player, characters.map(_.characterId))
+                                challengePanel(game, player, characters)
                               )
                       }
               },
@@ -2618,10 +2618,10 @@ object Views {
         )
 
     /* `characters` is every character this player has in the game, empty for a plain game. Offering a
-     * challenge is done as the first of them; accepting one is done as whichever of them was invited
-     * to it, if any was -- see `openChallengeRow`. */
-    private def challengePanel(game: Game, player: Player, characters: Seq[CharacterId]): HtmlElement = {
-        val characterId = characters.headOption
+     * challenge is done as whichever of them the challenger chooses on the form; accepting one is done
+     * as whichever of them was invited to it, if any was -- see `openChallengeRow`. */
+    private def challengePanel(game: Game, player: Player, characters: Seq[Character[String]]): HtmlElement = {
+        val characterIds = characters.map(_.characterId)
         // One flag for both lists, held out here rather than inside either of them: they are two
         // views of one request, and this element is rebuilt when that request answers.
         val refreshingChallenges = Var(false)
@@ -2656,7 +2656,7 @@ object Views {
                         // for one player, and one being looked up while the form is open is a different
                         // challenge, offered by opening it again.
                         child <-- Store.showChallengeForm.signal.map {
-                            if (_) challengeDialog(newChallengeForm(game, player, characterId, Store.invitee.now()))
+                            if (_) challengeDialog(newChallengeForm(game, player, characters, Store.invitee.now()))
                             else emptyNode
                         },
                         refreshableSection(
@@ -2675,7 +2675,7 @@ object Views {
                           subsection = true
                         )(
                           if (available.isEmpty) p(cls := "empty", "Nobody is waiting for an opponent.")
-                          else ul(available.map(openChallengeRow(game, _, characters, player.playerId)))
+                          else ul(available.map(openChallengeRow(game, _, characterIds, player.playerId)))
                         )
                       )
               }
@@ -3579,7 +3579,7 @@ object Views {
     private def newChallengeForm(
         game: Game,
         player: Player,
-        characterId: Option[CharacterId],
+        characters: Seq[Character[String]],
         invitee: Option[PublicPlayer] = None
     ): HtmlElement = {
         val message = Var("")
@@ -3625,6 +3625,9 @@ object Views {
         // In a character game the invitation names one of the invitee's characters (V25).
         val characterGame = game.gameType == GameType.Character
         val inviteeCharacter = Var(Option.empty[CharacterId])
+        // And the challenge is offered as one of the challenger's own: the first of them to start
+        // with, which is the only one for most players, but chosen here rather than assumed.
+        val ownCharacter = Var(characters.headOption.map(_.characterId))
         // One value per game parameter the challenger may choose — how many rounds a bout is, say —
         // starting from the game's default, or its first value when it names none. Sent as the
         // challenge's settings, and handed to the engine in place of the default when the match starts.
@@ -3638,6 +3641,21 @@ object Views {
           cls := "card",
           h3(idAttr := "offer-challenge-heading", "Offer a Challenge"),
           field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
+          // Shown even when there is only one, so the challenger can see who they are offering.
+          if (characterGame)
+              field(
+                "Your character",
+                select(
+                  onChange.mapToValue --> { raw =>
+                      ownCharacter.set(
+                        raw.toLongOption.map(CharacterId.apply).filter(id => characters.exists(_.characterId == id))
+                      )
+                  },
+                  value <-- ownCharacter.signal.map(_.map(_.value.toString).getOrElse("")),
+                  characters.map(c => option(value := c.characterId.value.toString, c.name))
+                )
+              )
+          else emptyNode,
           roleSelect(game.roles, role),
           // One picker per parameter, captioned with what players are shown for it and keyed by the
           // name the engine is sent. Built once: the game's parameters do not change while the form is open.
@@ -3798,9 +3816,11 @@ object Views {
             // A game with no roles at all has nothing an acceptance could name, so no challenge for
             // it can be created. The server refuses one; this keeps the button from offering it.
             disabledWhen = message.signal
-                .combineWith(role.signal, timeLimit.signal, inviteeCharacter.signal, live.signal)
-                .map { case (m, r, limit, asked, isLive) =>
+                .combineWith(role.signal, timeLimit.signal, inviteeCharacter.signal, live.signal, ownCharacter.signal)
+                .map { case (m, r, limit, asked, isLive, own) =>
                     m.trim.isEmpty || r.isEmpty || limitProblem(limit, isLive).isDefined ||
+                    // A character game's challenge is offered as one of the challenger's characters.
+                    (characterGame && own.isEmpty) ||
                     // An invitee in a character game is asked through a character, and until one is
                     // chosen there is nothing to send them.
                     (characterGame && invitee.isDefined && asked.isEmpty)
@@ -3811,7 +3831,7 @@ object Views {
               role.now().foreach { chosen =>
                   // The server assigns the id; this is the same unassigned-sentinel convention the
                   // service layer uses on create.
-                  val challenge: Challenge = characterId match {
+                  val challenge: Challenge = ownCharacter.now() match {
                       case Some(cid) =>
                           CharacterChallenge(
                             challengeId = ChallengeId(0),
