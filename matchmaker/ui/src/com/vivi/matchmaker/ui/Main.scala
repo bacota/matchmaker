@@ -2265,11 +2265,23 @@ object Views {
                         // Cleared first, so that a second "no character yet" is a change the live
                         // region announces rather than the same text it already holds.
                         checked.set(None)
-                        Store.run(ApiClient.characters(game.gameId), busy) { found =>
+                        // The session that asked, checked when the answer comes rather than when it is
+                        // used: an answer that outlives it -- a sign-out, or somebody else signed in
+                        // since -- is about the player who is gone, and must not reload, announce or
+                        // move focus for the one who is here. It comes back as `None` whether it
+                        // succeeded or failed, so not even its failure is reported to them.
+                        val signIn = Store.currentSignIn
+                        val asked = ApiClient.characters(game.gameId).transform {
+                            case _ if !Store.stillSignedInAs(signIn) => scala.util.Success(None)
+                            case answered                            => answered.map(Some(_))
+                        }
+                        Store.run(asked, busy) {
+                            case None => ()
                             // Nothing found is what the store already holds, so there is nothing to
                             // reload -- and reloading would only re-render this panel for no reason.
-                            if (found.isEmpty) checked.set(Some("No character yet. Finish making one in the game."))
-                            else {
+                            case Some(found) if found.isEmpty =>
+                                checked.set(Some("No character yet. Finish making one in the game."))
+                            case Some(found) =>
                                 checked.set(
                                   Some(
                                     s"Found ${found.map(_.name).mkString(", ")}. " +
@@ -2277,10 +2289,8 @@ object Views {
                                   )
                                 )
                                 focusStatus()
-                                // Through the store's own load, which drops the answer if the player has
-                                // signed out meanwhile; this request's answer is only used to say so.
+                                // Through the store's own load, which guards its own answer the same way.
                                 Store.refreshCharacters(game.gameId)
-                            }
                         }
                     }
                   )
