@@ -453,7 +453,7 @@ ${TurnTimer.script}
   .tip { display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 10; max-width: 22rem; padding: .5rem .75rem; border: 1px solid var(--line);
          border-radius: 6px; background: var(--paper); color: var(--ink); font-size: .875rem; line-height: 1.4;
          box-shadow: 0 2px 8px #0004; }
-  .tip.open, .tip-toggle:hover + .tip:not(.dismissed), .tip-toggle:focus-visible + .tip:not(.dismissed) { display: block; }
+  .tip.open, .tip:hover:not(.dismissed), .tip-toggle:hover + .tip:not(.dismissed), .tip-toggle:focus-visible + .tip:not(.dismissed) { display: block; }
   .detail { opacity: .8; }
   :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
 ${SignIn.css}
