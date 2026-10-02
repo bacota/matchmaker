@@ -802,6 +802,20 @@ object Views {
                   if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
                       Store.refreshChallenges(acceptance.gameId)
               }
+          },
+          // Every seat being taken is no promise the challenger still wants the match, so the way out of it stays
+          // here alongside the start. A refusal -- most likely a start that got there first -- re-reads the list, so
+          // the row goes the way the challenge did.
+          busyButton("Cancel") { busy =>
+              Store.run(
+                ApiClient.deleteChallenge(acceptance.gameId, acceptance.challengeId),
+                busy,
+                _ => Store.reloadAcceptances()
+              ) { _ =>
+                  Store.reloadAcceptances()
+                  if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
+                      Store.refreshChallenges(acceptance.gameId)
+              }
           }
         )
     }
