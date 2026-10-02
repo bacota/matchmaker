@@ -714,7 +714,6 @@ class ChallengeService[T](
 
     def delete(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
-            val characterRepo = new CharacterRepo[T](session)
             val playerRepo = new PlayerRepo(session)
             val challengeRepo = new ChallengeRepo(session)
             val acceptanceRepo = new AcceptanceRepo(session)
@@ -743,27 +742,18 @@ class ChallengeService[T](
                               NotFoundError("That challenge is no longer there. Whoever offered it has withdrawn it.")
                             )
                     }
-                    _ <- challenge match {
-                        case cc: CharacterChallenge =>
-                            // Locked: the owner read here is the only thing authorizing the delete below.
-                            characterRepo.readWithOwnerAndGameForUpdate(cc.characterId).flatMap {
-                                case Some(joined) =>
-                                    IO.raiseUnless(callerExternalId == joined.owner.externalId)(
-                                      UnauthorizedError(
-                                        s"caller '$callerExternalId' may not delete challenge ${challengeId.value}"
-                                      )
-                                    )
-                                case None =>
-                                    IO.raiseError(NotFoundError(s"no character with id ${cc.characterId.value}"))
-                            }
-                        case pc: PlainChallenge =>
-                            requirePlayer(playerRepo, pc.challenger).flatMap { challenger =>
-                                IO.raiseUnless(callerExternalId == challenger.externalId)(
-                                  UnauthorizedError(
-                                    s"caller '$callerExternalId' may not delete challenge ${challengeId.value}"
-                                  )
-                                )
-                            }
+                    // The challenger's, for a character challenge as for a plain one: the same player `start` and
+                    // `invite` answer to, so whoever the UI offers the challenge to as theirs can take it back as
+                    // well as start it. Not the character's current owner -- a character handed on after offering
+                    // a challenge leaves the challenge with whoever offered it, and an owner who never sees it as
+                    // theirs could not withdraw it anyway. The challenge row is locked above, so the challenger
+                    // read from it is the one in force.
+                    _ <- requirePlayer(playerRepo, challenge.challenger).flatMap { challenger =>
+                        IO.raiseUnless(callerExternalId == challenger.externalId)(
+                          UnauthorizedError(
+                            s"caller '$callerExternalId' may not delete challenge ${challengeId.value}"
+                          )
+                        )
                     }
                     _ <- acceptanceRepo.deleteAllForChallenge(gameId, challengeId)
                     // Before the challenge, because `invitation` has a foreign key to it. Deleted here

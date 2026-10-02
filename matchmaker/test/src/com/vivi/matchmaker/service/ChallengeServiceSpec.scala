@@ -353,7 +353,7 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
-    property("delete removes the challenge and its acceptances when authorized by the owner") {
+    property("delete removes the challenge and its acceptances when authorized by the challenger") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, accepterNickname, accepterExternalId) =>
                 val result = for {
@@ -488,7 +488,7 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
-    property("delete rejects a caller who does not own the character") {
+    property("delete rejects a caller who is not the challenger") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, otherExternalId) =>
             val result = for {
                 fixture <- makeFixture(nickname, externalId)
@@ -499,6 +499,39 @@ class ChallengeServiceSpec extends PropertySuite {
                 case _                          => false
             }
             result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* Delete answers to the challenger, as start and invite do, not to whoever owns the character now: the challenge
+     * stays on its challenger's screen after the character is handed on, so that is who must be able to withdraw it. */
+    property("a character handed on leaves its challenge the challenger's to delete, not the new owner's") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, newNickname, newExternalId) =>
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId)
+                    created <- challengeService.create(challengeFor(fixture), externalId)
+                    _ <- registrationService.register(newNickname, newExternalId)
+                    _ <- TestServices.services.characters.transfer(
+                      fixture.character.characterId,
+                      newNickname,
+                      externalId,
+                      fixture.game.externalId
+                    )
+                    byNewOwner <- challengeService
+                        .delete(fixture.game.gameId, created.challengeId, newExternalId)
+                        .attempt
+                    byChallenger <- challengeService
+                        .delete(fixture.game.gameId, created.challengeId, externalId)
+                        .attempt
+                    remaining <- TestSession.resource.use(session =>
+                        new com.vivi.matchmaker.persistence.ChallengeRepo(session)
+                            .read(fixture.game.gameId, created.challengeId)
+                    )
+                } yield (byNewOwner, byChallenger, remaining) match {
+                    case (Left(_: UnauthorizedError), Right(()), None) => true
+                    case _                                             => false
+                }
+                result.timeout(20.seconds).unsafeRunSync()
         }
     }
 

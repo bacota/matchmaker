@@ -802,8 +802,44 @@ object Views {
                   if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
                       Store.refreshChallenges(acceptance.gameId)
               }
+          },
+          // Every seat being taken is no promise the challenger still wants the match, so the way out of it stays
+          // here alongside the start.
+          busyButton("Cancel") { busy =>
+              Store.run(
+                ApiClient.deleteChallenge(acceptance.gameId, acceptance.challengeId),
+                busy,
+                cancelStale(acceptance.gameId)
+              ) { _ =>
+                  reloadAcceptanceSections()
+                  if (Store.page.now() == Store.Page.OneGame(acceptance.gameId))
+                      Store.refreshChallenges(acceptance.gameId)
+              }
           }
         )
+    }
+
+    /** What a refused cancel of a ready challenge says about the lists on screen, in the shape of [[invitationStale]].
+      *
+      *   - 409 is a start that got there first: there is a match now, and the challenger is in it, so their match lists
+      *     are stale along with the acceptances this row came from.
+      *   - 404 is the challenge already gone. Nothing was started by that, so only the lists that showed the challenge
+      *     are stale.
+      *
+      * Either way the game screen's challenge list, when it is up, showed the challenge too. Anything else -- a 5xx, a
+      * dropped connection -- says nothing about the challenge, and is left as `Store.run` reported it.
+      */
+    private def cancelStale(gameId: GameId)(failure: Throwable): Unit = {
+        def onItsPage(): Unit = if (Store.page.now() == Store.Page.OneGame(gameId)) Store.refreshChallenges(gameId)
+        failure match {
+            case ApiError(409, _) =>
+                reloadAfterStart()
+                onItsPage()
+            case ApiError(404, _) =>
+                reloadAcceptanceSections()
+                onItsPage()
+            case _ => ()
+        }
     }
 
     /** "List of all matches a player has a turn due" — the first thing in `ui.txt`, and the only list shown expanded
