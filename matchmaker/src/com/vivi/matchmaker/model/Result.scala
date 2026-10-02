@@ -35,6 +35,7 @@ case class ParticipantResult(
     matchId: MatchId,
     participantId: ParticipantId,
     nickname: String,
+    // The role's display name: this is for the results table, not the engine.
     roleName: String,
     rank: Option[Int],
     scores: Map[String, Any],

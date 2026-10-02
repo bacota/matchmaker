@@ -41,8 +41,8 @@ RETURNING game_id \gset
 
 -- Red and Blue, both required: a bout needs two fighters. Neither corner has any advantage — both
 -- plan every round at the same time.
-INSERT INTO game_role (game_id, name, optional)
-VALUES (:game_id, 'Red', false), (:game_id, 'Blue', false);
+INSERT INTO game_role (game_id, name, optional, display_name)
+VALUES (:game_id, 'Red', false, 'Red'), (:game_id, 'Blue', false, 'Blue');
 
 -- How many rounds a bout is scheduled for. The challenger picks one of these values on the
 -- challenge form; the default is what a challenge that picked nothing gets. The engine accepts 3

@@ -59,7 +59,7 @@ case class Invite(playerId: PlayerId, gameRoleId: Option[GameRoleId] = None)
   *   a browser holds is of the *active* games, and a challenge in a game deactivated since the invitation was sent is
   *   still one its invitee may accept — `active` filters what is listed, not what may be played.
   * @param roleName
-  *   the name of the seat they were asked to take, when they were asked for one. `Some` exactly when
+  *   the display name of the seat they were asked to take, when they were asked for one. `Some` exactly when
   *   `invitation.gameRoleId` is, and read from `game_role` in the same query rather than looked up per row.
   * @param invitedAt
   *   when the invitation was made. What the list is ordered by, and carried rather than only sorted on because the list

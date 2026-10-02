@@ -107,14 +107,19 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       * stored as "3x3 " is not a default at all. Done here rather than in the form, because the form is not the only
       * thing that can post a game.
       *
-      * A parameter's display name is trimmed too, and a blank one is the parameter's name: the form sends what was
-      * typed, and an empty field means the parameter is shown by its name.
+      * A role's or parameter's display name is trimmed too, and a blank one is its name: the form sends what was typed,
+      * and an empty field means it is shown by its name.
       */
     private def normalize(game: Game): Game =
         game.copy(
           // A blank url is no url: the form sends what was typed, and an empty field means there is none.
           characterUrl = game.characterUrl.map(_.trim).filter(_.nonEmpty),
-          roles = game.roles.map(role => role.copy(name = role.name.trim)),
+          roles = game.roles.map(role =>
+              role.copy(
+                name = role.name.trim,
+                displayName = Option(role.displayName.trim).filter(_.nonEmpty).getOrElse(role.name.trim)
+              )
+          ),
           parameters = game.parameters.map { p =>
               // The same cast GameRepo makes: `parameters` is existential in its value type, and
               // TextCodec[String] is the only instance there is.
@@ -151,6 +156,10 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             )
             _ <- IO.raiseWhen(game.roles.map(_.name).distinct.sizeIs != game.roles.size)(
               ValidationError(s"game '${game.name}' has two roles with the same name")
+            )
+            // A player picking a seat by its display name could not tell two seats shown alike apart.
+            _ <- IO.raiseWhen(game.roles.map(_.displayName).distinct.sizeIs != game.roles.size)(
+              ValidationError(s"game '${game.name}' shows two roles under the same name")
             )
             _ <- IO.raiseWhen(game.parameters.exists(_.name.trim.isEmpty))(
               ValidationError(s"game '${game.name}' has a parameter with no name")

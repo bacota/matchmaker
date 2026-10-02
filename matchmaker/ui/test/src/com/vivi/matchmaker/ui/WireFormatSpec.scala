@@ -48,7 +48,7 @@ class WireFormatSpec extends FunSuite {
           description = "the usual",
           url = "https://example.com/chess",
           active = true,
-          roles = Seq(GameRole(GameRoleId(1), GameId(7), "white", optional = false)),
+          roles = Seq(GameRole(GameRoleId(1), GameId(7), "white", optional = false, displayName = "white")),
           parameters = Seq(
             GameParameter(
               GameId(7),

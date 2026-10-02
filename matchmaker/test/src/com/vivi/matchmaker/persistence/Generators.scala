@@ -55,8 +55,8 @@ object Generators {
           url,
           active,
           Seq(
-            GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false),
-            GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false)
+            GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false, displayName = "first"),
+            GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false, displayName = "second")
           ),
           Seq.empty,
           externalId,
@@ -69,7 +69,7 @@ object Generators {
             roleName <- genString
             optional <- Gen.oneOf(true, false)
         } yield {
-            val role = GameRole(GameRoleId(0), GameId.unassigned, roleName, optional)
+            val role = GameRole(GameRoleId(0), GameId.unassigned, roleName, optional, displayName = roleName)
             base.copy(roles = Seq(role))
         }
 

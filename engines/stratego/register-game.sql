@@ -32,7 +32,7 @@ WITH game AS (
 )
 -- Red and Blue, the two armies. Neither is optional: a match cannot start until both are taken.
 -- Red moves first once both have deployed.
-INSERT INTO game_role (game_id, name, optional)
-SELECT game_id, role, false FROM game, (VALUES ('Red'), ('Blue')) AS roles(role);
+INSERT INTO game_role (game_id, name, optional, display_name)
+SELECT game_id, role, false, role FROM game, (VALUES ('Red'), ('Blue')) AS roles(role);
 
 SELECT game_id, name, url, external_id FROM game WHERE name = 'Stratego' ORDER BY game_id DESC LIMIT 1;

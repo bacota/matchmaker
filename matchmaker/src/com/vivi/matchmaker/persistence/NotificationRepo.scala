@@ -35,6 +35,8 @@ case class GameNotice(gameId: GameId, name: String)
   *
   * Two levels, which is all there is to ask: nobody is a participant in anything until the challenge is started, so the
   * level that would otherwise answer does not exist yet.
+  *
+  * `roleName` is the role's display name, since it is only ever written into the mail.
   */
 case class AcceptorNotifications(player: Player, roleName: String, levels: NotificationLevels)
 
@@ -185,7 +187,7 @@ class NotificationRepo(session: Session[IO]) {
       (GameId, ChallengeId),
       (PlayerId, String, Boolean, String, Option[String], String, NotificationPreferences, NotificationPreferences)
     ] =
-        sql"""SELECT pl.player_id, pl.nickname, pl.is_admin, pl.external_id, pl.email, r.name,
+        sql"""SELECT pl.player_id, pl.nickname, pl.is_admin, pl.external_id, pl.email, r.display_name,
                  pg.notify_challenge_accepted, pg.notify_challenge_ready, pg.notify_acceptance_changed,
                  pg.notify_accepted_challenge_ready, pg.notify_invitation_received, pg.notify_invitation_accepted, pg.notify_invitation_rejected, pg.notify_match_started, pg.notify_turn_taken,
                  pg.notify_your_turn, pg.notify_match_ended,

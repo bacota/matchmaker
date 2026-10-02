@@ -32,7 +32,7 @@ WITH game AS (
 )
 -- X and O, the two sides of the game. Neither is optional: a seat in tic-tac-toe is one side or
 -- the other, so a match cannot start until both are taken.
-INSERT INTO game_role (game_id, name, optional)
-SELECT game_id, role, false FROM game, (VALUES ('X'), ('O')) AS roles(role);
+INSERT INTO game_role (game_id, name, optional, display_name)
+SELECT game_id, role, false, role FROM game, (VALUES ('X'), ('O')) AS roles(role);
 
 SELECT game_id, name, url, external_id FROM game WHERE name = 'Tic-tac-toe' ORDER BY game_id DESC LIMIT 1;
