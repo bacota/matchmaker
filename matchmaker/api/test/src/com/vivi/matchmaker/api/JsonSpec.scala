@@ -29,7 +29,8 @@ class JsonSpec extends FunSuite {
               GameParameterId(3),
               "parameter",
               Some("default"),
-              Seq(GameParameterValue(GameId(1), GameParameterId(3), "default"))
+              Seq(GameParameterValue(GameId(1), GameParameterId(3), "default")),
+              "Parameter"
             )
           ),
           externalId = "secret"
@@ -40,6 +41,7 @@ class JsonSpec extends FunSuite {
         assertEquals(decoded.roles, game.roles)
         assertEquals(decoded.parameters.size, 1)
         assertEquals(decoded.parameters.head.asInstanceOf[GameParameter[String]].defaultValue, Some("default"))
+        assertEquals(decoded.parameters.head.displayName, "Parameter")
     }
 
     /* Preferences and answers are plain objects, and must stay plain.

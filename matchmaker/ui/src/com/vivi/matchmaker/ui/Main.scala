@@ -1858,10 +1858,15 @@ object Views {
      * addition on the way back — and an existing role can never be removed, only renamed or made
      * optional. Parameters carry no id: they are replaced wholesale, and deleting one is allowed. */
     private case class RoleDraft(gameRoleId: GameRoleId, name: Var[String], optional: Var[Boolean])
-    private case class ParameterDraft(name: Var[String], values: Var[String], default: Var[String])
+    private case class ParameterDraft(
+        name: Var[String],
+        displayName: Var[String],
+        values: Var[String],
+        default: Var[String]
+    )
 
     private def emptyRole: RoleDraft = RoleDraft(GameRoleId.unassigned, Var(""), Var(false))
-    private def emptyParameter: ParameterDraft = ParameterDraft(Var(""), Var(""), Var(""))
+    private def emptyParameter: ParameterDraft = ParameterDraft(Var(""), Var(""), Var(""), Var(""))
 
     private def draftOf(role: GameRole): RoleDraft =
         RoleDraft(role.gameRoleId, Var(role.name), Var(role.optional))
@@ -1869,6 +1874,7 @@ object Views {
     private def draftOf(parameter: GameParameter[String]): ParameterDraft =
         ParameterDraft(
           Var(parameter.name),
+          Var(parameter.displayName),
           Var(parameter.values.map(_.value).mkString(", ")),
           Var(parameter.defaultValue.getOrElse(""))
         )
@@ -1931,8 +1937,9 @@ object Views {
           h4("Parameters"),
           p(
             cls := "detail",
-            "How the game engine is configured when a match is created. A parameter's default has to " +
-                "be one of its values, and a game may have none at all."
+            "How the game engine is configured when a match is created. The name is what the engine is " +
+                "sent; the display name is what players see, and is the name if left blank. A parameter's " +
+                "default has to be one of its values, and a game may have none at all."
           ),
           children <-- parameters.signal.map(_.map { draft =>
               div(
@@ -1941,6 +1948,11 @@ object Views {
                   aria.label := "parameter name",
                   placeholder := "parameter name",
                   controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)
+                ),
+                input(
+                  aria.label := "display name, what players see; left blank, the name",
+                  placeholder := "display name (blank: the name)",
+                  controlled(value <-- draft.displayName.signal, onInput.mapToValue --> draft.displayName)
                 ),
                 input(
                   aria.label := "possible values, comma separated",
@@ -1985,24 +1997,28 @@ object Views {
 
     private def parametersOf(drafts: List[ParameterDraft]): Either[String, Seq[GameParameter[String]]] = {
         val named = drafts
-            .map(d => (d.name.now().trim, splitValues(d.values.now()), d.default.now().trim))
-            .filter(_._1.nonEmpty)
-        val badDefault = named.find((_, values, default) => default.nonEmpty && !values.contains(default))
-        if (named.map(_._1).distinct.sizeIs != named.size) Left("Two parameters cannot have the same name.")
+            .map { d =>
+                val name = d.name.now().trim
+                GameParameter[String](
+                  GameId.unassigned,
+                  GameParameterId(0),
+                  name,
+                  Option(d.default.now().trim).filter(_.nonEmpty),
+                  splitValues(d.values.now()).map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v)),
+                  // Left blank, a parameter is shown by its name -- the server does the same.
+                  Option(d.displayName.now().trim).filter(_.nonEmpty).getOrElse(name)
+                )
+            }
+            .filter(_.name.nonEmpty)
+        val badDefault = named.find(p => p.defaultValue.exists(d => !p.values.exists(_.value == d)))
+        if (named.map(_.name).distinct.sizeIs != named.size) Left("Two parameters cannot have the same name.")
+        else if (named.map(_.displayName).distinct.sizeIs != named.size)
+            Left("Two parameters cannot be shown under the same name.")
         else
             badDefault match {
-                case Some((name, _, default)) =>
-                    Left(s"Parameter '$name' has default '$default', which is not one of its values.")
-                case None =>
-                    Right(named.map { (name, values, default) =>
-                        GameParameter[String](
-                          GameId.unassigned,
-                          GameParameterId(0),
-                          name,
-                          Option(default).filter(_.nonEmpty),
-                          values.map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
-                        )
-                    })
+                case Some(p) =>
+                    Left(s"Parameter '${p.name}' has default '${p.defaultValue.get}', which is not one of its values.")
+                case None => Right(named)
             }
     }
 
@@ -3042,13 +3058,20 @@ object Views {
     private def timeLimitDetail(challenge: Challenge): HtmlElement =
         timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind, challenge.timeLimitUnit, challenge.live)
 
-    /** The values a challenger may pick for each of the game's parameters, by name, in the admin's order. Parameters
-      * with no values to choose between are left out: there is nothing to offer.
+    /** One of a game's parameters as a challenger picks it: `name` is the key it is stored and sent to the engine
+      * under, `label` what the challenger is shown for it.
       */
-    private def parameterChoices(game: Game): Seq[(String, Seq[String], Option[String])] =
+    private case class ParameterChoice(name: String, label: String, values: Seq[String], default: Option[String])
+
+    /** The values a challenger may pick for each of the game's parameters, in the admin's order. Parameters with no
+      * values to choose between are left out: there is nothing to offer.
+      */
+    private def parameterChoices(game: Game): Seq[ParameterChoice] =
         game.parameters
-            .map(p => (p.name, p.values.map(_.value.toString), p.defaultValue.map(_.toString)))
-            .filter(_._2.nonEmpty)
+            .map(p =>
+                ParameterChoice(p.name, p.displayName, p.values.map(_.value.toString), p.defaultValue.map(_.toString))
+            )
+            .filter(_.values.nonEmpty)
 
     /** A challenge's parameter choices as its `settings` carries them: `{"rounds":"12"}`. The same flat object of
       * strings `ChallengeSettings` reads on the server.
@@ -3056,7 +3079,9 @@ object Views {
     private def settingsOf(choices: Map[String, String]): String =
         ujson.write(ujson.Obj.from(choices.toSeq.sortBy(_._1).map((k, v) => k -> ujson.Str(v))))
 
-    /** What the challenger chose for each of the game's parameters, read back out of `settings`. */
+    /** What the challenger chose for each of the game's parameters, read back out of `settings`, as the parameter's
+      * label and the value chosen.
+      */
     private def chosenParameters(game: Game, challenge: Challenge): Seq[(String, String)] = {
         val stored =
             try
@@ -3069,7 +3094,7 @@ object Views {
                     case _ => Map.empty[String, String]
                 }
             catch { case _: Throwable => Map.empty[String, String] }
-        parameterChoices(game).flatMap((name, _, _) => stored.get(name).map(name -> _))
+        parameterChoices(game).flatMap(choice => stored.get(choice.name).map(choice.label -> _))
     }
 
     /** The terms a challenge was offered on beyond its clock — "rounds: 12" — so that whoever accepts it knows what
@@ -3078,7 +3103,7 @@ object Views {
     private def parameterDetail(game: Game, challenge: Challenge): Node =
         chosenParameters(game, challenge) match {
             case Seq()  => emptyNode
-            case chosen => div(cls := "detail", chosen.map((name, v) => s"$name: $v").mkString(" · "))
+            case chosen => div(cls := "detail", chosen.map((label, v) => s"$label: $v").mkString(" · "))
         }
 
     /** The clock something is played under, said in full wherever it is said at all.
@@ -3202,7 +3227,7 @@ object Views {
         // challenge's settings, and handed to the engine in place of the default when the match starts.
         val parameters = Var(
           parameterChoices(game)
-              .map((name, values, default) => name -> default.filter(values.contains).getOrElse(values.head))
+              .map(choice => choice.name -> choice.default.filter(choice.values.contains).getOrElse(choice.values.head))
               .toMap
         )
 
@@ -3211,15 +3236,17 @@ object Views {
           h3(idAttr := "offer-challenge-heading", "Offer a Challenge"),
           field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
           roleSelect(game.roles, role),
-          // One picker per parameter, captioned with the parameter's own name. Built once: the game's
-          // parameters do not change while the form is open.
-          parameterChoices(game).map { (name, values, _) =>
+          // One picker per parameter, captioned with what players are shown for it and keyed by the
+          // name the engine is sent. Built once: the game's parameters do not change while the form is open.
+          parameterChoices(game).map { choice =>
               field(
-                name.capitalize,
+                // A display name that is just the name -- what every parameter started with -- is
+                // capitalized, as the name always was here.
+                if (choice.label == choice.name) choice.name.capitalize else choice.label,
                 select(
-                  onChange.mapToValue --> (chosen => parameters.update(_.updated(name, chosen))),
-                  value <-- parameters.signal.map(_.getOrElse(name, "")),
-                  values.map(v => option(value := v, v))
+                  onChange.mapToValue --> (chosen => parameters.update(_.updated(choice.name, chosen))),
+                  value <-- parameters.signal.map(_.getOrElse(choice.name, "")),
+                  choice.values.map(v => option(value := v, v))
                 )
               )
           },

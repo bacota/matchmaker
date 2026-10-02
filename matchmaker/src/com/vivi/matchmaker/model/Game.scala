@@ -6,12 +6,19 @@ case class GameParameterValue[T](
     value: T
 )
 
+/** A setting a challenger picks for the game's engine — how many rounds a bout is, say.
+  *
+  * `name` is what the engine is sent: the key in a challenge's `settings`, and so in what the engine receives at a
+  * start. `displayName` is what a player is shown for it — "Rounds" for `rounds`, "Board size" for `board_size`. Often
+  * the two are the same, but both are always there.
+  */
 case class GameParameter[T](
     gameId: GameId,
     gameParameterId: GameParameterId,
     name: String,
     defaultValue: Option[T],
-    values: Seq[GameParameterValue[T]]
+    values: Seq[GameParameterValue[T]],
+    displayName: String
 )
 
 case class GameRole(
