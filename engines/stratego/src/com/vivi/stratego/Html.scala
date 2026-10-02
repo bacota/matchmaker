@@ -5,8 +5,16 @@ import com.vivi.engine.{LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
-/** The play page. This is its shell — the sign-in, status, clock and Play Live every engine's page has — with the board
-  * itself still to come.
+/** The play page: the setup, the board, and the shell every engine's page has around them.
+  *
+  * The board is drawn from the state alone, and the state already leaves out every rank the viewer may not see — the
+  * page hides nothing itself, since what the page receives anyone can read. It is drawn with the viewer's own army at
+  * the bottom, which for Blue means turned round; the public board is drawn from Red's side.
+  *
+  * Ten squares across a phone is about 34 pixels a square, under the 44 a touch target should be. So the board is also
+  * a set of labelled selects — the piece, and where it goes — that do everything a tap does at full size, and that a
+  * screen reader or a keyboard can use as well as a finger. The board's squares are buttons too, each labelled with its
+  * square and what is on it, and arrow keys move between them.
   *
   * A self-contained document with no assets, because the engine has no static hosting and a page that needs a second
   * request needs somewhere to serve it from. When the viewer already has a seat, the state is inlined into the first
@@ -47,13 +55,53 @@ object Html {
 <style>
   /* --error is 6.3:1 on the light page and 7.8:1 on the dark one; crimson, which it replaces, was 3.6:1
      in dark mode, under the 4.5:1 normal text needs. */
-  :root { color-scheme: light dark; --line: #8884; --ink: #222; --paper: #fafafa; --error: #b3261e; }
-  @media (prefers-color-scheme: dark) { :root { --ink: #eee; --paper: #16181c; --error: #ff8a80; } }
+  /* The two armies carry white text: --red is 6.6:1 against it and --blue 6.7:1. */
+  :root { color-scheme: light dark; --line: #8884; --ink: #222; --paper: #fafafa; --error: #b3261e;
+          --square: #e9e4d4; --water: #8fbcd9; --red: #b3261e; --blue: #1d4ed8; --mark: #e6a700; --focus: #6d28d9; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #eee; --paper: #16181c; --error: #ff8a80; --square: #3a3a33; --water: #1f4d6b; --mark: #ffc940; --focus: #c4b5fd; }
+  }
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--paper); color: var(--ink);
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
-  main { text-align: center; padding: 2rem 1rem; }
+  main { text-align: center; padding: 1.5rem 16px; width: 100%; max-width: 40rem; box-sizing: border-box; }
   h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; }
   #status { font-size: 1.5rem; font-weight: 700; margin: 0 0 1.25rem; min-height: 2rem; }
+  #board { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; width: 100%; max-width: 36rem;
+           margin: 0 auto; padding: 2px; box-sizing: border-box; background: var(--line); border-radius: 6px; }
+  #board button { aspect-ratio: 1; min-width: 0; padding: 0; border: 0; border-radius: 3px; position: relative;
+                  background: var(--square); color: var(--ink); font: 700 clamp(.8rem, 3.6vw, 1.15rem)/1 ui-monospace, monospace; }
+  #board button.Red { background: var(--red); color: #fff; }
+  #board button.Blue { background: var(--blue); color: #fff; }
+  #board button.lake { background: var(--water); }
+  #board button[aria-disabled="false"] { cursor: pointer; }
+  #board button.last { box-shadow: inset 0 0 0 2px var(--mark); }
+  #board button.target { box-shadow: inset 0 0 0 4px var(--mark); }
+  #board button.selected { outline: 4px solid var(--mark); outline-offset: -4px; }
+  #board button:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; z-index: 1; }
+  /* A piece that has moved, which tells the other side it is neither a bomb nor the flag. */
+  #board button.moved::after { content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px;
+                               border-radius: 50%; background: currentColor; opacity: .8; }
+  /* One of your own pieces whose rank the other side has seen. */
+  #board button.known { text-decoration: underline; text-underline-offset: 2px; }
+  #news { min-height: 1.5rem; margin: .75rem 0 0; }
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; align-items: end; margin-top: 1rem; }
+  /* Without this the display above would override `hidden`, and both sets of controls would always show. */
+  .controls[hidden] { display: none; }
+  .controls label { display: flex; flex-direction: column; align-items: start; font-size: .875rem; gap: .25rem; }
+  .controls select, .controls button { font: inherit; font-size: 16px; min-height: 44px; }
+  .controls select { min-width: 9rem; padding: 0 .5rem; }
+  .controls button { padding: 0 1rem; border-radius: 6px; border: 1px solid var(--line); background: var(--paper);
+                     color: var(--ink); cursor: pointer; }
+  .controls button.primary { background: var(--ink); color: var(--paper); }
+  .controls button:disabled { opacity: .5; cursor: default; }
+  .controls :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  #lost { margin-top: 1rem; font-size: .875rem; }
+  #lost p { margin: .25rem 0; }
+  details { margin-top: 1rem; font-size: .875rem; text-align: left; display: inline-block; }
+  summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+  details dl { display: grid; grid-template-columns: auto 1fr; gap: .125rem .75rem; margin: .25rem 0 0; }
+  details dt { font: 700 1rem ui-monospace, monospace; text-align: center; }
+  details dd { margin: 0; }
 ${SignIn.css}
 ${PlayLive.css}
 ${TurnTimer.css}
@@ -68,6 +116,34 @@ ${TurnTimer.css}
   <!-- Announced: the other player's move, and the result, arrive while this page is idle. -->
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   ${TurnTimer.markup}
+  <div id="board" role="group" aria-label="board"></div>
+  <!-- Announced: what the last move did, which the other player's arrives while this page is idle. -->
+  <p id="news" role="status" aria-live="polite"></p>
+  <div id="setup-controls" class="controls" hidden>
+    <label>Swap<select id="swap-a"></select></label>
+    <label>with<select id="swap-b"></select></label>
+    <button id="swap" type="button">Swap</button>
+    <button id="shuffle" type="button">Shuffle</button>
+    <button id="deploy" type="button" class="primary">Deploy army</button>
+  </div>
+  <div id="move-controls" class="controls" hidden>
+    <label>Piece<select id="move-from"></select></label>
+    <label>To<select id="move-to"></select></label>
+    <button id="move" type="button" class="primary">Move</button>
+  </div>
+  <div id="lost"></div>
+  <details>
+    <summary>Key</summary>
+    <dl>
+      <dt>10</dt><dd>Marshal</dd><dt>9</dt><dd>General</dd><dt>8</dt><dd>Colonel</dd><dt>7</dt><dd>Major</dd>
+      <dt>6</dt><dd>Captain</dd><dt>5</dt><dd>Lieutenant</dd><dt>4</dt><dd>Sergeant</dd>
+      <dt>3</dt><dd>Miner — the only piece that survives attacking a bomb</dd>
+      <dt>2</dt><dd>Scout — runs any distance in a straight line</dd>
+      <dt>S</dt><dd>Spy — takes the Marshal, if it attacks first</dd>
+      <dt>B</dt><dd>Bomb — never moves</dd><dt>F</dt><dd>Flag — take it to win</dd>
+      <dt>?</dt><dd>an enemy piece you have not seen; a dot means it has moved</dd>
+    </dl>
+  </details>
   <!-- The sign-in form, rendered by renderSignIn() and shown whenever there is a login to
        offer and no seat to show for it. -->
   <div id="signin" hidden></div>
@@ -109,8 +185,10 @@ ${TurnTimer.script}
       status.textContent = !state.you ? late.join(" and ") + " ran out of time"
         : late.includes(state.you) ? "your time ran out — you lose" : "their time ran out — you win";
     }
-    else if (state.completed) status.textContent = state.draw ? "drawn" : state.winner + " wins";
-    else if (state.phase === "setup") status.textContent = "deploying";
+    else if (state.completed) status.textContent = endingText();
+    else if (state.phase === "setup")
+      status.textContent = deploying() ? "deploy your army: swap any two of your pieces, then deploy"
+        : state.you ? "waiting for " + other(state.you) + " to deploy" : "the armies are deploying";
     else if (state.you) status.textContent = state.turn === state.you ? "your move (" + state.you + ")" : state.turn + " to move";
     else status.textContent = state.turn + " to move";
 
@@ -121,9 +199,274 @@ ${TurnTimer.script}
     // token expires mid-match, which is what turns a 401 back into a button.
     signin.hidden = !login || noSeat || (state && state.you);
 
+    drawBoard();
+    drawControls();
+    drawNews();
+    drawLost();
+
     document.getElementById("seats").innerHTML = state
       ? state.players.map(p => "<div>" + p.side + " · " + escapeHtml(p.cognitoId) + (p.side === (state.you || "") ? " (you)" : "") + "</div>").join("")
       : "";
+  }
+
+  // ---- the board --------------------------------------------------------------------------
+
+  const SHORT = { Marshal: "10", General: "9", Colonel: "8", Major: "7", Captain: "6", Lieutenant: "5",
+                  Sergeant: "4", Miner: "3", Scout: "2", Spy: "S", Bomb: "B", Flag: "F" };
+  const ARMY = [["Flag", 1], ["Spy", 1], ["Scout", 8], ["Miner", 5], ["Sergeant", 4], ["Lieutenant", 4],
+                ["Captain", 4], ["Major", 3], ["Colonel", 2], ["General", 1], ["Marshal", 1], ["Bomb", 6]];
+  const LAKES = [42, 43, 46, 47, 52, 53, 56, 57];
+
+  // In setup, the first of two squares to swap; in play, the piece about to move.
+  let selected = null;
+  // The setup being arranged: 40 ranks, in the order of the player's home squares.
+  let draft = null;
+  // The square the board's keyboard focus is on, which is the one square in the tab order.
+  let focusSquare = null;
+  let lastNews = null;
+
+  function other(side) { return side === "Red" ? "Blue" : "Red"; }
+  function squareName(sq) { return "abcdefghij"[sq % 10] + (Math.floor(sq / 10) + 1); }
+  function home(side) { const first = side === "Red" ? 0 : 60; return Array.from({ length: 40 }, (_, i) => first + i); }
+  function deploying() { return !!(state && state.you && state.phase === "setup" && !state.deployed.includes(state.you)); }
+  function myTurn() { return !!(state && state.you && state.phase === "play" && state.turn === state.you); }
+
+  /* The square drawn at display position d, top left first: the viewer's own side at the bottom. */
+  function squareAt(d) {
+    const row = Math.floor(d / 10), col = d % 10;
+    return state && state.you === "Blue" ? row * 10 + (9 - col) : (9 - row) * 10 + col;
+  }
+
+  function shuffled() {
+    const army = [];
+    ARMY.forEach(([rank, n]) => { for (let i = 0; i < n; i++) army.push(rank); });
+    for (let i = army.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [army[i], army[j]] = [army[j], army[i]];
+    }
+    return army;
+  }
+
+  /* The setup is kept in this browser while it is being arranged, so a reload does not lose it. */
+  const draftKey = "stratego-setup:" + here;
+  function loadDraft() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(draftKey));
+      const counts = {};
+      (saved || []).forEach(r => { counts[r] = (counts[r] || 0) + 1; });
+      if (Array.isArray(saved) && saved.length === 40 && ARMY.every(([r, n]) => counts[r] === n)) return saved;
+    } catch (e) {}
+    return shuffled();
+  }
+  function saveDraft() { try { localStorage.setItem(draftKey, JSON.stringify(draft)); } catch (e) {} }
+
+  /* Every piece the viewer may see, by square — the draft's, while it is being arranged. */
+  function piecesBySquare() {
+    const by = {};
+    if (!state) return by;
+    state.pieces.forEach(p => { by[p.square] = p; });
+    if (deploying()) {
+      if (!draft) draft = loadDraft();
+      home(state.you).forEach((sq, i) => { by[sq] = { square: sq, side: state.you, rank: draft[i], revealed: false, moved: false }; });
+    }
+    return by;
+  }
+
+  function movesFrom(sq) { return state ? state.legalMoves.filter(m => m[0] === sq).map(m => m[1]) : []; }
+
+  /* Whether tapping `sq` would do anything — which is also whether it is offered as a control. */
+  function actionable(sq) {
+    if (deploying()) return home(state.you).includes(sq);
+    if (!myTurn()) return false;
+    return movesFrom(sq).length > 0 || (selected !== null && movesFrom(selected).includes(sq));
+  }
+
+  const board = document.getElementById("board");
+  const squares = [];
+  for (let d = 0; d < 100; d++) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.tabIndex = -1;
+    b.addEventListener("click", () => tap(squareAt(d)));
+    b.addEventListener("focus", () => { focusSquare = squareAt(d); });
+    board.appendChild(b);
+    squares.push(b);
+  }
+  board.addEventListener("keydown", e => {
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -10, ArrowDown: 10 }[e.key];
+    const d = squares.indexOf(document.activeElement);
+    if (step === undefined || d < 0) return;
+    const next = d + step;
+    if (next < 0 || next > 99 || (Math.abs(step) === 1 && Math.floor(next / 10) !== Math.floor(d / 10))) return;
+    e.preventDefault();
+    squares[d].tabIndex = -1;
+    squares[next].tabIndex = 0;
+    squares[next].focus();
+  });
+
+  function describe(sq, p) {
+    const at = squareName(sq);
+    if (LAKES.includes(sq)) return at + ", lake";
+    if (!p) return at + ", empty";
+    const mine = state && p.side === state.you;
+    let text = at + ", " + (mine ? "your " : p.side + " ") + (p.rank || "unknown piece");
+    if (p.moved && !p.rank) text += ", has moved";
+    if (mine && p.revealed) text += ", seen by " + other(p.side);
+    return text;
+  }
+
+  function drawBoard() {
+    const by = piecesBySquare();
+    const last = state && state.lastMove ? [state.lastMove.from, state.lastMove.to] : [];
+    const targets = selected !== null && myTurn() ? movesFrom(selected) : [];
+    let focusable = false;
+    for (let d = 0; d < 100; d++) {
+      const sq = squareAt(d), p = by[sq], b = squares[d];
+      b.textContent = LAKES.includes(sq) || !p ? "" : p.rank ? SHORT[p.rank] : "?";
+      b.className = LAKES.includes(sq) ? "lake" : p ? p.side : "";
+      b.classList.toggle("moved", !!(p && p.moved && !p.rank));
+      b.classList.toggle("known", !!(p && p.rank && p.revealed && state && p.side === state.you));
+      b.classList.toggle("last", last.includes(sq));
+      b.classList.toggle("target", targets.includes(sq));
+      b.classList.toggle("selected", sq === selected);
+      b.setAttribute("aria-disabled", actionable(sq) ? "false" : "true");
+      let label = describe(sq, p);
+      if (sq === selected) label += ", selected";
+      if (targets.includes(sq)) label += p ? ", attack" : ", move here";
+      b.setAttribute("aria-label", label);
+      b.tabIndex = sq === focusSquare ? 0 : -1;
+      if (sq === focusSquare) focusable = true;
+    }
+    // Something on the board must be reachable with the tab key.
+    if (!focusable) squares[90].tabIndex = 0;
+    board.setAttribute("aria-label", "board, " + (state && state.you === "Blue" ? "Blue" : "Red") + " at the bottom");
+  }
+
+  function tap(sq) {
+    if (!actionable(sq)) return;
+    if (deploying()) {
+      if (selected === null) selected = sq;
+      else if (selected === sq) selected = null;
+      else { swap(selected, sq); selected = null; }
+    } else if (selected !== null && movesFrom(selected).includes(sq)) {
+      const from = selected;
+      selected = null;
+      submit({ from, to: sq });
+    } else selected = sq === selected ? null : sq;
+    render();
+  }
+
+  function swap(a, b) {
+    const own = home(state.you), i = own.indexOf(a), j = own.indexOf(b);
+    if (i < 0 || j < 0 || i === j) return;
+    [draft[i], draft[j]] = [draft[j], draft[i]];
+    saveDraft();
+  }
+
+  // ---- the controls --------------------------------------------------------------------------
+
+  /* Replaces a select's options, keeping what was chosen if it is still there. */
+  function fill(select, options) {
+    const kept = select.value;
+    select.innerHTML = "";
+    options.forEach(([value, text]) => {
+      const o = document.createElement("option");
+      o.value = String(value);
+      o.textContent = text;
+      select.appendChild(o);
+    });
+    if (options.some(([value]) => String(value) === kept)) select.value = kept;
+  }
+
+  const swapA = document.getElementById("swap-a"), swapB = document.getElementById("swap-b");
+  const moveFrom = document.getElementById("move-from"), moveTo = document.getElementById("move-to");
+
+  function drawControls() {
+    const setup = deploying(), play = myTurn();
+    document.getElementById("setup-controls").hidden = !setup;
+    document.getElementById("move-controls").hidden = !play;
+    const by = piecesBySquare();
+    if (setup) {
+      const options = home(state.you).map(sq => [sq, squareName(sq) + " " + by[sq].rank]);
+      fill(swapA, options);
+      fill(swapB, options);
+      // Two different squares to start with, so that Swap does something before either is changed.
+      if (swapA.value === swapB.value) swapB.selectedIndex = (swapA.selectedIndex + 1) % options.length;
+    }
+    if (play) {
+      const origins = [...new Set(state.legalMoves.map(m => m[0]))];
+      fill(moveFrom, origins.map(sq => [sq, squareName(sq) + " " + by[sq].rank]));
+      if (selected !== null && origins.includes(selected)) moveFrom.value = String(selected);
+      drawTargets();
+    }
+  }
+
+  function drawTargets() {
+    const by = piecesBySquare();
+    fill(moveTo, movesFrom(Number(moveFrom.value)).map(sq => [sq, squareName(sq) + (by[sq] ? " — attack" : "")]));
+    document.getElementById("move").disabled = moveTo.options.length === 0;
+  }
+
+  moveFrom.addEventListener("change", () => { selected = Number(moveFrom.value); drawBoard(); drawTargets(); });
+  document.getElementById("move").addEventListener("click", () => {
+    if (!moveTo.value) return;
+    selected = null;
+    submit({ from: Number(moveFrom.value), to: Number(moveTo.value) });
+  });
+  document.getElementById("swap").addEventListener("click", () => {
+    swap(Number(swapA.value), Number(swapB.value));
+    selected = null;
+    render();
+  });
+  document.getElementById("shuffle").addEventListener("click", () => {
+    draft = shuffled();
+    saveDraft();
+    selected = null;
+    render();
+  });
+  document.getElementById("deploy").addEventListener("click", () => {
+    selected = null;
+    submit({ setup: draft });
+  });
+
+  // ---- what happened --------------------------------------------------------------------------
+
+  function drawNews() {
+    const news = document.getElementById("news");
+    const lm = state && state.lastMove;
+    const key = lm ? state.moveCount + ":" + JSON.stringify(lm) : null;
+    // Written only when it changes, so the live region announces each move once.
+    if (key === lastNews) return;
+    lastNews = key;
+    news.textContent = lm ? moveText(lm) : "";
+  }
+
+  function moveText(lm) {
+    const at = squareName(lm.to), them = other(lm.side);
+    if (!lm.battle) return lm.side + " moved " + squareName(lm.from) + " to " + at + ".";
+    const a = lm.side + "'s " + lm.battle.attacker, d = them + "'s " + lm.battle.defender;
+    if (lm.battle.result === "AttackerWins") return a + " took " + d + " on " + at + ".";
+    if (lm.battle.result === "DefenderWins") return a + " attacked " + d + " on " + at + " and lost.";
+    return a + " and " + d + " both fell on " + at + ".";
+  }
+
+  function endingText() {
+    if (state.ending === "flag") return state.winner + " captured the flag";
+    if (state.ending === "no-moves")
+      return state.draw ? "neither side can move — drawn" : other(state.winner) + " cannot move — " + state.winner + " wins";
+    if (state.ending === "cap") return "move limit reached — drawn";
+    return state.draw ? "drawn" : state.winner + " wins";
+  }
+
+  function drawLost() {
+    const lost = document.getElementById("lost");
+    if (!state || state.phase === "setup") { lost.innerHTML = ""; return; }
+    lost.innerHTML = state.lost.map(l => {
+      const counts = {};
+      l.ranks.forEach(r => { counts[r] = (counts[r] || 0) + 1; });
+      const text = Object.keys(counts).map(r => r + (counts[r] > 1 ? " ×" + counts[r] : "")).join(", ") || "nothing";
+      return "<p>" + l.side + " has lost: " + escapeHtml(text) + "</p>";
+    }).join("") + "<p>" + state.moveCount + " of " + state.maxMoves + " moves</p>";
   }
 
   /* The sides whose clock ran out in a live match, which is how it ended if there are any. */
@@ -222,5 +565,6 @@ ${TurnTimer.script}
     private def outcome(state: Protocol.StateResponse): String =
         if (state.clock.exists(_.timedOut.nonEmpty)) "time ran out"
         else if (state.draw) "drawn"
+        else if (state.ending.contains("flag")) state.winner.map(w => s"$w captured the flag").getOrElse("over")
         else state.winner.map(w => s"$w wins").getOrElse("over")
 }
