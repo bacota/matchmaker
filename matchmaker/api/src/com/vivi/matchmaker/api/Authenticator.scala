@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.api
 
 import ApiGateway.{Request, Response}
+import cats.effect.IO
 import com.vivi.matchmaker.auth.ApiKeys
 
 /** Establishes who is calling.
@@ -13,9 +14,12 @@ import com.vivi.matchmaker.auth.ApiKeys
   *
   * Failure is a `Response` rather than a flag, so that each implementation can say what was actually wrong — a missing
   * header and an expired token are not the same 401.
+  *
+  * An `IO`, because one of them has to look something up: an engine's API key is checked against the keys stored with
+  * the games (V34). The others answer from the request alone and are pure underneath.
   */
 trait Authenticator {
-    def callerOf(request: Request): Either[Response, String]
+    def callerOf(request: Request): IO[Either[Response, String]]
 }
 
 object Authenticator {
@@ -27,12 +31,14 @@ object Authenticator {
       * hosted-login flow to exercise a route.
       */
     object TrustedHeader extends Authenticator {
-        def callerOf(request: Request): Either[Response, String] =
-            request
-                .header(ApiGateway.ExternalIdHeader)
-                .map(_.trim)
-                .filter(_.nonEmpty)
-                .toRight(Errors.unauthenticated)
+        def callerOf(request: Request): IO[Either[Response, String]] =
+            IO.pure(
+              request
+                  .header(ApiGateway.ExternalIdHeader)
+                  .map(_.trim)
+                  .filter(_.nonEmpty)
+                  .toRight(Errors.unauthenticated)
+            )
     }
 
     /** Takes the caller's identity from the `sub` claim of the token API Gateway already verified.
@@ -47,33 +53,31 @@ object Authenticator {
       * claims would be unauthenticated rather than admitted, which is what the missing-`sub` case below is for.
       */
     object GatewayClaims extends Authenticator {
-        def callerOf(request: Request): Either[Response, String] =
-            request
-                .claim("sub")
-                .filter(_.nonEmpty)
-                .toRight(Errors.unauthenticatedToken)
+        def callerOf(request: Request): IO[Either[Response, String]] =
+            IO.pure(request.claim("sub").filter(_.nonEmpty).toRight(Errors.unauthenticatedToken))
     }
 
     /** Takes the caller's identity from the API key the game engine presented.
       *
-      * This is how the game engine's callbacks are authenticated. Matchmaker and each engine share one secret,
-      * configured on both sides; the key names the engine, because matchmaker holds a different key for each one (see
-      * [[com.vivi.matchmaker.auth.ApiKeys]]). The name a key is filed under is the value an administrator records as
-      * the game's `externalId`, which is what the services compare a game-authorized caller against.
+      * This is how the game engine's callbacks are authenticated. Matchmaker and each engine share one secret: the
+      * engine has it from its own configuration, and matchmaker from the game's stored key, which an admin sets on the
+      * game's form (V34). The key names the engine — the game it is stored with has the engine's identity as its
+      * `externalId`, which is what the services compare a game-authorized caller against.
+      *
+      * `keys` is asked on every call rather than once, so that a key an admin has just changed is the one checked.
       *
       * Unlike the other two, this one verifies the credential itself: there is no authorizer in front of these routes
       * any more, so nothing has checked anything by the time the function runs. A wrong key and a missing key are the
       * same 401 on purpose — telling a caller that the key it sent was well-formed but unknown tells it that guessing
       * is worth continuing.
       */
-    class ApiKey(keys: () => ApiKeys) extends Authenticator {
-        def callerOf(request: Request): Either[Response, String] =
-            request
-                .header(ApiKeys.Header)
-                .map(_.trim)
-                .filter(_.nonEmpty)
-                .flatMap(keys().nameOf)
-                .toRight(Errors.unauthenticated)
+    class ApiKey(keys: () => IO[ApiKeys]) extends Authenticator {
+        def callerOf(request: Request): IO[Either[Response, String]] =
+            request.header(ApiKeys.Header).map(_.trim).filter(_.nonEmpty) match {
+                // Nothing presented is refused without a lookup: there is nothing to look up.
+                case None            => IO.pure(Left(Errors.unauthenticated))
+                case Some(presented) => keys().map(_.nameOf(presented).toRight(Errors.unauthenticated))
+            }
     }
 
     /** The deployed authenticator: whichever authorizer actually ran decides how the caller is identified.
@@ -86,13 +90,13 @@ object Authenticator {
       * Neither present is still unauthenticated, which is what keeps a route accidentally left open from being admitted
       * here.
       */
-    class Gateway(keys: () => ApiKeys) extends Authenticator {
+    class Gateway(keys: () => IO[ApiKeys]) extends Authenticator {
         private val apiKey = ApiKey(keys)
 
-        def callerOf(request: Request): Either[Response, String] =
+        def callerOf(request: Request): IO[Either[Response, String]] =
             if (request.claims.nonEmpty) GatewayClaims.callerOf(request)
             else if (request.header(ApiKeys.Header).isDefined) apiKey.callerOf(request)
-            else Left(Errors.unauthenticatedToken)
+            else IO.pure(Left(Errors.unauthenticatedToken))
     }
 
     /* One further implementation is expected, and is part of why this is an interface rather than a

@@ -82,9 +82,9 @@ case class Game(
     active: Boolean,
     roles: Seq[GameRole],
     parameters: Seq[GameParameter[_]],
-    // The engine's identity: the name its API key is filed under in ENGINE_API_KEYS. A request
-    // made on the game's behalf (a move, a result, a character it made) is authorized by its key
-    // resolving to this name.
+    // The engine's identity. A request made on the game's behalf (a move, a result, a character
+    // it made) is authorized by the API key it carries being one stored with a game of this
+    // identity (V34).
     externalId: String,
     // What happens when a player's turn runs out. Defaulted rather than required, because every
     // game had this behaviour decided for it by the migration that added the column, and
@@ -94,5 +94,9 @@ case class Game(
      * a page for it. Characters are made in their engine, which then reports each one to matchmaker,
      * so this is where matchmaker's UI sends a player who has none. `None` for a plain game, and for
      * a character game nobody has given one. */
-    characterUrl: Option[String] = None
+    characterUrl: Option[String] = None,
+    /* Whether the game has an engine API key stored (V34) — never the key itself, which no read of a
+     * game carries. What the admin form shows in its place, so that an admin can tell a game whose
+     * engine will refuse every call from one that is ready. Read-only: a save sets the key, not this. */
+    hasApiKey: Boolean = false
 )

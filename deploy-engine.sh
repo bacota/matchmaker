@@ -231,7 +231,8 @@ step "Applying to $env"
 # values that form needs are outputs of the apply above, and this prints them. Engine identity must
 # be the name matchmaker files this engine's API key under, because that key is how a deployed
 # matchmaker tells which engine a callback came from; the terraform files it under the engine's
-# name.
+# name. The API key is printed as the command that reads it rather than as the key, so that it is
+# not left in a terminal's scrollback; matchmaker stores it with the game and never shows it again.
 #
 # register-game.sql is not the way: it is for the local database the unit tests run against, and
 # it refuses any other.
@@ -257,6 +258,7 @@ pointing at an old url goes on calling it:
     Name                  $game_name
     Game engine url       $create_game_url
     Engine identity       $external_id
+    API key               ./terraform/tf.sh $env output -raw ${engine}_api_key
 EOF
   if [ -n "$character_url" ]; then
     cat <<EOF

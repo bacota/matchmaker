@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.engine
 
 import cats.effect.IO
+import cats.syntax.all._
 import com.vivi.matchmaker.auth.ApiKeys
 import upickle.default.{read, write}
 import java.net.{URI, URLEncoder}
@@ -15,15 +16,16 @@ import EngineJson.given
   * to the size of its jar, and the JDK's own client costs nothing to add.
   *
   * The key is looked up by the host of the url being called, which is all this client knows about the engine it is
-  * talking to — see [[ApiKeys]]. A host with no key configured is called without one, which is what makes a local stub
-  * engine work with no setup at all; a *deployed* engine with no key would answer 401, so the missing key is reported
-  * here instead, where what is actually missing can be said.
+  * talking to — see [[ApiKeys]]. The keys are the games' own, stored with them (V34) and filed under the host of each
+  * game's url; an engine's status url is on the same host as its create-game url. A host with no key is called without
+  * one, which is what makes a local stub engine work with no setup at all; a *deployed* engine with no key would answer
+  * 401, so the missing key is reported here instead, where what is actually missing can be said.
   *
-  * `keys` is a function, and is called once per request rather than once per client, so that rotating a key is a matter
-  * of changing the function's environment rather than rebuilding everything that holds a client.
+  * `keys` is asked once per request rather than once per client, so that a key an admin has just changed is the one
+  * presented.
   */
 class HttpGameEngineClient(
-    keys: () => ApiKeys,
+    keys: () => IO[ApiKeys],
     timeout: Duration = Duration.ofSeconds(10),
     httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
 ) extends GameEngineClient {
@@ -55,9 +57,9 @@ class HttpGameEngineClient(
         }
 
     private def send(method: String, url: String, body: Option[String]): IO[String] =
-        IO(URI.create(url)).flatMap { uri =>
+        (IO(URI.create(url)), keys()).tupled.flatMap { (uri, known) =>
             val host = Option(uri.getHost).getOrElse("")
-            val key = keys().keyFor(host)
+            val key = known.keyFor(host)
 
             val headers =
                 body.map(_ => "content-type" -> "application/json").toMap ++ key.map(ApiKeys.Header -> _)
@@ -78,8 +80,8 @@ class HttpGameEngineClient(
 
             IO.raiseWhen(mustBeKeyed && key.isEmpty)(
               GameEngineError(
-                s"$method $url has no API key: nothing in GAME_ENGINE_API_KEYS is filed under '$host'. " +
-                    "A deployed game engine answers an unauthenticated request with 401."
+                s"$method $url has no API key: no game whose url is on '$host' has one. Set it on the game's " +
+                    "admin form; a deployed game engine answers an unauthenticated request with 401."
               )
             ) *>
                 IO.blocking(httpClient.send(request, HttpResponse.BodyHandlers.ofString()))
@@ -100,15 +102,4 @@ class HttpGameEngineClient(
                             )
                     }
         }
-}
-
-object HttpGameEngineClient {
-
-    /** A client configured from the environment.
-      *
-      * `GAME_ENGINE_API_KEYS` is `host=key` per engine — see [[ApiKeys]]. It is re-read for every request rather than
-      * parsed once, so that a rotated key takes effect without the execution environment having to be recycled.
-      */
-    def fromEnvironment(env: String => Option[String] = k => Option(System.getenv(k))): HttpGameEngineClient =
-        new HttpGameEngineClient(keys = () => ApiKeys.parse(env("GAME_ENGINE_API_KEYS")))
 }

@@ -44,7 +44,7 @@ object TestServices {
         notifier: Notifier = Notifier.disabled,
         mail: MailSettings = MailSettings.none
     ): Services[String] =
-        Services.fromPool[String](pool, engine, callbackBaseUrl, notifier, mail)
+        Services.fromPool[String](pool, Some(engine), callbackBaseUrl, notifier, mail)
 
     /** What a deployment that can send mail is configured with. `MailSettings.none` is the default above, so a test
       * says nothing about notifications unless it is about them.

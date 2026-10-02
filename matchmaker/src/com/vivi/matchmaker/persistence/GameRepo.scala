@@ -38,12 +38,14 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
 
     private val selectGameRow: Query[
       GameId,
-      (GameType, String, String, String, String, Option[String], Boolean, String, TimeoutAction)
+      (GameType, String, String, String, String, Option[String], Boolean, String, TimeoutAction, Boolean)
     ] =
-        sql"""SELECT game_type, name, display_name, description, url, character_url, active, external_id, timeout_action
+        // Whether a key is stored, never the key: no read of a game carries it (V34).
+        sql"""SELECT game_type, name, display_name, description, url, character_url, active, external_id, timeout_action,
+                 EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = game.game_id)
           FROM game
           WHERE game_id = $gameId"""
-            .query(gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction)
+            .query(gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *: bool)
 
     /* Confirms a game exists and holds it that way for the rest of the transaction.
      *
@@ -156,7 +158,18 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         session.option(selectGameRow)(id).flatMap {
             case None => IO.pure(None)
             case Some(
-                  (gameType, name, displayName, description, url, characterUrl, active, externalId, timeoutAction)
+                  (
+                    gameType,
+                    name,
+                    displayName,
+                    description,
+                    url,
+                    characterUrl,
+                    active,
+                    externalId,
+                    timeoutAction,
+                    hasKey
+                  )
                 ) =>
                 for {
                     roles <- readRoles(id)
@@ -174,7 +187,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                     parameters,
                     externalId,
                     timeoutAction,
-                    characterUrl
+                    characterUrl,
+                    hasKey
                   )
                 )
         }
@@ -278,6 +292,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         active: Boolean,
         externalId: String,
         timeoutAction: TimeoutAction,
+        hasApiKey: Boolean,
         roleId: Option[Int],
         roleName: Option[String],
         roleOptional: Option[Boolean],
@@ -296,7 +311,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     // rather than its activity — but it is the reason to revisit this if they ever grow.
     private val selectGameAggregate =
         sql"""SELECT g.game_id, g.game_type, g.name, g.display_name, g.description, g.url, g.character_url, g.active, g.external_id,
-                 g.timeout_action,
+                 g.timeout_action, EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = g.game_id),
                  r.game_role_id, r.name, r.optional, r.display_name,
                  p.game_parameter_id, p.name, p.default_value, p.display_name,
                  v.value
@@ -308,7 +323,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           WHERE (NOT $bool OR g.active)
           ORDER BY g.game_id"""
             .query(
-              gameId *: gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *:
+              gameId *: gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *: bool *:
                   int4.opt *: text.opt *: bool.opt *: text.opt *:
                   int4.opt *: text.opt *: value.opt *: text.opt *: value.opt
             )
@@ -381,7 +396,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                       parameters,
                       head.externalId,
                       head.timeoutAction,
-                      head.characterUrl
+                      head.characterUrl,
+                      head.hasApiKey
                     )
                 }
                 // game_id breaks ties, so games sharing a name still come back in a stable order.

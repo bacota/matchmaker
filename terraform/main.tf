@@ -21,30 +21,28 @@ provider "aws" {
 
 /* The secret matchmaker and each bundled engine authenticate each other with — one per engine.
  *
- * Generated rather than written into a tfvars, so that nobody has to copy the same string into
- * two places and keep them in step — a pair is only ever configured together, and a key that
- * differs between the two sides is an outage. It lands in the state file, as `db_password`
- * already does; both are also readable from the functions' configuration by anyone holding
+ * Generated here and given to the engine; matchmaker's copy is stored with the game in its
+ * database (V34), where an admin enters it on the game's form — the deploy scripts print the
+ * command that reads it out of the `<engine>_api_key` output. It lands in the state file, as
+ * `db_password` already does, and is readable from the engine's configuration by anyone holding
  * lambda:GetFunction, which is the same trade this deployment already makes for the database.
  *
  * One key each rather than one between them, so that the engines are not a single failure:
  * rotating one, or an engine leaking one, leaves the other alone. Rotating is
  * `terraform apply -replace='random_password.tictactoe_api_key[0]'` (or `rps_api_key`, `boxing_api_key`,
- * `stratego_api_key`). Both
- * functions are updated in the same apply, so there is a window of a few seconds in which one has
- * the new key and the other the old; a create-game call in that window fails and the player
- * retries.
+ * `stratego_api_key`), and then entering the new key on the game's admin form: until it is
+ * entered, the engine and matchmaker disagree and every call between them is refused.
  *
  * Only for the engines deployed from this repository. An engine someone else runs has its key
- * agreed out of band and passed in through `engine_api_keys` / `game_engine_api_keys`.
+ * agreed out of band and entered on its game's form the same way.
  */
 resource "random_password" "tictactoe_api_key" {
   count = var.deploy_tictactoe ? 1 : 0
 
   length = 48
-  # Alphanumeric only: the key travels in an HTTP header and is written into a `name=key` list,
-  # so a comma or an equals sign in it would be a parsing problem rather than extra entropy. 48
-  # characters of base62 is about 285 bits, which is plenty without them.
+  # Alphanumeric only: the key travels in an HTTP header and is pasted into a form, where
+  # punctuation is a chance to get it wrong rather than extra entropy. 48 characters of base62
+  # is about 285 bits, which is plenty without it.
   special = false
 }
 
@@ -109,28 +107,6 @@ module "api" {
   )
   logout_urls          = concat([module.ui.url], var.logout_urls)
   cors_allowed_origins = concat([module.ui.origin], var.cors_allowed_origins)
-
-  # The engines this matchmaker may call, and which may call it back — one shared key per engine,
-  # wired here rather than inside either module because it is the one fact both halves need.
-  #
-  # Inbound entries are keyed by the engine's external_id and outbound by its host, which is what
-  # each side has in hand at the point it needs the key; a bundled engine contributes its own
-  # secret to both. An engine's external_id is its module name, and that string has to match the
-  # `external_id` column of its row in the `game` table — see each engine's README.
-  engine_api_keys = merge(
-    var.engine_api_keys,
-    var.deploy_tictactoe ? { tictactoe = random_password.tictactoe_api_key[0].result } : {},
-    var.deploy_rps ? { rps = random_password.rps_api_key[0].result } : {},
-    var.deploy_boxing ? { boxing = random_password.boxing_api_key[0].result } : {},
-    var.deploy_stratego ? { stratego = random_password.stratego_api_key[0].result } : {}
-  )
-  game_engine_api_keys = merge(
-    var.game_engine_api_keys,
-    var.deploy_tictactoe ? { (module.tictactoe[0].api_host) = random_password.tictactoe_api_key[0].result } : {},
-    var.deploy_rps ? { (module.rps[0].api_host) = random_password.rps_api_key[0].result } : {},
-    var.deploy_boxing ? { (module.boxing[0].api_host) = random_password.boxing_api_key[0].result } : {},
-    var.deploy_stratego ? { (module.stratego[0].api_host) = random_password.stratego_api_key[0].result } : {}
-  )
 
   # Where notifications are queued, and what they say they are from. Empty when deploy_mail is
   # false, which is what leaves the API with nothing to enqueue to — see modules/api's variables.

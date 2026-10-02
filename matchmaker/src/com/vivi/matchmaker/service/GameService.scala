@@ -3,7 +3,8 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import cats.syntax.all._
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{GameRepo, PlayerRepo, TextCodec}
+import com.vivi.matchmaker.auth.ApiKeys
+import com.vivi.matchmaker.persistence.{GameApiKeyRepo, GameRepo, PlayerRepo, TextCodec}
 
 /** Creates or updates a Game, together with all of its roles, parameters, and parameter values. Only an admin may do
   * this.
@@ -15,8 +16,13 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       *
       * @param externalUserId
       *   identifies the caller; must belong to an existing admin player
+      * @param apiKey
+      *   the key the game's engine and matchmaker authenticate each other with, replacing the one it has. `None` — or
+      *   blank, which is what an untouched form field sends — leaves the key as it is, since the key is never sent back
+      *   and an edit that does not mean to change it has no other way to say so. Written in the same transaction as the
+      *   game, so a new game is never saved without the key it was given.
       */
-    def createOrUpdate(externalUserId: String, game: Game): IO[Game] =
+    def createOrUpdate(externalUserId: String, game: Game, apiKey: Option[String] = None): IO[Game] =
         sessionPool.use { session =>
             val playerRepo = new PlayerRepo(session)
             val gameRepo = new GameRepo[T](session)
@@ -46,9 +52,17 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                                             IO.raiseError(NotFoundError(s"no game with id ${trimmed.gameId.value}"))
                                     }
                             }
-                } yield result
+                    newKey = apiKey.map(_.trim).filter(_.nonEmpty)
+                    _ <- newKey.traverse_(key => new GameApiKeyRepo(session).set(result.gameId, key))
+                } yield result.copy(hasApiKey = result.hasApiKey || newKey.isDefined)
             }
         }
+
+    /** Every stored engine key, filed under the engine identity of its game: what a game engine's callback is
+      * authenticated against. Asked by the authenticator before there is any caller to authorize, which is why it takes
+      * none.
+      */
+    def engineKeys: IO[ApiKeys] = sessionPool.use(session => new GameApiKeyRepo(session).byIdentity)
 
     /** Lists games for any registered caller. Unlike `createOrUpdate` this needs no admin rights — the game catalogue
       * is what every player browses — but the caller must still be a known player.

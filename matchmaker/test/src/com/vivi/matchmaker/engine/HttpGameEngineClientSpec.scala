@@ -1,5 +1,6 @@
 package com.vivi.matchmaker.engine
 
+import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.auth.ApiKeys
 import java.net.http.HttpClient
@@ -11,7 +12,7 @@ import munit.FunSuite
 class HttpGameEngineClientSpec extends FunSuite {
 
     private def client(keys: ApiKeys) =
-        new HttpGameEngineClient(() => keys, httpClient = HttpClient.newHttpClient())
+        new HttpGameEngineClient(() => IO.pure(keys), httpClient = HttpClient.newHttpClient())
 
     private val request = CreateGameRequest(
       matchId = "m1",
@@ -35,7 +36,7 @@ class HttpGameEngineClientSpec extends FunSuite {
         // The point of the message: the engine answers a keyless request with a 401 that names no
         // cause, so the cause has to be named here or it is named nowhere.
         assert(clue(error.getMessage).contains("no API key"))
-        assert(error.getMessage.contains("GAME_ENGINE_API_KEYS"))
+        assert(error.getMessage.contains("admin form"))
         assert(clue(error.getMessage).contains("abc123.execute-api.us-east-1.amazonaws.com"))
     }
 
@@ -52,11 +53,11 @@ class HttpGameEngineClientSpec extends FunSuite {
     test("the key is read for each request, not once for the client") {
         var reads = 0
         val counting = new HttpGameEngineClient(
-          () => { reads += 1; ApiKeys.empty },
+          () => IO { reads += 1; ApiKeys.empty },
           httpClient = HttpClient.newHttpClient()
         )
-        // Both fail to connect; what matters is that each attempt looked the key up again, so that a
-        // rotated key takes effect without the execution environment being recycled.
+        // Both fail to connect; what matters is that each attempt looked the keys up again, so that a
+        // key an admin has just changed is the one presented.
         counting.createGame("http://localhost:1/games", request).attempt.unsafeRunSync()
         counting.createGame("http://localhost:1/games", request).attempt.unsafeRunSync()
         assertEquals(reads, 2)

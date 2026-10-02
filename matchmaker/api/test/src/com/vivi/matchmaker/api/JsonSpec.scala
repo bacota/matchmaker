@@ -45,6 +45,19 @@ class JsonSpec extends FunSuite {
         assertEquals(decoded.parameters.head.displayName, "Parameter")
     }
 
+    // The key rides in the save request beside the game's fields and is read apart from them, and a
+    // game written out never has one to write: there is no field for it.
+    test("a game save carries its API key beside the game, and a game never writes one") {
+        val game = Game(GameId(1), GameType.Plain, "n", "n", "d", "u", true, Seq.empty, Seq.empty, "boxing")
+        val body = ujson.write(ujson.Obj.from(ujson.read(write(game)).obj.toSeq :+ ("apiKey" -> ujson.Str("s3cret"))))
+
+        assertEquals(read[Game](body).externalId, "boxing")
+        assertEquals(read[Json.GameApiKeyField](body).apiKey, Some("s3cret"))
+        assertEquals(read[Json.GameApiKeyField](write(game)).apiKey, None)
+        assert(!write(game.copy(hasApiKey = true)).contains("s3cret"))
+        assert(!write(game).contains("apiKey"))
+    }
+
     /* Preferences and answers are plain objects, and must stay plain.
      *
      * upickle tags a case class that has *any* supertype with a `$type` discriminator -- sealed or

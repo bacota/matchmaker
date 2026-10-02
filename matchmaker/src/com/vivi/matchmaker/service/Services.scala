@@ -3,7 +3,7 @@ package com.vivi.matchmaker.service
 import cats.effect.{IO, Resource}
 import com.vivi.matchmaker.engine.{GameEngineClient, HttpGameEngineClient}
 import com.vivi.matchmaker.notify.{MailSettings, Notifications, Notifier, SqsNotifier}
-import com.vivi.matchmaker.persistence.TextCodec
+import com.vivi.matchmaker.persistence.{GameApiKeyRepo, TextCodec}
 
 /** Every service, sharing one connection pool.
   *
@@ -46,7 +46,7 @@ object Services {
     def resource[T](
         config: DbConfig,
         poolSize: Int = defaultPoolSize,
-        engineClient: GameEngineClient = HttpGameEngineClient.fromEnvironment(),
+        engineClient: Option[GameEngineClient] = None,
         callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
         notifier: Notifier = SqsNotifier.fromEnvironment(),
         mail: MailSettings = MailSettings.fromEnvironment()
@@ -58,11 +58,12 @@ object Services {
     /** Builds the services over an already-open pool.
       *
       * `engineClient` and `notifier` are parameters rather than things built here because both are remote systems:
-      * tests pass a stub and a recorder, and only a deployment passes the HTTP client and the queue.
+      * tests pass a stub and a recorder, and only a deployment passes the queue. With no engine client given, it is the
+      * HTTP one, presenting the keys stored with the games — read from this pool, which is why it is built here.
       */
     def fromPool[T](
         pool: SessionPool,
-        engineClient: GameEngineClient = HttpGameEngineClient.fromEnvironment(),
+        engineClient: Option[GameEngineClient] = None,
         callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
         notifier: Notifier = SqsNotifier.fromEnvironment(),
         mail: MailSettings = MailSettings.fromEnvironment()
@@ -74,7 +75,10 @@ object Services {
          * `challenges`' to record while the start is this one's to carry out. Only the function is
          * shared, so neither service has to know about the other -- see
          * `ChallengeService.autoStart`. */
-        val engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications)
+        val client = engineClient.getOrElse(
+          new HttpGameEngineClient(keys = () => pool.use(session => new GameApiKeyRepo(session).byHost))
+        )
+        val engine = new GameEngineService[T](pool, client, callbackBaseUrl, notifications)
 
         Services(
           registration = new RegistrationService(pool),

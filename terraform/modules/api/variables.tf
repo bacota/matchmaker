@@ -252,44 +252,6 @@ variable "admin_initial_password" {
   }
 }
 
-variable "engine_api_keys" {
-  description = <<-EOT
-    The game engines allowed to post move and result callbacks, as `external_id = key`.
-
-    The key is the secret matchmaker and that engine share, and it is what a callback proves
-    itself with; the name it is filed under is the identity the callback is attributed to, so it
-    must equal the `external_id` of the engine's row in the `game` table.
-
-    Empty by default, which means no engine may call back. That is the right default — an engine
-    that has not been given a key is one nobody has decided to trust yet.
-  EOT
-  type        = map(string)
-  default     = {}
-  sensitive   = true
-
-  validation {
-    condition     = alltrue([for key in values(var.engine_api_keys) : length(key) >= 24])
-    error_message = "Each key must be at least 24 characters; it is a bearer token and the only thing protecting the callback routes."
-  }
-}
-
-variable "game_engine_api_keys" {
-  description = <<-EOT
-    The other direction: the key matchmaker presents when it creates a game or asks for a match's
-    status, as `host = key`.
-
-    Filed by host rather than by external_id because the host is all matchmaker's engine client
-    knows about the engine it is about to call — it has a url in hand and no identity. In
-    practice each entry pairs with one in `engine_api_keys` and carries the same secret.
-
-    Empty by default, which means matchmaker calls every engine unauthenticated — fine for a
-    local stub, and refused before the request is sent for anything on amazonaws.com.
-  EOT
-  type        = map(string)
-  default     = {}
-  sensitive   = true
-}
-
 # ---------------------------------------------------------------------------
 # Mail
 # ---------------------------------------------------------------------------

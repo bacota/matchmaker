@@ -212,6 +212,54 @@ class GameServiceSpec extends PropertySuite {
         assert(result.unsafeRunSync())
     }
 
+    // The key's only way back out of the database is as an engine's credential: a save stores it and
+    // reports that one is stored, and the authenticator resolves it to the game's engine identity.
+    test("createOrUpdate stores the engine's API key, and the stored key identifies the engine") {
+        val key = s"key-${java.util.UUID.randomUUID()}"
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGameWithRole.sample.get)
+            created <- gameService.createOrUpdate(admin.externalId, base, Some(s"  $key "))
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+            keys <- gameService.engineKeys
+        } yield (created.hasApiKey, listed.map(_.hasApiKey), keys.nameOf(key), created.externalId)
+
+        val (createdHas, listedHas, identity, externalId) = result.unsafeRunSync()
+        assert(createdHas)
+        assertEquals(listedHas, Some(true))
+        assertEquals(identity, Some(externalId))
+    }
+
+    test("an edit that sends no key keeps the stored one, and one that sends a key replaces it") {
+        val first = s"key-${java.util.UUID.randomUUID()}"
+        val second = s"key-${java.util.UUID.randomUUID()}"
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGameWithRole.sample.get)
+            created <- gameService.createOrUpdate(admin.externalId, base, Some(first))
+            // Blank is what an untouched form field sends.
+            _ <- gameService.createOrUpdate(admin.externalId, created.copy(description = "edited"), Some("  "))
+            kept <- gameService.engineKeys
+            _ <- gameService.createOrUpdate(admin.externalId, created, Some(second))
+            replaced <- gameService.engineKeys
+        } yield (kept.nameOf(first), replaced.nameOf(first), replaced.nameOf(second), created.externalId)
+
+        val (kept, oldAfter, newAfter, externalId) = result.unsafeRunSync()
+        assertEquals(kept, Some(externalId))
+        assertEquals(oldAfter, None)
+        assertEquals(newAfter, Some(externalId))
+    }
+
+    test("a game saved without a key reports none") {
+        val result = for {
+            admin <- makeAdmin()
+            created <- gameService.createOrUpdate(admin.externalId, Generators.genGameWithRole.sample.get)
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+        } yield (created.hasApiKey, listed.map(_.hasApiKey))
+
+        assertEquals(result.unsafeRunSync(), (false, Some(false)))
+    }
+
     test("createOrUpdate refuses a game that defines no roles") {
         val result = for {
             admin <- makeAdmin()

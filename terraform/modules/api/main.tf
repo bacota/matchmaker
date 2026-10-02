@@ -185,11 +185,8 @@ resource "aws_lambda_function" "api" {
       # this function, so taking its invoke_url here would close a dependency cycle.
       MATCHMAKER_BASE_URL = "https://${aws_apigatewayv2_api.api.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
 
-      # The shared secrets, one per game engine, in the two forms the function looks them up by:
-      # by external_id for a callback arriving (whose key says which engine sent it), and by host
-      # for a call going out (where a url is all there is to go on). Both are `name=key` lists.
-      ENGINE_API_KEYS      = join(",", [for name, key in var.engine_api_keys : "${name}=${key}"])
-      GAME_ENGINE_API_KEYS = join(",", [for host, key in var.game_engine_api_keys : "${host}=${key}"])
+      # No engine API keys: each game's key is stored with it in the database (V34), set by an
+      # admin on the game's form, and read from there in both directions.
     }
   }
 
@@ -375,8 +372,9 @@ locals {
    * of its own, and giving it one to impersonate would be a password shared between two systems
    * with a great deal more reach than a key scoped to these routes.
    *
-   * Matchmaker holds a different key per engine, so the key also says *which* engine is calling:
-   * it is filed under the name that must be the game's `external_id`. See `engine_api_keys`.
+   * Matchmaker holds a different key per game, stored with it in the database (V34), so the key
+   * also says *which* engine is calling: the game it is stored with names the engine as its
+   * `external_id`.
    */
   engine_routes = [
     "POST /games/{gameId}/matches/{matchId}/moves",

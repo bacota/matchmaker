@@ -162,6 +162,9 @@ any other. The deploy scripts print the urls; the form wants:
 - **Engine identity**: `rps` — the name matchmaker files this engine's API key under, and so
   how it tells which engine a callback came from. A game naming anything else has its callbacks
   refused.
+- **API key**: the key the engine was deployed with, which
+  `./terraform/tf.sh <env> output -raw rps_api_key` prints. Matchmaker stores it with the game and
+  never shows it again; entering a new one on the game's edit form replaces it.
 - **Type**: plain (leave "Requires characters" unticked)
 - **Roles**: `One` and `Two`, neither optional
 - **Parameters**: none

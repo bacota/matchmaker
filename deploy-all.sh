@@ -231,7 +231,8 @@ step "Games to add on matchmaker's admin page"
 
 # A deploy never creates a game: an admin adds each one on matchmaker's admin page ("Add a Game"),
 # or edits the game if it is already there, with these values. register-game.sql is for the local
-# database the unit tests run against, and refuses any other.
+# database the unit tests run against, and refuses any other. Each API key is printed as the command
+# that reads it, not as the key, so that it is not left in a terminal's scrollback.
 for engine in "${enabled_engines[@]}"; do
   IFS=: read -r name _ _ _ <<<"$engine"
 
@@ -249,6 +250,7 @@ for engine in "${enabled_engines[@]}"; do
     $name
       Game engine url       $create_game_url
       Engine identity       $external_id
+      API key               ./terraform/tf.sh $env output -raw ${name}_api_key
 EOF
   if [ -n "$character_url" ]; then
     cat <<EOF
