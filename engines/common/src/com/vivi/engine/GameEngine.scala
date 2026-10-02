@@ -111,16 +111,19 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
 
     /** The match ended by its clock, if it is a live match in which some pending seat has run out of time at `at`.
       *
-      * Every pending seat whose own clock has run out by then loses, and every other seat wins — including one still
-      * pending whose clock has time on it, or has not started because its player has not opened the board. Two players
-      * who both ran out both lose.
+      * The match ended the moment the first clock ran out, however much later this is noticed — nothing runs to notice
+      * it sooner. So the seat whose deadline came first loses, and every other seat wins: one whose clock ran out after
+      * that moment, one still running, and one that has not started because its player has not opened the board. Two
+      * seats that ran out at the same instant both lose.
       */
     private def timedOut(m: M, at: Instant): Option[M] =
         for {
             clock <- game.clock(m)
             if !game.isOver(m)
-            late = game.pending(m).filter(seat => deadlineOf(m, clock, seat).exists(d => !at.isBefore(d)))
-            if late.nonEmpty
+            due = game.pending(m).flatMap(seat => deadlineOf(m, clock, seat).map(seat -> _))
+            first <- due.map(_._2).minOption
+            if !at.isBefore(first)
+            late = due.collect { case (seat, d) if d == first => seat }
         } yield game.markCompleted(game.withClock(m, clock.copy(timedOut = late.map(_.participantId))))
 
     /** When a seat's clock runs out on the turn now being played; `None` while its player has not opened the board. */

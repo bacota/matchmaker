@@ -481,6 +481,20 @@ abstract class RoutesContract extends FunSuite {
         assertEquals(matchmaker.moves, Nil)
     }
 
+    // Nothing runs to end a match when a clock runs out, so a read can come long after two clocks have both
+    // run out. The match ended when the first did, and only that player lost.
+    test("a read that finds several clocks run out forfeits only the one that ran out first") {
+        val (routes, matchmaker, advance) = liveMatch()
+        stateOf(routes, "sub-alice")
+        advance(10)
+        stateOf(routes, "sub-bob")
+        // Alice's clock ran out at 30 seconds; bob's, if he is being waited on too, at 40.
+        advance(40)
+        assertEquals(statusOf(routes).completed, true)
+        assertEquals(stateOf(routes, "sub-bob")("clock")("timedOut").arr.map(_.num.toLong).toList, List(1L))
+        assertEquals(matchmaker.results.head._2.results.filter(_.isWinner).map(_.participantId), List(2L))
+    }
+
     test("a live move is recorded as starting when its player opened the board, not when the turn did") {
         val (routes, matchmaker, advance) = liveMatch()
         advance(3600)
