@@ -62,16 +62,6 @@ class RoutesSpec extends FunSuite {
           )
         )
 
-    private def building(routes: Routes, player: String, f: Fighter) =
-        routes(
-          EngineRequest(
-            "POST",
-            "/matches/m-9/fighter",
-            as(player),
-            write(Protocol.BuildRequest(f.strength, f.speed, f.agility, f.workrate, f.chin))
-          )
-        )
-
     test("GET /matches/:id/status answers matchmaker's status call, with both corners pending") {
         val (routes, _, _, _) = fixture()
         val status = read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status").body)
@@ -84,9 +74,17 @@ class RoutesSpec extends FunSuite {
         assert(get(routes, "/matches/m-9/play", as("sub-alice")).body.contains("plan round 1"))
     }
 
-    test("a caller who is somebody, but not in this bout, cannot build a fighter in it") {
+    // Building a fighter is not part of a bout, so there is nowhere in one to build it.
+    test("a bout has no route for building a fighter") {
         val (routes, _, _, _) = fixture()
-        assertEquals(building(routes, "sub-carol", average).status, 403)
+        val body = """{"strength":5,"speed":5,"agility":5,"workrate":5,"chin":5}"""
+        assertEquals(routes(EngineRequest("POST", "/matches/m-9/fighter", as("sub-alice"), body)).status, 404)
+    }
+
+    test("a bout between characters that are not built fighters is refused at creation") {
+        val (_, store, created, _) = fixture(blue = None)
+        assertEquals(created.status, 400)
+        assertEquals(store.get("m-9"), None)
     }
 
     test("a plan posted by a player is recorded and answered with the new state") {
@@ -119,34 +117,6 @@ class RoutesSpec extends FunSuite {
         val (routes, store, _, _) = fixture()
         assertEquals(planning(routes, "sub-alice", Int.MaxValue, Int.MaxValue, 7).status, 400)
         assertEquals(store.get("m-9").get.plans, Nil)
-    }
-
-    test("a fighter is built over the wire, and saved to matchmaker") {
-        val (routes, store, _, recorder) = fixture(blue = None)
-
-        val page = get(routes, "/matches/m-9/play", as("sub-bob"))
-        assert(page.body.contains("build your fighter"))
-
-        val built = Fighter(3, 6, 6, 6, 4)
-        val answer = building(routes, "sub-bob", built)
-        assertEquals(answer.status, 200)
-        val state = read[Protocol.StateResponse](answer.body)
-        assertEquals(
-          state.corners.find(_.side == "Blue").flatMap(_.fighter),
-          Some(Protocol.BuildRequest(3, 6, 6, 6, 4))
-        )
-        assertEquals(recorder.characterStates, List(202L -> Fighter.toState(built)))
-        assertEquals(store.get("m-9").get.cornerOf(Side.Blue).flatMap(_.fighter), Some(built))
-
-        assertEquals(building(routes, "sub-bob", built).status, 400)
-    }
-
-    test("a build matchmaker could not save is a 502, which the player may retry") {
-        val (routes, _, _, recorder) = fixture(blue = None)
-        recorder.failStateSaves = true
-        assertEquals(building(routes, "sub-bob", average).status, 502)
-        recorder.failStateSaves = false
-        assertEquals(building(routes, "sub-bob", average).status, 200)
     }
 
     test("the second plan resolves the round over the wire, and both plans are then told") {

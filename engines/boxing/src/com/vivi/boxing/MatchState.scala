@@ -3,7 +3,7 @@ package com.vivi.boxing
 import scala.util.control.NonFatal
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
-import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnLike}
+import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
 
 /** One corner of a bout.
   *
@@ -52,10 +52,10 @@ case class Bout(
     createdAt: Instant,
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String],
-    /** Where matchmaker's character routes are — `PUT {this}/characters/{id}/state` is how a fighter built here is
-      * kept. `None` when matchmaker sent no callback urls to derive it from.
+    /** A live bout's turn clock, which every round is fought against; `None` for every other bout, and defaulted so
+      * that a bout stored before live matches existed reads back as the bout it was.
       */
-    matchmakerUrl: Option[String]
+    clock: Option[TurnClock] = None
 ) extends MatchLike {
 
     def cornerOf(side: Side): Option[Corner] = corners.find(_.side == side)
@@ -83,8 +83,13 @@ case class Bout(
 
     def knockout: Option[Round] = rounds.find(_.outcome.decision == Decision.Knockout)
 
-    /** Over on a knockout, or once every scheduled round has been fought. */
-    def isOver: Boolean = knockout.isDefined || rounds.size >= scheduledRounds
+    /** Over on a knockout, or once every scheduled round has been fought — or, in a live bout, once a corner has let a
+      * round's clock run out.
+      */
+    def isOver: Boolean = ranOut || knockout.isDefined || rounds.size >= scheduledRounds
+
+    /** Whether a live bout's clock ended this one. */
+    def ranOut: Boolean = clock.exists(_.ranOut)
 
     /** The round being planned now. Past the last one once the bout is over. */
     def currentRound: Int = rounds.size + 1
@@ -93,9 +98,6 @@ case class Bout(
     def roundStartedAt: Instant = rounds.lastOption.map(_.resolvedAt).getOrElse(createdAt)
 
     /** The corners still to plan the current round — both at the start of every round, and none once the bout is over.
-      *
-      * A corner whose fighter is not built yet is pending too: building it is the first thing that player has to do,
-      * and it is done on their own clock.
       */
     def pending: List[Corner] = if (isOver) Nil else corners.filterNot(c => planOf(c, currentRound).isDefined)
 
@@ -106,10 +108,12 @@ case class Bout(
         rounds.count(r => r.outcome.decision == Decision.Knockdown && r.outcome.winner.contains(side))
 
     /** The winning corner once the bout is over: whoever scored the knockout, or failing one whoever is ahead on
-      * points. `None` while the bout goes on, and `None` for a draw on points, which [[isDraw]] tells apart.
+      * points. `None` while the bout goes on, and `None` for a draw on points, which [[isDraw]] tells apart. In a bout
+      * the clock ended, whichever corner did not run out — and nobody, if both did.
       */
     def winner: Option[Corner] =
         if (!isOver) None
+        else if (ranOut) corners.find(c => clock.flatMap(_.outcomeOf(c.participantId)).contains(Outcome.Win))
         else
             knockout.flatMap(_.outcome.winner) match {
                 case Some(side) => cornerOf(side)
@@ -118,17 +122,22 @@ case class Bout(
                     if (red > blue) cornerOf(Side.Red) else if (blue > red) cornerOf(Side.Blue) else None
             }
 
-    def isDraw: Boolean = isOver && winner.isEmpty
+    def isDraw: Boolean = isOver && !ranOut && winner.isEmpty
 
-    /** How a finished bout was won — "knockout" or "points" — as matchmaker records it and as the page says it. */
-    def method: Option[String] = Option.when(isOver)(if (knockout.isDefined) "knockout" else "points")
+    /** How a finished bout was won — "knockout", "points" or, in a live bout, "forfeit" — as matchmaker records it and
+      * as the page says it.
+      */
+    def method: Option[String] =
+        Option.when(isOver)(if (ranOut) "forfeit" else if (knockout.isDefined) "knockout" else "points")
 
     def outcomeFor(corner: Corner): Outcome =
-        winner match {
-            case Some(w) if w.participantId == corner.participantId => Outcome.Win
-            case Some(_)                                            => Outcome.Loss
-            case None                                               => Outcome.Draw
-        }
+        clock
+            .flatMap(_.outcomeOf(corner.participantId))
+            .getOrElse(winner match {
+                case Some(w) if w.participantId == corner.participantId => Outcome.Win
+                case Some(_)                                            => Outcome.Loss
+                case None                                               => Outcome.Draw
+            })
 }
 
 /** Boxing as matchmaker sees it: rounds that are each simultaneous, one after another.
@@ -150,6 +159,10 @@ object Bout extends Game[Bout, Corner, Plan] {
       * Every corner must carry a character: this is a character game, and the fighter *is* the character. A seat
       * without one means the game was registered in matchmaker as a plain game, which is a mistake to report at the
       * start rather than a bout to fight with nobody in one corner.
+      *
+      * And every character must arrive already built, its characteristics in its `characterState`. Building a fighter
+      * is not part of a bout: a bout is fought by the fighters the two characters already are, so one that is not a
+      * fighter yet — no state, or state this engine could not have built — refuses the bout.
       */
     def seat(players: List[Protocol.EnginePlayer]): Either[String, List[Corner]] =
         if (players.sizeIs != 2) Left(s"boxing is a two-fighter game; ${players.size} player(s) were sent")
@@ -159,6 +172,15 @@ object Bout extends Game[Bout, Corner, Plan] {
             Left("the two corners must belong to two different players")
         else if (players.exists(_.characterId.isEmpty))
             Left("every corner needs a fighter; register boxing in matchmaker as a character game")
+        else if (players.exists(_.characterState.flatMap(Fighter.fromState).isEmpty))
+            Left(
+              "every fighter must be built before a bout; character(s) " +
+                  players
+                      .filter(_.characterState.flatMap(Fighter.fromState).isEmpty)
+                      .flatMap(_.characterId)
+                      .mkString(", ") +
+                  " are not"
+            )
         else {
             val requested = players.map(p => p.role.flatMap(Side.parse))
             val sides =
@@ -200,15 +222,6 @@ object Bout extends Game[Bout, Corner, Plan] {
         }
     }
 
-    /** Matchmaker's base url, from the move callback it sent: the callbacks are `{base}/games/{g}/matches/{m}/moves`,
-      * and the character routes hang off the same base.
-      */
-    def matchmakerUrlOf(moveCallbackUrl: Option[String]): Option[String] =
-        moveCallbackUrl.flatMap { url =>
-            val at = url.lastIndexOf("/games/")
-            Option.when(at > 0 && url.endsWith("/moves"))(url.substring(0, at))
-        }
-
     override def seatName: String = "corner"
 
     def seats(m: Bout): List[Corner] = m.corners
@@ -226,6 +239,10 @@ object Bout extends Game[Bout, Corner, Plan] {
     def sequence(m: Bout): Long = m.plans.size.toLong
 
     def outcome(m: Bout, corner: Corner): Outcome = m.outcomeFor(corner)
+
+    def clock(m: Bout): Option[TurnClock] = m.clock
+
+    def withClock(m: Bout, clock: TurnClock): Bout = m.copy(clock = Some(clock))
 
     /** What a record of a fight would carry: how it ended and when, and each corner's points and knockdowns. */
     def scores(m: Bout, corner: Corner): Map[String, ujson.Value] =
@@ -251,8 +268,7 @@ object Bout extends Game[Bout, Corner, Plan] {
           completed = false,
           createdAt = now,
           moveCallbackUrl = request.moveCallbackUrl,
-          resultsCallbackUrl = request.resultsCallbackUrl,
-          matchmakerUrl = matchmakerUrlOf(request.moveCallbackUrl)
+          resultsCallbackUrl = request.resultsCallbackUrl
         )
 
     // Stored as JSON, as rock-paper-scissors stores its matches: the whole bout is one attribute.

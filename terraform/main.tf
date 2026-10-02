@@ -285,10 +285,10 @@ module "rps" {
 
 /* The third bundled engine: boxing, the first character game among them.
  *
- * Every corner is a matchmaker character — a fighter — and the engine writes a fighter's
- * characteristics back to matchmaker as the character's state once its player has built it. That
- * write goes to `PUT /characters/{characterId}/state` with this engine's API key, which is why
- * that route is among the api module's `engine_routes` rather than its player routes.
+ * Every corner is a matchmaker character — a fighter — whose characteristics are the character's
+ * state. A bout only fights fighters that are already built; it builds nothing. Writing that state
+ * is `PUT /characters/{characterId}/state` with this engine's API key, which is why that route is
+ * among the api module's `engine_routes` rather than its player routes.
  *
  * Off by default and otherwise configured exactly like the two above: its own function, table,
  * api and key.
@@ -302,8 +302,6 @@ module "boxing" {
 
   name    = "boxing"
   handler = "com.vivi.boxing.Handler::handleRequest"
-  # Building the fighter in a corner, before its first round.
-  extra_player_routes = ["POST /matches/{matchId}/fighter"]
 
   environment     = var.environment
   lambda_jar_path = var.boxing_jar_path

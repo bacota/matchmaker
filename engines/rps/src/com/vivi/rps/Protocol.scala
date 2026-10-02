@@ -1,6 +1,7 @@
 package com.vivi.rps
 
 import upickle.default.{ReadWriter, macroRW}
+import com.vivi.engine.ClockView
 
 /** This engine's messages: matchmaker's wire format, which is the same for every engine and is stated once in
   * [[com.vivi.engine.Protocol]], and the play API between the engine and its own play page, which is this game's.
@@ -31,6 +32,8 @@ object Protocol {
       *
       * `waitingFor` is who has yet to throw, by side, which is this game's answer to "whose turn is it" — plural, and
       * empty once the match is over.
+      *
+      * `clock` is a live match's turn clock, and absent from any other.
       */
     case class StateResponse(
         matchId: String,
@@ -40,7 +43,8 @@ object Protocol {
         completed: Boolean,
         winner: Option[String],
         draw: Boolean,
-        players: List[SeatView]
+        players: List[SeatView],
+        clock: Option[ClockView] = None
     )
 
     /** One seat as a viewer may see it. `shape` is `None` until the match is over, whoever is asking — including of the

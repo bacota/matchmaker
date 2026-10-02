@@ -65,6 +65,7 @@ class Engine(
           winner = m.winner.map(_.toString),
           draw = m.isDraw,
           winningLine = m.board.winningLine,
-          players = m.seats.map(s => SeatView(s.mark.toString, s.cognitoId, s.participantId, m.moveCount(s.mark)))
+          players = m.seats.map(s => SeatView(s.mark.toString, s.cognitoId, s.participantId, m.moveCount(s.mark))),
+          clock = core.clockView(m)
         )
 }

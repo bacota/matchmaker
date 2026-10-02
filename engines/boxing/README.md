@@ -38,25 +38,19 @@ Two readings of `boxing.txt` worth knowing about:
 - "If there is no tie there is no knockdown" is read as "if there is *still* a tie". Both fighters
   landing a knockdown that nothing separates means neither one scores it.
 
-### Building a fighter
+### Fighters
 
-Matchmaker creates every character with empty state, and only the character's game may write it.
-So a fighter is built on the engine's play page, **the first time it is in a bout**:
+A fighter is a matchmaker character, and its characteristics are the character's state:
 
 - **25 points** across the five characteristics, each **1–10**. The constants are `Fighter.Budget`,
   `Min` and `Max`.
-- The engine writes the fighter to matchmaker's `PUT /characters/{id}/state` using its API key,
-  then puts it in the bout. If matchmaker can't be reached, the build fails with a 502 and nothing
-  changes, so the player can simply retry.
-- A fighter is built once. At every later bout it arrives with its characteristics in the create
-  request's `characterState`. If that state isn't one this engine could have built (for example,
-  over budget), the fighter is treated as unbuilt.
-- Until a corner has built its fighter it can't plan round 1, and the round can't resolve. It stays
-  pending on its own clock the whole time.
+- Every fighter arrives at a bout already built, its characteristics in the create request's
+  `characterState`. Building a fighter is not part of a bout: a corner whose state is empty, or
+  isn't one this engine could have built (for example, over budget), refuses the bout.
 
-Matchmaker's base url for that write is taken from the move callback url it sends
-(`{base}/games/{g}/matches/{m}/moves`). A bout created without callback urls, like the offline
-local mode, keeps its fighters for that bout only.
+Where a fighter gets built is not settled yet. Matchmaker creates every character with empty state
+and only the character's game may write it (`PUT /characters/{id}/state`), so until a builder
+exists a new character cannot fight.
 
 ### Rounds
 
@@ -108,16 +102,14 @@ psql "$DATABASE_URL" -v url="http://localhost:8092/games" -v external_id="boxing
 
 Then run the normal character-game flow. Each player creates a fighter (a character) in
 matchmaker, a challenge is made and accepted with a fighter each, and the challenger starts it. The
-match's `playUrl` is the page. A fighter's first bout opens on the build form.
+match's `playUrl` is the page. Both characters must already be built fighters (see "Fighters").
 
-`MATCHMAKER_OFFLINE=true` runs with nothing to call back to. Callbacks and fighter writes are
+`MATCHMAKER_OFFLINE=true` runs with nothing to call back to. Callbacks are
 printed instead.
 
 With the trusted local sign-in, `?as=<sub>` names the player:
 
 ```bash
-curl -s -X POST "http://localhost:8092/matches/$MATCH/fighter?as=$SUB" -H 'content-type: application/json' \
-     -d '{"strength":5,"speed":5,"agility":5,"workrate":5,"chin":5}'
 curl -s -X POST "http://localhost:8092/matches/$MATCH/moves?as=$SUB" -H 'content-type: application/json' \
      -d '{"offense":2,"defense":2,"power":1}'
 ```
@@ -127,12 +119,11 @@ Sign-in, the three `PLAY_AUTH` modes and the environment variables are exactly a
 8092.
 
 Play Live is the same too (`engines/tictactoe/README.md`, "Play Live"), and served locally on 8192.
-Building a fighter is pushed to the other corner like a plan is.
 
 ## Deployed
 
-The boxing engine uses `terraform/modules/engine`, the module shared by every bundled engine, with one
-additional player route (`POST /matches/{matchId}/fighter`). Enable it with `deploy_boxing = true` in
+The boxing engine uses `terraform/modules/engine`, the module shared by every bundled engine. Enable it
+with `deploy_boxing = true` in
 `environments/<env>.settings.tfvars`.
 
 **The first deployment must be `./deploy-all.sh <env>`** (or `./deploy-boxing.sh <env> --full`).
@@ -151,8 +142,6 @@ Then register the game with the outputs: `boxing_create_game_url` as `url` and `
 ## Known limits
 
 - **Callbacks are best-effort**, as in the other engines. A lost one is what matchmaker's
-  `refresh` repairs. The fighter write is the exception: it happens before the build is accepted.
+  `refresh` repairs.
 - **Matchmaker's UI still says "character".** The game calls them fighters, and so do this engine's
   pages, but matchmaker has no per-game name for its characters.
-- **Two builds of one corner racing each other** from two tabs both reach matchmaker, and only the
-  first reaches the bout. Matchmaker keeps whichever wrote last.

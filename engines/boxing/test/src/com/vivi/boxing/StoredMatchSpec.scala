@@ -27,8 +27,13 @@ class StoredMatchSpec extends FunSuite {
           |"round":2,"allocation":{"offense":2,"defense":2,"power":1},"takenAt":"2026-01-01T00:00:03Z",
           |"startedAt":"2026-01-01T00:00:02Z"}],"isPublic":true,"completed":false,
           |"createdAt":"2026-01-01T00:00:00Z","moveCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/moves",
-          |"resultsCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/results",
-          |"matchmakerUrl":"http://matchmaker.test"}""".stripMargin.replace("\n", "")
+          |"resultsCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/results"}""".stripMargin.replace("\n", "")
+
+    /** A bout as it was stored while fighters were still built in their first bout, with the base url the build saved
+      * them through. The field is gone and is ignored when read, so a bout already stored is still the bout it was.
+      */
+    private val storedWithMatchmakerUrl =
+        stored.stripSuffix("}") + ""","matchmakerUrl":"http://matchmaker.test"}"""
 
     /** A match partway through, on a clock that ticks a second per read so that every timestamp differs. */
     private def played(): Bout = {
@@ -52,14 +57,12 @@ class StoredMatchSpec extends FunSuite {
             timeLimitSeconds = Some(600),
             players = List(
               Protocol.EnginePlayer("sub-alice", 11L, Some("Red"), Some(101L), Some(Fighter.toState(average))),
-              // Unbuilt, and then built here: a fighter written into the bout by the engine itself.
-              Protocol.EnginePlayer("sub-bob", 22L, Some("Blue"), Some(202L), Some(""))
+              Protocol.EnginePlayer("sub-bob", 22L, Some("Blue"), Some(202L), Some(Fighter.toState(average)))
             ),
             moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/moves"),
             resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/results")
           )
         )
-        engine.build("m-1", "sub-bob", average)
         engine.plan("m-1", "sub-alice", Allocation(5, 0, 0))
         engine.plan("m-1", "sub-bob", Allocation(0, 5, 0))
         engine.plan("m-1", "sub-alice", Allocation(2, 2, 1))
@@ -72,5 +75,9 @@ class StoredMatchSpec extends FunSuite {
 
     test("a match already stored reads back as the same match") {
         assertEquals(read[Bout](stored), played())
+    }
+
+    test("a bout stored with the matchmaker url fighters were once saved through reads back the same") {
+        assertEquals(read[Bout](storedWithMatchmakerUrl), played())
     }
 }

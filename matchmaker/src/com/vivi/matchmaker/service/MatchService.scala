@@ -117,6 +117,7 @@ class MatchService(
                   timeLimit = first.timeLimit,
                   timeLimitKind = first.timeLimitKind,
                   timeLimitUnit = first.timeLimitUnit,
+                  live = first.live,
                   whoseTurn = onTheClock.map(_.seatNickname),
                   // The earliest, so a game where several move at once counts down to the first clock to
                   // run out, which is the first one anything happens on.

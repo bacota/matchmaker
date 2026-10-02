@@ -158,6 +158,39 @@ class ProtocolSpec extends FunSuite {
         )
     }
 
+    test("matchmaker's create request for a live match reads as the engine's, turn timeout and all") {
+        val fromMatchmaker = MmCreateGameRequest(
+          matchId = "m-2",
+          gameName = "tic-tac-toe",
+          isPublic = false,
+          parameters = Map.empty,
+          settings = "{}",
+          timeLimitSeconds = Some(30L),
+          players = Nil,
+          moveCallbackUrl = None,
+          resultsCallbackUrl = None,
+          live = Some(com.vivi.matchmaker.engine.LiveTerms(30L))
+        )
+        assertEquals(read[Protocol.CreateGameRequest](write(fromMatchmaker)).live, Some(Protocol.LiveTerms(30L)))
+    }
+
+    test("results ending a live match by forfeit read as matchmaker's, forfeit and all") {
+        val results = Protocol.MatchResults(
+          List(
+            Protocol.ResultEntry(11L, 2, Map("outcome" -> ujson.Str("loss")), isWinner = false, forfeit = true),
+            Protocol.ResultEntry(22L, 1, Map("outcome" -> ujson.Str("win")), isWinner = true, forfeit = true)
+          )
+        )
+        val asMatchmaker = read[Json.MatchResults](write(results))(using Json.given_ReadWriter_MatchResults)
+        assertEquals(
+          asMatchmaker.results.map(r => (r.participantId, r.isWinner, r.forfeit)),
+          List(
+            (ParticipantId(11L), false, true),
+            (ParticipantId(22L), true, true)
+          )
+        )
+    }
+
     test("a character's state as an engine saves it reads as matchmaker's character-state request") {
         val request = Protocol.UpdateStateRequest("""{"strength":4,"speed":6}""")
         val asMatchmaker =

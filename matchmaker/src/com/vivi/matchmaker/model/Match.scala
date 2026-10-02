@@ -43,7 +43,11 @@ case class Match(
       */
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     /** The unit the challenger offered `timeLimit` in, carried forward with it. */
-    timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes
+    timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
+    /** Whether this match is played live — see `Challenge.live`, which it is copied from. A live match's seats are
+      * never pending here and never due: the engine runs its turns and their clock, and reports only the result.
+      */
+    live: Boolean = false
 ) {
 
     /** Whether the match was played to an end. */

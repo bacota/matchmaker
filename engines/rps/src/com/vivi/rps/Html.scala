@@ -1,7 +1,7 @@
 package com.vivi.rps
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, PlayLive, SignIn}
+import com.vivi.engine.{LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -69,6 +69,7 @@ object Html {
   :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
 ${SignIn.css}
 ${PlayLive.css}
+${TurnTimer.css}
   #seats { margin-top: 1.25rem; font-size: .875rem; opacity: .8; }
   #seats div { margin: .125rem 0; }
   #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
@@ -80,6 +81,7 @@ ${PlayLive.css}
   <!-- The result arrives while the page is idle rather than in answer to anything the player
        just did, so it is announced: a screen-reader user must not have to go looking for it. -->
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
+  ${TurnTimer.markup}
   <fieldset id="throws" aria-label="your throw"></fieldset>
   <!-- The sign-in form, rendered by renderSignIn() and shown whenever there is a login to
        offer and no seat to show for it. -->
@@ -92,6 +94,7 @@ ${PlayLive.css}
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
+${TurnTimer.script}
 
   const publicView = $publicView;
   // Urls are derived from this page's own, not built from a base: behind API Gateway the path
@@ -123,6 +126,7 @@ ${playLive.script(liveUrl, matchId)}
 
   const signin = document.getElementById("signin");
   renderSignIn();
+  const showClock = turnClock(refresh);
 
   function render() {
     // Thrown already, or the match is over, or this viewer has no seat to throw with: the server
@@ -135,6 +139,9 @@ ${playLive.script(liveUrl, matchId)}
     throws.hidden = !!(state && !state.you);
 
     document.getElementById("status").textContent = describe();
+    // Each seat has its own clock, which starts when its player opens the game.
+    const me = state && state.you ? state.players.find(p => p.side === state.you) : null;
+    showClock(state && state.clock, me ? me.participantId : null);
 
     // Offered whenever there is a login to start and no seat to show for it — including after a
     // token expires mid-match, which is what turns a 401 back into a button.
@@ -151,6 +158,12 @@ ${playLive.script(liveUrl, matchId)}
       : "";
   }
 
+  /* The sides whose clock ran out in a live match, which is how it ended if there are any. */
+  function ranOut() {
+    if (!state || !state.clock) return [];
+    return state.players.filter(p => state.clock.timedOut.includes(p.participantId)).map(p => p.side);
+  }
+
   /* What this viewer threw, if anything. `yourThrow` is the seat's own throw and is the one thing
    * a player may see before the match resolves. */
   function mine() { return state ? state.yourThrow : null; }
@@ -158,6 +171,11 @@ ${playLive.script(liveUrl, matchId)}
   function describe() {
     if (!state) return login ? "sign in to play" : "not your match";
     if (state.completed) {
+      const late = ranOut();
+      if (late.length) {
+        if (!state.you) return late.join(" and ") + " ran out of time";
+        return late.includes(state.you) ? "your time ran out — you lose" : "their time ran out — you win";
+      }
       if (state.draw) return "drawn";
       if (!state.you) return state.winner + " wins";
       return state.winner === state.you ? "you win" : "you lose";
@@ -257,7 +275,9 @@ ${playLive.script(liveUrl, matchId)}
     }
 
     private def outcome(state: Protocol.StateResponse): String =
-        if (state.draw) "drawn" else state.winner.map(w => s"$w wins").getOrElse("over")
+        if (state.clock.exists(_.timedOut.nonEmpty)) "time ran out"
+        else if (state.draw) "drawn"
+        else state.winner.map(w => s"$w wins").getOrElse("over")
 
     /* The heading of an unresolved match, server-rendered: "throw" while this viewer still has one
      * to make, and otherwise who is being waited for. */

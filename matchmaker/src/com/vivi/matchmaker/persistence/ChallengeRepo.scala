@@ -51,15 +51,16 @@ class ChallengeRepo(session: Session[IO]) {
           TimeLimitKind,
           TimeLimitUnit,
           Boolean,
+          Boolean,
           Boolean
       ),
       ChallengeId
     ] =
         sql"""INSERT INTO challenge (game_type, challenger, message, start, time_limit,
                                       settings, game_id, public, time_limit_kind, time_limit_unit,
-                                      auto_start, is_open)
+                                      auto_start, is_open, live)
           VALUES ($gameType, $playerId, $text, ${instant.opt}, ${float8.opt} * INTERVAL '1 second',
-                  $settings, $gameId, $bool, $timeLimitKind, $timeLimitUnit, $bool, $bool)
+                  $settings, $gameId, $bool, $timeLimitKind, $timeLimitUnit, $bool, $bool, $bool)
           RETURNING challenge_id""".query(challengeId)
 
     private val insertCharacterChallenge: Command[(GameId, ChallengeId, CharacterId)] =
@@ -84,11 +85,12 @@ class ChallengeRepo(session: Session[IO]) {
           TimeLimitKind,
           TimeLimitUnit,
           Boolean,
+          Boolean,
           Boolean
       )
     ] =
         gameType *: gameId *: playerId *: text *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId *: int8.opt *:
-            timeLimitKind *: timeLimitUnit *: bool *: bool
+            timeLimitKind *: timeLimitUnit *: bool *: bool *: bool
 
     private def toChallenge(
         id: ChallengeId,
@@ -105,6 +107,7 @@ class ChallengeRepo(session: Session[IO]) {
             Option[Long],
             TimeLimitKind,
             TimeLimitUnit,
+            Boolean,
             Boolean,
             Boolean
         )
@@ -123,7 +126,8 @@ class ChallengeRepo(session: Session[IO]) {
           timeLimitKind,
           timeLimitUnit,
           autoStart,
-          isOpen
+          isOpen,
+          live
         ) = row
         val timeLimit = fromSeconds(timeLimitSeconds)
         gameType match {
@@ -147,7 +151,8 @@ class ChallengeRepo(session: Session[IO]) {
                   timeLimitKind,
                   timeLimitUnit,
                   autoStart,
-                  isOpen
+                  isOpen,
+                  live
                 )
             case GameType.Plain =>
                 PlainChallenge(
@@ -163,7 +168,8 @@ class ChallengeRepo(session: Session[IO]) {
                   timeLimitKind,
                   timeLimitUnit,
                   autoStart,
-                  isOpen
+                  isOpen,
+                  live
                 )
         }
     }
@@ -186,12 +192,13 @@ class ChallengeRepo(session: Session[IO]) {
           TimeLimitKind,
           TimeLimitUnit,
           Boolean,
+          Boolean,
           Boolean
       )
     ] =
         sql"""SELECT ch.game_type, ch.game_id, ch.challenger, ch.message, ch.start,
                  EXTRACT(EPOCH FROM ch.time_limit)::float8, ch.settings, ch.public, a.game_role_id, cc.character_id,
-                 ch.time_limit_kind, ch.time_limit_unit, ch.auto_start, ch.is_open
+                 ch.time_limit_kind, ch.time_limit_unit, ch.auto_start, ch.is_open, ch.live
           FROM challenge ch
           LEFT JOIN character_challenge cc ON cc.game_id = ch.game_id AND cc.challenge_id = ch.challenge_id
           JOIN acceptance a ON a.game_id = ch.game_id AND a.challenge_id = ch.challenge_id
@@ -218,6 +225,7 @@ class ChallengeRepo(session: Session[IO]) {
           TimeLimitUnit,
           Boolean,
           Boolean,
+          Boolean,
           GameId,
           ChallengeId
       )
@@ -225,7 +233,7 @@ class ChallengeRepo(session: Session[IO]) {
         sql"""UPDATE challenge SET challenger = $playerId, message = $text,
           start = ${instant.opt}, time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
           public = $bool, time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit,
-          auto_start = $bool, is_open = $bool
+          auto_start = $bool, is_open = $bool, live = $bool
           WHERE game_id = $gameId AND challenge_id = $challengeId""".command
 
     /** Inserts the challenge, and for a [[CharacterChallenge]] its character row too.
@@ -252,7 +260,8 @@ class ChallengeRepo(session: Session[IO]) {
                 c.timeLimitKind,
                 c.timeLimitUnit,
                 c.autoStart,
-                c.isOpen
+                c.isOpen,
+                c.live
               )
             )
             _ <- c match {
@@ -348,6 +357,7 @@ class ChallengeRepo(session: Session[IO]) {
                 c.timeLimitUnit,
                 c.autoStart,
                 c.isOpen,
+                c.live,
                 c.gameId,
                 c.challengeId
               )
@@ -392,7 +402,8 @@ class ChallengeRepo(session: Session[IO]) {
           TimeLimitUnit,
           Boolean,
           Boolean,
-          String
+          String,
+          Boolean
       )
     ] =
         sql"""SELECT ch.challenge_id, ch.game_type, ch.challenger, ch.message, ch.start,
@@ -411,7 +422,8 @@ class ChallengeRepo(session: Session[IO]) {
                  -- and accepting as it again is refused -- so the screen has to know which to skip.
                  (SELECT coalesce(string_agg(ca.character_id::text, ',' ORDER BY ca.character_id), '')
                     FROM character_acceptance ca
-                   WHERE ca.game_id = ch.game_id AND ca.challenge_id = ch.challenge_id)
+                   WHERE ca.game_id = ch.game_id AND ca.challenge_id = ch.challenge_id),
+                 ch.live
           FROM challenge ch
           LEFT JOIN character_challenge cc ON cc.game_id = ch.game_id AND cc.challenge_id = ch.challenge_id
           JOIN acceptance a ON a.game_id = ch.game_id AND a.challenge_id = ch.challenge_id
@@ -490,7 +502,7 @@ class ChallengeRepo(session: Session[IO]) {
           ORDER BY ch.create_date DESC"""
             .query(
               challengeId *: gameType *: playerId *: text *: instant.opt *: float8.opt *: settings *: bool *:
-                  gameRoleId *: int8.opt *: int8 *: text *: timeLimitKind *: timeLimitUnit *: bool *: bool *: text
+                  gameRoleId *: int8.opt *: int8 *: text *: timeLimitKind *: timeLimitUnit *: bool *: bool *: text *: bool
             )
 
     /** Every challenge for a game that `viewer` may see, newest first, each with how many players have accepted it.
@@ -535,7 +547,8 @@ class ChallengeRepo(session: Session[IO]) {
                       timeLimitUnit,
                       autoStart,
                       isOpen,
-                      seatedCharacters
+                      seatedCharacters,
+                      live
                     ) =>
                     ChallengeSummary(
                       toChallenge(
@@ -554,7 +567,8 @@ class ChallengeRepo(session: Session[IO]) {
                           timeLimitKind,
                           timeLimitUnit,
                           autoStart,
-                          isOpen
+                          isOpen,
+                          live
                         )
                       ),
                       acceptances.toInt,

@@ -108,77 +108,31 @@ class EngineSpec extends FunSuite {
         )
     }
 
-    test("matchmaker's base url is worked out from the move callback it sent") {
-        assertEquals(Bout.matchmakerUrlOf(Some(moveUrl)), Some("http://matchmaker.test"))
-        assertEquals(
-          Bout.matchmakerUrlOf(Some("https://api.test/prod/games/7/matches/abc/moves")),
-          Some("https://api.test/prod")
-        )
-        assertEquals(Bout.matchmakerUrlOf(None), None)
-    }
-
     // ---------------------------------------------------------------------------
-    // Building a fighter
+    // Fighters arrive built
     // ---------------------------------------------------------------------------
 
-    test("a fighter arriving with its characteristics is ready; one arriving without has to be built") {
-        val (_, _, store, _, _) = fixture(createRequest(blue = None))
+    test("both fighters arrive with the characteristics their characters were built with") {
+        val (_, _, store, _, _) = fixture(createRequest(blue = Some(slugger)))
         assertEquals(bout(store).cornerOf(Side.Red).flatMap(_.fighter), Some(average))
-        assertEquals(bout(store).cornerOf(Side.Blue).flatMap(_.fighter), None)
+        assertEquals(bout(store).cornerOf(Side.Blue).flatMap(_.fighter), Some(slugger))
     }
 
-    test("an unbuilt fighter cannot plan a round") {
-        val (engine, _, _, _, _) = fixture(createRequest(blue = None))
+    test("a character that is not a built fighter refuses the bout: building one is not part of a bout") {
+        val (_, recorder, store, _, unbuilt) = fixture(createRequest(blue = None))
         assertEquals(
-          engine.plan("m-1", bob, Allocation(2, 2, 1)),
-          Left(Refusal.Invalid("build your fighter before planning a round"))
+          unbuilt,
+          Left(Refusal.Invalid("every fighter must be built before a bout; character(s) 202 are not"))
         )
-    }
-
-    test("building a fighter keeps it in matchmaker as the character's state, and puts it in the bout") {
-        val (engine, recorder, store, _, _) = fixture(createRequest(blue = None))
-        val built = Fighter(4, 6, 5, 6, 4)
-
-        assert(engine.build("m-1", bob, built).isRight)
-        assertEquals(recorder.characterStates, List(202L -> Fighter.toState(built)))
-        assertEquals(bout(store).cornerOf(Side.Blue).flatMap(_.fighter), Some(built))
-        // And now it can fight.
-        assert(engine.plan("m-1", bob, Allocation(2, 2, 2)).isRight)
-    }
-
-    test("a fighter is built once") {
-        val (engine, recorder, _, _, _) = fixture(createRequest(blue = None))
-        assertEquals(engine.build("m-1", alice, average), Left(Refusal.Invalid("your fighter is already built")))
-        assert(engine.build("m-1", bob, average).isRight)
-        assertEquals(engine.build("m-1", bob, slugger), Left(Refusal.Invalid("your fighter is already built")))
-        assertEquals(recorder.characterStates.size, 1)
-    }
-
-    test("a fighter that breaks the build rules is refused, and nothing is saved") {
-        val (engine, recorder, store, _, _) = fixture(createRequest(blue = None))
-        assertEquals(
-          engine.build("m-1", bob, Fighter(10, 10, 10, 10, 10)),
-          Left(Refusal.Invalid("a fighter is built from exactly 25 points; these add up to 50"))
-        )
+        assertEquals(store.get("m-1"), None)
         assertEquals(recorder.characterStates, Nil)
-        assertEquals(bout(store).cornerOf(Side.Blue).flatMap(_.fighter), None)
-    }
 
-    test("when matchmaker cannot be reached the build is refused as retryable, and the bout is unchanged") {
-        val (engine, recorder, store, _, _) = fixture(createRequest(blue = None))
-        recorder.failStateSaves = true
-
-        val refused = engine.build("m-1", bob, average)
-        assertEquals(refused.left.map(_.status), Left(502))
-        assertEquals(bout(store).cornerOf(Side.Blue).flatMap(_.fighter), None)
-
-        recorder.failStateSaves = false
-        assert(engine.build("m-1", bob, average).isRight)
-    }
-
-    test("a stranger cannot build a fighter in somebody else's corner") {
-        val (engine, _, _, _, _) = fixture(createRequest(blue = None))
-        assertEquals(engine.build("m-1", "sub-carol", average).left.map(_.status), Left(403))
+        // State this engine could not have built is not a fighter either.
+        val (_, _, _, _, overBudget) = fixture(createRequest(red = Some(Fighter(10, 10, 10, 10, 10))))
+        assertEquals(
+          overBudget,
+          Left(Refusal.Invalid("every fighter must be built before a bout; character(s) 101 are not"))
+        )
     }
 
     // ---------------------------------------------------------------------------

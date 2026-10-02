@@ -1471,12 +1471,15 @@ object Views {
           // that is over are history nobody can act on, and the result table is what that row is
           // for.
           if (summary.completed || summary.cancelled) emptyNode
-          else timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit),
+          else timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit, summary.live),
           // `pending` means it is this player's turn: it is the flag the "Your turn" list selects
           // on, so saying it there would repeat the heading on every row. Said here only for the
           // matches still being played — a finished match has no turn to be waiting for.
           if (showDue || summary.completed || summary.cancelled) emptyNode
           else if (summary.pending) div(cls := "pending", "your turn")
+          // Matchmaker is never told whose turn it is in a live match -- the game keeps that -- so
+          // "waiting for the other players" below would be a guess, and usually a wrong one.
+          else if (summary.live) div(cls := "detail", "being played live: open the game to see whose turn it is")
           // Named, rather than "the other players": in a match of three it is the difference
           // between knowing who to chase and knowing only that it is not you. The old wording is
           // still the fallback for a match matchmaker has not yet heard a turn for.
@@ -2973,7 +2976,7 @@ object Views {
 
     /** The clock something is played under, for a challenge — every row of both lists has one. */
     private def timeLimitDetail(challenge: Challenge): HtmlElement =
-        timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind, challenge.timeLimitUnit)
+        timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind, challenge.timeLimitUnit, challenge.live)
 
     /** The values a challenger may pick for each of the game's parameters, by name, in the admin's order. Parameters
       * with no values to choose between are left out: there is nothing to offer.
@@ -3027,12 +3030,16 @@ object Views {
     private def timeLimitDetail(
         limit: Option[java.time.Duration],
         kind: TimeLimitKind,
-        unit: TimeLimitUnit
+        unit: TimeLimitUnit,
+        live: Boolean
     ): HtmlElement =
         div(
           cls := "detail",
           limit match {
               case None => "no time limit"
+              // A live match's limit is always per turn, and the game keeps it rather than matchmaker:
+              // a turn that runs out loses the match there and then.
+              case Some(limit) if live => s"live: ${Format.duration(limit, unit)} per turn"
               case Some(limit) =>
                   kind match {
                       case TimeLimitKind.PerTurn => s"${Format.duration(limit, unit)} per turn"
@@ -3107,6 +3114,11 @@ object Views {
         // way a chess clock works. Per turn by default, which is what every limit meant before the
         // choice existed.
         val timeLimitKind = Var(TimeLimitKind.PerTurn)
+        // Whether the match is played live: the game runs every turn against the limit above, and a
+        // turn that runs out loses the match there and then. Off by default -- it asks the players to
+        // be there together -- and when on, the limit is required and is per turn, since it is what
+        // the game is told each turn may take.
+        val live = Var(false)
         // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
         // has been claimed yet, so every role of the game is on offer and the first stands selected.
         val role = Var(game.roles.headOption.map(_.gameRoleId))
@@ -3206,6 +3218,8 @@ object Views {
           field(
             "How that time is spent",
             select(
+              // Fixed at per turn for a live match, for the reason `live` gives.
+              disabled <-- live.signal,
               onChange.mapToValue --> (raw => timeLimitKind.set(TimeLimitKind.fromCode(raw))),
               value <-- timeLimitKind.signal.map(_.code),
               TimeLimitKind.values.toSeq.map(kind => option(value := kind.code, kind.label))
@@ -3221,11 +3235,38 @@ object Views {
           // the input. The class comes and goes with the text.
           div(
             aria.live := "polite",
-            cls <-- timeLimit.signal.map(raw => if (raw.trim.isEmpty || amountOf(raw).isDefined) "" else "empty"),
-            child.text <-- timeLimit.signal.map(raw =>
-                if (raw.trim.isEmpty || amountOf(raw).isDefined) ""
-                else "A time limit is a whole number, more than zero."
-            )
+            cls <-- timeLimit.signal
+                .combineWith(live.signal)
+                .map((raw, isLive) => if (limitProblem(raw, isLive).isEmpty) "" else "empty"),
+            child.text <-- timeLimit.signal
+                .combineWith(live.signal)
+                .map((raw, isLive) => limitProblem(raw, isLive).getOrElse(""))
+          ),
+          // A real label with the box inside it, like Public and the auto-start box below; the hint is
+          // tied to it so that a reader hears what "live" commits the players to.
+          label(
+            input(
+              tpe := "checkbox",
+              aria.describedBy := "live-hint",
+              controlled(
+                checked <-- live.signal,
+                onClick.mapToChecked --> { on =>
+                    live.set(on)
+                    if (on) {
+                        timeLimitKind.set(TimeLimitKind.PerTurn)
+                        // A live turn is usually seconds long. Only when nothing has been typed yet:
+                        // a number already there was typed in the unit beside it.
+                        if (timeLimit.now().trim.isEmpty) timeLimitUnit.set(TimeLimitUnit.Seconds)
+                    }
+                }
+              )
+            ),
+            "Live match"
+          ),
+          p(
+            idAttr := "live-hint",
+            cls := "detail",
+            "Played in real time: the game keeps each turn's clock, and a player whose turn runs out loses the match."
           ),
           // Public means anyone may watch the match, which the game engine implements by issuing a
           // url that needs no sign-in. It is decided here because it is a property of the game being
@@ -3254,13 +3295,14 @@ object Views {
             "Create Challenge",
             // A game with no roles at all has nothing an acceptance could name, so no challenge for
             // it can be created. The server refuses one; this keeps the button from offering it.
-            disabledWhen = message.signal.combineWith(role.signal, timeLimit.signal, inviteeCharacter.signal).map {
-                case (m, r, limit, asked) =>
-                    m.trim.isEmpty || r.isEmpty || (limit.trim.nonEmpty && amountOf(limit).isEmpty) ||
+            disabledWhen = message.signal
+                .combineWith(role.signal, timeLimit.signal, inviteeCharacter.signal, live.signal)
+                .map { case (m, r, limit, asked, isLive) =>
+                    m.trim.isEmpty || r.isEmpty || limitProblem(limit, isLive).isDefined ||
                     // An invitee in a character game is asked through a character, and until one is
                     // chosen there is nothing to send them.
                     (characterGame && invitee.isDefined && asked.isEmpty)
-            }
+                }
             // `foreach` rather than a fallback role: with no role there is no challenge to make, and
             // the disabled button above is what keeps that from being reachable.
           ) { busy =>
@@ -3283,7 +3325,8 @@ object Views {
                             timeLimitKind = timeLimitKind.now(),
                             timeLimitUnit = timeLimitUnit.now(),
                             autoStart = autoStart.now(),
-                            isOpen = isOpen
+                            isOpen = isOpen,
+                            live = live.now()
                           )
                       case None =>
                           PlainChallenge(
@@ -3299,7 +3342,8 @@ object Views {
                             timeLimitKind = timeLimitKind.now(),
                             timeLimitUnit = timeLimitUnit.now(),
                             autoStart = autoStart.now(),
-                            isOpen = isOpen
+                            isOpen = isOpen,
+                            live = live.now()
                           )
                   }
 
@@ -3331,6 +3375,7 @@ object Views {
                       timeLimitUnit.set(TimeLimitUnit.Minutes)
                       timeLimitKind.set(TimeLimitKind.PerTurn)
                       autoStart.set(true)
+                      live.set(false)
                       if (Store.stillSignedInAs(signIn) && Store.page.now() == Store.Page.OneGame(game.gameId)) {
                           // The challenge it was open for now exists and is in the list below it. The
                           // invitation went with it, so the slot is spent -- the next challenge offered
@@ -3356,6 +3401,13 @@ object Views {
             case ""   => None
             case text => text.toIntOption.filter(_ > 0)
         }
+
+    /** What is wrong with the time limit as typed, if anything: it must be a whole number above zero when there is one,
+      * and a live match must have one.
+      */
+    private def limitProblem(raw: String, live: Boolean): Option[String] =
+        if (raw.trim.isEmpty) Option.when(live)("A live match needs a time limit for each turn.")
+        else Option.when(amountOf(raw).isEmpty)("A time limit is a whole number, more than zero.")
 
     /** A time limit typed in some unit, as a `Duration`. The unit itself travels with the challenge, so that the limit
       * is said back in the unit it was offered in rather than in whichever one happens to divide it.

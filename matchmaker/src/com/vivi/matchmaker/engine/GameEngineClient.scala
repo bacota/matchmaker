@@ -34,8 +34,18 @@ case class CreateGameRequest(
       * field and removes the assumption.
       */
     moveCallbackUrl: Option[String],
-    resultsCallbackUrl: Option[String]
+    resultsCallbackUrl: Option[String],
+    /** Present for a live match, and only then: what tells the engine the match is live, and how long each turn may
+      * take. Absent otherwise — so an engine that predates live matches is sent exactly what it always was.
+      */
+    live: Option[LiveTerms] = None
 )
+
+/** What makes a match live, as the engine is told it: the engine runs the turns and the clock on each, sends no move
+  * callbacks, and ends a match whose turn has run out by forfeit — reporting that, as any other ending, through the
+  * results callback.
+  */
+case class LiveTerms(turnTimeoutSeconds: Long)
 
 /** The response of step 1: where matchmaker checks status, where a player plays, and — only for a public game — where
   * anyone can watch.
@@ -84,6 +94,7 @@ case class GameStatusResponse(
 object EngineJson {
     given ReadWriter[Instant] = upickle.default.readwriter[String].bimap(_.toString, Instant.parse)
     given ReadWriter[EnginePlayer] = macroRW
+    given ReadWriter[LiveTerms] = macroRW
     given ReadWriter[CreateGameRequest] = macroRW
     given ReadWriter[CreateGameResponse] = macroRW
     given ReadWriter[EngineParticipantStatus] = macroRW

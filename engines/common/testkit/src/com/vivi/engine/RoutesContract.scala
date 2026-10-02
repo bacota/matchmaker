@@ -1,5 +1,7 @@
 package com.vivi.engine
 
+import java.time.Instant
+import java.util.concurrent.atomic.AtomicReference
 import munit.FunSuite
 import upickle.default.{read, write}
 import Protocol.given
@@ -17,12 +19,23 @@ import Protocol.given
   */
 abstract class RoutesContract extends FunSuite {
 
-    /** This game's routes, over a fresh in-memory store, at `http://engine.test`, offering Play Live through `live`. */
+    /** This game's routes, over a fresh in-memory store, at `http://engine.test`, offering Play Live through `live`,
+      * calling `matchmaker` back and telling the time by `now`.
+      */
     protected def routes(
         playAuth: PlayAuth,
         matchmakerKey: Option[String],
-        live: Option[Live]
+        live: Option[Live],
+        matchmaker: Matchmaker,
+        now: () => Instant
     ): EngineRequest => EngineResponse
+
+    private def routes(
+        playAuth: PlayAuth,
+        matchmakerKey: Option[String],
+        live: Option[Live]
+    ): EngineRequest => EngineResponse =
+        routes(playAuth, matchmakerKey, live, RecordingMatchmaker(), () => Instant.now())
 
     private def routes(playAuth: PlayAuth, matchmakerKey: Option[String]): EngineRequest => EngineResponse =
         routes(playAuth, matchmakerKey, None)
@@ -375,5 +388,142 @@ abstract class RoutesContract extends FunSuite {
           2,
           "a 401 or a 403 may change the page only in order"
         )
+    }
+
+    // ---- live matches ------------------------------------------------------------------------
+
+    private val kickOff = Instant.parse("2026-01-01T00:00:00Z")
+
+    /** A create request for `m-9` with matchmaker's callback urls, live with 30-second turns unless `live` says
+      * otherwise.
+      */
+    private def calledBack(live: Option[Protocol.LiveTerms] = Some(Protocol.LiveTerms(30))) =
+        createRequest("m-9", isPublic = true).copy(
+          moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-9/moves"),
+          resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-9/results"),
+          live = live
+        )
+
+    /** A live match with 30-second turns, on a clock the test moves by the seconds it is given, calling back to a
+      * recorder.
+      */
+    private def liveMatch(live: Option[Live] = None) = {
+        val clock = AtomicReference(kickOff)
+        val matchmaker = RecordingMatchmaker()
+        val served = routes(PlayAuth.Trusted, None, live, matchmaker, () => clock.get)
+        assertEquals(served(EngineRequest("POST", "/games", Map.empty, write(calledBack()))).status, 201)
+        (served, matchmaker, (seconds: Long) => clock.updateAndGet(_.plusSeconds(seconds)): Unit)
+    }
+
+    private def statusOf(routes: EngineRequest => EngineResponse) =
+        read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status").body)
+
+    private def stateOf(routes: EngineRequest => EngineResponse, player: String) =
+        ujson.read(get(routes, "/matches/m-9/state", as(player)).body)
+
+    test("a live match reports none of its moves to matchmaker") {
+        val (routes, matchmaker, _) = liveMatch()
+        assertEquals(moving(routes, "sub-alice").status, 200)
+        assertEquals(matchmaker.moves, Nil)
+    }
+
+    test("a match that is not live has no clock, and reports its moves as ever") {
+        val matchmaker = RecordingMatchmaker()
+        val served = routes(PlayAuth.Trusted, None, None, matchmaker, () => kickOff)
+        assertEquals(served(EngineRequest("POST", "/games", Map.empty, write(calledBack(live = None)))).status, 201)
+        assertEquals(moving(served, "sub-alice").status, 200)
+        assertEquals(matchmaker.moves.size, 1)
+        assert(!stateOf(served, "sub-alice").obj.contains("clock"), "only a live match has a clock")
+    }
+
+    /** Alice's own clock, as her state shows it. */
+    private def aliceClock(state: ujson.Value) = state("clock")("seats").arr.find(_("participantId").num == 1)
+
+    test("a live match's state carries a player's clock, counting down from when they opened the board") {
+        val (routes, _, advance) = liveMatch()
+        advance(100)
+        // The first read is the player opening the board, and starts their clock.
+        stateOf(routes, "sub-alice")
+        advance(12)
+        val clock = stateOf(routes, "sub-alice")("clock")
+        assertEquals(clock("turnSeconds").num, 30.0)
+        assertEquals(aliceClock(stateOf(routes, "sub-alice")).map(_("remainingMillis").num), Some(18000.0))
+        assertEquals(clock("timedOut").arr.toList, Nil)
+    }
+
+    test("a player's clock does not start until they open the board, whoever else has") {
+        val (routes, matchmaker, advance) = liveMatch()
+        // Nobody has opened it: an hour goes by, and nobody runs out.
+        advance(3600)
+        assertEquals(statusOf(routes).completed, false)
+
+        stateOf(routes, "sub-alice")
+        advance(29)
+        val waiting = stateOf(routes, "sub-alice")
+        assertEquals(waiting("completed").bool, false)
+        // Bob has not opened it, so if he is being waited on too, his clock has not started.
+        val bob = waiting("clock")("seats").arr.find(_("participantId").num == 2)
+        assert(bob.forall(_.obj.get("remainingMillis").forall(_.isNull)), s"bob's clock has started: $bob")
+        assertEquals(matchmaker.results, Nil)
+
+        advance(1)
+        val ended = stateOf(routes, "sub-alice")
+        assertEquals(ended("completed").bool, true)
+        assertEquals(ended("clock")("timedOut").arr.map(_.num.toLong).toList, List(1L))
+        assertEquals(statusOf(routes).completed, true)
+
+        // Reported by the read that found it, and by nothing after; bob, never on the clock, wins.
+        assertEquals(matchmaker.results.size, 1)
+        val reported = matchmaker.results.head._2.results
+        assert(reported.forall(_.forfeit), "every seat of a match a clock ended is a forfeit")
+        assertEquals(reported.filter(_.isWinner).map(_.participantId), List(2L))
+        assertEquals(matchmaker.moves, Nil)
+    }
+
+    test("a move made after its turn ran out is refused, and the forfeit recorded in its place") {
+        val (routes, matchmaker, advance) = liveMatch()
+        stateOf(routes, "sub-alice")
+        advance(31)
+        assertEquals(moving(routes, "sub-alice").status, 409)
+        assertEquals(statusOf(routes).completed, true)
+        assertEquals(matchmaker.results.size, 1)
+        assert(matchmaker.results.head._2.results.forall(_.forfeit))
+        assertEquals(statusOf(routes).turns, Nil, "the late move was not made")
+    }
+
+    test("a player opening the board, and a forfeit found by a read, are each pushed to the watchers once") {
+        val channel = RecordingChannel()
+        val (routes, _, advance) =
+            liveMatch(Some(Live("ws://engine.test/live", PlayAuth.Trusted, InMemorySubscriptions(), channel)))
+        assertEquals(connecting(routes, "c-1", Map("match" -> "m-9", "as" -> "sub-bob")).status, 200)
+        val changed = "c-1" -> """{"changed":"m-9"}"""
+
+        // Alice's clock starting is news to bob, whose page shows it.
+        stateOf(routes, "sub-alice")
+        assertEquals(channel.sent.toList, List(changed))
+        stateOf(routes, "sub-alice")
+        assertEquals(channel.sent.size, 1, "only the first opening starts a clock")
+
+        advance(30)
+        statusOf(routes)
+        assertEquals(channel.sent.toList, List(changed, changed))
+        // A read of a match already ended changes nothing, and tells nobody anything.
+        stateOf(routes, "sub-alice")
+        assertEquals(channel.sent.size, 2)
+    }
+
+    test("a live match needs a turn timeout of at least a second") {
+        val served = routes(PlayAuth.Trusted, None)
+        val create = calledBack(live = Some(Protocol.LiveTerms(0)))
+        assertEquals(served(EngineRequest("POST", "/games", Map.empty, write(create))).status, 400)
+    }
+
+    test("the play page counts a live match's turn down, without announcing every second") {
+        val (routes, _, _) = liveMatch()
+        val page = get(routes, "/matches/m-9/play", as("sub-alice")).body
+        assert(page.contains("""<p id="turn-clock" role="timer" aria-live="off" hidden>"""))
+        assert(page.contains("function turnClock(refresh)"))
+        assert(page.contains("const showClock = turnClock(refresh);"))
+        assert(page.contains("showClock(state && state.clock, "), "render must hand the clock to the timer")
     }
 }
