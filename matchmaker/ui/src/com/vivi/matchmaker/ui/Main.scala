@@ -244,20 +244,26 @@ object Views {
                   )
               case _ => emptyNode
           },
-          child <-- Store.error.signal.map {
-              case Some(message) =>
-                  div(
-                    cls := "error",
-                    // Every failed request in the application reports here. Without this the banner is a
-                    // silent red box: it appears with no page change to notice, so a screen reader is
-                    // never given a reason to read it out.
-                    role := "alert",
-                    span(message),
-                    button(cls := "link", "Dismiss", onClick --> (_ => Store.error.set(None)))
-                  )
-              case None => emptyNode
-          }
+          errorBanner
         )
+
+    /** `Store.error` as a banner: in the header, and again inside each dialog that reports through it, since a modal
+      * dialog makes the header inert and covers it -- a refusal shown only there is neither seen nor read out.
+      */
+    private def errorBanner: Modifier[HtmlElement] =
+        child <-- Store.error.signal.map {
+            case Some(message) =>
+                div(
+                  cls := "error",
+                  // Every failed request in the application reports here. Without this the banner is a
+                  // silent red box: it appears with no page change to notice, so a screen reader is
+                  // never given a reason to read it out.
+                  role := "alert",
+                  span(message),
+                  button(cls := "link", "Dismiss", onClick --> (_ => Store.error.set(None)))
+                )
+            case None => emptyNode
+        }
 
     /** The sign-in form itself, not a button that navigates to one: signing in happens on this page now, so that the
       * password is asked for first. Sign-up and password reset are still links out to the hosted pages, from inside
@@ -1846,7 +1852,7 @@ object Views {
           s"edit-game-${game.gameId.value}-heading",
           s"Edit ${game.displayName}",
           closeEditGame,
-          onSaved = () => if (editGameOpening == opening) closeEditGame()
+          onSaved = _ => if (editGameOpening == opening) closeEditGame()
         )
     }
 
@@ -1856,7 +1862,7 @@ object Views {
         headingId: String,
         title: String,
         close: () => Unit,
-        onSaved: () => Unit = () => ()
+        onSaved: Game => Unit = _ => ()
     ): HtmlElement =
         div(
           cls := "modal-scrim",
@@ -1873,6 +1879,7 @@ object Views {
                 event.stopPropagation()
                 close()
             },
+            errorBanner,
             div(
               cls := "alternatives",
               button(tpe := "button", cls := "link", "Close", onClick --> (_ => close()))
@@ -1909,11 +1916,17 @@ object Views {
         // create does, for the new game's screen.
         val adding = Var(true)
         var trigger: Option[dom.html.Element] = None
+        // Which opening of the dialog is current, as `editGameOpening` is for the edit dialog: moved on by a close and
+        // by leaving the page, so that a create answered after either does not pull the admin to the new game's
+        // screen from wherever they have gone since. The game is recorded all the same.
+        var opening = 0
         def close(): Unit = {
+            opening += 1
             adding.set(false)
             trigger.foreach(_.focus())
         }
         div(
+          onUnmountCallback(_ => opening += 1),
           h2("Add a Game"),
           child <-- currentPlayer.map {
               case Some(player) if player.isAdmin =>
@@ -1926,9 +1939,20 @@ object Views {
                       onUnmountCallback(_ => trigger = None),
                       onClick --> (_ => adding.set(true))
                     ),
-                    child <-- adding.signal.map(
-                      if (_) gameDialog(None, "add-game-heading", "Add a Game", close) else emptyNode
-                    ),
+                    child <-- adding.signal.map { open =>
+                        if (open) {
+                            val mine = opening
+                            // Straight to the game that was just created: it is now in the menu, and its own
+                            // screen is where anything else is done with it.
+                            gameDialog(
+                              None,
+                              "add-game-heading",
+                              "Add a Game",
+                              close,
+                              onSaved = saved => if (opening == mine) Store.show(Store.Page.OneGame(saved.gameId))
+                            )
+                        } else emptyNode
+                    },
                     disabledGames
                   )
               case _ => p(cls := "empty", "Only an administrator can add a game.")
@@ -2213,7 +2237,7 @@ object Views {
     private def gameForm(
         existing: Option[Game],
         heading: Option[(String, String)] = None,
-        onSaved: () => Unit = () => ()
+        onSaved: Game => Unit = _ => ()
     ): HtmlElement = {
         val name = Var(existing.map(_.name).getOrElse(""))
         val displayName = Var(existing.map(_.displayName).getOrElse(""))
@@ -2398,40 +2422,38 @@ object Views {
                       )
 
                       // A save can be answered after a sign-out, and by then the dialog open may be the next
-                      // player's: an answer from an earlier session closes nothing, opens nothing and writes
-                      // nothing into the store. See `Store.currentSignIn`.
-                      val signIn = Store.currentSignIn
-                      Store.run(ApiClient.createGame(game, Option(apiKey.now().trim).filter(_.nonEmpty)), busy) {
-                          case _ if !Store.stillSignedInAs(signIn) => ()
-                          case saved                               =>
-                              // Cleared either way: it has been sent, and an edit saved again should not resend it.
-                              apiKey.set("")
-                              if (existing.isEmpty) {
-                                  name.set("")
-                                  displayName.set("")
-                                  description.set("")
-                                  url.set("")
-                                  engineIdentity.set("")
-                                  characterUrl.set("")
-                                  roles.set(List(emptyRole))
-                                  parameters.set(Nil)
-                                  // Straight to the game that was just created: it is now in the menu, and its own
-                                  // screen is where anything else is done with it.
-                                  Store.show(Store.Page.OneGame(saved.gameId))
-                              } else {
-                                  // Re-drafted from what came back, so that roles added by this save carry the ids
-                                  // the insert gave them — without which saving twice would ask to add them again.
-                                  roles.set(saved.roles.map(draftOf).toList)
-                                  parameters.set(
-                                    saved.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList
-                                  )
-                                  onSaved()
-                              }
-                              // Both copies of the game list, because a game saved while deactivated is in
-                              // neither the active one nor reachable by `ensureGame` — its own screen would
-                              // otherwise go on showing what it was before this save, and reopening this
-                              // form would submit that. See `Store.gameSaved`.
-                              Store.gameSaved(saved)
+                      // player's: an answer from an earlier session closes nothing, opens nothing, writes
+                      // nothing into the store and leaves the banner alone. See `Store.runSignedIn`.
+                      Store.runSignedIn(
+                        ApiClient.createGame(game, Option(apiKey.now().trim).filter(_.nonEmpty)),
+                        busy
+                      ) { saved =>
+                          // Cleared either way: it has been sent, and an edit saved again should not resend it.
+                          apiKey.set("")
+                          if (existing.isEmpty) {
+                              name.set("")
+                              displayName.set("")
+                              description.set("")
+                              url.set("")
+                              engineIdentity.set("")
+                              characterUrl.set("")
+                              roles.set(List(emptyRole))
+                              parameters.set(Nil)
+                          } else {
+                              // Re-drafted from what came back, so that roles added by this save carry the ids
+                              // the insert gave them — without which saving twice would ask to add them again.
+                              roles.set(saved.roles.map(draftOf).toList)
+                              parameters.set(
+                                saved.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList
+                              )
+                          }
+                          // Both copies of the game list, because a game saved while deactivated is in
+                          // neither the active one nor reachable by `ensureGame` — its own screen would
+                          // otherwise go on showing what it was before this save, and reopening this
+                          // form would submit that. See `Store.gameSaved`. Before `onSaved`, so that a
+                          // dialog's next step -- the new game's screen -- finds the game already there.
+                          Store.gameSaved(saved)
+                          onSaved(saved)
                       }
               }
           }
@@ -2657,6 +2679,7 @@ object Views {
                 event.stopPropagation()
                 closeChallengeForm()
             },
+            errorBanner,
             div(
               cls := "alternatives",
               button(tpe := "button", cls := "link", "Close", onClick --> (_ => closeChallengeForm()))

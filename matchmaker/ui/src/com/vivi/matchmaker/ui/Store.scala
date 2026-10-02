@@ -673,6 +673,20 @@ object Store {
         }
     }
 
+    /** The same, for an answer that belongs to the session that asked: one that arrives after a sign-out is dropped
+      * whole -- its success is not acted on, and neither its success nor its failure touches the banner, which is the
+      * next player's by then. `run` deliberately drops nothing, which is right for a click somebody is waiting on and
+      * wrong for an answer that writes into what the next session will see. See `currentSignIn`.
+      */
+    def runSignedIn[A](action: Future[A], busy: Var[Boolean])(onSuccess: A => Unit): Unit = {
+        val signIn = currentSignIn
+        busy.set(true)
+        action.onComplete { outcome =>
+            busy.set(false)
+            if (stillSignedInAs(signIn)) settle(outcome, Banner.Action)(onSuccess)
+        }
+    }
+
     /** The same, with something to do about a failure beyond showing it.
       *
       * For the actions whose failure is itself news about state this UI is holding: a 409 does not only mean the click
