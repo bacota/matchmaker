@@ -9,8 +9,8 @@ case class GameParameterValue[T](
 /** A setting a challenger picks for the game's engine — how many rounds a bout is, say.
   *
   * `name` is what the engine is sent: the key in a challenge's `settings`, and so in what the engine receives at a
-  * start. `displayName` is what a player is shown for it, when that ought to read differently — "Rounds" for `rounds`,
-  * "Board size" for `board_size`. `None` shows the name as it is.
+  * start. `displayName` is what a player is shown for it — "Rounds" for `rounds`, "Board size" for `board_size`. Often
+  * the two are the same, but both are always there.
   */
 case class GameParameter[T](
     gameId: GameId,
@@ -18,12 +18,8 @@ case class GameParameter[T](
     name: String,
     defaultValue: Option[T],
     values: Seq[GameParameterValue[T]],
-    displayName: Option[String] = None
-) {
-
-    /** What a player is shown for this parameter. */
-    def label: String = displayName.getOrElse(name)
-}
+    displayName: String
+)
 
 case class GameRole(
     gameRoleId: GameRoleId,

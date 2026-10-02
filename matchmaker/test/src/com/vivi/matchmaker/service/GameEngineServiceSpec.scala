@@ -220,7 +220,8 @@ class GameEngineServiceSpec extends PropertySuite {
           GameParameterId(0),
           "rounds",
           Some("4"),
-          Seq("3", "4", "5").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
+          Seq("3", "4", "5").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v)),
+          "Rounds"
         )
 
     property("start sends the engine the parameter value the challenger chose, in place of the default") {

@@ -21,7 +21,7 @@ class GameRepoSpec extends PropertySuite {
             GameRole(GameRoleId(0), GameId.unassigned, "second", optional = true)
           ),
           parameters = Seq(
-            GameParameter(GameId.unassigned, GameParameterId(0), "parameter", Some("a"), values, Some("Parameter"))
+            GameParameter(GameId.unassigned, GameParameterId(0), "parameter", Some("a"), values, "Parameter")
           )
         )
     }
@@ -44,7 +44,7 @@ class GameRepoSpec extends PropertySuite {
 
         val parameter = game.parameters.head.asInstanceOf[GameParameter[String]]
         assertEquals(parameter.name, "parameter")
-        assertEquals(parameter.displayName, Some("Parameter"))
+        assertEquals(parameter.displayName, "Parameter")
         assertEquals(parameter.defaultValue, Some("a"))
         assertEquals(parameter.values.map(_.value).toSet, Set("a", "b", "c"))
         assertEquals(parameter.values.size, 3)

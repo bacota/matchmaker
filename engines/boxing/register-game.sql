@@ -49,7 +49,8 @@ VALUES (:game_id, 'Red', false), (:game_id, 'Blue', false);
 -- to 25 and falls back to 10.
 --
 -- The default is set last: game_parameter.default_value is a foreign key to the value rows.
-INSERT INTO game_parameter (game_id, name) VALUES (:game_id, 'rounds')
+-- `rounds` is the name the engine reads; 'Rounds' is what a challenger is shown.
+INSERT INTO game_parameter (game_id, name, display_name) VALUES (:game_id, 'rounds', 'Rounds')
 RETURNING game_parameter_id AS rounds_id \gset
 
 INSERT INTO game_parameter_value (game_id, game_parameter_id, value)

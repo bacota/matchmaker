@@ -79,8 +79,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         sql"""UPDATE game_role SET name = $text, optional = $bool
           WHERE game_id = $gameId AND game_role_id = $gameRoleId""".command
 
-    private val insertParameterStmt: Query[(GameId, String, Option[String]), GameParameterId] =
-        sql"""INSERT INTO game_parameter (game_id, name, display_name) VALUES ($gameId, $text, ${text.opt})
+    private val insertParameterStmt: Query[(GameId, String, String), GameParameterId] =
+        sql"""INSERT INTO game_parameter (game_id, name, display_name) VALUES ($gameId, $text, $text)
           RETURNING game_parameter_id""".query(gameParameterId)
 
     private val setDefaultValueStmt: Command[(T, GameId, GameParameterId)] =
@@ -98,10 +98,10 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private val deleteParameters: Command[GameId] =
         sql"DELETE FROM game_parameter WHERE game_id = $gameId".command
 
-    private val selectParameters: Query[GameId, (GameParameterId, String, Option[T], Option[String])] =
+    private val selectParameters: Query[GameId, (GameParameterId, String, Option[T], String)] =
         sql"""SELECT game_parameter_id, name, default_value, display_name
           FROM game_parameter WHERE game_id = $gameId"""
-            .query(gameParameterId *: text *: value.opt *: text.opt)
+            .query(gameParameterId *: text *: value.opt *: text)
 
     private val selectParameterValues: Query[(GameId, GameParameterId), T] =
         sql"SELECT value FROM game_parameter_value WHERE game_id = $gameId AND game_parameter_id = $gameParameterId"
@@ -353,7 +353,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                                   .flatMap(_._3.parameterValue)
                                   .distinct
                                   .map(GameParameterValue(id, GameParameterId(parameterId), _)),
-                              first.parameterDisplayName
+                              // NOT NULL in the table; only the outer join makes it optional here.
+                              first.parameterDisplayName.getOrElse(name)
                             )
                         }
                         .sortBy(_.gameParameterId.value)

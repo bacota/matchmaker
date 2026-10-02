@@ -55,7 +55,8 @@ class WireFormatSpec extends FunSuite {
               GameParameterId(2),
               "clock",
               Some("5+3"),
-              Seq(GameParameterValue(GameId(7), GameParameterId(2), "10+0"))
+              Seq(GameParameterValue(GameId(7), GameParameterId(2), "10+0")),
+              "Clock"
             )
           ),
           externalId = "secret"

@@ -1874,7 +1874,7 @@ object Views {
     private def draftOf(parameter: GameParameter[String]): ParameterDraft =
         ParameterDraft(
           Var(parameter.name),
-          Var(parameter.displayName.getOrElse("")),
+          Var(parameter.displayName),
           Var(parameter.values.map(_.value).mkString(", ")),
           Var(parameter.defaultValue.getOrElse(""))
         )
@@ -1938,7 +1938,7 @@ object Views {
           p(
             cls := "detail",
             "How the game engine is configured when a match is created. The name is what the engine is " +
-                "sent; the display name, if there is one, is what players see instead. A parameter's " +
+                "sent; the display name is what players see, and is the name if left blank. A parameter's " +
                 "default has to be one of its values, and a game may have none at all."
           ),
           children <-- parameters.signal.map(_.map { draft =>
@@ -1950,8 +1950,8 @@ object Views {
                   controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)
                 ),
                 input(
-                  aria.label := "display name, if players should see something other than the name",
-                  placeholder := "display name (optional)",
+                  aria.label := "display name, what players see; left blank, the name",
+                  placeholder := "display name (blank: the name)",
                   controlled(value <-- draft.displayName.signal, onInput.mapToValue --> draft.displayName)
                 ),
                 input(
@@ -1997,20 +1997,22 @@ object Views {
 
     private def parametersOf(drafts: List[ParameterDraft]): Either[String, Seq[GameParameter[String]]] = {
         val named = drafts
-            .map(d =>
+            .map { d =>
+                val name = d.name.now().trim
                 GameParameter[String](
                   GameId.unassigned,
                   GameParameterId(0),
-                  d.name.now().trim,
+                  name,
                   Option(d.default.now().trim).filter(_.nonEmpty),
                   splitValues(d.values.now()).map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v)),
-                  Option(d.displayName.now().trim).filter(_.nonEmpty)
+                  // Left blank, a parameter is shown by its name -- the server does the same.
+                  Option(d.displayName.now().trim).filter(_.nonEmpty).getOrElse(name)
                 )
-            )
+            }
             .filter(_.name.nonEmpty)
         val badDefault = named.find(p => p.defaultValue.exists(d => !p.values.exists(_.value == d)))
         if (named.map(_.name).distinct.sizeIs != named.size) Left("Two parameters cannot have the same name.")
-        else if (named.map(_.label).distinct.sizeIs != named.size)
+        else if (named.map(_.displayName).distinct.sizeIs != named.size)
             Left("Two parameters cannot be shown under the same name.")
         else
             badDefault match {
@@ -3066,7 +3068,9 @@ object Views {
       */
     private def parameterChoices(game: Game): Seq[ParameterChoice] =
         game.parameters
-            .map(p => ParameterChoice(p.name, p.label, p.values.map(_.value.toString), p.defaultValue.map(_.toString)))
+            .map(p =>
+                ParameterChoice(p.name, p.displayName, p.values.map(_.value.toString), p.defaultValue.map(_.toString))
+            )
             .filter(_.values.nonEmpty)
 
     /** A challenge's parameter choices as its `settings` carries them: `{"rounds":"12"}`. The same flat object of
@@ -3236,7 +3240,8 @@ object Views {
           // name the engine is sent. Built once: the game's parameters do not change while the form is open.
           parameterChoices(game).map { choice =>
               field(
-                // A parameter with no display name is still shown by its name, capitalized as it always was.
+                // A display name that is just the name -- what every parameter started with -- is
+                // capitalized, as the name always was here.
                 if (choice.label == choice.name) choice.name.capitalize else choice.label,
                 select(
                   onChange.mapToValue --> (chosen => parameters.update(_.updated(choice.name, chosen))),

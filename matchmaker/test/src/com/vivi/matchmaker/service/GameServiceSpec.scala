@@ -52,7 +52,8 @@ class GameServiceSpec extends PropertySuite {
                     "board size",
                     defaultValue = Some("3x3"),
                     values =
-                        Seq("3x3", "4x4", "5x5").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
+                        Seq("3x3", "4x4", "5x5").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v)),
+                    displayName = "Board size"
                   )
                 )
             )
@@ -85,7 +86,8 @@ class GameServiceSpec extends PropertySuite {
                     "board size",
                     defaultValue = Some(" 3x3"),
                     values =
-                        Seq(" 3x3 ", "4x4\n").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
+                        Seq(" 3x3 ", "4x4\n").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v)),
+                    displayName = "Board size"
                   )
                 )
             )
@@ -111,7 +113,8 @@ class GameServiceSpec extends PropertySuite {
                   GameParameterId(0),
                   "\tboard size\n",
                   defaultValue = None,
-                  values = Seq.empty
+                  values = Seq.empty,
+                  displayName = "Board size"
                 )
               )
             )
@@ -165,7 +168,8 @@ class GameServiceSpec extends PropertySuite {
                     GameParameterId(0),
                     "board size",
                     defaultValue = Some("9x9"),
-                    values = Seq("3x3").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
+                    values = Seq("3x3").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v)),
+                    displayName = "Board size"
                   )
                 )
             )
@@ -178,7 +182,7 @@ class GameServiceSpec extends PropertySuite {
         assert(result.unsafeRunSync())
     }
 
-    test("createOrUpdate stores a parameter's display name trimmed, and a blank one as none") {
+    test("createOrUpdate stores a parameter's display name trimmed, and a blank one as the name") {
         val result = for {
             admin <- makeAdmin()
             base <- IO(Generators.genGameWithRole.sample.get)
@@ -190,7 +194,7 @@ class GameServiceSpec extends PropertySuite {
                     "board_size",
                     defaultValue = None,
                     values = Seq.empty,
-                    displayName = Some("  Board size ")
+                    displayName = "  Board size "
                   ),
                   GameParameter[String](
                     GameId.unassigned,
@@ -198,7 +202,7 @@ class GameServiceSpec extends PropertySuite {
                     "rounds",
                     defaultValue = None,
                     values = Seq.empty,
-                    displayName = Some("   ")
+                    displayName = "   "
                   )
                 )
             )
@@ -206,7 +210,7 @@ class GameServiceSpec extends PropertySuite {
             listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
         } yield listed.get.parameters.map(p => p.name -> p.displayName).toMap
 
-        assertEquals(result.unsafeRunSync(), Map("board_size" -> Some("Board size"), "rounds" -> None))
+        assertEquals(result.unsafeRunSync(), Map("board_size" -> "Board size", "rounds" -> "rounds"))
     }
 
     // The names differ, so the engine could tell them apart; a player shown two pickers captioned
@@ -217,14 +221,14 @@ class GameServiceSpec extends PropertySuite {
             base <- IO(Generators.genGameWithRole.sample.get)
             game = base.copy(parameters =
                 Seq(
-                  GameParameter[String](GameId.unassigned, GameParameterId(0), "length", None, Seq.empty),
+                  GameParameter[String](GameId.unassigned, GameParameterId(0), "length", None, Seq.empty, "length"),
                   GameParameter[String](
                     GameId.unassigned,
                     GameParameterId(0),
                     "rounds",
                     None,
                     Seq.empty,
-                    displayName = Some("length")
+                    displayName = "length"
                   )
                 )
             )
@@ -326,7 +330,8 @@ class GameServiceSpec extends PropertySuite {
               GameParameterId.unassigned,
               name,
               default,
-              values.map(v => GameParameterValue(GameId.unassigned, GameParameterId.unassigned, v))
+              values.map(v => GameParameterValue(GameId.unassigned, GameParameterId.unassigned, v)),
+              name
             )
 
         val result = for {
