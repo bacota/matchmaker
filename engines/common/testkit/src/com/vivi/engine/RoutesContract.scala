@@ -446,7 +446,8 @@ abstract class RoutesContract extends FunSuite {
         stateOf(routes, "sub-alice")
         advance(12)
         val clock = stateOf(routes, "sub-alice")("clock")
-        assertEquals(clock("turnSeconds").num, 30.0)
+        assertEquals(clock("limitSeconds").num, 30.0)
+        assertEquals(clock("kind").str, "PER_TURN")
         assertEquals(aliceClock(stateOf(routes, "sub-alice")).map(_("remainingMillis").num), Some(18000.0))
         assertEquals(clock("timedOut").arr.toList, Nil)
     }
@@ -478,6 +479,31 @@ abstract class RoutesContract extends FunSuite {
         assert(reported.forall(_.forfeit), "every seat of a match a clock ended is a forfeit")
         assertEquals(reported.filter(_.isWinner).map(_.participantId), List(2L))
         assertEquals(matchmaker.moves, Nil)
+    }
+
+    // Nothing runs to end a match when a clock runs out, so a read can come long after two clocks have both
+    // run out. The match ended when the first did, and only that player lost.
+    test("a read that finds several clocks run out forfeits only the one that ran out first") {
+        val (routes, matchmaker, advance) = liveMatch()
+        stateOf(routes, "sub-alice")
+        advance(10)
+        stateOf(routes, "sub-bob")
+        // Alice's clock ran out at 30 seconds; bob's, if he is being waited on too, at 40.
+        advance(40)
+        assertEquals(statusOf(routes).completed, true)
+        assertEquals(stateOf(routes, "sub-bob")("clock")("timedOut").arr.map(_.num.toLong).toList, List(1L))
+        assertEquals(matchmaker.results.head._2.results.filter(_.isWinner).map(_.participantId), List(2L))
+    }
+
+    test("a live move is recorded as starting when its player opened the board, not when the turn did") {
+        val (routes, matchmaker, advance) = liveMatch()
+        advance(3600)
+        stateOf(routes, "sub-alice")
+        advance(5)
+        assertEquals(moving(routes, "sub-alice").status, 200)
+        val turn = statusOf(routes).turns.head
+        assertEquals(turn.startedAt, Some(kickOff.plusSeconds(3600)))
+        assertEquals(turn.takenAt, kickOff.plusSeconds(3605))
     }
 
     test("a move made after its turn ran out is refused, and the forfeit recorded in its place") {
@@ -512,10 +538,50 @@ abstract class RoutesContract extends FunSuite {
         assertEquals(channel.sent.size, 2)
     }
 
-    test("a live match needs a turn timeout of at least a second") {
+    test("a live match needs a time limit of at least a second, of a kind the engine knows") {
         val served = routes(PlayAuth.Trusted, None)
-        val create = calledBack(live = Some(Protocol.LiveTerms(0)))
-        assertEquals(served(EngineRequest("POST", "/games", Map.empty, write(create))).status, 400)
+        def creating(terms: Protocol.LiveTerms) =
+            served(EngineRequest("POST", "/games", Map.empty, write(calledBack(live = Some(terms))))).status
+        assertEquals(creating(Protocol.LiveTerms(0)), 400)
+        assertEquals(creating(Protocol.LiveTerms(30, "HOURGLASS")), 400)
+    }
+
+    // ---- live matches on a chess clock -------------------------------------------------------
+
+    /** A live match on a 30-second chess clock: each player's budget for the whole match. */
+    private def chessMatch() = {
+        val clock = AtomicReference(kickOff)
+        val matchmaker = RecordingMatchmaker()
+        val served = routes(PlayAuth.Trusted, None, None, matchmaker, () => clock.get)
+        val create = calledBack(live = Some(Protocol.LiveTerms(30, "TOTAL")))
+        assertEquals(served(EngineRequest("POST", "/games", Map.empty, write(create))).status, 201)
+        (served, matchmaker, (seconds: Long) => clock.updateAndGet(_.plusSeconds(seconds)): Unit)
+    }
+
+    test("under a chess clock a move spends the mover's budget, which is shown while it is not running") {
+        val (routes, _, advance) = chessMatch()
+        stateOf(routes, "sub-alice")
+        advance(10)
+        assertEquals(moving(routes, "sub-alice").status, 200)
+
+        val clock = stateOf(routes, "sub-alice")("clock")
+        assertEquals(clock("kind").str, "TOTAL")
+        // Every seat is shown under a chess clock; alice's has 20 of her 30 seconds left, and is not running,
+        // since after her first move the match is waiting on bob.
+        val alice = aliceClock(stateOf(routes, "sub-alice")).get
+        assertEquals(alice("remainingMillis").num, 20000.0)
+        assertEquals(alice("running").bool, false)
+        assertEquals(clock("seats").arr.map(_("participantId").num.toLong).toSet, Set(1L, 2L))
+    }
+
+    test("under a chess clock a player who runs out of budget forfeits") {
+        val (routes, matchmaker, advance) = chessMatch()
+        stateOf(routes, "sub-alice")
+        advance(30)
+        val ended = stateOf(routes, "sub-alice")
+        assertEquals(ended("completed").bool, true)
+        assertEquals(ended("clock")("timedOut").arr.map(_.num.toLong).toList, List(1L))
+        assert(matchmaker.results.head._2.results.forall(_.forfeit))
     }
 
     test("the play page counts a live match's turn down, without announcing every second") {

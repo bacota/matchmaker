@@ -3037,14 +3037,14 @@ object Views {
           cls := "detail",
           limit match {
               case None => "no time limit"
-              // A live match's limit is always per turn, and the game keeps it rather than matchmaker:
-              // a turn that runs out loses the match there and then.
-              case Some(limit) if live => s"live: ${Format.duration(limit, unit)} per turn"
+              // A live match's clock is the game's rather than matchmaker's: a player who runs out
+              // loses the match there and then.
               case Some(limit) =>
-                  kind match {
+                  val terms = kind match {
                       case TimeLimitKind.PerTurn => s"${Format.duration(limit, unit)} per turn"
                       case TimeLimitKind.Total   => s"${Format.duration(limit, unit)} each for the whole match"
                   }
+                  if (live) s"live: $terms" else terms
           }
         )
 
@@ -3114,10 +3114,10 @@ object Views {
         // way a chess clock works. Per turn by default, which is what every limit meant before the
         // choice existed.
         val timeLimitKind = Var(TimeLimitKind.PerTurn)
-        // Whether the match is played live: the game runs every turn against the limit above, and a
-        // turn that runs out loses the match there and then. Off by default -- it asks the players to
-        // be there together -- and when on, the limit is required and is per turn, since it is what
-        // the game is told each turn may take.
+        // Whether the match is played live: the game runs every turn against the limit above, per
+        // turn or as a chess clock, and a player who runs out loses the match there and then. Off by
+        // default -- it asks the players to be there together -- and when on, the limit is required,
+        // since it is the clock the game plays against.
         val live = Var(false)
         // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
         // has been claimed yet, so every role of the game is on offer and the first stands selected.
@@ -3218,8 +3218,6 @@ object Views {
           field(
             "How that time is spent",
             select(
-              // Fixed at per turn for a live match, for the reason `live` gives.
-              disabled <-- live.signal,
               onChange.mapToValue --> (raw => timeLimitKind.set(TimeLimitKind.fromCode(raw))),
               value <-- timeLimitKind.signal.map(_.code),
               TimeLimitKind.values.toSeq.map(kind => option(value := kind.code, kind.label))
@@ -3253,7 +3251,6 @@ object Views {
                 onClick.mapToChecked --> { on =>
                     live.set(on)
                     if (on) {
-                        timeLimitKind.set(TimeLimitKind.PerTurn)
                         // A live turn is usually seconds long. Only when nothing has been typed yet:
                         // a number already there was typed in the unit beside it.
                         if (timeLimit.now().trim.isEmpty) timeLimitUnit.set(TimeLimitUnit.Seconds)
@@ -3266,7 +3263,7 @@ object Views {
           p(
             idAttr := "live-hint",
             cls := "detail",
-            "Played in real time: the game keeps each turn's clock, and a player whose turn runs out loses the match."
+            "Played in real time: the game keeps the clock, and a player who runs out of time loses the match."
           ),
           // Public means anyone may watch the match, which the game engine implements by issuing a
           // url that needs no sign-in. It is decided here because it is a property of the game being

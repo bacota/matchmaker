@@ -67,9 +67,9 @@ sealed trait Challenge {
     /** Whether the match this becomes is played live (V27): its turns, and the clock on each, are the game engine's to
       * run, and matchmaker hears from the engine only when the match is over.
       *
-      * The challenger's choice, like the time limit it depends on — a live challenge must have one, and it is per turn,
-      * since it is what the engine is told each turn may take. A total budget is a chess clock matchmaker keeps over
-      * the turns it is told about, and in a live match it is told about none.
+      * The challenger's choice, like the time limit it depends on — a live challenge must have one, since it is the
+      * clock the engine plays the match against. Either kind: per turn, or a chess clock the engine keeps across the
+      * turns it runs.
       */
     def live: Boolean
 }

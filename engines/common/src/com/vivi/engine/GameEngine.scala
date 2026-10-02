@@ -111,21 +111,24 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
 
     /** The match ended by its clock, if it is a live match in which some pending seat has run out of time at `at`.
       *
-      * Every pending seat whose own clock has run out by then loses, and every other seat wins — including one still
-      * pending whose clock has time on it, or has not started because its player has not opened the board. Two players
-      * who both ran out both lose.
+      * The match ended the moment the first clock ran out, however much later this is noticed — nothing runs to notice
+      * it sooner. So the seat whose deadline came first loses, and every other seat wins: one whose clock ran out after
+      * that moment, one still running, and one that has not started because its player has not opened the board. Two
+      * seats that ran out at the same instant both lose.
       */
     private def timedOut(m: M, at: Instant): Option[M] =
         for {
             clock <- game.clock(m)
             if !game.isOver(m)
-            late = game.pending(m).filter(seat => deadlineOf(m, clock, seat).exists(d => !at.isBefore(d)))
-            if late.nonEmpty
+            due = game.pending(m).flatMap(seat => deadlineOf(m, clock, seat).map(seat -> _))
+            first <- due.map(_._2).minOption
+            if !at.isBefore(first)
+            late = due.collect { case (seat, d) if d == first => seat }
         } yield game.markCompleted(game.withClock(m, clock.copy(timedOut = late.map(_.participantId))))
 
     /** When a seat's clock runs out on the turn now being played; `None` while its player has not opened the board. */
     private def deadlineOf(m: M, clock: TurnClock, seat: S): Option[Instant] =
-        clock.startedFor(seat.participantId, game.clockStartedAt(m)).map(clock.deadline)
+        clock.deadlineFor(seat.participantId, game.clockStartedAt(m), game.turns(m))
 
     /** A seated player has opened the board of match `matchId`: in a live match, the moment their clock may start.
       *
@@ -159,17 +162,33 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
     /** The clock of a live match as its play page shows it, as of now; `None` for a match that is not live. */
     def clockView(m: M): Option[ClockView] =
         game.clock(m).map { clock =>
-            val waiting = if (game.isOver(m)) Nil else game.pending(m)
+            val over = game.isOver(m)
+            val waiting = if (over) Set.empty[Long] else game.pending(m).map(_.participantId).toSet
+            // Every seat under a chess clock, whose budget is worth showing running or not; only the seats being
+            // waited on under a per-turn clock, since everyone else's next turn will get the whole limit anyway.
+            val shown =
+                if (over) Nil
+                else if (clock.kind == ClockKind.Total) game.seats(m)
+                else game.seats(m).filter(s => waiting(s.participantId))
             lazy val at = now()
+            def millis(d: java.time.Duration) = math.max(0L, d.toMillis)
             ClockView(
-              turnSeconds = clock.turnSeconds,
-              seats = waiting.map { seat =>
-                  val started = clock.startedFor(seat.participantId, game.clockStartedAt(m))
+              limitSeconds = clock.limitSeconds,
+              kind = clock.kind.code,
+              seats = shown.map { seat =>
+                  val id = seat.participantId
+                  val started = Option.when(waiting(id))(clock.startedFor(id, game.clockStartedAt(m))).flatten
+                  val deadline = Option.when(waiting(id))(deadlineOf(m, clock, seat)).flatten
                   SeatClock(
-                    participantId = seat.participantId,
+                    participantId = id,
+                    waiting = waiting(id),
+                    running = deadline.isDefined,
                     startedAt = started,
-                    remainingMillis =
-                        started.map(s => math.max(0L, java.time.Duration.between(at, clock.deadline(s)).toMillis))
+                    remainingMillis = deadline
+                        .map(d => millis(java.time.Duration.between(at, d)))
+                        .orElse(
+                          Option.when(clock.kind == ClockKind.Total)(millis(clock.allowance(id, game.turns(m))))
+                        )
                   )
               },
               timedOut = clock.timedOut

@@ -158,7 +158,7 @@ class ProtocolSpec extends FunSuite {
         )
     }
 
-    test("matchmaker's create request for a live match reads as the engine's, turn timeout and all") {
+    test("matchmaker's create request for a live match reads as the engine's, clock and all") {
         val fromMatchmaker = MmCreateGameRequest(
           matchId = "m-2",
           gameName = "tic-tac-toe",
@@ -169,9 +169,12 @@ class ProtocolSpec extends FunSuite {
           players = Nil,
           moveCallbackUrl = None,
           resultsCallbackUrl = None,
-          live = Some(com.vivi.matchmaker.engine.LiveTerms(30L))
+          live = Some(com.vivi.matchmaker.engine.LiveTerms(300L, "TOTAL"))
         )
-        assertEquals(read[Protocol.CreateGameRequest](write(fromMatchmaker)).live, Some(Protocol.LiveTerms(30L)))
+        assertEquals(
+          read[Protocol.CreateGameRequest](write(fromMatchmaker)).live,
+          Some(Protocol.LiveTerms(300L, "TOTAL"))
+        )
     }
 
     test("results ending a live match by forfeit read as matchmaker's, forfeit and all") {
