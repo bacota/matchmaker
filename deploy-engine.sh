@@ -237,8 +237,15 @@ step "Applying to $env"
 # register-game.sql is not the way: it is for the local database the unit tests run against, and
 # it refuses any other.
 
+# Every output in one call, read from that rather than asked for one at a time: each tf.sh run
+# re-initialises the backend and downloads the state, several seconds apiece, and there are three
+# outputs per engine. The JSON holds the API keys too, so it stays in this variable and is never
+# printed. An apply that left no outputs gives "{}", and every value read from it is then empty.
+outputs=$(cd "$TERRAFORM_DIR" && ./tf.sh "$env" output -json 2>/dev/null || true)
+[ -n "$outputs" ] || outputs="{}"
+
 output() {
-  (cd "$TERRAFORM_DIR" && ./tf.sh "$env" output -raw "$1" 2>/dev/null || true)
+  jq -r --arg name "$1" '.[$name].value // empty' <<<"$outputs" 2>/dev/null || true
 }
 
 create_game_url=$(output "${engine}_create_game_url")
