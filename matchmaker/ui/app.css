@@ -547,8 +547,8 @@ label.field > .hint {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 .tip.open,
-.tip-toggle:hover + .tip,
-.tip-toggle:focus-visible + .tip {
+.tip-toggle:hover + .tip:not(.dismissed),
+.tip-toggle:focus-visible + .tip:not(.dismissed) {
   display: block;
 }
 

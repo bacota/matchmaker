@@ -242,6 +242,7 @@ object Notifications {
         def dialog(ask: Deferred): HtmlElement =
             div(
               cls := "modal-scrim",
+              Modal.inertBehind,
               // The scrim is the gesture "not this", and the card inside it is not the scrim. Compared
               // against `currentTarget` rather than tested for containment, because that is exactly the
               // question: did the click land on the backdrop itself.

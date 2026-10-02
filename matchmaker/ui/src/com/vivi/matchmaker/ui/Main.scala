@@ -1817,7 +1817,13 @@ object Views {
      * counterpart. */
     private var editGameTrigger: Option[dom.html.Element] = None
 
+    /* Which opening of the edit dialog is the current one. A save can outlive the dialog it was made from -- it can be
+     * closed while the save is waiting, and opened again -- and the save's answer closing the dialog is only right for
+     * the opening that made it. Moved on by every close, so an answer from before one is never current. */
+    private var editGameOpening = 0
+
     private def closeEditGame(): Unit = {
+        editGameOpening += 1
         Store.editingGame.set(None)
         editGameTrigger.foreach(_.focus())
     }
@@ -1826,10 +1832,16 @@ object Views {
      * click on the backdrop, or by its own Close button, and closed by a save that succeeds. */
     private def editGameDialog(game: Game): HtmlElement = {
         val headingId = s"edit-game-${game.gameId.value}-heading"
+        val opening = editGameOpening
         div(
           cls := "modal-scrim",
+          Modal.inertBehind,
           onClick --> (event => if (event.target == event.currentTarget) closeEditGame()),
-          gameForm(Some(game), heading = Some(headingId -> s"Edit ${game.displayName}")).amend(
+          gameForm(
+            Some(game),
+            heading = Some(headingId -> s"Edit ${game.displayName}"),
+            onSaved = () => if (editGameOpening == opening) closeEditGame()
+          ).amend(
             cls := "modal",
             role := "dialog",
             htmlAttr("aria-modal", com.raquo.laminar.codecs.StringAsIsCodec) := "true",
@@ -2156,7 +2168,11 @@ object Views {
       * every game picker. It hides the game rather than closing it — its challenges, invitations and matches are left
       * as they are, since `active` decides what is listed, not what may be played.
       */
-    private def gameForm(existing: Option[Game], heading: Option[(String, String)] = None): HtmlElement = {
+    private def gameForm(
+        existing: Option[Game],
+        heading: Option[(String, String)] = None,
+        onSaved: () => Unit = () => ()
+    ): HtmlElement = {
         val name = Var(existing.map(_.name).getOrElse(""))
         val displayName = Var(existing.map(_.displayName).getOrElse(""))
         val description = Var(existing.map(_.description).getOrElse(""))
@@ -2367,7 +2383,7 @@ object Views {
                                   parameters.set(
                                     saved.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList
                                   )
-                                  closeEditGame()
+                                  onSaved()
                               }
                               // Both copies of the game list, because a game saved while deactivated is in
                               // neither the active one nor reachable by `ensureGame` — its own screen would
@@ -2586,6 +2602,7 @@ object Views {
     private def challengeDialog(form: HtmlElement): HtmlElement =
         div(
           cls := "modal-scrim",
+          Modal.inertBehind,
           onClick --> (event => if (event.target == event.currentTarget) closeChallengeForm()),
           form.amend(
             cls := "modal",
@@ -3285,6 +3302,9 @@ object Views {
       */
     private def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement = {
         val open = Var(false)
+        // Escape hides a tip that hover or keyboard focus is showing, which `open` knows nothing about: this holds it
+        // hidden, with focus left where it was, until the pointer or focus arrives afresh.
+        val dismissed = Var(false)
         div(
           cls := "with-tip",
           control,
@@ -3295,15 +3315,35 @@ object Views {
             aria.expanded <-- open.signal,
             aria.controls := id,
             "?",
-            onClick --> (_ => open.update(!_)),
+            onClick --> { _ =>
+                dismissed.set(false)
+                open.update(!_)
+            },
+            onFocus --> (_ => dismissed.set(false)),
+            onMouseEnter --> (_ => dismissed.set(false)),
             onBlur --> (_ => open.set(false)),
-            // An open tip takes the Escape that closes it, so a dialog the tip is in stays open.
-            onKeyDown.filter(event => event.key == "Escape" && open.now()) --> { event =>
-                event.stopPropagation()
-                open.set(false)
-            }
+            // A tip that is showing takes the Escape that hides it, so a dialog the tip is in stays open. Showing by
+            // `open`, or by the CSS, which shows it for keyboard focus and hover without telling `open`.
+            inContext(node =>
+                onKeyDown
+                    .filter(event =>
+                        event.key == "Escape" && !dismissed.now() &&
+                            (open.now() || node.ref.matches(":focus-visible") || node.ref.matches(":hover"))
+                    ) --> { event =>
+                    event.stopPropagation()
+                    open.set(false)
+                    dismissed.set(true)
+                }
+            )
           ),
-          span(idAttr := id, role := "tooltip", cls := "tip", cls.toggle("open") <-- open.signal, text)
+          span(
+            idAttr := id,
+            role := "tooltip",
+            cls := "tip",
+            cls("open") <-- open.signal,
+            cls("dismissed") <-- dismissed.signal,
+            text
+          )
         )
     }
 
