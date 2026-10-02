@@ -481,6 +481,17 @@ abstract class RoutesContract extends FunSuite {
         assertEquals(matchmaker.moves, Nil)
     }
 
+    test("a live move is recorded as starting when its player opened the board, not when the turn did") {
+        val (routes, matchmaker, advance) = liveMatch()
+        advance(3600)
+        stateOf(routes, "sub-alice")
+        advance(5)
+        assertEquals(moving(routes, "sub-alice").status, 200)
+        val turn = statusOf(routes).turns.head
+        assertEquals(turn.startedAt, Some(kickOff.plusSeconds(3600)))
+        assertEquals(turn.takenAt, kickOff.plusSeconds(3605))
+    }
+
     test("a move made after its turn ran out is refused, and the forfeit recorded in its place") {
         val (routes, matchmaker, advance) = liveMatch()
         stateOf(routes, "sub-alice")

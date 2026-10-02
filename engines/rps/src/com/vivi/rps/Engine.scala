@@ -1,7 +1,7 @@
 package com.vivi.rps
 
 import java.time.Instant
-import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal}
+import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
 import Protocol._
 
 /** Rock-paper-scissors: the four exchanges of `interaction-design.txt`, which [[GameEngine]] makes for any game, and
@@ -53,8 +53,15 @@ class Engine(
                   Refusal.Invalid("you have already thrown; a throw cannot be taken back")
                 )
             } yield {
-                // Both clocks started when the match was created — see `RpsMatch`.
-                val record = ThrowRecord(seat.participantId, shape, at, current.createdAt)
+                // Both clocks started when the match was created — see `RpsMatch` — or, in a live match,
+                // when this player opened the board, if that was later.
+                val record =
+                    ThrowRecord(
+                      seat.participantId,
+                      shape,
+                      at,
+                      TurnClock.turnStart(current.clock, seat.participantId, current.createdAt)
+                    )
                 (current.copy(throws = current.throws :+ record), record)
             }
         }

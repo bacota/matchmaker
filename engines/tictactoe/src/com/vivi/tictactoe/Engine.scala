@@ -1,7 +1,7 @@
 package com.vivi.tictactoe
 
 import java.time.Instant
-import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal}
+import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
 import Protocol._
 
 /** Tic-tac-toe: the four exchanges of `interaction-design.txt`, which [[GameEngine]] makes for any game, and the two
@@ -41,8 +41,11 @@ class Engine(
                 board <- current.board.place(cell, seat.mark).left.map(Refusal.Invalid.apply)
             } yield {
                 // The clock for this move started when the move before it was made, or when the
-                // match was created for the first move of the game.
-                val turn = TurnRecord(seat.participantId, at, TicTacToeMatch.clockStartedAt(current))
+                // match was created for the first move of the game — or, in a live match, when this
+                // player opened the board, if that was later.
+                val started =
+                    TurnClock.turnStart(current.clock, seat.participantId, TicTacToeMatch.clockStartedAt(current))
+                val turn = TurnRecord(seat.participantId, at, started)
                 val played =
                     current.copy(
                       board = board,

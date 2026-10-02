@@ -1,7 +1,7 @@
 package com.vivi.boxing
 
 import java.time.Instant
-import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal}
+import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
 import Protocol._
 
 /** Boxing: the four exchanges of `interaction-design.txt`, which [[GameEngine]] makes for any game, and what is this
@@ -47,7 +47,9 @@ class Engine(
                   Refusal.Invalid(s"you have already planned round $round; a plan cannot be changed")
                 )
             } yield {
-                val record = Plan(corner.participantId, round, valid, at, current.roundStartedAt)
+                // The round's start, or, in a live bout, this player's opening the board if that was later.
+                val started = TurnClock.turnStart(current.clock, corner.participantId, current.roundStartedAt)
+                val record = Plan(corner.participantId, round, valid, at, started)
                 (current.copy(plans = current.plans :+ record), record)
             }
         }

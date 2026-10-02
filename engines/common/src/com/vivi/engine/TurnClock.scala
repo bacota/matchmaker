@@ -110,6 +110,17 @@ object ClockKind {
 
 object TurnClock {
 
+    /** When a seat's clock started for a move it is making now, on a turn that began at `turnStartedAt`: what a game
+      * records as the move's `startedAt`.
+      *
+      * In a live match that is when the player's clock really started — the turn's start, or their first opening the
+      * board if that was later — so that a move made seconds after opening an hour-old match is recorded as taking
+      * seconds, which is what matchmaker shows as the time it cost. Anywhere else it is the turn's start, as it always
+      * was.
+      */
+    def turnStart(clock: Option[TurnClock], participantId: Long, turnStartedAt: Instant): Instant =
+        clock.flatMap(_.startedFor(participantId, turnStartedAt)).getOrElse(turnStartedAt)
+
     /** The clock a create request asks for: none for a match that is not live, and one per [[Protocol.LiveTerms]] for a
       * match that is — or why that cannot be played.
       */
