@@ -250,6 +250,17 @@ class GameServiceSpec extends PropertySuite {
         assertEquals(newAfter, Some(externalId))
     }
 
+    test("an API key shorter than the minimum is refused, and nothing is saved") {
+        val result = for {
+            admin <- makeAdmin()
+            game = Generators.genGameWithRole.sample.get
+            attempt <- gameService.createOrUpdate(admin.externalId, game, Some("x" * 23)).attempt
+            listed <- gameService.list(admin.externalId).map(_.exists(_.name == game.name))
+        } yield (attempt.left.exists(_.isInstanceOf[ValidationError]), listed)
+
+        assertEquals(result.unsafeRunSync(), (true, false))
+    }
+
     test("a game saved without a key reports none") {
         val result = for {
             admin <- makeAdmin()

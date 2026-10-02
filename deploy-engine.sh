@@ -16,11 +16,11 @@
 # credentials. The engines are independent of each other too: they share nothing but the user pool
 # they authenticate players against.
 #
-# An engine's first deployment needs matchmaker to change as well — every engine's does, since
-# matchmaker must hold the engine's API key, and boxing's also needs its
-# `PUT /characters/{characterId}/state` route to be an engine route, which is how a built fighter
-# is kept — and the targeted plan below leaves matchmaker's function alone. Use ./deploy-all.sh
-# for that, or --full here.
+# Boxing's first deployment needs matchmaker to change as well — its
+# `PUT /characters/{characterId}/state` route has to be an engine route, which is how a built
+# fighter is kept — and the targeted plan below leaves matchmaker's function alone. Use
+# ./deploy-all.sh for that, or --full here. The others need nothing of matchmaker's deployment:
+# matchmaker learns an engine's API key from its game's admin form, not from terraform.
 #
 # By default the plan is limited to the engine's own module plus the one resource outside it that
 # the engine changes: the Cognito app client, whose callback urls have to include the engine's

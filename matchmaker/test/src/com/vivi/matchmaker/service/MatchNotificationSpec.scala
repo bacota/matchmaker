@@ -27,10 +27,11 @@ class MatchNotificationSpec extends PropertySuite {
      * between a match that is being played and one that has quietly finished. */
     private class StubEngine(answer: () => GameStatusResponse = () => GameStatusResponse(false, Nil))
         extends GameEngineClient {
-        def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse] =
+        def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
             IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
 
-        def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse] = IO(answer())
+        def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
+            IO(answer())
     }
 
     private def genUniqueString: Gen[String] =

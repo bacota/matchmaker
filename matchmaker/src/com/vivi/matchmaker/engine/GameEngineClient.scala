@@ -115,16 +115,21 @@ object EngineJson {
   */
 trait GameEngineClient {
 
-    /** Creates a game at `gameUrl`, which is the `url` recorded on the [[com.vivi.matchmaker.model.Game]]. */
-    def createGame(gameUrl: String, request: CreateGameRequest): IO[CreateGameResponse]
+    /** Creates a game at `gameUrl`, which is the `url` recorded on the [[com.vivi.matchmaker.model.Game]].
+      *
+      * `apiKey` is that game's stored key (V34), presented to the engine — given by the caller, which has the game in
+      * hand, rather than looked up here, so that two games on one engine host each present their own.
+      */
+    def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse]
 
     /** Asks the engine how a match is going, at the `statusUrl` it returned when the game was created.
       *
       * `since` is the most recent turn matchmaker already has recorded; the engine answers with the turns taken after
       * it, so the reply carries what was missed rather than the whole game every time. `None` asks for all of them,
-      * which is what a match with no turns recorded wants.
+      * which is what a match with no turns recorded wants. `apiKey` is the match's game's stored key, as for
+      * `createGame`.
       */
-    def status(statusUrl: String, since: Option[Instant] = None): IO[GameStatusResponse]
+    def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse]
 }
 
 /** Raised when the game engine cannot be reached or answers with something other than success.

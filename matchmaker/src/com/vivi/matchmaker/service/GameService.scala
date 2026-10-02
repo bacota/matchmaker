@@ -35,6 +35,17 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                     // duplicate they are rather than stored as two roles that read identically.
                     trimmed = normalize(game)
                     _ <- validate(trimmed)
+                    newKey = apiKey.map(_.trim).filter(_.nonEmpty)
+                    // The same floor the engine module puts on the key it is given: this is the only thing
+                    // protecting the callback routes, and a short one is a typo or a guessable token.
+                    _ <- newKey.traverse_(key =>
+                        IO.raiseWhen(key.length < GameService.MinApiKeyLength)(
+                          ValidationError(
+                            s"an API key must be at least ${GameService.MinApiKeyLength} characters; " +
+                                s"this one is ${key.length}"
+                          )
+                        )
+                    )
                     result <-
                         if (trimmed.gameId == GameId.unassigned) gameRepo.create(trimmed)
                         else
@@ -52,7 +63,6 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                                             IO.raiseError(NotFoundError(s"no game with id ${trimmed.gameId.value}"))
                                     }
                             }
-                    newKey = apiKey.map(_.trim).filter(_.nonEmpty)
                     _ <- newKey.traverse_(key => new GameApiKeyRepo(session).set(result.gameId, key))
                 } yield result.copy(hasApiKey = result.hasApiKey || newKey.isDefined)
             }
@@ -226,4 +236,12 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                 IO.raiseError(UnauthorizedError(s"user '$externalUserId' is not an admin"))
             case Some(player) => IO.pure(player)
         }
+}
+
+object GameService {
+
+    /** The shortest engine API key a game may be given — the minimum `terraform/modules/engine` enforces on the key it
+      * deploys an engine with, so any key that engine could have been given passes.
+      */
+    val MinApiKeyLength = 24
 }

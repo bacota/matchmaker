@@ -142,9 +142,9 @@ with `deploy_boxing = true` in
 `environments/<env>.settings.tfvars`.
 
 **The first deployment must be `./deploy-all.sh <env>`** (or `./deploy-boxing.sh <env> --full`).
-This engine needs two changes on matchmaker's side that the targeted per-engine plan doesn't touch:
+This engine needs a change on matchmaker's side that the targeted per-engine plan doesn't touch —
+its API key does not count, since matchmaker learns that from the game's admin form:
 
-- matchmaker has to hold the engine's API key
 - `POST /characters`, `GET /characters`, `PUT /characters/{characterId}` and
   `PUT /characters/{characterId}/owner` (and `PUT /characters/{characterId}/state`) have to be
   engine routes

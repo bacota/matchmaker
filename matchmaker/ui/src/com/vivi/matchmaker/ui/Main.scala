@@ -2130,8 +2130,8 @@ object Views {
                       "No key is set, so a deployed engine will refuse every call. Enter the key the engine " +
                           "was deployed with."
                   case None =>
-                      "The key the engine was deployed with. It is stored, never shown again, and can be " +
-                          "replaced here later."
+                      "The key the engine was deployed with, at least 24 characters. It is stored, never shown " +
+                          "again, and can be replaced here later."
               }
             ),
             // A password field, so it is not shown while it is typed, and new-password so that no browser
@@ -2178,11 +2178,13 @@ object Views {
           parameterEditor(parameters),
           busyButton(
             if (existing.isDefined) "Save Changes" else "Create Game",
-            // A new game needs its key; an edit may leave the stored one alone.
+            // A new game needs its key; an edit may leave the stored one alone. A key that is typed has
+            // to be long enough, as the server checks too.
             disabledWhen = name.signal
                 .combineWith(engineIdentity.signal, apiKey.signal)
                 .map((n, identity, key) =>
-                    n.trim.isEmpty || identity.trim.isEmpty || (existing.isEmpty && key.trim.isEmpty)
+                    n.trim.isEmpty || identity.trim.isEmpty || (existing.isEmpty && key.trim.isEmpty) ||
+                        (key.trim.nonEmpty && key.trim.length < 24)
                 )
           ) { busy =>
               val drafted = for {

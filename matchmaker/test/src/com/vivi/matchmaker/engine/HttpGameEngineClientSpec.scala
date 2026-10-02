@@ -1,8 +1,6 @@
 package com.vivi.matchmaker.engine
 
-import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import com.vivi.matchmaker.auth.ApiKeys
 import java.net.http.HttpClient
 import munit.FunSuite
 
@@ -11,8 +9,7 @@ import munit.FunSuite
   */
 class HttpGameEngineClientSpec extends FunSuite {
 
-    private def client(keys: ApiKeys) =
-        new HttpGameEngineClient(() => IO.pure(keys), httpClient = HttpClient.newHttpClient())
+    private val client = new HttpGameEngineClient(httpClient = HttpClient.newHttpClient())
 
     private val request = CreateGameRequest(
       matchId = "m1",
@@ -26,9 +23,9 @@ class HttpGameEngineClientSpec extends FunSuite {
       resultsCallbackUrl = None
     )
 
-    test("a call to a deployed engine with no key for its host is refused before it is sent") {
-        val outcome = client(ApiKeys(Map("other.example.com" -> "k")))
-            .createGame("https://abc123.execute-api.us-east-1.amazonaws.com/games", request)
+    test("a call to a deployed engine with no key is refused before it is sent") {
+        val outcome = client
+            .createGame("https://abc123.execute-api.us-east-1.amazonaws.com/games", None, request)
             .attempt
             .unsafeRunSync()
 
@@ -43,29 +40,16 @@ class HttpGameEngineClientSpec extends FunSuite {
     test("a call to an engine that is not on AWS is made without a key, because a local stub needs none") {
         // Nothing is listening on this port; reaching a connection failure is what shows the request
         // was attempted rather than refused for want of a key.
-        val outcome = client(ApiKeys.empty).createGame("http://localhost:1/games", request).attempt.unsafeRunSync()
+        val outcome = client.createGame("http://localhost:1/games", None, request).attempt.unsafeRunSync()
 
         val error = outcome.swap.getOrElse(fail("the call unexpectedly succeeded"))
         assert(!error.getMessage.contains("no API key"))
         assert(clue(error.getMessage).contains("failed"))
     }
 
-    test("the key is read for each request, not once for the client") {
-        var reads = 0
-        val counting = new HttpGameEngineClient(
-          () => IO { reads += 1; ApiKeys.empty },
-          httpClient = HttpClient.newHttpClient()
-        )
-        // Both fail to connect; what matters is that each attempt looked the keys up again, so that a
-        // key an admin has just changed is the one presented.
-        counting.createGame("http://localhost:1/games", request).attempt.unsafeRunSync()
-        counting.createGame("http://localhost:1/games", request).attempt.unsafeRunSync()
-        assertEquals(reads, 2)
-    }
-
     test("the key is never in the message of a failure") {
-        val outcome = client(ApiKeys(Map("localhost" -> "s3cret")))
-            .createGame("http://localhost:1/games", request)
+        val outcome = client
+            .createGame("http://localhost:1/games", Some("s3cret"), request)
             .attempt
             .unsafeRunSync()
 

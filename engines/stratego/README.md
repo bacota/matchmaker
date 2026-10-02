@@ -111,9 +111,9 @@ psql -h localhost -U matchmaker matchmaker -v url="http://localhost:8093/games" 
 deploy_stratego = true
 ```
 
-The first deployment has to go through `./deploy-all.sh dev` (or `./deploy-stratego.sh dev --full`).
-Matchmaker's own function has to be given this engine's API key, and the engine-only plan leaves
-matchmaker alone. After that, `./deploy-stratego.sh dev` deploys the engine by itself.
+`./deploy-stratego.sh dev` deploys the engine by itself, the first time as much as any other: matchmaker
+needs no change of its own for it, since it learns the engine's API key from the game's admin form
+rather than from its deployment. `./deploy-all.sh dev` deploys it together with matchmaker.
 
 Then add the game on matchmaker's admin page ("Add a Game"), or edit it if it is already there.
 A deploy never creates a game, and `register-game.sql` is for the local database only — it refuses
