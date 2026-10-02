@@ -106,6 +106,9 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
       * `game_parameter.default_value` is a foreign key to `game_parameter_value`, so a default of "3x3" against a value
       * stored as "3x3 " is not a default at all. Done here rather than in the form, because the form is not the only
       * thing that can post a game.
+      *
+      * A parameter's display name is trimmed too, and a blank one is none at all: the form sends what was typed, and an
+      * empty field means the parameter is shown by its name.
       */
     private def normalize(game: Game): Game =
         game.copy(
@@ -118,6 +121,7 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
               val parameter = p.asInstanceOf[GameParameter[T]]
               parameter.copy(
                 name = parameter.name.trim,
+                displayName = parameter.displayName.map(_.trim).filter(_.nonEmpty),
                 defaultValue = parameter.defaultValue.map(trimValue),
                 values = parameter.values.map(value => value.copy(value = trimValue(value.value)))
               )
@@ -153,6 +157,12 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             )
             _ <- IO.raiseWhen(game.parameters.map(_.name).distinct.sizeIs != game.parameters.size)(
               ValidationError(s"game '${game.name}' has two parameters with the same name")
+            )
+            // Distinct names can still be shown alike — `rounds` captioned "Length" beside a `length`
+            // shown as it is — and a player choosing between two pickers with one caption cannot
+            // tell which is which.
+            _ <- IO.raiseWhen(game.parameters.map(_.label).distinct.sizeIs != game.parameters.size)(
+              ValidationError(s"game '${game.name}' shows two parameters under the same name")
             )
             _ <- game.parameters.toList.traverse_ { parameter =>
                 val values = parameter.values.map(_.value)

@@ -178,6 +178,62 @@ class GameServiceSpec extends PropertySuite {
         assert(result.unsafeRunSync())
     }
 
+    test("createOrUpdate stores a parameter's display name trimmed, and a blank one as none") {
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGameWithRole.sample.get)
+            game = base.copy(parameters =
+                Seq(
+                  GameParameter[String](
+                    GameId.unassigned,
+                    GameParameterId(0),
+                    "board_size",
+                    defaultValue = None,
+                    values = Seq.empty,
+                    displayName = Some("  Board size ")
+                  ),
+                  GameParameter[String](
+                    GameId.unassigned,
+                    GameParameterId(0),
+                    "rounds",
+                    defaultValue = None,
+                    values = Seq.empty,
+                    displayName = Some("   ")
+                  )
+                )
+            )
+            created <- gameService.createOrUpdate(admin.externalId, game)
+            listed <- gameService.list(admin.externalId).map(_.find(_.gameId == created.gameId))
+        } yield listed.get.parameters.map(p => p.name -> p.displayName).toMap
+
+        assertEquals(result.unsafeRunSync(), Map("board_size" -> Some("Board size"), "rounds" -> None))
+    }
+
+    // The names differ, so the engine could tell them apart; a player shown two pickers captioned
+    // alike could not.
+    test("createOrUpdate refuses two parameters that would be shown under the same name") {
+        val result = for {
+            admin <- makeAdmin()
+            base <- IO(Generators.genGameWithRole.sample.get)
+            game = base.copy(parameters =
+                Seq(
+                  GameParameter[String](GameId.unassigned, GameParameterId(0), "length", None, Seq.empty),
+                  GameParameter[String](
+                    GameId.unassigned,
+                    GameParameterId(0),
+                    "rounds",
+                    None,
+                    Seq.empty,
+                    displayName = Some("length")
+                  )
+                )
+            )
+            attempt <- gameService.createOrUpdate(admin.externalId, game).attempt
+        } yield attempt.left.exists(_.isInstanceOf[ValidationError])
+
+        assert(result.unsafeRunSync())
+    }
+
     property("createOrUpdate updates an existing game") {
         forAll(Generators.genString) { newName =>
             val result = for {

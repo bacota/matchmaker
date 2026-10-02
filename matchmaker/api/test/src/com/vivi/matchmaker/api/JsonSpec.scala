@@ -29,7 +29,8 @@ class JsonSpec extends FunSuite {
               GameParameterId(3),
               "parameter",
               Some("default"),
-              Seq(GameParameterValue(GameId(1), GameParameterId(3), "default"))
+              Seq(GameParameterValue(GameId(1), GameParameterId(3), "default")),
+              Some("Parameter")
             )
           ),
           externalId = "secret"
@@ -40,6 +41,16 @@ class JsonSpec extends FunSuite {
         assertEquals(decoded.roles, game.roles)
         assertEquals(decoded.parameters.size, 1)
         assertEquals(decoded.parameters.head.asInstanceOf[GameParameter[String]].defaultValue, Some("default"))
+        assertEquals(decoded.parameters.head.displayName, Some("Parameter"))
+    }
+
+    // A client written before display names existed sends a parameter without one, and has to be
+    // read as a parameter shown by its name rather than refused.
+    test("a parameter sent without a display name decodes as having none") {
+        val json = """{"gameId":1,"gameParameterId":3,"name":"rounds","defaultValue":"10","values":[]}"""
+        val parameter = read[GameParameter[String]](json)
+        assertEquals(parameter.displayName, None)
+        assertEquals(parameter.label, "rounds")
     }
 
     /* Preferences and answers are plain objects, and must stay plain.

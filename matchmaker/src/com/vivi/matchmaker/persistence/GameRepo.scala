@@ -79,8 +79,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         sql"""UPDATE game_role SET name = $text, optional = $bool
           WHERE game_id = $gameId AND game_role_id = $gameRoleId""".command
 
-    private val insertParameterStmt: Query[(GameId, String), GameParameterId] =
-        sql"""INSERT INTO game_parameter (game_id, name) VALUES ($gameId, $text)
+    private val insertParameterStmt: Query[(GameId, String, Option[String]), GameParameterId] =
+        sql"""INSERT INTO game_parameter (game_id, name, display_name) VALUES ($gameId, $text, ${text.opt})
           RETURNING game_parameter_id""".query(gameParameterId)
 
     private val setDefaultValueStmt: Command[(T, GameId, GameParameterId)] =
@@ -98,9 +98,10 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private val deleteParameters: Command[GameId] =
         sql"DELETE FROM game_parameter WHERE game_id = $gameId".command
 
-    private val selectParameters: Query[GameId, (GameParameterId, String, Option[T])] =
-        sql"SELECT game_parameter_id, name, default_value FROM game_parameter WHERE game_id = $gameId"
-            .query(gameParameterId *: text *: value.opt)
+    private val selectParameters: Query[GameId, (GameParameterId, String, Option[T], Option[String])] =
+        sql"""SELECT game_parameter_id, name, default_value, display_name
+          FROM game_parameter WHERE game_id = $gameId"""
+            .query(gameParameterId *: text *: value.opt *: text.opt)
 
     private val selectParameterValues: Query[(GameId, GameParameterId), T] =
         sql"SELECT value FROM game_parameter_value WHERE game_id = $gameId AND game_parameter_id = $gameParameterId"
@@ -222,7 +223,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     // exist, and default_value can only be set once a matching value row is present.
     private def insertParameter(gameId: GameId, parameter: GameParameter[T]): IO[GameParameter[T]] =
         for {
-            parameterId <- session.unique(insertParameterStmt)((gameId, parameter.name))
+            parameterId <- session.unique(insertParameterStmt)((gameId, parameter.name, parameter.displayName))
             values <- parameter.values.toList.traverse(v => insertParameterValue(gameId, parameterId, v))
             _ <- parameter.defaultValue match {
                 case Some(v) => session.execute(setDefaultValueStmt)((v, gameId, parameterId)).void
@@ -242,9 +243,9 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private def readParameters(gameId: GameId): IO[Seq[GameParameter[T]]] =
         session
             .execute(selectParameters)(gameId)
-            .flatMap(_.traverse { case (parameterId, name, defaultValue) =>
+            .flatMap(_.traverse { case (parameterId, name, defaultValue, displayName) =>
                 readParameterValues(gameId, parameterId)
-                    .map(values => GameParameter(gameId, parameterId, name, defaultValue, values))
+                    .map(values => GameParameter(gameId, parameterId, name, defaultValue, values, displayName))
             })
 
     private def readParameterValues(gameId: GameId, parameterId: GameParameterId): IO[Seq[GameParameterValue[T]]] =
@@ -275,6 +276,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         parameterId: Option[Int],
         parameterName: Option[String],
         parameterDefault: Option[T],
+        parameterDisplayName: Option[String],
         parameterValue: Option[T]
     )
 
@@ -287,7 +289,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         sql"""SELECT g.game_id, g.game_type, g.name, g.description, g.url, g.character_url, g.active, g.external_id,
                  g.timeout_action,
                  r.game_role_id, r.name, r.optional,
-                 p.game_parameter_id, p.name, p.default_value,
+                 p.game_parameter_id, p.name, p.default_value, p.display_name,
                  v.value
           FROM game g
           LEFT JOIN game_role r ON r.game_id = g.game_id
@@ -299,7 +301,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
             .query(
               gameId *: gameType *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *:
                   int4.opt *: text.opt *: bool.opt *:
-                  int4.opt *: text.opt *: value.opt *: value.opt
+                  int4.opt *: text.opt *: value.opt *: text.opt *: value.opt
             )
 
     /** All games with their roles and parameters, sorted by name, in a single query regardless of how many games there
@@ -350,7 +352,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                               parameterRows
                                   .flatMap(_._3.parameterValue)
                                   .distinct
-                                  .map(GameParameterValue(id, GameParameterId(parameterId), _))
+                                  .map(GameParameterValue(id, GameParameterId(parameterId), _)),
+                              first.parameterDisplayName
                             )
                         }
                         .sortBy(_.gameParameterId.value)
