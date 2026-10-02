@@ -9,9 +9,13 @@
 --
 -- One per game. A game with none can still be played against an engine that asks for no key —
 -- a local one, registered by its register-game.sql — and a deployed engine refuses it.
+--
+-- And no two games share one: a key is how a callback says which game's engine sent it, and how
+-- matchmaker proves to an engine which game it is calling about, so a key held by two games
+-- would vouch for either.
 CREATE TABLE game_api_key (
     game_id      INT PRIMARY KEY REFERENCES game,
-    api_key      TEXT NOT NULL CHECK (btrim(api_key) <> ''),
+    api_key      TEXT NOT NULL UNIQUE CHECK (btrim(api_key) <> ''),
     create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

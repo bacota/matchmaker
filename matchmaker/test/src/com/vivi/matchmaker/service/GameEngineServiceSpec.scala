@@ -237,21 +237,20 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val engine = StubEngine()
             val services = TestServices.servicesWith(engine)
+            // Fresh for each case: keys are unique across games (V34), and the database outlives a run.
+            val (otherKey, thisKey) = (s"other-$gameExternalId", s"this-$gameExternalId")
             val result = for {
                 other <- makeFixture(s"$nickname-o", s"$externalId-o", s"$gameExternalId-o")
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
                 _ <- TestSession.resource.use { session =>
                     val keys = new GameApiKeyRepo(session)
-                    keys.set(other.game.gameId, "the-other-games-key") *> keys.set(
-                      fixture.game.gameId,
-                      "this-games-key"
-                    )
+                    keys.set(other.game.gameId, otherKey) *> keys.set(fixture.game.gameId, thisKey)
                 }
                 challenge <- services.challenges.create(challengeFor(fixture), externalId)
                 _ <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
             } yield (engine.lastCreateKey, engine.lastStatusKey)
 
-            result.timeout(15.seconds).unsafeRunSync() == (Some("this-games-key"), Some("this-games-key"))
+            result.timeout(15.seconds).unsafeRunSync() == (Some(thisKey), Some(thisKey))
         }
     }
 

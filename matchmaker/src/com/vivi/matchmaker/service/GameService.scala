@@ -2,6 +2,7 @@ package com.vivi.matchmaker.service
 
 import cats.effect.IO
 import cats.syntax.all._
+import skunk.SqlState
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.auth.ApiKeys
 import com.vivi.matchmaker.persistence.{GameApiKeyRepo, GameRepo, PlayerRepo, TextCodec}
@@ -63,7 +64,15 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                                             IO.raiseError(NotFoundError(s"no game with id ${trimmed.gameId.value}"))
                                     }
                             }
-                    _ <- newKey.traverse_(key => new GameApiKeyRepo(session).set(result.gameId, key))
+                    // Unique across games (V34). A clash rolls the whole save back, game and all.
+                    _ <- newKey.traverse_(key =>
+                        new GameApiKeyRepo(session).set(result.gameId, key).recoverWith {
+                            case SqlState.UniqueViolation(_) =>
+                                IO.raiseError(
+                                  ConflictError("that API key is another game's; every game needs a key of its own")
+                                )
+                        }
+                    )
                 } yield result.copy(hasApiKey = result.hasApiKey || newKey.isDefined)
             }
         }
