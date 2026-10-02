@@ -393,9 +393,10 @@ ${TurnTimer.script}
 </html>
 """
 
-    /** The fighters page: a player's fighters, each of which they may edit or give away here, and the form a new one is
-      * built with. Every change to a fighter is made in this engine; matchmaker is told of each, and is where the list
-      * comes from, since this engine keeps no fighters of its own.
+    /** The fighters page: a player's fighters, each of which they may edit here, and the form a new one is built with.
+      * Giving one away has its route but is not offered on the page yet. Every change to a fighter is made in this
+      * engine; matchmaker is told of each, and is where the list comes from, since this engine keeps no fighters of its
+      * own.
       *
       * Served to anyone, like the play page, and for the same reason: a browser navigation carries no token, so this is
       * the shell that signs the player in and then fetches and posts with one. Without a login configured — the local,
@@ -436,9 +437,23 @@ ${TurnTimer.script}
   #fighters { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
   #fighters li { border: 1px solid var(--line); border-radius: 8px; padding: .75rem; }
   #fighters .about { margin: 0 0 .25rem; opacity: .8; overflow-wrap: anywhere; }
-  #fighters dl { display: grid; grid-template-columns: repeat(5, auto); gap: 0 .5rem; margin: .25rem 0 .5rem; font-size: .875rem; }
+  /* Each characteristic and its number kept together, as a pair, and the pairs wrapped as the width allows: laid out
+     in columns instead, the names and numbers of five characteristics come apart on a phone. */
+  #fighters dl { display: flex; flex-wrap: wrap; gap: .125rem 1rem; margin: .25rem 0 .5rem; font-size: .875rem; }
+  #fighters dl > div { display: flex; gap: .375rem; white-space: nowrap; }
   #fighters dt { opacity: .75; }
-  #fighters dd { margin: 0; font-variant-numeric: tabular-nums; }
+  #fighters dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+  /* A characteristic's explanation sits behind a "?" beside its name. The tip opens below the row,
+     no wider than it, so on a phone it stays on the screen: on hover where there is a mouse,
+     on keyboard focus, and on a tap (`.open`), the only one of the three a touch screen has. */
+  form .field.trait { position: relative; }
+  .caption { display: flex; align-items: center; gap: .125rem; }
+  .tip-toggle { min-width: 44px; min-height: 44px; padding: 0; border: none; background: none; color: inherit;
+                font: inherit; font-weight: 700; cursor: help; }
+  .tip { display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 10; max-width: 22rem; padding: .5rem .75rem; border: 1px solid var(--line);
+         border-radius: 6px; background: var(--paper); color: var(--ink); font-size: .875rem; line-height: 1.4;
+         box-shadow: 0 2px 8px #0004; }
+  .tip.open, .tip:hover:not(.dismissed), .tip-toggle:hover + .tip:not(.dismissed), .tip-toggle:focus-visible + .tip:not(.dismissed) { display: block; }
   .detail { opacity: .8; }
   :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
 ${SignIn.css}
@@ -506,19 +521,45 @@ ${signIn.signInScript}
     ["chin", "Chin", "You are knocked out only by power above your defense plus three times this."]
   ];
 
+  /* Each characteristic's explanation is a tip behind a "?" rather than a line under it. It still
+   * describes the field (aria-describedby reads a hidden element too), so a screen reader hears it
+   * on reaching the field without opening anything. */
   const inputs = {};
   const box = document.getElementById("build-fields");
   traits.forEach(([key, label, hint]) => {
     const row = document.createElement("div");
-    row.className = "field";
+    row.className = "field trait";
     row.innerHTML =
-      '<label for="f-' + key + '">' + label + '</label>' +
+      '<span class="caption"><label for="f-' + key + '">' + label + '</label>' +
+      '<button type="button" class="tip-toggle" aria-label="About ' + label + '" aria-expanded="false"' +
+      ' aria-controls="f-' + key + '-hint">?</button>' +
+      '<span class="tip" role="tooltip" id="f-' + key + '-hint">' + hint + '</span></span>' +
       '<input id="f-' + key + '" type="number" inputmode="numeric" step="1" required min="' + rules.min +
-      '" max="' + rules.max + '" aria-describedby="f-' + key + '-hint">' +
-      '<span class="hint" id="f-' + key + '-hint">' + hint + '</span>';
+      '" max="' + rules.max + '" aria-describedby="f-' + key + '-hint">';
     box.appendChild(row);
     inputs[key] = row.querySelector("input");
+    tip(row.querySelector(".tip-toggle"), row.querySelector(".tip"));
   });
+
+  /* A tap toggles the tip open and leaving the button closes it. Escape hides whatever tip is
+   * showing, including one shown by hover or keyboard focus, which `.open` knows nothing about:
+   * `.dismissed` holds it hidden, with focus left where it was, until the pointer or focus arrives
+   * afresh. */
+  function tip(toggle, text) {
+    const setOpen = open => { text.classList.toggle("open", open); toggle.setAttribute("aria-expanded", String(open)); };
+    const fresh = () => text.classList.remove("dismissed");
+    toggle.addEventListener("click", () => { fresh(); setOpen(!text.classList.contains("open")); });
+    toggle.addEventListener("focus", fresh);
+    toggle.addEventListener("mouseenter", fresh);
+    toggle.addEventListener("blur", () => setOpen(false));
+    document.addEventListener("keydown", e => {
+      if (e.key !== "Escape" || text.classList.contains("dismissed")) return;
+      if (text.classList.contains("open") || toggle.matches(":focus-visible") || toggle.matches(":hover")) {
+        setOpen(false);
+        text.classList.add("dismissed");
+      }
+    });
+  }
   const nameInput = document.getElementById("f-name");
   const descriptionInput = document.getElementById("f-description");
 
@@ -661,12 +702,15 @@ ${signIn.signInScript}
     }
     if (f.fighter) {
       const stats = document.createElement("dl");
+      // Each name and its number in a group of their own, so the two cannot be laid out apart.
       traits.forEach(([key, label]) => {
+        const pair = document.createElement("div");
         const term = document.createElement("dt");
         term.textContent = label;
         const figure = document.createElement("dd");
         figure.textContent = f.fighter[key];
-        stats.append(term, figure);
+        pair.append(term, figure);
+        stats.appendChild(pair);
       });
       item.appendChild(stats);
     } else {
@@ -676,7 +720,8 @@ ${signIn.signInScript}
       item.appendChild(unbuilt);
     }
 
-    item.append(editForm(f), giveForm(f));
+    // Not giveForm yet: giving a fighter away is to be offered later. The route and the form stay.
+    item.appendChild(editForm(f));
     return item;
   }
 
@@ -754,7 +799,8 @@ ${signIn.signInScript}
     );
   }
 
-  /* Giving a fighter away cannot be taken back from here, so the button asks first. */
+  /* Giving a fighter away cannot be taken back from here, so the button asks first. Not offered on
+   * the page yet (see fighterItem). */
   function giveForm(f) {
     const to = textField("give-" + f.characterId, "Give " + f.name + " to (matchmaker nickname)", "", 80);
     return changeForm(
