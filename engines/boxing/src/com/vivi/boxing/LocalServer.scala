@@ -17,7 +17,7 @@ import com.vivi.engine.LocalEngineServer
   * MATCHMAKER_OFFLINE=true mill -j 4 --ticker false engines.boxing.runMain com.vivi.boxing.LocalServer
   * }}}
   *
-  * Fighters are built at `/fighters/new?as=<cognito sub>` and reported to matchmaker at `MATCHMAKER_URL`, which
+  * Fighters are built and edited at `/fighters?as=<cognito sub>` and reported to matchmaker at `MATCHMAKER_URL`, which
   * defaults to matchmaker's own local server on 8080.
   */
 object LocalServer {

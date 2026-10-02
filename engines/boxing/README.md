@@ -49,14 +49,22 @@ A fighter is a matchmaker character, and its characteristics are the character's
   isn't one this engine could have built (for example, over budget), refuses the bout.
 
 A fighter is built here, not in matchmaker. A signed-in player builds one on this engine's
-`/fighters/new` page, which posts to `POST /fighters`. The engine checks the fighter against the
+`/fighters` page, which posts to `POST /fighters`. The engine checks the fighter against the
 rules above and then reports it to matchmaker with `POST {MATCHMAKER_URL}/characters`. That call
 carries the engine's API key, the player's `sub` as owner, and the characteristics as the
 character's state. Matchmaker takes the game from the key, records the character, and answers with
 its id. The engine keeps nothing itself, so the fighter's only record is matchmaker's.
 
 Matchmaker's UI has no character form of its own. A player with no fighter is sent to the game's
-`character_url`, which `register-game.sql` sets to `/fighters/new` beside the engine's `/games`.
+`character_url`, which `register-game.sql` sets to `/fighters` beside the engine's `/games`.
+
+Every other change to a fighter is made here too, on the same page. It lists the player's fighters,
+and each one can be renamed, given a new description, or given to another player by their
+matchmaker nickname. The engine keeps no fighters itself, so it gets the list from matchmaker with
+`GET {MATCHMAKER_URL}/characters?owner=<sub>`. Edits go to `PUT {MATCHMAKER_URL}/characters/{id}`
+and gifts to `PUT {MATCHMAKER_URL}/characters/{id}/owner`, each naming the signed-in player as
+owner. Matchmaker applies them only if that player owns the fighter. Players cannot change
+characters in matchmaker at all.
 
 ### Rounds
 
@@ -107,7 +115,7 @@ psql "$DATABASE_URL" -v url="http://localhost:8092/games" -v external_id="boxing
 ```
 
 Then run the normal character-game flow. Each player builds a fighter at
-`http://localhost:8092/fighters/new?as=<sub>`, which registers it with the matchmaker at
+`http://localhost:8092/fighters?as=<sub>`, which registers it with the matchmaker at
 `MATCHMAKER_URL` (by default `http://localhost:8080`). A challenge is then made and accepted with a
 fighter each, and the challenger starts it. The match's `playUrl` is the page.
 
@@ -137,7 +145,9 @@ with `deploy_boxing = true` in
 This engine needs two changes on matchmaker's side that the targeted per-engine plan doesn't touch:
 
 - matchmaker has to hold the engine's API key
-- `POST /characters` (and `PUT /characters/{characterId}/state`) have to be engine routes
+- `POST /characters`, `GET /characters`, `PUT /characters/{characterId}` and
+  `PUT /characters/{characterId}/owner` (and `PUT /characters/{characterId}/state`) have to be
+  engine routes
   (`local.engine_routes` in `terraform/modules/api/main.tf`). Behind the JWT authorizer, no game
   could ever report a fighter.
 

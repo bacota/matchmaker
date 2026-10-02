@@ -44,39 +44,88 @@ class Engine(
     def buildFighter(cognitoId: String, request: BuildRequest): Either[Refusal, BuiltFighter] = {
         val fighter = Fighter(request.strength, request.speed, request.agility, request.workrate, request.chin)
         for {
-            name <- Option(request.name.trim).filter(_.nonEmpty).toRight(Refusal.Invalid("give your fighter a name"))
+            name <- named(request.name)
             valid <- Fighter.validate(fighter).left.map(Refusal.Invalid(_))
-            url <- matchmakerUrl.toRight(
-              Refusal.Unavailable("this engine has no matchmaker to register fighters with")
+            url <- matchmakerUrl.toRight(noMatchmaker)
+            characterId <- ask("registering a fighter", Unknown)(
+              matchmaker.registerCharacter(
+                url,
+                RegisterCharacterRequest(name, request.description.trim, cognitoId, Fighter.toState(valid))
+              )
             )
-            characterId <- register(
-              url,
-              RegisterCharacterRequest(name, request.description.trim, cognitoId, Fighter.toState(valid))
-            )
-        } yield BuiltFighter(
-          characterId,
-          name,
-          FighterView(valid.strength, valid.speed, valid.agility, valid.workrate, valid.chin)
-        )
+        } yield BuiltFighter(characterId, name, view(valid))
     }
 
-    private def register(url: String, request: RegisterCharacterRequest): Either[Refusal, Long] =
-        try Right(matchmaker.registerCharacter(url, request))
+    /** The player's fighters, as matchmaker has them — this engine keeps none. A fighter whose state is not one this
+      * engine could have built (a character made before fighters were built here) is listed without characteristics, as
+      * it would be refused a bout.
+      */
+    def fightersOf(cognitoId: String): Either[Refusal, List[MyFighter]] =
+        for {
+            url <- matchmakerUrl.toRight(noMatchmaker)
+            owned <- ask("listing fighters", Unknown)(matchmaker.listCharacters(url, cognitoId))
+        } yield owned.map(c => MyFighter(c.characterId, c.name, c.description, Fighter.fromState(c.state).map(view)))
+
+    /** A player changing one of their fighters' name and description. Edits are made here, as fighters are built here,
+      * and matchmaker is told; it checks that the fighter is the player's, since it is what knows who owns what.
+      */
+    def editFighter(
+        cognitoId: String,
+        characterId: Long,
+        newName: String,
+        description: String
+    ): Either[Refusal, Edited] =
+        for {
+            name <- named(newName)
+            url <- matchmakerUrl.toRight(noMatchmaker)
+            _ <- ask("editing a fighter", notYours(characterId))(
+              matchmaker.editCharacter(url, characterId, EditCharacterRequest(name, description.trim, cognitoId))
+            )
+        } yield Edited(characterId, name, description.trim)
+
+    /** A player giving one of their fighters to another player, named by their matchmaker nickname. Checked by
+      * matchmaker as an edit is; a nickname nobody has is matchmaker's to say, and is passed on.
+      */
+    def giveFighter(cognitoId: String, characterId: Long, toNickname: String): Either[Refusal, Given] =
+        for {
+            to <- Option(toNickname.trim).filter(_.nonEmpty).toRight(Refusal.Invalid("say who to give it to"))
+            url <- matchmakerUrl.toRight(noMatchmaker)
+            _ <- ask("giving a fighter away", notYours(characterId))(
+              matchmaker.transferCharacter(url, characterId, TransferCharacterRequest(to, cognitoId))
+            )
+        } yield Given(characterId, to)
+
+    private def notYours(characterId: Long) = Refusal.NotFound(s"you have no fighter $characterId")
+
+    private def named(name: String): Either[Refusal, String] =
+        Option(name.trim).filter(_.nonEmpty).toRight(Refusal.Invalid("give your fighter a name"))
+
+    private def view(f: Fighter): FighterView = FighterView(f.strength, f.speed, f.agility, f.workrate, f.chin)
+
+    private val noMatchmaker = Refusal.Unavailable("this engine has no matchmaker to keep fighters with")
+
+    /** What a 404 from matchmaker means to a player who has never signed in there: it has no player for them. */
+    private val Unknown =
+        Refusal.Invalid("matchmaker does not know you yet: sign in to matchmaker once to register, then come back")
+
+    /** A call to matchmaker, with its failures put the way the player is told them. `notFound` is what a 404 means for
+      * this call, and a 400 is passed on as matchmaker said it: those are the refusals that are the player's own.
+      * Anything else matchmaker refuses is how this engine is set up, and anything else at all is matchmaker not
+      * answering, which the player can retry.
+      */
+    private def ask[A](what: String, notFound: Refusal)(call: => A): Either[Refusal, A] =
+        try Right(call)
         catch {
-            // Matchmaker has no player for this sign-in: the one refusal that is the player's to fix.
-            case MatchmakerRefusal(404, _) =>
-                Left(
-                  Refusal.Invalid(
-                    "matchmaker does not know you yet: sign in to matchmaker once to register, then build your fighter"
-                  )
-                )
-            // Anything else it refuses is how this engine is set up, not anything the player did.
+            case MatchmakerRefusal(404, _) => Left(notFound)
+            // Matchmaker's own word on what the player asked for — a nickname nobody has, a fighter
+            // that is already theirs — which is written to be read by them.
+            case MatchmakerRefusal(400, reason) => Left(Refusal.Invalid(reason))
             case e: MatchmakerRefusal =>
-                Log.failure(e, "registering a fighter")
-                Left(Refusal.Unavailable(s"matchmaker would not take the fighter: ${e.reason}"))
+                Log.failure(e, what)
+                Left(Refusal.Unavailable(s"matchmaker refused: ${e.reason}"))
             case NonFatal(e) =>
-                Log.failure(e, "registering a fighter")
-                Left(Refusal.Unavailable("your fighter could not be registered with matchmaker; please try again"))
+                Log.failure(e, what)
+                Left(Refusal.Unavailable("matchmaker could not be reached; please try again"))
         }
 
     /** A player's plan for the current round. Both corners planning at the same moment is the ordinary case here, and

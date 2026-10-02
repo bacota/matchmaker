@@ -93,7 +93,10 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private val lockGameRow: Query[GameId, GameId] =
         sql"SELECT game_id FROM game WHERE game_id = $gameId FOR SHARE".query(gameId)
 
-    /* The games an engine's identity names, held as `lockGameRow` holds one. */
+    /* The games an engine's identity names, read plainly, and held as `lockGameRow` holds one. */
+    private val selectGamesByExternalId: Query[String, GameId] =
+        sql"SELECT game_id FROM game WHERE external_id = $text ORDER BY game_id".query(gameId)
+
     private val lockGamesByExternalId: Query[String, GameId] =
         sql"SELECT game_id FROM game WHERE external_id = $text ORDER BY game_id FOR SHARE".query(gameId)
 
@@ -177,6 +180,10 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       */
     def lockForShareByExternalId(externalId: String): IO[List[GameId]] =
         session.execute(lockGamesByExternalId)(externalId)
+
+    /** As [[lockForShareByExternalId]], for a read that writes nothing and so needs no lock. */
+    def readIdsByExternalId(externalId: String): IO[List[GameId]] =
+        session.execute(selectGamesByExternalId)(externalId)
 
     /** As [[lockForShare]], but exclusively: for a caller that is about to modify the game, and whose decision about
       * what to write comes from reading it. Nothing else may read it for modification until the transaction ends.

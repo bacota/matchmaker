@@ -114,11 +114,89 @@ class FighterRoutesSpec extends FunSuite {
         assert(response.body.contains("sign in to matchmaker"), response.body)
     }
 
-    test("the build page is served to anyone, with the rules it builds to") {
+    test("the fighters page is served to anyone, with the rules a fighter is built to") {
         val (routes, _) = fixture()
-        val page = routes(EngineRequest("GET", "/fighters/new"))
+        val page = routes(EngineRequest("GET", "/fighters"))
         assertEquals(page.status, 200)
         assert(page.body.contains("Spread 25 points"), page.body.take(200))
         assert(page.body.contains("""<label for="f-name">"""))
+    }
+
+    private def mine(routes: Routes, as: String) =
+        routes(EngineRequest("GET", "/fighters/mine", Map("as" -> as)))
+
+    private def editing(routes: Routes, id: Long, name: String, description: String, as: String = "sub-alice") =
+        routes(
+          EngineRequest("PUT", s"/fighters/$id", Map("as" -> as), write(Protocol.EditRequest(name, description)))
+        )
+
+    private def giving(routes: Routes, id: Long, to: String, as: String = "sub-alice") =
+        routes(EngineRequest("PUT", s"/fighters/$id/owner", Map("as" -> as), write(Protocol.GiveRequest(to))))
+
+    test("a player's fighters are listed from matchmaker, theirs only, with their characteristics") {
+        val (routes, _) = fixture()
+        build(routes, slugger)
+        build(routes, slugger.copy(name = "Bob's"), as = Some("sub-bob"))
+
+        val response = mine(routes, "sub-alice")
+        assertEquals(response.status, 200)
+        val List(only) = read[List[Protocol.MyFighter]](response.body): @unchecked
+        assertEquals((only.name, only.description), ("Iron Mike", "hits hard"))
+        assertEquals(only.fighter, Some(Protocol.FighterView(8, 4, 3, 5, 5)))
+    }
+
+    test("a fighter edited by its owner has its name and description changed in matchmaker, and listed so") {
+        val (routes, _) = fixture()
+        val id = read[Protocol.BuiltFighter](build(routes, slugger).body).characterId
+
+        val response = editing(routes, id, "  Kid Dynamite ", " fast hands ")
+        assertEquals(response.status, 200)
+        assertEquals(read[Protocol.Edited](response.body), Protocol.Edited(id, "Kid Dynamite", "fast hands"))
+        val List(listed) = read[List[Protocol.MyFighter]](mine(routes, "sub-alice").body): @unchecked
+        assertEquals((listed.name, listed.description), ("Kid Dynamite", "fast hands"))
+        assertEquals(listed.fighter, Some(Protocol.FighterView(8, 4, 3, 5, 5)))
+    }
+
+    test("another player's fighter cannot be edited or given away, and is answered as though it were not there") {
+        val (routes, recorder) = fixture()
+        recorder.players = Map("carol" -> "sub-carol")
+        val id = read[Protocol.BuiltFighter](build(routes, slugger).body).characterId
+
+        assertEquals(editing(routes, id, "Stolen", "", as = "sub-bob").status, 404)
+        assertEquals(giving(routes, id, "carol", as = "sub-bob").status, 404)
+        assertEquals(read[List[Protocol.MyFighter]](mine(routes, "sub-alice").body).map(_.name), List("Iron Mike"))
+    }
+
+    test("a fighter given away by its owner belongs to the player with that nickname") {
+        val (routes, recorder) = fixture()
+        recorder.players = Map("bob" -> "sub-bob")
+        val id = read[Protocol.BuiltFighter](build(routes, slugger).body).characterId
+
+        val response = giving(routes, id, " bob ")
+        assertEquals(response.status, 200)
+        assertEquals(read[Protocol.Given](response.body), Protocol.Given(id, "bob"))
+        assertEquals(read[List[Protocol.MyFighter]](mine(routes, "sub-alice").body), Nil)
+        assertEquals(read[List[Protocol.MyFighter]](mine(routes, "sub-bob").body).map(_.characterId), List(id))
+    }
+
+    test("giving a fighter to a nickname nobody has is refused with matchmaker's reason") {
+        val (routes, _) = fixture()
+        val id = read[Protocol.BuiltFighter](build(routes, slugger).body).characterId
+
+        val response = giving(routes, id, "nobody")
+        assertEquals(response.status, 400)
+        assert(response.body.contains("no player is called 'nobody'"), response.body)
+    }
+
+    test("an edit needs a name and a fighter id, a gift needs somebody, and nobody signed in can do either") {
+        val (routes, recorder) = fixture()
+        val id = read[Protocol.BuiltFighter](build(routes, slugger).body).characterId
+        val body = write(Protocol.EditRequest("x", ""))
+
+        assertEquals(editing(routes, id, "   ", "").status, 400)
+        assertEquals(giving(routes, id, "  ").status, 400)
+        assertEquals(routes(EngineRequest("PUT", "/fighters/abc", Map("as" -> "sub-alice"), body)).status, 400)
+        assertEquals(routes(EngineRequest("PUT", s"/fighters/$id", Map.empty, body)).status, 401)
+        assertEquals(recorder.listCharacters(matchmakerUrl, "sub-alice").map(_.name), List("Iron Mike"))
     }
 }

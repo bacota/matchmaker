@@ -2207,7 +2207,18 @@ object Views {
                           // challenge, so there is nothing to show until there is one.
                           case Some(Nil) => characterPrompt(game, checked, () => status.foreach(_.focus()))
                           case Some(characters) =>
-                              challengePanel(game, player, characters.map(_.characterId))
+                              div(
+                                // Characters are renamed where they were made, so the way to do it
+                                // is the game's own page, as making one is.
+                                game.characterUrl.fold(emptyNode)(url =>
+                                    button(
+                                      cls := "link",
+                                      s"Manage your characters in ${game.name}",
+                                      onClick --> (_ => dom.window.open(url, "_blank", "noopener,noreferrer"))
+                                    )
+                                ),
+                                challengePanel(game, player, characters.map(_.characterId))
+                              )
                       }
               },
               // Focusable but not tabbable: focus is put here when the button that had it goes away.

@@ -2,6 +2,7 @@ package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
 import cats.effect.IO
+import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import org.scalacheck.Prop._
 import org.scalacheck.Gen
@@ -133,41 +134,150 @@ class CharacterServiceSpec extends PropertySuite {
         }
     }
 
-    property("update changes name and description but not state when authorized by the current owner") {
+    property("edit changes a character's name and description, but not its state, for its owner via its game") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, name, newName, gameExternalId) =>
                 val result = for {
                     player <- registrationService.register(nickname, externalId)
                     game <- makeCharacterGame(gameExternalId)
-                    created <- characterService.create(name, "description", externalId, "", gameExternalId)
-                    updated <- characterService.update(
+                    created <- characterService.create(name, "description", externalId, "s", gameExternalId)
+                    edited <- characterService.edit(
                       created.characterId,
-                      newName,
-                      "new description",
+                      s" $newName ",
+                      " new ",
                       externalId,
-                      externalId
+                      gameExternalId
                     )
-                } yield updated.characterId == created.characterId &&
-                    updated.name == newName &&
-                    updated.state == created.state &&
-                    updated.playerId == Some(player.playerId)
+                    found <- characterService.listForGame(game.gameId, externalId)
+                } yield edited.name == newName && found.map(c => (c.name, c.description, c.state, c.playerId)) ==
+                    List((newName, "new", "s", Some(player.playerId)))
                 result.timeout(10.seconds).unsafeRunSync()
         }
     }
 
-    property("update rejects a caller who is not the character's current owner") {
+    property("edit answers a character the named player does not own as if it did not exist") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
-            (nickname, externalId, otherExternalId, name, gameExternalId) =>
+            (nickname, externalId, otherNickname, otherExternalId, gameExternalId) =>
                 val result = for {
                     _ <- registrationService.register(nickname, externalId)
-                    game <- makeCharacterGame(gameExternalId)
-                    created <- characterService.create(name, "description", externalId, "", gameExternalId)
+                    _ <- registrationService.register(otherNickname, otherExternalId)
+                    _ <- makeCharacterGame(gameExternalId)
+                    created <- characterService.create("mine", "description", externalId, "", gameExternalId)
                     attempt <- characterService
-                        .update(created.characterId, name, "description", externalId, otherExternalId)
+                        .edit(created.characterId, "stolen", "d", otherExternalId, gameExternalId)
                         .attempt
-                } yield attempt match {
+                    after <- characterService.listForOwner(externalId, gameExternalId)
+                } yield (attempt match {
+                    case Left(_: NotFoundError) => true
+                    case _                      => false
+                }) && after.map(_.name) == List("mine")
+                result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    property("edit and transfer refuse anyone but the character's own game, its owner included") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, otherNickname, otherExternalId, gameExternalId, otherGameExternalId) =>
+                val result = for {
+                    _ <- registrationService.register(nickname, externalId)
+                    _ <- registrationService.register(otherNickname, otherExternalId)
+                    _ <- makeCharacterGame(gameExternalId)
+                    _ <- makeCharacterGame(otherGameExternalId)
+                    created <- characterService.create("mine", "description", externalId, "", gameExternalId)
+                    id = created.characterId
+                    attempts <- List(
+                      characterService.edit(id, "x", "d", externalId, otherGameExternalId),
+                      characterService.edit(id, "x", "d", externalId, externalId),
+                      characterService.transfer(id, otherNickname, externalId, otherGameExternalId),
+                      characterService.transfer(id, otherNickname, externalId, externalId)
+                    ).traverse(_.attempt)
+                } yield attempts.forall {
                     case Left(_: UnauthorizedError) => true
                     case _                          => false
+                }
+                result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    property("edit refuses a blank name") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val result = for {
+                _ <- registrationService.register(nickname, externalId)
+                _ <- makeCharacterGame(gameExternalId)
+                created <- characterService.create("mine", "description", externalId, "", gameExternalId)
+                attempt <- characterService.edit(created.characterId, "  ", "d", externalId, gameExternalId).attempt
+            } yield attempt match {
+                case Left(_: ValidationError) => true
+                case _                        => false
+            }
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    property("transfer hands a character to the player with that nickname, who then owns it") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, newNickname, newExternalId, gameExternalId) =>
+                val result = for {
+                    _ <- registrationService.register(nickname, externalId)
+                    newOwner <- registrationService.register(newNickname, newExternalId)
+                    game <- makeCharacterGame(gameExternalId)
+                    created <- characterService.create("mine", "description", externalId, "s", gameExternalId)
+                    handed <- characterService.transfer(created.characterId, newNickname, externalId, gameExternalId)
+                    formerList <- characterService.listForGame(game.gameId, externalId)
+                    newList <- characterService.listForGame(game.gameId, newExternalId)
+                } yield handed.playerId == Some(newOwner.playerId) && formerList.isEmpty &&
+                    newList.map(c => (c.characterId, c.name, c.state)) == List((created.characterId, "mine", "s"))
+                result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    property("transfer refuses a nickname nobody has, a character that is not the owner's, and handing it to oneself") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, otherNickname, otherExternalId, unknownNickname, gameExternalId) =>
+                val result = for {
+                    _ <- registrationService.register(nickname, externalId)
+                    _ <- registrationService.register(otherNickname, otherExternalId)
+                    _ <- makeCharacterGame(gameExternalId)
+                    created <- characterService.create("mine", "description", externalId, "", gameExternalId)
+                    id = created.characterId
+                    toNobody <- characterService.transfer(id, unknownNickname, externalId, gameExternalId).attempt
+                    notTheirs <- characterService.transfer(id, otherNickname, otherExternalId, gameExternalId).attempt
+                    toSelf <- characterService.transfer(id, nickname, externalId, gameExternalId).attempt
+                    after <- characterService.listForOwner(externalId, gameExternalId)
+                } yield ((toNobody, notTheirs, toSelf) match {
+                    case (Left(_: ValidationError), Left(_: NotFoundError), Left(_: ValidationError)) => true
+                    case _                                                                            => false
+                }) && after.map(_.characterId) == List(id)
+                result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    property("listForOwner lists a player's characters in the calling game only") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherGameExternalId) =>
+                val result = for {
+                    _ <- registrationService.register(nickname, externalId)
+                    _ <- makeCharacterGame(gameExternalId)
+                    _ <- makeCharacterGame(otherGameExternalId)
+                    here <- characterService.create("here", "description", externalId, "", gameExternalId)
+                    _ <- characterService.create("elsewhere", "description", externalId, "", otherGameExternalId)
+                    listed <- characterService.listForOwner(externalId, gameExternalId)
+                } yield listed.map(_.characterId) == List(here.characterId)
+                result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    property("listForOwner refuses a caller that is no game, and a player matchmaker does not know") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, unknownExternalId, gameExternalId) =>
+                val result = for {
+                    _ <- registrationService.register(nickname, externalId)
+                    _ <- makeCharacterGame(gameExternalId)
+                    byPlayer <- characterService.listForOwner(externalId, externalId).attempt
+                    unknown <- characterService.listForOwner(unknownExternalId, gameExternalId).attempt
+                } yield (byPlayer, unknown) match {
+                    case (Left(_: UnauthorizedError), Left(_: NotFoundError)) => true
+                    case _                                                    => false
                 }
                 result.timeout(10.seconds).unsafeRunSync()
         }
