@@ -244,20 +244,26 @@ object Views {
                   )
               case _ => emptyNode
           },
-          child <-- Store.error.signal.map {
-              case Some(message) =>
-                  div(
-                    cls := "error",
-                    // Every failed request in the application reports here. Without this the banner is a
-                    // silent red box: it appears with no page change to notice, so a screen reader is
-                    // never given a reason to read it out.
-                    role := "alert",
-                    span(message),
-                    button(cls := "link", "Dismiss", onClick --> (_ => Store.error.set(None)))
-                  )
-              case None => emptyNode
-          }
+          errorBanner
         )
+
+    /** `Store.error` as a banner: in the header, and again inside each dialog that reports through it, since a modal
+      * dialog makes the header inert and covers it -- a refusal shown only there is neither seen nor read out.
+      */
+    private def errorBanner: Modifier[HtmlElement] =
+        child <-- Store.error.signal.map {
+            case Some(message) =>
+                div(
+                  cls := "error",
+                  // Every failed request in the application reports here. Without this the banner is a
+                  // silent red box: it appears with no page change to notice, so a screen reader is
+                  // never given a reason to read it out.
+                  role := "alert",
+                  span(message),
+                  button(cls := "link", "Dismiss", onClick --> (_ => Store.error.set(None)))
+                )
+            case None => emptyNode
+        }
 
     /** The sign-in form itself, not a button that navigates to one: signing in happens on this page now, so that the
       * password is asked for first. Sign-up and password reset are still links out to the hosted pages, from inside
@@ -1840,17 +1846,29 @@ object Views {
     /* The edit form as a modal dialog, the way `challengeDialog` shows the challenge form: closed by Escape, by a
      * click on the backdrop, or by its own Close button, and closed by a save that succeeds. */
     private def editGameDialog(game: Game): HtmlElement = {
-        val headingId = s"edit-game-${game.gameId.value}-heading"
         val opening = editGameOpening
+        gameDialog(
+          Some(game),
+          s"edit-game-${game.gameId.value}-heading",
+          s"Edit ${game.displayName}",
+          closeEditGame,
+          onSaved = _ => if (editGameOpening == opening) closeEditGame()
+        )
+    }
+
+    /* The game form as a modal dialog, for adding a game or editing one. */
+    private def gameDialog(
+        existing: Option[Game],
+        headingId: String,
+        title: String,
+        close: () => Unit,
+        onSaved: Game => Unit = _ => ()
+    ): HtmlElement =
         div(
           cls := "modal-scrim",
           Modal.inertBehind,
-          onClick --> (event => if (event.target == event.currentTarget) closeEditGame()),
-          gameForm(
-            Some(game),
-            heading = Some(headingId -> s"Edit ${game.displayName}"),
-            onSaved = () => if (editGameOpening == opening) closeEditGame()
-          ).amend(
+          onClick --> (event => if (event.target == event.currentTarget) close()),
+          gameForm(existing, heading = Some(headingId -> title), onSaved = onSaved).amend(
             cls := "modal",
             role := "dialog",
             htmlAttr("aria-modal", com.raquo.laminar.codecs.StringAsIsCodec) := "true",
@@ -1859,15 +1877,15 @@ object Views {
             inContext(node => onMountCallback(_ => node.ref.focus())),
             onKeyDown.filter(_.key == "Escape") --> { event =>
                 event.stopPropagation()
-                closeEditGame()
+                close()
             },
+            errorBanner,
             div(
               cls := "alternatives",
-              button(tpe := "button", cls := "link", "Close", onClick --> (_ => closeEditGame()))
+              button(tpe := "button", cls := "link", "Close", onClick --> (_ => close()))
             )
           )
         )
-    }
 
     /** This player's finished matches in one game, most recently finished first.
       *
@@ -1892,14 +1910,55 @@ object Views {
     /** The admin's add-a-game screen, reached from the menu. The same form the edit link opens, with nothing to start
       * from.
       */
-    private def newGamePage: HtmlElement =
+    private def newGamePage: HtmlElement = {
+        // Open on arriving, since adding a game is what the menu item was pressed for; closed, the page is left with
+        // the button to open it again and the disabled games. Page-local, so leaving the page is closing it -- a
+        // create does, for the new game's screen.
+        val adding = Var(true)
+        var trigger: Option[dom.html.Element] = None
+        // Which opening of the dialog is current, as `editGameOpening` is for the edit dialog: moved on by a close and
+        // by leaving the page, so that a create answered after either does not pull the admin to the new game's
+        // screen from wherever they have gone since. The game is recorded all the same.
+        var opening = 0
+        def close(): Unit = {
+            opening += 1
+            adding.set(false)
+            trigger.foreach(_.focus())
+        }
         div(
+          onUnmountCallback(_ => opening += 1),
           h2("Add a Game"),
           child <-- currentPlayer.map {
-              case Some(player) if player.isAdmin => div(newGameForm, disabledGames)
-              case _                              => p(cls := "empty", "Only an administrator can add a game.")
+              case Some(player) if player.isAdmin =>
+                  div(
+                    button(
+                      htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
+                      aria.expanded <-- adding.signal,
+                      "New Game",
+                      onMountCallback(context => trigger = Some(context.thisNode.ref)),
+                      onUnmountCallback(_ => trigger = None),
+                      onClick --> (_ => adding.set(true))
+                    ),
+                    child <-- adding.signal.map { open =>
+                        if (open) {
+                            val mine = opening
+                            // Straight to the game that was just created: it is now in the menu, and its own
+                            // screen is where anything else is done with it.
+                            gameDialog(
+                              None,
+                              "add-game-heading",
+                              "Add a Game",
+                              close,
+                              onSaved = saved => if (opening == mine) Store.show(Store.Page.OneGame(saved.gameId))
+                            )
+                        } else emptyNode
+                    },
+                    disabledGames
+                  )
+              case _ => p(cls := "empty", "Only an administrator can add a game.")
           }
         )
+    }
 
     /** The games an admin has disabled, each a link to its own screen, where its edit form can enable it again.
       *
@@ -2160,8 +2219,6 @@ object Views {
             }
     }
 
-    private def newGameForm: HtmlElement = gameForm(None)
-
     /** The admin's game form, for creating one (`existing` is None) or editing one.
       *
       * The two are the same form because a game is the same thing either way, and every field is editable in both:
@@ -2180,7 +2237,7 @@ object Views {
     private def gameForm(
         existing: Option[Game],
         heading: Option[(String, String)] = None,
-        onSaved: () => Unit = () => ()
+        onSaved: Game => Unit = _ => ()
     ): HtmlElement = {
         val name = Var(existing.map(_.name).getOrElse(""))
         val displayName = Var(existing.map(_.displayName).getOrElse(""))
@@ -2213,63 +2270,7 @@ object Views {
           cls := "card",
           // A dialog's title, given as (id, text) so the dialog can be labelled by it.
           heading.fold(emptyNode)((id, text) => h3(idAttr := id, text)),
-          field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
-          label(
-            cls := "field",
-            "Display name",
-            // Inside the label so it is read with the field, as the engine identity's hint is.
-            span(
-              cls := "detail hint",
-              "What players see. Left blank, it is the name. Rename a game by changing this rather than the " +
-                  "name, which is what the game engine is told."
-            ),
-            input(controlled(value <-- displayName.signal, onInput.mapToValue --> displayName))
-          ),
-          field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
-          field("Game engine url", input(tpe := "url", controlled(value <-- url.signal, onInput.mapToValue --> url))),
-          label(
-            cls := "field",
-            "Engine identity",
-            // Inside the label, so that it is read out with the field: the name means nothing on its
-            // own, and getting it wrong fails nowhere near this form.
-            span(
-              cls := "detail hint",
-              "Who the engine is, such as \"boxing\". Moves, results and characters reported with this " +
-                  "game's API key are taken to come from it."
-            ),
-            input(
-              autoComplete := "off",
-              spellCheck := false,
-              controlled(value <-- engineIdentity.signal, onInput.mapToValue --> engineIdentity)
-            )
-          ),
-          label(
-            cls := "field",
-            "API key",
-            // Said in the label, so it is read with the field: whether a key is stored is the one thing
-            // about it this form can tell, since the key itself never comes back.
-            span(
-              cls := "detail hint",
-              existing match {
-                  case Some(game) if game.hasApiKey =>
-                      "A key is set. Leave this blank to keep it, or enter a new one to replace it."
-                  case Some(_) =>
-                      "No key is set, so a deployed engine will refuse every call. Enter the key the engine " +
-                          "was deployed with."
-                  case None =>
-                      "The key the engine was deployed with, at least 24 characters. It is stored, never shown " +
-                          "again, and can be replaced here later."
-              }
-            ),
-            // A password field, so it is not shown while it is typed, and new-password so that no browser
-            // offers to fill it with something saved for this site.
-            input(
-              tpe := "password",
-              autoComplete := "new-password",
-              spellCheck := false,
-              controlled(value <-- apiKey.signal, onInput.mapToValue --> apiKey)
-            )
-          ),
+          // First, because it decides what else the form asks: a character game has a page to make characters on.
           label(
             "Requires characters ",
             input(
@@ -2293,14 +2294,65 @@ object Views {
                 )
               )
           ),
-          field(
-            "When a turn runs out",
-            select(
-              onChange.mapToValue --> (code => timeoutAction.set(TimeoutAction.fromCode(code))),
-              value <-- timeoutAction.signal.map(_.code),
-              TimeoutAction.values.toSeq.map(action => option(value := action.code, action.label))
+          field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
+          tipField(
+            s"$formKey-display-name-tip",
+            "Display name",
+            "What players see. Left blank, it is the name. Rename a game by changing this rather than the " +
+                "name, which is what the game engine is told."
+          )(input(controlled(value <-- displayName.signal, onInput.mapToValue --> displayName))),
+          field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
+          field("Game engine url", input(tpe := "url", controlled(value <-- url.signal, onInput.mapToValue --> url))),
+          // The name means nothing on its own, and getting it wrong fails nowhere near this form.
+          tipField(
+            s"$formKey-engine-identity-tip",
+            "Engine identity",
+            "Who the engine is, such as \"boxing\". Moves, results and characters reported with this " +
+                "game's API key are taken to come from it."
+          )(
+            input(
+              autoComplete := "off",
+              spellCheck := false,
+              controlled(value <-- engineIdentity.signal, onInput.mapToValue --> engineIdentity)
             )
           ),
+          // Whether a key is stored is the one thing about it this form can tell, since the key itself never comes
+          // back.
+          tipField(
+            s"$formKey-api-key-tip",
+            "API key",
+            existing match {
+                case Some(game) if game.hasApiKey =>
+                    "A key is set. Leave this blank to keep it, or enter a new one to replace it."
+                case Some(_) =>
+                    "No key is set, so a deployed engine will refuse every call. Enter the key the engine " +
+                        "was deployed with."
+                case None =>
+                    "The key the engine was deployed with, at least 24 characters. It is stored, never shown " +
+                        "again, and can be replaced here later."
+            }
+          )(
+            // A password field, so it is not shown while it is typed, and new-password so that no browser
+            // offers to fill it with something saved for this site.
+            input(
+              tpe := "password",
+              autoComplete := "new-password",
+              spellCheck := false,
+              controlled(value <-- apiKey.signal, onInput.mapToValue --> apiKey)
+            )
+          ),
+          // Not asked while there is nothing to choose: Forfeit is the only action so far, and a dropdown of one
+          // is a question with no answer to give. It comes back by itself when a second action is added.
+          if (TimeoutAction.values.sizeIs > 1)
+              field(
+                "When a turn runs out",
+                select(
+                  onChange.mapToValue --> (code => timeoutAction.set(TimeoutAction.fromCode(code))),
+                  value <-- timeoutAction.signal.map(_.code),
+                  TimeoutAction.values.toSeq.map(action => option(value := action.code, action.label))
+                )
+              )
+          else emptyNode,
           // Only an existing game can be disabled: a new one is created active, since a game created
           // hidden would look as though the button had done nothing.
           // In the warning colour: of everything on this form it is the one box that makes a game vanish.
@@ -2369,36 +2421,39 @@ object Views {
                             .filter(_.nonEmpty)
                       )
 
-                      Store.run(ApiClient.createGame(game, Option(apiKey.now().trim).filter(_.nonEmpty)), busy) {
-                          saved =>
-                              // Cleared either way: it has been sent, and an edit saved again should not resend it.
-                              apiKey.set("")
-                              if (existing.isEmpty) {
-                                  name.set("")
-                                  displayName.set("")
-                                  description.set("")
-                                  url.set("")
-                                  engineIdentity.set("")
-                                  characterUrl.set("")
-                                  roles.set(List(emptyRole))
-                                  parameters.set(Nil)
-                                  // Straight to the game that was just created: it is now in the menu, and its own
-                                  // screen is where anything else is done with it.
-                                  Store.show(Store.Page.OneGame(saved.gameId))
-                              } else {
-                                  // Re-drafted from what came back, so that roles added by this save carry the ids
-                                  // the insert gave them — without which saving twice would ask to add them again.
-                                  roles.set(saved.roles.map(draftOf).toList)
-                                  parameters.set(
-                                    saved.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList
-                                  )
-                                  onSaved()
-                              }
-                              // Both copies of the game list, because a game saved while deactivated is in
-                              // neither the active one nor reachable by `ensureGame` — its own screen would
-                              // otherwise go on showing what it was before this save, and reopening this
-                              // form would submit that. See `Store.gameSaved`.
-                              Store.gameSaved(saved)
+                      // A save can be answered after a sign-out, and by then the dialog open may be the next
+                      // player's: an answer from an earlier session closes nothing, opens nothing, writes
+                      // nothing into the store and leaves the banner alone. See `Store.runSignedIn`.
+                      Store.runSignedIn(
+                        ApiClient.createGame(game, Option(apiKey.now().trim).filter(_.nonEmpty)),
+                        busy
+                      ) { saved =>
+                          // Cleared either way: it has been sent, and an edit saved again should not resend it.
+                          apiKey.set("")
+                          if (existing.isEmpty) {
+                              name.set("")
+                              displayName.set("")
+                              description.set("")
+                              url.set("")
+                              engineIdentity.set("")
+                              characterUrl.set("")
+                              roles.set(List(emptyRole))
+                              parameters.set(Nil)
+                          } else {
+                              // Re-drafted from what came back, so that roles added by this save carry the ids
+                              // the insert gave them — without which saving twice would ask to add them again.
+                              roles.set(saved.roles.map(draftOf).toList)
+                              parameters.set(
+                                saved.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList
+                              )
+                          }
+                          // Both copies of the game list, because a game saved while deactivated is in
+                          // neither the active one nor reachable by `ensureGame` — its own screen would
+                          // otherwise go on showing what it was before this save, and reopening this
+                          // form would submit that. See `Store.gameSaved`. Before `onSaved`, so that a
+                          // dialog's next step -- the new game's screen -- finds the game already there.
+                          Store.gameSaved(saved)
+                          onSaved(saved)
                       }
               }
           }
@@ -2624,6 +2679,7 @@ object Views {
                 event.stopPropagation()
                 closeChallengeForm()
             },
+            errorBanner,
             div(
               cls := "alternatives",
               button(tpe := "button", cls := "link", "Close", onClick --> (_ => closeChallengeForm()))
@@ -3301,6 +3357,12 @@ object Views {
     /** The clock something is played under, for a challenge — every row of both lists has one. */
     private def timeLimitDetail(challenge: Challenge): HtmlElement =
         timeLimitDetail(challenge.timeLimit, challenge.timeLimitKind, challenge.timeLimitUnit, challenge.live)
+
+    /** A captioned text field whose explanation is a tip beside it rather than a line under it: [[withTip]] around a
+      * `label.field`, with the input pointed at the tip so that it is read out with the field.
+      */
+    private def tipField(id: String, caption: String, text: String)(control: HtmlElement): HtmlElement =
+        withTip(id, caption, text)(label(cls := "field", caption, control.amend(aria.describedBy := id)))
 
     /** A control with a tip beside it: a "?" button that shows `text` on hover, on keyboard focus, and on a tap, which
       * is the only one of the three a phone has. The tip is the element `id` names, so the control can point
