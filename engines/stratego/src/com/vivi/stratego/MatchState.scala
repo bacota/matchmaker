@@ -43,8 +43,9 @@ enum Ending(val label: String) {
   * [[Engine.stateOf]], never by what is stored. Everything else — the phase, whose turn it is, whether the match is
   * over — is derived from the board and the turns rather than kept beside them, where the two could disagree.
   *
-  * `maxMoves` is how many piece moves, by both sides together, end the match as a draw. `clock` is a live match's turn
-  * clock, and `None` for every other match.
+  * `maxMoves` is how many piece moves, by both sides together, end the match as a draw. It has no default, so it is
+  * always stored: a match keeps the cap it was created with, whatever the default becomes later. `clock` is a live
+  * match's turn clock, and `None` for every other match.
   */
 case class StrategoMatch(
     matchId: String,
@@ -56,7 +57,7 @@ case class StrategoMatch(
     createdAt: Instant,
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String],
-    maxMoves: Int = StrategoMatch.defaultMaxMoves,
+    maxMoves: Int,
     clock: Option[TurnClock] = None
 ) extends MatchLike {
 
@@ -145,9 +146,7 @@ case class StrategoMatch(
   */
 object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
 
-    /** A match created with no `maxMoves` is stored without one, and reads back with this — so changing it changes the
-      * cap on every such match already in progress, not only on new ones.
-      */
+    /** The cap for a match created without the `maxMoves` parameter. Changing it changes only matches created after. */
     val defaultMaxMoves = 2000
 
     /** Seats the players, honouring the roles matchmaker sent when it sent usable ones.

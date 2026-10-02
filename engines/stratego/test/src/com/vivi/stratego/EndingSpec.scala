@@ -23,7 +23,8 @@ class EndingSpec extends FunSuite {
           completed = false,
           createdAt = at,
           moveCallbackUrl = None,
-          resultsCallbackUrl = None
+          resultsCallbackUrl = None,
+          maxMoves = StrategoMatch.defaultMaxMoves
         )
     }
 

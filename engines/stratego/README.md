@@ -65,7 +65,7 @@ Blue's. The engine does not warn about it.
 
 | parameter | meaning |
 |---|---|
-| `maxMoves` | Piece moves, both sides together, before the match is drawn. Default 2000. A match created without it is stored without it, so changing the default changes the cap on matches already in progress. |
+| `maxMoves` | Piece moves, both sides together, before the match is drawn. Default 2000. Every match stores its cap, so changing the default affects only matches created afterwards. |
 
 ## The play API
 

@@ -44,7 +44,8 @@ class StoredMatchSpec extends FunSuite {
           completed = false,
           createdAt = at(0),
           moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/moves"),
-          resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/results")
+          resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/results"),
+          maxMoves = 2000
         )
 
     // One line in storage; broken here only to be readable.
@@ -59,7 +60,8 @@ class StoredMatchSpec extends FunSuite {
           |"step":{"pieceId":30,"from":30,"to":60},"battle":{"attacker":"Scout","defender":"Sergeant",
           |"result":"DefenderWins"}}],"isPublic":true,"completed":false,"createdAt":"2026-01-01T00:00:00Z",
           |"moveCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/moves",
-          |"resultsCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/results"}""".stripMargin.replace("\n", "")
+          |"resultsCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/results","maxMoves":2000}""".stripMargin
+            .replace("\n", "")
 
     test("a match is stored as the JSON matches already in DynamoDB are written in") {
         assertEquals(write(stratego), stored)
