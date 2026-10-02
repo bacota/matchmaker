@@ -1788,8 +1788,8 @@ object Views {
         )
     }
 
-    /** The admin's edit form for a game, opened from a link on the game's own screen. Nothing for anyone else: the
-      * server answers a non-admin with a 403, so the link is not there to press.
+    /** The admin's edit form for a game, opened as a dialog from a link on the game's own screen, as the challenge form
+      * is. Nothing for anyone else: the server answers a non-admin with a 403, so the link is not there to press.
       */
     private def editGamePanel(game: Game): HtmlElement =
         div(
@@ -1798,20 +1798,55 @@ object Views {
                   div(
                     button(
                       cls := "link",
+                      htmlAttr("aria-haspopup", com.raquo.laminar.codecs.StringAsIsCodec) := "dialog",
                       aria.expanded := editing.contains(game.gameId),
-                      if (editing.contains(game.gameId)) "Done editing" else "Edit game",
-                      onClick --> { _ =>
-                          Store.editingGame
-                              .update(current => if (current.contains(game.gameId)) None else Some(game.gameId))
-                      }
+                      "Edit game",
+                      onMountCallback(context => editGameTrigger = Some(context.thisNode.ref)),
+                      onUnmountCallback(_ => editGameTrigger = None),
+                      onClick --> (_ => Store.editingGame.set(Some(game.gameId)))
                     ),
                     // Keyed on the game so that the form is rebuilt when a different game is opened:
                     // its fields are initialised from `game` once, not bound to it.
-                    if (editing.contains(game.gameId)) gameForm(Some(game)) else emptyNode
+                    if (editing.contains(game.gameId)) editGameDialog(game) else emptyNode
                   )
               case _ => emptyNode
           }
         )
+
+    /* The link the edit dialog is opened from, so closing it can put focus back -- `challengeTrigger`'s
+     * counterpart. */
+    private var editGameTrigger: Option[dom.html.Element] = None
+
+    private def closeEditGame(): Unit = {
+        Store.editingGame.set(None)
+        editGameTrigger.foreach(_.focus())
+    }
+
+    /* The edit form as a modal dialog, the way `challengeDialog` shows the challenge form: closed by Escape, by a
+     * click on the backdrop, or by its own Close button, and closed by a save that succeeds. */
+    private def editGameDialog(game: Game): HtmlElement = {
+        val headingId = s"edit-game-${game.gameId.value}-heading"
+        div(
+          cls := "modal-scrim",
+          onClick --> (event => if (event.target == event.currentTarget) closeEditGame()),
+          gameForm(Some(game), heading = Some(headingId -> s"Edit ${game.displayName}")).amend(
+            cls := "modal",
+            role := "dialog",
+            htmlAttr("aria-modal", com.raquo.laminar.codecs.StringAsIsCodec) := "true",
+            aria.labelledBy := headingId,
+            tabIndex := -1,
+            inContext(node => onMountCallback(_ => node.ref.focus())),
+            onKeyDown.filter(_.key == "Escape") --> { event =>
+                event.stopPropagation()
+                closeEditGame()
+            },
+            div(
+              cls := "alternatives",
+              button(tpe := "button", cls := "link", "Close", onClick --> (_ => closeEditGame()))
+            )
+          )
+        )
+    }
 
     /** This player's finished matches in one game, most recently finished first.
       *
@@ -1931,32 +1966,51 @@ object Views {
     private def splitValues(raw: String): Seq[String] =
         raw.split(',').map(_.trim).filter(_.nonEmpty).toSeq.distinct
 
-    private def roleEditor(roles: Var[List[RoleDraft]]): HtmlElement =
+    /** `formKey` tells this form's tips apart from another form's on the same page, since every tip is found by id. */
+    private def roleEditor(formKey: String, roles: Var[List[RoleDraft]]): HtmlElement =
         div(
-          h4("Roles"),
-          p(
-            cls := "detail",
+          withTip(
+            s"$formKey-roles-tip",
+            "Roles",
             "Every seat in a match names a role, so a game needs at least one. An optional role is one " +
                 "a match does not wait to see filled before it can start. A role that already exists can " +
                 "be renamed but not removed — acceptances and played matches name it, so retire one by " +
-                "making it optional. The name is what the engine is sent; the display name is what " +
-                "players see, and is the name if left blank."
-          ),
-          children <-- roles.signal.map(_.map { draft =>
+                "making it optional."
+          )(h4("Roles")),
+          children <-- roles.signal.map(_.zipWithIndex.map { (draft, i) =>
+              val nameTip = s"$formKey-role-$i-name-tip"
+              val displayTip = s"$formKey-role-$i-display-tip"
               div(
                 cls := "row",
-                // A caption per row would repeat "role name" down the whole editor, so these repeated
-                // rows carry their name rather than showing it. The placeholder stays as the visible
-                // hint it always was.
-                input(
-                  aria.label := "role name",
-                  placeholder := "role name",
-                  controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)
+                // A caption on each field, with what it means in a tip beside it rather than under it:
+                // the explanation is the same on every row, and repeated in full it would bury the rows.
+                withTip(
+                  nameTip,
+                  "Role name",
+                  "What the game engine is sent for this seat, so it has to be the name the engine expects."
+                )(
+                  label(
+                    cls := "field",
+                    "Name",
+                    input(
+                      aria.describedBy := nameTip,
+                      controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)
+                    )
+                  )
                 ),
-                input(
-                  aria.label := "role display name, what players see; left blank, the name",
-                  placeholder := "display name (blank: the name)",
-                  controlled(value <-- draft.displayName.signal, onInput.mapToValue --> draft.displayName)
+                withTip(
+                  displayTip,
+                  "Role display name",
+                  "What players see for this seat. Left blank, it is the name."
+                )(
+                  label(
+                    cls := "field",
+                    "Display name",
+                    input(
+                      aria.describedBy := displayTip,
+                      controlled(value <-- draft.displayName.signal, onInput.mapToValue --> draft.displayName)
+                    )
+                  )
                 ),
                 label(
                   input(
@@ -1984,15 +2038,15 @@ object Views {
           button(cls := "link", "Add a Role", onClick --> (_ => roles.update(_ :+ emptyRole)))
         )
 
-    private def parameterEditor(parameters: Var[List[ParameterDraft]]): HtmlElement =
+    private def parameterEditor(formKey: String, parameters: Var[List[ParameterDraft]]): HtmlElement =
         div(
-          h4("Parameters"),
-          p(
-            cls := "detail",
+          withTip(
+            s"$formKey-parameters-tip",
+            "Parameters",
             "How the game engine is configured when a match is created. The name is what the engine is " +
                 "sent; the display name is what players see, and is the name if left blank. A parameter's " +
                 "default has to be one of its values, and a game may have none at all."
-          ),
+          )(h4("Parameters")),
           children <-- parameters.signal.map(_.map { draft =>
               div(
                 cls := "row",
@@ -2098,17 +2152,19 @@ object Views {
       * come from, and what game-authorized requests are matched against. The API key itself is asked for too — the
       * secret the engine was deployed with — and is write-only: required to create a game, left as it is by an edit
       * that leaves the field blank, and never shown, since nothing sends it back. `active` is asked only of an edit, as
-      * "Disabled": a new game is created active, and an edit may disable it, which takes it out of the menu and every
-      * game picker. It hides the game rather than closing it — its challenges, invitations and matches are left as they
-      * are, since `active` decides what is listed, not what may be played.
+      * "Disable Game": a new game is created active, and an edit may disable it, which takes it out of the menu and
+      * every game picker. It hides the game rather than closing it — its challenges, invitations and matches are left
+      * as they are, since `active` decides what is listed, not what may be played.
       */
-    private def gameForm(existing: Option[Game]): HtmlElement = {
+    private def gameForm(existing: Option[Game], heading: Option[(String, String)] = None): HtmlElement = {
         val name = Var(existing.map(_.name).getOrElse(""))
         val displayName = Var(existing.map(_.displayName).getOrElse(""))
         val description = Var(existing.map(_.description).getOrElse(""))
         val url = Var(existing.map(_.url).getOrElse(""))
         val engineIdentity = Var(existing.map(_.externalId).getOrElse(""))
         val disabled = Var(existing.exists(!_.active))
+        // What this form's tip ids start with: a game's edit form and the new-game form are different forms.
+        val formKey = existing.fold("new-game")(game => s"game-${game.gameId.value}")
         // Write-only: starts empty whether or not a key is stored, because the stored one is never sent here.
         val apiKey = Var("")
         // Where a player makes a character: the engine's page, since characters are made there.
@@ -2130,6 +2186,8 @@ object Views {
 
         div(
           cls := "card",
+          // A dialog's title, given as (id, text) so the dialog can be labelled by it.
+          heading.fold(emptyNode)((id, text) => h3(idAttr := id, text)),
           field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
           label(
             cls := "field",
@@ -2220,27 +2278,28 @@ object Views {
           ),
           // Only an existing game can be disabled: a new one is created active, since a game created
           // hidden would look as though the button had done nothing.
-          existing.fold(emptyNode) { game =>
-              val hintId = s"disabled-hint-${game.gameId.value}"
-              div(
+          // In the warning colour: of everything on this form it is the one box that makes a game vanish.
+          existing.fold(emptyNode) { _ =>
+              val tipId = s"$formKey-disable-tip"
+              withTip(
+                tipId,
+                "Disable Game",
+                "A disabled game is taken out of the menu and every game list. Its challenges, invitations " +
+                    "and matches are left as they are. It is listed on Add a Game, where it can be enabled again."
+              )(
                 label(
+                  cls := "warn",
                   input(
                     tpe := "checkbox",
-                    aria.describedBy := hintId,
+                    aria.describedBy := tipId,
                     controlled(checked <-- disabled.signal, onClick.mapToChecked --> disabled)
                   ),
-                  "Disabled"
-                ),
-                p(
-                  idAttr := hintId,
-                  cls := "detail",
-                  "A disabled game is taken out of the menu and every game list. Its challenges, invitations " +
-                      "and matches are left as they are. It is listed on Add a Game, where it can be enabled again."
+                  "Disable Game"
                 )
               )
           },
-          roleEditor(roles),
-          parameterEditor(parameters),
+          roleEditor(formKey, roles),
+          parameterEditor(formKey, parameters),
           busyButton(
             if (existing.isDefined) "Save Changes" else "Create Game",
             // A new game needs its key; an edit may leave the stored one alone. A key that is typed has
@@ -2308,7 +2367,7 @@ object Views {
                                   parameters.set(
                                     saved.parameters.map(p => draftOf(p.asInstanceOf[GameParameter[String]])).toList
                                   )
-                                  Store.editingGame.set(None)
+                                  closeEditGame()
                               }
                               // Both copies of the game list, because a game saved while deactivated is in
                               // neither the active one nor reachable by `ensureGame` — its own screen would
@@ -3238,7 +3297,11 @@ object Views {
             "?",
             onClick --> (_ => open.update(!_)),
             onBlur --> (_ => open.set(false)),
-            onKeyDown.filter(_.key == "Escape") --> (_ => open.set(false))
+            // An open tip takes the Escape that closes it, so a dialog the tip is in stays open.
+            onKeyDown.filter(event => event.key == "Escape" && open.now()) --> { event =>
+                event.stopPropagation()
+                open.set(false)
+            }
           ),
           span(idAttr := id, role := "tooltip", cls := "tip", cls.toggle("open") <-- open.signal, text)
         )

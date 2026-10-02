@@ -552,6 +552,18 @@ label.field > .hint {
   display: block;
 }
 
+/* A captioned field with a tip beside it takes the row's width, leaving the "?" only what it needs. */
+.with-tip > label.field {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+/* A box whose effect is drastic enough to say so in its colour: Disable Game. */
+.card label.warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
 .card label input[type="checkbox"] {
   margin: 0;
   flex: none;
