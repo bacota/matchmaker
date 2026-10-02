@@ -12,10 +12,14 @@ ALTER TABLE match ADD COLUMN live BOOLEAN NOT NULL DEFAULT false;
 
 -- A live match is played against a clock, so it has a time limit: per turn, or a chess clock
 -- (TOTAL), which the engine keeps across the turns it runs just as matchmaker keeps one otherwise.
+-- At least a second, which is what ChallengeService requires and what an engine accepts: anything
+-- less is a clock that has run out before it starts.
 ALTER TABLE challenge
-    ADD CONSTRAINT challenge_live_time_limit CHECK (NOT live OR time_limit IS NOT NULL);
+    ADD CONSTRAINT challenge_live_time_limit
+        CHECK (NOT live OR (time_limit IS NOT NULL AND time_limit >= INTERVAL '1 second'));
 ALTER TABLE match
-    ADD CONSTRAINT match_live_time_limit CHECK (NOT live OR time_limit IS NOT NULL);
+    ADD CONSTRAINT match_live_time_limit
+        CHECK (NOT live OR (time_limit IS NOT NULL AND time_limit >= INTERVAL '1 second'));
 
 -- Seconds, which is what a live turn is measured in. V11 created both checks unnamed, and the
 -- challenge table's still carries the name it was given before V21 renamed the table.
