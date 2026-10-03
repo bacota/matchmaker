@@ -37,6 +37,9 @@ locals {
   matchmaker_routes = [
     "POST /games",
     "GET /matches/{matchId}/status",
+    # A cancelled match, which the engine drops (GameEngine.cancel). Matchmaker posts here at the
+    # cancelUrl the create answered with.
+    "POST /matches/{matchId}/cancel",
   ]
 
   # A player's own routes: the state they see and the moves they make, and any the game adds — a

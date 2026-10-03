@@ -253,6 +253,7 @@ abstract class RoutesContract extends FunSuite {
         val (routes, created) = fixture(matchmakerKey = Some("s3cret"))
         assertEquals(created.status, 401)
         assertEquals(routes(EngineRequest("GET", "/matches/m-9/status")).status, 401)
+        assertEquals(routes(EngineRequest("POST", "/matches/m-9/cancel")).status, 401)
     }
 
     test("a wrong key is refused exactly as a missing one is") {
@@ -272,6 +273,22 @@ abstract class RoutesContract extends FunSuite {
           201
         )
         assertEquals(served(EngineRequest("GET", "/matches/m-1/status", headers = keyed)).status, 200)
+    }
+
+    test("matchmaker cancelling a match drops it, only with the key, and saying so twice is harmless") {
+        val keyed = Map("x-api-key" -> "s3cret")
+        val served = routes(PlayAuth.Trusted, Some("s3cret"))
+        val created = read[Protocol.CreateGameResponse](
+          served(EngineRequest("POST", "/games", Map.empty, write(createRequest("m-1", isPublic = true)), keyed)).body
+        )
+        assertEquals(created.cancelUrl, Some("http://engine.test/matches/m-1/cancel"))
+
+        assertEquals(served(EngineRequest("POST", "/matches/m-1/cancel")).status, 401)
+        assertEquals(served(EngineRequest("GET", "/matches/m-1/status", headers = keyed)).status, 200)
+
+        assertEquals(served(EngineRequest("POST", "/matches/m-1/cancel", headers = keyed)).status, 204)
+        assertEquals(served(EngineRequest("GET", "/matches/m-1/status", headers = keyed)).status, 404)
+        assertEquals(served(EngineRequest("POST", "/matches/m-1/cancel", headers = keyed)).status, 204)
     }
 
     test("a player route is not protected by matchmaker's key") {
