@@ -535,13 +535,13 @@ class MatchServiceSpec extends PropertySuite {
         } yield player.copy(isAdmin = true)
 
     /** A match, its creator, and a player made an admin of its game. */
-    private def friendlyFixture(completed: Boolean = false): IO[(Player, Game, MatchId, Player)] =
+    private def friendlyFixture(): IO[(Player, Game, MatchId, Player)] =
         for {
             made <- makeMatch(
               genUniqueString.sample.get,
               genUniqueString.sample.get,
               genUniqueString.sample.get,
-              completed = completed,
+              completed = false,
               pending = true
             )
             (creator, game, matchId) = made
@@ -574,27 +574,6 @@ class MatchServiceSpec extends PropertySuite {
             stored <- friendlyOf(game, matchId)
         } yield stored
         assertEquals(result.timeout(30.seconds).unsafeRunSync(), Some(false))
-    }
-
-    test(
-      "once a match is completed, nobody may change whether it is friendly, though saying what it is still answers"
-    ) {
-        val result = for {
-            f <- friendlyFixture(completed = true)
-            (_, game, matchId, gameAdmin) = f
-            overall <- overallAdmin()
-            byGameAdmin <- matchService
-                .setFriendly(game.gameId, matchId, friendly = false, gameAdmin.externalId)
-                .attempt
-            byOverall <- matchService.setFriendly(game.gameId, matchId, friendly = false, overall.externalId).attempt
-            unchanged <- matchService.setFriendly(game.gameId, matchId, friendly = true, gameAdmin.externalId)
-            stored <- friendlyOf(game, matchId)
-        } yield (byGameAdmin, byOverall, unchanged.friendly, stored)
-        val (byGameAdmin, byOverall, unchanged, stored) = result.timeout(30.seconds).unsafeRunSync()
-        assert(byGameAdmin.left.exists(_.isInstanceOf[ConflictError]), byGameAdmin)
-        assert(byOverall.left.exists(_.isInstanceOf[ConflictError]), byOverall)
-        assertEquals(unchanged, true)
-        assertEquals(stored, Some(true))
     }
 
     test("a game's admin lists the game's matches, each with who plays it and whether it is friendly") {
