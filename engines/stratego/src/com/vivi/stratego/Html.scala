@@ -177,11 +177,11 @@ object Html {
   #lost { margin-top: 1rem; font-size: .875rem; }
   #lost p { margin: .25rem 0; }
   /* The key: a button beside the board that opens it over the page, so it is in reach mid-game. */
-  .board-bar { display: flex; justify-content: flex-end; max-width: 36rem; margin: 0 auto .5rem; }
-  .board-bar button, #key .close { font: inherit; font-size: 1rem; min-height: 44px; min-width: 44px; padding: 0 1rem;
+  .board-bar { display: flex; justify-content: flex-end; gap: .5rem; max-width: 36rem; margin: 0 auto .5rem; }
+  .board-bar button, #key .close, #rules .close { font: inherit; font-size: 1rem; min-height: 44px; min-width: 44px; padding: 0 1rem;
                                    border-radius: 6px; border: 1px solid var(--line); background: var(--paper);
                                    color: var(--ink); cursor: pointer; }
-  .board-bar button:focus-visible, #key :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  .board-bar button:focus-visible, #key :focus-visible, #rules :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   #key { width: min(28rem, calc(100vw - 32px)); max-height: 85vh; overflow: auto; box-sizing: border-box; padding: 1rem;
          border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink);
          text-align: left; box-shadow: 0 12px 32px rgba(0, 0, 0, .3); }
@@ -192,9 +192,24 @@ object Html {
   /* Filled, so that it is found at a glance — in the page's accent rather than the ink of Move and
      Deploy, which are the turn's own actions. White on --accent is 7.1:1; in dark mode --accent is
      light, and --paper on it is 9.6:1. */
-  .board-bar #key-button { display: inline-flex; align-items: center; gap: .375rem; background: var(--accent);
-                           border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
-  .board-bar #key-button svg { width: 1.125rem; height: 1.125rem; }
+  .board-bar #key-button, .board-bar #rules-button { display: inline-flex; align-items: center; gap: .375rem;
+                           background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+                           font-weight: 600; }
+  .board-bar button svg { width: 1.125rem; height: 1.125rem; }
+  /* The rules: a modal, read start to finish, scrolling within itself on a phone. */
+  #rules { width: min(32rem, calc(100vw - 32px)); max-height: 85vh; overflow: auto; box-sizing: border-box;
+           padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 8px; background: var(--paper);
+           color: var(--ink); text-align: left; box-shadow: 0 12px 32px rgba(0, 0, 0, .3); }
+  #rules:not([open]) { display: none; }
+  #rules::backdrop { background: rgba(0, 0, 0, .35); }
+  #rules .head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: -1rem;
+                 margin: -1rem -1.25rem .5rem; padding: 1rem 1.25rem .5rem; background: var(--paper); }
+  #rules h2 { font-size: 1.125rem; margin: 0; }
+  #rules h3 { font-size: 1rem; margin: 1rem 0 .25rem; }
+  #rules p, #rules ul { margin: .25rem 0; }
+  #rules ul { padding-left: 1.25rem; }
+  #rules li { margin: .25rem 0; }
+  #rules .close { padding: 0; }
   #key dl { display: grid; grid-template-columns: auto 1fr; gap: .5rem .75rem; margin: 0; }
   #key dt { font: 700 1rem ui-monospace, monospace; display: flex; align-items: center; gap: .375rem; }
   #key dd { margin: 0; align-self: center; }
@@ -232,6 +247,7 @@ $icons
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   ${TurnTimer.markup}
   <div class="board-bar">
+    <button type="button" id="rules-button" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5.5C4 4.7 4.7 4 5.5 4H11v16H5.5c-.8 0-1.5-.7-1.5-1.5zM20 5.5c0-.8-.7-1.5-1.5-1.5H13v16h5.5c.8 0 1.5-.7 1.5-1.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>Rules</button>
     <button type="button" id="key-button" popovertarget="key" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="7.5" r="1.4" fill="currentColor"/></svg>Key</button>
   </div>
   <div id="board" role="group" aria-label="board"></div>
@@ -273,6 +289,13 @@ $icons
   <!-- What a square's label already says to a screen reader, shown to a mouse or keyboard after a
        second's rest; so it is hidden from the accessibility tree rather than said twice. -->
   <div id="tip" aria-hidden="true" hidden></div>
+  <dialog id="rules" aria-labelledby="rules-title">
+    <div class="head">
+      <h2 id="rules-title">Rules</h2>
+      <button type="button" class="close" aria-label="Close the rules" autofocus>✕</button>
+    </div>
+    $rules
+  </dialog>
   <div id="key" popover role="dialog" aria-labelledby="key-title">
     <div class="head">
       <h2 id="key-title">Key</h2>
@@ -1085,6 +1108,20 @@ $replayScript
    * have no session to wait for and are fetched as before. */
   function mayFetch() { return !noSeat && (!login || publicView || isSignedIn()); }
 
+  /* The rules, as a modal. Escape closes it, as does a click on the backdrop around it. Without
+   * dialogs — Safari before 15.4 — it opens in place in the page instead. */
+  const rules = document.getElementById("rules"), rulesButton = document.getElementById("rules-button");
+  rulesButton.addEventListener("click", () => {
+    document.getElementById("rules-cap").textContent = state ? String(state.maxMoves) : "a set number of";
+    if (typeof rules.showModal === "function") rules.showModal();
+    else { rules.setAttribute("open", ""); rules.querySelector(".close").focus(); }
+  });
+  rules.querySelector(".close").addEventListener("click", () => {
+    if (typeof rules.close === "function") rules.close(); else rules.removeAttribute("open");
+    rulesButton.focus();
+  });
+  rules.addEventListener("click", e => { if (e.target === rules && typeof rules.close === "function") rules.close(); });
+
   /* Without popovers — Safari before 17 — the key would sit open in the page for good. There the
    * buttons show and hide it instead, and it is a section of the page rather than a layer over it. */
   if (!HTMLElement.prototype.hasOwnProperty("popover")) {
@@ -1156,6 +1193,51 @@ $replayScript
       * What is not metal is `currentColor`, the white of a coloured piece. Placed with `<use href="#rank-Marshal">`,
       * and decoration only — a square's label names its rank in words.
       */
+    /** The rules as this engine plays them, which the page shows in a dialog. Pieces are named as the page names them —
+      * see `NAME` — and numbered as the key numbers them. The move cap is the match's own, filled in when the dialog
+      * opens.
+      */
+    private val rules: String =
+        """<p><strong>Capture the enemy flag.</strong> Each side has 40 pieces whose ranks the other side cannot see.</p>
+    <h3>Setting up</h3>
+    <ul>
+      <li>Arrange your army on your four home rows: swap any two pieces, then deploy. Neither side sees the other's.</li>
+      <li>Either side may deploy first. Once deployed, a setup cannot be changed.</li>
+    </ul>
+    <h3>Moving</h3>
+    <ul>
+      <li>Red moves first, then the sides take turns, one piece a turn.</li>
+      <li>A piece moves one square up, down, left or right, onto an empty square or onto an enemy piece, which
+        attacks it. Never diagonally, never onto your own piece, and never into the two lakes.</li>
+      <li>Bombs and the Flag never move.</li>
+      <li>A Scout may move any distance in a straight line over empty squares, and may attack at the end of it. It
+        cannot jump. A Scout that moves more than one square shows the enemy what it is.</li>
+      <li>No piece may move back and forth between the same two squares more than three times in a row.</li>
+    </ul>
+    <h3>Battles</h3>
+    <ul>
+      <li>Both pieces are revealed. The lower number wins, and the loser leaves the board. Equal ranks both fall.</li>
+      <li>The Spy takes the General (1), but only when the Spy attacks. Otherwise it is the weakest piece.</li>
+      <li>A Bomb destroys any piece that attacks it, except a Miner, which takes it.</li>
+      <li>Any piece that attacks the Flag takes it.</li>
+    </ul>
+    <h3>Winning</h3>
+    <ul>
+      <li>Take the enemy's Flag and you win.</li>
+      <li>A player with no move they may make when it is their turn loses — or the match is drawn, if neither side can
+        move.</li>
+      <li>After <span id="rules-cap">a set number of</span> moves, counting both sides', the match is drawn.</li>
+      <li>A player may concede at any time, and the other side wins.</li>
+      <li>In a timed match, a player whose time runs out loses.</li>
+    </ul>
+    <h3>What you can see</h3>
+    <ul>
+      <li>All of your own pieces. An enemy piece is a ? until a battle or a Scout's long move reveals it, and is
+        marked once it has moved, since it cannot be a Bomb or the Flag.</li>
+      <li>Hidden pieces stay hidden when the match ends.</li>
+      <li>◀ and ▶ under the board, or the left and right arrow keys, step back and forward through the moves.</li>
+    </ul>"""
+
     /** The key's lines, strongest first, named as the page's `NAME` names them. Numbered the classic European way — 1
       * is the Marshal, and the lower number wins — which is only how ranks are shown: `Rank.strength` is what decides a
       * fight. The page's `NUMBER` must agree.
