@@ -31,4 +31,14 @@ class LambdaEventSpec extends FunSuite {
         assertEquals(encoded("statusCode").num, 201.0)
         assertEquals(encoded("body").str, """{"ok":true}""")
     }
+
+    test("a response's own headers go out beside its content type") {
+        val encoded = ujson.read(
+          LambdaEvent.encode(EngineResponse(304, "", headers = Map("etag" -> "\"t\"", "cache-control" -> "no-cache")))
+        )
+        assertEquals(encoded("statusCode").num, 304.0)
+        assertEquals(encoded("headers")("etag").str, "\"t\"")
+        assertEquals(encoded("headers")("cache-control").str, "no-cache")
+        assertEquals(encoded("headers")("content-type").str, "application/json")
+    }
 }

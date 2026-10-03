@@ -433,17 +433,23 @@ object Store {
       */
     def reloadPublicMatches(playerId: PlayerId): Future[Unit] = {
         val lists = Seq(Fetch.PublicMatches)
-        val stamp = ask(lists)
+        // Shown as loading from the ask, not from the start: the page has just been emptied for this player.
         publicMatchesLoading.set(true)
+        // One question for whichever player was asked about last: a page left for another before its
+        // lists came is answered for the one now on screen.
+        gated(lists) { () =>
+            val stamp = ask(lists)
+            publicMatchesLoading.set(true)
 
-        val running = reloadAs(ApiClient.publicMatches(playerId), stamp, lists)(publicActive.set)
-        val over = reloadAs(ApiClient.publicCompletedMatches(playerId), stamp, lists)(publicCompleted.set)
+            val running = reloadAs(ApiClient.publicMatches(playerId), stamp, lists)(publicActive.set)
+            val over = reloadAs(ApiClient.publicCompletedMatches(playerId), stamp, lists)(publicCompleted.set)
 
-        // However they settled: `reloadAs` reports a failure and succeeds, so this runs on either
-        // outcome, which is what stops a failed fetch from leaving the page loading for ever. Guarded
-        // like the two commits are, and by the same stamp: a newer fetch has already set the flag for
-        // itself, and this one clearing it would say that fetch had finished.
-        running.zip(over).map(_ => if (newest(stamp, lists)) publicMatchesLoading.set(false))
+            // However they settled: `reloadAs` reports a failure and succeeds, so this runs on either
+            // outcome, which is what stops a failed fetch from leaving the page loading for ever. Guarded
+            // like the two commits are, and by the same stamp: a newer fetch has already set the flag for
+            // itself, and this one clearing it would say that fetch had finished.
+            running.zip(over).map(_ => if (newest(stamp, lists)) publicMatchesLoading.set(false))
+        }
     }
 
     /** What the caller wants to be told about, once something has asked.
@@ -718,19 +724,44 @@ object Store {
       * it: a 401 for a request the previous session made is not news, and `ApiClient` has already ended that session
       * over it.
       */
-    private def load[A](action: Future[A], fetches: Fetch*)(commit: A => Unit): Unit = {
-        val signIn = currentSignIn
-        val stamp = ask(fetches)
-        action.onComplete { outcome =>
-            // Superseded as well as signed out: an answer to a question since asked again is not this
-            // list's current answer, and committing it would undo the newer one. See `newest`.
-            if (stillSignedInAs(signIn) && newest(stamp, fetches)) {
-                settle(outcome, Banner.Background(fetches.toSet))(commit)
-                // However it ended: what the section shows next is decided by which of the two it was.
-                // See `outcomes`.
-                outcomes.update(_ ++ fetches.map(_ -> outcome.isSuccess))
+    private def load[A](action: => Future[A], fetches: Fetch*)(commit: A => Unit): Unit = {
+        gated(fetches) { () =>
+            val signIn = currentSignIn
+            val stamp = ask(fetches)
+            action.transform { outcome =>
+                // Superseded as well as signed out: an answer to a question since asked again is not this
+                // list's current answer, and committing it would undo the newer one. See `newest`.
+                try
+                    if (stillSignedInAs(signIn) && newest(stamp, fetches)) {
+                        settle(outcome, Banner.Background(fetches.toSet))(commit)
+                        // However it ended: what the section shows next is decided by which of the two it was.
+                        // See `outcomes`.
+                        outcomes.update(_ ++ fetches.map(_ -> outcome.isSuccess))
+                    }
+                catch { case t: Throwable => report(t) }
+                Success(())
             }
         }
+        ()
+    }
+
+    /* Every fetch the store makes goes out through this, so that asking for a list again while it is
+     * on its way -- or many times a second, by a fault -- does not become a request each time. See
+     * `Coalescer`. A second apart at most once a list is being asked for back to back; the first ask
+     * after a quiet spell goes at once.
+     *
+     * `start` runs only if the session that asked is the one still here: a request queued behind one
+     * from before a sign-out is one nobody now signed in asked for. */
+    private val coalescer =
+        Coalescer[Set[Fetch]](
+          spacingMs = 1000,
+          now = () => scala.scalajs.js.Date.now(),
+          later = (ms, run) => { scala.scalajs.js.timers.setTimeout(ms)(run()); () }
+        )
+
+    private def gated(fetches: Seq[Fetch])(start: () => Future[Unit]): Future[Unit] = {
+        val signIn = currentSignIn
+        coalescer(fetches.toSet)(() => if (stillSignedInAs(signIn)) start() else Future.unit)
     }
 
     /* `owner` says what this outcome belongs to, which decides both whose banner may be cleared on a
@@ -865,8 +896,8 @@ object Store {
       * and the result is always a success, because the only caller is a section waiting to stop showing that it is
       * reloading. A failure there is not a second thing to handle; it is a banner that has already been raised.
       */
-    private def reload[A](action: Future[A], fetches: Fetch*)(onSuccess: A => Unit): Future[Unit] =
-        reloadAs(action, ask(fetches), fetches)(onSuccess)
+    private def reload[A](action: => Future[A], fetches: Fetch*)(onSuccess: A => Unit): Future[Unit] =
+        gated(fetches)(() => reloadAs(action, ask(fetches), fetches)(onSuccess))
 
     /** `reload`, against a stamp already taken rather than one of its own.
       *

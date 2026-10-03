@@ -88,8 +88,13 @@ object LocalEngineServer {
 
                 val bytes = response.body.getBytes(UTF_8)
                 exchange.getResponseHeaders.add("content-type", response.contentType)
-                exchange.sendResponseHeaders(response.status, bytes.length.toLong)
-                exchange.getResponseBody.write(bytes)
+                response.headers.foreach((name, value) => exchange.getResponseHeaders.add(name, value))
+                // A 304 has no body, and the JDK's server wants to be told so with -1 rather than 0.
+                if (response.status == 304) exchange.sendResponseHeaders(304, -1)
+                else {
+                    exchange.sendResponseHeaders(response.status, bytes.length.toLong)
+                    exchange.getResponseBody.write(bytes)
+                }
             } catch {
                 case e: Throwable =>
                     Log.failure(e, s"${exchange.getRequestMethod} ${exchange.getRequestURI.getPath}")

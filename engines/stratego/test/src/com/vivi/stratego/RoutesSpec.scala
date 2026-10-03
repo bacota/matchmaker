@@ -39,6 +39,57 @@ class RoutesSpec extends FunSuite {
     private def deploy(routes: Routes, player: String, side: Side, fixed: Map[Int, Rank] = Map.empty) =
         post(routes, player, write(Protocol.MoveRequest(setup = Some(names(setup(side, fixed))))))
 
+    private def state(routes: Routes, player: String, held: Option[String] = None) =
+        routes(
+          EngineRequest(
+            "GET",
+            "/matches/m-9/state",
+            Map("as" -> player),
+            headers = held.map(tag => Map("if-none-match" -> tag)).getOrElse(Map.empty)
+          )
+        )
+
+    test("a state is tagged, and asked for again with the tag it is a bodiless 304 until something moves") {
+        val (routes, _) = fixture()
+        deploy(routes, "sub-alice", Side.Red, Map(30 -> Rank.Scout))
+        deploy(routes, "sub-bob", Side.Blue)
+        val first = state(routes, "sub-alice")
+        assertEquals(first.status, 200)
+        val tag = first.headers("etag")
+        assertEquals(first.headers("cache-control"), "private, no-cache")
+
+        val again = state(routes, "sub-alice", Some(tag))
+        assertEquals(again.status, 304)
+        assertEquals(again.body, "")
+        assertEquals(again.headers("etag"), tag)
+
+        post(routes, "sub-alice", """{"from":30,"to":40}""")
+        val moved = state(routes, "sub-alice", Some(tag))
+        assertEquals(moved.status, 200)
+        assertNotEquals(moved.headers("etag"), tag)
+        assertEquals(read[Protocol.StateResponse](moved.body).turn, Some("Blue"))
+    }
+
+    // The tag is of the body, and each player's body is their own: one player's tag is never the
+    // other's, so a browser holding Red's copy is never told it may show it to Blue.
+    test("one player's tag does not answer for the other's state") {
+        val (routes, _) = fixture()
+        deploy(routes, "sub-alice", Side.Red)
+        deploy(routes, "sub-bob", Side.Blue)
+        val red = state(routes, "sub-alice").headers("etag")
+        assertEquals(state(routes, "sub-bob", Some(red)).status, 200)
+    }
+
+    test("the public board's state is tagged and revalidated the same way") {
+        val (routes, _) = fixture()
+        val board = routes(EngineRequest("GET", "/matches/m-9/board/state"))
+        assertEquals(board.status, 200)
+        val again = routes(
+          EngineRequest("GET", "/matches/m-9/board/state", headers = Map("if-none-match" -> board.headers("etag")))
+        )
+        assertEquals(again.status, 304)
+    }
+
     test("a setup posted by a player answers with their own army, and nothing of the other's") {
         val (routes, _) = fixture()
         assertEquals(deploy(routes, "sub-bob", Side.Blue).status, 200)

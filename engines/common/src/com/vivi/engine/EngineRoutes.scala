@@ -184,7 +184,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                 withSeat(request, matchId) { (found, seat) =>
                     openedBy(found, seat) match {
                         case Left(refusal) => error(refusal)
-                        case Right(m)      => EngineResponse(200, write(stateOf(m, Some(seat))))
+                        case Right(m)      => revalidated(request, write(stateOf(m, Some(seat))))
                     }
                 }
 
@@ -211,7 +211,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                 )
 
             case ("GET", "matches" :: matchId :: "board" :: "state" :: Nil) =>
-                withPublic(matchId)(m => EngineResponse(200, write(stateOf(m, None))))
+                withPublic(matchId)(m => revalidated(request, write(stateOf(m, None))))
 
             case ("GET", "health" :: Nil) => EngineResponse(200, """{"status":"ok"}""")
 
@@ -313,6 +313,27 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
         }
 
     private def html(body: String): EngineResponse = EngineResponse(200, body, "text/html; charset=utf-8")
+
+    /** A state, tagged with a digest of itself, or a bodiless 304 when that is the tag the caller already holds.
+      *
+      * The play page asks for its state every two seconds, and on most of those asks nothing has moved. Tagged, the
+      * browser's own cache does the rest without the page knowing: `no-cache` has it ask every time, as the page needs,
+      * but with the tag it holds, and an unchanged state comes back as a 304 with nothing in it — the page is handed
+      * the copy it had. What is saved is the body, which grows with the match: a replay carries every move.
+      *
+      * The tag is of the body itself, so it can only match a body that is identical. That is also why a cached copy
+      * cannot leak across the players of one browser: a 304 says "what you hold is what I would send *you*", and the
+      * state is per viewer. `private` keeps it out of any cache between, and `Vary` says the answer depends on who
+      * asks.
+      */
+    private def revalidated(request: EngineRequest, body: String): EngineResponse = {
+        val digest = MessageDigest.getInstance("SHA-256").digest(body.getBytes(StandardCharsets.UTF_8))
+        val tag = "\"" + java.util.Base64.getUrlEncoder.withoutPadding.encodeToString(digest.take(16)) + "\""
+        val headers = Map("etag" -> tag, "cache-control" -> "private, no-cache", "vary" -> "Authorization")
+        val held = request.headers.get("if-none-match").toList.flatMap(_.split(',')).map(_.trim.stripPrefix("W/"))
+        if (held.contains(tag) || held.contains("*")) EngineResponse(304, "", headers = headers)
+        else EngineResponse(200, body, headers = headers)
+    }
 
     protected def error(refusal: Refusal): EngineResponse = error(refusal.status, refusal.message)
 
