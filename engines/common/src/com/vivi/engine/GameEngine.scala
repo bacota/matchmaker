@@ -69,12 +69,19 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                   CreateGameResponse(
                     statusUrl = s"$base/matches/${created.matchId}/status",
                     playUrl = playUrl(created),
-                    publicUrl = Option.when(created.isPublic)(s"$base/matches/${created.matchId}/board")
+                    publicUrl = Option.when(created.isPublic)(s"$base/matches/${created.matchId}/board"),
+                    cancelUrl = Some(s"$base/matches/${created.matchId}/cancel")
                   )
                 )
         }
 
     def playUrl(m: M): String = s"$base/matches/${m.matchId}/play"
+
+    /** Matchmaker has cancelled match `matchId`: it will never be played or archived, and is dropped. Answered the same
+      * whether or not there was anything to drop, so that matchmaker retrying a cancel it did not hear answered is
+      * harmless.
+      */
+    def cancel(matchId: String): Unit = store.delete(matchId)
 
     /** The match as it stands now, with any turn that has run out recorded. `archived` is a request's word that the
       * match has been archived, which reads the archive first — see [[MatchStore.getArchived]].

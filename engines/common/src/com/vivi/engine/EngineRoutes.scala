@@ -175,6 +175,14 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                         }
                 }
 
+            // Matchmaker saying the match was cancelled. Like status, it is matchmaker's alone; a
+            // player cancels through matchmaker, which owns who may.
+            case ("POST", "matches" :: matchId :: "cancel" :: Nil) if !fromMatchmaker(request) => unauthenticated
+
+            case ("POST", "matches" :: matchId :: "cancel" :: Nil) =>
+                engine.cancel(matchId)
+                EngineResponse(204, "")
+
             /* The play page itself, which is served to anyone who asks — signed in or not.
              *
              * It carries no game state when the caller has no seat: the page is a shell that signs the

@@ -311,7 +311,7 @@ class GameEngineService[T](
             // way out is forward. Failing here leaves the challenge claimed and the match urlless,
             // which is the recoverable state `refresh` reports: the claim is now the permanent mark
             // of a spent challenge rather than something that has to be cleaned up.
-            started <- retrying(finish(session, withUrls).as(withUrls))
+            started <- retrying(finish(session, withUrls, response.cancelUrl).as(withUrls))
 
             // Whose turn it is first is the engine's to decide, and every participant was written
             // above with `pending = false`. Without asking, nobody's list of matches waiting on them
@@ -521,8 +521,8 @@ class GameEngineService[T](
      * match a creator. */
     /* The urls only: `withUrls` is the match as it was written before the engine call, and the row
      * may have changed since -- see `MatchRepo.setUrls`. */
-    private def finish(session: skunk.Session[IO], withUrls: Match): IO[Unit] =
-        new MatchRepo(session).setUrls(withUrls)
+    private def finish(session: skunk.Session[IO], withUrls: Match, cancelUrl: Option[String]): IO[Unit] =
+        new MatchRepo(session).setUrls(withUrls, cancelUrl)
 
     /* Retries a database action a few times before giving up. Used only for the work after the
      * engine call, where failing is not an option that leaves a sane state behind — everywhere

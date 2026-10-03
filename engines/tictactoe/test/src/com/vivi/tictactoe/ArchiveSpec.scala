@@ -155,4 +155,46 @@ class ArchiveSpec extends FunSuite with QuietTests {
         assertEquals(engine.read("nope").left.map(_.status), Left(404))
         assertEquals(engine.read("nope", archived = true).left.map(_.status), Left(404))
     }
+
+    test("matchmaker cancelling a match drops it here, and saying so twice is harmless") {
+        val (engine, routes, live, _) = fixture()
+        assertEquals(routes(EngineRequest("POST", "/matches/m-1/cancel")).status, 204)
+        assertEquals(live.get("m-1"), None)
+        assertEquals(engine.read("m-1").left.map(_.status), Left(404))
+        assertEquals(routes(EngineRequest("POST", "/matches/m-1/cancel")).status, 204)
+    }
+
+    test("the cancel url is handed back at creation, and only matchmaker may use it") {
+        val live = InMemoryMatchStore[TicTacToeMatch]()
+        val engine = Engine(live, RecordingMatchmaker(), "http://engine.test")
+        val created = engine
+            .createGame(
+              Protocol.CreateGameRequest(
+                "m-2",
+                "tic-tac-toe",
+                false,
+                Map.empty,
+                "{}",
+                None,
+                List(
+                  Protocol.EnginePlayer("a", 1L, Some("X"), None, None),
+                  Protocol.EnginePlayer("b", 2L, Some("O"), None, None)
+                ),
+                None,
+                None
+              )
+            )
+            .toOption
+            .get
+        assertEquals(created.cancelUrl, Some("http://engine.test/matches/m-2/cancel"))
+
+        val keyed = Routes(engine, PlayAuth.Trusted, Some("secret"))
+        assertEquals(keyed(EngineRequest("POST", "/matches/m-2/cancel")).status, 401)
+        assert(live.get("m-2").isDefined)
+        assertEquals(
+          keyed(EngineRequest("POST", "/matches/m-2/cancel", headers = Map("x-api-key" -> "secret"))).status,
+          204
+        )
+        assertEquals(live.get("m-2"), None)
+    }
 }

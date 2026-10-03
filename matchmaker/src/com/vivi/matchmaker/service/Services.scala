@@ -95,7 +95,7 @@ object Services {
           // event came from -- that is the whole point of it being a class of its own.
           challenges = new ChallengeService[T](pool, notifications, engine.startIfReady(_, _, _, _).map(_.isMatch)),
           acceptances = new AcceptanceService(pool, notifications),
-          matches = new MatchService(pool, notifications, Some(archives)),
+          matches = new MatchService(pool, notifications, Some(archives), Some(engineClient)),
           engine = engine,
           archives = archives,
           notifications = new NotificationService(pool),

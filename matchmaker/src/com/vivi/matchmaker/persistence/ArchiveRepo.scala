@@ -143,6 +143,13 @@ class ArchiveRepo(session: Session[IO]) {
             .execute(selectUnreleased)(limit)
             .map(_.map((game, id, url) => ReleaseRow(GameId(game), MatchId(id), url)))
 
+    private val selectCancelUrl: Query[(GameId, MatchId), Option[String]] =
+        sql"""SELECT cancel_url FROM match WHERE game_id = $gameId AND match_id = $matchId""".query(text.opt)
+
+    /** Where the engine is told the match was cancelled, if it gave anywhere. */
+    def cancelUrl(game: GameId, id: MatchId): IO[Option[String]] =
+        session.option(selectCancelUrl)((game, id)).map(_.flatten)
+
     private val updateReleased: Command[(GameId, MatchId)] =
         sql"""UPDATE match SET engine_released = now()
           WHERE game_id = $gameId AND match_id = $matchId AND engine_released IS NULL""".command

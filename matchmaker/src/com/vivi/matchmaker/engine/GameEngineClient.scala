@@ -57,7 +57,15 @@ case class LiveTerms(timeLimitSeconds: Long, kind: String)
 /** The response of step 1: where matchmaker checks status, where a player plays, and — only for a public game — where
   * anyone can watch.
   */
-case class CreateGameResponse(statusUrl: String, playUrl: String, publicUrl: Option[String])
+case class CreateGameResponse(
+    statusUrl: String,
+    playUrl: String,
+    publicUrl: Option[String],
+    /** Where to tell the engine the match has been cancelled, so that it can drop it. Absent from an engine that offers
+      * no such route, which is then not told: its board stays up, and matchmaker stops listening to it.
+      */
+    cancelUrl: Option[String] = None
+)
 
 /** One participant's state in the engine's answer to a status call (step 4).
   *
@@ -134,6 +142,12 @@ trait GameEngineClient {
       * `createGame`.
       */
     def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse]
+
+    /** Tells the engine its match has been cancelled, at the `cancelUrl` it gave when the game was created. Refused by
+      * a client that cannot, which is every test stub that has no reason to.
+      */
+    def cancel(cancelUrl: String, apiKey: Option[String]): IO[Unit] =
+        IO.raiseError(GameEngineError(s"this engine client cannot cancel a match ($cancelUrl)"))
 }
 
 /** Raised when the game engine cannot be reached or answers with something other than success.

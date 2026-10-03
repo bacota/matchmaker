@@ -15,8 +15,11 @@ import com.vivi.matchmaker.model.{
     TimeLimitKind
 }
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
+import com.vivi.matchmaker.engine.GameEngineClient
 import com.vivi.matchmaker.persistence.{
+    ArchiveRepo,
     GameAdminRepo,
+    GameApiKeyRepo,
     MatchRepo,
     ChallengeRepo,
     ParticipantRepo,
@@ -35,7 +38,9 @@ class MatchService(
     /* Silent by default, as in the other services that send mail: see `Notifications`. */
     notifications: Notifications = Notifications.disabled,
     /* For the finished lists: whether a friendly match's archive is still there to be watched. */
-    archives: Option[ArchiveService] = None
+    archives: Option[ArchiveService] = None,
+    /* For a cancel: telling the engine, so that it can drop the match. */
+    engine: Option[GameEngineClient] = None
 ) {
 
     /** Matches in which it is the caller's turn. */
@@ -209,76 +214,109 @@ class MatchService(
       * would contradict a fact the engine reported; a cancelled one is already cancelled, and saying so is more useful
       * than silently doing nothing.
       *
-      * The game engine is not told, because the engine API has no operation for it: the four exchanges of
-      * `interaction-design.txt` are create, move, results and status, and none of them retracts a game. The engine's
-      * board therefore stays playable after a cancel, and it is matchmaker that stops listening — [[GameEngineService]]
-      * refuses the move and result callbacks for a cancelled match, and refuses to refresh it. Telling the engine would
-      * need a fifth exchange on both sides of the protocol.
+      * The game engine is told afterwards, at the cancel url it gave when it created the game, so that it can drop the
+      * match — see [[releaseEngine]]. Whether or not it hears, matchmaker stops listening: [[GameEngineService]]
+      * refuses the move and result callbacks for a cancelled match, and refuses to refresh it.
       *
       * Under the match's row lock, so that a cancel racing a result callback resolves one way or the other rather than
       * both writing.
       */
     def cancel(gameId: GameId, matchId: MatchId, callerExternalId: String): IO[Match] =
-        sessionPool.use { session =>
-            val matchRepo = new MatchRepo(session)
-            val challengeRepo = new ChallengeRepo(session)
-            val participantRepo = new ParticipantRepo(session)
+        sessionPool
+            .use { session =>
+                val matchRepo = new MatchRepo(session)
+                val challengeRepo = new ChallengeRepo(session)
+                val participantRepo = new ParticipantRepo(session)
 
-            session.transaction
-                .use { _ =>
-                    for {
-                        caller <- resolveCaller(session, callerExternalId)
-                        existing <- matchRepo.readForUpdate(gameId, matchId).flatMap {
-                            case Some(m) => IO.pure(m)
-                            case None =>
-                                IO.raiseError(
-                                  NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
-                                )
-                        }
-                        creator <- challengeRepo.challengerOf(gameId, existing.challengeId).flatMap {
-                            case Some(playerId) => IO.pure(playerId)
-                            // The foreign key makes this unreachable; it is a NotFoundError rather than a crash
-                            // because a match whose challenge has gone is a broken row, not a bad request.
-                            case None =>
-                                IO.raiseError(
-                                  NotFoundError(
-                                    s"match ${matchId.value} has no challenge ${existing.challengeId.value}"
-                                  )
-                                )
-                        }
-                        _ <- IO.raiseUnless(creator == caller.playerId)(
-                          UnauthorizedError(
-                            s"caller '$callerExternalId' did not create match ${matchId.value} and may not cancel it"
-                          )
-                        )
-                        _ <- IO.raiseWhen(existing.completed)(
-                          ConflictError(s"match ${matchId.value} is completed and can no longer be cancelled")
-                        )
-                        _ <- IO.raiseWhen(existing.cancelled)(
-                          ConflictError(s"match ${matchId.value} is already cancelled")
-                        )
-                        cancelled = existing.copy(cancelled = true)
-                        _ <- matchRepo.update(cancelled)
-                        // And the seats, in the same lock: a cancelled match is over, so nobody's turn
-                        // is pending in it and no clock is still running. Completion says this seat by
-                        // seat as it records what each player scored; a cancellation has nothing to
-                        // record, so it says the one thing true of every seat at once.
-                        //
-                        // Not merely tidiness. Anything asking "is this seat still in play" could
-                        // otherwise only answer it by joining `match` for the cancelled flag, because
-                        // the seat did not know -- see `NotificationRepo.restampParticipants`.
-                        _ <- participantRepo.completeForMatch(gameId, matchId)
-                    } yield (cancelled, caller)
-                }
-                .flatMap { (cancelled, caller) =>
-                    /* After the commit and outside the lock, and unable to fail the cancel -- the same
-                     * terms every notification in this codebase is sent on. Everyone in the match except
-                     * the creator, who called it off and is looking at the answer. */
-                    notifications
-                        .matchEnded(session, cancelled, MatchEnding.Cancelled, except = Some(caller.playerId))
-                        .as(cancelled)
-                }
-        }
+                session.transaction
+                    .use { _ =>
+                        for {
+                            caller <- resolveCaller(session, callerExternalId)
+                            existing <- matchRepo.readForUpdate(gameId, matchId).flatMap {
+                                case Some(m) => IO.pure(m)
+                                case None =>
+                                    IO.raiseError(
+                                      NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
+                                    )
+                            }
+                            creator <- challengeRepo.challengerOf(gameId, existing.challengeId).flatMap {
+                                case Some(playerId) => IO.pure(playerId)
+                                // The foreign key makes this unreachable; it is a NotFoundError rather than a crash
+                                // because a match whose challenge has gone is a broken row, not a bad request.
+                                case None =>
+                                    IO.raiseError(
+                                      NotFoundError(
+                                        s"match ${matchId.value} has no challenge ${existing.challengeId.value}"
+                                      )
+                                    )
+                            }
+                            _ <- IO.raiseUnless(creator == caller.playerId)(
+                              UnauthorizedError(
+                                s"caller '$callerExternalId' did not create match ${matchId.value} and may not cancel it"
+                              )
+                            )
+                            _ <- IO.raiseWhen(existing.completed)(
+                              ConflictError(s"match ${matchId.value} is completed and can no longer be cancelled")
+                            )
+                            _ <- IO.raiseWhen(existing.cancelled)(
+                              ConflictError(s"match ${matchId.value} is already cancelled")
+                            )
+                            cancelled = existing.copy(cancelled = true)
+                            _ <- matchRepo.update(cancelled)
+                            // And the seats, in the same lock: a cancelled match is over, so nobody's turn
+                            // is pending in it and no clock is still running. Completion says this seat by
+                            // seat as it records what each player scored; a cancellation has nothing to
+                            // record, so it says the one thing true of every seat at once.
+                            //
+                            // Not merely tidiness. Anything asking "is this seat still in play" could
+                            // otherwise only answer it by joining `match` for the cancelled flag, because
+                            // the seat did not know -- see `NotificationRepo.restampParticipants`.
+                            _ <- participantRepo.completeForMatch(gameId, matchId)
+                        } yield (cancelled, caller)
+                    }
+                    .flatMap { (cancelled, caller) =>
+                        /* After the commit and outside the lock, and unable to fail the cancel -- the same
+                         * terms every notification in this codebase is sent on. Everyone in the match except
+                         * the creator, who called it off and is looking at the answer. */
+                        notifications
+                            .matchEnded(session, cancelled, MatchEnding.Cancelled, except = Some(caller.playerId))
+                            .as(cancelled)
+                    }
+            }
+            // And the engine, once the session above is given back: telling it borrows a session of its own.
+            .flatTap(cancelled => releaseEngine(cancelled.gameId, cancelled.matchId))
+
+    /** Tells the engine a cancelled match is cancelled, so that it drops the match, and records that it heard.
+      *
+      * Unable to fail the cancel, which is committed: an engine that does not answer keeps its copy until the sweep
+      * tells it again (`ArchiveRepo.listUnreleased`). An engine that gave no cancel url when the game was created is
+      * not told at all, and its board stays up — matchmaker refuses its callbacks for the match either way.
+      *
+      * The engine is asked with no transaction open, per the rule on external calls; what is recorded afterwards is a
+      * single conditional update, which needs no lock.
+      */
+    def releaseEngine(gameId: GameId, matchId: MatchId): IO[Unit] =
+        engine
+            .fold(IO.unit) { client =>
+                sessionPool
+                    .use { session =>
+                        for {
+                            url <- new ArchiveRepo(session).cancelUrl(gameId, matchId)
+                            key <- new GameApiKeyRepo(session).forGame(gameId)
+                        } yield (url, key)
+                    }
+                    .flatMap {
+                        case (Some(url), key) =>
+                            client.cancel(url, key) *>
+                                sessionPool.use(session => new ArchiveRepo(session).recordReleased(gameId, matchId))
+                        case (None, _) => IO.unit
+                    }
+            }
+            .handleErrorWith(e =>
+                IO.blocking(
+                  System.err.println(s"telling the engine match ${matchId.value} was cancelled failed: $e")
+                )
+            )
 
     private def forCaller(
         callerExternalId: String

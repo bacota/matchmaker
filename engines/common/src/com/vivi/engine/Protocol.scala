@@ -60,7 +60,15 @@ object Protocol {
       */
     case class LiveTerms(timeLimitSeconds: Long, kind: String = "PER_TURN")
 
-    case class CreateGameResponse(statusUrl: String, playUrl: String, publicUrl: Option[String])
+    /** `cancelUrl` is where matchmaker says the match has been cancelled, so that the engine can drop it. Absent from
+      * an engine that predates it, which is then simply not told.
+      */
+    case class CreateGameResponse(
+        statusUrl: String,
+        playUrl: String,
+        publicUrl: Option[String],
+        cancelUrl: Option[String] = None
+    )
 
     case class EngineParticipantStatus(
         participantId: Long,
