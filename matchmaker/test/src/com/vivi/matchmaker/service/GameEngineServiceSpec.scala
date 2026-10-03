@@ -171,7 +171,7 @@ class GameEngineServiceSpec extends PropertySuite {
           timeLimit = timeLimit,
           settings = settings,
           gameId = fixture.game.gameId,
-          characterId = fixture.character.characterId,
+          characterId = Some(fixture.character.characterId),
           isPublic = isPublic,
           gameRoleId = Some(fixture.game.roles.head.gameRoleId),
           timeLimitKind = timeLimitKind,

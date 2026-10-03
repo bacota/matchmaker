@@ -191,7 +191,7 @@ class RouterSpec extends FunSuite {
           None,
           "{}",
           GameId(1),
-          CharacterId(1),
+          Some(CharacterId(1)),
           gameRoleId = Some(GameRoleId(1))
         )
 

@@ -123,7 +123,7 @@ class MatchServiceSpec extends PropertySuite {
                 None,
                 "{}",
                 game.gameId,
-                character.characterId,
+                Some(character.characterId),
                 isPublic = false,
                 Some(game.roles.head.gameRoleId)
               )

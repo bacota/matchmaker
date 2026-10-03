@@ -137,11 +137,6 @@ class ChallengeRepo(session: Session[IO]) {
         val timeLimit = fromSeconds(timeLimitSeconds)
         gameType match {
             case GameType.Character =>
-                val cid = characterIdValue.getOrElse(
-                  throw new IllegalStateException(
-                    s"challenge ${id.value} is game_type 'C' but has no character_challenge row"
-                  )
-                )
                 CharacterChallenge(
                   id,
                   challenger,
@@ -150,7 +145,7 @@ class ChallengeRepo(session: Session[IO]) {
                   timeLimit,
                   settings,
                   gameId,
-                  CharacterId(cid),
+                  characterIdValue.map(CharacterId.apply),
                   isPublic,
                   roleId,
                   timeLimitKind,
@@ -276,8 +271,11 @@ class ChallengeRepo(session: Session[IO]) {
               )
             )
             _ <- c match {
+                // None for a seatless challenge, which has no character of its challenger's to name.
                 case cc: CharacterChallenge =>
-                    session.execute(insertCharacterChallenge)((c.gameId, id, cc.characterId)).void
+                    cc.characterId.traverse_(character =>
+                        session.execute(insertCharacterChallenge)((c.gameId, id, character))
+                    )
                 case _: PlainChallenge => IO.unit
             }
         } yield c match {

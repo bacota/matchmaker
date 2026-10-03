@@ -33,8 +33,7 @@ sealed trait Challenge {
     def isPublic: Boolean
 
     /** The role the challenger will play, or nothing for a challenger who will not play at all: a game's admin who
-      * offers a match for other players to play (a seatless challenge), which only a game's admin may do, and only in a
-      * plain game.
+      * offers a match for other players to play (a seatless challenge), which only a game's admin may do.
       *
       * Not a column on `challenge`: creating a challenge also creates the challenger's own acceptance, so this is
       * stored on that acceptance like every other player's role, and is read back from it. Setting it on a challenge is
@@ -107,7 +106,10 @@ case class CharacterChallenge(
     timeLimit: Option[Duration],
     settings: String,
     gameId: GameId,
-    characterId: CharacterId,
+    /** The challenger's character, which plays their seat — or nothing for a seatless challenge, offered by a game's
+      * admin for other players' characters to play. Exactly when [[gameRoleId]] is.
+      */
+    characterId: Option[CharacterId],
     isPublic: Boolean = false,
     gameRoleId: Option[GameRoleId],
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
