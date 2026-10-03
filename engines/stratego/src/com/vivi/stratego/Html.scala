@@ -58,11 +58,12 @@ object Html {
   /* The two armies carry white text: --red is 6.6:1 against it and --blue 6.7:1. The insignia's
      metals are drawn only on a piece, in either theme: --silver is 5.1:1 against --red and 5.2:1
      against --blue, --gold 4.0:1 and 4.1:1 — over the 3:1 a graphic needs. --black (2.8:1 on --blue),
-     --brown (1.1:1 on --red) and a flag in the other army's colour (1.0:1) are not, so each is drawn
+     --brown (1.1:1 on --red), --green (1.2:1 on --red) and a flag in the other army's colour (1.0:1) are not, so each is drawn
      inside a --halo outline, 5.8:1 against --red and 5.9:1 against --blue. */
   :root { color-scheme: light dark; --line: #8884; --ink: #222; --paper: #fafafa; --error: #b3261e;
           --square: #e9e4d4; --water: #8fbcd9; --red: #b3261e; --blue: #1d4ed8; --mark: #e6a700; --focus: #6d28d9;
-          --silver: #dfe3e8; --gold: #f3c34a; --black: #111; --brown: #7b4a1f; --halo: #f4f1ea; }
+          --silver: #dfe3e8; --gold: #f3c34a; --black: #111; --brown: #7b4a1f; --green: #3d7a2a;
+          --halo: #f4f1ea; }
   @media (prefers-color-scheme: dark) {
     :root { --ink: #eee; --paper: #16181c; --error: #ff8a80; --square: #3a3a33; --water: #1f4d6b; --mark: #ffc940; --focus: #c4b5fd; }
   }
@@ -153,6 +154,11 @@ object Html {
   #key .icon.wide { width: 1.8rem; height: .65rem; }
   /* The marks a square can carry, drawn as the board draws them. */
   #key .dot { position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: #fff; }
+  /* The name of the piece under a resting pointer, after a second. */
+  #tip { position: fixed; z-index: 20; padding: .375rem .625rem; border-radius: 6px; background: var(--ink);
+         color: var(--paper); font-size: .875rem; line-height: 1.3; white-space: nowrap;
+         box-shadow: 0 4px 12px rgba(0, 0, 0, .25); }
+  #tip[hidden] { display: none; }
   #key .bar { position: absolute; left: 25%; right: 25%; bottom: 2px; height: 2px; background: #fff; }
 ${SignIn.css}
 ${PlayLive.css}
@@ -189,6 +195,9 @@ $icons
     <button id="move" type="button" class="primary">Move</button>
   </div>
   <div id="lost"></div>
+  <!-- What a square's label already says to a screen reader, shown to a mouse or keyboard after a
+       second's rest; so it is hidden from the accessibility tree rather than said twice. -->
+  <div id="tip" aria-hidden="true" hidden></div>
   <div id="key" popover role="dialog" aria-labelledby="key-title">
     <div class="head">
       <h2 id="key-title">Key</h2>
@@ -373,7 +382,13 @@ ${TurnTimer.script}
       tap(squareAt(d));
     });
     b.addEventListener("pointerdown", e => press(e, d));
-    b.addEventListener("focus", () => { focusSquare = squareAt(d); });
+    b.addEventListener("focus", () => {
+      focusSquare = squareAt(d);
+      if (b.matches(":focus-visible")) tipLater(d);
+    });
+    b.addEventListener("blur", hideTip);
+    b.addEventListener("pointerenter", e => { if (e.pointerType === "mouse") tipLater(d); });
+    b.addEventListener("pointerleave", () => leaveSoon());
     board.appendChild(b);
     squares.push(b);
   }
@@ -399,6 +414,64 @@ ${TurnTimer.script}
     if (mine && p.revealed) text += ", seen by " + other(p.side);
     return text;
   }
+
+  // ---- naming a piece on hover ----------------------------------------------------------------
+  //
+  // A pointer resting on a piece for a second, or the keyboard's focus, names it beside the square.
+  // Hover only: a phone has none, and a long press there is the start of a drag. It stays while the
+  // pointer moves onto it and goes with Escape, as content shown on hover must.
+
+  const tip = document.getElementById("tip");
+  let tipSquare = null, tipTimer = null, leaveTimer = null;
+
+  /* What the tip says for the piece on display position `d`, or null for no tip. */
+  function tipText(d) {
+    const sq = squareAt(d), p = piecesBySquare()[sq];
+    if (!p || LAKES.includes(sq)) return null;
+    if (!p.rank) return "Unknown " + p.side + " piece" + (p.moved ? " — has moved" : "");
+    return rankName(p.rank) + (NUMBER[p.rank] ? " (" + NUMBER[p.rank] + ")" : "");
+  }
+
+  function tipLater(d) {
+    clearTimeout(tipTimer);
+    clearTimeout(leaveTimer);
+    if (tipSquare !== null && tipSquare !== d) hideTip();
+    tipTimer = setTimeout(() => showTip(d), 1000);
+  }
+
+  function showTip(d) {
+    const text = drag ? null : tipText(d);
+    if (text === null) { hideTip(); return; }
+    tipSquare = d;
+    tip.textContent = text;
+    tip.hidden = false;
+    // Above the square, or below it when there is no room above; kept inside the window.
+    const r = squares[d].getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+    const left = Math.min(Math.max(4, r.left + r.width / 2 - w / 2), window.innerWidth - w - 4);
+    const top = r.top - h - 6 >= 4 ? r.top - h - 6 : r.bottom + 6;
+    tip.style.left = left + "px";
+    tip.style.top = top + "px";
+  }
+
+  function hideTip() {
+    clearTimeout(tipTimer);
+    clearTimeout(leaveTimer);
+    tipSquare = null;
+    tip.hidden = true;
+  }
+
+  /* Leaving the square hides the tip, unless the pointer is on its way onto the tip itself. */
+  function leaveSoon() {
+    clearTimeout(tipTimer);
+    if (tipSquare === null) return;
+    clearTimeout(leaveTimer);
+    leaveTimer = setTimeout(hideTip, 200);
+  }
+  tip.addEventListener("pointerenter", () => clearTimeout(leaveTimer));
+  tip.addEventListener("pointerleave", hideTip);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") hideTip(); });
+  // The square scrolls away from under a tip placed beside it.
+  window.addEventListener("scroll", () => { if (tipSquare !== null) hideTip(); }, { passive: true });
 
   function drawBoard() {
     const by = piecesBySquare();
@@ -431,6 +504,8 @@ ${TurnTimer.script}
     }
     // Something on the board must be reachable with the tab key.
     if (!focusable) squares[90].tabIndex = 0;
+    // A refresh can change what is on the square a tip names.
+    if (tipSquare !== null) showTip(tipSquare);
     board.setAttribute("aria-label", "board, " + (state && state.you === "Blue" ? "Blue" : "Red") + " at the bottom");
   }
 
@@ -512,6 +587,7 @@ ${TurnTimer.script}
   }
 
   function press(e, d) {
+    hideTip();
     const sq = squareAt(d);
     if (drag || !e.isPrimary || e.button !== 0 || !draggable(sq)) return;
     drag = { from: sq, button: squares[d], pointer: e.pointerId, touch: e.pointerType !== "mouse",
@@ -805,9 +881,9 @@ ${TurnTimer.script}
     /** One icon per rank, drawn for this page. The officers and the sergeant wear simplified US Army insignia, which as
       * works of the US government are free to use, in their metals: four silver stars for the Marshal (a general), one
       * for the General (a brigadier), a silver eagle, a gold oak leaf, two silver bars joined, one silver bar, and
-      * three chevrons. The Miner's brown pick, the Scout's galloping horse, the black mask and bomb, and the flag — in
-      * the other army's colour, through `--flag` — are plain symbols, not any published Stratego edition's artwork,
-      * which is copyrighted.
+      * three chevrons, in green. The Miner's brown pick, the Scout's galloping horse, the black mask and bomb, and the
+      * flag — in the other army's colour, through `--flag` — are plain symbols, not any published Stratego edition's
+      * artwork, which is copyrighted.
       *
       * Each is a 24-unit square, except the four stars, which are a strip so that they can take a piece's whole width.
       * What is not metal is `currentColor`, the white of a coloured piece. Placed with `<use href="#rank-Marshal">`,
@@ -852,7 +928,7 @@ ${TurnTimer.script}
   <symbol id="rank-Major" viewBox="0 0 24 24"><path style="fill:var(--gold)" stroke="none" d="M12 1.8c1.6 1.3 2 2.7 1.3 4 1.7-.7 3.2-.3 3.7 1-.6 1-1.6 1.5-2.8 1.6 1.9.2 3.3 1.1 3.5 2.7-1 .7-2.3.7-3.6.2 1.5 1 2.3 2.3 2 3.9-1.3.4-2.6 0-3.6-.9.4 1.5.1 2.9-.9 3.9l-.6 1.2v3.2h-1v-3.2l-.6-1.2c-1-1-1.3-2.4-.9-3.9-1 .9-2.3 1.3-3.6.9-.3-1.6.5-2.9 2-3.9-1.3.5-2.6.5-3.6-.2.2-1.6 1.6-2.5 3.5-2.7-1.2-.1-2.2-.6-2.8-1.6.5-1.3 2-1.7 3.7-1-.7-1.3-.3-2.7 1.3-4z"/><path d="M12 5.5v13" style="stroke:#0005" stroke-width="1"/></symbol>
   <symbol id="rank-Captain" viewBox="0 0 24 24"><g style="fill:var(--silver)" stroke="none"><rect x="5" y="3" width="4.5" height="18" rx=".6"/><rect x="14.5" y="3" width="4.5" height="18" rx=".6"/><rect x="9" y="5" width="6" height="1.6"/><rect x="9" y="17.4" width="6" height="1.6"/></g></symbol>
   <symbol id="rank-Lieutenant" viewBox="0 0 24 24"><rect style="fill:var(--silver)" stroke="none" x="9.5" y="3" width="5" height="18" rx=".6"/></symbol>
-  <symbol id="rank-Sergeant" viewBox="0 0 24 24"><path stroke-width="2.6" stroke-linecap="butt" stroke-linejoin="miter" d="m4 9 8-5 8 5M4 14.5l8-5 8 5M4 20l8-5 8 5"/></symbol>
+  <symbol id="rank-Sergeant" viewBox="0 0 24 24"><g fill="none" stroke-linecap="butt" stroke-linejoin="miter"><path style="stroke:var(--halo)" stroke-width="4.4" d="m4 9 8-5 8 5M4 14.5l8-5 8 5M4 20l8-5 8 5"/><path style="stroke:var(--green)" stroke-width="2.6" d="m4 9 8-5 8 5M4 14.5l8-5 8 5M4 20l8-5 8 5"/></g></symbol>
   <symbol id="rank-Miner" viewBox="0 0 24 24"><g transform="rotate(-35 12 12)" style="fill:none;stroke-linecap:round"><path d="M3 9.5c5-5 13-5 18 0M12 6v15.5" style="stroke:var(--halo);stroke-width:4"/><path d="M3 9.5c5-5 13-5 18 0M12 6v15.5" style="stroke:var(--brown);stroke-width:2.2"/></g></symbol>
   <symbol id="rank-Scout" viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><ellipse cx="11" cy="9.8" rx="5.6" ry="2.9" transform="rotate(-4 11 9.8)"/><path d="M13.6 7.4 17.4 2.8 20.2 3.9 16.8 10.8Z"/><path d="M17.2 3 17.8.9 19 2.3 23.3 6.3C23.8 6.8 23.4 7.6 22.8 7.5L21 7.4 18 5.8Z"/><path d="M17.4 3.1 16 4.6 15.2 6.6 16.6 5.2Z"/><path d="M5.8 8.2C3.6 6.6 1.8 6.4.4 7.4 1.8 7.8 2.6 9.2 2.8 11.4 3.8 10 4.8 9.6 6.2 10Z"/></g><g fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15.8 10.8 19.6 12.8 22.8 12.4"/><path d="M15 11.6 18.2 15.2 21.2 16.8"/><path d="M7.4 10.8 4 13.8 1.2 14"/><path d="M8.6 11.8 5.8 16 2.8 17.8"/></g></symbol>
   <symbol id="rank-Spy" viewBox="0 0 24 24"><path fill-rule="evenodd" style="fill:var(--black);stroke:var(--halo);stroke-width:2;paint-order:stroke;stroke-linejoin:round" d="M2 9c0-1.5 1-2 2.5-2C8 7 10 9 12 9s4-2 7.5-2C21 7 22 7.5 22 9c0 4-2 7.5-5 7.5-2.5 0-3.5-2.5-5-2.5s-2.5 2.5-5 2.5c-3 0-5-3.5-5-7.5zM4.5 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0zM14 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0z"/></symbol>
