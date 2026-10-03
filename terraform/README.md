@@ -208,8 +208,13 @@ current objects. Only the API function's role can reach them. Engines upload and
 matchmaker signs, and hold no AWS credentials of their own.
 
 The names contain dots, so the urls are path-style (`s3.<region>.amazonaws.com/<bucket>/<key>`): a
-virtual-hosted url for a dotted bucket fails S3's certificate. The function reaches S3 the way it
-reaches SQS and the engines, through its VPC's route to the internet.
+virtual-hosted url for a dotted bucket fails S3's certificate. The API function checks objects in
+S3 from inside its VPC, the way it already reaches the engines' public urls. An S3 gateway endpoint
+on the subnets' route tables would carry that traffic off the NAT for free; nothing here creates
+one.
+
+An hourly function, `matchmaker-<env>-sweep`, asks again about completed matches never archived and
+cancels the engine never acknowledged; see `SweepService`.
 
 ## The hosted login domain
 
