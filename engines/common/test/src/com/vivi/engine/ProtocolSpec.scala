@@ -243,4 +243,47 @@ class ProtocolSpec extends FunSuite {
           List(Protocol.OwnedCharacter(5L, "Iron Mike", "a slugger", """{"strength":9}"""))
         )
     }
+
+    test("an engine's archive upload request reads as matchmaker's, and matchmaker's answers read as the engine's") {
+        val request =
+            Protocol.ArchiveUploadRequest(120L, "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=", Some("stored-match-1"))
+        val requestRead =
+            read[Json.ArchiveUploadRequest](write(request))(using Json.given_ReadWriter_ArchiveUploadRequest)
+        assertEquals(
+          (requestRead.size, requestRead.sha256, requestRead.formatVersion),
+          (request.size, request.sha256, request.formatVersion)
+        )
+
+        val at = java.time.Instant.parse("2026-10-03T12:00:00Z")
+        val upload = Json.ArchiveUploadAnswer(upload =
+            Some(Json.ArchiveUpload("https://s3/b/k", "PUT", Map("x-amz-checksum-sha256" -> request.sha256), at))
+        )
+        assertEquals(
+          read[Protocol.ArchiveUploadAnswer](write(upload)(using Json.given_ReadWriter_ArchiveUploadAnswer)),
+          Protocol.ArchiveUploadAnswer(upload =
+              Some(Protocol.ArchiveUpload("https://s3/b/k", "PUT", Map("x-amz-checksum-sha256" -> request.sha256), at))
+          )
+        )
+        val already = Json.ArchiveUploadAnswer(archivedAt = Some(at))
+        assertEquals(
+          read[Protocol.ArchiveUploadAnswer](write(already)(using Json.given_ReadWriter_ArchiveUploadAnswer)),
+          Protocol.ArchiveUploadAnswer(archivedAt = Some(at))
+        )
+    }
+
+    test("matchmaker's archive confirmation and download read as the engine's") {
+        val at = java.time.Instant.parse("2026-10-03T12:00:00Z")
+        assertEquals(
+          read[Protocol.ArchiveConfirmation](
+            write(Json.ArchiveConfirmation(at))(using Json.given_ReadWriter_ArchiveConfirmation)
+          ),
+          Protocol.ArchiveConfirmation(at)
+        )
+        assertEquals(
+          read[Protocol.ArchiveDownload](
+            write(Json.ArchiveDownload("https://s3/b/k", at))(using Json.given_ReadWriter_ArchiveDownload)
+          ),
+          Protocol.ArchiveDownload("https://s3/b/k", at)
+        )
+    }
 }

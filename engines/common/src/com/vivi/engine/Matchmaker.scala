@@ -41,6 +41,41 @@ trait Matchmaker {
       * nickname nobody has is a 400 [[MatchmakerRefusal]], whose reason says so.
       */
     def transferCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.TransferCharacterRequest): Unit
+
+    /** `POST {matchmakerUrl}/matches/{matchId}/archive`: where to upload a finished match's archive, or that matchmaker
+      * already has it. Refused (409) for a match matchmaker does not yet know is over; 503 when it keeps no archives.
+      */
+    def requestArchiveUpload(
+        matchmakerUrl: String,
+        matchId: String,
+        request: Protocol.ArchiveUploadRequest
+    ): Protocol.ArchiveUploadAnswer
+
+    /** `POST {matchmakerUrl}/matches/{matchId}/archive/confirm`: the upload is done. Answered once matchmaker has seen
+      * the archive arrive; from then on the live copy may go.
+      */
+    def confirmArchive(matchmakerUrl: String, matchId: String): Protocol.ArchiveConfirmation
+
+    /** `POST {matchmakerUrl}/matches/{matchId}/archive/read`: where to read a match's archive from. */
+    def readArchive(matchmakerUrl: String, matchId: String): ArchiveLocation
+
+    /** `POST {matchmakerUrl}/matches/{matchId}/archive/expired`: a url [[readArchive]] gave found nothing. Matchmaker
+      * checks for itself before believing it, and refuses it for a permanent archive, whose absence is a fault.
+      */
+    def reportArchiveExpired(matchmakerUrl: String, matchId: String): Unit
+}
+
+/** Where a match's archive is, as matchmaker answers. */
+enum ArchiveLocation {
+
+    /** Readable at `url`, for a few minutes. */
+    case At(download: Protocol.ArchiveDownload)
+
+    /** A friendly match's archive, kept for 30 days and since expired: there is nothing left to show. */
+    case Expired
+
+    /** Matchmaker has no archive of this match — it is not finished, not archived yet, or not this engine's. */
+    case NotArchived
 }
 
 /** Posts the callbacks over HTTP, to the urls matchmaker itself supplied when it created the game.
@@ -95,6 +130,37 @@ class HttpMatchmaker(http: SignedHttp, apiKey: Option[String], externalId: Optio
 
     def transferCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.TransferCharacterRequest): Unit =
         call("PUT", s"${matchmakerUrl.stripSuffix("/")}/characters/$characterId/owner", Some(write(request)))
+
+    private def archiveUrl(matchmakerUrl: String, matchId: String, action: String = ""): String = {
+        val id = java.net.URLEncoder.encode(matchId, java.nio.charset.StandardCharsets.UTF_8)
+        s"${matchmakerUrl.stripSuffix("/")}/matches/$id/archive$action"
+    }
+
+    def requestArchiveUpload(
+        matchmakerUrl: String,
+        matchId: String,
+        request: Protocol.ArchiveUploadRequest
+    ): Protocol.ArchiveUploadAnswer =
+        read[Protocol.ArchiveUploadAnswer](call("POST", archiveUrl(matchmakerUrl, matchId), Some(write(request))))
+
+    def confirmArchive(matchmakerUrl: String, matchId: String): Protocol.ArchiveConfirmation =
+        read[Protocol.ArchiveConfirmation](call("POST", archiveUrl(matchmakerUrl, matchId, "/confirm"), Some("{}")))
+
+    def readArchive(matchmakerUrl: String, matchId: String): ArchiveLocation = {
+        val url = archiveUrl(matchmakerUrl, matchId, "/read")
+        http.exchange("POST", url, Some("{}"), "execute-api", headers) match {
+            case (status, answer) if status >= 200 && status < 300 =>
+                ArchiveLocation.At(read[Protocol.ArchiveDownload](answer))
+            case (410, _) => ArchiveLocation.Expired
+            case (404, _) => ArchiveLocation.NotArchived
+            case (status, answer) if status >= 400 && status < 500 =>
+                throw MatchmakerRefusal(status, MatchmakerRefusal.reason(answer))
+            case (status, answer) => throw AwsError(s"POST $url returned $status: $answer")
+        }
+    }
+
+    def reportArchiveExpired(matchmakerUrl: String, matchId: String): Unit =
+        call("POST", archiveUrl(matchmakerUrl, matchId, "/expired"), Some("{}"))
 
     /* A call whose answer the engine reads. Matchmaker's own refusal is raised with its reason, so
      * that the engine can tell the player what it was; anything else is matchmaker failing, and the
@@ -217,6 +283,89 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
             .get(characterId)
             .filter(_.ownerExternalId == ownerExternalId)
             .getOrElse(throw MatchmakerRefusal(404, s"no character with id $characterId"))
+
+    /** Archives, kept as matchmaker would keep track of them: what was asked for, and what is confirmed. The bytes
+      * themselves are in [[archiveStore]], which stands in for S3 — an engine moves them, not matchmaker.
+      */
+    val archiveStore: InMemoryArchiveTransfer = InMemoryArchiveTransfer()
+
+    private val archiveRequests = scala.collection.mutable.Map[String, Protocol.ArchiveUploadRequest]()
+    private val archivedAt = scala.collection.mutable.Map[String, java.time.Instant]()
+
+    /** Matches whose archive the friendly bucket has expired, as a test says. */
+    @volatile var expiredArchives: Set[String] = Set.empty
+
+    /** While set, archiving is refused as a matchmaker with no buckets refuses it: 503. */
+    @volatile var archivingUnavailable: Boolean = false
+
+    /** While set, an upload request is refused as one for a match matchmaker does not know is over: 409. */
+    @volatile var refuseArchiving: Boolean = false
+
+    def requestArchiveUpload(
+        matchmakerUrl: String,
+        matchId: String,
+        request: Protocol.ArchiveUploadRequest
+    ): Protocol.ArchiveUploadAnswer = synchronized {
+        log(s"POST $matchmakerUrl/matches/$matchId/archive ${write(request)}")
+        if (archivingUnavailable) throw AwsError("archiving is not configured on this matchmaker (503)")
+        if (refuseArchiving) throw MatchmakerRefusal(409, s"match $matchId is not over")
+        archivedAt.get(matchId) match {
+            case Some(at) => Protocol.ArchiveUploadAnswer(archivedAt = Some(at))
+            case None =>
+                archiveRequests(matchId) = request
+                Protocol.ArchiveUploadAnswer(upload =
+                    Some(
+                      Protocol.ArchiveUpload(
+                        archiveStore.urlOf(matchId),
+                        "PUT",
+                        Map("content-type" -> "application/json", "x-amz-checksum-sha256" -> request.sha256),
+                        java.time.Instant.now().plusSeconds(300)
+                      )
+                    )
+                )
+        }
+    }
+
+    def confirmArchive(matchmakerUrl: String, matchId: String): Protocol.ArchiveConfirmation = synchronized {
+        log(s"POST $matchmakerUrl/matches/$matchId/archive/confirm")
+        archivedAt.get(matchId) match {
+            case Some(at) => Protocol.ArchiveConfirmation(at)
+            case None =>
+                val asked = archiveRequests.getOrElse(
+                  matchId,
+                  throw MatchmakerRefusal(409, s"no upload was asked for for match $matchId")
+                )
+                archiveStore.bytesAt(archiveStore.urlOf(matchId)) match {
+                    case Some(bytes) if ArchiveTransfer.sha256(bytes) == asked.sha256 =>
+                        val at = java.time.Instant.now()
+                        archivedAt(matchId) = at
+                        Protocol.ArchiveConfirmation(at)
+                    case _ => throw MatchmakerRefusal(409, s"no archive has arrived for match $matchId")
+                }
+        }
+    }
+
+    def readArchive(matchmakerUrl: String, matchId: String): ArchiveLocation = synchronized {
+        log(s"POST $matchmakerUrl/matches/$matchId/archive/read")
+        if (expiredArchives(matchId)) ArchiveLocation.Expired
+        else if (archivedAt.contains(matchId))
+            ArchiveLocation.At(
+              Protocol.ArchiveDownload(archiveStore.urlOf(matchId), java.time.Instant.now().plusSeconds(300))
+            )
+        else ArchiveLocation.NotArchived
+    }
+
+    /** Matches the engine has reported as missing from the archive. */
+    @volatile var reportedExpired: List[String] = Nil
+
+    def reportArchiveExpired(matchmakerUrl: String, matchId: String): Unit = synchronized {
+        log(s"POST $matchmakerUrl/matches/$matchId/archive/expired")
+        reportedExpired = reportedExpired :+ matchId
+        expiredArchives = expiredArchives + matchId
+    }
+
+    /** Whether matchmaker has confirmed this match's archive. */
+    def isArchived(matchId: String): Boolean = synchronized(archivedAt.contains(matchId))
 
     def moves: List[(String, Protocol.MoveNotification)] = synchronized(movesBuffer.toList)
     def results: List[(String, Protocol.MatchResults)] = synchronized(resultsBuffer.toList)

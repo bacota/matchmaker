@@ -41,15 +41,23 @@ object EngineConfig {
     def region(env: String => Option[String]): String =
         env("AWS_REGION").orElse(env("AWS_DEFAULT_REGION")).getOrElse("us-east-1")
 
-    /** Where matches are kept: a DynamoDB table when `MATCH_TABLE` names one, and memory otherwise. */
-    def matchStore[M <: HasMatchId: ReadWriter](env: String => Option[String]): MatchStore[M] =
-        env("MATCH_TABLE") match {
+    /** Where matches are kept: a DynamoDB table when `MATCH_TABLE` names one, and memory otherwise — archived, once
+      * finished, through matchmaker when `MATCHMAKER_URL` says where it is. See [[ArchivingMatchStore]].
+      */
+    def matchStore[M <: HasMatchId: ReadWriter](env: String => Option[String]): MatchStore[M] = {
+        val live = env("MATCH_TABLE") match {
             case Some(table) =>
                 DynamoDbMatchStore[M](SignedHttp(AwsCredentials.provider(env), region(env)), table, region(env))
             // Fine for the local server, whose process outlives its matches, and wrong for Lambda,
             // where the next invocation may be a different container — hence the table.
             case None => InMemoryMatchStore[M]()
         }
+        // Not when matchmaker is offline: there is nothing to archive through, and the local engine
+        // keeps every match in memory for as long as it runs.
+        ArchivingMatchStore.around(live, matchmaker(env), matchmakerUrl(env).filterNot(_ => offline(env)))
+    }
+
+    private def offline(env: String => Option[String]): Boolean = env("MATCHMAKER_OFFLINE").contains("true")
 
     /** Where matchmaker's API is, for a call an engine makes on its own account rather than about a match — a character
       * game reporting a character a player has made. A match's callbacks arrive with their urls, so an engine with no
@@ -61,7 +69,7 @@ object EngineConfig {
     /** How matchmaker is called back: over HTTP, or — with `MATCHMAKER_OFFLINE=true` — not at all, the calls printed.
       */
     def matchmaker(env: String => Option[String]): Matchmaker =
-        if (env("MATCHMAKER_OFFLINE").contains("true")) RecordingMatchmaker(println)
+        if (offline(env)) RecordingMatchmaker(println)
         // Unsigned: matchmaker's callback routes take an API key now, not a SigV4 signature. The
         // signed client stays for DynamoDB above, which is still AWS and still needs one.
         else HttpMatchmaker(SignedHttp(None, region(env)), matchmakerKey(env), env("GAME_EXTERNAL_ID"))
