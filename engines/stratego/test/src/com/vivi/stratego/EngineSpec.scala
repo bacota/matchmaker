@@ -126,6 +126,21 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(f.m.inPlay)
     }
 
+    test("each deployment keeps the army it put down, which is the opening position a replay starts from") {
+        val f = Fixture()
+        val red = setup(Side.Red, Map(30 -> Rank.Scout))
+        val blue = setup(Side.Blue, Map(60 -> Rank.Sergeant))
+        assert(f.engine.deploy("m-1", bob, names(blue)).isRight)
+        assert(f.engine.deploy("m-1", alice, names(red)).isRight)
+        assertEquals(f.m.turns.map(t => (t.side, t.setup)), List((Side.Blue, Some(blue)), (Side.Red, Some(red))))
+        // What was kept is what the board was given, square by square.
+        for (t <- f.m.turns; s <- t.setup)
+            assertEquals(t.side.homeSquares.zip(s), t.side.homeSquares.map(sq => sq -> f.m.board(sq).get.rank))
+        // And a move keeps no army.
+        assert(f.engine.move("m-1", alice, 30, 40).isRight)
+        assertEquals(f.m.turns.last.setup, None)
+    }
+
     test("a setup must be one whole army, made once") {
         val f = Fixture()
         assertEquals(

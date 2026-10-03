@@ -57,7 +57,8 @@ class Engine(
                       seat.participantId,
                       seat.side,
                       at,
-                      TurnClock.turnStart(current.clock, seat.participantId, current.createdAt)
+                      TurnClock.turnStart(current.clock, seat.participantId, current.createdAt),
+                      setup = Some(parsed)
                     )
                 (current.copy(board = board, turns = current.turns :+ record), record)
             }
@@ -164,16 +165,7 @@ class Engine(
               .toList
               .flatMap(m.legalMoves)
               .map((from, to) => List(from, to)),
-          lastMove = m.moves.lastOption.flatMap(r =>
-              r.step.map(s =>
-                  LastMove(
-                    r.side.toString,
-                    s.from,
-                    s.to,
-                    r.battle.map(b => BattleView(b.attacker.toString, b.defender.toString, b.result.toString))
-                  )
-              )
-          ),
+          lastMove = m.moves.lastOption.flatMap(moveView),
           lost = Side.values.toList.map(s => LostView(s.toString, m.lost(s).map(_.toString))),
           completed = over,
           winner = m.winner.map(_.toString),
@@ -191,7 +183,37 @@ class Engine(
                 s.nickname
               )
           ),
-          clock = core.clockView(m)
+          clock = core.clockView(m),
+          replay = replayOf(m, viewer)
+        )
+    }
+
+    private def moveView(r: MoveRecord): Option[LastMove] =
+        r.step.map(s =>
+            LastMove(
+              r.side.toString,
+              s.from,
+              s.to,
+              r.battle.map(b => BattleView(b.attacker.toString, b.defender.toString, b.result.toString))
+            )
+        )
+
+    /** The match from its opening position, hiding — see [[Protocol.ReplayView]] — the ranks of the pieces that stand
+      * unseen by `viewer` now.
+      */
+    private def replayOf(m: StrategoMatch, viewer: Option[Side]): Option[Protocol.ReplayView] = {
+        val unseen =
+            if (m.isOver) Set.empty[Int]
+            else m.board.cells.flatten.filter(p => !p.revealed && !viewer.contains(p.side)).map(_.id).toSet
+        m.opening.map(opening =>
+            Protocol.ReplayView(
+              opening.cells.indices.toList.flatMap(square =>
+                  opening(square).map(p =>
+                      PieceView(square, p.side.toString, Option.unless(unseen(p.id))(p.rank.toString), false, false)
+                  )
+              ),
+              m.moves.flatMap(moveView)
+            )
         )
     }
 }

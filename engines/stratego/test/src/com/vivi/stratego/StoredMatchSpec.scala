@@ -76,6 +76,16 @@ class StoredMatchSpec extends FunSuite {
         assert(!write(stratego).contains("concession"))
     }
 
+    test("a deployment's army is stored on its turn, and reads back; a match stored without one reads as none") {
+        val army = Armies.setup(Side.Red)
+        val deployed = stratego.copy(turns = stratego.turns.updated(0, stratego.turns.head.copy(setup = Some(army))))
+        val written = write(deployed)
+        assertEquals(read[StrategoMatch](written), deployed)
+        assertEquals("\"setup\":".r.findAllIn(written).size, 1)
+        assert(!write(stratego).contains("setup"))
+        assert(read[StrategoMatch](stored).turns.forall(_.setup.isEmpty))
+    }
+
     test("a match already stored reads back as the same match") {
         assertEquals(read[StrategoMatch](stored), stratego)
     }
