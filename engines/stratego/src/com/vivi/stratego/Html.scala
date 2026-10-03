@@ -141,6 +141,27 @@ object Html {
   /* --paper on --error, not white: the dark theme's --error is light, and white on it is 2.3:1. */
   #concede-dialog .give-up { background: var(--error); border-color: var(--error); color: var(--paper); }
   #concede:focus-visible, #concede-dialog :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  /* What the other side still has, rank by rank: their army less what they have lost, every piece of
+     which was revealed in the battle that took it — so nothing here is anything a player could not
+     have counted for themselves. */
+  #remaining { margin: 1rem auto 0; max-width: 36rem; text-align: left; }
+  #remaining[hidden] { display: none; }
+  #remaining section + section { margin-top: .75rem; }
+  #remaining h2 { font-size: 1rem; font-weight: 600; margin: 0 0 .5rem; }
+  #remaining ul { list-style: none; margin: 0; padding: 0; display: grid;
+                  grid-template-columns: repeat(auto-fill, minmax(2.75rem, 1fr)); gap: .375rem; }
+  #remaining li { display: flex; flex-direction: column; align-items: center; gap: .125rem;
+                  font: 700 .9375rem/1.2 ui-monospace, monospace; }
+  /* A rank with none left, faded but kept in its place, so the row does not shift as pieces fall. */
+  #remaining li.gone { opacity: .4; }
+  #remaining .chip { display: inline-grid; place-items: center; width: 2rem; height: 2rem; border-radius: 3px;
+                     color: #fff; }
+  #remaining .chip.Red { background: var(--red); --flag: var(--blue); }
+  #remaining .chip.Blue { background: var(--blue); --flag: var(--red); }
+  #remaining .icon { width: 1.4rem; height: 1.4rem; }
+  #remaining .icon.wide { width: 1.8rem; height: .65rem; }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+             clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   #lost { margin-top: 1rem; font-size: .875rem; }
   #lost p { margin: .25rem 0; }
   /* The key: a button beside the board that opens it over the page, so it is in reach mid-game. */
@@ -198,6 +219,7 @@ $icons
   <div id="board" role="group" aria-label="board"></div>
   <!-- Announced: what the last move did, which the other player's arrives while this page is idle. -->
   <p id="news" role="status" aria-live="polite"></p>
+  <div id="remaining" hidden></div>
   <div id="setup-controls" class="controls" hidden>
     <label>Swap<select id="swap-a"></select></label>
     <label>with<select id="swap-b"></select></label>
@@ -306,6 +328,7 @@ ${TurnTimer.script}
     drawControls();
     drawNews();
     drawLost();
+    drawRemaining();
 
     // By nickname; a match created before matchmaker sent nicknames has only the sign-in id.
     document.getElementById("players").hidden = !state;
@@ -791,6 +814,33 @@ ${TurnTimer.script}
       return state.draw ? "neither side can move — drawn" : other(state.winner) + " cannot move — " + state.winner + " wins";
     if (state.ending === "cap") return "move limit reached — drawn";
     return state.draw ? "drawn" : state.winner + " wins";
+  }
+
+  // Strongest first, as the key lists them.
+  const STRONGEST_FIRST = ["Marshal", "General", "Colonel", "Major", "Captain", "Lieutenant", "Sergeant", "Miner",
+                           "Scout", "Spy", "Bomb", "Flag"];
+
+  /* The other side's army as it stands, rank by rank — a player's opponent's, or on the public board
+   * both — once the setups are in and pieces can have been lost. */
+  function drawRemaining() {
+    const box = document.getElementById("remaining");
+    const sides = !state || state.phase === "setup" ? [] : state.you ? [other(state.you)] : ["Red", "Blue"];
+    box.hidden = sides.length === 0;
+    box.innerHTML = sides.map(side => {
+      const lost = (state.lost.find(l => l.side === side) || { ranks: [] }).ranks;
+      const items = STRONGEST_FIRST.map(rank => {
+        const of = ARMY.find(a => a[0] === rank)[1];
+        const left = of - lost.filter(r => r === rank).length;
+        const said = rankName(rank) + ": " + left + " of " + of;
+        return '<li class="' + (left ? "" : "gone") + '" title="' + said + '">' +
+          '<span class="chip ' + side + '" aria-hidden="true"><svg class="icon' + (rank === "Marshal" ? " wide" : "") +
+          '" focusable="false"><use href="#rank-' + rank + '"/></svg></span>' +
+          '<span aria-hidden="true">' + left + '</span><span class="sr-only">' + said + '</span></li>';
+      }).join("");
+      const id = "remaining-" + side;
+      return '<section aria-labelledby="' + id + '"><h2 id="' + id + '">' + side + " has " + (40 - lost.length) +
+        " of 40 pieces left</h2><ul>" + items + "</ul></section>";
+    }).join("");
   }
 
   function drawLost() {
