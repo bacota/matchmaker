@@ -8,25 +8,33 @@ import com.vivi.matchmaker.model.{GameId, MatchId}
 import com.vivi.matchmaker.persistence.{ArchiveRepo, GameApiKeyRepo}
 
 /** What one run of the sweep did. `stillUnarchived` and `stillUnreleased` are the matches it asked about and that are
-  * still owed afterwards — the ones worth a look, if they keep turning up.
+  * still owed afterwards — the ones worth a look, if they keep turning up. `deferred` is how many owed matches it did
+  * not reach before its deadline, which the next run starts with.
   */
 case class SweepReport(
     prompted: Int,
     stillUnarchived: List[MatchId],
     released: Int,
-    stillUnreleased: List[MatchId]
+    stillUnreleased: List[MatchId],
+    deferred: Int = 0
 )
 
 /** Catches what archiving and cancelling leave owed when something does not answer at the moment it should
   * (archiving-matches-plan.md). Run on a schedule; nothing here is on any player's request path.
   *
+  *   - A cancelled match whose engine never acknowledged the cancel: it is told again.
   *   - A completed match never archived: its engine finished it, and then failed to archive it — or never reported its
   *     result, so matchmaker refused the archive. The engine is asked for the match's status, which is how an engine is
   *     prompted to archive a finished match it still holds (`GameEngine.archiveIfFinished`).
-  *   - A cancelled match whose engine never acknowledged the cancel: it is told again.
   *
-  * Each match is asked about at most once every [[retryAfter]], recorded as `swept_at` before it is asked, so that one
-  * that can never be settled — an engine that has lost the match, or has gone — does not hold the front of every run. A
+  * Cancels first: there are few of them and each is one quick call, so a long backlog of matches to archive — the
+  * matches finished before archiving existed, the first time it runs — cannot crowd them out.
+  *
+  * Run once a day, with no limit on how many matches a run takes on, only on how long it runs: given `deadline`, it
+  * starts on no further match once that has passed, and the next run carries on. Each match is asked about at most once
+  * every [[retryAfter]] — a little under a day, so that a daily run starting a few seconds early does not skip a match
+  * a day — recorded as `swept_at` before it is asked. The matches asked about longest ago go last, so one that can
+  * never be settled — an engine that has lost the match, or has gone — does not hold the front of every run. A
   * completed match is left alone for [[grace]] first: its engine is archiving it already.
   *
   * Every engine is asked with no transaction open, per the rule on external calls, and one failing does not stop the
@@ -37,26 +45,44 @@ class SweepService(
     engine: GameEngineClient,
     matches: MatchService,
     now: () => Instant = () => Instant.now(),
-    batch: Int = 50,
     grace: Duration = Duration.ofHours(1),
-    retryAfter: Duration = Duration.ofDays(1),
+    retryAfter: Duration = Duration.ofHours(20),
     /** One game's matches only, rather than every game's: for a run by hand against one engine, and for the tests. */
     game: Option[GameId] = None
 ) {
 
-    def run(): IO[SweepReport] =
+    /** One run. `deadline` is when to stop starting on matches; none, for a run by hand that may take as long as it
+      * needs.
+      */
+    def run(deadline: Option[Instant] = None): IO[SweepReport] =
         for {
-            prompted <- prompt()
-            released <- release()
-        } yield SweepReport(prompted._1, prompted._2, released._1, released._2)
+            released <- release(deadline)
+            prompted <- prompt(deadline)
+        } yield SweepReport(
+          prompted.asked,
+          prompted.still,
+          released.asked,
+          released.still,
+          prompted.left + released.left
+        )
 
-    private def prompt(): IO[(Int, List[MatchId])] = {
+    private case class Pass(asked: Int, still: List[MatchId], left: Int)
+
+    /* The rows a deadline leaves time for, in order: each is checked against the clock just before it is started, so
+     * a run never begins a match after its deadline, however long the one before took. */
+    private def within[A](deadline: Option[Instant], rows: List[A])(f: A => IO[Unit]): IO[List[A]] =
+        rows.foldLeftM(List.empty[A]) { (done, row) =>
+            if (deadline.exists(d => !now().isBefore(d))) IO.pure(done)
+            else f(row).as(done :+ row)
+        }
+
+    private def prompt(deadline: Option[Instant]): IO[Pass] = {
         val at = now()
         for {
             owed <- sessionPool.use(session =>
-                new ArchiveRepo(session).listUnarchived(at.minus(grace), at.minus(retryAfter), batch, game)
+                new ArchiveRepo(session).listUnarchived(at.minus(grace), at.minus(retryAfter), game)
             )
-            _ <- owed.traverse_ { row =>
+            asked <- within(deadline, owed) { row =>
                 for {
                     key <- sessionPool.use { session =>
                         new ArchiveRepo(session).recordSwept(row.gameId, row.matchId) *>
@@ -73,27 +99,25 @@ class SweepService(
                 } yield ()
             }
             still <- sessionPool.use { session =>
-                owed.filterA(row =>
+                asked.filterA(row =>
                     new ArchiveRepo(session).read(row.gameId, row.matchId).map(_.forall(_.archivedAt.isEmpty))
                 )
             }
-        } yield (owed.size, still.map(_.matchId))
+        } yield Pass(asked.size, still.map(_.matchId), owed.size - asked.size)
     }
 
-    private def release(): IO[(Int, List[MatchId])] = {
+    private def release(deadline: Option[Instant]): IO[Pass] = {
         val at = now()
         for {
-            owed <- sessionPool.use(session =>
-                new ArchiveRepo(session).listUnreleased(at.minus(retryAfter), batch, game)
-            )
-            _ <- owed.traverse_ { row =>
+            owed <- sessionPool.use(session => new ArchiveRepo(session).listUnreleased(at.minus(retryAfter), game))
+            asked <- within(deadline, owed) { row =>
                 sessionPool.use(session => new ArchiveRepo(session).recordSwept(row.gameId, row.matchId)) *>
                     matches.releaseEngine(row.gameId, row.matchId)
             }
             still <- sessionPool.use { session =>
-                owed.filterA(row => new ArchiveRepo(session).isReleased(row.gameId, row.matchId).map(!_))
+                asked.filterA(row => new ArchiveRepo(session).isReleased(row.gameId, row.matchId).map(!_))
             }
-        } yield (owed.size, still.map(_.matchId))
+        } yield Pass(asked.size, still.map(_.matchId), owed.size - asked.size)
     }
 
     private def log(message: String): IO[Unit] = IO.blocking(System.err.println(message))

@@ -17,7 +17,12 @@ class Handler extends RequestStreamHandler {
 
     override def handleRequest(input: InputStream, output: OutputStream, context: Context): Unit = {
         input.readAllBytes()
-        val report = Handler.services.sweep.run().unsafeRunSync()
+        // Stop starting on matches with half a minute to spare: one more engine call can take ten seconds, and
+        // recording what was done afterwards a little more. Whatever is left, the next run starts with.
+        val deadline = Option(context).map(c =>
+            java.time.Instant.now().plusMillis(c.getRemainingTimeInMillis.toLong).minus(Handler.margin)
+        )
+        val report = Handler.services.sweep.run(deadline).unsafeRunSync()
         val summary = Handler.describe(report)
         Option(context).fold(System.err.println(summary))(_.getLogger.log(summary))
         output.write(summary.getBytes(StandardCharsets.UTF_8))
@@ -30,13 +35,17 @@ object Handler {
     /** The API's services, built the API's way: the same database, engine client and archive store. */
     lazy val services: Services[String] = com.vivi.matchmaker.api.Handler.services
 
+    /** How long before the function's own timeout a run stops starting on matches. */
+    val margin: java.time.Duration = java.time.Duration.ofSeconds(30)
+
     def describe(report: SweepReport): String =
         ujson.write(
           ujson.Obj(
             "prompted" -> report.prompted,
             "stillUnarchived" -> report.stillUnarchived.map(_.value),
             "released" -> report.released,
-            "stillUnreleased" -> report.stillUnreleased.map(_.value)
+            "stillUnreleased" -> report.stillUnreleased.map(_.value),
+            "deferred" -> report.deferred
           )
         )
 

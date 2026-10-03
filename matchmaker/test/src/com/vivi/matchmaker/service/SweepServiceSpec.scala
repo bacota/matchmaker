@@ -164,4 +164,18 @@ class SweepServiceSpec extends FunSuite {
         assert(run(TestSession.resource.use(session => new ArchiveRepo(session).isReleased(game.gameId, matchId))))
         assertEquals(run(sweepOf(services, engine, game).run()).released, 0)
     }
+
+    test("a run whose deadline has passed starts on nothing, and leaves every match owed to the next") {
+        val engine = Engine(archiveOnStatus = false)
+        val services = TestServices.servicesWith(engine, archiveStore = store)
+        val (game, matchId) = run(matchOf(services, Some(Duration.ofHours(2))))
+
+        val late = run(sweepOf(services, engine, game).run(deadline = Some(Instant.now().minusSeconds(1))))
+        assertEquals((late.prompted, late.deferred), (0, 1))
+        assertEquals(engine.asked, Nil)
+
+        // Not recorded as asked, so the next run takes it on at once.
+        val next = run(sweepOf(services, engine, game).run(deadline = Some(Instant.now().plusSeconds(60))))
+        assertEquals((next.prompted, next.deferred, next.stillUnarchived), (1, 0, List(matchId)))
+    }
 }

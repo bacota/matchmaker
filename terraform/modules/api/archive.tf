@@ -153,7 +153,8 @@ resource "aws_iam_role_policy" "archive" {
 /* Asks again about what archiving and cancelling left owed when something did not answer at the
  * time: completed matches never archived (prompted through the engine's status call) and cancels
  * the engine never acknowledged. See com.vivi.matchmaker.service.SweepService. Each match is asked
- * about at most once a day, so an hourly run is mostly a query that finds nothing.
+ * about once per run, and a run is once a day: nothing it catches is urgent, since a match that
+ * is not archived yet is still served from its live copy.
  *
  * A third function from the api's jar, inside the VPC beside it, with its role: it reads and writes
  * the same tables, calls the same engines with the same keys, and checks the same buckets. */
@@ -173,8 +174,9 @@ resource "aws_lambda_function" "sweep" {
   source_code_hash = filebase64sha256(var.lambda_jar_path)
 
   memory_size = var.lambda_memory_mb
-  # A run asks up to 50 engines one after another, each allowed ten seconds.
-  timeout = 600
+  # Lambda's maximum. A run takes on every match owed, one after another, and stops starting on
+  # them half a minute before this (sweep.Handler); the next day's run carries on from there.
+  timeout = 900
 
   # No SnapStart, alias or publish: nothing waits on a scheduled run's cold start.
 
@@ -207,7 +209,7 @@ resource "aws_lambda_function" "sweep" {
 resource "aws_cloudwatch_event_rule" "sweep" {
   name                = "${local.name}-sweep"
   description         = "Archive sweep: completed matches never archived, cancels never acknowledged."
-  schedule_expression = "rate(1 hour)"
+  schedule_expression = "rate(1 day)"
 }
 
 resource "aws_cloudwatch_event_target" "sweep" {

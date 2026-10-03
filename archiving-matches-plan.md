@@ -304,7 +304,7 @@ something; see [Sweep](#sweep).
 
 ### Sweep
 
-`SweepService`, run hourly by an EventBridge schedule as a third function from the API's jar
+`SweepService`, run once a day by an EventBridge schedule as a third function from the API's jar
 (`com.vivi.matchmaker.sweep.Handler`):
 
 - **Completed matches never archived**, an hour after they finished, are prompted through their
@@ -313,9 +313,13 @@ something; see [Sweep](#sweep).
   failed to archive it, or never reported its result, so that matchmaker refused the archive.
 - **Cancels the engine never acknowledged** are sent again.
 
-Each match is asked about at most once a day (`swept_at`, V39), so one that can never be settled,
-because its engine lost it or has gone, neither repeats every hour nor holds the front of each
-run's batch of 50. What a run asked about and found still owed is logged.
+Nothing it catches is urgent: a match that is not archived yet is still served from its live copy.
+Each match is asked about at most once a run (`swept_at`, V39, with a retry interval a little under
+a day), and the ones asked about longest ago go last, so one that can never be settled, because its
+engine lost it or has gone, does not hold the front of the queue. A run takes on every match owed,
+with no batch limit, and runs for up to Lambda's 15 minutes: it stops starting on matches half a
+minute before then, and the next day's run carries on. Re-sent cancels go first, so that a long
+backlog of matches to archive cannot crowd them out. What a run asked about and found still owed is logged.
 
 
 ## Engine changes (`engines/common`)

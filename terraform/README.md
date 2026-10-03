@@ -213,7 +213,7 @@ S3 from inside its VPC, the way it already reaches the engines' public urls. An 
 on the subnets' route tables would carry that traffic off the NAT for free; nothing here creates
 one.
 
-An hourly function, `matchmaker-<env>-sweep`, asks again about completed matches never archived and
+A daily function, `matchmaker-<env>-sweep`, asks again about completed matches never archived and
 cancels the engine never acknowledged; see `SweepService`.
 
 ## The hosted login domain
