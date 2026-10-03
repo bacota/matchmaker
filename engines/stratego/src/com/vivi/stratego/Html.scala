@@ -12,9 +12,9 @@ import Protocol.given
   * the bottom, which for Blue means turned round; the public board is drawn from Red's side.
   *
   * Ten squares across a phone is about 34 pixels a square, under the 44 a touch target should be. So the board is also
-  * a set of labelled selects — the piece, and where it goes — that do everything a tap does at full size, and that a
-  * screen reader or a keyboard can use as well as a finger. The board's squares are buttons too, each labelled with its
-  * square and what is on it, and arrow keys move between them.
+  * a set of labelled selects — the piece, and where it goes — that do everything a tap or a drag does at full size, and
+  * that a screen reader or a keyboard can use as well as a finger. The board's squares are buttons too, each labelled
+  * with its square and what is on it, and arrow keys move between them.
   *
   * A self-contained document with no assets, because the engine has no static hosting and a page that needs a second
   * request needs somewhere to serve it from. When the viewer already has a seat, the state is inlined into the first
@@ -79,6 +79,15 @@ object Html {
   #board .icon.alone { left: 18%; top: 18%; width: 64%; height: 64%; }
   #board .number { position: absolute; top: 2px; left: 3px; font-size: clamp(.6rem, 2.4vw, .8rem); }
   #board button[aria-disabled="false"] { cursor: pointer; }
+  /* A piece that can be picked up. Only these take the touch for themselves, so a swipe that starts
+     anywhere else on the board still scrolls the page. */
+  #board { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #board button.draggable { touch-action: none; cursor: grab; }
+  /* The piece being dragged stays on its square, faded, while a copy follows the finger. */
+  #board button.lifted { opacity: .35; }
+  #board button.over { outline: 4px solid var(--mark); outline-offset: -4px; }
+  #board button.ghost { position: fixed; z-index: 10; pointer-events: none; transform: scale(1.15);
+                        box-shadow: 0 6px 16px rgba(0, 0, 0, .35); cursor: grabbing; }
   #board button.last { box-shadow: inset 0 0 0 2px var(--mark); }
   #board button.target { box-shadow: inset 0 0 0 4px var(--mark); }
   #board button.selected { outline: 4px solid var(--mark); outline-offset: -4px; }
@@ -298,7 +307,12 @@ ${TurnTimer.script}
     const b = document.createElement("button");
     b.type = "button";
     b.tabIndex = -1;
-    b.addEventListener("click", () => tap(squareAt(d)));
+    b.addEventListener("click", () => {
+      // The click that ends a drag is the drop, already acted on.
+      if (justDragged) { justDragged = false; return; }
+      tap(squareAt(d));
+    });
+    b.addEventListener("pointerdown", e => press(e, d));
     b.addEventListener("focus", () => { focusSquare = squareAt(d); });
     board.appendChild(b);
     squares.push(b);
@@ -343,6 +357,8 @@ ${TurnTimer.script}
       b.classList.toggle("last", last.includes(sq));
       b.classList.toggle("target", targets.includes(sq));
       b.classList.toggle("selected", sq === selected);
+      b.classList.toggle("draggable", draggable(sq));
+      b.classList.toggle("lifted", !!(drag && drag.ghost && drag.from === sq));
       b.setAttribute("aria-disabled", actionable(sq) ? "false" : "true");
       let label = describe(sq, p);
       if (sq === selected) label += ", selected";
@@ -369,6 +385,93 @@ ${TurnTimer.script}
     } else selected = sq === selected ? null : sq;
     render();
   }
+
+  // ---- dragging ------------------------------------------------------------------------------
+  //
+  // Pointer events rather than HTML drag and drop, which a phone's touch does not drive. A press
+  // becomes a drag only once it has moved, so a press that stays put is still a tap. Picking a
+  // piece up selects it, which is what shows where it may go; letting it go does what tapping the
+  // square under it would, and anywhere else puts it back.
+
+  let drag = null, justDragged = false;
+
+  function draggable(sq) {
+    if (deploying()) return home(state.you).includes(sq);
+    return myTurn() && movesFrom(sq).length > 0;
+  }
+
+  /* The square at a point on the screen, if it is one of the board's. */
+  function squareUnder(x, y) {
+    const d = squares.indexOf(document.elementFromPoint(x, y)?.closest("#board button"));
+    return d < 0 ? null : squareAt(d);
+  }
+
+  /* Whether letting the dragged piece go on `sq` would do anything. */
+  function droppable(sq) {
+    if (sq === null || sq === drag.from) return false;
+    return deploying() ? home(state.you).includes(sq) : movesFrom(drag.from).includes(sq);
+  }
+
+  function press(e, d) {
+    const sq = squareAt(d);
+    if (drag || !e.isPrimary || e.button !== 0 || !draggable(sq)) return;
+    drag = { from: sq, button: squares[d], pointer: e.pointerId, touch: e.pointerType !== "mouse",
+             x: e.clientX, y: e.clientY, ghost: null, over: null };
+    squares[d].setPointerCapture(e.pointerId);
+  }
+
+  board.addEventListener("pointermove", e => {
+    if (!drag || e.pointerId !== drag.pointer) return;
+    if (!drag.ghost) {
+      // Under this, the press may still be a tap.
+      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 8) return;
+      selected = drag.from;
+      render();
+      const r = drag.button.getBoundingClientRect();
+      const g = drag.button.cloneNode(true);
+      g.classList.remove("selected", "target", "last", "draggable");
+      g.classList.add("ghost");
+      g.tabIndex = -1;
+      g.inert = true;
+      g.setAttribute("aria-hidden", "true");
+      g.style.width = r.width + "px";
+      g.style.height = r.height + "px";
+      board.appendChild(g);
+      drag.ghost = g;
+      drag.button.classList.add("lifted");
+    }
+    drag.ghost.style.left = (e.clientX - drag.ghost.offsetWidth / 2) + "px";
+    // Held above the point rather than under it, so that the square it would land on, and its
+    // highlight, stay in sight — clear of a fingertip, which covers more than a cursor does.
+    drag.ghost.style.top = (e.clientY - drag.ghost.offsetHeight * (drag.touch ? 1.5 : 1)) + "px";
+    const sq = squareUnder(e.clientX, e.clientY);
+    const over = droppable(sq) ? sq : null;
+    if (over !== drag.over) {
+      squares.forEach((b, i) => b.classList.toggle("over", squareAt(i) === over));
+      drag.over = over;
+    }
+  });
+
+  function release(e, drop) {
+    if (!drag || e.pointerId !== drag.pointer) return;
+    const d = drag;
+    drag = null;
+    if (!d.ghost) return; // never moved: a tap, which the click that follows handles
+    d.ghost.remove();
+    d.button.classList.remove("lifted");
+    squares.forEach(b => b.classList.remove("over"));
+    // The click that follows a drag, if the browser sends one, lands on the square it started from.
+    justDragged = true;
+    setTimeout(() => { justDragged = false; }, 0);
+    selected = null;
+    if (drop && d.over !== null) {
+      if (deploying()) swap(d.from, d.over);
+      else submit({ from: d.from, to: d.over });
+    }
+    render();
+  }
+  board.addEventListener("pointerup", e => release(e, true));
+  board.addEventListener("pointercancel", e => release(e, false));
 
   function swap(a, b) {
     const own = home(state.you), i = own.indexOf(a), j = own.indexOf(b);
