@@ -59,9 +59,13 @@ object EngineConfig {
 
     private def offline(env: String => Option[String]): Boolean = env("MATCHMAKER_OFFLINE").contains("true")
 
-    /** Where matchmaker's API is, for a call an engine makes on its own account rather than about a match — a character
-      * game reporting a character a player has made. A match's callbacks arrive with their urls, so an engine with no
-      * characters to report needs no `MATCHMAKER_URL`.
+    /** Where matchmaker's API is, for the calls an engine makes on its own account rather than about one match's moves:
+      * archiving a finished match and reading it back once its live copy is gone, which every engine does, and a
+      * character game reporting a character a player has made.
+      *
+      * Every engine that talks to matchmaker needs `MATCHMAKER_URL`. One without it still plays matches and sends their
+      * callbacks, which arrive with urls of their own, but archives nothing: its finished matches stay in its own
+      * store, and matchmaker's sweep cannot get them out. The local server says so when it starts.
       */
     def matchmakerUrl(env: String => Option[String]): Option[String] =
         env("MATCHMAKER_URL").map(_.trim).filter(_.nonEmpty)
