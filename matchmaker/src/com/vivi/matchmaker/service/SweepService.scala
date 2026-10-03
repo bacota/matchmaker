@@ -73,10 +73,14 @@ class SweepService(
     /* The rows a deadline leaves time for, in order: each is checked against the clock just before it is started, so
      * a run never begins a match after its deadline, however long the one before took. */
     private def within[A](deadline: Option[Instant], rows: List[A])(f: A => IO[Unit]): IO[List[A]] =
-        rows.foldLeftM(List.empty[A]) { (done, row) =>
-            if (deadline.exists(d => !now().isBefore(d))) IO.pure(done)
-            else f(row).as(done :+ row)
-        }
+        // Built backwards and turned round once: appending would copy the list for every match, and the
+        // first run after a deploy may have a long backlog.
+        rows
+            .foldLeftM(List.empty[A]) { (done, row) =>
+                if (deadline.exists(d => !now().isBefore(d))) IO.pure(done)
+                else f(row).as(row :: done)
+            }
+            .map(_.reverse)
 
     private def prompt(deadline: Option[Instant]): IO[Pass] = {
         val at = now()
