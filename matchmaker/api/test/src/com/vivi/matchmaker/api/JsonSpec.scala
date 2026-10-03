@@ -96,6 +96,33 @@ class JsonSpec extends FunSuite {
         assertEquals(read[Challenge](write(challenge)), challenge)
     }
 
+    // A game's admin hosting a bout in a character game takes no seat and plays no character, so
+    // both are empty. The create body is written this way by the UI, and a codec that wanted
+    // either field would refuse every such challenge.
+    test("a seatless CharacterChallenge leaves its character and role empty, and reads back that way") {
+        val challenge = CharacterChallenge(
+          ChallengeId(1),
+          PlayerId(2),
+          "hosted",
+          start = None,
+          timeLimit = None,
+          settings = "{}",
+          gameId = GameId(4),
+          characterId = None,
+          gameRoleId = None,
+          autoStart = true
+        )
+        val json = ujson.read(write(challenge))
+
+        // Written as null, as the other optional fields without a default are, and read back as
+        // None -- not as some default character or role.
+        assertEquals(json("characterId"), ujson.Null)
+        assertEquals(json("gameRoleId"), ujson.Null)
+        val decoded = read[Challenge](json)
+        assertEquals(decoded, challenge)
+        assert(decoded.isInstanceOf[CharacterChallenge])
+    }
+
     test("a Duration is seconds and an Instant is ISO-8601") {
         val json = ujson.read(
           write(

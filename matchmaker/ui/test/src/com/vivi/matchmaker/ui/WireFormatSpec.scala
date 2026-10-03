@@ -281,6 +281,32 @@ class WireFormatSpec extends FunSuite {
         assertEquals(decoded.head.challenge.start, character.challenge.start)
     }
 
+    // The browser writes the create body for a game admin's seatless bout and reads it back in the
+    // game's challenge list, so both directions are exercised here as well as on the server.
+    test("a seatless CharacterChallenge leaves its character and role empty, and reads back that way") {
+        val challenge = CharacterChallenge(
+          challengeId = ChallengeId(0),
+          challenger = PlayerId(1),
+          message = "hosted",
+          start = None,
+          timeLimit = None,
+          settings = "{}",
+          gameId = GameId(1),
+          characterId = None,
+          gameRoleId = None,
+          autoStart = true
+        )
+        val json = ujson.read(write(challenge))
+
+        // Written as null, as the other optional fields without a default are, and read back as
+        // None -- not as some default character or role.
+        assertEquals(json("characterId"), ujson.Null)
+        assertEquals(json("gameRoleId"), ujson.Null)
+        val decoded = read[Challenge](json)
+        assertEquals(decoded, challenge)
+        assert(decoded.isInstanceOf[CharacterChallenge])
+    }
+
     test("an absent optional stays absent rather than becoming a default") {
         val challenge = CharacterChallenge(
           challengeId = ChallengeId(0),
