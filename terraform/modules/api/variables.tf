@@ -52,7 +52,10 @@ variable "lambda_memory_mb" {
 }
 
 variable "lambda_timeout_s" {
-  description = "Lambda timeout in seconds."
+  description = <<-EOT
+    Lambda timeout in seconds. Every invocation answers an API Gateway request, whose integration
+    gives up at 30 seconds, so a longer timeout would buy nothing a caller could see.
+  EOT
   type        = number
   default     = 30
 }

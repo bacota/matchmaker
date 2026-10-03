@@ -115,9 +115,15 @@ variable "lambda_snap_start" {
 }
 
 variable "lambda_timeout_s" {
-  description = "Lambda timeout. A move is two DynamoDB calls and up to two callbacks to matchmaker; building a boxer waits on matchmaker's answer."
+  description = <<-EOT
+    Lambda timeout. A move is two DynamoDB calls and up to two callbacks to matchmaker; building a
+    boxer waits on matchmaker's answer. The move that ends a match also archives it -- a request to
+    matchmaker, an upload to S3, a confirm, and a delete -- after the results are sent, and that
+    work is what this allows a minute for. The gateway in front answers its caller after 30
+    seconds whatever happens; the function carries on to finish the archive.
+  EOT
   type        = number
-  default     = 15
+  default     = 60
 }
 
 variable "log_retention_days" {
