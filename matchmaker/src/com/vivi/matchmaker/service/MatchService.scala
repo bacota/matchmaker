@@ -291,8 +291,12 @@ class MatchService(
         }
 
     /** Says whether the match is friendly (V36): a game admin's to decide, or an overall admin's, and nobody else's —
-      * not even the match's creator. Saying what it already is changes nothing. Any match of the game, finished or not:
-      * the classification is about how the match counts, which matters as much once it is over.
+      * not even the match's creator. Saying what it already is changes nothing.
+      *
+      * Not once the match is completed: by then it has been archived to the bucket its classification chose, the
+      * friendly one only for 30 days, so changing it afterwards would leave a permanent match in a bucket that expires.
+      * A cancelled match is not archived, and may still be changed. The match's own lock orders this against
+      * [[MatchRepo.complete]], whose update takes the same row.
       *
       * Under the match's row lock, which [[MatchRepo.update]] rewrites whole, and with the caller's admin held FOR
       * SHARE so that losing it waits for this to land.
@@ -317,6 +321,9 @@ class MatchService(
                         case None =>
                             IO.raiseError(NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}"))
                     }
+                    _ <- IO.raiseWhen(existing.completed && existing.friendly != friendly)(
+                      ConflictError("a completed match stays as friendly as it was when it finished")
+                    )
                     classified = existing.copy(friendly = friendly)
                     _ <- matchRepo.update(classified)
                 } yield classified
