@@ -55,9 +55,12 @@ object Html {
 <style>
   /* --error is 6.3:1 on the light page and 7.8:1 on the dark one; crimson, which it replaces, was 3.6:1
      in dark mode, under the 4.5:1 normal text needs. */
-  /* The two armies carry white text: --red is 6.6:1 against it and --blue 6.7:1. */
+  /* The two armies carry white text: --red is 6.6:1 against it and --blue 6.7:1. The insignia's
+     metals are drawn only on a piece, in either theme: --silver is 5.1:1 against --red and 5.2:1
+     against --blue, --gold 4.0:1 and 4.1:1 — over the 3:1 a graphic needs. */
   :root { color-scheme: light dark; --line: #8884; --ink: #222; --paper: #fafafa; --error: #b3261e;
-          --square: #e9e4d4; --water: #8fbcd9; --red: #b3261e; --blue: #1d4ed8; --mark: #e6a700; --focus: #6d28d9; }
+          --square: #e9e4d4; --water: #8fbcd9; --red: #b3261e; --blue: #1d4ed8; --mark: #e6a700; --focus: #6d28d9;
+          --silver: #dfe3e8; --gold: #f3c34a; }
   @media (prefers-color-scheme: dark) {
     :root { --ink: #eee; --paper: #16181c; --error: #ff8a80; --square: #3a3a33; --water: #1f4d6b; --mark: #ffc940; --focus: #c4b5fd; }
   }
@@ -77,6 +80,8 @@ object Html {
   .icon { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   #board .icon { position: absolute; left: 24%; top: 26%; width: 56%; height: 56%; pointer-events: none; }
   #board .icon.alone { left: 18%; top: 18%; width: 64%; height: 64%; }
+  /* Four stars in a row, as a general wears them, given the whole width or they shrink to dots. */
+  #board .icon.wide { left: 5%; top: 42%; width: 90%; height: 32%; }
   #board .number { position: absolute; top: 2px; left: 3px; font-size: clamp(.6rem, 2.4vw, .8rem); }
   #board button[aria-disabled="false"] { cursor: pointer; }
   /* A piece that can be picked up. Only these take the touch for themselves, so a swipe that starts
@@ -112,12 +117,34 @@ object Html {
   .controls :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   #lost { margin-top: 1rem; font-size: .875rem; }
   #lost p { margin: .25rem 0; }
-  details { margin-top: 1rem; font-size: .875rem; text-align: left; display: inline-block; }
-  summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
-  details dl { display: grid; grid-template-columns: auto 1fr; gap: .125rem .75rem; margin: .25rem 0 0; }
-  details dt { font: 700 1rem ui-monospace, monospace; display: flex; align-items: center; justify-content: end; gap: .25rem; }
-  details dt .icon { width: 1.25rem; height: 1.25rem; }
-  details dd { margin: 0; }
+  /* The key: a button beside the board that opens it over the page, so it is in reach mid-game. */
+  .board-bar { display: flex; justify-content: flex-end; max-width: 36rem; margin: 0 auto .5rem; }
+  .board-bar button, #key .close { font: inherit; font-size: 1rem; min-height: 44px; min-width: 44px; padding: 0 1rem;
+                                   border-radius: 6px; border: 1px solid var(--line); background: var(--paper);
+                                   color: var(--ink); cursor: pointer; }
+  .board-bar button:focus-visible, #key :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  #key { width: min(28rem, calc(100vw - 32px)); max-height: 85vh; overflow: auto; box-sizing: border-box; padding: 1rem;
+         border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink);
+         text-align: left; box-shadow: 0 12px 32px rgba(0, 0, 0, .3); }
+  #key::backdrop { background: rgba(0, 0, 0, .35); }
+  #key .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
+  #key h2 { font-size: 1.125rem; margin: 0; }
+  #key .close { padding: 0; }
+  #key dl { display: grid; grid-template-columns: auto 1fr; gap: .5rem .75rem; margin: 0; }
+  #key dt { font: 700 1rem ui-monospace, monospace; display: flex; align-items: center; gap: .375rem; }
+  #key dd { margin: 0; align-self: center; }
+  #key dd strong { display: block; }
+  #key dd span { display: block; font-size: .875rem; opacity: .85; }
+  #key .rule { margin: 1rem 0 .75rem; font-weight: 600; }
+  /* Each icon on a piece of its own, since the metals are drawn for a piece and silver would vanish on the page. */
+  #key .chip { display: inline-grid; place-items: center; position: relative; width: 2rem; height: 2rem;
+               border-radius: 3px; background: var(--red); color: #fff; }
+  #key .chip.Blue { background: var(--blue); }
+  #key .icon { width: 1.4rem; height: 1.4rem; }
+  #key .icon.wide { width: 1.8rem; height: .65rem; }
+  /* The marks a square can carry, drawn as the board draws them. */
+  #key .dot { position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: #fff; }
+  #key .bar { position: absolute; left: 25%; right: 25%; bottom: 2px; height: 2px; background: #fff; }
 ${SignIn.css}
 ${PlayLive.css}
 ${TurnTimer.css}
@@ -134,6 +161,9 @@ $icons
   <!-- Announced: the other player's move, and the result, arrive while this page is idle. -->
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   ${TurnTimer.markup}
+  <div class="board-bar">
+    <button type="button" id="key-button" popovertarget="key" aria-haspopup="dialog">Key</button>
+  </div>
   <div id="board" role="group" aria-label="board"></div>
   <!-- Announced: what the last move did, which the other player's arrives while this page is idle. -->
   <p id="news" role="status" aria-live="polite"></p>
@@ -150,13 +180,23 @@ $icons
     <button id="move" type="button" class="primary">Move</button>
   </div>
   <div id="lost"></div>
-  <details>
-    <summary>Key</summary>
+  <div id="key" popover role="dialog" aria-labelledby="key-title">
+    <div class="head">
+      <h2 id="key-title">Key</h2>
+      <button type="button" class="close" popovertarget="key" popovertargetaction="hide" aria-label="Close the key">✕</button>
+    </div>
     <dl>
       $key
-      <dt>?</dt><dd>an enemy piece you have not seen; a dot means it has moved</dd>
     </dl>
-  </details>
+    <p class="rule">The lower number wins a battle. Equal ranks both fall.</p>
+    <dl>
+      <dt><span class="chip Blue">?</span></dt><dd>An enemy piece you have not seen</dd>
+      <dt><span class="chip Blue">?<span class="dot"></span></span></dt><dd>An enemy piece that has moved — so it is not a bomb or the flag</dd>
+      <dt><span class="chip">${iconOf(
+              "Sergeant"
+            )}<span class="bar"></span></span></dt><dd>One of your pieces the enemy has seen</dd>
+    </dl>
+  </div>
   <!-- The sign-in form, rendered by renderSignIn() and shown whenever there is a login to
        offer and no seat to show for it. -->
   <div id="signin" hidden></div>
@@ -233,6 +273,11 @@ ${TurnTimer.script}
   // and the flag are drawn by their icon alone.
   const NUMBER = { Marshal: "1", General: "2", Colonel: "3", Major: "4", Captain: "5", Lieutenant: "6",
                    Sergeant: "7", Miner: "8", Scout: "9", Spy: "", Bomb: "", Flag: "" };
+  // What a rank is called on this page, where it differs from the engine's own name for it: the two
+  // generals are named for the insignia they wear. The engine's names are what the API and stored
+  // matches use, so they stay; only what a player reads changes.
+  const NAME = { Marshal: "General", General: "Brigadier General" };
+  function rankName(rank) { return NAME[rank] || rank; }
   const ARMY = [["Flag", 1], ["Spy", 1], ["Scout", 8], ["Miner", 5], ["Sergeant", 4], ["Lieutenant", 4],
                 ["Captain", 4], ["Major", 3], ["Colonel", 2], ["General", 1], ["Marshal", 1], ["Bomb", 6]];
   const LAKES = [42, 43, 46, 47, 52, 53, 56, 57];
@@ -334,7 +379,7 @@ ${TurnTimer.script}
     if (LAKES.includes(sq)) return at + ", lake";
     if (!p) return at + ", empty";
     const mine = state && p.side === state.you;
-    let text = at + ", " + (mine ? "your " : p.side + " ") + (p.rank || "unknown piece");
+    let text = at + ", " + (mine ? "your " : p.side + " ") + (p.rank ? rankName(p.rank) : "unknown piece");
     if (p.moved && !p.rank) text += ", has moved";
     if (mine && p.revealed) text += ", seen by " + other(p.side);
     return text;
@@ -349,7 +394,7 @@ ${TurnTimer.script}
       const sq = squareAt(d), p = by[sq], b = squares[d];
       if (LAKES.includes(sq) || !p) b.textContent = "";
       else if (!p.rank) b.textContent = "?";
-      else b.innerHTML = '<svg class="icon' + (NUMBER[p.rank] ? "" : " alone") + '" aria-hidden="true" focusable="false">' +
+      else b.innerHTML = '<svg class="icon' + (p.rank === "Marshal" ? " wide" : NUMBER[p.rank] ? "" : " alone") + '" aria-hidden="true" focusable="false">' +
         '<use href="#rank-' + p.rank + '"/></svg>' + (NUMBER[p.rank] ? '<span class="number">' + NUMBER[p.rank] + "</span>" : "");
       b.className = LAKES.includes(sq) ? "lake" : p ? p.side : "";
       b.classList.toggle("moved", !!(p && p.moved && !p.rank));
@@ -504,7 +549,7 @@ ${TurnTimer.script}
     document.getElementById("move-controls").hidden = !play;
     const by = piecesBySquare();
     if (setup) {
-      const options = home(state.you).map(sq => [sq, squareName(sq) + " " + by[sq].rank]);
+      const options = home(state.you).map(sq => [sq, squareName(sq) + " " + rankName(by[sq].rank)]);
       fill(swapA, options);
       fill(swapB, options);
       // Two different squares to start with, so that Swap does something before either is changed.
@@ -512,7 +557,7 @@ ${TurnTimer.script}
     }
     if (play) {
       const origins = [...new Set(state.legalMoves.map(m => m[0]))];
-      fill(moveFrom, origins.map(sq => [sq, squareName(sq) + " " + by[sq].rank]));
+      fill(moveFrom, origins.map(sq => [sq, squareName(sq) + " " + rankName(by[sq].rank)]));
       if (selected !== null && origins.includes(selected)) moveFrom.value = String(selected);
       drawTargets();
     }
@@ -561,7 +606,7 @@ ${TurnTimer.script}
   function moveText(lm) {
     const at = squareName(lm.to), them = other(lm.side);
     if (!lm.battle) return lm.side + " moved " + squareName(lm.from) + " to " + at + ".";
-    const a = lm.side + "'s " + lm.battle.attacker, d = them + "'s " + lm.battle.defender;
+    const a = lm.side + "'s " + rankName(lm.battle.attacker), d = them + "'s " + rankName(lm.battle.defender);
     if (lm.battle.result === "AttackerWins") return a + " took " + d + " on " + at + ".";
     if (lm.battle.result === "DefenderWins") return a + " attacked " + d + " on " + at + " and lost.";
     return a + " and " + d + " both fell on " + at + ".";
@@ -580,7 +625,7 @@ ${TurnTimer.script}
     if (!state || state.phase === "setup") { lost.innerHTML = ""; return; }
     lost.innerHTML = state.lost.map(l => {
       const counts = {};
-      l.ranks.forEach(r => { counts[r] = (counts[r] || 0) + 1; });
+      l.ranks.forEach(r => { counts[rankName(r)] = (counts[rankName(r)] || 0) + 1; });
       const text = Object.keys(counts).map(r => r + (counts[r] > 1 ? " ×" + counts[r] : "")).join(", ") || "nothing";
       return "<p>" + l.side + " has lost: " + escapeHtml(text) + "</p>";
     }).join("") + "<p>" + state.moveCount + " of " + state.maxMoves + " moves</p>";
@@ -670,6 +715,21 @@ ${TurnTimer.script}
    * have no session to wait for and are fetched as before. */
   function mayFetch() { return !noSeat && (!login || publicView || isSignedIn()); }
 
+  /* Without popovers — Safari before 17 — the key would sit open in the page for good. There the
+   * buttons show and hide it instead, and it is a section of the page rather than a layer over it. */
+  if (!HTMLElement.prototype.hasOwnProperty("popover")) {
+    const key = document.getElementById("key"), opener = document.getElementById("key-button");
+    key.hidden = true;
+    opener.setAttribute("aria-expanded", "false");
+    const show = open => {
+      key.hidden = !open;
+      opener.setAttribute("aria-expanded", String(open));
+      (open ? key.querySelector(".close") : opener).focus();
+    };
+    opener.addEventListener("click", () => show(key.hidden));
+    key.querySelector(".close").addEventListener("click", () => show(false));
+  }
+
   render();
   if (!state && mayFetch()) refresh();
   keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
@@ -679,49 +739,58 @@ ${TurnTimer.script}
 """
     }
 
-    /** One icon per rank, drawn for this page: plain symbols, not any published edition's artwork, which is
-      * copyrighted. Each is a 24-unit square in `currentColor`, so it takes the white of a coloured piece, and is
-      * placed on a square with `<use href="#rank-Marshal">`. They are decoration — a square's label names its rank in
-      * words.
+    /** One icon per rank, drawn for this page. The officers and the sergeant wear simplified US Army insignia, which as
+      * works of the US government are free to use, in their metals: four silver stars for the Marshal (a general), one
+      * for the General (a brigadier), a silver eagle, a gold oak leaf, two silver bars joined, one silver bar, and
+      * three chevrons. The Miner's pick, the Scout's horse and the rest are plain symbols — not any published Stratego
+      * edition's artwork, which is copyrighted.
+      *
+      * Each is a 24-unit square, except the four stars, which are a strip so that they can take a piece's whole width.
+      * What is not metal is `currentColor`, the white of a coloured piece. Placed with `<use href="#rank-Marshal">`,
+      * and decoration only — a square's label names its rank in words.
       */
-    /** The key's lines, strongest first. Numbered the classic European way — 1 is the Marshal, and the lower number
-      * wins — which is only how ranks are shown: `Rank.strength` is what decides a fight. The page's `NUMBER` must
-      * agree.
+    /** The key's lines, strongest first, named as the page's `NAME` names them. Numbered the classic European way — 1
+      * is the Marshal, and the lower number wins — which is only how ranks are shown: `Rank.strength` is what decides a
+      * fight. The page's `NUMBER` must agree.
       */
     private val key: String =
         List(
-          ("Marshal", "1", "Marshal"),
-          ("General", "2", "General"),
-          ("Colonel", "3", "Colonel"),
-          ("Major", "4", "Major"),
-          ("Captain", "5", "Captain"),
-          ("Lieutenant", "6", "Lieutenant"),
-          ("Sergeant", "7", "Sergeant"),
-          ("Miner", "8", "Miner — the only piece that survives attacking a bomb"),
-          ("Scout", "9", "Scout — runs any distance in a straight line"),
-          ("Spy", "", "Spy — takes the Marshal, if it attacks first"),
-          ("Bomb", "", "Bomb — never moves"),
-          ("Flag", "", "Flag — take it to win")
-        ).map((rank, number, meaning) => keyEntry(rank, number, meaning)).mkString("\n      ")
+          ("Marshal", "1", "General", "The strongest piece — but it falls to the Spy, if the Spy attacks it."),
+          ("General", "2", "Brigadier General", ""),
+          ("Colonel", "3", "Colonel", ""),
+          ("Major", "4", "Major", ""),
+          ("Captain", "5", "Captain", ""),
+          ("Lieutenant", "6", "Lieutenant", ""),
+          ("Sergeant", "7", "Sergeant", ""),
+          ("Miner", "8", "Miner", "The only piece that survives attacking a bomb, which it takes."),
+          ("Scout", "9", "Scout", "Moves any distance in a straight line, and may attack at the end of it."),
+          ("Spy", "", "Spy", "Loses any other battle — but takes the General, if the Spy attacks first."),
+          ("Bomb", "", "Bomb", "Never moves. Destroys any piece that attacks it except a Miner."),
+          ("Flag", "", "Flag", "Never moves. Take the enemy's to win.")
+        ).map((rank, number, name, note) => keyEntry(rank, number, name, note)).mkString("\n      ")
 
-    /** A line of the key: the icon and number a rank is drawn with, and what it is. */
-    private def keyEntry(rank: String, number: String, meaning: String): String =
-        s"""<dt>${iconOf(rank)}$number</dt><dd>$meaning</dd>"""
+    /** A line of the key: the icon and number a rank is drawn with, its name, and what is special about it. */
+    private def keyEntry(rank: String, number: String, name: String, note: String): String = {
+        val noted = if (note.isEmpty) "" else s"<span>$note</span>"
+        s"""<dt><span class="chip">${iconOf(rank)}</span>$number</dt><dd><strong>$name</strong>$noted</dd>"""
+    }
 
     private def iconOf(rank: String): String =
-        s"""<svg class="icon" aria-hidden="true" focusable="false"><use href="#rank-$rank"/></svg>"""
+        s"""<svg class="icon${
+                if (rank == "Marshal") " wide" else ""
+            }" aria-hidden="true" focusable="false"><use href="#rank-$rank"/></svg>"""
 
     private val icons: String =
         """<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
-  <symbol id="rank-Marshal" viewBox="0 0 24 24"><path fill="currentColor" d="M3 17 2 6.5l5.5 4L12 3.5l4.5 7 5.5-4L21 17z"/><path d="M3 20.5h18"/></symbol>
-  <symbol id="rank-General" viewBox="0 0 24 24"><path fill="currentColor" d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5-5.9-3.1-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z"/></symbol>
-  <symbol id="rank-Colonel" viewBox="0 0 24 24"><path fill="currentColor" d="m12 2.5 8 3v6.5c0 5-3.5 8.2-8 9.5-4.5-1.3-8-4.5-8-9.5V5.5z"/></symbol>
-  <symbol id="rank-Major" viewBox="0 0 24 24"><path d="M4 4l13 13M20 4 7 17M14 19.5l5.5-5.5M10 19.5 4.5 14M17 17l3 3M7 17l-3 3"/></symbol>
-  <symbol id="rank-Captain" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/></symbol>
-  <symbol id="rank-Lieutenant" viewBox="0 0 24 24"><rect x="10" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/></symbol>
-  <symbol id="rank-Sergeant" viewBox="0 0 24 24"><path d="m5 8.5 7-4.5 7 4.5M5 13.5 12 9l7 4.5M5 18.5l7-4.5 7 4.5"/></symbol>
+  <symbol id="rank-Marshal" viewBox="0 8.4 24 7.2"><path style="fill:var(--silver)" stroke="none" d="M3.20 8.60 L4.04 10.84 L6.43 10.95 L4.56 12.44 L5.20 14.75 L3.20 13.43 L1.20 14.75 L1.84 12.44 L-0.03 10.95 L2.36 10.84zM9.07 8.60 L9.91 10.84 L12.30 10.95 L10.43 12.44 L11.07 14.75 L9.07 13.43 L7.07 14.75 L7.71 12.44 L5.84 10.95 L8.23 10.84zM14.93 8.60 L15.77 10.84 L18.16 10.95 L16.29 12.44 L16.93 14.75 L14.93 13.43 L12.93 14.75 L13.57 12.44 L11.70 10.95 L14.09 10.84zM20.80 8.60 L21.64 10.84 L24.03 10.95 L22.16 12.44 L22.80 14.75 L20.80 13.43 L18.80 14.75 L19.44 12.44 L17.57 10.95 L19.96 10.84z"/></symbol>
+  <symbol id="rank-General" viewBox="0 0 24 24"><path style="fill:var(--silver)" stroke="none" d="M12.00 2.10 L14.59 9.03 L21.99 9.36 L16.19 13.96 L18.17 21.09 L12.00 17.01 L5.83 21.09 L7.81 13.96 L2.01 9.36 L9.41 9.03z"/></symbol>
+  <symbol id="rank-Colonel" viewBox="0 0 24 24"><path style="fill:var(--silver)" stroke="none" d="M12 6.2c-1 0-1.8.8-1.8 1.8 0 .5.2.9.5 1.2L3.2 4.6c-.7-.4-1.5.2-1.2 1l2 5.6c.6 1.7 2.2 2.8 4 2.8h1.4l-1.6 2.6 1.9.3-.6 3.3 1.6-1.1 1.3 2.1 1.3-2.1 1.6 1.1-.6-3.3 1.9-.3-1.6-2.6H16c1.8 0 3.4-1.1 4-2.8l2-5.6c.3-.8-.5-1.4-1.2-1l-7.5 4.6c.3-.3.5-.7.5-1.2 0-1-.8-1.8-1.8-1.8z"/><path style="fill:var(--silver)" stroke="none" d="M10.3 7.6 8.6 8.3l1.9.6z"/></symbol>
+  <symbol id="rank-Major" viewBox="0 0 24 24"><path style="fill:var(--gold)" stroke="none" d="M12 1.8c1.6 1.3 2 2.7 1.3 4 1.7-.7 3.2-.3 3.7 1-.6 1-1.6 1.5-2.8 1.6 1.9.2 3.3 1.1 3.5 2.7-1 .7-2.3.7-3.6.2 1.5 1 2.3 2.3 2 3.9-1.3.4-2.6 0-3.6-.9.4 1.5.1 2.9-.9 3.9l-.6 1.2v3.2h-1v-3.2l-.6-1.2c-1-1-1.3-2.4-.9-3.9-1 .9-2.3 1.3-3.6.9-.3-1.6.5-2.9 2-3.9-1.3.5-2.6.5-3.6-.2.2-1.6 1.6-2.5 3.5-2.7-1.2-.1-2.2-.6-2.8-1.6.5-1.3 2-1.7 3.7-1-.7-1.3-.3-2.7 1.3-4z"/><path d="M12 5.5v13" style="stroke:#0005" stroke-width="1"/></symbol>
+  <symbol id="rank-Captain" viewBox="0 0 24 24"><g style="fill:var(--silver)" stroke="none"><rect x="5" y="3" width="4.5" height="18" rx=".6"/><rect x="14.5" y="3" width="4.5" height="18" rx=".6"/><rect x="9" y="5" width="6" height="1.6"/><rect x="9" y="17.4" width="6" height="1.6"/></g></symbol>
+  <symbol id="rank-Lieutenant" viewBox="0 0 24 24"><rect style="fill:var(--silver)" stroke="none" x="9.5" y="3" width="5" height="18" rx=".6"/></symbol>
+  <symbol id="rank-Sergeant" viewBox="0 0 24 24"><path stroke-width="2.6" stroke-linecap="butt" stroke-linejoin="miter" d="m4 9 8-5 8 5M4 14.5l8-5 8 5M4 20l8-5 8 5"/></symbol>
   <symbol id="rank-Miner" viewBox="0 0 24 24"><g transform="rotate(-35 12 12)"><path d="M3 9.5c5-5 13-5 18 0"/><path d="M12 6v15.5"/></g></symbol>
-  <symbol id="rank-Scout" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.75" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="rank-Scout" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" stroke="none" d="M7 21.5h10.5c.3-3.6-.6-6.7-2.4-9.1 2.4-.4 4.2-1.6 5-3.5l.6-1.5c.2-.6-.2-1.2-.8-1.3-1.6-.2-3-.9-4.1-2L14.5 2.5l-.9 2c-3.6.6-6.5 3.2-7.6 6.7l-1.3 3.4c-.3.8.2 1.6 1 1.7l1.6.2c1.1.2 2.2-.3 2.8-1.2l1.4-2.1c.1 3-1 5.8-3.1 8.3zM14.55 6.6a1.05 1.05 0 1 0 2.1 0 1.05 1.05 0 1 0-2.1 0z"/></symbol>
   <symbol id="rank-Spy" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" stroke="none" d="M2 9c0-1.5 1-2 2.5-2C8 7 10 9 12 9s4-2 7.5-2C21 7 22 7.5 22 9c0 4-2 7.5-5 7.5-2.5 0-3.5-2.5-5-2.5s-2.5 2.5-5 2.5c-3 0-5-3.5-5-7.5zM4.5 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0zM14 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0z"/></symbol>
   <symbol id="rank-Bomb" viewBox="0 0 24 24"><circle cx="10" cy="14" r="7" fill="currentColor" stroke="none"/><path d="m14.5 9.5 3-3M20 2v2M23 5h-2M22 3l-1.5 1.5"/></symbol>
   <symbol id="rank-Flag" viewBox="0 0 24 24"><path d="M6 21.5V3"/><path fill="currentColor" d="M6 4h12l-3 4 3 4H6z"/></symbol>

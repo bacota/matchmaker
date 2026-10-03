@@ -43,6 +43,9 @@ Classic (ISF) rules:
   - The stronger rank wins, and equal ranks both fall. Ranks are numbered the classic European way, so
     the lower number is the stronger: the Marshal is 1 and a Scout 9.
   - A spy that *attacks* the marshal takes it.
+
+The play page names the Marshal "General" and the General "Brigadier General", after the US Army
+insignia it draws them with. Only the page does: the API and stored matches use the names above.
   - A bomb destroys any attacker except a miner.
   - Anything takes the flag.
 - **What the opponent learns:** a battle reveals both pieces to everyone. A scout that moves more
