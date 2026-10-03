@@ -33,7 +33,8 @@ become part of that contract.
   never revealed), so it is read only through the engine, which serves the usual per-viewer masked
   view. A presigned GET is handed to the engine and never passed on.
 - **Write-once.** Once an archive is confirmed, matchmaker issues no further upload url for that
-  match. Bucket versioning on; Object Lock if that needs enforcing rather than relying on matchmaker.
+  match. Both buckets are versioned, so an overwrite or a delete keeps the earlier version for 30
+  days. No Object Lock: write-once is matchmaker's rule, and versioning is the safety net.
 - **The live copy is dropped as soon as the archive is confirmed, and not before.** An engine that
   crashes between finishing a match and uploading it leaves the match pending, and it is retried.
   Nothing is lost. There is no grace period: once matchmaker confirms, the engine removes its item,
@@ -42,9 +43,9 @@ become part of that contract.
   when a match is cancelled (see [Cancelled matches](#cancelled-matches)).
 - **Private buckets**, encrypted, all public access blocked.
 - **Two buckets, by retention.** A friendly match's archive is kept for 30 days; every other
-  match's is kept permanently. They go to separate buckets, and only the friendly bucket has a
-  lifecycle policy, so nothing in the permanent bucket can be expired by a misconfigured rule.
-  Matchmaker chooses the bucket from the match's `friendly` flag.
+  match's is kept permanently. They go to separate buckets, and only the friendly bucket's
+  lifecycle policy expires current objects; the permanent bucket's only removes versions that were
+  already deleted or overwritten. Matchmaker chooses the bucket from the match's `friendly` flag.
 - **A completed match's classification is fixed.** `MatchService.setFriendly` refuses to change
   whether a completed match is friendly (409), so the bucket its archive went to is always the one
   its flag names, and an archive never has to move. A cancelled match can still be changed; it is
@@ -246,13 +247,16 @@ configuration.
 
 - Two buckets, both private, versioned, encrypted, with public access blocked, with names ending
   in `.vivi.com`:
-  - **Permanent**, `matchmaker-${var.environment}-archive.vivi.com`: no lifecycle configuration
-    at all. Object Lock, if write-once is to be enforced, goes here.
-  - **Friendly**, `matchmaker-${var.environment}-friendly-archive.vivi.com`: one lifecycle rule.
-    It expires current objects 30 days after creation. Because the bucket is versioned, expiry only
-    adds a delete marker, so the rule also expires noncurrent versions (after a day) and removes
-    expired delete markers; otherwise nothing is ever freed. No Object Lock: a retention period
-    would fight the expiry.
+  - **Permanent**, `matchmaker-${var.environment}-archive.vivi.com`: a lifecycle rule that never
+    touches a current object. It removes noncurrent versions 30 days after they become noncurrent
+    (an object deleted or overwritten by mistake can be restored within that time), and removes
+    expired delete markers.
+  - **Friendly**, `matchmaker-${var.environment}-friendly-archive.vivi.com`: the same cleanup, and
+    it also expires current objects 30 days after creation. Because the bucket is versioned, that
+    expiry only adds a delete marker; the archive stops being readable at 30 days, and its data is
+    removed by the cleanup 30 days after that.
+
+  No Object Lock on either bucket.
 
   The domain suffix keeps the names clear of everybody else's in S3's global namespace. S3 does not
   check that the domain is ours, so it is a convention rather than a reservation, but nobody else
@@ -319,7 +323,7 @@ is enough for the test suites, and MinIO is worth it once, for the end-to-end ch
 1. Matchmaker: migration, `ArchiveStore` with the local fake, `ArchiveService`, the four routes
    (router, terraform, `RouterSpec`), `archived=1` on the urls, `archiveExpired` and the UI, and
    tests.
-2. Terraform: the two buckets, the friendly bucket's lifecycle rule, and the role's permissions.
+2. Terraform: the two buckets, their lifecycle rules, and the role's permissions.
 3. `engines/common`: the client calls, archiving beside `reportResults`, the `MatchStore` fallback,
    deleting the item after a confirm, and the cancel route. All four engines pick it up together.
 4. Matchmaker: `cancelUrl`, `GameEngineClient.cancel`, and the call from `MatchService.cancel`.
