@@ -131,6 +131,7 @@ class DynamoDbMessageStore(
         def page(from: Option[ujson.Value]): List[Message] = {
             val request = ujson.Obj(
               "TableName" -> table,
+              "ConsistentRead" -> true,
               "KeyConditionExpression" -> "matchId = :m",
               "ExpressionAttributeValues" -> ujson.Obj(":m" -> ujson.Obj("S" -> matchId))
             )
