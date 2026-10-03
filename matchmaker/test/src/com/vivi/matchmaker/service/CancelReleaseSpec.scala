@@ -8,7 +8,7 @@ import munit.FunSuite
 import skunk.implicits._
 import skunk.codec.all.{int4, text, timestamptz}
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.TestMigration
+import com.vivi.matchmaker.{QuietTests, TestMigration}
 import com.vivi.matchmaker.engine.{
     CreateGameRequest,
     CreateGameResponse,
@@ -20,7 +20,7 @@ import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{ArchiveRepo, ChallengeRepo, GameRepo, MatchRepo, ParticipantRepo, TestSession}
 
 /** A cancelled match's engine is told, so that it can drop the match — and a cancel stands whether or not it hears. */
-class CancelReleaseSpec extends FunSuite {
+class CancelReleaseSpec extends FunSuite with QuietTests {
     TestMigration.ensure()
 
     private class RecordingEngine(fail: Boolean = false) extends GameEngineClient {
@@ -124,7 +124,7 @@ class CancelReleaseSpec extends FunSuite {
         assert(!owed.exists(_.matchId == matchId))
     }
 
-    test("an engine that does not answer leaves the cancel standing, and the match owed a retry") {
+    test("an engine that does not answer leaves the cancel standing, and the match owed a retry".tag(Quiet)) {
         val services = TestServices.servicesWith(RecordingEngine(fail = true))
         val (player, game, matchId) = run(runningMatch(services, Some("https://engine/matches/m/cancel")))
 

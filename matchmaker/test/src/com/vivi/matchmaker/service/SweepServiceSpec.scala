@@ -6,7 +6,7 @@ import cats.effect.unsafe.implicits.global
 import java.nio.file.Files
 import java.time.{Duration, Instant}
 import munit.FunSuite
-import com.vivi.matchmaker.TestMigration
+import com.vivi.matchmaker.{QuietTests, TestMigration}
 import com.vivi.matchmaker.archive.{ArchiveStore, LocalArchiveStore}
 import com.vivi.matchmaker.engine.{CreateGameRequest, CreateGameResponse, GameEngineClient, GameStatusResponse}
 import com.vivi.matchmaker.model._
@@ -15,7 +15,7 @@ import com.vivi.matchmaker.persistence.{ArchiveRepo, ChallengeRepo, GameRepo, Ma
 /** The sweep: completed matches never archived are prompted through their engine's status, cancels the engine never
   * acknowledged are sent again, and neither is asked about more than once a day.
   */
-class SweepServiceSpec extends FunSuite {
+class SweepServiceSpec extends FunSuite with QuietTests {
     TestMigration.ensure()
 
     private val store = LocalArchiveStore(Files.createTempDirectory("sweep-spec"), "http://localhost:0")
@@ -165,7 +165,7 @@ class SweepServiceSpec extends FunSuite {
         assertEquals(run(sweepOf(services, engine, game).run()).released, 0)
     }
 
-    test("a cancel the engine does not acknowledge is reported as still owed, and not as released") {
+    test("a cancel the engine does not acknowledge is reported as still owed, and not as released".tag(Quiet)) {
         val engine = new Engine() {
             override def cancel(url: String, key: Option[String]): IO[Unit] =
                 IO.raiseError(new IllegalStateException("engine is down"))
