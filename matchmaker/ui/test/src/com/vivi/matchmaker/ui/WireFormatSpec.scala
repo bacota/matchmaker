@@ -246,7 +246,7 @@ class WireFormatSpec extends FunSuite {
             timeLimit = Some(Duration.ofMinutes(5)),
             settings = "{}",
             gameId = GameId(3),
-            characterId = CharacterId(9),
+            characterId = Some(CharacterId(9)),
             isPublic = true,
             gameRoleId = Some(GameRoleId(4))
           ),
@@ -290,7 +290,7 @@ class WireFormatSpec extends FunSuite {
           timeLimit = Some(Duration.ofMinutes(5)),
           settings = "{}",
           gameId = GameId(1),
-          characterId = CharacterId(9),
+          characterId = Some(CharacterId(9)),
           gameRoleId = Some(GameRoleId(2))
         )
 

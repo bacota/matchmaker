@@ -90,7 +90,7 @@ class JsonSpec extends FunSuite {
           timeLimit = Some(Duration.ofSeconds(3600)),
           settings = "{}",
           gameId = GameId(4),
-          characterId = CharacterId(5),
+          characterId = Some(CharacterId(5)),
           gameRoleId = Some(GameRoleId(6))
         )
         assertEquals(read[Challenge](write(challenge)), challenge)
@@ -107,7 +107,7 @@ class JsonSpec extends FunSuite {
               Some(Duration.ofMinutes(2)),
               "{}",
               GameId(3),
-              CharacterId(4),
+              Some(CharacterId(4)),
               gameRoleId = Some(GameRoleId(5))
             )
           )
@@ -129,7 +129,7 @@ class JsonSpec extends FunSuite {
             timeLimit = Some(Duration.ofSeconds(3600)),
             settings = "{}",
             gameId = GameId(4),
-            characterId = CharacterId(5),
+            characterId = Some(CharacterId(5)),
             isPublic = true,
             gameRoleId = Some(GameRoleId(6))
           ),

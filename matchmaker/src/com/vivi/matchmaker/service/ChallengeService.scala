@@ -271,34 +271,59 @@ class ChallengeService[T](
                                     s"game ${game.gameId.value} does not require a character, but a CharacterChallenge was given"
                                   )
                                 )
-                                // Locked: ownership is what authorizes this challenge, and the challenge row
-                                // inserted below references the character. An unlocked read would let the
-                                // character be reassigned or removed between the check and the insert.
-                                joined <- characterRepo.readWithOwnerAndGameForUpdate(cc.characterId).flatMap {
-                                    case Some(t) => IO.pure(t)
-                                    case None =>
-                                        IO.raiseError(NotFoundError(s"no character with id ${cc.characterId.value}"))
-                                }
-                                owner = joined.owner
-                                characterGame = joined.game
-                                _ <- IO.raiseUnless(challenge.gameId == characterGame.gameId)(
+                                // The challenger names their character exactly when they take a seat: it is the
+                                // character that plays it. A seatless challenge is a game's admin's (checked below)
+                                // and names neither.
+                                _ <- IO.raiseUnless(cc.characterId.isDefined == cc.gameRoleId.isDefined)(
                                   ValidationError(
-                                    s"challenge game_id ${challenge.gameId.value} does not match character's game_id ${characterGame.gameId.value}"
+                                    "a challenge in a game played by characters names its challenger's character " +
+                                        "exactly when the challenger takes a seat in it"
                                   )
                                 )
-                                _ <- IO.raiseUnless(callerExternalId == owner.externalId)(
-                                  UnauthorizedError(
-                                    s"caller '$callerExternalId' may not create a challenge for character ${cc.characterId.value}"
-                                  )
-                                )
-                                // The caller owning the character is not enough on its own: challenger names the
-                                // player the challenge (and now its implicit acceptance) is recorded under, so it
-                                // has to be the character's owner too, not some other player the caller picked.
-                                _ <- IO.raiseUnless(challenge.challenger == owner.playerId)(
-                                  UnauthorizedError(
-                                    s"player ${challenge.challenger.value} does not own character ${cc.characterId.value}"
-                                  )
-                                )
+                                _ <- cc.characterId match {
+                                    case None =>
+                                        // Nobody's character to own, so the challenger is authorized as in a plain game.
+                                        requirePlayer(playerRepo, challenge.challenger).flatMap(challengerPlayer =>
+                                            IO.raiseUnless(callerExternalId == challengerPlayer.externalId)(
+                                              UnauthorizedError(
+                                                s"caller '$callerExternalId' may not create a challenge for player ${challenge.challenger.value}"
+                                              )
+                                            )
+                                        )
+                                    case Some(characterId) =>
+                                        for {
+                                            // Locked: ownership is what authorizes this challenge, and the challenge row
+                                            // inserted below references the character. An unlocked read would let the
+                                            // character be reassigned or removed between the check and the insert.
+                                            joined <- characterRepo.readWithOwnerAndGameForUpdate(characterId).flatMap {
+                                                case Some(t) => IO.pure(t)
+                                                case None =>
+                                                    IO.raiseError(
+                                                      NotFoundError(s"no character with id ${characterId.value}")
+                                                    )
+                                            }
+                                            owner = joined.owner
+                                            characterGame = joined.game
+                                            _ <- IO.raiseUnless(challenge.gameId == characterGame.gameId)(
+                                              ValidationError(
+                                                s"challenge game_id ${challenge.gameId.value} does not match character's game_id ${characterGame.gameId.value}"
+                                              )
+                                            )
+                                            _ <- IO.raiseUnless(callerExternalId == owner.externalId)(
+                                              UnauthorizedError(
+                                                s"caller '$callerExternalId' may not create a challenge for character ${characterId.value}"
+                                              )
+                                            )
+                                            // The caller owning the character is not enough on its own: challenger names the
+                                            // player the challenge (and now its implicit acceptance) is recorded under, so it
+                                            // has to be the character's owner too, not some other player the caller picked.
+                                            _ <- IO.raiseUnless(challenge.challenger == owner.playerId)(
+                                              UnauthorizedError(
+                                                s"player ${challenge.challenger.value} does not own character ${characterId.value}"
+                                              )
+                                            )
+                                        } yield ()
+                                }
                             } yield ()
                         case _: PlainChallenge =>
                             for {
@@ -322,13 +347,6 @@ class ChallengeService[T](
                         IO.raiseUnless(game.roles.exists(_.gameRoleId == role))(
                           ValidationError(s"game ${game.gameId.value} has no role ${role.value}")
                         )
-                    )
-                    // A character game's challenger offers their character, and the character takes a
-                    // seat, so there is no seatless character challenge.
-                    _ <- IO.raiseWhen(challenge.gameRoleId.isEmpty && game.gameType == GameType.Character)(
-                      ValidationError(
-                        s"${game.displayName} is played by characters, and a challenge in it is played by its challenger's"
-                      )
                     )
                     // And it starts itself once its seats are filled: its challenger has no seat, so the
                     // match is not in any list of theirs, and a start left to them is one they may never
@@ -386,14 +404,20 @@ class ChallengeService[T](
                       taken = challenge.gameRoleId.toSet
                     )
                     created <- challengeRepo.create(challenge)
-                    _ <- created.gameRoleId.traverse_(role =>
-                        acceptanceRepo.create(created match {
-                            case cc: CharacterChallenge =>
-                                CharacterAcceptance(cc.challengeId, cc.challenger, cc.gameId, cc.characterId, role)
-                            case pc: PlainChallenge =>
-                                PlainAcceptance(pc.challengeId, pc.challenger, pc.gameId, role)
-                        })
-                    )
+                    // The challenger's seat, if they take one -- in a character game, played by the
+                    // character checked above to be both theirs and named exactly when the role is.
+                    _ <- created match {
+                        case cc: CharacterChallenge =>
+                            (cc.gameRoleId, cc.characterId).tupled.traverse_((role, character) =>
+                                acceptanceRepo.create(
+                                  CharacterAcceptance(cc.challengeId, cc.challenger, cc.gameId, character, role)
+                                )
+                            )
+                        case pc: PlainChallenge =>
+                            pc.gameRoleId.traverse_(role =>
+                                acceptanceRepo.create(PlainAcceptance(pc.challengeId, pc.challenger, pc.gameId, role))
+                            )
+                    }
                     _ <- invitations.traverse_(invite =>
                         invitationRepo.create(
                           Invitation(created.gameId, created.challengeId, invite.playerId, invite.gameRoleId)

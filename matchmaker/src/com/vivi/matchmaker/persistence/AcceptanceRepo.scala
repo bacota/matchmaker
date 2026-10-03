@@ -238,11 +238,6 @@ class AcceptanceRepo(session: Session[IO]) {
                     val timeLimit = timeLimitSeconds.map(v => Duration.ofSeconds(v.toLong))
                     val challengeModel: Challenge = gameType match {
                         case GameType.Character =>
-                            val cid = characterIdValue.getOrElse(
-                              throw new IllegalStateException(
-                                s"challenge ${challengeId.value} is game_type 'C' but has no character_challenge row"
-                              )
-                            )
                             CharacterChallenge(
                               challengeId,
                               challenger,
@@ -251,7 +246,7 @@ class AcceptanceRepo(session: Session[IO]) {
                               timeLimit,
                               settings,
                               gameId,
-                              CharacterId(cid),
+                              characterIdValue.map(CharacterId.apply),
                               isPublic,
                               challengerRoleId,
                               timeLimitKind,

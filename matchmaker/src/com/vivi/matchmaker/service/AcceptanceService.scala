@@ -80,7 +80,7 @@ class AcceptanceService(
                       )
                     )
                     // Never the challenger's own: that would leave a challenge whose challenger has no seat,
-                    // which is a seatless challenge -- a game's admin's to offer, in a plain game, and one that
+                    // which is a seatless challenge -- a game's admin's to offer, and one that
                     // has to start by itself (see `ChallengeService.create`). A challenger who no longer wants
                     // to play deletes the challenge.
                     _ <- IO.raiseWhen(playerId == challenger.playerId)(

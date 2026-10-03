@@ -80,7 +80,7 @@ class ChallengeServiceSpec extends PropertySuite {
           None,
           "{}",
           fixture.game.gameId,
-          fixture.character.characterId,
+          Some(fixture.character.characterId),
           isPublic = false,
           gameRoleId = Some(fixture.game.roles.head.gameRoleId)
         )
@@ -91,7 +91,7 @@ class ChallengeServiceSpec extends PropertySuite {
                 fixture <- makeFixture(nickname, externalId)
                 created <- challengeService.create(challengeFor(fixture), externalId)
             } yield created match {
-                case c: CharacterChallenge => c.characterId == fixture.character.characterId; case _ => false
+                case c: CharacterChallenge => c.characterId.contains(fixture.character.characterId); case _ => false
             }
             result.timeout(10.seconds).unsafeRunSync()
         }

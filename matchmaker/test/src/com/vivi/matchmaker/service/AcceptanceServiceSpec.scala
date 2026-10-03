@@ -71,7 +71,7 @@ class AcceptanceServiceSpec extends PropertySuite {
           None,
           "{}",
           fixture.game.gameId,
-          fixture.character.characterId,
+          Some(fixture.character.characterId),
           isPublic = false,
           gameRoleId = Some(fixture.game.roles.head.gameRoleId)
         )

@@ -306,7 +306,7 @@ class HostedChallengeSpec extends PropertySuite {
                 None,
                 "{}",
                 game.gameId,
-                character.characterId,
+                Some(character.characterId),
                 gameRoleId = Some(game.roles(0).gameRoleId)
               ),
               owner.externalId
@@ -350,34 +350,115 @@ class HostedChallengeSpec extends PropertySuite {
         assertEquals(messages.count(_.recipient == host.email.get), 1, messages.map(m => m.recipient -> m.subject))
     }
 
-    test("a character game has no seatless challenge, even for its admin") {
-        val result = for {
+    /** A character game, an admin of it with no character of their own, and two players with a character each. */
+    private case class CharacterFixture(
+        game: Game,
+        overall: Player,
+        host: Player,
+        first: (Player, Character[String]),
+        second: (Player, Character[String])
+    )
+
+    private def characterFixture(): IO[CharacterFixture] = {
+        def withCharacter(game: Game): IO[(Player, Character[String])] =
+            for {
+                player <- register()
+                character <- TestSession.resource.use(session =>
+                    new CharacterRepo[String](session).create(
+                      Character(CharacterId(0), game.gameId, unique("boxer"), "description", "", Some(player.playerId))
+                    )
+                )
+            } yield (player, character)
+        for {
             game <- makeGame(GameType.Character)
             overall <- register()
             _ <- TestSession.resource.use(session => new PlayerRepo(session).update(overall.copy(isAdmin = true)))
-            character <- TestSession.resource.use(session =>
-                new CharacterRepo[String](session).create(
-                  Character(CharacterId(0), game.gameId, "boxer", "description", "", Some(overall.playerId))
-                )
+            host <- register()
+            _ <- services.gameAdmins.grant(game.gameId, host.playerId, overall.externalId)
+            first <- withCharacter(game)
+            second <- withCharacter(game)
+        } yield CharacterFixture(game, overall, host, first, second)
+    }
+
+    private def hosted(
+        f: CharacterFixture,
+        by: Player,
+        character: Option[CharacterId] = None,
+        seat: Option[GameRoleId] = None
+    ): CharacterChallenge =
+        CharacterChallenge(
+          ChallengeId(0),
+          by.playerId,
+          "a bout for your boxers",
+          None,
+          None,
+          "{}",
+          f.game.gameId,
+          character,
+          gameRoleId = seat,
+          isOpen = false,
+          autoStart = seat.isEmpty,
+          friendly = false
+        )
+
+    private def characterInvitations(f: CharacterFixture): Seq[CharacterInvite] =
+        Seq(
+          CharacterInvite(f.first._2.characterId, Some(f.game.roles(0).gameRoleId)),
+          CharacterInvite(f.second._2.characterId, Some(f.game.roles(1).gameRoleId))
+        )
+
+    test("a game's admin with no character offers a bout for two players' characters, which starts when both accept") {
+        val result = for {
+            f <- characterFixture()
+            created <- services.challenges.create(hosted(f, f.host), f.host.externalId, Nil, characterInvitations(f))
+            _ <- services.challenges.accept(
+              f.game.gameId,
+              created.challengeId,
+              Some(f.first._2.characterId),
+              f.game.roles(0).gameRoleId,
+              f.first._1.externalId
             )
-            refused <- services.challenges
-                .create(
-                  CharacterChallenge(
-                    ChallengeId(0),
-                    overall.playerId,
-                    "message",
-                    None,
-                    None,
-                    "{}",
-                    game.gameId,
-                    character.characterId,
-                    gameRoleId = None
-                  ),
-                  overall.externalId
-                )
+            _ <- services.challenges.accept(
+              f.game.gameId,
+              created.challengeId,
+              Some(f.second._2.characterId),
+              f.game.roles(1).gameRoleId,
+              f.second._1.externalId
+            )
+            matchId <- TestSession.resource.use(session =>
+                new ChallengeRepo(session).startedMatch(f.game.gameId, created.challengeId)
+            )
+            stored <- TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, matchId.get))
+            players <- TestSession.resource.use(session =>
+                new PlayerRepo(session).listForMatch(f.game.gameId, matchId.get)
+            )
+        } yield (f, created, stored, players)
+        val (f, created, stored, players) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(created.gameRoleId, None)
+        assertEquals(created.asInstanceOf[CharacterChallenge].characterId, None)
+        assertEquals(stored.map(_.friendly), Some(false))
+        assertEquals(players.map(_.playerId).toSet, Set(f.first._1.playerId, f.second._1.playerId))
+    }
+
+    test("a seatless bout is a game's admin's alone, and names a character exactly when it names a seat") {
+        val result = for {
+            f <- characterFixture()
+            (player, own) = f.first
+            // An ordinary player offering one without a seat.
+            notAdmin <- services.challenges
+                .create(hosted(f, player), player.externalId, Nil, characterInvitations(f).tail)
                 .attempt
-        } yield refused
-        val refused = result.timeout(caseTimeout).unsafeRunSync()
-        assert(refused.left.exists(_.isInstanceOf[ValidationError]), refused)
+            // A seat with no character to play it, and a character with no seat.
+            noCharacter <- services.challenges
+                .create(hosted(f, f.host, seat = Some(f.game.roles(0).gameRoleId)), f.host.externalId)
+                .attempt
+            noSeat <- services.challenges
+                .create(hosted(f, player, character = Some(own.characterId)), player.externalId)
+                .attempt
+        } yield (notAdmin, noCharacter, noSeat)
+        val (notAdmin, noCharacter, noSeat) = result.timeout(caseTimeout).unsafeRunSync()
+        assert(notAdmin.left.exists(_.isInstanceOf[UnauthorizedError]), notAdmin)
+        assert(noCharacter.left.exists(_.isInstanceOf[ValidationError]), noCharacter)
+        assert(noSeat.left.exists(_.isInstanceOf[ValidationError]), noSeat)
     }
 }

@@ -191,7 +191,7 @@ object Generators {
           timeLimit,
           "{}",
           gameId,
-          characterId,
+          Some(characterId),
           isPublic,
           Some(gameRoleId),
           timeLimitKind,
