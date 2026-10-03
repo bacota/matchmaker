@@ -329,6 +329,10 @@ locals {
 
     "GET /games",
     "POST /games",
+    # A game's admins (V35): who they are, making one, and taking it away.
+    "GET /games/{gameId}/admins",
+    "PUT /games/{gameId}/admins/{playerId}",
+    "DELETE /games/{gameId}/admins/{playerId}",
     "GET /games/{gameId}/challenges",
     "GET /games/{gameId}/characters",
     # Another player's characters by name, for inviting one (V25). No state.
