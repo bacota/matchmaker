@@ -108,7 +108,8 @@ object Html {
   #board button.target { box-shadow: inset 0 0 0 4px var(--mark); }
   #board button.selected { outline: 4px solid var(--mark); outline-offset: -4px; }
   #board button:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; z-index: 1; }
-  /* A piece that has moved, which tells the other side it is neither a mine nor the flag. */
+  /* A piece seen to move but not yet revealed — either side's, and in a replay by the move shown — which tells its enemy
+     it is neither a mine nor the flag. */
   #board button.moved::after { content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px;
                                border-radius: 50%; background: currentColor; opacity: .8; }
   /* A piece whose rank its enemy has seen — in a replay, by the move shown. */
@@ -309,7 +310,8 @@ $icons
     <p class="rule">The lower number wins a battle. Equal ranks both fall.</p>
     <dl>
       <dt><span class="chip Blue">?</span></dt><dd>An enemy piece you have not seen</dd>
-      <dt><span class="chip Blue">?<span class="dot"></span></span></dt><dd>An enemy piece that has moved — so it is not a mine or the flag</dd>
+      <dt><span class="chip Blue">?<span class="dot"></span></span></dt><dd>A piece that has moved but not been revealed — so its enemy knows it is not a mine
+        or the flag</dd>
       <dt><span class="chip">${iconOf(
               "Sergeant"
             )}<span class="bar"></span></span></dt><dd>A piece the enemy has seen — when stepping back through the moves, seen by
@@ -402,7 +404,7 @@ $replayScript
   // generals are named for the insignia they wear, and the miner, spy and bomb are the engineer,
   // assassin and mine. The engine's names are what the API and stored matches use, so they stay; only
   // what a player reads changes.
-  const NAME = { Marshal: "General", General: "Brigadier General", Miner: "Engineer", Spy: "Assassin", Bomb: "Mine" };
+  const NAME = { Marshal: "General", General: "Brigadier", Miner: "Engineer", Spy: "Assassin", Bomb: "Mine" };
   function rankName(rank) { return NAME[rank] || rank; }
   const ARMY = [["Flag", 1], ["Spy", 1], ["Scout", 8], ["Miner", 5], ["Sergeant", 4], ["Lieutenant", 4],
                 ["Captain", 4], ["Major", 3], ["Colonel", 2], ["General", 1], ["Marshal", 1], ["Bomb", 6]];
@@ -537,7 +539,7 @@ $replayScript
     if (!p) return at + ", empty";
     const mine = state && p.side === state.you;
     let text = at + ", " + (mine ? "your " : p.side + " ") + (p.rank ? rankName(p.rank) : "unknown piece");
-    if (p.moved && !p.rank) text += ", has moved";
+    if (p.moved && !p.revealed) text += ", has moved";
     if (mine && p.revealed) text += ", seen by " + other(p.side);
     else if (replaying() && p.rank && !mine) text += p.revealed ? ", revealed" : ", not yet revealed";
     return text;
@@ -614,7 +616,8 @@ $replayScript
       else b.innerHTML = '<svg class="icon' + (p.rank === "Marshal" ? " wide" : NUMBER[p.rank] ? "" : " alone") + '" aria-hidden="true" focusable="false">' +
         '<use href="#rank-' + p.rank + '"/></svg>' + (NUMBER[p.rank] ? '<span class="number">' + NUMBER[p.rank] + "</span>" : "");
       b.className = LAKES.includes(sq) ? "lake" : p ? p.side : "";
-      b.classList.toggle("moved", !!(p && p.moved && !p.rank));
+      // Like `known`, either side's, so that a replay shows what each side knew of the other at every step.
+      b.classList.toggle("moved", !!(p && p.moved && !p.revealed));
       // Either side's: a replay shows ranks that were not seen until later, and the mark is what tells them apart, so
       // it means the same at every step — the latest included.
       b.classList.toggle("known", !!(p && p.rank && p.revealed));
@@ -1249,12 +1252,13 @@ $replayScript
     </ul>
     <h3>What you can see</h3>
     <ul>
-      <li>All of your own pieces. An enemy piece is a ? until a battle or a Scout's long move reveals it, and is
-        marked once it has moved, since it cannot be a Mine or the Flag.</li>
+      <li>All of your own pieces. An enemy piece is a ? until a battle or a Scout's long move reveals it.</li>
+      <li>A dot marks a piece, yours or the enemy's, that has moved but not been revealed: it cannot be a Mine or the
+        Flag. An underline marks a piece that has been revealed.</li>
       <li>Hidden pieces stay hidden when the match ends.</li>
       <li>◀ and ▶ under the board, or the left and right arrow keys, step back and forward through the moves; ◀◀ and
-        ▶▶, or Home and End on the board, go to the opening and the latest position. While stepping through, an underline marks
-        each piece whose rank had been seen by then.</li>
+        ▶▶, or Home and End on the board, go to the opening and the latest position. While stepping through, the dots
+        and underlines show what each side knew at that move.</li>
     </ul>"""
 
     /** The key's lines, strongest first, named as the page's `NAME` names them. Numbered the classic European way — 1
@@ -1269,7 +1273,7 @@ $replayScript
             "General",
             "The strongest piece — but it falls to the Assassin, if the Assassin attacks it."
           ),
-          ("General", "2", "Brigadier General", ""),
+          ("General", "2", "Brigadier", ""),
           ("Colonel", "3", "Colonel", ""),
           ("Major", "4", "Major", ""),
           ("Captain", "5", "Captain", ""),
