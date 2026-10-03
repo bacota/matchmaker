@@ -114,6 +114,17 @@ object Html {
   #board button.known::before { content: ""; position: absolute; left: 25%; right: 25%; bottom: 2px; height: 2px;
                                 background: currentColor; }
   #news { min-height: 1.5rem; margin: .75rem 0 0; }
+  /* Stepping through the match: back, where the board is, forward, and back to the latest. */
+  #replay { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; align-items: center; margin-top: .75rem; }
+  #replay[hidden] { display: none; }
+  #replay button { font: inherit; font-size: 1rem; min-height: 44px; min-width: 44px; padding: 0 .75rem;
+                   border-radius: 6px; border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+                   cursor: pointer; }
+  #replay button[aria-disabled="true"] { opacity: .5; cursor: default; }
+  #replay button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  #replay-at { min-width: 9rem; font-variant-numeric: tabular-nums; }
+  /* A past position, not the one being played: the board is ringed while it shows one. */
+  #board.replaying { outline: 3px dashed var(--mark); outline-offset: 3px; }
   .controls { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; align-items: end; margin-top: 1rem; }
   /* Without this the display above would override `hidden`, and both sets of controls would always show. */
   .controls[hidden] { display: none; }
@@ -217,6 +228,13 @@ $icons
     <button type="button" id="key-button" popovertarget="key" aria-haspopup="dialog">Key</button>
   </div>
   <div id="board" role="group" aria-label="board"></div>
+  <!-- Not a live region: what each step shows is announced by #news, below. -->
+  <div id="replay" role="group" aria-label="replay" hidden>
+    <button type="button" id="replay-back" aria-label="Previous move" title="Previous move (left arrow)">◀</button>
+    <span id="replay-at"></span>
+    <button type="button" id="replay-forward" aria-label="Next move" title="Next move (right arrow)">▶</button>
+    <button type="button" id="replay-latest">Latest</button>
+  </div>
   <!-- Announced: what the last move did, which the other player's arrives while this page is idle. -->
   <p id="news" role="status" aria-live="polite"></p>
   <div id="remaining" hidden></div>
@@ -280,6 +298,7 @@ ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
 ${TurnTimer.script}
+$replayScript
 
   const publicView = $publicView;
   // Urls are derived from this page's own, not built from a base: behind API Gateway the path
@@ -324,7 +343,10 @@ ${TurnTimer.script}
     // token expires mid-match, which is what turns a 401 back into a button.
     signin.hidden = !login || noSeat || (state && state.you);
 
+    // A state with nothing to replay — signed out, or a new match — has no past to be looking at.
+    if (!state || !state.replay) view = null;
     drawBoard();
+    drawReplay();
     drawControls();
     drawNews();
     drawLost();
@@ -359,12 +381,19 @@ ${TurnTimer.script}
   // The square the board's keyboard focus is on, which is the one square in the tab order.
   let focusSquare = null;
   let lastNews = null;
+  // The move the board is showing the position after, while stepping back through the match; null
+  // for the position being played. See `replayFrame`.
+  let view = null;
 
   function other(side) { return side === "Red" ? "Blue" : "Red"; }
   function squareName(sq) { return "abcdefghij"[sq % 10] + (Math.floor(sq / 10) + 1); }
   function home(side) { const first = side === "Red" ? 0 : 60; return Array.from({ length: 40 }, (_, i) => first + i); }
   function deploying() { return !!(state && state.you && state.phase === "setup" && !state.deployed.includes(state.you)); }
   function myTurn() { return !!(state && state.you && state.phase === "play" && state.turn === state.you); }
+  /* Whether the board is showing a past position rather than the one being played. */
+  function replaying() { return view !== null && !!(state && state.replay); }
+  /* What each side had lost by the position on the board. */
+  function lostShown() { return replaying() ? replayFrame(state.replay, view).lost : state.lost; }
 
   /* The square drawn at display position d, top left first: the viewer's own side at the bottom. */
   function squareAt(d) {
@@ -397,6 +426,7 @@ ${TurnTimer.script}
 
   /* Every piece the viewer may see, by square — the draft's, while it is being arranged. */
   function piecesBySquare() {
+    if (replaying()) return replayFrame(state.replay, view).by;
     const by = {};
     if (!state) return by;
     state.pieces.forEach(p => { by[p.square] = p; });
@@ -419,7 +449,7 @@ ${TurnTimer.script}
   /* Whether tapping `sq` would do anything — which is also whether it is offered as a control. */
   function actionable(sq) {
     // Nothing while a move is out, as `tap` and dragging have it: the turn's move is already made.
-    if (pending) return false;
+    if (pending || replaying()) return false;
     if (deploying()) return home(state.you).includes(sq);
     if (!myTurn()) return false;
     return movesFrom(sq).length > 0 || (selected !== null && movesFrom(selected).includes(sq));
@@ -427,6 +457,12 @@ ${TurnTimer.script}
 
   const board = document.getElementById("board");
   const squares = [];
+  // Whether a square has the focus because it was clicked or touched, rather than reached with the
+  // keyboard. The arrow keys move between squares for a keyboard user and step the replay for
+  // everyone else; see the replay's keys below.
+  let pointerDown = false, squareFocusByPointer = false;
+  // A key pressed means the next focus is the keyboard's, even after a press that focused nothing.
+  document.addEventListener("keydown", () => { pointerDown = false; }, true);
   for (let d = 0; d < 100; d++) {
     const b = document.createElement("button");
     b.type = "button";
@@ -436,9 +472,11 @@ ${TurnTimer.script}
       if (justDragged) { justDragged = false; return; }
       tap(squareAt(d));
     });
-    b.addEventListener("pointerdown", e => press(e, d));
+    b.addEventListener("pointerdown", e => { pointerDown = true; press(e, d); });
     b.addEventListener("focus", () => {
       focusSquare = squareAt(d);
+      squareFocusByPointer = pointerDown;
+      pointerDown = false;
       if (b.matches(":focus-visible")) tipLater(d);
     });
     b.addEventListener("blur", hideTip);
@@ -450,7 +488,7 @@ ${TurnTimer.script}
   board.addEventListener("keydown", e => {
     const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -10, ArrowDown: 10 }[e.key];
     const d = squares.indexOf(document.activeElement);
-    if (step === undefined || d < 0) return;
+    if (step === undefined || d < 0 || squareFocusByPointer) return;
     const next = d + step;
     if (next < 0 || next > 99 || (Math.abs(step) === 1 && Math.floor(next / 10) !== Math.floor(d / 10))) return;
     e.preventDefault();
@@ -530,7 +568,8 @@ ${TurnTimer.script}
 
   function drawBoard() {
     const by = piecesBySquare();
-    const last = state && state.lastMove ? [state.lastMove.from, state.lastMove.to] : [];
+    const shownMove = replaying() ? (view > 0 ? state.replay.moves[view - 1] : null) : state && state.lastMove;
+    const last = shownMove ? [shownMove.from, shownMove.to] : [];
     const targets = selected !== null && myTurn() ? movesFrom(selected) : [];
     let focusable = false;
     for (let d = 0; d < 100; d++) {
@@ -561,7 +600,9 @@ ${TurnTimer.script}
     if (!focusable) squares[90].tabIndex = 0;
     // A refresh can change what is on the square a tip names.
     if (tipSquare !== null) showTip(tipSquare);
-    board.setAttribute("aria-label", "board, " + (state && state.you === "Blue" ? "Blue" : "Red") + " at the bottom");
+    board.classList.toggle("replaying", replaying());
+    board.setAttribute("aria-label", "board, " + (state && state.you === "Blue" ? "Blue" : "Red") + " at the bottom" +
+      (replaying() ? ", replaying " + replayPlace() : ""));
   }
 
   function tap(sq) {
@@ -593,7 +634,7 @@ ${TurnTimer.script}
   let drag = null, justDragged = false, pending = null;
 
   function draggable(sq) {
-    if (pending) return false;
+    if (pending || replaying()) return false;
     if (deploying()) return home(state.you).includes(sq);
     return myTurn() && movesFrom(sq).length > 0;
   }
@@ -727,7 +768,7 @@ ${TurnTimer.script}
     document.getElementById("concede-bar").hidden = !(state && state.you && !state.completed);
     // Not while a move is out: it is shown made, so its piece is no longer where the controls
     // would offer it from, and it is the only move this turn has.
-    const setup = deploying(), play = myTurn() && !pending;
+    const setup = deploying(), play = myTurn() && !pending && !replaying();
     document.getElementById("setup-controls").hidden = !setup;
     document.getElementById("move-controls").hidden = !play;
     const by = piecesBySquare();
@@ -786,10 +827,72 @@ ${TurnTimer.script}
     submit({ setup: draft });
   });
 
+  // ---- replaying ------------------------------------------------------------------------------
+  //
+  // Back and forward a move at a time, from the opening position to the one being played, with the
+  // buttons under the board or the left and right arrow keys. Looking back changes nothing: the
+  // board cannot be played on until it is back at the latest position, and a move the other player
+  // makes meanwhile is added to the end of what can be stepped through.
+
+  const replayBack = document.getElementById("replay-back"), replayForward = document.getElementById("replay-forward");
+  const replayLatest = document.getElementById("replay-latest");
+
+  function replayLength() { return state && state.replay ? state.replay.moves.length : 0; }
+
+  /* Where the board is in the match, as the replay's controls say it. */
+  function replayPlace() {
+    if (!replaying()) return "latest position, move " + replayLength();
+    return view === 0 ? "opening position" : "move " + view + " of " + replayLength();
+  }
+
+  function drawReplay() {
+    const n = replayLength();
+    document.getElementById("replay").hidden = n === 0;
+    document.getElementById("replay-at").textContent = replaying()
+      ? (view === 0 ? "Opening position" : "Move " + view + " of " + n) : "Move " + n + " of " + n;
+    // aria-disabled rather than disabled, so a button keeps the focus when it has stepped as far as
+    // it goes, and the arrow keys still work from it.
+    replayBack.setAttribute("aria-disabled", String(n === 0 || view === 0));
+    replayForward.setAttribute("aria-disabled", String(!replaying()));
+    replayLatest.setAttribute("aria-disabled", String(!replaying()));
+  }
+
+  /* Shows the position `delta` moves on from the one shown, as far as the opening or the latest. */
+  function stepReplay(delta) {
+    const n = replayLength();
+    if (n === 0 || drag) return;
+    const at = Math.min(n, Math.max(0, (replaying() ? view : n) + delta));
+    view = at === n ? null : at;
+    selected = null;
+    hideTip();
+    render();
+  }
+
+  replayBack.addEventListener("click", () => stepReplay(-1));
+  replayForward.addEventListener("click", () => stepReplay(1));
+  replayLatest.addEventListener("click", () => stepReplay(Infinity));
+  document.addEventListener("keydown", e => {
+    const delta = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+    if (delta === undefined || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    // Not where the arrows already mean something: a select, a field, or a dialog over the board.
+    if (e.target.closest && e.target.closest("select, input, textarea, dialog, [popover]")) return;
+    if (replayLength() === 0) return;
+    e.preventDefault();
+    stepReplay(delta);
+  });
+
   // ---- what happened --------------------------------------------------------------------------
 
   function drawNews() {
     const news = document.getElementById("news");
+    if (replaying()) {
+      const key = "replay:" + view;
+      if (key === lastNews) return;
+      lastNews = key;
+      news.textContent = view === 0 ? "The opening position." :
+        "Move " + view + ": " + moveText(state.replay.moves[view - 1]);
+      return;
+    }
     const lm = state && state.lastMove;
     const key = lm ? state.moveCount + ":" + JSON.stringify(lm) : null;
     // Written only when it changes, so the live region announces each move once.
@@ -827,7 +930,7 @@ ${TurnTimer.script}
     const sides = !state || state.phase === "setup" ? [] : state.you ? [other(state.you)] : ["Red", "Blue"];
     box.hidden = sides.length === 0;
     box.innerHTML = sides.map(side => {
-      const lost = (state.lost.find(l => l.side === side) || { ranks: [] }).ranks;
+      const lost = (lostShown().find(l => l.side === side) || { ranks: [] }).ranks;
       const items = STRONGEST_FIRST.map(rank => {
         const of = ARMY.find(a => a[0] === rank)[1];
         const left = of - lost.filter(r => r === rank).length;
@@ -846,12 +949,12 @@ ${TurnTimer.script}
   function drawLost() {
     const lost = document.getElementById("lost");
     if (!state || state.phase === "setup") { lost.innerHTML = ""; return; }
-    lost.innerHTML = state.lost.map(l => {
+    lost.innerHTML = lostShown().map(l => {
       const counts = {};
       l.ranks.forEach(r => { counts[rankName(r)] = (counts[rankName(r)] || 0) + 1; });
       const text = Object.keys(counts).map(r => r + (counts[r] > 1 ? " ×" + counts[r] : "")).join(", ") || "nothing";
       return "<p>" + l.side + " has lost: " + escapeHtml(text) + "</p>";
-    }).join("") + "<p>" + state.moveCount + " of " + state.maxMoves + " moves</p>";
+    }).join("") + "<p>" + (replaying() ? view : state.moveCount) + " of " + state.maxMoves + " moves</p>";
   }
 
   /* The sides whose clock ran out in a live match, which is how it ended if there are any. */
@@ -998,6 +1101,42 @@ ${TurnTimer.script}
 </html>
 """
     }
+
+    /** The position a replay shows, worked out on the page from [[Protocol.ReplayView]]: the opening, with the first
+      * `k` of its moves made on it as the engine makes them. A battle names both ranks and reveals both pieces, a scout
+      * that went more than one square is revealed, and a piece that moved is marked as having moved.
+      *
+      * Separate from the page's own script so that a test can run it as it is, and check that playing every move
+      * arrives at the board the engine describes — see `ReplaySpec`.
+      */
+    private[stratego] val replayScript: String =
+        """
+  /* The position after the first `k` of `replay`'s moves: the pieces by square, and what each side
+   * had lost by then, strongest first, as the state's own `lost` lists it. */
+  function replayFrame(replay, k) {
+    const by = {}, lost = { Red: [], Blue: [] };
+    replay.opening.forEach(p => { by[p.square] = Object.assign({}, p); });
+    replay.moves.slice(0, k).forEach(m => {
+      const piece = by[m.from], defender = by[m.to], gap = Math.abs(m.to - m.from);
+      delete by[m.from];
+      piece.square = m.to;
+      piece.moved = true;
+      if (gap !== 1 && gap !== 10) piece.revealed = true;
+      if (!m.battle) { by[m.to] = piece; return; }
+      piece.rank = m.battle.attacker;
+      piece.revealed = true;
+      defender.rank = m.battle.defender;
+      defender.revealed = true;
+      if (m.battle.result !== "AttackerWins") lost[piece.side].push(m.battle.attacker);
+      if (m.battle.result !== "DefenderWins") lost[defender.side].push(m.battle.defender);
+      if (m.battle.result === "AttackerWins") by[m.to] = piece;
+      else if (m.battle.result === "BothLost") delete by[m.to];
+    });
+    const order = ["Bomb", "Marshal", "General", "Colonel", "Major", "Captain", "Lieutenant", "Sergeant", "Miner",
+                   "Scout", "Spy", "Flag"];
+    return { by, lost: ["Red", "Blue"].map(side => ({ side, ranks: lost[side].sort((a, b) => order.indexOf(a) - order.indexOf(b)) })) };
+  }
+"""
 
     /** One icon per rank, drawn for this page. The officers and the sergeant wear simplified US Army insignia, which as
       * works of the US government are free to use, in their metals: four silver stars for the Marshal (a general), one

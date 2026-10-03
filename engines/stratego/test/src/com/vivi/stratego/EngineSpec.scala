@@ -126,6 +126,21 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(f.m.inPlay)
     }
 
+    test("each deployment keeps the army it put down, which is the opening position a replay starts from") {
+        val f = Fixture()
+        val red = setup(Side.Red, Map(30 -> Rank.Scout))
+        val blue = setup(Side.Blue, Map(60 -> Rank.Sergeant))
+        assert(f.engine.deploy("m-1", bob, names(blue)).isRight)
+        assert(f.engine.deploy("m-1", alice, names(red)).isRight)
+        assertEquals(f.m.turns.map(t => (t.side, t.setup)), List((Side.Blue, Some(blue)), (Side.Red, Some(red))))
+        // What was kept is what the board was given, square by square.
+        for (t <- f.m.turns; s <- t.setup)
+            assertEquals(t.side.homeSquares.zip(s), t.side.homeSquares.map(sq => sq -> f.m.board(sq).get.rank))
+        // And a move keeps no army.
+        assert(f.engine.move("m-1", alice, 30, 40).isRight)
+        assertEquals(f.m.turns.last.setup, None)
+    }
+
     test("a setup must be one whole army, made once") {
         val f = Fixture()
         assertEquals(
@@ -334,13 +349,25 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(!f.m.completed)
     }
 
-    test("once the match is over every rank is shown, on the public board too") {
+    test(
+      "a finished match hides what it hid in play: a player sees their own army, the public only what was revealed"
+    ) {
         val f = deployed(blueOnA7 = Rank.Flag, request = createRequest(isPublic = true))
         f.engine.move("m-1", alice, 30, 60)
         val public = f.state(None)
         assertEquals(public.phase, "over")
         assertEquals(public.winner, Some("Red"))
-        assert(public.pieces.forall(_.rank.isDefined))
+        // The scout that took the flag, and nothing else: the flag fell in the battle.
+        assertEquals(public.pieces.filter(_.rank.isDefined).map(p => (p.side, p.rank.get)), List(("Red", "Scout")))
+        for ((who, side) <- List(alice -> "Red", bob -> "Blue")) {
+            val seen = f.state(Some(who)).pieces
+            assert(seen.filter(_.side == side).forall(_.rank.isDefined), who)
+            assertEquals(
+              seen.filter(p => p.side != side && p.rank.isDefined).map(_.rank.get),
+              if (side == "Blue") List("Scout") else Nil,
+              who
+            )
+        }
     }
 
     test("the move cap ends the match as a draw") {

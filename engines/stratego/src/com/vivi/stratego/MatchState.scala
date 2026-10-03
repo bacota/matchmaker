@@ -20,6 +20,10 @@ case class Seat(side: Side, cognitoId: String, participantId: Long, nickname: Op
   * time is charged to them. So is a concession, which is the conceding player's last act in the match, and may be made
   * whether or not it was their turn. `concession` defaults to false, so a match stored before there were any reads as
   * it was written.
+  *
+  * `setup` is the army a deployment put down — its ranks in the order of [[Side.homeSquares]], as it was submitted — so
+  * that the match can be replayed from its opening position. It is never shown to the opponent while the match is being
+  * played. A match deployed before it was kept has `None`, and nothing reads it to decide anything.
   */
 case class MoveRecord(
     participantId: Long,
@@ -28,7 +32,8 @@ case class MoveRecord(
     startedAt: Instant,
     step: Option[Step] = None,
     battle: Option[Battle] = None,
-    concession: Boolean = false
+    concession: Boolean = false,
+    setup: Option[List[Rank]] = None
 ) extends TurnLike {
     def isSetup: Boolean = step.isEmpty && !concession
 }
@@ -136,6 +141,53 @@ case class StrategoMatch(
                 case Result.BothLost     => true
             }
         }
+
+    /** The board as the two armies were deployed, before any piece moved — where a replay starts — or `None` until both
+      * are down.
+      *
+      * From the armies the setups kept, when both did. A match deployed before they were kept is rebuilt instead, which
+      * it can always be: a piece's id is its place in its side's [[Side.homeSquares]], so where each started is known,
+      * and its rank is either on the board still or was told by the battle that took it — every piece that fell, fell
+      * fighting. `None` too if the turns do not account for every piece, which a match this engine played cannot do.
+      */
+    def opening: Option[Board] =
+        if (!inPlay) None
+        else {
+            val kept = turns.filter(_.isSetup).flatMap(t => t.setup.map(t.side -> _)).toMap
+            if (kept.sizeIs == 2)
+                Side.values.foldLeft(Option(Board.empty))((b, side) => b.flatMap(_.deploy(side, kept(side)).toOption))
+            else rebuiltOpening
+        }
+
+    private def rebuiltOpening: Option[Board] = {
+        def sideOf(id: Int) = if (id < 40) Side.Red else Side.Blue
+        def homeOf(id: Int) = sideOf(id).homeSquares(id % 40)
+        val standing = board.cells.flatten.map(p => p.id -> p.rank).toMap
+        // Who stands where, by id, followed move by move — which is how a battle's defender is known —
+        // and the rank each fallen piece was shown to have.
+        val (_, fallen) = moves.foldLeft((Map.from((0 until 80).map(id => homeOf(id) -> id)), Map.empty[Int, Rank])) {
+            case ((at, ranks), MoveRecord(_, _, _, _, Some(step), battle, _, _)) =>
+                val defender = at.get(step.to)
+                val left = at - step.from
+                battle match {
+                    case None => (left.updated(step.to, step.pieceId), ranks)
+                    case Some(b) =>
+                        val told = ranks.updated(step.pieceId, b.attacker) ++ defender.map(_ -> b.defender)
+                        b.result match {
+                            case Result.AttackerWins => (left.updated(step.to, step.pieceId), told)
+                            case Result.DefenderWins => (left, told)
+                            case Result.BothLost     => (left - step.to, told)
+                        }
+                }
+            case (acc, _) => acc
+        }
+        val ranks = fallen ++ standing
+        Option.when((0 until 80).forall(ranks.contains))(
+          Board((0 until 80).foldLeft(Board.empty.cells) { (cells, id) =>
+              cells.updated(homeOf(id), Some(Piece(id, sideOf(id), ranks(id))))
+          })
+        )
+    }
 
     /** The ranks `side` has lost, highest first. Every one of them was revealed in the battle that took it, so these
       * are safe to show anyone.
