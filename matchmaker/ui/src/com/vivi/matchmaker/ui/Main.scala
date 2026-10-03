@@ -2635,13 +2635,12 @@ object Views {
                           // An admin of the game gets the challenge panel as well: they may offer a
                           // match for other players' characters without one of their own.
                           case Some(Nil) =>
+                              val admin = Store.administers(game.gameId, player)
                               div(
-                                characterPrompt(game, checked, () => status.foreach(_.focus())),
-                                child <-- Store
-                                    .administers(game.gameId, player)
-                                    .map(
-                                      if (_) challengePanel(game, player, Seq.empty) else emptyNode
-                                    )
+                                characterPrompt(game, admin, checked, () => status.foreach(_.focus())),
+                                child <-- admin.map(
+                                  if (_) challengePanel(game, player, Seq.empty) else emptyNode
+                                )
                               )
                           case Some(characters) =>
                               div(
@@ -2681,15 +2680,25 @@ object Views {
       */
     private def characterPrompt(
         game: Game,
+        admin: Signal[Boolean],
         checked: Var[Option[String]],
         focusStatus: () => Unit
     ): HtmlElement =
         div(
           cls := "card",
           h3(s"Make Your Character for ${game.displayName}"),
+          // An admin of the game has the challenge panel below this, so for them a character is
+          // needed only to play, not to offer a match. Text rather than a re-rendered card, so the
+          // buttons here keep focus if the admin list arrives while one has it.
           p(
-            s"You need a character in ${game.displayName} before you can offer or accept a challenge. " +
-                "Characters are made in the game itself, which tells matchmaker once yours exists."
+            child.text <-- admin.map {
+                case true =>
+                    s"You need a character in ${game.displayName} to play or to accept a challenge. " +
+                        "As an admin of this game you can still host a match for other players' characters below. "
+                case false =>
+                    s"You need a character in ${game.displayName} before you can offer or accept a challenge. "
+            },
+            "Characters are made in the game itself, which tells matchmaker once yours exists."
           ),
           game.characterUrl match {
               case Some(url) =>
