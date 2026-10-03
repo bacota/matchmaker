@@ -266,7 +266,9 @@ ${TurnTimer.script}
       const doing = state.completed ? "" : c.planned ? "Round planned." : "Planning…";
       return '<div class="corner ' + escapeHtml(c.side) + '"><h3>' + escapeHtml(cornerName(c.side)) + "</h3>" +
         "<p>" + c.points + " points" + (doing ? " · " + doing : "") + "</p>" + stats +
-        '<p class="who">' + escapeHtml(c.cognitoId) + "</p></div>";
+        // By nickname, never the sign-in id, which means nothing to anybody; a bout created before
+        // nicknames were kept has none to show.
+        (c.nickname ? '<p class="who">' + escapeHtml(c.nickname) + "</p>" : "") + "</div>";
     }).join("");
   }
 

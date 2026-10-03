@@ -92,7 +92,9 @@ object Protocol {
         characterId: Long,
         fighter: Option[FighterView],
         planned: Boolean,
-        points: Int
+        points: Int,
+        // Who is in the corner, by matchmaker nickname; absent for a bout created before nicknames were kept.
+        nickname: Option[String] = None
     )
 
     case class Numbers(offense: Int, defense: Int, power: Int, effectiveChin: Int)

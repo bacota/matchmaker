@@ -188,7 +188,8 @@ class Engine(
                 characterId = c.characterId,
                 fighter = c.fighter.map(f => FighterView(f.strength, f.speed, f.agility, f.workrate, f.chin)),
                 planned = !over && m.planOf(c, m.currentRound).isDefined,
-                points = m.points(c.side)
+                points = m.points(c.side),
+                nickname = c.nickname
               )
           ),
           rounds = m.rounds.map(r =>

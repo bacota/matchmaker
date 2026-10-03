@@ -40,8 +40,22 @@ class EngineSpec extends FunSuite with QuietTests {
           settings = settings,
           timeLimitSeconds = Some(600),
           players = List(
-            Protocol.EnginePlayer(alice, 11L, roles.head, Some(101L), Some(red.map(Fighter.toState).getOrElse(""))),
-            Protocol.EnginePlayer(bob, 22L, roles(1), Some(202L), Some(blue.map(Fighter.toState).getOrElse("")))
+            Protocol.EnginePlayer(
+              alice,
+              11L,
+              roles.head,
+              Some(101L),
+              Some(red.map(Fighter.toState).getOrElse("")),
+              Some("Alice")
+            ),
+            Protocol.EnginePlayer(
+              bob,
+              22L,
+              roles(1),
+              Some(202L),
+              Some(blue.map(Fighter.toState).getOrElse("")),
+              Some("Bob")
+            )
           ),
           moveCallbackUrl = Some(moveUrl),
           resultsCallbackUrl = Some(resultsUrl)
@@ -79,6 +93,13 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(created.publicUrl, Some("http://engine.test/matches/m-1/board"))
         assertEquals(bout(store).cornerOf(Side.Blue).map(_.participantId), Some(11L))
         assertEquals(bout(store).cornerOf(Side.Red).map(_.characterId), Some(202L))
+    }
+
+    test("each corner carries its player's nickname, as matchmaker sent it, for the page to show") {
+        val (engine, _, store, _, _) = fixture()
+        val corners = engine.stateOf(bout(store), None).corners
+
+        assertEquals(corners.map(c => c.side -> c.nickname), List("Red" -> Some("Alice"), "Blue" -> Some("Bob")))
     }
 
     test("the number of rounds comes from the challenge's settings, then the game's parameter, then the default") {
