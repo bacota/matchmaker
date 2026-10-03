@@ -57,10 +57,12 @@ object Html {
      in dark mode, under the 4.5:1 normal text needs. */
   /* The two armies carry white text: --red is 6.6:1 against it and --blue 6.7:1. The insignia's
      metals are drawn only on a piece, in either theme: --silver is 5.1:1 against --red and 5.2:1
-     against --blue, --gold 4.0:1 and 4.1:1 — over the 3:1 a graphic needs. */
+     against --blue, --gold 4.0:1 and 4.1:1 — over the 3:1 a graphic needs. --black (2.8:1 on --blue),
+     --brown (1.1:1 on --red) and a flag in the other army's colour (1.0:1) are not, so each is drawn
+     inside a --halo outline, 5.8:1 against --red and 5.9:1 against --blue. */
   :root { color-scheme: light dark; --line: #8884; --ink: #222; --paper: #fafafa; --error: #b3261e;
           --square: #e9e4d4; --water: #8fbcd9; --red: #b3261e; --blue: #1d4ed8; --mark: #e6a700; --focus: #6d28d9;
-          --silver: #dfe3e8; --gold: #f3c34a; }
+          --silver: #dfe3e8; --gold: #f3c34a; --black: #111; --brown: #7b4a1f; --halo: #f4f1ea; }
   @media (prefers-color-scheme: dark) {
     :root { --ink: #eee; --paper: #16181c; --error: #ff8a80; --square: #3a3a33; --water: #1f4d6b; --mark: #ffc940; --focus: #c4b5fd; }
   }
@@ -73,8 +75,9 @@ object Html {
            margin: 0 auto; padding: 2px; box-sizing: border-box; background: var(--line); border-radius: 6px; }
   #board button { aspect-ratio: 1; min-width: 0; padding: 0; border: 0; border-radius: 3px; position: relative;
                   background: var(--square); color: var(--ink); font: 700 clamp(.8rem, 3.6vw, 1.15rem)/1 ui-monospace, monospace; }
-  #board button.Red { background: var(--red); color: #fff; }
-  #board button.Blue { background: var(--blue); color: #fff; }
+  /* --flag: each army's flag is drawn in the other's colour. */
+  #board button.Red { background: var(--red); color: #fff; --flag: var(--blue); }
+  #board button.Blue { background: var(--blue); color: #fff; --flag: var(--red); }
   #board button.lake { background: var(--water); }
   /* A piece's icon, and its number tucked into the corner — the number is what decides a fight, so it stays. */
   .icon { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -144,8 +147,8 @@ object Html {
   #key .rule { margin: 1rem 0 .75rem; font-weight: 600; }
   /* Each icon on a piece of its own, since the metals are drawn for a piece and silver would vanish on the page. */
   #key .chip { display: inline-grid; place-items: center; position: relative; width: 2rem; height: 2rem;
-               border-radius: 3px; background: var(--red); color: #fff; }
-  #key .chip.Blue { background: var(--blue); }
+               border-radius: 3px; background: var(--red); color: #fff; --flag: var(--blue); }
+  #key .chip.Blue { background: var(--blue); --flag: var(--red); }
   #key .icon { width: 1.4rem; height: 1.4rem; }
   #key .icon.wide { width: 1.8rem; height: .65rem; }
   /* The marks a square can carry, drawn as the board draws them. */
@@ -802,8 +805,9 @@ ${TurnTimer.script}
     /** One icon per rank, drawn for this page. The officers and the sergeant wear simplified US Army insignia, which as
       * works of the US government are free to use, in their metals: four silver stars for the Marshal (a general), one
       * for the General (a brigadier), a silver eagle, a gold oak leaf, two silver bars joined, one silver bar, and
-      * three chevrons. The Miner's pick, the Scout's horse and the rest are plain symbols — not any published Stratego
-      * edition's artwork, which is copyrighted.
+      * three chevrons. The Miner's brown pick, the Scout's galloping horse, the black mask and bomb, and the flag — in
+      * the other army's colour, through `--flag` — are plain symbols, not any published Stratego edition's artwork,
+      * which is copyrighted.
       *
       * Each is a 24-unit square, except the four stars, which are a strip so that they can take a piece's whole width.
       * What is not metal is `currentColor`, the white of a coloured piece. Placed with `<use href="#rank-Marshal">`,
@@ -849,11 +853,11 @@ ${TurnTimer.script}
   <symbol id="rank-Captain" viewBox="0 0 24 24"><g style="fill:var(--silver)" stroke="none"><rect x="5" y="3" width="4.5" height="18" rx=".6"/><rect x="14.5" y="3" width="4.5" height="18" rx=".6"/><rect x="9" y="5" width="6" height="1.6"/><rect x="9" y="17.4" width="6" height="1.6"/></g></symbol>
   <symbol id="rank-Lieutenant" viewBox="0 0 24 24"><rect style="fill:var(--silver)" stroke="none" x="9.5" y="3" width="5" height="18" rx=".6"/></symbol>
   <symbol id="rank-Sergeant" viewBox="0 0 24 24"><path stroke-width="2.6" stroke-linecap="butt" stroke-linejoin="miter" d="m4 9 8-5 8 5M4 14.5l8-5 8 5M4 20l8-5 8 5"/></symbol>
-  <symbol id="rank-Miner" viewBox="0 0 24 24"><g transform="rotate(-35 12 12)"><path d="M3 9.5c5-5 13-5 18 0"/><path d="M12 6v15.5"/></g></symbol>
-  <symbol id="rank-Scout" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" stroke="none" d="M7 21.5h10.5c.3-3.6-.6-6.7-2.4-9.1 2.4-.4 4.2-1.6 5-3.5l.6-1.5c.2-.6-.2-1.2-.8-1.3-1.6-.2-3-.9-4.1-2L14.5 2.5l-.9 2c-3.6.6-6.5 3.2-7.6 6.7l-1.3 3.4c-.3.8.2 1.6 1 1.7l1.6.2c1.1.2 2.2-.3 2.8-1.2l1.4-2.1c.1 3-1 5.8-3.1 8.3zM14.55 6.6a1.05 1.05 0 1 0 2.1 0 1.05 1.05 0 1 0-2.1 0z"/></symbol>
-  <symbol id="rank-Spy" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" stroke="none" d="M2 9c0-1.5 1-2 2.5-2C8 7 10 9 12 9s4-2 7.5-2C21 7 22 7.5 22 9c0 4-2 7.5-5 7.5-2.5 0-3.5-2.5-5-2.5s-2.5 2.5-5 2.5c-3 0-5-3.5-5-7.5zM4.5 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0zM14 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0z"/></symbol>
-  <symbol id="rank-Bomb" viewBox="0 0 24 24"><circle cx="10" cy="14" r="7" fill="currentColor" stroke="none"/><path d="m14.5 9.5 3-3M20 2v2M23 5h-2M22 3l-1.5 1.5"/></symbol>
-  <symbol id="rank-Flag" viewBox="0 0 24 24"><path d="M6 21.5V3"/><path fill="currentColor" d="M6 4h12l-3 4 3 4H6z"/></symbol>
+  <symbol id="rank-Miner" viewBox="0 0 24 24"><g transform="rotate(-35 12 12)" style="fill:none;stroke-linecap:round"><path d="M3 9.5c5-5 13-5 18 0M12 6v15.5" style="stroke:var(--halo);stroke-width:4"/><path d="M3 9.5c5-5 13-5 18 0M12 6v15.5" style="stroke:var(--brown);stroke-width:2.2"/></g></symbol>
+  <symbol id="rank-Scout" viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><ellipse cx="11" cy="9.8" rx="5.6" ry="2.9" transform="rotate(-4 11 9.8)"/><path d="M13.6 7.4 17.4 2.8 20.2 3.9 16.8 10.8Z"/><path d="M17.2 3 17.8.9 19 2.3 23.3 6.3C23.8 6.8 23.4 7.6 22.8 7.5L21 7.4 18 5.8Z"/><path d="M17.4 3.1 16 4.6 15.2 6.6 16.6 5.2Z"/><path d="M5.8 8.2C3.6 6.6 1.8 6.4.4 7.4 1.8 7.8 2.6 9.2 2.8 11.4 3.8 10 4.8 9.6 6.2 10Z"/></g><g fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15.8 10.8 19.6 12.8 22.8 12.4"/><path d="M15 11.6 18.2 15.2 21.2 16.8"/><path d="M7.4 10.8 4 13.8 1.2 14"/><path d="M8.6 11.8 5.8 16 2.8 17.8"/></g></symbol>
+  <symbol id="rank-Spy" viewBox="0 0 24 24"><path fill-rule="evenodd" style="fill:var(--black);stroke:var(--halo);stroke-width:2;paint-order:stroke;stroke-linejoin:round" d="M2 9c0-1.5 1-2 2.5-2C8 7 10 9 12 9s4-2 7.5-2C21 7 22 7.5 22 9c0 4-2 7.5-5 7.5-2.5 0-3.5-2.5-5-2.5s-2.5 2.5-5 2.5c-3 0-5-3.5-5-7.5zM4.5 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0zM14 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0z"/></symbol>
+  <symbol id="rank-Bomb" viewBox="0 0 24 24"><circle cx="10" cy="14" r="7" style="fill:var(--black);stroke:var(--halo);stroke-width:2;paint-order:stroke;stroke-linejoin:round"/><path d="m14.5 9.5 3-3M20 2v2M23 5h-2M22 3l-1.5 1.5"/></symbol>
+  <symbol id="rank-Flag" viewBox="0 0 24 24"><path d="M6 21.5V3"/><path style="fill:var(--flag);stroke:var(--halo);stroke-width:2;paint-order:stroke;stroke-linejoin:round" d="M6 4h12l-3 4 3 4H6z"/></symbol>
 </defs></svg>"""
 
     private def outcome(state: Protocol.StateResponse): String =
