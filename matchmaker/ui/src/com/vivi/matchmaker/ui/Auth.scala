@@ -208,20 +208,35 @@ object Auth {
       * window can do it within the click that asked for it — a browser blocks a popup opened later than that.
       */
     def handOff(url: String): Future[String] =
+        handOff(url, idToken, () => refreshToken, () => freshIdToken())
+
+    /** [[handOff]] with the session it reads passed in rather than read from `sessionStorage`, which is what lets it be
+      * tested where there is none. `refresh` is read after `fresh` has run, since a refresh may have stored a new one.
+      */
+    private[ui] def handOff(
+        url: String,
+        current: Option[String],
+        refresh: () => Option[String],
+        fresh: () => Future[Option[String]]
+    ): Future[String] =
         if (url.contains("#")) Future.successful(url)
         else
-            idToken match {
-                case Some(id) => Future.successful(withSession(url, id))
+            current match {
+                case Some(id) => Future.successful(withSession(url, id, refresh()))
                 case None =>
-                    freshIdToken()
-                        .map(_.fold(url)(withSession(url, _)))
+                    fresh()
+                        .map(_.fold(url)(withSession(url, _, refresh())))
                         .recover { case _ => url }
             }
 
-    private def withSession(url: String, id: String): String = {
+    /** The names the engines' `SignIn` reads the hand-off by. */
+    private[ui] val HandedIdToken = "idToken"
+    private[ui] val HandedRefreshToken = "refreshToken"
+
+    private def withSession(url: String, id: String, refresh: Option[String]): String = {
         val handed = new URLSearchParams()
-        handed.set("idToken", id)
-        refreshToken.foreach(handed.set("refreshToken", _))
+        handed.set(HandedIdToken, id)
+        refresh.foreach(handed.set(HandedRefreshToken, _))
         s"$url#${handed.toString}"
     }
 
