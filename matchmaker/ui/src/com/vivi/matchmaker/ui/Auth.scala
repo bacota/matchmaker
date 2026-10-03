@@ -190,6 +190,41 @@ object Auth {
         case _ => false
     }
 
+    /** `url` with this session handed over in its fragment, for opening a game engine's page signed in as the same
+      * player — the engine's `SignIn` takes it from there and removes it from the address bar.
+      *
+      * The engines sign in against this same pool and app client, so the refresh token redeems there as it does here,
+      * and the ID token is the one they verify. The page is on another origin and opened in a new tab, and
+      * `sessionStorage` is per origin and per tab, so without this a player signed in here arrives there signed out.
+      *
+      * The fragment because it is never sent to a server: neither the engine's gateway nor CloudFront logs it. What is
+      * handed over is a credential for this whole account, so it goes only to the urls matchmaker's own API gave for a
+      * match — which the engine already earns no less of by serving its own sign-in form on the same pool.
+      *
+      * A url that already carries a fragment is the engine's own business and is left alone, as is everything when
+      * there is no session or it could not be refreshed: the engine's page then asks the player to sign in, as before.
+      *
+      * Already completed when the ID token in hand is still good, which is nearly always, so that a caller opening a
+      * window can do it within the click that asked for it — a browser blocks a popup opened later than that.
+      */
+    def handOff(url: String): Future[String] =
+        if (url.contains("#")) Future.successful(url)
+        else
+            idToken match {
+                case Some(id) => Future.successful(withSession(url, id))
+                case None =>
+                    freshIdToken()
+                        .map(_.fold(url)(withSession(url, _)))
+                        .recover { case _ => url }
+            }
+
+    private def withSession(url: String, id: String): String = {
+        val handed = new URLSearchParams()
+        handed.set("idToken", id)
+        refreshToken.foreach(handed.set("refreshToken", _))
+        s"$url#${handed.toString}"
+    }
+
     /** Sends the browser to one of the hosted pages. Does not return: the page navigates away.
       *
       * Only sign-up and password reset go through here now — signing in is `SignIn`, on this page. Both come back to
