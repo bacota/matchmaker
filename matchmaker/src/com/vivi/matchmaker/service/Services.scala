@@ -22,6 +22,7 @@ case class Services[T](
     matches: MatchService,
     engine: GameEngineService[T],
     archives: ArchiveService,
+    sweep: SweepService,
     notifications: NotificationService,
     suppression: SuppressionService
 )
@@ -76,6 +77,7 @@ object Services {
     )(using codec: TextCodec[T]): Services[T] = {
         val notifications = new Notifications(notifier, mail)
         val archives = new ArchiveService(pool, archiveStore)
+        val matches = new MatchService(pool, notifications, Some(archives), Some(engineClient))
 
         /* Built before the services it is given to, because it is given to one of them: a challenge
          * offered as starting itself turns an acceptance into a start, and the acceptance is
@@ -95,9 +97,10 @@ object Services {
           // event came from -- that is the whole point of it being a class of its own.
           challenges = new ChallengeService[T](pool, notifications, engine.startIfReady(_, _, _, _).map(_.isMatch)),
           acceptances = new AcceptanceService(pool, notifications),
-          matches = new MatchService(pool, notifications, Some(archives), Some(engineClient)),
+          matches = matches,
           engine = engine,
           archives = archives,
+          sweep = new SweepService(pool, engineClient, matches),
           notifications = new NotificationService(pool),
           suppression = new SuppressionService(pool)
         )

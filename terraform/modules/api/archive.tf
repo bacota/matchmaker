@@ -145,3 +145,80 @@ resource "aws_iam_role_policy" "archive" {
   role   = aws_iam_role.lambda.id
   policy = data.aws_iam_policy_document.archive.json
 }
+
+# ---------------------------------------------------------------------------
+# The archive sweep
+# ---------------------------------------------------------------------------
+
+/* Asks again about what archiving and cancelling left owed when something did not answer at the
+ * time: completed matches never archived (prompted through the engine's status call) and cancels
+ * the engine never acknowledged. See com.vivi.matchmaker.service.SweepService. Each match is asked
+ * about at most once a day, so an hourly run is mostly a query that finds nothing.
+ *
+ * A third function from the api's jar, inside the VPC beside it, with its role: it reads and writes
+ * the same tables, calls the same engines with the same keys, and checks the same buckets. */
+resource "aws_cloudwatch_log_group" "sweep" {
+  name              = "/aws/lambda/${local.name}-sweep"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_lambda_function" "sweep" {
+  function_name = "${local.name}-sweep"
+  role          = aws_iam_role.lambda.arn
+  runtime       = "java21"
+  handler       = "com.vivi.matchmaker.sweep.Handler::handleRequest"
+
+  # The same jar as the api function, for the reason the bounce function gives.
+  filename         = var.lambda_jar_path
+  source_code_hash = filebase64sha256(var.lambda_jar_path)
+
+  memory_size = var.lambda_memory_mb
+  # A run asks up to 50 engines one after another, each allowed ten seconds.
+  timeout = 600
+
+  # No SnapStart, alias or publish: nothing waits on a scheduled run's cold start.
+
+  vpc_config {
+    subnet_ids         = var.subnet_ids
+    security_group_ids = var.security_group_ids
+  }
+
+  environment {
+    variables = {
+      DB_HOST      = local.db_host
+      DB_PORT      = local.db_port
+      DB_NAME      = var.db_name
+      DB_USER      = var.db_user
+      DB_PASSWORD  = var.db_password
+      DB_POOL_SIZE = "2"
+
+      ARCHIVE_BUCKET          = aws_s3_bucket.archive["permanent"].bucket
+      FRIENDLY_ARCHIVE_BUCKET = aws_s3_bucket.archive["friendly"].bucket
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.basic_execution,
+    aws_iam_role_policy_attachment.vpc_access,
+    aws_cloudwatch_log_group.sweep,
+  ]
+}
+
+resource "aws_cloudwatch_event_rule" "sweep" {
+  name                = "${local.name}-sweep"
+  description         = "Archive sweep: completed matches never archived, cancels never acknowledged."
+  schedule_expression = "rate(1 hour)"
+}
+
+resource "aws_cloudwatch_event_target" "sweep" {
+  rule = aws_cloudwatch_event_rule.sweep.name
+  arn  = aws_lambda_function.sweep.arn
+}
+
+resource "aws_lambda_permission" "sweep" {
+  statement_id  = "AllowEventBridgeSweep"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.sweep.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.sweep.arn
+}

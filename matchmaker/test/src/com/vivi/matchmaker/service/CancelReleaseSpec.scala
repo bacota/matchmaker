@@ -119,7 +119,8 @@ class CancelReleaseSpec extends FunSuite {
         assertEquals(engine.cancelled.map(_._1), List("https://engine/matches/m/cancel"))
         assert(run(released(game.gameId, matchId)).isDefined)
         // Listed for the sweep no longer.
-        val owed = run(TestSession.resource.use(session => new ArchiveRepo(session).listUnreleased(1000)))
+        val owed =
+            run(TestSession.resource.use(session => new ArchiveRepo(session).listUnreleased(Instant.now(), 100000)))
         assert(!owed.exists(_.matchId == matchId))
     }
 
@@ -130,7 +131,8 @@ class CancelReleaseSpec extends FunSuite {
         val cancelled = run(services.matches.cancel(game.gameId, matchId, player.externalId))
         assert(cancelled.cancelled)
         assertEquals(run(released(game.gameId, matchId)), None)
-        val owed = run(TestSession.resource.use(session => new ArchiveRepo(session).listUnreleased(10000)))
+        val owed =
+            run(TestSession.resource.use(session => new ArchiveRepo(session).listUnreleased(Instant.now(), 100000)))
         assert(owed.exists(row => row.matchId == matchId && row.cancelUrl == "https://engine/matches/m/cancel"))
     }
 
@@ -141,7 +143,8 @@ class CancelReleaseSpec extends FunSuite {
 
         run(services.matches.cancel(game.gameId, matchId, player.externalId))
         assertEquals(engine.cancelled, Nil)
-        val owed = run(TestSession.resource.use(session => new ArchiveRepo(session).listUnreleased(10000)))
+        val owed =
+            run(TestSession.resource.use(session => new ArchiveRepo(session).listUnreleased(Instant.now(), 100000)))
         assert(!owed.exists(_.matchId == matchId))
     }
 }
