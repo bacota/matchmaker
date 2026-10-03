@@ -173,6 +173,15 @@ class GameAdminServiceSpec extends PropertySuite {
         assertEquals(now, Set(gameAdmin))
     }
 
+    test("a game nobody administers lists nobody, rather than not being found") {
+        val result = for {
+            overall <- makeOverallAdmin()
+            game <- IO(Generators.genGameWithRole.sample.get).flatMap(games.createOrUpdate(overall.externalId, _))
+            seen <- admins.list(game.gameId, overall.externalId)
+        } yield seen
+        assertEquals(result.unsafeRunSync(), Nil)
+    }
+
     test("an unknown player or game is not found, and an unregistered caller is refused") {
         val result = for {
             f <- fixture()

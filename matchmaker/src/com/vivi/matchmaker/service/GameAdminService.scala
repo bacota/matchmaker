@@ -23,9 +23,12 @@ class GameAdminService[T](sessionPool: SessionPool)(using TextCodec[T]) {
         sessionPool.use { session =>
             for {
                 _ <- requireCaller(new PlayerRepo(session).readByExternalId(callerExternalId), callerExternalId)
-                // Read plainly: nothing is written, so there is nothing for a lock to protect.
-                _ <- requireGame(new GameRepo[T](session).read(gameId).map(_.map(_.gameId)), gameId)
-                admins <- new GameAdminRepo(session).listForGame(gameId)
+                // Read plainly, and the game's existence in the same query: nothing is written, so there is
+                // nothing for a lock to protect.
+                admins <- new GameAdminRepo(session).listForGame(gameId).flatMap {
+                    case Some(admins) => IO.pure(admins)
+                    case None         => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+                }
             } yield admins
         }
 

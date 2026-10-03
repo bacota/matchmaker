@@ -29,13 +29,16 @@ class GameAdminRepo(session: Session[IO]) {
         sql"""SELECT granted_by FROM game_admin WHERE player_id = $playerId AND game_id = $gameId FOR UPDATE"""
             .query(playerId)
 
-    private val selectForGame: Query[GameId, (PlayerId, String, PlayerId, String)] =
-        sql"""SELECT p.player_id, p.nickname, g.player_id, g.nickname
-          FROM game_admin a
-          JOIN player p ON p.player_id = a.player_id
-          JOIN player g ON g.player_id = a.granted_by
-          WHERE a.game_id = $gameId
-          ORDER BY p.nickname""".query(playerId *: text *: playerId *: text)
+    /* From the game outward, so that one query says both whether the game exists and who administers
+     * it: no row at all is no game, and a game with no admins is one row of nulls. */
+    private val selectForGame: Query[GameId, Option[(PlayerId, String, PlayerId, String)]] =
+        sql"""SELECT p.player_id, p.nickname, b.player_id, b.nickname
+          FROM game g
+          LEFT JOIN game_admin a ON a.game_id = g.game_id
+          LEFT JOIN player p ON p.player_id = a.player_id
+          LEFT JOIN player b ON b.player_id = a.granted_by
+          WHERE g.game_id = $gameId
+          ORDER BY p.nickname""".query((playerId *: text *: playerId *: text).opt)
 
     /** Makes `player` an admin of the game on `grantedBy`'s say. Making an admin of somebody who already is one changes
       * nothing, and in particular not who made them one.
@@ -58,13 +61,17 @@ class GameAdminRepo(session: Session[IO]) {
     def grantedByForUpdate(player: PlayerId, game: GameId): IO[Option[PlayerId]] =
         session.option(selectGrantedByForUpdate)((player, game))
 
-    /** The game's admins by nickname, each with who made them one, as anybody may see them. */
-    def listForGame(game: GameId): IO[List[GameAdmin]] =
+    /** The game's admins by nickname, each with who made them one, as anybody may see them — or nothing, if there is no
+      * such game.
+      */
+    def listForGame(game: GameId): IO[Option[List[GameAdmin]]] =
         session
             .execute(selectForGame)(game)
-            .map(
-              _.map((id, nickname, byId, byNickname) =>
-                  GameAdmin(PublicPlayer(id, nickname), PublicPlayer(byId, byNickname))
-              )
+            .map(rows =>
+                Option.when(rows.nonEmpty)(
+                  rows.flatten.map((id, nickname, byId, byNickname) =>
+                      GameAdmin(PublicPlayer(id, nickname), PublicPlayer(byId, byNickname))
+                  )
+                )
             )
 }
