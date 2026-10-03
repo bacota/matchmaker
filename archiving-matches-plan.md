@@ -226,7 +226,8 @@ configuration.
 
 - An `ArchiveStore` trait with three operations: presign an upload, presign a download, and check
   an object. Each takes which bucket, friendly or permanent. An S3 implementation using the AWS
-  SDK's presigner (no network call to sign), and a local one.
+  SDK's presigner (no network call to sign), configured path-style because the bucket names
+  contain dots (see Terraform), and a local one.
 - `ArchiveService`: the four engine routes — upload, confirm, read, expired. One transaction per
   call, with `FOR UPDATE` on the match row, per CLAUDE.md. Checking an object is a call outside the
   database: re-read under lock after it.
@@ -243,13 +244,31 @@ configuration.
 
 ### Terraform
 
-- Two buckets, both private, versioned, encrypted, with public access blocked.
-  - **Permanent**: no lifecycle configuration at all. Object Lock, if write-once is to be enforced,
-    goes here.
-  - **Friendly**: one lifecycle rule. It expires current objects 30 days after creation. Because the
-    bucket is versioned, expiry only adds a delete marker, so the rule also expires noncurrent
-    versions (after a day) and removes expired delete markers; otherwise nothing is ever freed. No
-    Object Lock: a retention period would fight the expiry.
+- Two buckets, both private, versioned, encrypted, with public access blocked, with names ending
+  in `.vivi.com`:
+  - **Permanent**, `matchmaker-${var.environment}-archive.vivi.com`: no lifecycle configuration
+    at all. Object Lock, if write-once is to be enforced, goes here.
+  - **Friendly**, `matchmaker-${var.environment}-friendly-archive.vivi.com`: one lifecycle rule.
+    It expires current objects 30 days after creation. Because the bucket is versioned, expiry only
+    adds a delete marker, so the rule also expires noncurrent versions (after a day) and removes
+    expired delete markers; otherwise nothing is ever freed. No Object Lock: a retention period
+    would fight the expiry.
+
+  The domain suffix keeps the names clear of everybody else's in S3's global namespace. S3 does not
+  check that the domain is ours, so it is a convention rather than a reservation, but nobody else
+  has reason to use it. Both names are well under the 63-character limit for any environment name
+  the root module's validation allows.
+
+  **Dots in a bucket name break virtual-hosted urls over HTTPS.** S3's certificate is a wildcard,
+  `*.s3.<region>.amazonaws.com`, which covers one label, so
+  `https://matchmaker-dev-archive.vivi.com.s3.us-east-1.amazonaws.com/...` fails certificate
+  validation. Every url matchmaker issues — the presigned POST's form action and every presigned
+  GET — must be **path-style**,
+  `https://s3.us-east-1.amazonaws.com/matchmaker-dev-archive.vivi.com/...`, by building the presigner and the S3 client with `forcePathStyle(true)`. Path-style is what
+  MinIO uses locally anyway. Transfer Acceleration does not work with dotted names; nothing here
+  needs it. The UI module's `bucket_name` validation forbids dots, so these buckets get their own
+  names rather than reusing that variable.
+
 - The matchmaker Lambda role gets `s3:PutObject`, `s3:GetObject` and `s3:GetObjectAttributes` on
   both buckets, and `s3:ListBucket` on the friendly one. Without `ListBucket`, `HeadObject` on a
   missing object answers 403 rather than 404, and an expired archive would be indistinguishable from
