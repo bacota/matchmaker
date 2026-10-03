@@ -349,13 +349,25 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(!f.m.completed)
     }
 
-    test("once the match is over every rank is shown, on the public board too") {
+    test(
+      "a finished match hides what it hid in play: a player sees their own army, the public only what was revealed"
+    ) {
         val f = deployed(blueOnA7 = Rank.Flag, request = createRequest(isPublic = true))
         f.engine.move("m-1", alice, 30, 60)
         val public = f.state(None)
         assertEquals(public.phase, "over")
         assertEquals(public.winner, Some("Red"))
-        assert(public.pieces.forall(_.rank.isDefined))
+        // The scout that took the flag, and nothing else: the flag fell in the battle.
+        assertEquals(public.pieces.filter(_.rank.isDefined).map(p => (p.side, p.rank.get)), List(("Red", "Scout")))
+        for ((who, side) <- List(alice -> "Red", bob -> "Blue")) {
+            val seen = f.state(Some(who)).pieces
+            assert(seen.filter(_.side == side).forall(_.rank.isDefined), who)
+            assertEquals(
+              seen.filter(p => p.side != side && p.rank.isDefined).map(_.rank.get),
+              if (side == "Blue") List("Scout") else Nil,
+              who
+            )
+        }
     }
 
     test("the move cap ends the match as a draw") {

@@ -30,7 +30,7 @@ object Protocol {
       *
       * `phase` is `setup`, `play` or `over`. `you` is the side belonging to the seat that asked; absent on the public
       * board, which belongs to nobody. `pieces` is every piece the viewer may know is there — and, of each, the rank
-      * only where the viewer may know it: their own pieces, revealed ones, and every piece once the match is over.
+      * only where the viewer may know it: their own pieces and revealed ones — and no more once the match is over.
       * During setup an opponent's army is not on the board at all; `deployed` says who has put theirs down.
       *
       * `legalMoves` is the viewer's moves as `[from, to]` pairs, and only when it is their turn. `lost` is what each
@@ -63,7 +63,7 @@ object Protocol {
       *
       * The opening hides what `pieces` hides, and no more. A rank is left out only for a piece the viewer has not seen
       * and that still stands unseen; one that has fought since was shown in that battle, and one the viewer has seen
-      * move from a square has only ever been where the moves say. Once the match is over, every rank is shown.
+      * move from a square has only ever been where the moves say. A match being over shows no more than it did.
       */
     case class ReplayView(opening: List[PieceView], moves: List[LastMove])
 

@@ -132,21 +132,23 @@ class Engine(
       * Everything a viewer may not see is left out here, and not merely left undrawn by the page: the response is what
       * travels, and a rank in it is a rank anybody with the developer tools can read. So an opponent's piece carries
       * its rank only once it has been revealed, the public board sees only what both players have seen, and during
-      * setup an opponent's army is not sent at all — only the fact that it is down. Once the match is over, everything
-      * is.
+      * setup an opponent's army is not sent at all — only the fact that it is down. The match being over changes none
+      * of this: a player still sees only their own army and what they saw of the other, and the public board only what
+      * was revealed in play.
       */
     def stateOf(m: StrategoMatch, seat: Option[Seat]): StateResponse = {
         val over = m.isOver
         val viewer = seat.map(_.side)
+        // Not `over`: a finished match hides what it hid while it was played. See above.
         val pieces =
             m.board.cells.indices.toList.flatMap(square =>
                 m.board(square).flatMap { p =>
                     val own = viewer.contains(p.side)
-                    Option.when(over || m.inPlay || own)(
+                    Option.when(m.inPlay || own)(
                       PieceView(
                         square,
                         p.side.toString,
-                        Option.when(over || own || p.revealed)(p.rank.toString),
+                        Option.when(own || p.revealed)(p.rank.toString),
                         p.revealed,
                         p.moved
                       )
@@ -199,12 +201,10 @@ class Engine(
         )
 
     /** The match from its opening position, hiding — see [[Protocol.ReplayView]] — the ranks of the pieces that stand
-      * unseen by `viewer` now.
+      * unseen by `viewer` now, whether or not the match is over.
       */
     private def replayOf(m: StrategoMatch, viewer: Option[Side]): Option[Protocol.ReplayView] = {
-        val unseen =
-            if (m.isOver) Set.empty[Int]
-            else m.board.cells.flatten.filter(p => !p.revealed && !viewer.contains(p.side)).map(_.id).toSet
+        val unseen = m.board.cells.flatten.filter(p => !p.revealed && !viewer.contains(p.side)).map(_.id).toSet
         m.opening.map(opening =>
             Protocol.ReplayView(
               opening.cells.indices.toList.flatMap(square =>

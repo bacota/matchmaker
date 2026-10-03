@@ -89,19 +89,23 @@ class ReplaySpec extends FunSuite with QuietTests {
         assertEquals(p.engine.stateOf(half, half.seatOf(Side.Red)).replay, None)
     }
 
-    test("the opening hides only what still stands unseen, and nothing once the match is over") {
+    test("the opening hides exactly what still stands unseen, before the match is over and after") {
         val p = Played(3L, 120)
         assert(!p.m.isOver)
-        for (viewer <- List(Some(Side.Red), Some(Side.Blue), None)) {
-            val unseen = p.m.board.cells.flatten.filter(q => !q.revealed && !viewer.contains(q.side)).map(_.id).toSet
-            val opening = p.m.opening.get
-            val hidden = p.state(viewer).replay.get.opening.filter(_.rank.isEmpty).map(v => opening(v.square).get.id)
-            assertEquals(hidden.toSet, unseen, s"viewing as $viewer")
-            assert(unseen.nonEmpty)
-        }
+        def check(when: String) =
+            for (viewer <- List(Some(Side.Red), Some(Side.Blue), None)) {
+                val unseen =
+                    p.m.board.cells.flatten.filter(q => !q.revealed && !viewer.contains(q.side)).map(_.id).toSet
+                val opening = p.m.opening.get
+                val hidden =
+                    p.state(viewer).replay.get.opening.filter(_.rank.isEmpty).map(v => opening(v.square).get.id)
+                assertEquals(hidden.toSet, unseen, s"$when, viewing as $viewer")
+                assert(unseen.nonEmpty)
+            }
+        check("in play")
         p.finish()
-        for (viewer <- List(Some(Side.Red), Some(Side.Blue), None))
-            assert(p.state(viewer).replay.get.opening.forall(_.rank.isDefined), s"viewing as $viewer")
+        assert(p.m.isOver)
+        check("over")
     }
 
     /** `replayFrame` for every position from 0 to every move, run in Node on `replay`. */
@@ -152,7 +156,12 @@ console.log(JSON.stringify(out));
             val p = Played(seed, 300)
             val boards = p.boards
             p.finish()
-            val made = frames(p.state(None).replay.get)
+            // The replay as nobody is ever sent it, every rank named, so that every rank is checked too.
+            val everything = Protocol.ReplayView(
+              viewOf(p.m.opening.get),
+              p.state(None).replay.get.moves
+            )
+            val made = frames(everything)
             assertEquals(made.value.size, boards.size, s"seed $seed")
             for ((frame, (board, k)) <- made.value.zip(boards.zipWithIndex))
                 assertEquals(piecesOf(frame), viewOf(board), s"seed $seed, after $k moves")
