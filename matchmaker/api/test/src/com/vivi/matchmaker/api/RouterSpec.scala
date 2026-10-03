@@ -280,7 +280,13 @@ class RouterSpec extends FunSuite {
         "/games/1/matches/m1/moves",
         """{"participantId":1,"next":[2],"takenAt":"2030-01-01T00:00:00Z","startedAt":"2030-01-01T00:00:00Z"}"""
       ),
-      ("POST", "/games/1/matches/m1/results", resultsBody)
+      ("POST", "/games/1/matches/m1/results", resultsBody),
+      // The engine's archive calls. The upload request is the only one with a body: the size and
+      // checksum it will be held to.
+      ("POST", "/matches/m1/archive", """{"size":10,"sha256":"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="}"""),
+      ("POST", "/matches/m1/archive/confirm", "{}"),
+      ("POST", "/matches/m1/archive/read", "{}"),
+      ("POST", "/matches/m1/archive/expired", "{}")
     )
 
     test("every routed endpoint reaches a service rather than falling through to 404") {
@@ -297,7 +303,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 50)
+        assertEquals(routed.size, 54)
         assertEquals(routed.distinct.size, routed.size)
     }
 
@@ -424,6 +430,8 @@ class RouterSpec extends FunSuite {
         assertEquals(Errors.statusFor(UnauthorizedError("x")), 403)
         assertEquals(Errors.statusFor(NotFoundError("x")), 404)
         assertEquals(Errors.statusFor(ConflictError("x")), 409)
+        assertEquals(Errors.statusFor(GoneError("x")), 410)
+        assertEquals(Errors.statusFor(UnavailableError("x")), 503)
         assertEquals(Errors.statusFor(new RuntimeException("x")), 500)
     }
 

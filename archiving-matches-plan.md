@@ -59,12 +59,22 @@ All four are engine routes, authenticated with the game's API key, so they go in
 `local.engine_routes`, not `local.routes`. Matchmaker checks that the match belongs to the calling
 engine's game, as the results callback already does.
 
+They are addressed by match id alone, `/matches/{matchId}/archive...`, not under
+`/games/{gameId}/`. An engine whose live copy is gone no longer knows which of matchmaker's games
+the match was in, only the match id and its own identity. Matchmaker finds the match by its id and
+the caller's game external id; match ids are UUIDs, so the id alone picks one match, and the
+external id is what makes it this engine's. Another game's match is not found.
+
 ### 1. Ask for an upload
 
-`POST /games/{gameId}/matches/{matchId}/archive`, sent by the engine when the match finishes.
+`POST /matches/{matchId}/archive`, sent by the engine when the match finishes. The body is
+`{size, sha256, formatVersion}`: the archive's length, its SHA-256 (base64) and the engine's name
+for the format it wrote.
 
 Matchmaker:
-- refuses a match that is not over, and one already archived;
+- refuses a match that is not over, and a cancelled one. A match already archived is answered
+  `{archivedAt}` instead of a url, so an engine retrying after a lost confirm learns that it may
+  drop its copy;
 - picks the bucket from the match's `friendly` flag: the friendly bucket if it is friendly, the
   permanent bucket otherwise. The flag cannot change once the match is completed, so this choice
   holds;
@@ -85,8 +95,12 @@ Matchmaker:
   The key is fixed once recorded: a later rename of the game does not move its archives. The name
   goes into the key as it is if it is already safe for a key (letters, digits, `-`, `_`, `.`),
   and is percent-encoded otherwise;
-- returns a **presigned POST** rather than a PUT. Its policy can cap the size
-  (`content-length-range`) and pin the content type and checksum, which a presigned PUT cannot;
+- returns a **presigned PUT** with `content-length`, `content-type` and `x-amz-checksum-sha256`
+  among its signed headers, as `{upload: {url, method, headers, expiresAt}}`. The engine sends
+  every one of those headers. S3 refuses a body of a different length or checksum, so the url can
+  upload nothing but the archive that was asked for. (The plan first said a presigned POST, for
+  its policy's size cap; a signed length and checksum do the same with a plain PUT, and the SDK
+  presigns a PUT where a POST policy would have to be signed by hand.)
 - records the key and an `archive_requested` time on the match.
 
 The request body says which version of its stored format the engine wrote. It is kept as object
@@ -95,7 +109,7 @@ metadata, so a later engine version can still read an old archive.
 ### 2. Upload, then confirm
 
 The engine uploads to S3 itself, then calls
-`POST /games/{gameId}/matches/{matchId}/archive/confirm`.
+`POST /matches/{matchId}/archive/confirm`.
 
 Matchmaker checks the object exists (`HeadObject`: size and checksum match what was asked for) and
 sets `archived_at`. The engine removes its live copy as soon as the confirm returns success
@@ -107,7 +121,7 @@ to run locally, and it tells the engine in the same exchange that it may let go.
 ### 3. Read back
 
 When a finished match is viewed and the engine no longer has it, the engine calls
-`POST /games/{gameId}/matches/{matchId}/archive/read`, which returns a short-lived presigned GET.
+`POST /matches/{matchId}/archive/read`, which returns a short-lived presigned GET.
 The engine fetches the archive, decodes it with its normal stored-match codec, and serves the usual
 masked view and replay. It may cache the decoded match for the length of the request; it does not
 write it back to DynamoDB.
@@ -156,7 +170,7 @@ before offering a link.
   than 30 days old, matchmaker checks the object the same way. If it is gone, matchmaker records
   that and answers 410 Gone instead of a url; if it is still there, it issues the url.
 - **The engine reports a missing object too.** If a url matchmaker issued finds nothing (404), the
-  engine calls `POST /games/{gameId}/matches/{matchId}/archive/expired`. Matchmaker confirms with
+  engine calls `POST /matches/{matchId}/archive/expired`. Matchmaker confirms with
   `HeadObject` that the object really is gone before recording it, so a transient failure cannot
   hide a match. This covers an object deleted between matchmaker's check and the engine's download.
 - **The engine tells the player.** On a 410 or a 404 it serves a page saying the match was friendly
@@ -266,7 +280,7 @@ configuration.
   **Dots in a bucket name break virtual-hosted urls over HTTPS.** S3's certificate is a wildcard,
   `*.s3.<region>.amazonaws.com`, which covers one label, so
   `https://matchmaker-dev-archive.vivi.com.s3.us-east-1.amazonaws.com/...` fails certificate
-  validation. Every url matchmaker issues — the presigned POST's form action and every presigned
+  validation. Every url matchmaker issues — the presigned PUT and every presigned
   GET — must be **path-style**,
   `https://s3.us-east-1.amazonaws.com/matchmaker-dev-archive.vivi.com/...`, by building the presigner and the S3 client with `forcePathStyle(true)`. Path-style is what
   MinIO uses locally anyway. Transfer Acceleration does not work with dotted names; nothing here

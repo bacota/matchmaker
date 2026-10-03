@@ -72,7 +72,12 @@ case class MatchSummary(
     // needs one.
     publicUrl: Option[String] = None,
     // Whether the match is friendly (V36). Every match is, unless a game's admin says otherwise.
-    friendly: Boolean = true
+    friendly: Boolean = true,
+    // When the match's archive was confirmed (V38), as on `Match`.
+    archivedAt: Option[Instant] = None,
+    // Whether a friendly match's archive has expired (V38): no Review or Watch link, and `publicUrl`
+    // is cleared.
+    archiveExpired: Boolean = false
 ) {
 
     /** Whether the match was played to an end. */

@@ -12,6 +12,8 @@ object Errors {
         case _: UnauthorizedError => 403
         case _: NotFoundError     => 404
         case _: ConflictError     => 409
+        case _: GoneError         => 410
+        case _: UnavailableError  => 503
         case _                    => 500
     }
 

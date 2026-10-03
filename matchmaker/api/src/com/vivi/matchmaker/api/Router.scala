@@ -467,6 +467,40 @@ object Router {
                     }
                 }
 
+            // A completed match's archive, the engine's to move and matchmaker's to keep track of
+            // (archiving-matches-plan.md). Authorized as the game, like the callbacks above, but addressed
+            // by match id alone: an engine whose live copy is gone no longer knows the game id.
+            case ("POST", "matches" :: matchId :: "archive" :: Nil) =>
+                body[Json.ArchiveUploadRequest](request).flatMap { r =>
+                    ok(
+                      services.archives
+                          .requestUpload(MatchId(matchId), r.size, r.sha256, r.formatVersion, caller)
+                          .map {
+                              case UploadAnswer.Upload(signed) =>
+                                  Json.ArchiveUploadAnswer(upload =
+                                      Some(
+                                        Json.ArchiveUpload(signed.url, signed.method, signed.headers, signed.expiresAt)
+                                      )
+                                  )
+                              case UploadAnswer.AlreadyArchived(at) => Json.ArchiveUploadAnswer(archivedAt = Some(at))
+                          }
+                    )
+                }
+
+            case ("POST", "matches" :: matchId :: "archive" :: "confirm" :: Nil) =>
+                ok(services.archives.confirm(MatchId(matchId), caller).map(Json.ArchiveConfirmation(_)))
+
+            // A POST, not a GET: finding a friendly archive gone is recorded.
+            case ("POST", "matches" :: matchId :: "archive" :: "read" :: Nil) =>
+                ok(
+                  services.archives
+                      .download(MatchId(matchId), caller)
+                      .map(signed => Json.ArchiveDownload(signed.url, signed.expiresAt))
+                )
+
+            case ("POST", "matches" :: matchId :: "archive" :: "expired" :: Nil) =>
+                noContent(services.archives.reportExpired(MatchId(matchId), caller))
+
             case _ => IO.pure(Errors.notFound)
         }
 

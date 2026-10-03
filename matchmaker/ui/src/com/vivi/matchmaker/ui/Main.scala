@@ -1493,17 +1493,26 @@ object Views {
           // Absent when there is no url. A match is only listed here if it is public, but an engine
           // that serves no spectator page answers with none, and a button that opens nothing is
           // worse than no button.
-          summary.publicUrl
-              .map(url =>
-                  button(
-                    tpe := "button",
-                    cls := "link",
-                    "Watch",
-                    onClick --> (_ => openSignedIn(url))
+          //
+          // A friendly match's archive is kept for 30 days, and once it has gone there is nothing to
+          // watch: the url is cleared, and the row says why the button is missing.
+          if (summary.archiveExpired) archiveExpiredNote
+          else
+              summary.publicUrl
+                  .map(url =>
+                      button(
+                        tpe := "button",
+                        cls := "link",
+                        "Watch",
+                        onClick --> (_ => openSignedIn(url))
+                      )
                   )
-              )
-              .getOrElse(emptyNode)
+                  .getOrElse(emptyNode)
         )
+
+    /** Where a Review or Watch link would be, for a friendly match whose archive has expired. */
+    private def archiveExpiredNote: HtmlElement =
+        div(cls := "detail", "archive expired — friendly matches are kept for 30 days")
 
     /** Opens a game engine's page — a board, a spectator's view, a character page — in a new tab, signed in as the
       * player signed in here. See `Auth.handOff`.
@@ -1586,12 +1595,18 @@ object Views {
                 // goes and looks at how it ended. Fetched the same way "Play" fetches it — the urls
                 // live on the match, not on the summary — and `publicUrl` is the fallback for a match
                 // whose play url the engine has since stopped honouring for a game that is over.
-                if (summary.completed)
+                if (summary.completed && summary.archiveExpired) archiveExpiredNote
+                else if (summary.completed)
                     busyButton("Review game", classes = Some("link")) { busy =>
                         Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                             m.playUrl.orElse(m.publicUrl) match {
                                 case Some(url) => openSignedIn(url)
-                                case None      => Store.reportProblem("This match has no url to view.")
+                                // Found expired by this very request: the list was read before it was.
+                                case None if m.archiveExpired =>
+                                    Store.reportProblem(
+                                      "This match's archive has expired: friendly matches are kept for 30 days."
+                                    )
+                                case None => Store.reportProblem("This match has no url to view.")
                             }
                         }
                     }

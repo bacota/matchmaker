@@ -8,6 +8,8 @@ import scala.jdk.CollectionConverters._
 import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.persistence.TextCodec.given
+import java.nio.file.Paths
+import com.vivi.matchmaker.archive.{ArchiveStore, LocalArchiveStore}
 import com.vivi.matchmaker.notify.Notifier
 import com.vivi.matchmaker.service.{DbConfig, Services}
 import ApiGateway.{Request, Response}
@@ -40,11 +42,27 @@ object LocalServer {
         // wants to see what a "your match has started" mail says should not have to deploy to read
         // it. MAIL_SENDER and UI_BASE_URL still decide whether there is anything to print, exactly as
         // they do deployed — see MailSettings — so an unset environment stays silent.
+        //
+        // Archives go to a directory this server serves itself, unless ARCHIVE_BUCKET and
+        // FRIENDLY_ARCHIVE_BUCKET name real buckets (with ARCHIVE_ENDPOINT for MinIO): an engine run
+        // locally can archive a match and read it back with no AWS involved.
+        val localArchive = Option.when(env("ARCHIVE_BUCKET").isEmpty)(
+          LocalArchiveStore(
+            Paths.get(env("ARCHIVE_DIR").getOrElse(s"${System.getProperty("java.io.tmpdir")}/matchmaker-archive")),
+            s"http://localhost:$port"
+          )
+        )
+        val archiveStore = localArchive.getOrElse(ArchiveStore.fromEnvironment())
+
         val (services, release) =
-            Services.resource[String](config, poolSize, notifier = Notifier.logging).allocated.unsafeRunSync()
+            Services
+                .resource[String](config, poolSize, notifier = Notifier.logging, archiveStore = archiveStore)
+                .allocated
+                .unsafeRunSync()
 
         val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
         server.createContext("/", new Dispatcher(services, authenticator))
+        localArchive.foreach(store => server.createContext(s"/${LocalArchiveStore.prefix}/", new ArchiveFiles(store)))
         // The default executor runs requests one at a time on the accepting thread, which would make
         // a connection pool pointless. Sized to the pool, since that is the real limit.
         server.setExecutor(Executors.newFixedThreadPool(poolSize))
@@ -59,6 +77,9 @@ object LocalServer {
         println(s"  database  ${config.user}@${config.host}:${config.port}/${config.database}")
         println(s"  auth      $authMode")
         println(s"  cors      ${allowedOrigins.mkString(", ")}")
+        println(
+          s"  archive   ${env("ARCHIVE_BUCKET").fold(env("ARCHIVE_DIR").getOrElse("temporary directory"))(b => s"s3 $b")}"
+        )
     }
 
     /** Origins the browser UI may call this from.
@@ -99,6 +120,41 @@ object LocalServer {
     )
 
     private def env(name: String): Option[String] = sys.env.get(name).filter(_.nonEmpty)
+
+    /** The local archive store's urls: what an engine uploads an archive to and reads it back from. Unauthenticated, as
+      * the whole of this server is in its trust of the caller; S3 checks a signature here instead.
+      */
+    private class ArchiveFiles(store: LocalArchiveStore) extends HttpHandler {
+        def handle(exchange: HttpExchange): Unit =
+            try {
+                val path = exchange.getRequestURI.getRawPath.stripPrefix(s"/${LocalArchiveStore.prefix}/")
+                exchange.getRequestMethod.toUpperCase match {
+                    case "PUT" =>
+                        val headers = exchange.getRequestHeaders.asScala.flatMap { case (name, values) =>
+                            values.asScala.headOption.map(name.toLowerCase -> _)
+                        }.toMap
+                        store.put(path, exchange.getRequestBody.readAllBytes(), headers) match {
+                            case Right(())    => exchange.sendResponseHeaders(200, -1)
+                            case Left(reason) => sendText(exchange, 400, reason)
+                        }
+                    case "GET" =>
+                        store.get(path) match {
+                            case Some(bytes) =>
+                                exchange.getResponseHeaders.set("Content-Type", "application/json")
+                                exchange.sendResponseHeaders(200, bytes.length.toLong)
+                                exchange.getResponseBody.write(bytes)
+                            case None => sendText(exchange, 404, "NoSuchKey")
+                        }
+                    case _ => sendText(exchange, 405, "method not allowed")
+                }
+            } finally exchange.close()
+
+        private def sendText(exchange: HttpExchange, status: Int, text: String): Unit = {
+            val bytes = text.getBytes(StandardCharsets.UTF_8)
+            exchange.sendResponseHeaders(status, bytes.length.toLong)
+            exchange.getResponseBody.write(bytes)
+        }
+    }
 
     private class Dispatcher(services: Services[String], authenticator: Authenticator) extends HttpHandler {
 

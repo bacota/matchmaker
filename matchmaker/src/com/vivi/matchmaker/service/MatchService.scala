@@ -33,7 +33,9 @@ import com.vivi.matchmaker.persistence.{
 class MatchService(
     sessionPool: SessionPool,
     /* Silent by default, as in the other services that send mail: see `Notifications`. */
-    notifications: Notifications = Notifications.disabled
+    notifications: Notifications = Notifications.disabled,
+    /* For the finished lists: whether a friendly match's archive is still there to be watched. */
+    archives: Option[ArchiveService] = None
 ) {
 
     /** Matches in which it is the caller's turn. */
@@ -61,6 +63,7 @@ class MatchService(
       */
     def completed(callerExternalId: String): IO[List[MatchSummary]] =
         forCaller(callerExternalId)((repo, playerId) => repo.listForPlayer(playerId, over = true).map(summarise))
+            .flatMap(viewed)
 
     /** The matches another player has marked public, either still running or finished.
       *
@@ -76,12 +79,25 @@ class MatchService(
       * own budgets, and a stranger's remaining seconds are not what somebody reading their page came for.
       */
     def publicFor(callerExternalId: String, playerId: PlayerId, over: Boolean): IO[List[MatchSummary]] =
-        sessionPool.use { session =>
-            for {
-                _ <- resolveCaller(session, callerExternalId)
-                rows <- new MatchRepo(session).listPublicForPlayer(playerId, over)
-            } yield summarise(rows)
-        }
+        sessionPool
+            .use { session =>
+                for {
+                    _ <- resolveCaller(session, callerExternalId)
+                    rows <- new MatchRepo(session).listPublicForPlayer(playerId, over)
+                } yield summarise(rows)
+            }
+            .flatMap(viewed)
+
+    /** A finished list as a player is shown it: any friendly archive that may have expired checked, and the links of an
+      * archived match marked as such — see [[ArchiveService.settle]].
+      *
+      * After the list's session is given back, not inside it: the check asks S3, and a pooled connection held across
+      * that is one nobody else can use meanwhile — and the check borrows one of its own to record what it found.
+      */
+    private def viewed(summaries: List[MatchSummary]): IO[List[MatchSummary]] =
+        archives
+            .fold(IO.pure(summaries))(_.settle(summaries))
+            .map(_.map(ArchiveService.forViewer))
 
     /** Folds one row per seat into one summary per match.
       *
@@ -133,7 +149,9 @@ class MatchService(
                   // A fact about the match, so it is the same on every row of it and comes off the
                   // first like the rest of them.
                   publicUrl = first.publicUrl,
-                  friendly = first.friendly
+                  friendly = first.friendly,
+                  archivedAt = first.archivedAt,
+                  archiveExpired = first.archiveExpired
                 )
             }
 

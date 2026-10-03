@@ -16,3 +16,11 @@ case class UnauthorizedError(message: String) extends ServiceError(message)
 
 /** A referenced entity does not exist. */
 case class NotFoundError(message: String) extends ServiceError(message)
+
+/** The thing asked for existed and is gone for good — a friendly match's archive, which its bucket expires. */
+case class GoneError(message: String) extends ServiceError(message)
+
+/** The request is fine, but this deployment cannot serve it — archiving with no buckets configured. Not the caller's
+  * fault, and nothing they can fix by asking differently, which is what a 503 says.
+  */
+case class UnavailableError(message: String) extends ServiceError(message)

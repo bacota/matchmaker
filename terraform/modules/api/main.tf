@@ -400,6 +400,13 @@ locals {
     "GET /characters",
     "PUT /characters/{characterId}",
     "PUT /characters/{characterId}/owner",
+    # A completed match's archive (ArchiveService): a url to upload it to, the confirm that it
+    # arrived, a url to read it back from, and the report that a friendly one has expired. By match
+    # id alone, because an engine whose live copy is gone no longer knows the game id.
+    "POST /matches/{matchId}/archive",
+    "POST /matches/{matchId}/archive/confirm",
+    "POST /matches/{matchId}/archive/read",
+    "POST /matches/{matchId}/archive/expired",
   ]
 }
 
