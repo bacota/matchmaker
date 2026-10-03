@@ -133,7 +133,9 @@ object LambdaEvent {
         ujson.write(
           ujson.Obj(
             "statusCode" -> ujson.Num(response.status.toDouble),
-            "headers" -> ujson.Obj("content-type" -> ujson.Str(response.contentType)),
+            "headers" -> ujson.Obj.from(
+              (response.headers + ("content-type" -> response.contentType)).map((k, v) => k -> ujson.Str(v))
+            ),
             "isBase64Encoded" -> ujson.Bool(false),
             "body" -> ujson.Str(response.body)
           )

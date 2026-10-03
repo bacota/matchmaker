@@ -31,4 +31,10 @@ case class EngineRequest(
             .filter(_.nonEmpty)
 }
 
-case class EngineResponse(status: Int, body: String, contentType: String = "application/json")
+/** What a route answers. `headers` are any beyond the content type, which both transports write as they are. */
+case class EngineResponse(
+    status: Int,
+    body: String,
+    contentType: String = "application/json",
+    headers: Map[String, String] = Map.empty
+)
