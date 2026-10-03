@@ -1120,7 +1120,11 @@ $replayScript
     if (typeof rules.close === "function") rules.close(); else rules.removeAttribute("open");
     rulesButton.focus();
   });
-  rules.addEventListener("click", e => { if (e.target === rules && typeof rules.close === "function") rules.close(); });
+  rules.addEventListener("click", e => {
+    if (e.target !== rules || typeof rules.close !== "function") return;
+    const box = rules.getBoundingClientRect();
+    if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) rules.close();
+  });
 
   /* Without popovers — Safari before 17 — the key would sit open in the page for good. There the
    * buttons show and hide it instead, and it is a section of the page rather than a layer over it. */
@@ -1207,8 +1211,8 @@ $replayScript
     <h3>Moving</h3>
     <ul>
       <li>Red moves first, then the sides take turns, one piece a turn.</li>
-      <li>A piece moves one square up, down, left or right, onto an empty square or onto an enemy piece, which
-        attacks it. Never diagonally, never onto your own piece, and never into the two lakes.</li>
+      <li>A piece moves one square up, down, left or right, onto an empty square or onto an enemy piece to attack it.
+        Never diagonally, never onto your own piece, and never into the two lakes.</li>
       <li>Bombs and the Flag never move.</li>
       <li>A Scout may move any distance in a straight line over empty squares, and may attack at the end of it. It
         cannot jump. A Scout that moves more than one square shows the enemy what it is.</li>
