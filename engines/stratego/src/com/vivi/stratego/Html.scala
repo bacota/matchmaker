@@ -90,9 +90,15 @@ object Html {
   #board button.draggable { touch-action: none; cursor: grab; }
   /* The piece being dragged stays on its square, faded, while a copy follows the finger. */
   #board button.lifted { opacity: .35; }
-  #board button.over { outline: 4px solid var(--mark); outline-offset: -4px; }
+  /* The square the carried piece will land on: the piece sits in it, ringed. */
+  #board button.over { outline: 4px solid var(--mark); outline-offset: 0; z-index: 1; }
   #board button.ghost { position: fixed; z-index: 10; pointer-events: none; transform: scale(1.15);
                         box-shadow: 0 6px 16px rgba(0, 0, 0, .35); cursor: grabbing; }
+  /* Settled into the square it will land on, at that square's size, so there is no doubt which. */
+  #board button.ghost.snapped { transform: none; box-shadow: 0 0 0 4px var(--mark), 0 4px 10px rgba(0, 0, 0, .3); }
+  /* Under a finger, larger, so that it shows round the fingertip. */
+  #board button.ghost.touch { transform: scale(1.6); }
+  #board button.ghost.touch.snapped { transform: scale(1.5); }
   #board button.last { box-shadow: inset 0 0 0 2px var(--mark); }
   #board button.target { box-shadow: inset 0 0 0 4px var(--mark); }
   #board button.selected { outline: 4px solid var(--mark); outline-offset: -4px; }
@@ -334,6 +340,12 @@ ${TurnTimer.script}
       if (!draft) draft = loadDraft();
       home(state.you).forEach((sq, i) => { by[sq] = { square: sq, side: state.you, rank: draft[i], revealed: false, moved: false }; });
     }
+    // A move that has been made but not yet answered is shown made; the answer replaces it either
+    // way, and a refused one goes back.
+    if (pending && by[pending.from]) {
+      by[pending.to] = Object.assign({}, by[pending.from], { square: pending.to, moved: true });
+      delete by[pending.from];
+    }
     return by;
   }
 
@@ -403,7 +415,9 @@ ${TurnTimer.script}
       b.classList.toggle("target", targets.includes(sq));
       b.classList.toggle("selected", sq === selected);
       b.classList.toggle("draggable", draggable(sq));
+      // A redraw mid-drag — a refresh arriving — must not drop what the drag is showing.
       b.classList.toggle("lifted", !!(drag && drag.ghost && drag.from === sq));
+      b.classList.toggle("over", !!(drag && drag.ghost && drag.over === sq));
       b.setAttribute("aria-disabled", actionable(sq) ? "false" : "true");
       let label = describe(sq, p);
       if (sq === selected) label += ", selected";
@@ -418,7 +432,7 @@ ${TurnTimer.script}
   }
 
   function tap(sq) {
-    if (!actionable(sq)) return;
+    if (pending || !actionable(sq)) return;
     if (deploying()) {
       if (selected === null) selected = sq;
       else if (selected === sq) selected = null;
@@ -435,12 +449,18 @@ ${TurnTimer.script}
   //
   // Pointer events rather than HTML drag and drop, which a phone's touch does not drive. A press
   // becomes a drag only once it has moved, so a press that stays put is still a tap. Picking a
-  // piece up selects it, which is what shows where it may go; letting it go does what tapping the
-  // square under it would, and anywhere else puts it back.
+  // piece up selects it, which is what shows where it may go.
+  //
+  // What is seen is what happens: the piece carried is centred on the pointer and lands on the
+  // square under it. Over a square it may land on it snaps into that square, ringed; anywhere else
+  // it floats, and letting it go there puts it back. Under a finger it is drawn larger, so that it
+  // shows round the fingertip. A move then shows where it was dropped while the
+  // engine is asked (`pending`), rather than jumping home until the answer comes.
 
-  let drag = null, justDragged = false;
+  let drag = null, justDragged = false, pending = null;
 
   function draggable(sq) {
+    if (pending) return false;
     if (deploying()) return home(state.you).includes(sq);
     return myTurn() && movesFrom(sq).length > 0;
   }
@@ -457,11 +477,42 @@ ${TurnTimer.script}
     return deploying() ? home(state.you).includes(sq) : movesFrom(drag.from).includes(sq);
   }
 
+  function buttonOf(sq) { return squares[squares.findIndex((_, i) => squareAt(i) === sq)]; }
+
+  /* The square the piece would land on if let go with the pointer at (x, y), or null for nowhere —
+   * worked out afresh from where the pointer is, never from where it last moved. */
+  function landing(x, y) {
+    const sq = squareUnder(x, y);
+    return droppable(sq) ? sq : null;
+  }
+
+  /* Places the carried piece for a pointer at (x, y): snapped into the square it would land on, or
+   * floating where it is carried. Called on every move, and on a scroll, which moves the board
+   * under a pointer that has not moved. */
+  function place(x, y) {
+    drag.x = x;
+    drag.y = y;
+    const over = landing(x, y), g = drag.ghost;
+    if (over !== null) {
+      const r = buttonOf(over).getBoundingClientRect();
+      g.style.left = r.left + "px";
+      g.style.top = r.top + "px";
+    } else {
+      g.style.left = (x - g.offsetWidth / 2) + "px";
+      g.style.top = (y - g.offsetHeight / 2) + "px";
+    }
+    g.classList.toggle("snapped", over !== null);
+    if (over !== drag.over) {
+      drag.over = over;
+      squares.forEach((b, i) => b.classList.toggle("over", squareAt(i) === over));
+    }
+  }
+
   function press(e, d) {
     const sq = squareAt(d);
     if (drag || !e.isPrimary || e.button !== 0 || !draggable(sq)) return;
     drag = { from: sq, button: squares[d], pointer: e.pointerId, touch: e.pointerType !== "mouse",
-             x: e.clientX, y: e.clientY, ghost: null, over: null };
+             startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY, ghost: null, over: null };
     squares[d].setPointerCapture(e.pointerId);
   }
 
@@ -469,13 +520,13 @@ ${TurnTimer.script}
     if (!drag || e.pointerId !== drag.pointer) return;
     if (!drag.ghost) {
       // Under this, the press may still be a tap.
-      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 8) return;
+      if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 8) return;
       selected = drag.from;
-      render();
       const r = drag.button.getBoundingClientRect();
       const g = drag.button.cloneNode(true);
-      g.classList.remove("selected", "target", "last", "draggable");
+      g.classList.remove("selected", "target", "last", "draggable", "over");
       g.classList.add("ghost");
+      g.classList.toggle("touch", drag.touch);
       g.tabIndex = -1;
       g.inert = true;
       g.setAttribute("aria-hidden", "true");
@@ -483,35 +534,29 @@ ${TurnTimer.script}
       g.style.height = r.height + "px";
       board.appendChild(g);
       drag.ghost = g;
-      drag.button.classList.add("lifted");
+      render();
     }
-    drag.ghost.style.left = (e.clientX - drag.ghost.offsetWidth / 2) + "px";
-    // Held above the point rather than under it, so that the square it would land on, and its
-    // highlight, stay in sight — clear of a fingertip, which covers more than a cursor does.
-    drag.ghost.style.top = (e.clientY - drag.ghost.offsetHeight * (drag.touch ? 1.5 : 1)) + "px";
-    const sq = squareUnder(e.clientX, e.clientY);
-    const over = droppable(sq) ? sq : null;
-    if (over !== drag.over) {
-      squares.forEach((b, i) => b.classList.toggle("over", squareAt(i) === over));
-      drag.over = over;
-    }
+    place(e.clientX, e.clientY);
   });
+
+  // The board can scroll under a pointer that holds still — a wheel, a phone's page settling.
+  window.addEventListener("scroll", () => { if (drag && drag.ghost) place(drag.x, drag.y); }, { passive: true });
 
   function release(e, drop) {
     if (!drag || e.pointerId !== drag.pointer) return;
     const d = drag;
+    // Where it is let go, not where it last moved: the board may have scrolled since.
+    const to = drop && d.ghost ? landing(e.clientX, e.clientY) : null;
     drag = null;
     if (!d.ghost) return; // never moved: a tap, which the click that follows handles
     d.ghost.remove();
-    d.button.classList.remove("lifted");
-    squares.forEach(b => b.classList.remove("over"));
     // The click that follows a drag, if the browser sends one, lands on the square it started from.
     justDragged = true;
     setTimeout(() => { justDragged = false; }, 0);
     selected = null;
-    if (drop && d.over !== null) {
-      if (deploying()) swap(d.from, d.over);
-      else submit({ from: d.from, to: d.over });
+    if (to !== null) {
+      if (deploying()) swap(d.from, to);
+      else submit({ from: d.from, to });
     }
     render();
   }
@@ -544,7 +589,9 @@ ${TurnTimer.script}
   const moveFrom = document.getElementById("move-from"), moveTo = document.getElementById("move-to");
 
   function drawControls() {
-    const setup = deploying(), play = myTurn();
+    // Not while a move is out: it is shown made, so its piece is no longer where the controls
+    // would offer it from, and it is the only move this turn has.
+    const setup = deploying(), play = myTurn() && !pending;
     document.getElementById("setup-controls").hidden = !setup;
     document.getElementById("move-controls").hidden = !play;
     const by = piecesBySquare();
@@ -566,7 +613,8 @@ ${TurnTimer.script}
   function drawTargets() {
     const by = piecesBySquare();
     fill(moveTo, movesFrom(Number(moveFrom.value)).map(sq => [sq, squareName(sq) + (by[sq] ? " — attack" : "")]));
-    document.getElementById("move").disabled = moveTo.options.length === 0;
+    // And not while a move is out: one move a turn, and the page shows this one made already.
+    document.getElementById("move").disabled = moveTo.options.length === 0 || !!pending;
   }
 
   moveFrom.addEventListener("change", () => { selected = Number(moveFrom.value); drawBoard(); drawTargets(); });
@@ -647,15 +695,27 @@ ${TurnTimer.script}
   async function submit(body) {
     show("");
     const ticket = ask();
-    const response = await send(movesUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, ticket);
-    if (!response) return;
-    const answer = await response.json();
-    // A refusal is dropped under a newer state, which says more; see PlayLive for the two orders.
-    if (!response.ok) { if (!overtaken(ticket)) tell(ticket, answer.error || response.statusText); return; }
-    if (latest(ticket)) state = answer;
-    // Clears an earlier move's refusal, but not a later one's: that is still the news.
-    tell(ticket, "");
-    render();
+    // A move is shown made from now until it is answered, whatever the answer; see `pending`.
+    const move = body.from !== undefined ? body : null;
+    if (move) { pending = move; render(); }
+    try {
+      const response = await send(movesUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, ticket);
+      if (!response) return;
+      const answer = await response.json();
+      // A refusal is dropped under a newer state, which says more; see PlayLive for the two orders.
+      if (!response.ok) { if (!overtaken(ticket)) tell(ticket, answer.error || response.statusText); return; }
+      // Clears an earlier move's refusal, but not a later one's: that is still the news.
+      tell(ticket, "");
+      if (latest(ticket)) state = answer;
+      // Overtaken by a refresh asked while the move was out, whose answer may predate it — a poll
+      // can be answered before the move it was asked after is made. Showing that would put the
+      // piece back until the next poll, so ask once more, now that the move is made, before
+      // letting go of it.
+      else if (move) await refresh();
+    } finally {
+      if (move && pending === move) pending = null;
+      render();
+    }
   }
 
   async function refresh() {
