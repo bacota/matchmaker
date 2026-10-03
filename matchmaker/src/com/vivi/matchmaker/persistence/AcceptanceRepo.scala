@@ -9,6 +9,9 @@ import natchez.Trace.Implicits.noop
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 
+/** One seat of a challenge about to start: the acceptance, and what the game engine is told about the player in it. */
+case class RosterEntry(acceptance: Acceptance, externalId: String, nickname: String, roleName: String)
+
 class AcceptanceRepo(session: Session[IO]) {
     private val challengeId = SkunkIdCodecs.challengeId
     private val playerId = SkunkIdCodecs.playerId
@@ -351,9 +354,9 @@ class AcceptanceRepo(session: Session[IO]) {
 
     private val selectAcceptancesForChallenge: Query[
       (GameId, ChallengeId),
-      (PlayerId, GameType, String, GameRoleId, String, Option[Long])
+      (PlayerId, GameType, String, String, GameRoleId, String, Option[Long])
     ] =
-        sql"""SELECT a.player_id, a.game_type, pl.external_id, a.game_role_id, r.name, ca.character_id
+        sql"""SELECT a.player_id, a.game_type, pl.external_id, pl.nickname, a.game_role_id, r.name, ca.character_id
           FROM acceptance a
           JOIN player pl ON pl.player_id = a.player_id
           JOIN game_role r ON r.game_id = a.game_id AND r.game_role_id = a.game_role_id
@@ -361,18 +364,23 @@ class AcceptanceRepo(session: Session[IO]) {
                  ON ca.game_id = a.game_id AND ca.challenge_id = a.challenge_id AND ca.game_role_id = a.game_role_id
           WHERE a.game_id = $gameId AND a.challenge_id = $challengeId
           ORDER BY a.player_id"""
-            .query(playerId *: gameType *: text *: gameRoleId *: text *: int8.opt)
+            .query(playerId *: gameType *: text *: text *: gameRoleId *: text *: int8.opt)
 
-    /** Every acceptance of one challenge, with each accepting player's external id and role name.
+    /** Every acceptance of one challenge, with each accepting player's external id, nickname and role name.
       *
       * This is the roster a challenge turns into when it is started: one participant per acceptance, and one entry in
       * the game engine's create-game request.
       */
-    def listForChallenge(gameId: GameId, challengeId: ChallengeId): IO[List[(Acceptance, String, String)]] =
+    def listForChallenge(gameId: GameId, challengeId: ChallengeId): IO[List[RosterEntry]] =
         session
             .execute(selectAcceptancesForChallenge)((gameId, challengeId))
-            .map(_.map { case (playerId, gt, externalId, roleId, roleName, characterIdValue) =>
-                (toAcceptance(challengeId, playerId, gameId, gt, roleId, characterIdValue), externalId, roleName)
+            .map(_.map { case (playerId, gt, externalId, nickname, roleId, roleName, characterIdValue) =>
+                RosterEntry(
+                  toAcceptance(challengeId, playerId, gameId, gt, roleId, characterIdValue),
+                  externalId,
+                  nickname,
+                  roleName
+                )
             })
 
     // A CharacterAcceptance's insert already writes both the acceptance and character_acceptance

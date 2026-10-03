@@ -8,9 +8,10 @@ import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
   *
   * `cognitoId` is who may move in it — the same subject the player signs in as, which is how matchmaker named them and
   * how the engine recognises them. `participantId` is matchmaker's key for the seat and is what every callback quotes
-  * back.
+  * back. `nickname` is what the player is shown as, as matchmaker named them when the match was created; a match stored
+  * before it was sent has none, and shows the subject instead.
   */
-case class Seat(side: Side, cognitoId: String, participantId: Long) extends SeatLike
+case class Seat(side: Side, cognitoId: String, participantId: Long, nickname: Option[String] = None) extends SeatLike
 
 /** One turn that was taken: a side's deployment when `step` is empty, a move of one piece otherwise — with the battle
   * it caused, if it attacked.
@@ -166,7 +167,7 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
             val sides =
                 if (requested.flatten.distinct.sizeIs == 2) requested.map(_.get)
                 else List(Side.Red, Side.Blue)
-            Right(players.zip(sides).map((p, side) => Seat(side, p.cognitoId, p.participantId)))
+            Right(players.zip(sides).map((p, side) => Seat(side, p.cognitoId, p.participantId, p.nickname)))
         }
 
     /** The `maxMoves` game parameter, if matchmaker sent one: a whole number of piece moves, at least one. */

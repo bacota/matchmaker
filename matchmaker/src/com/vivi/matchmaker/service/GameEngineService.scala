@@ -254,7 +254,7 @@ class GameEngineService[T](
                         )
                     }
                     roster <- acceptanceRepo.listForChallenge(gameId, challengeId)
-                    taken = roster.map((acceptance, _, _) => acceptance.gameRoleId).toSet
+                    taken = roster.map(_.acceptance.gameRoleId).toSet
                     unfilled = game.roles.filterNot(_.optional).filterNot(role => taken.contains(role.gameRoleId))
                     _ <- IO.raiseUnless(unfilled.isEmpty)(
                       ValidationError(
@@ -283,10 +283,10 @@ class GameEngineService[T](
                     saved <- matchRepo.create(newMatch)
                     // Under the lock taken above, so the next start of this challenge sees the claim.
                     _ <- challengeRepo.claimForStart(gameId, challengeId, matchId)
-                    participants <- roster.traverse { case (acceptance, externalId, roleName) =>
+                    participants <- roster.traverse { entry =>
                         participantRepo
-                            .create(toParticipant(matchId, acceptance))
-                            .flatMap(p => enginePlayer(characterRepo)(p, acceptance, externalId, roleName))
+                            .create(toParticipant(matchId, entry.acceptance))
+                            .flatMap(p => enginePlayer(characterRepo)(p, entry))
                     }
                     // The key the engine is called with. Read plainly, like the game itself: it decides
                     // nothing written here, and is only handed to the engine below.
@@ -1050,23 +1050,22 @@ class GameEngineService[T](
 
     private def enginePlayer(characterRepo: CharacterRepo[T])(
         participant: Participant,
-        acceptance: Acceptance,
-        externalId: String,
-        roleName: String
+        entry: RosterEntry
     ): IO[EnginePlayer] = {
-        val character = acceptance match {
+        val character = entry.acceptance match {
             case ca: CharacterAcceptance => characterRepo.read(ca.characterId)
             case _: PlainAcceptance      => IO.pure(None)
         }
         character.map { c =>
             EnginePlayer(
-              cognitoId = externalId,
+              cognitoId = entry.externalId,
               // The engine quotes this back in every callback, which is how a move or a result lands on
               // the right row without the engine knowing anything else about matchmaker's model.
               participantId = participant.participantId.value,
-              role = Some(roleName),
+              role = Some(entry.roleName),
               characterId = c.map(_.characterId.value),
-              characterState = c.map(ch => codec.encode(ch.state))
+              characterState = c.map(ch => codec.encode(ch.state)),
+              nickname = Some(entry.nickname)
             )
         }
     }

@@ -10,13 +10,17 @@ import java.time.Instant
   * stores as `player.external_id` — it has no notion of matchmaker's own player ids. `participantId` travels the other
   * way: it is matchmaker's key for this seat, and the engine quotes it back in its callbacks so a move or a result
   * lands on the right row without the engine having to know anything else about matchmaker's model.
+  *
+  * `nickname` is for the engine to show players by, as it stood when the match started: a rename afterwards does not
+  * reach a match already under way. Optional, so an engine that predates it reads the request as it always did.
   */
 case class EnginePlayer(
     cognitoId: String,
     participantId: Long,
     role: Option[String],
     characterId: Option[Long],
-    characterState: Option[String]
+    characterState: Option[String],
+    nickname: Option[String] = None
 )
 
 /** The request of step 1: create a game, given its parameters, its players and their roles, and whether it is public.

@@ -73,6 +73,20 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(f.m.seatOf(Side.Red).get.participantId, 22L)
     }
 
+    test("the players are shown by the nicknames matchmaker sends, and a match without them by none") {
+        val named = createRequest().copy(players =
+            createRequest().players.zip(List("Alice", "Bob")).map((p, n) => p.copy(nickname = Some(n)))
+        )
+        assertEquals(
+          Fixture(named).state(None).players.map(p => (p.side, p.nickname)),
+          List(
+            ("Red", Some("Alice")),
+            ("Blue", Some("Bob"))
+          )
+        )
+        assertEquals(Fixture().state(None).players.map(_.nickname), List(None, None))
+    }
+
     test("a game for anything but two different players, or with an unusable move cap, is refused") {
         val engine = Engine(InMemoryMatchStore[StrategoMatch](), RecordingMatchmaker(), "http://engine.test")
         val solo = createRequest().copy(players = createRequest().players.take(1))

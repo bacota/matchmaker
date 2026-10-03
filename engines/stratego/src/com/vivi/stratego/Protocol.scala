@@ -59,7 +59,14 @@ object Protocol {
 
     case class LostView(side: String, ranks: List[String])
 
-    case class SeatView(side: String, cognitoId: String, participantId: Long, moves: Int, captured: Int)
+    case class SeatView(
+        side: String,
+        cognitoId: String,
+        participantId: Long,
+        moves: Int,
+        captured: Int,
+        nickname: Option[String] = None
+    )
 
     given ReadWriter[MoveRequest] = macroRW
     given ReadWriter[PieceView] = macroRW

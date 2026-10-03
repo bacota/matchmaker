@@ -27,7 +27,9 @@ object Protocol {
         participantId: Long,
         role: Option[String],
         characterId: Option[Long],
-        characterState: Option[String]
+        characterState: Option[String],
+        // The player's matchmaker nickname, for showing them by. Absent from a matchmaker that predates it.
+        nickname: Option[String] = None
     )
 
     /** `live` makes the match a live one: see [[LiveTerms]]. Absent from a matchmaker that predates live matches, and
