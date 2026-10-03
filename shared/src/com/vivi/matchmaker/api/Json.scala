@@ -191,6 +191,11 @@ object Json {
       */
     case class EmailRequest(email: String)
 
+    /** Whether a match is friendly, as a game's admin says it is: `PUT /games/{gameId}/matches/{matchId}/friendly`. The
+      * value rather than a toggle, so that sending it twice means the same as sending it once.
+      */
+    case class FriendlyRequest(friendly: Boolean)
+
     case class UpdateStateRequest(state: String)
 
     /** A character its game engine has made, as the engine tells matchmaker about it: `POST /characters`, in the game
@@ -355,6 +360,7 @@ object Json {
 
     given ReadWriter[RegisterRequest] = macroRW
     given ReadWriter[NicknameRequest] = macroRW
+    given ReadWriter[FriendlyRequest] = macroRW
     given ReadWriter[EmailRequest] = macroRW
     given ReadWriter[UpdateStateRequest] = macroRW
     given ReadWriter[RegisterCharacterRequest] = macroRW

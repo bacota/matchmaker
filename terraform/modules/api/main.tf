@@ -362,6 +362,8 @@ locals {
     "POST /games/{gameId}/matches/{matchId}/refresh",
     # Calling a match off, which only its creator may do.
     "POST /games/{gameId}/matches/{matchId}/cancel",
+    # Whether a match is friendly (V36), which a game's admin says.
+    "PUT /games/{gameId}/matches/{matchId}/friendly",
     # Muting one match: the most specific thing a player can say about notifications.
     "GET /games/{gameId}/matches/{matchId}/notifications",
     "PUT /games/{gameId}/matches/{matchId}/notifications",

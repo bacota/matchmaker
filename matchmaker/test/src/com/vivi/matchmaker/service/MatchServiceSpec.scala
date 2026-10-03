@@ -14,6 +14,7 @@ import com.vivi.matchmaker.persistence.{
     MatchRepo,
     ChallengeRepo,
     ParticipantRepo,
+    PlayerRepo,
     ResultRepo,
     TestSession
 }
@@ -520,6 +521,79 @@ class MatchServiceSpec extends PropertySuite {
             }
             result.timeout(10.seconds).unsafeRunSync()
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Friendly
+    // ---------------------------------------------------------------------------
+
+    /** A registered player made an overall admin, as only the database can. */
+    private def overallAdmin(): IO[Player] =
+        for {
+            player <- registrationService.register(genUniqueString.sample.get, genUniqueString.sample.get)
+            _ <- TestSession.resource.use(session => new PlayerRepo(session).update(player.copy(isAdmin = true)))
+        } yield player.copy(isAdmin = true)
+
+    /** A match, its creator, and a player made an admin of its game. */
+    private def friendlyFixture(): IO[(Player, Game, MatchId, Player)] =
+        for {
+            made <- makeMatch(
+              genUniqueString.sample.get,
+              genUniqueString.sample.get,
+              genUniqueString.sample.get,
+              completed = false,
+              pending = true
+            )
+            (creator, game, matchId) = made
+            overall <- overallAdmin()
+            gameAdmin <- registrationService.register(genUniqueString.sample.get, genUniqueString.sample.get)
+            _ <- TestServices.services.gameAdmins.grant(game.gameId, gameAdmin.playerId, overall.externalId)
+        } yield (creator, game, matchId, gameAdmin)
+
+    private def friendlyOf(game: Game, matchId: MatchId): IO[Option[Boolean]] =
+        TestSession.resource.use(session => new MatchRepo(session).read(game.gameId, matchId).map(_.map(_.friendly)))
+
+    test("a game's admin says a match of the game is not friendly, and then that it is") {
+        val result = for {
+            f <- friendlyFixture()
+            (_, game, matchId, gameAdmin) = f
+            answered <- matchService.setFriendly(game.gameId, matchId, friendly = false, gameAdmin.externalId)
+            stored <- friendlyOf(game, matchId)
+            _ <- matchService.setFriendly(game.gameId, matchId, friendly = true, gameAdmin.externalId)
+            restored <- friendlyOf(game, matchId)
+        } yield (answered.friendly, stored, restored)
+        assertEquals(result.timeout(30.seconds).unsafeRunSync(), (false, Some(false), Some(true)))
+    }
+
+    test("an overall admin may say it too, without administering the game") {
+        val result = for {
+            f <- friendlyFixture()
+            (_, game, matchId, _) = f
+            overall <- overallAdmin()
+            _ <- matchService.setFriendly(game.gameId, matchId, friendly = false, overall.externalId)
+            stored <- friendlyOf(game, matchId)
+        } yield stored
+        assertEquals(result.timeout(30.seconds).unsafeRunSync(), Some(false))
+    }
+
+    test("the match's own creator may not, nor an admin of a different game, and a missing match is not found") {
+        val result = for {
+            f <- friendlyFixture()
+            (creator, game, matchId, _) = f
+            other <- friendlyFixture()
+            (_, _, _, otherAdmin) = other
+            byCreator <- matchService.setFriendly(game.gameId, matchId, friendly = false, creator.externalId).attempt
+            byOther <- matchService.setFriendly(game.gameId, matchId, friendly = false, otherAdmin.externalId).attempt
+            stored <- friendlyOf(game, matchId)
+            missing <- matchService
+                .setFriendly(other._2.gameId, MatchId("no-such-match"), friendly = false, otherAdmin.externalId)
+                .attempt
+        } yield (byCreator, byOther, stored, missing)
+        val (byCreator, byOther, stored, missing) = result.timeout(30.seconds).unsafeRunSync()
+        assert(byCreator.left.exists(_.isInstanceOf[UnauthorizedError]), byCreator)
+        assert(byOther.left.exists(_.isInstanceOf[UnauthorizedError]), byOther)
+        assertEquals(stored, Some(true))
+        assert(missing.left.exists(_.isInstanceOf[NotFoundError]), missing)
     }
 
     // ---------------------------------------------------------------------------

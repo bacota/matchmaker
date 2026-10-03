@@ -14,7 +14,14 @@ import com.vivi.matchmaker.model.{
     TimeLimitKind
 }
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
-import com.vivi.matchmaker.persistence.{MatchRepo, ChallengeRepo, ParticipantRepo, PlayerRepo, ResultRepo}
+import com.vivi.matchmaker.persistence.{
+    GameAdminRepo,
+    MatchRepo,
+    ChallengeRepo,
+    ParticipantRepo,
+    PlayerRepo,
+    ResultRepo
+}
 
 /** Lists a player's matches, and lets the creator of one call it off.
   *
@@ -261,6 +268,39 @@ class MatchService(
                 player <- resolveCaller(session, callerExternalId)
                 result <- query(new MatchRepo(session), player.playerId)
             } yield result
+        }
+
+    /** Says whether the match is friendly (V36): a game admin's to decide, or an overall admin's, and nobody else's —
+      * not even the match's creator. Saying what it already is changes nothing. Any match of the game, finished or not:
+      * the classification is about how the match counts, which matters as much once it is over.
+      *
+      * Under the match's row lock, which [[MatchRepo.update]] rewrites whole, and with the caller's admin held FOR
+      * SHARE so that losing it waits for this to land.
+      */
+    def setFriendly(gameId: GameId, matchId: MatchId, friendly: Boolean, callerExternalId: String): IO[Match] =
+        sessionPool.use { session =>
+            val matchRepo = new MatchRepo(session)
+            session.transaction.use { _ =>
+                for {
+                    caller <- new PlayerRepo(session).readByExternalIdForShare(callerExternalId).flatMap {
+                        case Some(player) => IO.pure(player)
+                        case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+                    }
+                    allowed <-
+                        if (caller.isAdmin) IO.pure(true)
+                        else new GameAdminRepo(session).isAdminForShare(caller.playerId, gameId)
+                    _ <- IO.raiseUnless(allowed)(
+                      UnauthorizedError("only an admin of this game may say whether its matches are friendly")
+                    )
+                    existing <- matchRepo.readForUpdate(gameId, matchId).flatMap {
+                        case Some(m) => IO.pure(m)
+                        case None =>
+                            IO.raiseError(NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}"))
+                    }
+                    classified = existing.copy(friendly = friendly)
+                    _ <- matchRepo.update(classified)
+                } yield classified
+            }
         }
 
     private def resolveCaller(session: Session[IO], callerExternalId: String) =
