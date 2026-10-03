@@ -5,6 +5,7 @@ import java.time.Duration
 import skunk.Session
 import com.vivi.matchmaker.model.{
     GameId,
+    GameMatch,
     Match,
     MatchId,
     MatchSummary,
@@ -14,7 +15,14 @@ import com.vivi.matchmaker.model.{
     TimeLimitKind
 }
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
-import com.vivi.matchmaker.persistence.{MatchRepo, ChallengeRepo, ParticipantRepo, PlayerRepo, ResultRepo}
+import com.vivi.matchmaker.persistence.{
+    GameAdminRepo,
+    MatchRepo,
+    ChallengeRepo,
+    ParticipantRepo,
+    PlayerRepo,
+    ResultRepo
+}
 
 /** Lists a player's matches, and lets the creator of one call it off.
   *
@@ -124,7 +132,8 @@ class MatchService(
                   turnDue = onTheClock.flatMap(_.seatDue).minOption,
                   // A fact about the match, so it is the same on every row of it and comes off the
                   // first like the rest of them.
-                  publicUrl = first.publicUrl
+                  publicUrl = first.publicUrl,
+                  friendly = first.friendly
                 )
             }
 
@@ -263,9 +272,66 @@ class MatchService(
             } yield result
         }
 
+    /** The game's matches, for its admins to manage them from: an overall admin's or the game's own admins' to read,
+      * since these are matches they may have no seat in. The running ones first, and at most
+      * [[MatchService.gameMatchLimit]] of them altogether, so that a game with a long history answers with what is
+      * being played and what was played lately rather than with everything.
+      */
+    def listForGame(gameId: GameId, callerExternalId: String): IO[List[GameMatch]] =
+        sessionPool.use { session =>
+            for {
+                caller <- resolveCaller(session, callerExternalId)
+                // Read plainly, like the list: nothing is written on the strength of it.
+                allowed <-
+                    if (caller.isAdmin) IO.pure(true)
+                    else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
+                _ <- IO.raiseUnless(allowed)(UnauthorizedError("only an admin of this game may list its matches"))
+                matches <- new MatchRepo(session).listForGame(gameId, MatchService.gameMatchLimit)
+            } yield matches
+        }
+
+    /** Says whether the match is friendly (V36): a game admin's to decide, or an overall admin's, and nobody else's —
+      * not even the match's creator. Saying what it already is changes nothing. Any match of the game, finished or not:
+      * the classification is about how the match counts, which matters as much once it is over.
+      *
+      * Under the match's row lock, which [[MatchRepo.update]] rewrites whole, and with the caller's admin held FOR
+      * SHARE so that losing it waits for this to land.
+      */
+    def setFriendly(gameId: GameId, matchId: MatchId, friendly: Boolean, callerExternalId: String): IO[Match] =
+        sessionPool.use { session =>
+            val matchRepo = new MatchRepo(session)
+            session.transaction.use { _ =>
+                for {
+                    caller <- new PlayerRepo(session).readByExternalIdForShare(callerExternalId).flatMap {
+                        case Some(player) => IO.pure(player)
+                        case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+                    }
+                    allowed <-
+                        if (caller.isAdmin) IO.pure(true)
+                        else new GameAdminRepo(session).isAdminForShare(caller.playerId, gameId)
+                    _ <- IO.raiseUnless(allowed)(
+                      UnauthorizedError("only an admin of this game may say whether its matches are friendly")
+                    )
+                    existing <- matchRepo.readForUpdate(gameId, matchId).flatMap {
+                        case Some(m) => IO.pure(m)
+                        case None =>
+                            IO.raiseError(NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}"))
+                    }
+                    classified = existing.copy(friendly = friendly)
+                    _ <- matchRepo.update(classified)
+                } yield classified
+            }
+        }
+
     private def resolveCaller(session: Session[IO], callerExternalId: String) =
         new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
             case Some(player) => IO.pure(player)
             case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
         }
+}
+
+object MatchService {
+
+    /** How many matches [[MatchService.listForGame]] answers with at most. */
+    val gameMatchLimit: Int = 50
 }

@@ -71,6 +71,7 @@ object Json {
     given ReadWriter[PublicPlayer] = macroRW
     given ReadWriter[PlayerSearchResult] = macroRW
     given ReadWriter[GameAdmin] = macroRW
+    given ReadWriter[GameMatch] = macroRW
     given ReadWriter[GameRole] = macroRW
     given ReadWriter[GameParameterValue[String]] = macroRW
     given ReadWriter[GameParameter[String]] = macroRW
@@ -190,6 +191,11 @@ object Json {
       * answered — only to record it. See `PlayerService.updateEmail`.
       */
     case class EmailRequest(email: String)
+
+    /** Whether a match is friendly, as a game's admin says it is: `PUT /games/{gameId}/matches/{matchId}/friendly`. The
+      * value rather than a toggle, so that sending it twice means the same as sending it once.
+      */
+    case class FriendlyRequest(friendly: Boolean)
 
     case class UpdateStateRequest(state: String)
 
@@ -355,6 +361,7 @@ object Json {
 
     given ReadWriter[RegisterRequest] = macroRW
     given ReadWriter[NicknameRequest] = macroRW
+    given ReadWriter[FriendlyRequest] = macroRW
     given ReadWriter[EmailRequest] = macroRW
     given ReadWriter[UpdateStateRequest] = macroRW
     given ReadWriter[RegisterCharacterRequest] = macroRW

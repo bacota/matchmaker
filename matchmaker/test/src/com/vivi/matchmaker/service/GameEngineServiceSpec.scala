@@ -172,7 +172,7 @@ class GameEngineServiceSpec extends PropertySuite {
           gameId = fixture.game.gameId,
           characterId = fixture.character.characterId,
           isPublic = isPublic,
-          gameRoleId = fixture.game.roles.head.gameRoleId,
+          gameRoleId = Some(fixture.game.roles.head.gameRoleId),
           timeLimitKind = timeLimitKind,
           timeLimitUnit = timeLimitUnit,
           live = live
@@ -302,7 +302,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 // The refusal is read by a player, so it names the seat the way they see it.
                 challenge <- services.challenges.create(
                   challengeFor(fixture) match {
-                      case c: CharacterChallenge => c.copy(gameRoleId = fixture.game.roles(1).gameRoleId)
+                      case c: CharacterChallenge => c.copy(gameRoleId = Some(fixture.game.roles(1).gameRoleId))
                       case other                 => other
                   },
                   externalId

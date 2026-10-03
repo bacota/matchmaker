@@ -40,7 +40,7 @@ class InvitationRepoSpec extends PropertySuite {
                 challenger.playerId,
                 game.gameId,
                 character.characterId,
-                challenge.gameRoleId
+                challenge.gameRoleId.get
               )
             )
         } yield Fixture(game, challenger, invitee, challenge)

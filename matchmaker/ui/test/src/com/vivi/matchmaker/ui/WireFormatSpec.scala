@@ -143,7 +143,7 @@ class WireFormatSpec extends FunSuite {
             timeLimit = None,
             settings = "{}",
             gameId = GameId(3),
-            gameRoleId = GameRoleId(4),
+            gameRoleId = Some(GameRoleId(4)),
             isOpen = false
           ),
           acceptances = 1,
@@ -187,7 +187,7 @@ class WireFormatSpec extends FunSuite {
           timeLimit = None,
           settings = "{}",
           gameId = GameId(2),
-          gameRoleId = GameRoleId(3),
+          gameRoleId = Some(GameRoleId(3)),
           isOpen = false
         )
         val invited = Json.CreateChallenge(
@@ -248,7 +248,7 @@ class WireFormatSpec extends FunSuite {
             gameId = GameId(3),
             characterId = CharacterId(9),
             isPublic = true,
-            gameRoleId = GameRoleId(4)
+            gameRoleId = Some(GameRoleId(4))
           ),
           acceptances = 2,
           takenRoles = Seq(GameRoleId(4))
@@ -262,7 +262,7 @@ class WireFormatSpec extends FunSuite {
             timeLimit = None,
             settings = "{}",
             gameId = GameId(7),
-            gameRoleId = GameRoleId(8)
+            gameRoleId = Some(GameRoleId(8))
           ),
           acceptances = 1,
           takenRoles = Seq(GameRoleId(8))
@@ -291,7 +291,7 @@ class WireFormatSpec extends FunSuite {
           settings = "{}",
           gameId = GameId(1),
           characterId = CharacterId(9),
-          gameRoleId = GameRoleId(2)
+          gameRoleId = Some(GameRoleId(2))
         )
 
         val decoded = read[Challenge](write(challenge))

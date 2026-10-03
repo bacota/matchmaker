@@ -55,6 +55,14 @@ class GameAdminRepo(session: Session[IO]) {
     def isAdminForShare(player: PlayerId, game: GameId): IO[Boolean] =
         session.option(selectForShare)((player, game)).map(_.isDefined)
 
+    private val select: Query[(PlayerId, GameId), PlayerId] =
+        sql"""SELECT player_id FROM game_admin WHERE player_id = $playerId AND game_id = $gameId""".query(playerId)
+
+    /** Whether the player administers the game, read plainly: for a caller that decides what to show, not what to
+      * write. [[isAdminForShare]] is the one for a write.
+      */
+    def isAdmin(player: PlayerId, game: GameId): IO[Boolean] = session.option(select)((player, game)).map(_.isDefined)
+
     /** Who made the player an admin of the game, or nothing if they are not one — locked, for a revoke that is decided
       * by the answer and then deletes the row.
       */

@@ -395,6 +395,18 @@ object Router {
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "cancel" :: Nil) =>
                 withGameId(gameId)(gid => ok(services.matches.cancel(gid, MatchId(matchId), caller)))
 
+            // A game's matches, for its admins to manage them from -- whether each is friendly, above all.
+            case ("GET", "games" :: gameId :: "matches" :: Nil) =>
+                withGameId(gameId)(gid => ok(services.matches.listForGame(gid, caller)))
+
+            // Whether the match is friendly (V36), which a game's admin says.
+            case ("PUT", "games" :: gameId :: "matches" :: matchId :: "friendly" :: Nil) =>
+                withGameId(gameId) { gid =>
+                    body[Json.FriendlyRequest](request).flatMap(r =>
+                        ok(services.matches.setFriendly(gid, MatchId(matchId), r.friendly, caller))
+                    )
+                }
+
             // Muting one match, which is the most specific thing a player can say about notifications
             // and the only one that is about a single thing they are playing. Player-authorized like
             // every other match route; the service refuses a caller with no seat in it.

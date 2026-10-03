@@ -10,6 +10,7 @@ import com.vivi.matchmaker.persistence.{
     AcceptanceRepo,
     CharacterInvitationRepo,
     CharacterRepo,
+    GameAdminRepo,
     GameRepo,
     ChallengeRepo,
     InvitationRepo,
@@ -255,7 +256,8 @@ class ChallengeService[T](
             val characterInvitationRepo = new CharacterInvitationRepo(session)
             // Creating a challenge is itself an acceptance of it: the challenger is the first
             // participant. Both rows go in together so a challenge can never exist with its creator
-            // missing from its own acceptances.
+            // missing from its own acceptances -- unless the challenger takes no seat at all, which a
+            // game's admin may (a seatless challenge, offered for other players to play).
             val made = session.transaction.use { _ =>
                 for {
                     // Unlocked, per the note on `requireGame`: what this decides is the challenge
@@ -314,11 +316,33 @@ class ChallengeService[T](
                             } yield ()
                     }
                     // As in accept: the role must be one of this game's, checked here so a wrong one is a
-                    // 400 rather than a foreign-key violation surfacing as a 500. There is no "no role"
-                    // case left to skip — every acceptance names one, and creating a challenge writes the
-                    // challenger's acceptance.
-                    _ <- IO.raiseUnless(game.roles.exists(_.gameRoleId == challenge.gameRoleId))(
-                      ValidationError(s"game ${game.gameId.value} has no role ${challenge.gameRoleId.value}")
+                    // 400 rather than a foreign-key violation surfacing as a 500. No role is a seatless
+                    // challenge, whose challenger writes no acceptance and so names no role.
+                    _ <- challenge.gameRoleId.traverse_(role =>
+                        IO.raiseUnless(game.roles.exists(_.gameRoleId == role))(
+                          ValidationError(s"game ${game.gameId.value} has no role ${role.value}")
+                        )
+                    )
+                    // A character game's challenger offers their character, and the character takes a
+                    // seat, so there is no seatless character challenge.
+                    _ <- IO.raiseWhen(challenge.gameRoleId.isEmpty && game.gameType == GameType.Character)(
+                      ValidationError(
+                        s"${game.displayName} is played by characters, and a challenge in it is played by its challenger's"
+                      )
+                    )
+                    // And it starts itself once its seats are filled: its challenger has no seat, so the
+                    // match is not in any list of theirs, and a start left to them is one they may never
+                    // come back to make. Refused rather than switched on, so that what was offered is what
+                    // was asked for.
+                    _ <- IO.raiseWhen(challenge.gameRoleId.isEmpty && !challenge.autoStart)(
+                      ValidationError(
+                        "a challenge whose challenger will not play in it has to start when all its seats are filled"
+                      )
+                    )
+                    // Offering a match one will not play in, or one that is not friendly, is a game's
+                    // admin's to do: the challenger is the caller by now, checked above for either kind.
+                    _ <- IO.whenA(challenge.gameRoleId.isEmpty || !challenge.friendly)(
+                      requireGameAdmin(session, playerRepo, challenge.challenger, game)
                     )
                     // The challenger's choice of each game parameter, which `settings` carries: held to the
                     // values the game allows here, where the challenger can be told, rather than found out
@@ -349,7 +373,7 @@ class ChallengeService[T](
                       playerRepo,
                       challenge.challenger,
                       characterInvitations,
-                      taken = Set(challenge.gameRoleId)
+                      taken = challenge.gameRoleId.toSet
                     )
                     _ <- validateInvitations(
                       game,
@@ -359,15 +383,17 @@ class ChallengeService[T](
                       // The challenger's own role is the one seat already gone at this point: their
                       // acceptance is written below, so nothing has read it yet and it has to be named
                       // here rather than asked for.
-                      taken = Set(challenge.gameRoleId)
+                      taken = challenge.gameRoleId.toSet
                     )
                     created <- challengeRepo.create(challenge)
-                    _ <- acceptanceRepo.create(created match {
-                        case cc: CharacterChallenge =>
-                            CharacterAcceptance(cc.challengeId, cc.challenger, cc.gameId, cc.characterId, cc.gameRoleId)
-                        case pc: PlainChallenge =>
-                            PlainAcceptance(pc.challengeId, pc.challenger, pc.gameId, pc.gameRoleId)
-                    })
+                    _ <- created.gameRoleId.traverse_(role =>
+                        acceptanceRepo.create(created match {
+                            case cc: CharacterChallenge =>
+                                CharacterAcceptance(cc.challengeId, cc.challenger, cc.gameId, cc.characterId, role)
+                            case pc: PlainChallenge =>
+                                PlainAcceptance(pc.challengeId, pc.challenger, pc.gameId, role)
+                        })
+                    )
                     _ <- invitations.traverse_(invite =>
                         invitationRepo.create(
                           Invitation(created.gameId, created.challengeId, invite.playerId, invite.gameRoleId)
@@ -404,6 +430,30 @@ class ChallengeService[T](
                     .as(created)
             }
         }
+
+    /* That `challenger` administers `game`: an overall admin, or one of the game's own (V35). Their
+     * player row and their admin row are both held FOR SHARE, so that losing either waits for the
+     * challenge this is permitting to be written. */
+    private def requireGameAdmin(
+        session: skunk.Session[IO],
+        playerRepo: PlayerRepo,
+        challenger: PlayerId,
+        game: Game
+    ): IO[Unit] =
+        for {
+            player <- playerRepo.readForShare(challenger).flatMap {
+                case Some(p) => IO.pure(p)
+                case None    => IO.raiseError(NotFoundError(s"no player with id ${challenger.value}"))
+            }
+            allowed <-
+                if (player.isAdmin) IO.pure(true)
+                else new GameAdminRepo(session).isAdminForShare(player.playerId, game.gameId)
+            _ <- IO.raiseUnless(allowed)(
+              UnauthorizedError(
+                s"only an admin of ${game.displayName} may offer a match they will not play in, or one that is not friendly"
+              )
+            )
+        } yield ()
 
     /* The name of the seat an invitation holds, for the mail that offers it. From the game already in
      * hand rather than a query: the roles are what `validateInvitations` has just checked the id

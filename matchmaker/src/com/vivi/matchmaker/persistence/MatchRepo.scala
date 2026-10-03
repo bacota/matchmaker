@@ -5,6 +5,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
+import skunk.data.Arr
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 import MatchRepo.{MatchClockRow, MatchSeatRow}
@@ -39,13 +40,16 @@ class MatchRepo(session: Session[IO]) {
           Option[String],
           TimeLimitKind,
           TimeLimitUnit,
+          Boolean,
           Boolean
       )
     ] =
         sql"""INSERT INTO match (game_id, match_id, challenge_id, description, completed, cancelled, start, time_limit,
-                             settings, public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live)
+                             settings, public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live,
+                             friendly)
           VALUES ($gameId, $matchId, $challengeId, $text, ${instant.opt}, $bool, $instant, ${float8.opt} * INTERVAL '1 second',
-                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt}, $timeLimitKind, $timeLimitUnit, $bool)""".command
+                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt}, $timeLimitKind, $timeLimitUnit, $bool,
+                  $bool)""".command
 
     private type MatchRow =
         (
@@ -62,17 +66,18 @@ class MatchRepo(session: Session[IO]) {
             Option[String],
             TimeLimitKind,
             TimeLimitUnit,
+            Boolean,
             Boolean
         )
 
     private val matchRow: Codec[MatchRow] =
         challengeId *: text *: instant.opt *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *:
-            text.opt *: timeLimitKind *: timeLimitUnit *: bool
+            text.opt *: timeLimitKind *: timeLimitUnit *: bool *: bool
 
     private val selectMatch: Query[(GameId, MatchId), MatchRow] =
         sql"""SELECT challenge_id, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
-                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live
+                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId"""
             .query(matchRow)
@@ -83,7 +88,7 @@ class MatchRepo(session: Session[IO]) {
     private val selectMatchForUpdate: Query[(GameId, MatchId), MatchRow] =
         sql"""SELECT challenge_id, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
-                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live
+                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
             .query(matchRow)
@@ -104,6 +109,7 @@ class MatchRepo(session: Session[IO]) {
           Option[String],
           TimeLimitKind,
           TimeLimitUnit,
+          Boolean,
           GameId,
           MatchId
       )
@@ -111,7 +117,7 @@ class MatchRepo(session: Session[IO]) {
         sql"""UPDATE match SET description = $text, completed = ${instant.opt}, cancelled = $bool, start = $instant,
           time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
           public = $bool, status_url = ${text.opt}, play_url = ${text.opt}, public_url = ${text.opt},
-          time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit
+          time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit, friendly = $bool
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
     def create(m: Match): IO[Match] =
@@ -133,7 +139,8 @@ class MatchRepo(session: Session[IO]) {
                 m.publicUrl,
                 m.timeLimitKind,
                 m.timeLimitUnit,
-                m.live
+                m.live,
+                m.friendly
               )
             )
             .as(m)
@@ -153,7 +160,8 @@ class MatchRepo(session: Session[IO]) {
           publicUrl,
           timeLimitKind,
           timeLimitUnit,
-          live
+          live,
+          friendly
         ) = row
         Match(
           gameId,
@@ -171,7 +179,8 @@ class MatchRepo(session: Session[IO]) {
           publicUrl,
           timeLimitKind,
           timeLimitUnit,
-          live
+          live,
+          friendly
         )
     }
 
@@ -198,6 +207,7 @@ class MatchRepo(session: Session[IO]) {
                 m.publicUrl,
                 m.timeLimitKind,
                 m.timeLimitUnit,
+                m.friendly,
                 m.gameId,
                 m.matchId
               )
@@ -260,7 +270,7 @@ class MatchRepo(session: Session[IO]) {
     private val seatRow =
         gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: float8.opt *: timeLimitKind *:
             timeLimitUnit *: bool *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt *:
-            text.opt
+            text.opt *: bool
 
     private def toSeatRow(
         row: (
@@ -284,7 +294,8 @@ class MatchRepo(session: Session[IO]) {
             Boolean,
             Boolean,
             Option[Instant],
-            Option[String]
+            Option[String],
+            Boolean
         )
     ): MatchSeatRow = {
         val (
@@ -308,7 +319,8 @@ class MatchRepo(session: Session[IO]) {
           seatPending,
           seatCompleted,
           seatDue,
-          publicUrl
+          publicUrl,
+          friendly
         ) = row
         MatchSeatRow(
           gameId,
@@ -331,7 +343,8 @@ class MatchRepo(session: Session[IO]) {
           seatPending,
           seatCompleted,
           seatDue,
-          publicUrl
+          publicUrl,
+          friendly
         )
     }
 
@@ -349,7 +362,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url
+                 m.public_url, m.friendly
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -387,7 +400,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url
+                 m.public_url, m.friendly
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -426,7 +439,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url
+                 m.public_url, m.friendly
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -460,7 +473,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url
+                 m.public_url, m.friendly
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -483,7 +496,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url
+                 m.public_url, m.friendly
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -546,6 +559,33 @@ class MatchRepo(session: Session[IO]) {
           ORDER BY p.participant_id"""
             .query(gameId *: matchId *: text *: float8 *: instant.opt)
 
+    /* A game's matches for its admins: the ones still being played first, then the rest, most
+     * recently started first within each. Who is playing comes as one array per match, so a match
+     * is one row however many seats it has; a match with no seats yet (one whose engine is still
+     * being asked to create it) has an empty one. */
+    private val selectForGame
+        : Query[(GameId, Int), (MatchId, String, Instant, Option[Instant], Boolean, Boolean, Arr[String])] =
+        sql"""SELECT m.match_id, m.description, m.start, m.completed, m.cancelled, m.friendly,
+                 coalesce(array_agg(pl.nickname ORDER BY p.participant_id) FILTER (WHERE pl.nickname IS NOT NULL),
+                          '{}')
+          FROM match m
+          LEFT JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
+          LEFT JOIN player pl ON pl.player_id = p.player_id
+          WHERE m.game_id = $gameId
+          GROUP BY m.game_id, m.match_id
+          ORDER BY (m.completed IS NULL AND NOT m.cancelled) DESC, m.start DESC, m.match_id
+          LIMIT $int4""".query(matchId *: text *: instant *: instant.opt *: bool *: bool *: _text)
+
+    /** At most `limit` of the game's matches, running ones first, each with its players' nicknames. */
+    def listForGame(gameId: GameId, limit: Int): IO[List[GameMatch]] =
+        session
+            .execute(selectForGame)((gameId, limit))
+            .map(
+              _.map((id, description, start, completedAt, cancelled, friendly, players) =>
+                  GameMatch(id, description, start, completedAt, cancelled, friendly, players.flattenTo(List))
+              )
+            )
+
     /** Every seat's remaining budget, across the caller's running chess-clock matches. */
     def clocksForPlayer(playerId: PlayerId): IO[List[MatchClockRow]] =
         session
@@ -602,7 +642,9 @@ object MatchRepo {
         seatDue: Option[Instant],
         // Where anyone may watch this match, and `None` for one that is not public. A fact about the
         // match rather than about this seat, and so the same on every row of it.
-        publicUrl: Option[String]
+        publicUrl: Option[String],
+        // Whether the match is friendly (V36), likewise the match's.
+        friendly: Boolean
     )
 
     /** What one seat has left of a chess-clock budget. */

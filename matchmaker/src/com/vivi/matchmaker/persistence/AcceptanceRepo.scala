@@ -168,10 +168,11 @@ class AcceptanceRepo(session: Session[IO]) {
           Option[Double],
           String,
           Boolean,
-          GameRoleId,
+          Option[GameRoleId],
           Option[Long],
           TimeLimitKind,
           TimeLimitUnit,
+          Boolean,
           (String, Boolean, String, Option[String]),
           String,
           Boolean,
@@ -179,23 +180,23 @@ class AcceptanceRepo(session: Session[IO]) {
           Option[String]
       )
     ] =
-        gameType *: playerId *: text *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId *: int8.opt *:
-            SkunkCodecs.timeLimitKind *: SkunkCodecs.timeLimitUnit *: playerRow *: playerRow
+        gameType *: playerId *: text *: instant.opt *: float8.opt *: settings *: bool *: gameRoleId.opt *: int8.opt *:
+            SkunkCodecs.timeLimitKind *: SkunkCodecs.timeLimitUnit *: bool *: playerRow *: playerRow
 
     // `a` is the acceptance being read; `challenger_acceptance` is the challenger's own, which is
     // where a challenge's gameRoleId lives (there is no such column on challenge — see
-    // ChallengeRepo). The join is an inner one: every challenge has a challenger's acceptance,
-    // created with it, and that acceptance names a role.
+    // ChallengeRepo). A LEFT JOIN: a seatless challenge's challenger has no acceptance, and so no
+    // role, and the acceptances other players made of it are as much theirs to withdraw.
     private val selectAcceptanceWithChallengeAndPlayers = sql"""
     SELECT a.game_type, ch.challenger, ch.message, ch.start,
            EXTRACT(EPOCH FROM ch.time_limit)::float8, ch.settings, ch.public,
-           challenger_acceptance.game_role_id, cc.character_id, ch.time_limit_kind, ch.time_limit_unit,
+           challenger_acceptance.game_role_id, cc.character_id, ch.time_limit_kind, ch.time_limit_unit, ch.friendly,
            acceptor.nickname, acceptor.is_admin, acceptor.external_id, acceptor.email,
            challenger.nickname, challenger.is_admin, challenger.external_id, challenger.email
     FROM acceptance a
     JOIN challenge ch ON ch.game_id = a.game_id AND ch.challenge_id = a.challenge_id
     LEFT JOIN character_challenge cc ON cc.game_id = ch.game_id AND cc.challenge_id = ch.challenge_id
-    JOIN acceptance challenger_acceptance
+    LEFT JOIN acceptance challenger_acceptance
            ON challenger_acceptance.game_id = ch.game_id
           AND challenger_acceptance.challenge_id = ch.challenge_id
           AND challenger_acceptance.player_id = ch.challenger
@@ -227,6 +228,7 @@ class AcceptanceRepo(session: Session[IO]) {
                       characterIdValue,
                       timeLimitKind,
                       timeLimitUnit,
+                      friendly,
                       (acceptorNickname, acceptorIsAdmin, acceptorExternalId, acceptorEmail),
                       challengerNickname,
                       challengerIsAdmin,
@@ -253,7 +255,8 @@ class AcceptanceRepo(session: Session[IO]) {
                               isPublic,
                               challengerRoleId,
                               timeLimitKind,
-                              timeLimitUnit
+                              timeLimitUnit,
+                              friendly = friendly
                             )
                         case GameType.Plain =>
                             PlainChallenge(
@@ -267,7 +270,8 @@ class AcceptanceRepo(session: Session[IO]) {
                               isPublic,
                               challengerRoleId,
                               timeLimitKind,
-                              timeLimitUnit
+                              timeLimitUnit,
+                              friendly = friendly
                             )
                     }
                     val acceptor =

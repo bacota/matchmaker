@@ -73,7 +73,7 @@ class AcceptanceServiceSpec extends PropertySuite {
           fixture.game.gameId,
           fixture.character.characterId,
           isPublic = false,
-          gameRoleId = fixture.game.roles.head.gameRoleId
+          gameRoleId = Some(fixture.game.roles.head.gameRoleId)
         )
 
     private def setUp(nickname: String, externalId: String, accepterNickname: String, accepterExternalId: String) =
