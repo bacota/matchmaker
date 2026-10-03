@@ -125,7 +125,7 @@ object MessageBoards {
     mbDraw();
   }
 
-  function mbKey(m) { return m.at + "\u0000" + m.name + "\u0000" + m.text; }
+  function mbKey(m) { return m.at + "\u0000" + m.name + "\u0000" + m.text + "\u0000" + String(m.mine); }
 
   function mbItem(m) {
     const li = document.createElement("li");
