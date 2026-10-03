@@ -1211,8 +1211,8 @@ $replayScript
     <h3>Moving</h3>
     <ul>
       <li>Red moves first, then the sides take turns, one piece a turn.</li>
-      <li>A piece moves one square up, down, left or right, onto an empty square or onto an enemy piece, which
-        attacks it. Never diagonally, never onto your own piece, and never into the two lakes.</li>
+      <li>A piece moves one square up, down, left or right, onto an empty square or onto an enemy piece to attack it.
+        Never diagonally, never onto your own piece, and never into the two lakes.</li>
       <li>Bombs and the Flag never move.</li>
       <li>A Scout may move any distance in a straight line over empty squares, and may attack at the end of it. It
         cannot jump. A Scout that moves more than one square shows the enemy what it is.</li>
