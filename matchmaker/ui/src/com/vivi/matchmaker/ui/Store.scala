@@ -97,6 +97,7 @@ object Store {
         lookingForGames.set(Set.empty)
         challengesByGame.set(Map.empty)
         charactersByGame.set(Map.empty)
+        gameAdminsByGame.set(Map.empty)
         acceptances.set(Seq.empty)
         invitations.set(Seq.empty)
         // And what was last said about one. The stamp above would keep it from being read anyway;
@@ -150,6 +151,7 @@ object Store {
         case Challenges(gameId: GameId)
         case Characters(gameId: GameId)
         case Game(gameId: GameId)
+        case GameAdmins(gameId: GameId)
         case PublicMatches
         case PlayerSearch
         case NotificationSettings
@@ -275,6 +277,21 @@ object Store {
       * accepting a challenge need one.
       */
     val charactersByGame: Var[Map[GameId, Seq[Character[String]]]] = Var(Map.empty)
+
+    /** Each game's admins (V35), loaded when the game's screen is shown: what decides whether that screen offers what
+      * only an admin of the game may do. One list per game for the whole screen, read through [[administers]], rather
+      * than a request from each part of it that wants to know.
+      */
+    val gameAdminsByGame: Var[Map[GameId, Seq[GameAdmin]]] = Var(Map.empty)
+
+    /** Whether `player` administers the game: at once for an overall admin, and for anybody else once the game's admins
+      * have come — false until then. Distinct, because the map it reads is every game's, and a screen drawn from this
+      * must not be redrawn when some other game's list arrives.
+      */
+    def administers(gameId: GameId, player: Player): Signal[Boolean] =
+        gameAdminsByGame.signal
+            .map(byGame => player.isAdmin || byGame.get(gameId).exists(_.exists(_.player.playerId == player.playerId)))
+            .distinct
 
     /** What the caller has accepted and that has not yet become a match — what `ui.txt` calls the pending acceptances,
       * and the list "back out" acts on.
@@ -539,6 +556,7 @@ object Store {
             case Page.OneGame(gameId) =>
                 refreshChallenges(gameId)
                 refreshCharacters(gameId)
+                refreshGameAdmins(gameId)
                 ensureGame(gameId)
             /* Emptied before the request rather than left holding the last player's matches: the
              * page is about to be headed with a different nickname, and rows from the player before
@@ -1064,6 +1082,11 @@ object Store {
     def refreshChallenges(gameId: GameId): Unit =
         load(ApiClient.challenges(gameId), Fetch.Challenges(gameId))(list =>
             challengesByGame.update(_.updated(gameId, list))
+        )
+
+    def refreshGameAdmins(gameId: GameId): Unit =
+        load(ApiClient.gameAdmins(gameId), Fetch.GameAdmins(gameId))(list =>
+            gameAdminsByGame.update(_.updated(gameId, list))
         )
 
     def refreshCharacters(gameId: GameId): Unit =

@@ -2527,8 +2527,12 @@ object Views {
     private def adminMatchesSection(game: Game): HtmlElement =
         div(child <-- currentPlayer.map(_.fold(emptyNode)(player => adminMatches(game, player))))
 
-    private def adminMatches(game: Game, player: Player): HtmlElement = {
-        // `None` until this player is known to administer the game and the list has come back.
+    private def adminMatches(game: Game, player: Player): HtmlElement =
+        div(child <-- Store.administers(game.gameId, player).map(if (_) adminMatchList(game) else emptyNode))
+
+    /** The list itself, asked for when it is shown — which is only to an admin of the game. */
+    private def adminMatchList(game: Game): HtmlElement = {
+        // `None` until the list has come back.
         val matches = Var(Option.empty[Seq[GameMatch]])
         val refreshing = Var(false)
         // Mounts of this section, so that an answer to an earlier one is not written into a later one.
@@ -2547,16 +2551,7 @@ object Views {
         div(
           onMountCallback { _ =>
               mount += 1
-              val asked = mount
-              val signIn = Store.currentSignIn
-              // An overall admin is known to be one without asking; anybody else is looked for among the
-              // game's admins, and only an admin's page asks for the matches.
-              val administers =
-                  if (player.isAdmin) Future.successful(true)
-                  else ApiClient.gameAdmins(game.gameId).map(_.exists(_.player.playerId == player.playerId))
-              administers.foreach { yes =>
-                  if (yes && asked == mount && Store.stillSignedInAs(signIn)) fetch(asked)
-              }
+              fetch(mount)
           },
           onUnmountCallback(_ => mount += 1),
           child <-- matches.signal.map {
@@ -2642,9 +2637,11 @@ object Views {
                           case Some(Nil) =>
                               div(
                                 characterPrompt(game, checked, () => status.foreach(_.focus())),
-                                child <-- administers(game, player).map(
-                                  if (_) challengePanel(game, player, Seq.empty) else emptyNode
-                                )
+                                child <-- Store
+                                    .administers(game.gameId, player)
+                                    .map(
+                                      if (_) challengePanel(game, player, Seq.empty) else emptyNode
+                                    )
                               )
                           case Some(characters) =>
                               div(
@@ -2671,23 +2668,6 @@ object Views {
               )
             )
         }
-
-    /** Whether `player` administers `game`: at once for an overall admin, and for anybody else once the game's admins
-      * have been asked — false until then, and if the asking fails. Held by the view that asks, never the store, so the
-      * answer cannot redraw what asked for it.
-      */
-    private def administers(game: Game, player: Player): Signal[Boolean] =
-        if (player.isAdmin) Val(true)
-        else
-            EventStream
-                .fromFuture(
-                  ApiClient
-                      .gameAdmins(game.gameId)
-                      .map(_.exists(_.player.playerId == player.playerId))
-                      .recover { case _ => false },
-                  emitOnce = true
-                )
-                .toSignal(false)
 
     /** Where a player with no character in this game is sent to make one.
       *
@@ -3763,11 +3743,9 @@ object Views {
         // has been claimed yet, so every role of the game is on offer and the first stands selected.
         val role = Var(game.roles.headOption.map(_.gameRoleId))
         // Whether this player administers the game (V35), which is what lets them offer a match they
-        // will not play in, or one that is not friendly. An overall admin is known to without asking;
-        // anybody else is asked about once the form is open, and offered neither until the answer says.
+        // will not play in, or one that is not friendly: `Store.administers`, held here so that the
+        // button can read it when it is pressed.
         val administers = Var(player.isAdmin)
-        // Mounts of this form, so that an answer to an earlier one is not written into a later one.
-        var mount = 0
         // Whether the challenger takes a seat. Only a game's admin is offered the choice. In a character
         // game the seat is played by one of their characters, so an admin with none has no seat to take.
         val canPlay = game.gameType != GameType.Character || characters.nonEmpty
@@ -3801,21 +3779,7 @@ object Views {
 
         div(
           cls := "card",
-          onMountCallback { _ =>
-              mount += 1
-              val asked = mount
-              if (!player.isAdmin) {
-                  // Written only into this form, never the store, so the answer cannot redraw what
-                  // asked for it; and dropped if it belongs to another mount or another sign-in.
-                  val signIn = Store.currentSignIn
-                  ApiClient.gameAdmins(game.gameId).onComplete {
-                      case scala.util.Success(admins) if asked == mount && Store.stillSignedInAs(signIn) =>
-                          administers.set(admins.exists(_.player.playerId == player.playerId))
-                      case _ => ()
-                  }
-              }
-          },
-          onUnmountCallback(_ => mount += 1),
+          Store.administers(game.gameId, player) --> administers,
           h3(idAttr := "offer-challenge-heading", "Offer a Challenge"),
           field("Message", input(controlled(value <-- message.signal, onInput.mapToValue --> message))),
           // Shown even when there is only one, so the challenger can see who they are offering -- and
