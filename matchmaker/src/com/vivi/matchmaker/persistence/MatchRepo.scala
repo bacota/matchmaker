@@ -214,6 +214,19 @@ class MatchRepo(session: Session[IO]) {
             )
             .void
 
+    private val updateUrls: Command[(Option[String], Option[String], Option[String], GameId, MatchId)] =
+        sql"""UPDATE match SET status_url = ${text.opt}, play_url = ${text.opt}, public_url = ${text.opt}
+          WHERE game_id = $gameId AND match_id = $matchId""".command
+
+    /** Sets the three urls the engine answered a create with, and nothing else.
+      *
+      * Not [[update]], which writes the whole row from the `Match` it is given: the start that calls this holds no lock
+      * across the engine call, and its `Match` is the one it wrote before making it. Anything changed meanwhile — a
+      * game's admin saying the match is not friendly, its creator cancelling it — would be written back over.
+      */
+    def setUrls(m: Match): IO[Unit] =
+        session.execute(updateUrls)((m.statusUrl, m.playUrl, m.publicUrl, m.gameId, m.matchId)).void
+
     /* now() rather than a time bound from Scala: the completion time is a fact about when the
      * database recorded the match as over, and the application's clock is not the same clock. It
      * returns what was stored so the caller does not have to read the row back to find out. */

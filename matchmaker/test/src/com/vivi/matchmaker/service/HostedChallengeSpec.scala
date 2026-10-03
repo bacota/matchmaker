@@ -269,6 +269,87 @@ class HostedChallengeSpec extends PropertySuite {
         assert(refused.left.exists(_.isInstanceOf[UnauthorizedError]), refused)
     }
 
+    test("a challenger may not back out of their own challenge, which would leave it seatless") {
+        val result = for {
+            f <- fixture()
+            created <- services.challenges.create(
+              offer(f, f.first, Some(f.game.roles(0).gameRoleId), friendly = true),
+              f.first.externalId,
+              invitations(f).tail
+            )
+            refused <- services.acceptances
+                .delete(f.game.gameId, created.challengeId, f.first.playerId, f.first.externalId)
+                .attempt
+            // So a seated challenge stays seated, and cannot be started with its challenger out of it.
+            still <- services.challenges.listByGame(f.game.gameId, f.first.externalId)
+        } yield (refused, still.find(_.challenge.challengeId == created.challengeId).map(_.challenge.gameRoleId))
+        val (refused, role) = result.timeout(caseTimeout).unsafeRunSync()
+        assert(refused.left.exists(_.isInstanceOf[ConflictError]), refused)
+        assert(role.exists(_.isDefined), role)
+    }
+
+    test("nor in a character game, where a challenge is always played by its challenger's character") {
+        val result = for {
+            game <- makeGame(GameType.Character)
+            owner <- register()
+            character <- TestSession.resource.use(session =>
+                new CharacterRepo[String](session).create(
+                  Character(CharacterId(0), game.gameId, "boxer", "description", "", Some(owner.playerId))
+                )
+            )
+            created <- services.challenges.create(
+              CharacterChallenge(
+                ChallengeId(0),
+                owner.playerId,
+                "message",
+                None,
+                None,
+                "{}",
+                game.gameId,
+                character.characterId,
+                gameRoleId = Some(game.roles(0).gameRoleId)
+              ),
+              owner.externalId
+            )
+            refused <- services.acceptances
+                .delete(game.gameId, created.challengeId, owner.playerId, owner.externalId)
+                .attempt
+        } yield refused
+        val refused = result.timeout(caseTimeout).unsafeRunSync()
+        assert(refused.left.exists(_.isInstanceOf[ConflictError]), refused)
+    }
+
+    test("a seatless challenge's host is written to when somebody accepts it, though they hold no seat") {
+        val notifier = new com.vivi.matchmaker.notify.RecordingNotifier
+        val mailing = TestServices.servicesWith(new StubEngine, notifier = notifier, mail = TestServices.mailSettings)
+        def withMail(): IO[Player] = {
+            val name = unique("hc")
+            mailing.registration.register(name, unique("hc-sub"), Some(s"$name@example.com"))
+        }
+        val result = for {
+            game <- makeGame(GameType.Plain)
+            overall <- register()
+            _ <- TestSession.resource.use(session => new PlayerRepo(session).update(overall.copy(isAdmin = true)))
+            host <- withMail()
+            _ <- mailing.gameAdmins.grant(game.gameId, host.playerId, overall.externalId)
+            first <- withMail()
+            second <- withMail()
+            f = Fixture(game, host, first, second)
+            created <- mailing.challenges.create(offer(f, host, None, friendly = true), host.externalId, invitations(f))
+            // The invitations' own mail is not what this is about.
+            _ <- IO(notifier.clear())
+            _ <- mailing.challenges.accept(
+              game.gameId,
+              created.challengeId,
+              None,
+              game.roles(0).gameRoleId,
+              first.externalId
+            )
+        } yield (notifier.messages, host)
+        val (messages, host) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(messages.count(_.recipient == host.email.get), 1, messages.map(m => m.recipient -> m.subject))
+    }
+
     test("a character game has no seatless challenge, even for its admin") {
         val result = for {
             game <- makeGame(GameType.Character)

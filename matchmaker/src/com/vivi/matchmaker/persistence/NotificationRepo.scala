@@ -38,7 +38,7 @@ case class GameNotice(gameId: GameId, name: String)
   *
   * `roleName` is the role's display name, since it is only ever written into the mail.
   */
-case class AcceptorNotifications(player: Player, roleName: String, levels: NotificationLevels)
+case class AcceptorNotifications(player: Player, roleName: Option[String], levels: NotificationLevels)
 
 /** The `notify_*` columns of `player`, `participant` and `player_game`.
   *
@@ -183,9 +183,21 @@ class NotificationRepo(session: Session[IO]) {
      * see `ChallengeService.create`. So this one query is the whole audience for anything that
      * happens to a challenge, and which of them is the challenger is a comparison the caller makes.
      */
+    /* Everyone with a seat, and the challenger whether or not they have one: a seatless challenge's
+     * host (a game's admin offering a match they will not play in) has no acceptance, and is still the
+     * person the challenge is reporting to. No role for them, and never twice for a seated one. */
     private val selectLevelsForChallenge: Query[
-      (GameId, ChallengeId),
-      (PlayerId, String, Boolean, String, Option[String], String, NotificationPreferences, NotificationPreferences)
+      (GameId, ChallengeId, GameId, ChallengeId),
+      (
+          PlayerId,
+          String,
+          Boolean,
+          String,
+          Option[String],
+          Option[String],
+          NotificationPreferences,
+          NotificationPreferences
+      )
     ] =
         sql"""SELECT pl.player_id, pl.nickname, pl.is_admin, pl.external_id, pl.email, r.display_name,
                  pg.notify_challenge_accepted, pg.notify_challenge_ready, pg.notify_acceptance_changed,
@@ -194,13 +206,21 @@ class NotificationRepo(session: Session[IO]) {
                  pl.notify_challenge_accepted, pl.notify_challenge_ready, pl.notify_acceptance_changed,
                  pl.notify_accepted_challenge_ready, pl.notify_invitation_received, pl.notify_invitation_accepted, pl.notify_invitation_rejected, pl.notify_match_started, pl.notify_turn_taken,
                  pl.notify_your_turn, pl.notify_match_ended
-          FROM acceptance a
+          FROM (SELECT a.game_id, a.player_id, a.game_role_id
+                  FROM acceptance a
+                 WHERE a.game_id = $gameId AND a.challenge_id = $challengeId
+                UNION ALL
+                SELECT ch.game_id, ch.challenger, NULL
+                  FROM challenge ch
+                 WHERE ch.game_id = $gameId AND ch.challenge_id = $challengeId
+                   AND NOT EXISTS (SELECT 1 FROM acceptance mine
+                                    WHERE mine.game_id = ch.game_id AND mine.challenge_id = ch.challenge_id
+                                      AND mine.player_id = ch.challenger)) a
           JOIN player pl ON pl.player_id = a.player_id
-          JOIN game_role r ON r.game_id = a.game_id AND r.game_role_id = a.game_role_id
+          LEFT JOIN game_role r ON r.game_id = a.game_id AND r.game_role_id = a.game_role_id
           LEFT JOIN player_game pg ON pg.player_id = a.player_id AND pg.game_id = a.game_id
-          WHERE a.game_id = $gameId AND a.challenge_id = $challengeId
           ORDER BY a.player_id"""
-            .query(playerId *: text *: bool *: text *: text.opt *: text *: preferences *: preferences)
+            .query(playerId *: text *: bool *: text *: text.opt *: text.opt *: preferences *: preferences)
 
     /* The caller's own seats in one match. Plural: a player may hold two, and they are not two
      * settings -- so the read takes the first and the write covers all of them. */
@@ -488,10 +508,12 @@ class NotificationRepo(session: Session[IO]) {
     def applyToMatches(id: PlayerId, game: Option[GameId], changed: Set[NotificationType]): IO[Unit] =
         session.execute(restampParticipants)((changed, id, game)).void
 
-    /** Everyone who has accepted a challenge, with what each of them wants to hear about it. */
+    /** Everyone who has accepted a challenge, and its challenger even if they have not — a seatless challenge's host —
+      * with what each of them wants to hear about it.
+      */
     def levelsForChallenge(gameId: GameId, challengeId: ChallengeId): IO[List[AcceptorNotifications]] =
         session
-            .execute(selectLevelsForChallenge)((gameId, challengeId))
+            .execute(selectLevelsForChallenge)((gameId, challengeId, gameId, challengeId))
             .map(_.map { case (id, nickname, isAdmin, externalId, email, roleName, perGame, overall) =>
                 AcceptorNotifications(
                   Player(id, nickname, isAdmin, externalId, email),

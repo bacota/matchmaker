@@ -393,13 +393,12 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                           // audience, which is also why a withdrawal says nothing about the role it
                           // freed: that row is gone, and the roster line names the role anyway
                           // whenever it is one a start waits for.
-                          role = audience.find(_.player.playerId == actor.playerId).map(_.roleName),
+                          role = audience.find(_.player.playerId == actor.playerId).flatMap(_.roleName),
                           joined = joined,
-                          // The challenger is in the audience: creating a challenge inserts their own
-                          // acceptance. The fallback is unreachable by anything that can happen — that
-                          // acceptance is written in the same transaction as the challenge — and is a
-                          // phrase rather than a crash because a notification is not the place to
-                          // discover a broken row.
+                          // The challenger is in the audience, seated or not: `levelsForChallenge` adds
+                          // a seatless challenge's host. The fallback is unreachable by anything that can
+                          // happen, and is a phrase rather than a crash because a notification is not the
+                          // place to discover a broken row.
                           challenger = audience
                               .find(_.player.playerId == offered.challenger)
                               .map(_.player.nickname)
