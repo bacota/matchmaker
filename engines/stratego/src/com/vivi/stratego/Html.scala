@@ -63,9 +63,10 @@ object Html {
   :root { color-scheme: light dark; --line: #8884; --ink: #222; --paper: #fafafa; --error: #b3261e;
           --square: #e9e4d4; --water: #8fbcd9; --red: #b3261e; --blue: #1d4ed8; --mark: #e6a700; --focus: #6d28d9;
           --silver: #dfe3e8; --gold: #f3c34a; --black: #111; --brown: #7b4a1f; --green: #3d7a2a;
-          --halo: #f4f1ea; }
+          --halo: #f4f1ea; --accent: #6d28d9; --on-accent: #fff; }
   @media (prefers-color-scheme: dark) {
-    :root { --ink: #eee; --paper: #16181c; --error: #ff8a80; --square: #3a3a33; --water: #1f4d6b; --mark: #ffc940; --focus: #c4b5fd; }
+    :root { --ink: #eee; --paper: #16181c; --error: #ff8a80; --square: #3a3a33; --water: #1f4d6b; --mark: #ffc940; --focus: #c4b5fd;
+            --accent: #c4b5fd; --on-accent: #16181c; }
   }
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--paper); color: var(--ink);
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
@@ -188,6 +189,12 @@ object Html {
   #key .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
   #key h2 { font-size: 1.125rem; margin: 0; }
   #key .close { padding: 0; }
+  /* Filled, so that it is found at a glance — in the page's accent rather than the ink of Move and
+     Deploy, which are the turn's own actions. White on --accent is 7.1:1; in dark mode --accent is
+     light, and --paper on it is 9.6:1. */
+  .board-bar #key-button { display: inline-flex; align-items: center; gap: .375rem; background: var(--accent);
+                           border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .board-bar #key-button svg { width: 1.125rem; height: 1.125rem; }
   #key dl { display: grid; grid-template-columns: auto 1fr; gap: .5rem .75rem; margin: 0; }
   #key dt { font: 700 1rem ui-monospace, monospace; display: flex; align-items: center; gap: .375rem; }
   #key dd { margin: 0; align-self: center; }
@@ -225,7 +232,7 @@ $icons
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   ${TurnTimer.markup}
   <div class="board-bar">
-    <button type="button" id="key-button" popovertarget="key" aria-haspopup="dialog">Key</button>
+    <button type="button" id="key-button" popovertarget="key" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="7.5" r="1.4" fill="currentColor"/></svg>Key</button>
   </div>
   <div id="board" role="group" aria-label="board"></div>
   <!-- Not a live region: what each step shows is announced by #news, below. -->
