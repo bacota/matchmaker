@@ -20,6 +20,7 @@ import com.vivi.matchmaker.persistence.{
     MatchRepo,
     ChallengeRepo,
     ParticipantRepo,
+    PlayerRepo,
     ResultRepo,
     TestSession,
     TurnRepo
@@ -418,6 +419,33 @@ class GameEngineServiceSpec extends PropertySuite {
             } yield claimed.flatMap(_.startedMatchId).contains(started.matchId) &&
                 matches.size == 1 &&
                 engine.calls == 1
+            result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a match said not to be friendly while its engine is still answering the start stays so") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val result = for {
+                entered <- Deferred[IO, Unit]
+                release <- Deferred[IO, Unit]
+                engine = new GatedEngine(entered, release)
+                services = TestServices.servicesWith(engine)
+                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                admin <- services.registration.register(s"admin-$nickname", s"admin-$externalId")
+                _ <- TestSession.resource.use(session => new PlayerRepo(session).update(admin.copy(isAdmin = true)))
+                challenge <- services.challenges.create(challengeFor(fixture), externalId)
+                starting <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).start
+                // The match row is written and committed, and the start is parked in the engine call.
+                matchId <- entered.get *> TestSession.resource.use { session =>
+                    new ChallengeRepo(session).startedMatch(fixture.game.gameId, challenge.challengeId)
+                }
+                _ <- services.matches.setFriendly(fixture.game.gameId, matchId.get, friendly = false, admin.externalId)
+                _ <- release.complete(())
+                started <- starting.joinWithNever
+                stored <- TestSession.resource.use(session =>
+                    new MatchRepo(session).read(fixture.game.gameId, started.matchId)
+                )
+            } yield stored.exists(m => !m.friendly && m.statusUrl.contains("https://engine/status/1"))
             result.timeout(15.seconds).unsafeRunSync()
         }
     }

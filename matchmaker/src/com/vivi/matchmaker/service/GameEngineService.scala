@@ -517,8 +517,10 @@ class GameEngineService[T](
      * transaction, because a challenge left standing beside its own match could have been started
      * a second time — that is now the claim's job, and keeping the challenge is what gives the
      * match a creator. */
+    /* The urls only: `withUrls` is the match as it was written before the engine call, and the row
+     * may have changed since -- see `MatchRepo.setUrls`. */
     private def finish(session: skunk.Session[IO], withUrls: Match): IO[Unit] =
-        new MatchRepo(session).update(withUrls)
+        new MatchRepo(session).setUrls(withUrls)
 
     /* Retries a database action a few times before giving up. Used only for the work after the
      * engine call, where failing is not an option that leaves a sane state behind — everywhere

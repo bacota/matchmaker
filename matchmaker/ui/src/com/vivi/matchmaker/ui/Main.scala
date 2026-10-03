@@ -964,6 +964,10 @@ object Views {
           else div(cls := "detail", "accepted, waiting for the other players"),
           child <-- currentPlayer.map {
               case None => emptyNode
+              // Their own challenge is not one to back out of -- the server refuses it, since it would
+              // leave the challenge with no seat for its challenger -- but one to delete, from the game.
+              case Some(player) if player.playerId == pending.challenger =>
+                  div(cls := "detail", "your challenge: delete it from the game's page to call it off")
               case Some(player) =>
                   busyButton("Back out", classes = Some("link")) { busy =>
                       Store.run(
@@ -2588,10 +2592,12 @@ object Views {
           label(
             input(
               tpe := "checkbox",
-              disabled <-- busy.signal,
+              // Not disabled while saving: a disabled box drops the keyboard's focus, so a click made
+              // meanwhile is ignored instead, and the box keeps showing what is being saved.
+              aria.busy <-- busy.signal,
               controlled(
                 checked <-- friendly.signal,
-                onClick.mapToChecked --> { on =>
+                onClick.mapToChecked.filter(_ => !busy.now()) --> { on =>
                     friendly.set(on)
                     Store.run(ApiClient.setFriendly(game.gameId, m.matchId, on), busy, _ => friendly.set(!on))(saved =>
                         friendly.set(saved.friendly)
@@ -4013,7 +4019,11 @@ object Views {
           // The challenger changing their own role can leave the invitee holding the seat just taken,
           // which the server refuses. Released rather than refused here: the challenger's choice is
           // the one they just made, and the invitation falls back to "any seat that is free".
-          role.signal --> { mine => if (mine.exists(inviteeRole.now().contains)) inviteeRole.set(None) },
+          // And the same when they take a seat again after offering the match without one: the role they
+          // had chosen comes back with it, and may be the one held for the invitee meanwhile.
+          role.signal.combineWith(seated) --> { (mine, inIt) =>
+              if (inIt && mine.exists(inviteeRole.now().contains)) inviteeRole.set(None)
+          },
           busyButton(
             "Create Challenge",
             // A game with no roles at all has nothing an acceptance could name, so no challenge for

@@ -79,6 +79,15 @@ class AcceptanceService(
                         s"caller '$callerExternalId' may not delete acceptance for challenge ${challengeId.value} and player ${playerId.value}"
                       )
                     )
+                    // Never the challenger's own: that would leave a challenge whose challenger has no seat,
+                    // which is a seatless challenge -- a game's admin's to offer, in a plain game, and one that
+                    // has to start by itself (see `ChallengeService.create`). A challenger who no longer wants
+                    // to play deletes the challenge.
+                    _ <- IO.raiseWhen(playerId == challenger.playerId)(
+                      ConflictError(
+                        "A challenger cannot back out of their own challenge. Delete the challenge instead."
+                      )
+                    )
                     _ <- acceptanceRepo.delete(gameId, challengeId, playerId)
                     // Carried out of the transaction because the row that knows them is about to be
                     // gone: the mail tells the other players whose seat has opened up, and `acceptor`
