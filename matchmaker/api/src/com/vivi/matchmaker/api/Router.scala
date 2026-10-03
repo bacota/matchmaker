@@ -163,6 +163,23 @@ object Router {
                     ok(services.games.createOrUpdate(caller, game, key.apiKey))
                 )
 
+            /* A game's admins (V35): anybody registered may see who they are, and who made them; an
+             * admin, or an admin of this game, may make a player one; an admin may take it away, and so
+             * may the game's admin who made them one. A PUT rather than a POST, because making an admin
+             * of somebody who already is one changes nothing. */
+            case ("GET", "games" :: gameId :: "admins" :: Nil) =>
+                withGameId(gameId)(id => ok(services.gameAdmins.list(id, caller)))
+
+            case ("PUT", "games" :: gameId :: "admins" :: playerId :: Nil) =>
+                withGameId(gameId)(gid =>
+                    withPlayerId(playerId)(pid => noContent(services.gameAdmins.grant(gid, pid, caller)))
+                )
+
+            case ("DELETE", "games" :: gameId :: "admins" :: playerId :: Nil) =>
+                withGameId(gameId)(gid =>
+                    withPlayerId(playerId)(pid => noContent(services.gameAdmins.revoke(gid, pid, caller)))
+                )
+
             case ("GET", "games" :: gameId :: "challenges" :: Nil) =>
                 withGameId(gameId)(id => ok(services.challenges.listByGame(id, caller)))
 
