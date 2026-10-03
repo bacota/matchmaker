@@ -138,7 +138,8 @@ object Html {
   #concede-dialog h2 { font-size: 1.125rem; margin: 0 0 .5rem; }
   #concede-dialog p { margin: 0 0 1rem; }
   #concede-dialog .actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
-  #concede-dialog .give-up { background: var(--error); border-color: var(--error); color: #fff; }
+  /* --paper on --error, not white: the dark theme's --error is light, and white on it is 2.3:1. */
+  #concede-dialog .give-up { background: var(--error); border-color: var(--error); color: var(--paper); }
   #concede:focus-visible, #concede-dialog :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   #lost { margin-top: 1rem; font-size: .875rem; }
   #lost p { margin: .25rem 0; }
@@ -279,6 +280,7 @@ ${TurnTimer.script}
   const showClock = turnClock(refresh);
 
   function render() {
+    settlePending();
     const status = document.getElementById("status");
     if (!state) status.textContent = login ? "sign in to play" : "not your match";
     else if (state.completed && ranOut().length) {
@@ -380,8 +382,9 @@ ${TurnTimer.script}
       home(state.you).forEach((sq, i) => { by[sq] = { square: sq, side: state.you, rank: draft[i], revealed: false, moved: false }; });
     }
     // A move that has been made but not yet answered is shown made; the answer replaces it either
-    // way, and a refused one goes back.
-    if (pending && by[pending.from]) {
+    // way, and a refused one goes back. Only over the state it was made from: one that has moved on
+    // already holds this move, and perhaps the reply, whose piece may now stand on `from`.
+    if (pending && state.moveCount === pending.count && by[pending.from]) {
       by[pending.to] = Object.assign({}, by[pending.from], { square: pending.to, moved: true });
       delete by[pending.from];
     }
@@ -392,6 +395,8 @@ ${TurnTimer.script}
 
   /* Whether tapping `sq` would do anything — which is also whether it is offered as a control. */
   function actionable(sq) {
+    // Nothing while a move is out, as `tap` and dragging have it: the turn's move is already made.
+    if (pending) return false;
     if (deploying()) return home(state.you).includes(sq);
     if (!myTurn()) return false;
     return movesFrom(sq).length > 0 || (selected !== null && movesFrom(selected).includes(sq));
@@ -811,13 +816,37 @@ ${TurnTimer.script}
 
   function show(message) { document.getElementById("error").textContent = message || ""; }
 
+  /* `pending` lets go once the state has moved past it, however the news arrived: the move's own
+   * answer, a poll, a push. So a stalled request cannot hold the board once the page knows better. */
+  function settlePending() {
+    if (pending && (!state || state.completed || state.moveCount !== pending.count)) {
+      clearTimeout(pending.timer);
+      pending = null;
+    }
+  }
+
   /* A setup or a move: `body` is either {setup: [...]} or {from, to}. */
   async function submit(body) {
     show("");
     const ticket = ask();
-    // A move is shown made from now until it is answered, whatever the answer; see `pending`.
-    const move = body.from !== undefined ? body : null;
-    if (move) { pending = move; render(); }
+    // A move is shown made from now until it is answered, whatever the answer; see `pending`. It
+    // remembers the move count it was made at, which is how a newer state is told from an older.
+    const move = body.from !== undefined ? { from: body.from, to: body.to, count: state.moveCount, timer: null } : null;
+    if (move) {
+      pending = move;
+      // Nothing heard at all — neither an answer nor a state that has moved on — is let go of after
+      // a while, and the board shown as the engine last described it. Not a retry: the request may
+      // yet land, and if it does a second move is refused by the engine as out of turn, and the
+      // board catches up from the next poll or push.
+      move.timer = setTimeout(() => {
+        if (pending !== move) return;
+        pending = null;
+        tell(ticket, "the engine has not answered yet; the board shows the last it heard");
+        render();
+        refresh();
+      }, 15000);
+      render();
+    }
     try {
       const response = await send(movesUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, ticket);
       if (!response) return;
@@ -833,6 +862,7 @@ ${TurnTimer.script}
       // letting go of it.
       else if (move) await refresh();
     } finally {
+      if (move) clearTimeout(move.timer);
       if (move && pending === move) pending = null;
       render();
     }
