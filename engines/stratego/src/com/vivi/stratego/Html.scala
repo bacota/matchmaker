@@ -108,7 +108,7 @@ object Html {
   #board button.target { box-shadow: inset 0 0 0 4px var(--mark); }
   #board button.selected { outline: 4px solid var(--mark); outline-offset: -4px; }
   #board button:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; z-index: 1; }
-  /* A piece that has moved, which tells the other side it is neither a bomb nor the flag. */
+  /* A piece that has moved, which tells the other side it is neither a mine nor the flag. */
   #board button.moved::after { content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px;
                                border-radius: 50%; background: currentColor; opacity: .8; }
   /* One of your own pieces whose rank the other side has seen. */
@@ -307,7 +307,7 @@ $icons
     <p class="rule">The lower number wins a battle. Equal ranks both fall.</p>
     <dl>
       <dt><span class="chip Blue">?</span></dt><dd>An enemy piece you have not seen</dd>
-      <dt><span class="chip Blue">?<span class="dot"></span></span></dt><dd>An enemy piece that has moved — so it is not a bomb or the flag</dd>
+      <dt><span class="chip Blue">?<span class="dot"></span></span></dt><dd>An enemy piece that has moved — so it is not a mine or the flag</dd>
       <dt><span class="chip">${iconOf(
               "Sergeant"
             )}<span class="bar"></span></span></dt><dd>One of your pieces the enemy has seen</dd>
@@ -391,14 +391,15 @@ $replayScript
 
   // ---- the board --------------------------------------------------------------------------
 
-  // The number a rank is shown with, the lower the stronger, as the key has it; the spy, the bomb
-  // and the flag are drawn by their icon alone.
+  // The number a rank is shown with, the lower the stronger, as the key has it; the assassin, the
+  // mine and the flag are drawn by their icon alone.
   const NUMBER = { Marshal: "1", General: "2", Colonel: "3", Major: "4", Captain: "5", Lieutenant: "6",
                    Sergeant: "7", Miner: "8", Scout: "9", Spy: "", Bomb: "", Flag: "" };
   // What a rank is called on this page, where it differs from the engine's own name for it: the two
-  // generals are named for the insignia they wear. The engine's names are what the API and stored
-  // matches use, so they stay; only what a player reads changes.
-  const NAME = { Marshal: "General", General: "Brigadier General" };
+  // generals are named for the insignia they wear, and the miner, spy and bomb are the engineer,
+  // assassin and mine. The engine's names are what the API and stored matches use, so they stay; only
+  // what a player reads changes.
+  const NAME = { Marshal: "General", General: "Brigadier General", Miner: "Engineer", Spy: "Assassin", Bomb: "Mine" };
   function rankName(rank) { return NAME[rank] || rank; }
   const ARMY = [["Flag", 1], ["Spy", 1], ["Scout", 8], ["Miner", 5], ["Sergeant", 4], ["Lieutenant", 4],
                 ["Captain", 4], ["Major", 3], ["Colonel", 2], ["General", 1], ["Marshal", 1], ["Bomb", 6]];
@@ -1189,9 +1190,10 @@ $replayScript
     /** One icon per rank, drawn for this page. The officers and the sergeant wear simplified US Army insignia, which as
       * works of the US government are free to use, in their metals: four silver stars for the Marshal (a general), one
       * for the General (a brigadier), a silver eagle, a gold oak leaf, two silver bars joined, one silver bar, and
-      * three chevrons, in green. The Miner's brown pick, the Scout's galloping horse — knees and hocks folding its legs
-      * in under it, as a horse's do — the black mask and bomb, and the flag — in the other army's colour, through
-      * `--flag` — are plain symbols, not any published Stratego edition's artwork, which is copyrighted.
+      * three chevrons, in green. The Engineer's (`Miner`'s) brown pick, the Scout's galloping horse — knees and hocks
+      * folding its legs in under it, as a horse's do — the Assassin's (`Spy`'s) dagger, the black Mine (`Bomb`), and
+      * the flag — in the other army's colour, through `--flag` — are plain symbols, not any published Stratego
+      * edition's artwork, which is copyrighted.
       *
       * Each is a 24-unit square, except the four stars, which are a strip so that they can take a piece's whole width.
       * What is not metal is `currentColor`, the white of a coloured piece. Placed with `<use href="#rank-Marshal">`,
@@ -1213,7 +1215,7 @@ $replayScript
       <li>Red moves first, then the sides take turns, one piece a turn.</li>
       <li>A piece moves one square up, down, left or right, onto an empty square or onto an enemy piece to attack it.
         Never diagonally, never onto your own piece, and never into the two lakes.</li>
-      <li>Bombs and the Flag never move.</li>
+      <li>Mines and the Flag never move.</li>
       <li>A Scout may move any distance in a straight line over empty squares, and may attack at the end of it. It
         cannot jump. A Scout that moves more than one square shows the enemy what it is.</li>
       <li>No piece may move back and forth between the same two squares more than three times in a row.</li>
@@ -1221,8 +1223,8 @@ $replayScript
     <h3>Battles</h3>
     <ul>
       <li>Both pieces are revealed. The lower number wins, and the loser leaves the board. Equal ranks both fall.</li>
-      <li>The Spy takes the General (1), but only when the Spy attacks. Otherwise it is the weakest piece.</li>
-      <li>A Bomb destroys any piece that attacks it, except a Miner, which takes it.</li>
+      <li>The Assassin takes the General (1), but only when the Assassin attacks. Otherwise it is the weakest piece.</li>
+      <li>A Mine destroys any piece that attacks it, except an Engineer, which takes it.</li>
       <li>Any piece that attacks the Flag takes it.</li>
     </ul>
     <h3>Winning</h3>
@@ -1237,7 +1239,7 @@ $replayScript
     <h3>What you can see</h3>
     <ul>
       <li>All of your own pieces. An enemy piece is a ? until a battle or a Scout's long move reveals it, and is
-        marked once it has moved, since it cannot be a Bomb or the Flag.</li>
+        marked once it has moved, since it cannot be a Mine or the Flag.</li>
       <li>Hidden pieces stay hidden when the match ends.</li>
       <li>◀ and ▶ under the board, or the left and right arrow keys, step back and forward through the moves.</li>
     </ul>"""
@@ -1248,17 +1250,22 @@ $replayScript
       */
     private val key: String =
         List(
-          ("Marshal", "1", "General", "The strongest piece — but it falls to the Spy, if the Spy attacks it."),
+          (
+            "Marshal",
+            "1",
+            "General",
+            "The strongest piece — but it falls to the Assassin, if the Assassin attacks it."
+          ),
           ("General", "2", "Brigadier General", ""),
           ("Colonel", "3", "Colonel", ""),
           ("Major", "4", "Major", ""),
           ("Captain", "5", "Captain", ""),
           ("Lieutenant", "6", "Lieutenant", ""),
           ("Sergeant", "7", "Sergeant", ""),
-          ("Miner", "8", "Miner", "The only piece that survives attacking a bomb, which it takes."),
+          ("Miner", "8", "Engineer", "The only piece that survives attacking a mine, which it takes."),
           ("Scout", "9", "Scout", "Moves any distance in a straight line, and may attack at the end of it."),
-          ("Spy", "", "Spy", "Loses any other battle — but takes the General, if the Spy attacks first."),
-          ("Bomb", "", "Bomb", "Never moves. Destroys any piece that attacks it except a Miner."),
+          ("Spy", "", "Assassin", "Loses any other battle — but takes the General, if the Assassin attacks first."),
+          ("Bomb", "", "Mine", "Never moves. Destroys any piece that attacks it except an Engineer."),
           ("Flag", "", "Flag", "Never moves. Take the enemy's to win.")
         ).map((rank, number, name, note) => keyEntry(rank, number, name, note)).mkString("\n      ")
 
@@ -1284,7 +1291,7 @@ $replayScript
   <symbol id="rank-Sergeant" viewBox="0 0 24 24"><g fill="none" stroke-linecap="butt" stroke-linejoin="miter"><path style="stroke:var(--halo)" stroke-width="4.4" d="m4 9 8-5 8 5M4 14.5l8-5 8 5M4 20l8-5 8 5"/><path style="stroke:var(--green)" stroke-width="2.6" d="m4 9 8-5 8 5M4 14.5l8-5 8 5M4 20l8-5 8 5"/></g></symbol>
   <symbol id="rank-Miner" viewBox="0 0 24 24"><g transform="rotate(-35 12 12)" style="fill:none;stroke-linecap:round"><path d="M3 9.5c5-5 13-5 18 0M12 6v15.5" style="stroke:var(--halo);stroke-width:4"/><path d="M3 9.5c5-5 13-5 18 0M12 6v15.5" style="stroke:var(--brown);stroke-width:2.2"/></g></symbol>
   <symbol id="rank-Scout" viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><ellipse cx="11" cy="9.8" rx="5.6" ry="2.9" transform="rotate(-4 11 9.8)"/><path d="M13.6 7.4 17.4 2.8 20.2 3.9 16.8 10.8Z"/><path d="M17.2 3 17.8.9 19 2.3 23.3 6.3C23.8 6.8 23.4 7.6 22.8 7.5L21 7.4 18 5.8Z"/><path d="M17.4 3.1 16 4.6 15.2 6.6 16.6 5.2Z"/><path d="M5.8 8.2C3.6 6.6 1.8 6.4.4 7.4 1.8 7.8 2.6 9.2 2.8 11.4 3.8 10 4.8 9.6 6.2 10Z"/></g><g fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15.8 10.8 20 12.8 19.2 16.2"/><path d="M15 11.6 18 13.6 16.2 16.4"/><path d="M7.4 10.8 3.4 12.6 3.8 16.2"/><path d="M8.6 11.8 7 15 9.4 17.4"/></g></symbol>
-  <symbol id="rank-Spy" viewBox="0 0 24 24"><path fill-rule="evenodd" style="fill:var(--black);stroke:var(--halo);stroke-width:2;paint-order:stroke;stroke-linejoin:round" d="M2 9c0-1.5 1-2 2.5-2C8 7 10 9 12 9s4-2 7.5-2C21 7 22 7.5 22 9c0 4-2 7.5-5 7.5-2.5 0-3.5-2.5-5-2.5s-2.5 2.5-5 2.5c-3 0-5-3.5-5-7.5zM4.5 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0zM14 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0z"/></symbol>
+  <symbol id="rank-Spy" viewBox="0 0 24 24"><g transform="rotate(45 12 12) translate(12 12) scale(1.3) translate(-12 -12)"><g style="fill:var(--halo);stroke:var(--halo);stroke-width:2;stroke-linejoin:round"><path d="M12 1 14.2 5v8.5H9.8V5z"/><rect x="6" y="13.5" width="12" height="2.4" rx="1.1"/><rect x="10.7" y="15.9" width="2.6" height="4.6"/><circle cx="12" cy="21.4" r="1.7"/></g><path style="fill:var(--silver)" stroke="none" d="M12 1 14.2 5v8.5H9.8V5z"/><path d="M12 4v9" style="stroke:#0005" stroke-width=".8"/><g style="fill:var(--black)" stroke="none"><rect x="6" y="13.5" width="12" height="2.4" rx="1.1"/><rect x="10.7" y="15.9" width="2.6" height="4.6"/><circle cx="12" cy="21.4" r="1.7"/></g></g></symbol>
   <symbol id="rank-Bomb" viewBox="0 0 24 24"><circle cx="10" cy="14" r="7" style="fill:var(--black);stroke:var(--halo);stroke-width:2;paint-order:stroke;stroke-linejoin:round"/><path d="m14.5 9.5 3-3M20 2v2M23 5h-2M22 3l-1.5 1.5"/></symbol>
   <symbol id="rank-Flag" viewBox="0 0 24 24"><path d="M6 21.5V3"/><path style="fill:var(--flag);stroke:var(--halo);stroke-width:2;paint-order:stroke;stroke-linejoin:round" d="M6 4h12l-3 4 3 4H6z"/></symbol>
 </defs></svg>"""
