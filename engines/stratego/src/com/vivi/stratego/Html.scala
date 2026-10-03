@@ -922,9 +922,9 @@ ${TurnTimer.script}
     /** One icon per rank, drawn for this page. The officers and the sergeant wear simplified US Army insignia, which as
       * works of the US government are free to use, in their metals: four silver stars for the Marshal (a general), one
       * for the General (a brigadier), a silver eagle, a gold oak leaf, two silver bars joined, one silver bar, and
-      * three chevrons, in green. The Miner's brown pick, the Scout's galloping horse, the black mask and bomb, and the
-      * flag — in the other army's colour, through `--flag` — are plain symbols, not any published Stratego edition's
-      * artwork, which is copyrighted.
+      * three chevrons, in green. The Miner's brown pick, the Scout's galloping horse — knees and hocks folding its legs
+      * in under it, as a horse's do — the black mask and bomb, and the flag — in the other army's colour, through
+      * `--flag` — are plain symbols, not any published Stratego edition's artwork, which is copyrighted.
       *
       * Each is a 24-unit square, except the four stars, which are a strip so that they can take a piece's whole width.
       * What is not metal is `currentColor`, the white of a coloured piece. Placed with `<use href="#rank-Marshal">`,
@@ -971,7 +971,7 @@ ${TurnTimer.script}
   <symbol id="rank-Lieutenant" viewBox="0 0 24 24"><rect style="fill:var(--silver)" stroke="none" x="9.5" y="3" width="5" height="18" rx=".6"/></symbol>
   <symbol id="rank-Sergeant" viewBox="0 0 24 24"><g fill="none" stroke-linecap="butt" stroke-linejoin="miter"><path style="stroke:var(--halo)" stroke-width="4.4" d="m4 9 8-5 8 5M4 14.5l8-5 8 5M4 20l8-5 8 5"/><path style="stroke:var(--green)" stroke-width="2.6" d="m4 9 8-5 8 5M4 14.5l8-5 8 5M4 20l8-5 8 5"/></g></symbol>
   <symbol id="rank-Miner" viewBox="0 0 24 24"><g transform="rotate(-35 12 12)" style="fill:none;stroke-linecap:round"><path d="M3 9.5c5-5 13-5 18 0M12 6v15.5" style="stroke:var(--halo);stroke-width:4"/><path d="M3 9.5c5-5 13-5 18 0M12 6v15.5" style="stroke:var(--brown);stroke-width:2.2"/></g></symbol>
-  <symbol id="rank-Scout" viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><ellipse cx="11" cy="9.8" rx="5.6" ry="2.9" transform="rotate(-4 11 9.8)"/><path d="M13.6 7.4 17.4 2.8 20.2 3.9 16.8 10.8Z"/><path d="M17.2 3 17.8.9 19 2.3 23.3 6.3C23.8 6.8 23.4 7.6 22.8 7.5L21 7.4 18 5.8Z"/><path d="M17.4 3.1 16 4.6 15.2 6.6 16.6 5.2Z"/><path d="M5.8 8.2C3.6 6.6 1.8 6.4.4 7.4 1.8 7.8 2.6 9.2 2.8 11.4 3.8 10 4.8 9.6 6.2 10Z"/></g><g fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15.8 10.8 19.6 12.8 22.8 12.4"/><path d="M15 11.6 18.2 15.2 21.2 16.8"/><path d="M7.4 10.8 4 13.8 1.2 14"/><path d="M8.6 11.8 5.8 16 2.8 17.8"/></g></symbol>
+  <symbol id="rank-Scout" viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><ellipse cx="11" cy="9.8" rx="5.6" ry="2.9" transform="rotate(-4 11 9.8)"/><path d="M13.6 7.4 17.4 2.8 20.2 3.9 16.8 10.8Z"/><path d="M17.2 3 17.8.9 19 2.3 23.3 6.3C23.8 6.8 23.4 7.6 22.8 7.5L21 7.4 18 5.8Z"/><path d="M17.4 3.1 16 4.6 15.2 6.6 16.6 5.2Z"/><path d="M5.8 8.2C3.6 6.6 1.8 6.4.4 7.4 1.8 7.8 2.6 9.2 2.8 11.4 3.8 10 4.8 9.6 6.2 10Z"/></g><g fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15.8 10.8 20 12.8 19.2 16.2"/><path d="M15 11.6 18 13.6 16.2 16.4"/><path d="M7.4 10.8 3.4 12.6 3.8 16.2"/><path d="M8.6 11.8 7 15 9.4 17.4"/></g></symbol>
   <symbol id="rank-Spy" viewBox="0 0 24 24"><path fill-rule="evenodd" style="fill:var(--black);stroke:var(--halo);stroke-width:2;paint-order:stroke;stroke-linejoin:round" d="M2 9c0-1.5 1-2 2.5-2C8 7 10 9 12 9s4-2 7.5-2C21 7 22 7.5 22 9c0 4-2 7.5-5 7.5-2.5 0-3.5-2.5-5-2.5s-2.5 2.5-5 2.5c-3 0-5-3.5-5-7.5zM4.5 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0zM14 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0z"/></symbol>
   <symbol id="rank-Bomb" viewBox="0 0 24 24"><circle cx="10" cy="14" r="7" style="fill:var(--black);stroke:var(--halo);stroke-width:2;paint-order:stroke;stroke-linejoin:round"/><path d="m14.5 9.5 3-3M20 2v2M23 5h-2M22 3l-1.5 1.5"/></symbol>
   <symbol id="rank-Flag" viewBox="0 0 24 24"><path d="M6 21.5V3"/><path style="fill:var(--flag);stroke:var(--halo);stroke-width:2;paint-order:stroke;stroke-linejoin:round" d="M6 4h12l-3 4 3 4H6z"/></symbol>
