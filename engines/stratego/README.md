@@ -47,6 +47,8 @@ Classic (ISF) rules:
 The play page names the Marshal "General" and the General "Brigadier General", after the US Army
 insignia it draws them with. Only the page does: the API and stored matches use the names above.
   - A bomb destroys any attacker except a miner.
+- **Conceding:** either player may give the match up at any point, setup included, whether or not it
+  is their turn. The other side wins, and the results say `"ending": "conceded"`.
   - Anything takes the flag.
 - **What the opponent learns:** a battle reveals both pieces to everyone. A scout that moves more
   than one square reveals itself. A piece that has moved is marked as moved, which shows it is not a
@@ -77,6 +79,7 @@ Blue's. The engine does not warn about it.
 |---|---|---|
 | `POST /matches/{id}/moves` | `{"setup":[40 ranks]}`, listed in the order of the side's home squares, ascending (a1…j4 for Red, a7…j10 for Blue) | the new state |
 | `POST /matches/{id}/moves` | `{"from":30,"to":40}`, squares numbered 0 (a1) to 99 (j10) | the new state |
+| `POST /matches/{id}/moves` | `{"concede":true}`, at any point before the match is over, whoever's turn it is; the other side wins | the final state |
 | `GET /matches/{id}/state` | | the caller's state |
 | `GET /matches/{id}/board/state` | | the public state |
 

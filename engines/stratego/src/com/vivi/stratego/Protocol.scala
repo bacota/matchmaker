@@ -15,11 +15,16 @@ object Protocol {
 
     // ---- this engine's play API --------------------------------------------------------
 
-    /** What the play page submits, which is one of two things: a deployment, `{"setup":[...40 ranks]}`, in the order of
-      * the side's home squares, ascending; or a move, `{"from":n,"to":n}`. Whose it is comes from the caller's token,
-      * not from the body — a player may not name someone else's seat.
+    /** What the play page submits, which is one of three things: a deployment, `{"setup":[...40 ranks]}`, in the order
+      * of the side's home squares, ascending; a move, `{"from":n,"to":n}`; or giving the match up, `{"concede":true}`.
+      * Whose it is comes from the caller's token, not from the body — a player may not name someone else's seat.
       */
-    case class MoveRequest(setup: Option[List[String]] = None, from: Option[Int] = None, to: Option[Int] = None)
+    case class MoveRequest(
+        setup: Option[List[String]] = None,
+        from: Option[Int] = None,
+        to: Option[Int] = None,
+        concede: Option[Boolean] = None
+    )
 
     /** The state the play page renders, and what a scripted client polls.
       *

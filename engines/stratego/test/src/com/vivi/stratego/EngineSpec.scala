@@ -281,6 +281,59 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(f.engine.move("m-1", bob, 61, 51), Left(Refusal.Invalid("this match is already over")))
     }
 
+    test("a player may concede when it is not their turn; the other side wins, and matchmaker is told") {
+        val f = deployed()
+        // Red's turn; Blue gives up.
+        assert(f.engine.concede("m-1", bob).isRight)
+
+        val m = f.m
+        assert(m.completed)
+        assertEquals(m.ending, Some(Ending.Conceded))
+        assertEquals(m.conceded, Some(Side.Blue))
+        assertEquals(m.winner, Some(Side.Red))
+        assert(!m.isDraw)
+        assertEquals(StrategoMatch.pending(m), Nil)
+        // Not a piece move: the count and the turn order are as they were.
+        assertEquals(m.moves, Nil)
+
+        val state = f.state(Some(alice))
+        assertEquals(state.phase, "over")
+        assertEquals(state.ending, Some("conceded"))
+        assertEquals(state.winner, Some("Red"))
+
+        val (url, results) = f.recorder.results.head
+        assertEquals(url, resultsUrl)
+        val byParticipant = results.results.map(r => r.participantId -> r).toMap
+        assert(byParticipant(11L).isWinner)
+        assert(!byParticipant(22L).isWinner)
+        assertEquals(byParticipant(22L).scores("ending").str, "conceded")
+        // Not the clock's forfeit, which is matchmaker's word for a turn that ran out.
+        assert(results.results.forall(!_.forfeit))
+        // The concession is the conceding player's last turn.
+        assertEquals(results.turns.get.map(_.participantId), List(11L, 22L, 22L))
+
+        assertEquals(f.engine.move("m-1", alice, 30, 40), Left(Refusal.Invalid("this match is already over")))
+        assertEquals(f.engine.concede("m-1", alice), Left(Refusal.Invalid("this match is already over")))
+    }
+
+    test("a player may concede during setup, before either army is down") {
+        val f = Fixture()
+        assert(f.engine.concede("m-1", alice).isRight)
+        assert(f.m.completed)
+        assertEquals(f.m.winner, Some(Side.Blue))
+        assertEquals(f.state(Some(bob)).phase, "over")
+        assertEquals(
+          f.engine.deploy("m-1", bob, names(setup(Side.Blue, Map.empty))),
+          Left(Refusal.Invalid("this match is already over"))
+        )
+    }
+
+    test("only a player in the match may concede it") {
+        val f = Fixture()
+        assert(f.engine.concede("m-1", "sub-mallory").isLeft)
+        assert(!f.m.completed)
+    }
+
     test("once the match is over every rank is shown, on the public board too") {
         val f = deployed(blueOnA7 = Rank.Flag, request = createRequest(isPublic = true))
         f.engine.move("m-1", alice, 30, 60)

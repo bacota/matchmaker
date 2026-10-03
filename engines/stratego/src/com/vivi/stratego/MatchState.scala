@@ -14,10 +14,12 @@ import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
 case class Seat(side: Side, cognitoId: String, participantId: Long, nickname: Option[String] = None) extends SeatLike
 
 /** One turn that was taken: a side's deployment when `step` is empty, a move of one piece otherwise — with the battle
-  * it caused, if it attacked.
+  * it caused, if it attacked — or, with `concession`, a side giving the match up.
   *
   * A setup is a turn like any other as far as matchmaker is concerned: it is what the player was pending on, and its
-  * time is charged to them.
+  * time is charged to them. So is a concession, which is the conceding player's last act in the match, and may be made
+  * whether or not it was their turn. `concession` defaults to false, so a match stored before there were any reads as
+  * it was written.
   */
 case class MoveRecord(
     participantId: Long,
@@ -25,9 +27,10 @@ case class MoveRecord(
     takenAt: Instant,
     startedAt: Instant,
     step: Option[Step] = None,
-    battle: Option[Battle] = None
+    battle: Option[Battle] = None,
+    concession: Boolean = false
 ) extends TurnLike {
-    def isSetup: Boolean = step.isEmpty
+    def isSetup: Boolean = step.isEmpty && !concession
 }
 
 /** How a finished match ended, as the scores and the page say it. */
@@ -36,6 +39,7 @@ enum Ending(val label: String) {
     case NoMoves extends Ending("no-moves")
     case MoveCap extends Ending("cap")
     case Forfeit extends Ending("forfeit")
+    case Conceded extends Ending("conceded")
 }
 
 /** A match in progress, and everything needed to answer for it or to call matchmaker back.
@@ -72,8 +76,11 @@ case class StrategoMatch(
     /** Both armies are on the board, and the setup phase is over. */
     def inPlay: Boolean = Side.values.forall(hasDeployed)
 
-    /** The piece moves, without the two setups. */
-    def moves: List[MoveRecord] = turns.filterNot(_.isSetup)
+    /** The piece moves, without the two setups or a concession. */
+    def moves: List[MoveRecord] = turns.filter(_.step.isDefined)
+
+    /** The side that gave the match up, if one did. */
+    def conceded: Option[Side] = turns.find(_.concession).map(_.side)
 
     /** Red moves first, and the sides alternate. */
     def toMove: Side = if (moves.size % 2 == 0) Side.Red else Side.Blue
@@ -90,11 +97,12 @@ case class StrategoMatch(
 
     /** Why the match is over, or `None` while it is not.
       *
-      * In order: the clock, which overrides the position; a flag taken; the side to move having nothing it may move;
-      * and the move cap.
+      * In order: the clock, which overrides the position; a concession, which may come at any point, setup included; a
+      * flag taken; the side to move having nothing it may move; and the move cap.
       */
     def ending: Option[Ending] =
         if (ranOut) Some(Ending.Forfeit)
+        else if (conceded.isDefined) Some(Ending.Conceded)
         else if (!inPlay) None
         else if (Side.values.exists(s => !board.hasFlag(s))) Some(Ending.FlagTaken)
         else if (stuck(toMove)) Some(Ending.NoMoves)
@@ -104,12 +112,13 @@ case class StrategoMatch(
     def isOver: Boolean = ending.isDefined
 
     /** Whoever took the flag, or whoever's opponent could not move — unless neither side could, which is a draw. In a
-      * match the clock ended, whoever did not run out.
+      * match the clock ended, whoever did not run out; in one conceded, whoever did not concede.
       */
     def winner: Option[Side] =
         ending match {
             case Some(Ending.Forfeit) =>
                 seats.find(s => clock.flatMap(_.outcomeOf(s.participantId)).contains(Outcome.Win)).map(_.side)
+            case Some(Ending.Conceded)                        => conceded.map(_.other)
             case Some(Ending.FlagTaken)                       => Side.values.find(board.hasFlag)
             case Some(Ending.NoMoves) if !stuck(toMove.other) => Some(toMove.other)
             case _                                            => None

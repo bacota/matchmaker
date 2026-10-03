@@ -125,6 +125,21 @@ object Html {
   .controls button.primary { background: var(--ink); color: var(--paper); }
   .controls button:disabled { opacity: .5; cursor: default; }
   .controls :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  /* Conceding: set apart from the turn's own controls, and asked twice, since it cannot be undone. */
+  #concede-bar { margin-top: 1.25rem; }
+  #concede-bar[hidden] { display: none; }
+  #concede, #concede-dialog button { font: inherit; font-size: 1rem; min-height: 44px; padding: 0 1rem; border-radius: 6px;
+                                     border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+                                     cursor: pointer; }
+  #concede { color: var(--error); border-color: currentColor; }
+  #concede-dialog { max-width: min(24rem, calc(100vw - 32px)); box-sizing: border-box; padding: 1.25rem;
+                    border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); }
+  #concede-dialog::backdrop { background: rgba(0, 0, 0, .35); }
+  #concede-dialog h2 { font-size: 1.125rem; margin: 0 0 .5rem; }
+  #concede-dialog p { margin: 0 0 1rem; }
+  #concede-dialog .actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
+  #concede-dialog .give-up { background: var(--error); border-color: var(--error); color: #fff; }
+  #concede:focus-visible, #concede-dialog :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   #lost { margin-top: 1rem; font-size: .875rem; }
   #lost p { margin: .25rem 0; }
   /* The key: a button beside the board that opens it over the page, so it is in reach mid-game. */
@@ -194,6 +209,18 @@ $icons
     <label>To<select id="move-to"></select></label>
     <button id="move" type="button" class="primary">Move</button>
   </div>
+  <div id="concede-bar" hidden>
+    <button type="button" id="concede" aria-haspopup="dialog">Concede</button>
+  </div>
+  <dialog id="concede-dialog" aria-labelledby="concede-title" aria-describedby="concede-text">
+    <h2 id="concede-title">Concede this match?</h2>
+    <p id="concede-text">Your opponent wins. This cannot be undone.</p>
+    <div class="actions">
+      <!-- First, so that it has the focus when the dialog opens: the safe answer is the default. -->
+      <button type="button" id="concede-cancel" autofocus>Keep playing</button>
+      <button type="button" id="concede-confirm" class="give-up">Concede</button>
+    </div>
+  </dialog>
   <div id="lost"></div>
   <!-- What a square's label already says to a screen reader, shown to a mouse or keyboard after a
        second's rest; so it is hidden from the accessibility tree rather than said twice. -->
@@ -668,6 +695,8 @@ ${TurnTimer.script}
   const moveFrom = document.getElementById("move-from"), moveTo = document.getElementById("move-to");
 
   function drawControls() {
+    // A seated player may give up at any point until the match is over, setup included.
+    document.getElementById("concede-bar").hidden = !(state && state.you && !state.completed);
     // Not while a move is out: it is shown made, so its piece is no longer where the controls
     // would offer it from, and it is the only move this turn has.
     const setup = deploying(), play = myTurn() && !pending;
@@ -713,6 +742,17 @@ ${TurnTimer.script}
     selected = null;
     render();
   });
+  /* Conceding asks first. In a dialog where the browser has one, or its plain confirm otherwise —
+   * old Safari — so that the question is always asked. */
+  const concedeDialog = document.getElementById("concede-dialog");
+  function concede() { submit({ concede: true }); }
+  document.getElementById("concede").addEventListener("click", () => {
+    if (typeof concedeDialog.showModal === "function") concedeDialog.showModal();
+    else if (window.confirm("Concede this match? Your opponent wins. This cannot be undone.")) concede();
+  });
+  document.getElementById("concede-cancel").addEventListener("click", () => concedeDialog.close());
+  document.getElementById("concede-confirm").addEventListener("click", () => { concedeDialog.close(); concede(); });
+
   document.getElementById("deploy").addEventListener("click", () => {
     selected = null;
     submit({ setup: draft });
@@ -740,6 +780,7 @@ ${TurnTimer.script}
   }
 
   function endingText() {
+    if (state.ending === "conceded") return other(state.winner) + " conceded — " + state.winner + " wins";
     if (state.ending === "flag") return state.winner + " captured the flag";
     if (state.ending === "no-moves")
       return state.draw ? "neither side can move — drawn" : other(state.winner) + " cannot move — " + state.winner + " wins";
@@ -939,6 +980,8 @@ ${TurnTimer.script}
     private def outcome(state: Protocol.StateResponse): String =
         if (state.clock.exists(_.timedOut.nonEmpty)) "time ran out"
         else if (state.draw) "drawn"
+        else if (state.ending.contains("conceded"))
+            state.winner.flatMap(Side.parse).map(w => s"${w.other} conceded — $w wins").getOrElse("over")
         else if (state.ending.contains("flag")) state.winner.map(w => s"$w captured the flag").getOrElse("over")
         else state.winner.map(w => s"$w wins").getOrElse("over")
 }
