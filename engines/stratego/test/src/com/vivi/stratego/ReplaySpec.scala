@@ -58,7 +58,7 @@ class ReplaySpec extends FunSuite with QuietTests {
 
         def state(viewer: Option[Side]): Protocol.StateResponse = engine.stateOf(m, viewer.flatMap(m.seatOf))
 
-        /** Over, so that nothing is hidden any more: the side to move gives it up, if it is not over already. */
+        /** Ends the match by concession if random play has not already ended it. */
         def finish(): Unit = if (!m.isOver) assert(engine.concede("m-1", who(m.toMove)).isRight)
     }
 
