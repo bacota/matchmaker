@@ -183,6 +183,55 @@ abstract class RoutesContract extends FunSuite {
         assert(watching.obj.get("you").forall(_.isNull), "nobody's seat is the public board's")
     }
 
+    /* The state routes tag what they send and answer an unchanged state with a bodiless 304 -- see
+     * `EngineRoutes.revalidated`. Here rather than in each game's spec because each game's state is
+     * its own serializer's: the tag is only as good as the state it is a digest of. */
+    private def state(routes: EngineRequest => EngineResponse, player: String, held: Option[String] = None) =
+        routes(
+          EngineRequest(
+            "GET",
+            "/matches/m-9/state",
+            as(player),
+            headers = held.map(tag => Map("if-none-match" -> tag)).getOrElse(Map.empty)
+          )
+        )
+
+    test("a state is tagged, and asked for again with its tag is a bodiless 304 until a move changes it") {
+        val (routes, _) = fixture()
+        val first = state(routes, "sub-alice")
+        assertEquals(first.status, 200)
+        val tag = first.headers("etag")
+        assertEquals(first.headers("cache-control"), "private, no-cache")
+
+        val again = state(routes, "sub-alice", Some(tag))
+        assertEquals(again.status, 304)
+        assertEquals(again.body, "")
+        assertEquals(again.headers("etag"), tag)
+
+        assertEquals(moving(routes, "sub-alice").status, 200)
+        val moved = state(routes, "sub-alice", Some(tag))
+        assertEquals(moved.status, 200)
+        assertNotEquals(moved.headers("etag"), tag)
+    }
+
+    // The tag is of the body, and each player's body names their own seat: one player's tag is
+    // never the other's, so a browser holding one player's copy is never told it may show it to the other.
+    test("one player's tag does not answer for the other's state") {
+        val (routes, _) = fixture()
+        val alices = state(routes, "sub-alice").headers("etag")
+        assertEquals(state(routes, "sub-bob", Some(alices)).status, 200)
+    }
+
+    test("the public board's state is tagged and revalidated the same way") {
+        val (routes, _) = fixture()
+        val board = get(routes, "/matches/m-9/board/state")
+        assertEquals(board.status, 200)
+        val again = routes(
+          EngineRequest("GET", "/matches/m-9/board/state", headers = Map("if-none-match" -> board.headers("etag")))
+        )
+        assertEquals(again.status, 304)
+    }
+
     test("a private match has no public board") {
         val (routes, _) = fixture(isPublic = false)
         assertEquals(get(routes, "/matches/m-9/board").status, 403)
