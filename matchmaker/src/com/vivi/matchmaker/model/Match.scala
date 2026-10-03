@@ -47,7 +47,9 @@ case class Match(
     /** Whether this match is played live — see `Challenge.live`, which it is copied from. A live match's seats are
       * never pending here and never due: the engine runs its turns and their clock, and reports only the result.
       */
-    live: Boolean = false
+    live: Boolean = false,
+    /** Whether this is a friendly match (V36). Every match is, unless it is classified otherwise. */
+    friendly: Boolean = true
 ) {
 
     /** Whether the match was played to an end. */

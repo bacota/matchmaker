@@ -96,6 +96,7 @@ object Generators {
             cancelled <- Gen.oneOf(true, false)
             timeLimitKind <- Gen.oneOf(TimeLimitKind.values.toSeq)
             timeLimitUnit <- Gen.oneOf(TimeLimitUnit.values.toSeq)
+            friendly <- Gen.oneOf(true, false)
         } yield Match(
           gameId,
           matchId,
@@ -111,7 +112,8 @@ object Generators {
           playUrl,
           publicUrl,
           timeLimitKind,
-          timeLimitUnit
+          timeLimitUnit,
+          friendly = friendly
         )
 
     def genParticipant(

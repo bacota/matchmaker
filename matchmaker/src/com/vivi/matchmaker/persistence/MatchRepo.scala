@@ -39,13 +39,16 @@ class MatchRepo(session: Session[IO]) {
           Option[String],
           TimeLimitKind,
           TimeLimitUnit,
+          Boolean,
           Boolean
       )
     ] =
         sql"""INSERT INTO match (game_id, match_id, challenge_id, description, completed, cancelled, start, time_limit,
-                             settings, public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live)
+                             settings, public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live,
+                             friendly)
           VALUES ($gameId, $matchId, $challengeId, $text, ${instant.opt}, $bool, $instant, ${float8.opt} * INTERVAL '1 second',
-                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt}, $timeLimitKind, $timeLimitUnit, $bool)""".command
+                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt}, $timeLimitKind, $timeLimitUnit, $bool,
+                  $bool)""".command
 
     private type MatchRow =
         (
@@ -62,17 +65,18 @@ class MatchRepo(session: Session[IO]) {
             Option[String],
             TimeLimitKind,
             TimeLimitUnit,
+            Boolean,
             Boolean
         )
 
     private val matchRow: Codec[MatchRow] =
         challengeId *: text *: instant.opt *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *:
-            text.opt *: timeLimitKind *: timeLimitUnit *: bool
+            text.opt *: timeLimitKind *: timeLimitUnit *: bool *: bool
 
     private val selectMatch: Query[(GameId, MatchId), MatchRow] =
         sql"""SELECT challenge_id, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
-                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live
+                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId"""
             .query(matchRow)
@@ -83,7 +87,7 @@ class MatchRepo(session: Session[IO]) {
     private val selectMatchForUpdate: Query[(GameId, MatchId), MatchRow] =
         sql"""SELECT challenge_id, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
-                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live
+                 public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
             .query(matchRow)
@@ -104,6 +108,7 @@ class MatchRepo(session: Session[IO]) {
           Option[String],
           TimeLimitKind,
           TimeLimitUnit,
+          Boolean,
           GameId,
           MatchId
       )
@@ -111,7 +116,7 @@ class MatchRepo(session: Session[IO]) {
         sql"""UPDATE match SET description = $text, completed = ${instant.opt}, cancelled = $bool, start = $instant,
           time_limit = ${float8.opt} * INTERVAL '1 second', settings = $settings,
           public = $bool, status_url = ${text.opt}, play_url = ${text.opt}, public_url = ${text.opt},
-          time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit
+          time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit, friendly = $bool
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
     def create(m: Match): IO[Match] =
@@ -133,7 +138,8 @@ class MatchRepo(session: Session[IO]) {
                 m.publicUrl,
                 m.timeLimitKind,
                 m.timeLimitUnit,
-                m.live
+                m.live,
+                m.friendly
               )
             )
             .as(m)
@@ -153,7 +159,8 @@ class MatchRepo(session: Session[IO]) {
           publicUrl,
           timeLimitKind,
           timeLimitUnit,
-          live
+          live,
+          friendly
         ) = row
         Match(
           gameId,
@@ -171,7 +178,8 @@ class MatchRepo(session: Session[IO]) {
           publicUrl,
           timeLimitKind,
           timeLimitUnit,
-          live
+          live,
+          friendly
         )
     }
 
@@ -198,6 +206,7 @@ class MatchRepo(session: Session[IO]) {
                 m.publicUrl,
                 m.timeLimitKind,
                 m.timeLimitUnit,
+                m.friendly,
                 m.gameId,
                 m.matchId
               )
