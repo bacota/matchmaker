@@ -225,6 +225,10 @@ module "tictactoe" {
   # The same secret the api module above is given, which is what makes the pair a pair.
   matchmaker_api_key = random_password.tictactoe_api_key[0].result
 
+  # Where the engine archives a finished match through, and reads it back from once its live
+  # copy is gone (ArchivingMatchStore). Without it the engine archives nothing.
+  matchmaker_url = module.api.api_endpoint
+
   # The players sign in to matchmaker's user pool, so that a seat can be recognised by the same
   # `sub` matchmaker sent the engine as the player's cognitoId. Referencing the api module here
   # and the engine's callback url there is not a cycle: the callback url comes from the engine's
@@ -263,6 +267,10 @@ module "rps" {
   lambda_jar_path = var.rps_jar_path
 
   matchmaker_api_key = random_password.rps_api_key[0].result
+
+  # Where the engine archives a finished match through, and reads it back from once its live
+  # copy is gone (ArchivingMatchStore). Without it the engine archives nothing.
+  matchmaker_url = module.api.api_endpoint
 
   cognito_issuer    = module.api.jwt_issuer
   cognito_client_id = module.api.user_pool_client_id
@@ -339,6 +347,10 @@ module "stratego" {
   lambda_jar_path = var.stratego_jar_path
 
   matchmaker_api_key = random_password.stratego_api_key[0].result
+
+  # Where the engine archives a finished match through, and reads it back from once its live
+  # copy is gone (ArchivingMatchStore). Without it the engine archives nothing.
+  matchmaker_url = module.api.api_endpoint
 
   cognito_issuer    = module.api.jwt_issuer
   cognito_client_id = module.api.user_pool_client_id
