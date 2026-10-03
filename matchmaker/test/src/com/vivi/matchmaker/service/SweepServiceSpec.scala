@@ -165,6 +165,18 @@ class SweepServiceSpec extends FunSuite {
         assertEquals(run(sweepOf(services, engine, game).run()).released, 0)
     }
 
+    test("a cancel the engine does not acknowledge is reported as still owed, and not as released") {
+        val engine = new Engine() {
+            override def cancel(url: String, key: Option[String]): IO[Unit] =
+                IO.raiseError(new IllegalStateException("engine is down"))
+        }
+        val services = TestServices.servicesWith(engine, archiveStore = store)
+        val (game, matchId) = run(matchOf(services, None, cancelled = true))
+
+        val report = run(sweepOf(services, engine, game).run())
+        assertEquals((report.released, report.stillUnreleased), (0, List(matchId)))
+    }
+
     test("a run whose deadline has passed starts on nothing, and leaves every match owed to the next") {
         val engine = Engine(archiveOnStatus = false)
         val services = TestServices.servicesWith(engine, archiveStore = store)

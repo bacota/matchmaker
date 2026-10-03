@@ -7,9 +7,11 @@ import com.vivi.matchmaker.engine.GameEngineClient
 import com.vivi.matchmaker.model.{GameId, MatchId}
 import com.vivi.matchmaker.persistence.{ArchiveRepo, GameApiKeyRepo}
 
-/** What one run of the sweep did. `stillUnarchived` and `stillUnreleased` are the matches it asked about and that are
-  * still owed afterwards — the ones worth a look, if they keep turning up. `deferred` is how many owed matches it did
-  * not reach before its deadline, which the next run starts with.
+/** What one run of the sweep did. `prompted` is how many engines it asked to archive a match, and `released` how many
+  * cancels an engine acknowledged — not how many it tried, since a failed one is swallowed and logged.
+  * `stillUnarchived` and `stillUnreleased` are the matches it asked about and that are still owed afterwards — the ones
+  * worth a look, if they keep turning up. `deferred` is how many owed matches it did not reach before its deadline,
+  * which the next run starts with.
   */
 case class SweepReport(
     prompted: Int,
@@ -61,7 +63,7 @@ class SweepService(
         } yield SweepReport(
           prompted.asked,
           prompted.still,
-          released.asked,
+          released.asked - released.still.size,
           released.still,
           prompted.left + released.left
         )
