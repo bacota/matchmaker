@@ -120,6 +120,7 @@ A deploy never creates a game, and `register-game.sql` is for the local database
 any other. The deploy scripts print the urls; the form wants:
 
 - **Name**: Stratego
+- **Display name**: Capture the Flag — what players see. "Stratego" is a trademark, so it is not shown.
 - **Game engine url**: the `stratego_create_game_url` output
 - **Engine identity**: `stratego` — the name matchmaker files this engine's API key under, and so
   how it tells which engine a callback came from. A game naming anything else has its callbacks

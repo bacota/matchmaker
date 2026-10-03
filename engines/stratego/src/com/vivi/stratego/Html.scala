@@ -51,7 +51,7 @@ object Html {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>stratego · ${escape(matchId)}</title>
+<title>capture the flag · ${escape(matchId)}</title>
 <style>
   /* --error is 6.3:1 on the light page and 7.8:1 on the dark one; crimson, which it replaces, was 3.6:1
      in dark mode, under the 4.5:1 normal text needs. */
@@ -73,6 +73,11 @@ object Html {
   #board button.Red { background: var(--red); color: #fff; }
   #board button.Blue { background: var(--blue); color: #fff; }
   #board button.lake { background: var(--water); }
+  /* A piece's icon, and its number tucked into the corner — the number is what decides a fight, so it stays. */
+  .icon { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #board .icon { position: absolute; left: 24%; top: 26%; width: 56%; height: 56%; pointer-events: none; }
+  #board .icon.alone { left: 18%; top: 18%; width: 64%; height: 64%; }
+  #board .number { position: absolute; top: 2px; left: 3px; font-size: clamp(.6rem, 2.4vw, .8rem); }
   #board button[aria-disabled="false"] { cursor: pointer; }
   #board button.last { box-shadow: inset 0 0 0 2px var(--mark); }
   #board button.target { box-shadow: inset 0 0 0 4px var(--mark); }
@@ -82,7 +87,8 @@ object Html {
   #board button.moved::after { content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px;
                                border-radius: 50%; background: currentColor; opacity: .8; }
   /* One of your own pieces whose rank the other side has seen. */
-  #board button.known { text-decoration: underline; text-underline-offset: 2px; }
+  #board button.known::before { content: ""; position: absolute; left: 25%; right: 25%; bottom: 2px; height: 2px;
+                                background: currentColor; }
   #news { min-height: 1.5rem; margin: .75rem 0 0; }
   .controls { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; align-items: end; margin-top: 1rem; }
   /* Without this the display above would override `hidden`, and both sets of controls would always show. */
@@ -100,7 +106,8 @@ object Html {
   details { margin-top: 1rem; font-size: .875rem; text-align: left; display: inline-block; }
   summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
   details dl { display: grid; grid-template-columns: auto 1fr; gap: .125rem .75rem; margin: .25rem 0 0; }
-  details dt { font: 700 1rem ui-monospace, monospace; text-align: center; }
+  details dt { font: 700 1rem ui-monospace, monospace; display: flex; align-items: center; justify-content: end; gap: .25rem; }
+  details dt .icon { width: 1.25rem; height: 1.25rem; }
   details dd { margin: 0; }
 ${SignIn.css}
 ${PlayLive.css}
@@ -111,8 +118,9 @@ ${TurnTimer.css}
 </style>
 </head>
 <body>
+$icons
 <main>
-  <h1>stratego</h1>
+  <h1>capture the flag</h1>
   <!-- Announced: the other player's move, and the result, arrive while this page is idle. -->
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   ${TurnTimer.markup}
@@ -135,12 +143,24 @@ ${TurnTimer.css}
   <details>
     <summary>Key</summary>
     <dl>
-      <dt>10</dt><dd>Marshal</dd><dt>9</dt><dd>General</dd><dt>8</dt><dd>Colonel</dd><dt>7</dt><dd>Major</dd>
-      <dt>6</dt><dd>Captain</dd><dt>5</dt><dd>Lieutenant</dd><dt>4</dt><dd>Sergeant</dd>
-      <dt>3</dt><dd>Miner — the only piece that survives attacking a bomb</dd>
-      <dt>2</dt><dd>Scout — runs any distance in a straight line</dd>
-      <dt>S</dt><dd>Spy — takes the Marshal, if it attacks first</dd>
-      <dt>B</dt><dd>Bomb — never moves</dd><dt>F</dt><dd>Flag — take it to win</dd>
+      ${keyEntry("Marshal", "10", "Marshal")}${keyEntry("General", "9", "General")}${keyEntry(
+              "Colonel",
+              "8",
+              "Colonel"
+            )}
+      ${keyEntry("Major", "7", "Major")}${keyEntry("Captain", "6", "Captain")}${keyEntry(
+              "Lieutenant",
+              "5",
+              "Lieutenant"
+            )}
+      ${keyEntry("Sergeant", "4", "Sergeant")}${keyEntry(
+              "Miner",
+              "3",
+              "Miner — the only piece that survives attacking a bomb"
+            )}
+      ${keyEntry("Scout", "2", "Scout — runs any distance in a straight line")}
+      ${keyEntry("Spy", "", "Spy — takes the Marshal, if it attacks first")}
+      ${keyEntry("Bomb", "", "Bomb — never moves")}${keyEntry("Flag", "", "Flag — take it to win")}
       <dt>?</dt><dd>an enemy piece you have not seen; a dot means it has moved</dd>
     </dl>
   </details>
@@ -211,8 +231,9 @@ ${TurnTimer.script}
 
   // ---- the board --------------------------------------------------------------------------
 
-  const SHORT = { Marshal: "10", General: "9", Colonel: "8", Major: "7", Captain: "6", Lieutenant: "5",
-                  Sergeant: "4", Miner: "3", Scout: "2", Spy: "S", Bomb: "B", Flag: "F" };
+  // The number a rank fights at; the spy, the bomb and the flag are drawn by their icon alone.
+  const NUMBER = { Marshal: "10", General: "9", Colonel: "8", Major: "7", Captain: "6", Lieutenant: "5",
+                   Sergeant: "4", Miner: "3", Scout: "2", Spy: "", Bomb: "", Flag: "" };
   const ARMY = [["Flag", 1], ["Spy", 1], ["Scout", 8], ["Miner", 5], ["Sergeant", 4], ["Lieutenant", 4],
                 ["Captain", 4], ["Major", 3], ["Colonel", 2], ["General", 1], ["Marshal", 1], ["Bomb", 6]];
   const LAKES = [42, 43, 46, 47, 52, 53, 56, 57];
@@ -322,7 +343,10 @@ ${TurnTimer.script}
     let focusable = false;
     for (let d = 0; d < 100; d++) {
       const sq = squareAt(d), p = by[sq], b = squares[d];
-      b.textContent = LAKES.includes(sq) || !p ? "" : p.rank ? SHORT[p.rank] : "?";
+      if (LAKES.includes(sq) || !p) b.textContent = "";
+      else if (!p.rank) b.textContent = "?";
+      else b.innerHTML = '<svg class="icon' + (NUMBER[p.rank] ? "" : " alone") + '" aria-hidden="true" focusable="false">' +
+        '<use href="#rank-' + p.rank + '"/></svg>' + (NUMBER[p.rank] ? '<span class="number">' + NUMBER[p.rank] + "</span>" : "");
       b.className = LAKES.includes(sq) ? "lake" : p ? p.side : "";
       b.classList.toggle("moved", !!(p && p.moved && !p.rank));
       b.classList.toggle("known", !!(p && p.rank && p.revealed && state && p.side === state.you));
@@ -561,6 +585,34 @@ ${TurnTimer.script}
 </html>
 """
     }
+
+    /** One icon per rank, drawn for this page: plain symbols, not any published edition's artwork, which is
+      * copyrighted. Each is a 24-unit square in `currentColor`, so it takes the white of a coloured piece, and is
+      * placed on a square with `<use href="#rank-Marshal">`. They are decoration — a square's label names its rank in
+      * words.
+      */
+    /** A line of the key: the icon and number a rank is drawn with, and what it is. */
+    private def keyEntry(rank: String, number: String, meaning: String): String =
+        s"""<dt>${iconOf(rank)}$number</dt><dd>$meaning</dd>"""
+
+    private def iconOf(rank: String): String =
+        s"""<svg class="icon" aria-hidden="true" focusable="false"><use href="#rank-$rank"/></svg>"""
+
+    private val icons: String =
+        """<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+  <symbol id="rank-Marshal" viewBox="0 0 24 24"><path fill="currentColor" d="M3 17 2 6.5l5.5 4L12 3.5l4.5 7 5.5-4L21 17z"/><path d="M3 20.5h18"/></symbol>
+  <symbol id="rank-General" viewBox="0 0 24 24"><path fill="currentColor" d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5-5.9-3.1-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z"/></symbol>
+  <symbol id="rank-Colonel" viewBox="0 0 24 24"><path fill="currentColor" d="m12 2.5 8 3v6.5c0 5-3.5 8.2-8 9.5-4.5-1.3-8-4.5-8-9.5V5.5z"/></symbol>
+  <symbol id="rank-Major" viewBox="0 0 24 24"><path d="M4 4l13 13M20 4 7 17M14 19.5l5.5-5.5M10 19.5 4.5 14M17 17l3 3M7 17l-3 3"/></symbol>
+  <symbol id="rank-Captain" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="rank-Lieutenant" viewBox="0 0 24 24"><rect x="10" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="rank-Sergeant" viewBox="0 0 24 24"><path d="m5 8.5 7-4.5 7 4.5M5 13.5 12 9l7 4.5M5 18.5l7-4.5 7 4.5"/></symbol>
+  <symbol id="rank-Miner" viewBox="0 0 24 24"><g transform="rotate(-35 12 12)"><path d="M3 9.5c5-5 13-5 18 0"/><path d="M12 6v15.5"/></g></symbol>
+  <symbol id="rank-Scout" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.75" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="rank-Spy" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" stroke="none" d="M2 9c0-1.5 1-2 2.5-2C8 7 10 9 12 9s4-2 7.5-2C21 7 22 7.5 22 9c0 4-2 7.5-5 7.5-2.5 0-3.5-2.5-5-2.5s-2.5 2.5-5 2.5c-3 0-5-3.5-5-7.5zM4.5 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0zM14 10.5a2.75 1.75 0 1 0 5.5 0 2.75 1.75 0 1 0-5.5 0z"/></symbol>
+  <symbol id="rank-Bomb" viewBox="0 0 24 24"><circle cx="10" cy="14" r="7" fill="currentColor" stroke="none"/><path d="m14.5 9.5 3-3M20 2v2M23 5h-2M22 3l-1.5 1.5"/></symbol>
+  <symbol id="rank-Flag" viewBox="0 0 24 24"><path d="M6 21.5V3"/><path fill="currentColor" d="M6 4h12l-3 4 3 4H6z"/></symbol>
+</defs></svg>"""
 
     private def outcome(state: Protocol.StateResponse): String =
         if (state.clock.exists(_.timedOut.nonEmpty)) "time ran out"

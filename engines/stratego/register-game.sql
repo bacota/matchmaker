@@ -35,8 +35,8 @@ WITH game AS (
     'P',
     'Stratego',
     -- What players see; an admin may change it later. The name above is how this script, and
-    -- anything else, finds the game again, so that stays as it is.
-    'Stratego',
+    -- anything else, finds the game again, so that stays as it is. Not "Stratego", which is a trademark.
+    'Capture the Flag',
     'Two armies of forty, ranks hidden from the other side. Deploy, then capture the enemy flag.',
     :'url',
     true,
