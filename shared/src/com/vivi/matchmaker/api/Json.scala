@@ -100,6 +100,7 @@ object Json {
     given ReadWriter[PendingAcceptance] = macroRW
 
     given ReadWriter[PlayerClock] = macroRW
+    given ReadWriter[MatchParameter] = macroRW
     given ReadWriter[MatchSummary] = macroRW
     given ReadWriter[Match] = macroRW
 

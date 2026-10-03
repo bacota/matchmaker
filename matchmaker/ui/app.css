@@ -316,6 +316,14 @@ ul {
   font-size: 0.9rem;
 }
 
+/* A match's parameter values, one per line under the lines that name it: a list for a screen
+   reader, but set like the .detail lines around it. */
+.parameters {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
 .due {
   color: var(--accent);
   font-size: 0.85rem;

@@ -88,7 +88,7 @@ simultaneous rounds:
   starts the next round's clocks at `takenAt`. Matchmaker clears the mover before applying `next`,
   so this works.
 - The plan that **ends the bout** names nobody, and the results follow. Each corner's `scores`
-  contains `outcome`, `method` (`knockout`/`points`), `rounds`, `scheduledRounds`, `points`,
+  contains `outcome`, `method` (`knockout`/`points`), `rounds` (fought), `points`,
   `knockdowns` and `corner`. The winner is rank 1 and the loser rank 2. A draw is rank 1 for both.
 
 Every move callback also carries `state`: the plan's number (how many plans the bout holds) and

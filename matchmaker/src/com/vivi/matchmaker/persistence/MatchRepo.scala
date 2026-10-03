@@ -8,7 +8,7 @@ import natchez.Trace.Implicits.noop
 import skunk.data.Arr
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
-import MatchRepo.{MatchClockRow, MatchSeatRow}
+import MatchRepo.{GameParameterRow, MatchClockRow, MatchSeatRow}
 
 class MatchRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
@@ -293,7 +293,7 @@ class MatchRepo(session: Session[IO]) {
     private val seatRow =
         gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: float8.opt *: timeLimitKind *:
             timeLimitUnit *: bool *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt *:
-            text.opt *: bool *: instant.opt *: bool
+            text.opt *: bool *: instant.opt *: bool *: settings
 
     private def toSeatRow(
         row: (
@@ -320,7 +320,8 @@ class MatchRepo(session: Session[IO]) {
             Option[String],
             Boolean,
             Option[Instant],
-            Boolean
+            Boolean,
+            String
         )
     ): MatchSeatRow = {
         val (
@@ -347,7 +348,8 @@ class MatchRepo(session: Session[IO]) {
           publicUrl,
           friendly,
           archivedAt,
-          archiveExpired
+          archiveExpired,
+          matchSettings
         ) = row
         MatchSeatRow(
           gameId,
@@ -373,7 +375,8 @@ class MatchRepo(session: Session[IO]) {
           publicUrl,
           friendly,
           archivedAt,
-          archiveExpired
+          archiveExpired,
+          matchSettings
         )
     }
 
@@ -391,7 +394,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL
+                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -429,7 +432,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL
+                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -468,7 +471,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL
+                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -502,7 +505,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL
+                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -525,7 +528,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL
+                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -587,6 +590,37 @@ class MatchRepo(session: Session[IO]) {
           GROUP BY p.game_id, p.match_id, p.participant_id, pl.nickname, p.due, m.time_limit
           ORDER BY p.participant_id"""
             .query(gameId *: matchId *: text *: float8 *: instant.opt)
+
+    /* The parameters of the games a list of matches is in, each with the values it may take, in the
+     * order each game defines them -- which is the order they are shown in. One query for the whole
+     * list, as with the clocks above, not one per match or per game.
+     *
+     * Read plainly: this is a listing, which writes nothing. */
+    private def selectParametersForGames(
+        n: Int
+    ): Query[List[GameId], (GameId, String, String, Option[String], Arr[String])] =
+        sql"""SELECT gp.game_id, gp.name, gp.display_name, gp.default_value,
+                 coalesce(array_agg(v.value ORDER BY v.value) FILTER (WHERE v.value IS NOT NULL), '{}')
+          FROM game_parameter gp
+          LEFT JOIN game_parameter_value v
+            ON v.game_id = gp.game_id AND v.game_parameter_id = gp.game_parameter_id
+          WHERE gp.game_id IN (${gameId.list(n)})
+          GROUP BY gp.game_id, gp.game_parameter_id
+          ORDER BY gp.game_id, gp.game_parameter_id""".query(gameId *: text *: text *: text.opt *: _text)
+
+    /** The parameters of each of these games, in the order each game defines them. */
+    def parametersForGames(gameIds: Set[GameId]): IO[List[GameParameterRow]] =
+        if (gameIds.isEmpty) IO.pure(Nil)
+        else {
+            val ids = gameIds.toList
+            session
+                .execute(selectParametersForGames(ids.size))(ids)
+                .map(
+                  _.map((game, name, displayName, defaultValue, values) =>
+                      GameParameterRow(game, name, displayName, defaultValue, values.flattenTo(List))
+                  )
+                )
+        }
 
     /* A game's matches for its admins: the ones still being played first, then the rest, most
      * recently started first within each. Who is playing comes as one array per match, so a match
@@ -676,7 +710,19 @@ object MatchRepo {
         friendly: Boolean,
         // The match's archive (V38): when it was confirmed, and whether a friendly one has expired.
         archivedAt: Option[Instant] = None,
-        archiveExpired: Boolean = false
+        archiveExpired: Boolean = false,
+        // The match's settings, which hold the challenger's choice for each of the game's
+        // parameters (see `ChallengeSettings`); likewise the match's.
+        settings: String = "{}"
+    )
+
+    /** One of a game's parameters, with every value it may take: what a match's settings are resolved against. */
+    case class GameParameterRow(
+        gameId: GameId,
+        name: String,
+        displayName: String,
+        defaultValue: Option[String],
+        values: List[String]
     )
 
     /** What one seat has left of a chess-clock budget. */

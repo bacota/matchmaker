@@ -8,6 +8,7 @@ import com.vivi.matchmaker.model.{
     GameMatch,
     Match,
     MatchId,
+    MatchParameter,
     MatchSummary,
     ParticipantResult,
     PlayerClock,
@@ -16,6 +17,7 @@ import com.vivi.matchmaker.model.{
 }
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.engine.GameEngineClient
+import com.vivi.matchmaker.util.ChallengeSettings
 import com.vivi.matchmaker.persistence.{
     ArchiveRepo,
     GameAdminRepo,
@@ -45,14 +47,14 @@ class MatchService(
 
     /** Matches in which it is the caller's turn. */
     def due(callerExternalId: String): IO[List[MatchSummary]] =
-        forCaller(callerExternalId)((repo, playerId) => repo.listDueForPlayer(playerId).map(summarise))
+        forCaller(callerExternalId)((repo, playerId) => repo.listDueForPlayer(playerId).flatMap(summarised(repo, _)))
 
     /** Matches the caller is in that are still being played, each with what every seat has left of a chess clock where
       * the match is played under one.
       */
     def active(callerExternalId: String): IO[List[MatchSummary]] =
         forCaller(callerExternalId) { (repo, playerId) =>
-            repo.listForPlayer(playerId, over = false).map(summarise).flatMap { summaries =>
+            repo.listForPlayer(playerId, over = false).flatMap(summarised(repo, _)).flatMap { summaries =>
                 // Asked for at all only when one of these matches is played under a chess clock, which
                 // most are not.
                 if (summaries.exists(s => s.timeLimit.isDefined && s.timeLimitKind == TimeLimitKind.Total))
@@ -67,7 +69,9 @@ class MatchService(
       * on the result rows instead.
       */
     def completed(callerExternalId: String): IO[List[MatchSummary]] =
-        forCaller(callerExternalId)((repo, playerId) => repo.listForPlayer(playerId, over = true).map(summarise))
+        forCaller(callerExternalId)((repo, playerId) =>
+            repo.listForPlayer(playerId, over = true).flatMap(summarised(repo, _))
+        )
             .flatMap(viewed)
 
     /** The matches another player has marked public, either still running or finished.
@@ -88,8 +92,10 @@ class MatchService(
             .use { session =>
                 for {
                     _ <- resolveCaller(session, callerExternalId)
-                    rows <- new MatchRepo(session).listPublicForPlayer(playerId, over)
-                } yield summarise(rows)
+                    repo = new MatchRepo(session)
+                    rows <- repo.listPublicForPlayer(playerId, over)
+                    summaries <- summarised(repo, rows)
+                } yield summaries
             }
             .flatMap(viewed)
 
@@ -103,6 +109,31 @@ class MatchService(
         archives
             .fold(IO.pure(summaries))(_.settle(summaries))
             .map(_.map(ArchiveService.forViewer))
+
+    /** The summaries of these rows, each with the parameter values its match is played under.
+      *
+      * The values are resolved here, as `GameEngineService` resolved them for the engine: the challenger's choice where
+      * the game still allows it, the default otherwise. Every parameter is listed, chosen or not — a match played at
+      * the default is played under that value just the same, and "12 rounds" is what a player wants to see either way.
+      */
+    private def summarised(repo: MatchRepo, rows: List[MatchRepo.MatchSeatRow]): IO[List[MatchSummary]] =
+        repo.parametersForGames(rows.map(_.gameId).toSet).map { parameters =>
+            val byGame = parameters.groupBy(_.gameId)
+            val settingsOf = rows.map(row => (row.gameId, row.matchId) -> row.settings).toMap
+            summarise(rows).map { summary =>
+                val ofGame = byGame.getOrElse(summary.gameId, Nil)
+                val resolved = ChallengeSettings.resolve(
+                  defaults = ofGame.map(p => p.name -> p.defaultValue.getOrElse("")).toMap,
+                  allowed = ofGame.map(p => p.name -> p.values).toMap,
+                  settings = settingsOf.getOrElse((summary.gameId, summary.matchId), "{}")
+                )
+                summary.copy(parameters =
+                    ofGame
+                        .map(p => MatchParameter(p.displayName, resolved.getOrElse(p.name, "")))
+                        .filter(_.value.nonEmpty)
+                )
+            }
+        }
 
     /** Folds one row per seat into one summary per match.
       *

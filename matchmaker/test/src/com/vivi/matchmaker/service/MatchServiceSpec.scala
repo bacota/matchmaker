@@ -62,7 +62,8 @@ class MatchServiceSpec extends PropertySuite {
     private def setup(
         session: skunk.Session[IO],
         nickname: String,
-        externalId: String
+        externalId: String,
+        parameters: Seq[GameParameter[String]] = Seq.empty
     ): IO[(Player, Game, Character[String])] =
         for {
             player <- registrationService.register(nickname, externalId)
@@ -77,7 +78,7 @@ class MatchServiceSpec extends PropertySuite {
                 active = true,
                 // One role, because every participant names one.
                 Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false, displayName = "only")),
-                Seq.empty,
+                parameters,
                 genUniqueString.sample.get
               )
             )
@@ -108,7 +109,9 @@ class MatchServiceSpec extends PropertySuite {
         /* Whether this player's own seat is finished, which is normally whether the match is -- but
          * not always: a player can be out of a match that is still being played, and the lists on
          * their page split on the seat. */
-        seatCompleted: Option[Boolean] = None
+        seatCompleted: Option[Boolean] = None,
+        /* The challenger's parameter choices, carried by the challenge and the match alike. */
+        settings: String = "{}"
     ): IO[MatchId] =
         for {
             // The match's creator is its challenge's challenger, and a match cannot exist without a
@@ -121,7 +124,7 @@ class MatchServiceSpec extends PropertySuite {
                 "challenge",
                 None,
                 None,
-                "{}",
+                settings,
                 game.gameId,
                 Some(character.characterId),
                 isPublic = false,
@@ -138,7 +141,7 @@ class MatchServiceSpec extends PropertySuite {
                 completedAt,
                 Instant.ofEpochSecond(1000),
                 None,
-                "{}",
+                settings,
                 isPublic = isPublic,
                 publicUrl = publicUrl
               )
@@ -229,6 +232,59 @@ class MatchServiceSpec extends PropertySuite {
                         running.forall(s => s.pending && s.isCreator)
                 }
                 result.timeout(15.seconds).unsafeRunSync()
+        }
+    }
+
+    /* A game's parameters as a match is played under them: what the challenger chose where they
+     * chose, the default where they did not, and a choice the game no longer allows read as the
+     * default -- what the engine is told at a start. Shown by display name, in the game's order. */
+    property("a summary lists each of the game's parameters with the value its match is played under") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, runningId, finishedId) =>
+                def parameter(name: String, displayName: String, default: String, values: String*) =
+                    GameParameter(
+                      GameId.unassigned,
+                      GameParameterId(0),
+                      name,
+                      Some(default),
+                      values.map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v)),
+                      displayName
+                    )
+                val parameters = Seq(
+                  parameter("rounds", "Rounds", "3", "3", "6", "12"),
+                  parameter("venue", "Venue", "hall", "hall", "park")
+                )
+                val result = TestSession.resource.use { session =>
+                    for {
+                        prepared <- setup(session, nickname, externalId, parameters)
+                        (player, game, character) = prepared
+                        _ <- addMatch(
+                          session,
+                          player,
+                          game,
+                          character,
+                          runningId,
+                          None,
+                          pending = true,
+                          settings = """{"rounds":"12"}"""
+                        )
+                        _ <- addMatch(
+                          session,
+                          player,
+                          game,
+                          character,
+                          finishedId,
+                          Some(Instant.ofEpochSecond(5000)),
+                          pending = false,
+                          settings = """{"rounds":"6","venue":"moon"}"""
+                        )
+                        running <- matchService.active(externalId)
+                        over <- matchService.completed(externalId)
+                    } yield (running.map(_.parameters), over.map(_.parameters))
+                }
+                val (running, over) = result.timeout(15.seconds).unsafeRunSync()
+                (running ?= List(Seq(MatchParameter("Rounds", "12"), MatchParameter("Venue", "hall")))) &&
+                (over ?= List(Seq(MatchParameter("Rounds", "6"), MatchParameter("Venue", "hall"))))
         }
     }
 

@@ -241,6 +241,9 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(red.scores("method").str, "points")
         assertEquals(red.scores("points").num, 30.0)
         assertEquals(blue.scores("points").num, 27.0)
+        // The scheduled length is the game's `rounds` parameter, which matchmaker lists under the
+        // match itself; the result says only how many were fought.
+        assert(results.results.forall(!_.scores.contains("scheduledRounds")))
         // The last plan ends the bout, so it names nobody next.
         assertEquals(recorder.moves.last._2.next, Nil)
 

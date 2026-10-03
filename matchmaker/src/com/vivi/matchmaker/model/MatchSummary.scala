@@ -77,7 +77,10 @@ case class MatchSummary(
     archivedAt: Option[Instant] = None,
     // Whether a friendly match's archive has expired (V38): no Review or Watch link, and `publicUrl`
     // is cleared.
-    archiveExpired: Boolean = false
+    archiveExpired: Boolean = false,
+    // The value of each of the game's parameters this match is played under, in the order the
+    // game defines them; empty for a game that has none.
+    parameters: Seq[MatchParameter] = Nil
 ) {
 
     /** Whether the match was played to an end. */

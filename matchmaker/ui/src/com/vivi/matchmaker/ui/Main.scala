@@ -1476,6 +1476,7 @@ object Views {
           ),
           div(cls := "detail", s"started ${Format.date(summary.start)}"),
           if (summary.friendly) emptyNode else div(cls := "detail", "not friendly"),
+          matchParameters(summary),
           if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
           summary.completedAt
               .map(when => div(cls := "detail", s"completed ${Format.date(when)}"))
@@ -1510,6 +1511,20 @@ object Views {
                   .getOrElse(emptyNode)
         )
 
+    /** The game's parameters as this match is played under them, one to a line, under what names the match.
+      *
+      * On running and finished rows alike: unlike the clock, these are what the match *is* — twelve rounds rather than
+      * three — and they are as much a part of how it ended as of how it is going.
+      */
+    private def matchParameters(summary: MatchSummary): Modifier[HtmlElement] =
+        if (summary.parameters.isEmpty) emptyNode
+        else
+            ul(
+              cls := "parameters",
+              aria.label := "Game parameters",
+              summary.parameters.map(p => li(cls := "detail", s"${p.displayName}: ${p.value}"))
+            )
+
     /** Where a Review or Watch link would be, for a friendly match whose archive has expired. */
     private def archiveExpiredNote: HtmlElement =
         div(cls := "detail", "archive expired — friendly matches are kept for 30 days")
@@ -1535,6 +1550,7 @@ object Views {
           div(cls := "title", summary.gameName),
           div(cls := "detail", summary.description),
           if (summary.friendly) emptyNode else div(cls := "detail", "not friendly"),
+          matchParameters(summary),
           if (showDue) summary.due.map(countdown).getOrElse(emptyNode)
           else emptyNode,
           // The rule behind that deadline, which the deadline itself does not give away: the same

@@ -249,7 +249,6 @@ object Bout extends Game[Bout, Corner, Plan] {
         Map(
           "method" -> m.method.map(ujson.Str(_)).getOrElse(ujson.Null),
           "rounds" -> ujson.Num(m.rounds.size),
-          "scheduledRounds" -> ujson.Num(m.scheduledRounds),
           "points" -> ujson.Num(m.points(corner.side)),
           "knockdowns" -> ujson.Num(m.knockdownsScored(corner.side)),
           "corner" -> ujson.Str(corner.side.toString)
