@@ -1494,11 +1494,26 @@ object Views {
                     tpe := "button",
                     cls := "link",
                     "Watch",
-                    onClick --> (_ => dom.window.open(url, "_blank", "noopener,noreferrer"))
+                    onClick --> (_ => openSignedIn(url))
                   )
               )
               .getOrElse(emptyNode)
         )
+
+    /** Opens a game engine's page — a board, a spectator's view, a character page — in a new tab, signed in as the
+      * player signed in here. See `Auth.handOff`.
+      *
+      * Opened at once when the hand-off is ready at once, which keeps it inside the click a browser requires a popup to
+      * come from; only a session that has to be refreshed first waits for that.
+      */
+    private def openSignedIn(url: String): Unit = {
+        def open(target: String): Unit = { dom.window.open(target, "_blank", "noopener,noreferrer"); () }
+        val handed = Auth.handOff(url)
+        handed.value match {
+            case Some(scala.util.Success(target)) => open(target)
+            case _                                => handed.foreach(open)
+        }
+    }
 
     private def matchRow(summary: MatchSummary, showDue: Boolean): HtmlElement =
         li(
@@ -1569,7 +1584,7 @@ object Views {
                     busyButton("View final state", classes = Some("link")) { busy =>
                         Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                             m.playUrl.orElse(m.publicUrl) match {
-                                case Some(url) => dom.window.open(url, "_blank", "noopener,noreferrer")
+                                case Some(url) => openSignedIn(url)
                                 case None      => Store.reportProblem("This match has no url to view.")
                             }
                         }
@@ -1583,7 +1598,7 @@ object Views {
                 busyButton("Play", classes = Some("link")) { busy =>
                     Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                         m.playUrl match {
-                            case Some(url) => dom.window.open(url, "_blank", "noopener,noreferrer")
+                            case Some(url) => openSignedIn(url)
                             case None      => Store.reportProblem("This match has no play url yet.")
                         }
                     }
@@ -2532,7 +2547,7 @@ object Views {
                                     button(
                                       cls := "link",
                                       s"Manage your characters in ${game.displayName}",
-                                      onClick --> (_ => dom.window.open(url, "_blank", "noopener,noreferrer"))
+                                      onClick --> (_ => openSignedIn(url))
                                     )
                                 ),
                                 challengePanel(game, player, characters)
@@ -2577,7 +2592,7 @@ object Views {
                   div(
                     button(
                       s"Make a character in ${game.displayName}",
-                      onClick --> (_ => dom.window.open(url, "_blank", "noopener,noreferrer"))
+                      onClick --> (_ => openSignedIn(url))
                     ),
                     busyButton("I've made one — check again", classes = Some("link")) { busy =>
                         // Cleared first, so that a second "no character yet" is a change the live

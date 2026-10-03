@@ -234,6 +234,27 @@ ${authScript(Some(login))}
     [TokenKey, AccessKey, RefreshKey, VerifierKey, StateKey].forEach(key => sessionStorage.removeItem(key));
   }
 
+  /* A session handed over by matchmaker's UI, which opens this page with its own tokens in the
+   * fragment — `#idToken=…&refreshToken=…`, see `Auth.handOff` there — so that a player signed in
+   * on the main page is signed in here without being asked again. Same pool, same app client, so
+   * the refresh token redeems here as it does there.
+   *
+   * In the fragment because a fragment is never sent to a server and so never lands in a log, and
+   * taken out of the address bar at once, before anything else on the page runs, so that it is not
+   * bookmarked, shared or left in history. It replaces whatever session the tab held: following
+   * the link is the player saying who they are. Nothing here vouches for the tokens — the engine
+   * verifies the ID token on every request, and Cognito the refresh token on every redemption. */
+  (function takeHandOff() {
+    if (!location.hash) return;
+    const handed = new URLSearchParams(location.hash.substring(1));
+    const id = handed.get("idToken"), refresh = handed.get("refreshToken");
+    if (!id && !refresh) return;
+    history.replaceState(history.state, "", location.pathname + location.search);
+    clearSession();
+    if (id) sessionStorage.setItem(TokenKey, id);
+    if (refresh) sessionStorage.setItem(RefreshKey, refresh);
+  })();
+
   /* One call to the Cognito user pools API. Not an SDK and not SigV4 signed: `InitiateAuth` and
    * `RespondToAuthChallenge` are how a caller with no credentials obtains some, and the app client
    * is public, so there is no secret hash to compute either. The wire format is AWS JSON 1.1 — the
