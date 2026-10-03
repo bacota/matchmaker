@@ -2,10 +2,11 @@ package com.vivi.engine
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.time.Duration
+import java.time.{Clock, Duration}
 import scala.jdk.CollectionConverters._
 import software.amazon.awssdk.http.{ContentStreamProvider, SdkHttpMethod, SdkHttpRequest}
 import software.amazon.awssdk.http.auth.aws.signer.{AwsV4FamilyHttpSigner, AwsV4HttpSigner}
+import software.amazon.awssdk.http.auth.spi.signer.HttpSigner
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
 import software.amazon.awssdk.identity.spi.{AwsCredentialsIdentity, IdentityProvider}
 
@@ -46,7 +47,8 @@ class SignedHttp(
     credentials: Option[IdentityProvider[? <: AwsCredentialsIdentity]],
     region: String,
     httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
-    timeout: Duration = Duration.ofSeconds(10)
+    timeout: Duration = Duration.ofSeconds(10),
+    clock: Clock = Clock.systemUTC()
 ) {
 
     private val signer = AwsV4HttpSigner.create()
@@ -110,7 +112,8 @@ class SignedHttp(
         (response.statusCode, response.body)
     }
 
-    private def sign(
+    /** The headers that sign this request: what [[exchange]] adds to it. */
+    private[engine] def sign(
         method: String,
         uri: URI,
         headers: Map[String, String],
@@ -131,11 +134,12 @@ class SignedHttp(
                 .payload(ContentStreamProvider.fromUtf8String(body))
                 .putProperty(AwsV4FamilyHttpSigner.SERVICE_SIGNING_NAME, service)
                 .putProperty(AwsV4HttpSigner.REGION_NAME, region)
-                // API Gateway signs the path exactly as sent; the signer's default is to encode it a
-                // second time. Harmless for DynamoDB, whose path is always "/", and required for
-                // execute-api — see matchmaker's SigV4 for the same two properties.
-                .putProperty(AwsV4FamilyHttpSigner.DOUBLE_URL_ENCODE, false)
-                .putProperty(AwsV4FamilyHttpSigner.NORMALIZE_PATH, false)
+                .putProperty(HttpSigner.SIGNING_CLOCK, clock)
+            // The signer's defaults otherwise, which encode the path a second time: what every AWS
+            // service but S3 expects, and what its own clients do. Turning that off was a no-op for
+            // DynamoDB's "/" and matchmaker's callback paths, which have nothing to encode, and broke
+            // every Play Live push — a connection id ends in "=", sent as "%3D", and API Gateway's
+            // @connections answered each one with a signature mismatch.
         }
 
         result.request.headers.asScala.view.mapValues(_.asScala.mkString(",")).toMap
