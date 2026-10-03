@@ -1482,7 +1482,7 @@ object Views {
           else div(cls := "detail", "waiting for the other players"),
           // The board, for anyone who cares to look: this is what being public gets you, and the
           // engine issued the url when the match was created. Straight off the summary, with no
-          // request behind the click — unlike "View final state" on the player's own rows, which has
+          // request behind the click — unlike "Review game" on the player's own rows, which has
           // to ask for a play url that is not on a summary.
           //
           // Absent when there is no url. A match is only listed here if it is public, but an engine
@@ -1581,7 +1581,7 @@ object Views {
                 // live on the match, not on the summary — and `publicUrl` is the fallback for a match
                 // whose play url the engine has since stopped honouring for a game that is over.
                 if (summary.completed)
-                    busyButton("View final state", classes = Some("link")) { busy =>
+                    busyButton("Review game", classes = Some("link")) { busy =>
                         Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                             m.playUrl.orElse(m.publicUrl) match {
                                 case Some(url) => openSignedIn(url)

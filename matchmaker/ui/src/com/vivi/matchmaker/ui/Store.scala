@@ -217,17 +217,17 @@ object Store {
         fetches.forall(what => latestAsk.get(what).contains(stamp))
 
     /** Whether a list is still on its way, which is to say nothing has answered for it yet this session. */
-    def loading(what: Fetch): Signal[Boolean] = outcomes.signal.map(!_.contains(what))
+    def loading(what: Fetch): Signal[Boolean] = Outcomes.of(outcomes.signal, what)(_.isEmpty)
 
     /** Whether what is held for a list is this session's own answer rather than the empty default. */
-    def known(what: Fetch): Signal[Boolean] = outcomes.signal.map(_.get(what).contains(true))
+    def known(what: Fetch): Signal[Boolean] = Outcomes.of(outcomes.signal, what)(_.contains(true))
 
     /** Whether the last thing to happen to a list was its request failing, so what is held for it is nothing.
       *
       * The third state a section needs, and the one most often inferred wrongly from emptiness. A screen that can tell
       * it from "nothing yet" can offer the thing that helps, which is to ask again.
       */
-    def failed(what: Fetch): Signal[Boolean] = outcomes.signal.map(_.get(what).contains(false))
+    def failed(what: Fetch): Signal[Boolean] = Outcomes.of(outcomes.signal, what)(_.contains(false))
 
     val due: Var[Seq[MatchSummary]] = Var(Seq.empty)
     val active: Var[Seq[MatchSummary]] = Var(Seq.empty)
@@ -1033,4 +1033,19 @@ object Store {
             charactersByGame.update(_.updated(gameId, list))
         )
 
+}
+
+/** What one list's outcome says, read out of the map that holds every list's — see `Store.outcomes`.
+  *
+  * Emitted only when the answer changes. That map changes whenever *any* fetch is answered, and a signal derived from
+  * it re-emits on every change, equal or not; so without this, a section's "still loading?" said `false` again each
+  * time anything at all came back, and whatever was drawn from it was drawn afresh. On a player's page that was a loop:
+  * the game rows were rebuilt, the open game's challenges were fetched again as it remounted, that answer rebuilt the
+  * rows, and the requests never stopped -- with the Watch button replaced under the reader's pointer every round.
+  *
+  * Apart from `Store` so that it can be tested without one: `Store` reads the browser's storage as it starts.
+  */
+private[ui] object Outcomes {
+    def of[K, A](all: Signal[Map[K, Boolean]], what: K)(read: Option[Boolean] => A): Signal[A] =
+        all.map(outcomes => read(outcomes.get(what))).distinct
 }
