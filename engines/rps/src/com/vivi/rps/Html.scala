@@ -1,7 +1,7 @@
 package com.vivi.rps
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{LoginConfig, MessageBoards, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -69,6 +69,7 @@ object Html {
   :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
 ${SignIn.css}
 ${PlayLive.css}
+${MessageBoards.css}
 ${TurnTimer.css}
   #seats { margin-top: 1.25rem; font-size: .875rem; opacity: .8; }
   #seats div { margin: .125rem 0; }
@@ -76,6 +77,7 @@ ${TurnTimer.css}
 </style>
 </head>
 <body>
+${MessageBoards.layoutStart}
 <main>
   <h1>rock · paper · scissors</h1>
   <!-- The result arrives while the page is idle rather than in answer to anything the player
@@ -90,10 +92,12 @@ ${TurnTimer.css}
   ${PlayLive.markup}
   <div id="error" role="alert"></div>
 </main>
+${MessageBoards.layoutEnd}
 <script>
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
+${MessageBoards.script}
 ${TurnTimer.script}
 
   const publicView = $publicView;
@@ -145,7 +149,7 @@ ${TurnTimer.script}
 
     // Offered whenever there is a login to start and no seat to show for it — including after a
     // token expires mid-match, which is what turns a 401 back into a button.
-    signin.hidden = !login || noSeat || (state && state.you);
+    signin.hidden = !login || noSeat || (state && state.you) || (publicView && !mbWantsSignIn());
 
     document.getElementById("seats").innerHTML = state
       ? state.players.map(p => {
@@ -255,7 +259,7 @@ ${TurnTimer.script}
 
   /* Called once the sign-in has tokens in hand: there is a seat to fetch now, and the board is
    * still showing the shell it was served. */
-  function signedIn() { refresh(); }
+  function signedIn() { refresh(); refreshMessages(); }
 
   /* Whether there is any point asking for the state. With a login configured and no session, the
    * answer is a 401 — and asking every two seconds scrolls the console with them and, worse, kept
@@ -265,9 +269,10 @@ ${TurnTimer.script}
 
   render();
   if (!state && mayFetch()) refresh();
+  refreshMessages();
   // Kept current to the end — polled, or with Play Live told — and for the same reason as
   // tic-tac-toe's board: the other player's throw arrives while this page is doing nothing.
-  keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
+  keepCurrent(() => Promise.all([refresh(), refreshMessages()]), () => mayFetch() && (!state || !state.completed));
 </script>
 </body>
 </html>

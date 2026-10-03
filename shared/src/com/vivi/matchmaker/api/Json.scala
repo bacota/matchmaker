@@ -200,6 +200,11 @@ object Json {
       */
     case class RegisterCharacterRequest(name: String, description: String, ownerExternalId: String, state: String)
 
+    /** What a player is called: `GET /nicknames?externalId=`, a game engine's call, for showing a player by on a
+      * match's message board.
+      */
+    case class Nickname(nickname: String)
+
     /** A character's name and description, changed in its game engine: `PUT /characters/{characterId}`, the engine's
       * call. The engine says which signed-in player asked, as `ownerExternalId`; matchmaker changes it only if that
       * player owns it.
@@ -357,6 +362,7 @@ object Json {
     given ReadWriter[EmailRequest] = macroRW
     given ReadWriter[UpdateStateRequest] = macroRW
     given ReadWriter[RegisterCharacterRequest] = macroRW
+    given ReadWriter[Nickname] = macroRW
     given ReadWriter[EditCharacterRequest] = macroRW
     given ReadWriter[TransferCharacterRequest] = macroRW
     given ReadWriter[AcceptRequest] = macroRW

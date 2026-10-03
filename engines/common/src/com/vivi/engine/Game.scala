@@ -22,6 +22,9 @@ trait MatchLike extends HasMatchId {
 trait SeatLike {
     def cognitoId: String
     def participantId: Long
+
+    /** What the player in it is called, if the game kept what matchmaker sent — for showing them by without asking. */
+    def displayName: Option[String] = None
 }
 
 /** One move that was made: by whom, when, and when that player's clock started for it — which is what matchmaker

@@ -11,7 +11,9 @@ import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
   * back. `nickname` is what the player is shown as, as matchmaker named them when the match was created; a match stored
   * before it was sent has none, and shows the subject instead.
   */
-case class Seat(side: Side, cognitoId: String, participantId: Long, nickname: Option[String] = None) extends SeatLike
+case class Seat(side: Side, cognitoId: String, participantId: Long, nickname: Option[String] = None) extends SeatLike {
+    override def displayName: Option[String] = nickname
+}
 
 /** One turn that was taken: a side's deployment when `step` is empty, a move of one piece otherwise — with the battle
   * it caused, if it attacked — or, with `concession`, a side giving the match up.

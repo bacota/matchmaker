@@ -66,6 +66,31 @@ object EngineConfig {
         // signed client stays for DynamoDB above, which is still AWS and still needs one.
         else HttpMatchmaker(SignedHttp(None, region(env)), matchmakerKey(env), env("GAME_EXTERNAL_ID"))
 
+    /** The message boards: kept in a DynamoDB table when `MESSAGE_TABLE` names one, and in memory otherwise, with each
+      * writer shown by their matchmaker nickname when there is a `MATCHMAKER_URL` to ask. A lookup that fails is logged
+      * and the writer shown without one: a message is not worth refusing because matchmaker did not answer.
+      */
+    def messages(env: String => Option[String]): Messages = {
+        val store = env("MESSAGE_TABLE") match {
+            case Some(table) =>
+                DynamoDbMessageStore(SignedHttp(AwsCredentials.provider(env), region(env)), table, region(env))
+            case None => InMemoryMessageStore()
+        }
+        val client = matchmaker(env)
+        val nickname: String => Option[String] = matchmakerUrl(env) match {
+            case Some(url) =>
+                who =>
+                    try client.nicknameOf(url, who)
+                    catch {
+                        case scala.util.control.NonFatal(e) =>
+                            Log.failure(e, s"looking up the nickname of '$who'")
+                            None
+                    }
+            case None => _ => None
+        }
+        Messages(store, nickname)
+    }
+
     /** The sign-in the board page offers, when there is a user pool to offer it against.
       *
       * All three settings or none: a client id with no hosted login url is a button that goes nowhere, and failing at

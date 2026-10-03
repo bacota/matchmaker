@@ -1,7 +1,7 @@
 package com.vivi.boxing
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{LoginConfig, MessageBoards, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -85,11 +85,13 @@ object Html {
   tfoot td, tfoot th { font-weight: 700; border-bottom: 0; }
 ${SignIn.css}
 ${PlayLive.css}
+${MessageBoards.css}
 ${TurnTimer.css}
   #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
 </style>
 </head>
 <body>
+${MessageBoards.layoutStart}
 <main>
   <h1>boxing</h1>
   <!-- A round resolves while the page is idle rather than in answer to anything this player just
@@ -116,10 +118,12 @@ ${TurnTimer.css}
   <section aria-label="corners"><div id="corners"></div></section>
   <section id="card-section" hidden><table id="card"></table></section>
 </main>
+${MessageBoards.layoutEnd}
 <script>
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
+${MessageBoards.script}
 ${TurnTimer.script}
 
   const publicView = $publicView;
@@ -217,7 +221,7 @@ ${TurnTimer.script}
     // token expires mid-bout, which is what turns a 401 back into a form.
     // Not offered to a player already signed in with no corner here: another sign-in would be the
     // same player, refused the same way.
-    signin.hidden = !login || noCorner || !!(state && state.you);
+    signin.hidden = !login || noCorner || !!(state && state.you) || (publicView && !mbWantsSignIn());
 
     renderCorners();
     renderCard();
@@ -377,7 +381,7 @@ ${TurnTimer.script}
     }
   }
 
-  function signedIn() { refresh(); }
+  function signedIn() { refresh(); refreshMessages(); }
 
   /* With a login configured and no session the answer is a 401, so there is no point asking; and a
    * signed-in player with no corner here will be refused every time. */
@@ -385,9 +389,10 @@ ${TurnTimer.script}
 
   render();
   if (!state && mayFetch()) refresh();
+  refreshMessages();
   // Kept current to the end — polled, or with Play Live told: the other corner's plan, and so the
   // round's result, arrive while this page is doing nothing.
-  keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
+  keepCurrent(() => Promise.all([refresh(), refreshMessages()]), () => mayFetch() && (!state || !state.completed));
 </script>
 </body>
 </html>

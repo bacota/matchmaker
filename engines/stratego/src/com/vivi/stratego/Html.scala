@@ -1,7 +1,7 @@
 package com.vivi.stratego
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{LoginConfig, MessageBoards, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -177,6 +177,7 @@ object Html {
   #key .bar { position: absolute; left: 25%; right: 25%; bottom: 2px; height: 2px; background: #fff; }
 ${SignIn.css}
 ${PlayLive.css}
+${MessageBoards.css}
 ${TurnTimer.css}
   #players h2 { font-size: 1rem; font-weight: 600; margin: 1.25rem 0 .25rem; }
   #seats { font-size: .875rem; opacity: .7; }
@@ -186,6 +187,7 @@ ${TurnTimer.css}
 </head>
 <body>
 $icons
+${MessageBoards.layoutStart}
 <main>
   <h1>capture the flag</h1>
   <!-- Announced: the other player's move, and the result, arrive while this page is idle. -->
@@ -252,10 +254,12 @@ $icons
   ${PlayLive.markup}
   <div id="error" role="alert"></div>
 </main>
+${MessageBoards.layoutEnd}
 <script>
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
+${MessageBoards.script}
 ${TurnTimer.script}
 
   const publicView = $publicView;
@@ -298,7 +302,7 @@ ${TurnTimer.script}
 
     // Offered whenever there is a login to start and no seat to show for it — including after a
     // token expires mid-match, which is what turns a 401 back into a button.
-    signin.hidden = !login || noSeat || (state && state.you);
+    signin.hidden = !login || noSeat || (state && state.you) || (publicView && !mbWantsSignIn());
 
     drawBoard();
     drawControls();
@@ -887,7 +891,7 @@ ${TurnTimer.script}
 
   /* Called once the sign-in has tokens in hand: there is a seat to fetch now, and the board is
    * still showing the shell it was served. */
-  function signedIn() { refresh(); }
+  function signedIn() { refresh(); refreshMessages(); }
 
   /* Whether there is any point asking for the state. With a login configured and no session, the
    * answer is a 401 — and asking every two seconds scrolls the console with them and, worse, kept
@@ -912,7 +916,8 @@ ${TurnTimer.script}
 
   render();
   if (!state && mayFetch()) refresh();
-  keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
+  refreshMessages();
+  keepCurrent(() => Promise.all([refresh(), refreshMessages()]), () => mayFetch() && (!state || !state.completed));
 </script>
 </body>
 </html>

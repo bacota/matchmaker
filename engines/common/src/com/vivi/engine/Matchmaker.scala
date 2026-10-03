@@ -41,6 +41,11 @@ trait Matchmaker {
       * nickname nobody has is a 400 [[MatchmakerRefusal]], whose reason says so.
       */
     def transferCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.TransferCharacterRequest): Unit
+
+    /** `GET {matchmakerUrl}/nicknames?externalId=`: what a signed-in player is called, for showing them by on a message
+      * board. `None` for a subject matchmaker has no player for.
+      */
+    def nicknameOf(matchmakerUrl: String, externalId: String): Option[String]
 }
 
 /** Posts the callbacks over HTTP, to the urls matchmaker itself supplied when it created the game.
@@ -95,6 +100,17 @@ class HttpMatchmaker(http: SignedHttp, apiKey: Option[String], externalId: Optio
 
     def transferCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.TransferCharacterRequest): Unit =
         call("PUT", s"${matchmakerUrl.stripSuffix("/")}/characters/$characterId/owner", Some(write(request)))
+
+    def nicknameOf(matchmakerUrl: String, externalId: String): Option[String] = {
+        val who = java.net.URLEncoder.encode(externalId, java.nio.charset.StandardCharsets.UTF_8)
+        try
+            Some(
+              read[Protocol.Nickname](
+                call("GET", s"${matchmakerUrl.stripSuffix("/")}/nicknames?externalId=$who", None)
+              ).nickname
+            )
+        catch { case MatchmakerRefusal(404, _) => None }
+    }
 
     /* A call whose answer the engine reads. Matchmaker's own refusal is raised with its reason, so
      * that the engine can tell the player what it was; anything else is matchmaker failing, and the
@@ -190,8 +206,15 @@ class RecordingMatchmaker(log: String => Unit = _ => ()) extends Matchmaker {
                 .sortBy(_.name)
         }
 
-    /** Who each nickname is, for [[transferCharacter]] — matchmaker knows its players, and this has to be told. */
+    /** Who each nickname is, for [[transferCharacter]] and [[nicknameOf]] — matchmaker knows its players, and this has
+      * to be told.
+      */
     @volatile var players: Map[String, String] = Map.empty
+
+    def nicknameOf(matchmakerUrl: String, externalId: String): Option[String] = {
+        log(s"GET $matchmakerUrl/nicknames?externalId=$externalId")
+        players.collectFirst { case (nickname, id) if id == externalId => nickname }
+    }
 
     def editCharacter(matchmakerUrl: String, characterId: Long, request: Protocol.EditCharacterRequest): Unit =
         synchronized {

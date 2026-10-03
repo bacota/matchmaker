@@ -1,18 +1,24 @@
 package com.vivi.rps
 
-import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, Live, LoginConfig, PlayAuth}
+import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, Live, LoginConfig, Messages, PlayAuth}
 import Protocol.given
 
 /** The engine's HTTP surface: the routes every engine serves, which are [[EngineRoutes]]'s, and what a throw looks like
   * on the wire.
   */
-class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], live: Option[Live] = None)
-    extends EngineRoutes[RpsMatch, Seat, Protocol.StateResponse](
+class Routes(
+    engine: Engine,
+    playAuth: PlayAuth,
+    matchmakerKey: Option[String],
+    live: Option[Live] = None,
+    messages: Option[Messages] = None
+) extends EngineRoutes[RpsMatch, Seat, Protocol.StateResponse](
       engine.core,
       playAuth,
       matchmakerKey,
       Html.signIn,
-      live
+      live,
+      messages
     ) {
 
     protected def stateOf(m: RpsMatch, seat: Option[Seat]): Protocol.StateResponse = engine.stateOf(m, seat)

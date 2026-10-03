@@ -1,7 +1,7 @@
 package com.vivi.tictactoe
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{LoginConfig, MessageBoards, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -61,6 +61,7 @@ object Html {
   button.cell.win { background: color-mix(in srgb, var(--paper) 70%, seagreen); }
 ${SignIn.css}
 ${PlayLive.css}
+${MessageBoards.css}
 ${TurnTimer.css}
   #seats { margin-top: 1.25rem; font-size: .875rem; opacity: .7; }
   #seats div { margin: .125rem 0; }
@@ -68,6 +69,7 @@ ${TurnTimer.css}
 </style>
 </head>
 <body>
+${MessageBoards.layoutStart}
 <main>
   <h1>tic-tac-toe</h1>
   <!-- Announced: the other player's move, and the result, arrive while this page is idle. -->
@@ -81,10 +83,12 @@ ${TurnTimer.css}
   ${PlayLive.markup}
   <div id="error" role="alert"></div>
 </main>
+${MessageBoards.layoutEnd}
 <script>
 ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
+${MessageBoards.script}
 ${TurnTimer.script}
 
   const publicView = $publicView;
@@ -145,7 +149,7 @@ ${TurnTimer.script}
 
     // Offered whenever there is a login to start and no seat to show for it — including after a
     // token expires mid-match, which is what turns a 401 back into a button.
-    signin.hidden = !login || noSeat || (state && state.you);
+    signin.hidden = !login || noSeat || (state && state.you) || (publicView && !mbWantsSignIn());
 
     document.getElementById("seats").innerHTML = state
       ? state.players.map(p => "<div>" + p.mark + " · " + escapeHtml(p.cognitoId) + (p.mark === (state.you || "") ? " (you)" : "") + "</div>").join("")
@@ -227,7 +231,7 @@ ${TurnTimer.script}
 
   /* Called once the sign-in has tokens in hand: there is a seat to fetch now, and the board is
    * still showing the shell it was served. */
-  function signedIn() { refresh(); }
+  function signedIn() { refresh(); refreshMessages(); }
 
   /* Whether there is any point asking for the state. With a login configured and no session, the
    * answer is a 401 — and asking every two seconds scrolls the console with them and, worse, kept
@@ -237,7 +241,8 @@ ${TurnTimer.script}
 
   render();
   if (!state && mayFetch()) refresh();
-  keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
+  refreshMessages();
+  keepCurrent(() => Promise.all([refresh(), refreshMessages()]), () => mayFetch() && (!state || !state.completed));
 </script>
 </body>
 </html>

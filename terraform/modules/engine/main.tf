@@ -47,6 +47,10 @@ locals {
   player_routes = concat([
     "GET /matches/{matchId}/state",
     "POST /matches/{matchId}/moves",
+    # The match's message boards, as the caller may see them, and writing on one: a player, or a
+    # signed-in watcher of a public match, recognised by the same token.
+    "GET /matches/{matchId}/messages",
+    "POST /matches/{matchId}/messages",
   ], var.extra_player_routes)
 
   # Served to anyone. The play page carries no game state for a caller with no seat — it is the
@@ -60,6 +64,8 @@ locals {
     "GET /matches/{matchId}/play",
     "GET /matches/{matchId}/board",
     "GET /matches/{matchId}/board/state",
+    # A public match's boards as anyone watching may read them; writing needs the token above.
+    "GET /matches/{matchId}/board/messages",
     "GET /auth/callback",
     "GET /health",
   ], var.extra_open_routes)
@@ -149,6 +155,20 @@ resource "aws_iam_role_policy" "matches" {
   name   = "${local.name}-matches"
   role   = aws_iam_role.lambda.id
   policy = data.aws_iam_policy_document.matches.json
+}
+
+/* The message boards: a message written, and a match's messages read back by key. */
+data "aws_iam_policy_document" "messages" {
+  statement {
+    actions   = ["dynamodb:PutItem", "dynamodb:Query"]
+    resources = [aws_dynamodb_table.messages.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "messages" {
+  name   = "${local.name}-messages"
+  role   = aws_iam_role.lambda.id
+  policy = data.aws_iam_policy_document.messages.json
 }
 
 /* Play Live: the connections table, by connection and by match, and pushing down this stage's
@@ -256,6 +276,10 @@ resource "aws_lambda_function" "engine" {
       LIVE_URL      = local.live_url
       LIVE_ENDPOINT = local.live_endpoint
       LIVE_TABLE    = aws_dynamodb_table.connections.name
+
+      # The match's message boards. Writers are shown by their nickname, which the engine asks
+      # MATCHMAKER_URL for.
+      MESSAGE_TABLE = aws_dynamodb_table.messages.name
     }
   }
 
@@ -396,6 +420,40 @@ resource "aws_lambda_permission" "api_gateway" {
 # ---------------------------------------------------------------------------
 # Play Live
 # ---------------------------------------------------------------------------
+
+/* A match's two message boards — the players' and, for a public match, the observers'.
+ *
+ * Kept apart from the matches table so that writing a message never contends with a move for the
+ * match's item, and so that a long conversation cannot push a match toward DynamoDB's item size.
+ * Keyed by match, and within it by `key` — the time written, zero-padded, and an id — so a query by
+ * match is the whole of both boards, oldest first. `expiresAt` is written on every message, as on
+ * the matches table, so that expiry is a setting rather than a migration.
+ */
+resource "aws_dynamodb_table" "messages" {
+  name         = "${local.name}-messages"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "matchId"
+  range_key    = "key"
+
+  attribute {
+    name = "matchId"
+    type = "S"
+  }
+
+  attribute {
+    name = "key"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = var.point_in_time_recovery
+  }
+}
 
 /* Who is watching which match, for the play pages a player has switched Play Live on in.
  *
