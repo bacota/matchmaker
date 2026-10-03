@@ -2558,7 +2558,10 @@ object Views {
               case None => emptyNode
               case Some(found) =>
                   refreshableSection("Matches in this game", refreshing, () => fetch(mount), subsection = false)(
-                    p(cls := "detail", "As an admin of this game, you say whether each match is friendly."),
+                    p(
+                      cls := "detail",
+                      "As an admin of this game, you say whether each match is friendly, until it is completed."
+                    ),
                     if (found.isEmpty) p(cls := "empty", "None yet.")
                     else ul(found.map(adminMatchRow(game, _)))
                   )
@@ -2584,24 +2587,28 @@ object Views {
                 if (m.cancelled) "cancelled" else s"started ${Format.date(m.start)}"
             }
           ),
-          label(
-            input(
-              tpe := "checkbox",
-              // Not disabled while saving: a disabled box drops the keyboard's focus, so a click made
-              // meanwhile is ignored instead, and the box keeps showing what is being saved.
-              aria.busy <-- busy.signal,
-              controlled(
-                checked <-- friendly.signal,
-                onClick.mapToChecked.filter(_ => !busy.now()) --> { on =>
-                    friendly.set(on)
-                    Store.run(ApiClient.setFriendly(game.gameId, m.matchId, on), busy, _ => friendly.set(!on))(saved =>
-                        friendly.set(saved.friendly)
-                    )
-                }
+          // A completed match keeps the classification it finished with — its archive was written to the
+          // bucket that chose — so it is said rather than offered as a box the server would refuse.
+          if (m.completedAt.isDefined) div(cls := "detail", if (m.friendly) "friendly" else "not friendly")
+          else
+              label(
+                input(
+                  tpe := "checkbox",
+                  // Not disabled while saving: a disabled box drops the keyboard's focus, so a click made
+                  // meanwhile is ignored instead, and the box keeps showing what is being saved.
+                  aria.busy <-- busy.signal,
+                  controlled(
+                    checked <-- friendly.signal,
+                    onClick.mapToChecked.filter(_ => !busy.now()) --> { on =>
+                        friendly.set(on)
+                        Store.run(ApiClient.setFriendly(game.gameId, m.matchId, on), busy, _ => friendly.set(!on))(
+                          saved => friendly.set(saved.friendly)
+                        )
+                    }
+                  )
+                ),
+                "Friendly"
               )
-            ),
-            "Friendly"
-          )
         )
     }
 
@@ -3844,7 +3851,7 @@ object Views {
                       "friendly-tip",
                       "Friendly",
                       "Untick to make the match one that is not friendly. As an admin of this game you can change " +
-                          "it later, too."
+                          "it later, until the match is completed."
                     )(
                       label(
                         input(
