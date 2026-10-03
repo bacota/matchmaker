@@ -37,7 +37,8 @@ object ArchiveTransfer {
 
 class HttpArchiveTransfer(
     httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
-    timeout: Duration = Duration.ofSeconds(20)
+    // One step of an archive, which ArchivingMatchStore's budget is counted in. See there.
+    timeout: Duration = Duration.ofSeconds(10)
 ) extends ArchiveTransfer {
 
     /* The JDK client sets these itself, from the url and the body, and refuses to be told them. The
@@ -123,7 +124,8 @@ class ArchivingMatchStore[M <: HasMatchId: ReadWriter](
     transfer: ArchiveTransfer,
     formatVersion: String = ArchivingMatchStore.FormatVersion,
     cacheFor: Duration = Duration.ofMinutes(5),
-    now: () => Instant = () => Instant.now()
+    now: () => Instant = () => Instant.now(),
+    budget: Duration = ArchivingMatchStore.Budget
 ) extends MatchStore[M] {
 
     private val cache = ConcurrentHashMap[String, (Instant, M)]()
@@ -152,9 +154,20 @@ class ArchivingMatchStore[M <: HasMatchId: ReadWriter](
       *
       * Raises if any step fails, and leaves the live copy: the caller decides whether that matters. Every caller here
       * treats it as best-effort.
+      *
+      * Bounded by [[budget]], because it runs inside the request that made the final move — a player is waiting on the
+      * answer, and the gateway in front gives up at 30 seconds. No step is started once the budget is spent, and each
+      * is limited to ten seconds by its client, so the whole is at most the budget and one step more. One cut short
+      * leaves the live copy, and matchmaker's daily sweep prompts the engine to finish it. The delete after a confirm
+      * is not subject to it: once matchmaker has the archive, nothing would prompt the engine again, and the live copy
+      * would stay for good.
       */
     override def finished(matchId: String): Unit =
         live.get(matchId).foreach { m =>
+            val deadline = now().plus(budget)
+            def withinBudget(step: String): Unit =
+                if (!now().isBefore(deadline))
+                    throw AwsError(s"archiving match '$matchId' ran out of time before $step; the sweep will finish it")
             val body = write(m).getBytes(StandardCharsets.UTF_8)
             val answer = matchmaker.requestArchiveUpload(
               matchmakerUrl,
@@ -165,7 +178,9 @@ class ArchivingMatchStore[M <: HasMatchId: ReadWriter](
                 case None if answer.archivedAt.isDefined => ()
                 case None => throw AwsError(s"matchmaker answered the archive request for '$matchId' with nothing")
                 case Some(upload) =>
+                    withinBudget("the upload")
                     transfer.upload(upload, body)
+                    withinBudget("the confirm")
                     matchmaker.confirmArchive(matchmakerUrl, matchId)
             }
             live.delete(matchId)
@@ -212,6 +227,9 @@ object ArchivingMatchStore {
     val FormatVersion: String = "stored-match-1"
 
     val CacheSize: Int = 64
+
+    /** How long archiving may hold up the request that ended the match: see [[ArchivingMatchStore.finished]]. */
+    val Budget: Duration = Duration.ofSeconds(15)
 
     /** Archiving around `live`, through matchmaker at `matchmakerUrl`; or `live` alone when there is no matchmaker to
       * archive through. Failures to reach it at construction cannot happen: nothing is asked until a match ends.

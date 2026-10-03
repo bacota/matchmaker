@@ -163,4 +163,39 @@ class ArchiveSpec extends FunSuite with QuietTests {
         assertEquals(engine.read("m-1").left.map(_.status), Left(404))
         assertEquals(routes(EngineRequest("POST", "/matches/m-1/cancel")).status, 204)
     }
+
+    test("an archive that runs out of time keeps its live copy, for the sweep to finish") {
+        val live = InMemoryMatchStore[TicTacToeMatch]()
+        val recorder = RecordingMatchmaker()
+        // A clock that moves a minute every time it is read: the budget is spent before the upload.
+        val clock = new java.util.concurrent.atomic.AtomicReference(java.time.Instant.parse("2026-10-03T00:00:00Z"))
+        val store = ArchivingMatchStore(
+          live,
+          recorder,
+          matchmakerUrl,
+          recorder.archiveStore,
+          now = () => clock.updateAndGet(_.plusSeconds(60))
+        )
+        val engine = Engine(store, recorder, "http://engine.test")
+        engine.createGame(
+          Protocol.CreateGameRequest(
+            "m-1",
+            "tic-tac-toe",
+            false,
+            Map.empty,
+            "{}",
+            None,
+            List(
+              Protocol.EnginePlayer("sub-alice", 1L, Some("X"), None, None),
+              Protocol.EnginePlayer("sub-bob", 2L, Some("O"), None, None)
+            ),
+            Some(s"$matchmakerUrl/games/1/matches/m-1/moves"),
+            Some(s"$matchmakerUrl/games/1/matches/m-1/results")
+          )
+        )
+        playToTheEnd(engine)
+        assertEquals(recorder.results.size, 1)
+        assert(!recorder.isArchived("m-1"))
+        assert(live.get("m-1").isDefined)
+    }
 }
