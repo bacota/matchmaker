@@ -144,24 +144,7 @@ $icons
   <details>
     <summary>Key</summary>
     <dl>
-      ${keyEntry("Marshal", "10", "Marshal")}${keyEntry("General", "9", "General")}${keyEntry(
-              "Colonel",
-              "8",
-              "Colonel"
-            )}
-      ${keyEntry("Major", "7", "Major")}${keyEntry("Captain", "6", "Captain")}${keyEntry(
-              "Lieutenant",
-              "5",
-              "Lieutenant"
-            )}
-      ${keyEntry("Sergeant", "4", "Sergeant")}${keyEntry(
-              "Miner",
-              "3",
-              "Miner — the only piece that survives attacking a bomb"
-            )}
-      ${keyEntry("Scout", "2", "Scout — runs any distance in a straight line")}
-      ${keyEntry("Spy", "", "Spy — takes the Marshal, if it attacks first")}
-      ${keyEntry("Bomb", "", "Bomb — never moves")}${keyEntry("Flag", "", "Flag — take it to win")}
+      $key
       <dt>?</dt><dd>an enemy piece you have not seen; a dot means it has moved</dd>
     </dl>
   </details>
@@ -237,9 +220,10 @@ ${TurnTimer.script}
 
   // ---- the board --------------------------------------------------------------------------
 
-  // The number a rank fights at; the spy, the bomb and the flag are drawn by their icon alone.
-  const NUMBER = { Marshal: "10", General: "9", Colonel: "8", Major: "7", Captain: "6", Lieutenant: "5",
-                   Sergeant: "4", Miner: "3", Scout: "2", Spy: "", Bomb: "", Flag: "" };
+  // The number a rank is shown with, the lower the stronger, as the key has it; the spy, the bomb
+  // and the flag are drawn by their icon alone.
+  const NUMBER = { Marshal: "1", General: "2", Colonel: "3", Major: "4", Captain: "5", Lieutenant: "6",
+                   Sergeant: "7", Miner: "8", Scout: "9", Spy: "", Bomb: "", Flag: "" };
   const ARMY = [["Flag", 1], ["Spy", 1], ["Scout", 8], ["Miner", 5], ["Sergeant", 4], ["Lieutenant", 4],
                 ["Captain", 4], ["Major", 3], ["Colonel", 2], ["General", 1], ["Marshal", 1], ["Bomb", 6]];
   const LAKES = [42, 43, 46, 47, 52, 53, 56, 57];
@@ -597,6 +581,26 @@ ${TurnTimer.script}
       * placed on a square with `<use href="#rank-Marshal">`. They are decoration — a square's label names its rank in
       * words.
       */
+    /** The key's lines, strongest first. Numbered the classic European way — 1 is the Marshal, and the lower number
+      * wins — which is only how ranks are shown: `Rank.strength` is what decides a fight. The page's `NUMBER` must
+      * agree.
+      */
+    private val key: String =
+        List(
+          ("Marshal", "1", "Marshal"),
+          ("General", "2", "General"),
+          ("Colonel", "3", "Colonel"),
+          ("Major", "4", "Major"),
+          ("Captain", "5", "Captain"),
+          ("Lieutenant", "6", "Lieutenant"),
+          ("Sergeant", "7", "Sergeant"),
+          ("Miner", "8", "Miner — the only piece that survives attacking a bomb"),
+          ("Scout", "9", "Scout — runs any distance in a straight line"),
+          ("Spy", "", "Spy — takes the Marshal, if it attacks first"),
+          ("Bomb", "", "Bomb — never moves"),
+          ("Flag", "", "Flag — take it to win")
+        ).map((rank, number, meaning) => keyEntry(rank, number, meaning)).mkString("\n      ")
+
     /** A line of the key: the icon and number a rank is drawn with, and what it is. */
     private def keyEntry(rank: String, number: String, meaning: String): String =
         s"""<dt>${iconOf(rank)}$number</dt><dd>$meaning</dd>"""

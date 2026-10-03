@@ -25,12 +25,12 @@ Classic (ISF) rules:
 
 | rank | count | | rank | count |
 |---|---|---|---|---|
-| Marshal (10) | 1 | | Sergeant (4) | 4 |
-| General (9) | 1 | | Miner (3) | 5 |
-| Colonel (8) | 2 | | Scout (2) | 8 |
-| Major (7) | 3 | | Spy (S) | 1 |
-| Captain (6) | 4 | | Bomb (B) | 6 |
-| Lieutenant (5) | 4 | | Flag (F) | 1 |
+| Marshal (1) | 1 | | Sergeant (7) | 4 |
+| General (2) | 1 | | Miner (8) | 5 |
+| Colonel (3) | 2 | | Scout (9) | 8 |
+| Major (4) | 3 | | Spy (S) | 1 |
+| Captain (5) | 4 | | Bomb (B) | 6 |
+| Lieutenant (6) | 4 | | Flag (F) | 1 |
 
 - **Deployment:** Red deploys on rows 1–4 and Blue on rows 7–10. The lakes are c5, d5, g5, h5, c6,
   d6, g6 and h6.
@@ -40,7 +40,8 @@ Classic (ISF) rules:
     never jumps.
   - Bombs and the flag never move, and nothing enters a lake.
 - **Combat:**
-  - The higher rank wins, and equal ranks both fall.
+  - The stronger rank wins, and equal ranks both fall. Ranks are numbered the classic European way, so
+    the lower number is the stronger: the Marshal is 1 and a Scout 9.
   - A spy that *attacks* the marshal takes it.
   - A bomb destroys any attacker except a miner.
   - Anything takes the flag.
