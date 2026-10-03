@@ -94,9 +94,14 @@ resource "aws_s3_bucket_lifecycle_configuration" "permanent_archive" {
 
 /* The friendly bucket's rule also expires every current object 30 days after it was written. In a
  * versioned bucket that only lays a delete marker over it: the archive stops being readable at 30
- * days, and its data goes with the noncurrent versions 30 days after that. A rule with `days` set
- * removes the delete markers it leaves behind on its own -- S3 does not allow
- * expired_object_delete_marker beside it. */
+ * days, and its data goes with the noncurrent versions 30 days after that.
+ *
+ * No expired_object_delete_marker here, and none is missing. S3 refuses it beside `days`, and a
+ * rule with `days` cleans up its own expired delete markers once they are old enough: "When you
+ * specify the Days tag, Amazon S3 automatically performs ExpiredObjectDeleteMarker cleanup when
+ * the delete markers are old enough to satisfy the age criteria."
+ * (https://docs.aws.amazon.com/AmazonS3/latest/userguide/intro-lifecycle-rules.html) A separate
+ * rule for it would be redundant. */
 resource "aws_s3_bucket_lifecycle_configuration" "friendly_archive" {
   bucket = aws_s3_bucket.archive["friendly"].id
 
