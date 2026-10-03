@@ -156,6 +156,18 @@ object ApiClient {
     def gameAdmins(gameId: GameId): Future[Seq[GameAdmin]] =
         get[Seq[GameAdmin]](s"/games/${gameId.value}/admins")
 
+    /** A game's matches, running ones first, for its admins to manage them from; refused for anybody else. */
+    def gameMatches(gameId: GameId): Future[Seq[GameMatch]] =
+        get[Seq[GameMatch]](s"/games/${gameId.value}/matches")
+
+    /** Says whether a match is friendly — a game's admin's to say (V36). */
+    def setFriendly(gameId: GameId, matchId: MatchId, friendly: Boolean): Future[Match] =
+        send[Match](
+          HttpMethod.PUT,
+          s"/games/${gameId.value}/matches/${js.URIUtils.encodeURIComponent(matchId.value)}/friendly",
+          Some(write(Json.FriendlyRequest(friendly)))
+        )
+
     def games(activeOnly: Boolean): Future[Seq[Game]] =
         get[Seq[Game]](if (activeOnly) "/games?activeOnly=true" else "/games")
 

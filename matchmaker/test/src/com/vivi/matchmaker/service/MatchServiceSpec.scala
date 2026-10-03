@@ -576,6 +576,19 @@ class MatchServiceSpec extends PropertySuite {
         assertEquals(result.timeout(30.seconds).unsafeRunSync(), Some(false))
     }
 
+    test("a game's admin lists the game's matches, each with who plays it and whether it is friendly") {
+        val result = for {
+            f <- friendlyFixture()
+            (creator, game, matchId, gameAdmin) = f
+            _ <- matchService.setFriendly(game.gameId, matchId, friendly = false, gameAdmin.externalId)
+            listed <- matchService.listForGame(game.gameId, gameAdmin.externalId)
+            refused <- matchService.listForGame(game.gameId, creator.externalId).attempt
+        } yield (listed, creator, matchId, refused)
+        val (listed, creator, matchId, refused) = result.timeout(30.seconds).unsafeRunSync()
+        assertEquals(listed.map(m => (m.matchId, m.friendly, m.players)), List((matchId, false, Seq(creator.nickname))))
+        assert(refused.left.exists(_.isInstanceOf[UnauthorizedError]), refused)
+    }
+
     test("the match's own creator may not, nor an admin of a different game, and a missing match is not found") {
         val result = for {
             f <- friendlyFixture()

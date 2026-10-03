@@ -330,6 +330,15 @@ class ChallengeService[T](
                         s"${game.displayName} is played by characters, and a challenge in it is played by its challenger's"
                       )
                     )
+                    // And it starts itself once its seats are filled: its challenger has no seat, so the
+                    // match is not in any list of theirs, and a start left to them is one they may never
+                    // come back to make. Refused rather than switched on, so that what was offered is what
+                    // was asked for.
+                    _ <- IO.raiseWhen(challenge.gameRoleId.isEmpty && !challenge.autoStart)(
+                      ValidationError(
+                        "a challenge whose challenger will not play in it has to start when all its seats are filled"
+                      )
+                    )
                     // Offering a match one will not play in, or one that is not friendly, is a game's
                     // admin's to do: the challenger is the caller by now, checked above for either kind.
                     _ <- IO.whenA(challenge.gameRoleId.isEmpty || !challenge.friendly)(

@@ -5,6 +5,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
+import skunk.data.Arr
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 import MatchRepo.{MatchClockRow, MatchSeatRow}
@@ -557,6 +558,33 @@ class MatchRepo(session: Session[IO]) {
           GROUP BY p.game_id, p.match_id, p.participant_id, pl.nickname, p.due, m.time_limit
           ORDER BY p.participant_id"""
             .query(gameId *: matchId *: text *: float8 *: instant.opt)
+
+    /* A game's matches for its admins: the ones still being played first, then the rest, most
+     * recently started first within each. Who is playing comes as one array per match, so a match
+     * is one row however many seats it has; a match with no seats yet (one whose engine is still
+     * being asked to create it) has an empty one. */
+    private val selectForGame
+        : Query[(GameId, Int), (MatchId, String, Instant, Option[Instant], Boolean, Boolean, Arr[String])] =
+        sql"""SELECT m.match_id, m.description, m.start, m.completed, m.cancelled, m.friendly,
+                 coalesce(array_agg(pl.nickname ORDER BY p.participant_id) FILTER (WHERE pl.nickname IS NOT NULL),
+                          '{}')
+          FROM match m
+          LEFT JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
+          LEFT JOIN player pl ON pl.player_id = p.player_id
+          WHERE m.game_id = $gameId
+          GROUP BY m.game_id, m.match_id
+          ORDER BY (m.completed IS NULL AND NOT m.cancelled) DESC, m.start DESC, m.match_id
+          LIMIT $int4""".query(matchId *: text *: instant *: instant.opt *: bool *: bool *: _text)
+
+    /** At most `limit` of the game's matches, running ones first, each with its players' nicknames. */
+    def listForGame(gameId: GameId, limit: Int): IO[List[GameMatch]] =
+        session
+            .execute(selectForGame)((gameId, limit))
+            .map(
+              _.map((id, description, start, completedAt, cancelled, friendly, players) =>
+                  GameMatch(id, description, start, completedAt, cancelled, friendly, players.flattenTo(List))
+              )
+            )
 
     /** Every seat's remaining budget, across the caller's running chess-clock matches. */
     def clocksForPlayer(playerId: PlayerId): IO[List[MatchClockRow]] =

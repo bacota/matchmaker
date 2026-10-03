@@ -1841,6 +1841,7 @@ object Views {
                         myMatchesSection(Some(game)),
                         pendingAcceptances(Some(game)),
                         gameChallenges(game),
+                        adminMatchesSection(game),
                         gameHistory(game)
                       )
               },
@@ -2510,6 +2511,96 @@ object Views {
                       }
               }
           }
+        )
+    }
+
+    /** The game's matches, for its admins: where they say whether each is friendly (V36). Nothing at all for anybody
+      * else — not a heading, not a request beyond the one that finds out.
+      *
+      * A section of its own rather than a box on the rows of the player's own lists, because an admin need not be
+      * playing a match to manage it, and a match they host but do not play in is in none of their lists.
+      */
+    private def adminMatchesSection(game: Game): HtmlElement =
+        div(child <-- currentPlayer.map(_.fold(emptyNode)(player => adminMatches(game, player))))
+
+    private def adminMatches(game: Game, player: Player): HtmlElement = {
+        // `None` until this player is known to administer the game and the list has come back.
+        val matches = Var(Option.empty[Seq[GameMatch]])
+        val refreshing = Var(false)
+        // Mounts of this section, so that an answer to an earlier one is not written into a later one.
+        var mount = 0
+
+        /* Written only into this section, never the store: the page this sits in is rebuilt when the
+         * store changes, and an answer that changed the store would rebuild it, remount this, and ask
+         * again. Dropped if it belongs to another mount or another sign-in. */
+        def fetch(asked: Int): Future[Unit] = {
+            val signIn = Store.currentSignIn
+            ApiClient.gameMatches(game.gameId).map { found =>
+                if (asked == mount && Store.stillSignedInAs(signIn)) matches.set(Some(found))
+            }
+        }
+
+        div(
+          onMountCallback { _ =>
+              mount += 1
+              val asked = mount
+              val signIn = Store.currentSignIn
+              // An overall admin is known to be one without asking; anybody else is looked for among the
+              // game's admins, and only an admin's page asks for the matches.
+              val administers =
+                  if (player.isAdmin) Future.successful(true)
+                  else ApiClient.gameAdmins(game.gameId).map(_.exists(_.player.playerId == player.playerId))
+              administers.foreach { yes =>
+                  if (yes && asked == mount && Store.stillSignedInAs(signIn)) fetch(asked)
+              }
+          },
+          onUnmountCallback(_ => mount += 1),
+          child <-- matches.signal.map {
+              case None => emptyNode
+              case Some(found) =>
+                  refreshableSection("Matches in this game", refreshing, () => fetch(mount), subsection = false)(
+                    p(cls := "detail", "As an admin of this game, you say whether each match is friendly."),
+                    if (found.isEmpty) p(cls := "empty", "None yet.")
+                    else ul(found.map(adminMatchRow(game, _)))
+                  )
+          }
+        )
+    }
+
+    /** One match in [[adminMatches]], with the box that says whether it is friendly.
+      *
+      * The box's state is the row's own, set as it is clicked and put back if the server refuses: changing it does not
+      * rebuild the list, which would take the keyboard's focus with it.
+      */
+    private def adminMatchRow(game: Game, m: GameMatch): HtmlElement = {
+        val friendly = Var(m.friendly)
+        val busy = Var(false)
+        li(
+          cls := "row",
+          div(cls := "title", if (m.description.trim.nonEmpty) m.description else s"match ${m.matchId.value}"),
+          div(cls := "detail", if (m.players.isEmpty) "nobody seated yet" else m.players.mkString(", ")),
+          div(
+            cls := "detail",
+            m.completedAt.map(when => s"completed ${Format.date(when)}").getOrElse {
+                if (m.cancelled) "cancelled" else s"started ${Format.date(m.start)}"
+            }
+          ),
+          label(
+            input(
+              tpe := "checkbox",
+              disabled <-- busy.signal,
+              controlled(
+                checked <-- friendly.signal,
+                onClick.mapToChecked --> { on =>
+                    friendly.set(on)
+                    Store.run(ApiClient.setFriendly(game.gameId, m.matchId, on), busy, _ => friendly.set(!on))(saved =>
+                        friendly.set(saved.friendly)
+                    )
+                }
+              )
+            ),
+            "Friendly"
+          )
         )
     }
 
@@ -3893,14 +3984,32 @@ object Views {
             )
           ),
           // The same shape as the Public box above it: a box and a short caption, which is all
-          // either of them needs.
-          label(
-            input(
-              tpe := "checkbox",
-              controlled(checked <-- autoStart.signal, onClick.mapToChecked --> autoStart)
-            ),
-            "Start when all seats filled"
-          ),
+          // either of them needs. Ticked and fixed for a challenger who will not play: the match will
+          // not be in any list of theirs, so it has to start without them, and the server refuses one
+          // that would not. Disabled rather than hidden, so that what the challenge will do is said.
+          child <-- seated.map { inIt =>
+              div(
+                label(
+                  input(
+                    tpe := "checkbox",
+                    disabled := !inIt,
+                    aria.describedBy := (if (inIt) "" else "auto-start-why"),
+                    controlled(
+                      checked <-- autoStart.signal.map(_ || !inIt),
+                      onClick.mapToChecked --> autoStart
+                    )
+                  ),
+                  "Start when all seats filled"
+                ),
+                if (inIt) emptyNode
+                else
+                    p(
+                      idAttr := "auto-start-why",
+                      cls := "detail",
+                      "Always, for a match you will not play in: it will not appear among your matches."
+                    )
+              )
+          },
           // The challenger changing their own role can leave the invitee holding the seat just taken,
           // which the server refuses. Released rather than refused here: the challenger's choice is
           // the one they just made, and the invitation falls back to "any seat that is free".
@@ -3950,7 +4059,7 @@ object Views {
                             gameRoleId = seat,
                             timeLimitKind = timeLimitKind.now(),
                             timeLimitUnit = timeLimitUnit.now(),
-                            autoStart = autoStart.now(),
+                            autoStart = autoStart.now() || !seatedNow,
                             isOpen = isOpen,
                             live = live.now(),
                             friendly = isFriendly
@@ -3968,7 +4077,7 @@ object Views {
                             gameRoleId = seat,
                             timeLimitKind = timeLimitKind.now(),
                             timeLimitUnit = timeLimitUnit.now(),
-                            autoStart = autoStart.now(),
+                            autoStart = autoStart.now() || !seatedNow,
                             isOpen = isOpen,
                             live = live.now(),
                             friendly = isFriendly

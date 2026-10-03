@@ -395,6 +395,10 @@ object Router {
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "cancel" :: Nil) =>
                 withGameId(gameId)(gid => ok(services.matches.cancel(gid, MatchId(matchId), caller)))
 
+            // A game's matches, for its admins to manage them from -- whether each is friendly, above all.
+            case ("GET", "games" :: gameId :: "matches" :: Nil) =>
+                withGameId(gameId)(gid => ok(services.matches.listForGame(gid, caller)))
+
             // Whether the match is friendly (V36), which a game's admin says.
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "friendly" :: Nil) =>
                 withGameId(gameId) { gid =>

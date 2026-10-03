@@ -5,6 +5,7 @@ import java.time.Duration
 import skunk.Session
 import com.vivi.matchmaker.model.{
     GameId,
+    GameMatch,
     Match,
     MatchId,
     MatchSummary,
@@ -271,6 +272,24 @@ class MatchService(
             } yield result
         }
 
+    /** The game's matches, for its admins to manage them from: an overall admin's or the game's own admins' to read,
+      * since these are matches they may have no seat in. The running ones first, and at most
+      * [[MatchService.gameMatchLimit]] of them altogether, so that a game with a long history answers with what is
+      * being played and what was played lately rather than with everything.
+      */
+    def listForGame(gameId: GameId, callerExternalId: String): IO[List[GameMatch]] =
+        sessionPool.use { session =>
+            for {
+                caller <- resolveCaller(session, callerExternalId)
+                // Read plainly, like the list: nothing is written on the strength of it.
+                allowed <-
+                    if (caller.isAdmin) IO.pure(true)
+                    else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
+                _ <- IO.raiseUnless(allowed)(UnauthorizedError("only an admin of this game may list its matches"))
+                matches <- new MatchRepo(session).listForGame(gameId, MatchService.gameMatchLimit)
+            } yield matches
+        }
+
     /** Says whether the match is friendly (V36): a game admin's to decide, or an overall admin's, and nobody else's —
       * not even the match's creator. Saying what it already is changes nothing. Any match of the game, finished or not:
       * the classification is about how the match counts, which matters as much once it is over.
@@ -309,4 +328,10 @@ class MatchService(
             case Some(player) => IO.pure(player)
             case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
         }
+}
+
+object MatchService {
+
+    /** How many matches [[MatchService.listForGame]] answers with at most. */
+    val gameMatchLimit: Int = 50
 }

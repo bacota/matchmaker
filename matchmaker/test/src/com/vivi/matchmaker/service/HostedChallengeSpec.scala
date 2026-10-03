@@ -7,7 +7,7 @@ import java.time.Instant
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, MatchRepo, PlayerRepo, TestSession}
+import com.vivi.matchmaker.persistence.{ChallengeRepo, CharacterRepo, GameRepo, MatchRepo, PlayerRepo, TestSession}
 
 /** A game's admin offering a match they will not play in (a seatless challenge), and offering one that is not friendly
   * — both of which only a game's admin may do.
@@ -19,9 +19,15 @@ class HostedChallengeSpec extends PropertySuite {
      * several registrations, a challenge, acceptances and a start. See CLAUDE.md. */
     private val caseTimeout = 60.seconds
 
-    private class StubEngine extends GameEngineClient {
+    /* An engine that refuses the first `failures` games it is asked for, and then makes them. */
+    private class StubEngine(failures: Int = 0) extends GameEngineClient {
+        private val refused = new java.util.concurrent.atomic.AtomicInteger(0)
+
         def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
-            IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+            IO(refused.getAndIncrement() < failures).flatMap { refuse =>
+                if (refuse) IO.raiseError(new RuntimeException("the engine is down"))
+                else IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+            }
 
         def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
             IO.pure(GameStatusResponse(completed = false, participants = Nil))
@@ -68,7 +74,15 @@ class HostedChallengeSpec extends PropertySuite {
             second <- register()
         } yield Fixture(game, host, first, second)
 
-    private def offer(f: Fixture, by: Player, seat: Option[GameRoleId], friendly: Boolean): PlainChallenge =
+    /* Starting by itself unless said otherwise when the challenger takes no seat, which the service
+     * requires of one. */
+    private def offer(
+        f: Fixture,
+        by: Player,
+        seat: Option[GameRoleId],
+        friendly: Boolean,
+        autoStart: Option[Boolean] = None
+    ): PlainChallenge =
         PlainChallenge(
           ChallengeId(0),
           by.playerId,
@@ -79,7 +93,8 @@ class HostedChallengeSpec extends PropertySuite {
           gameId = f.game.gameId,
           gameRoleId = seat,
           isOpen = false,
-          friendly = friendly
+          friendly = friendly,
+          autoStart = autoStart.getOrElse(seat.isEmpty)
         )
 
     private def invitations(f: Fixture): Seq[Invite] =
@@ -88,7 +103,7 @@ class HostedChallengeSpec extends PropertySuite {
           Invite(f.second.playerId, Some(f.game.roles(1).gameRoleId))
         )
 
-    test("a game's admin offers a match they will not play in, the invited players take it, and it starts unfriendly") {
+    test("a game's admin offers a match they will not play in, and it starts unfriendly when the last seat is taken") {
         val result = for {
             f <- fixture()
             created <- services.challenges.create(
@@ -110,22 +125,67 @@ class HostedChallengeSpec extends PropertySuite {
               f.game.roles(1).gameRoleId,
               f.second.externalId
             )
-            // Full, and the host holds no seat in it: still theirs to see, or they could not start it.
-            listed <- services.challenges.listByGame(f.game.gameId, f.host.externalId)
-            started <- services.engine.start(f.game.gameId, created.challengeId, f.host.externalId)
-            stored <- TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, started.matchId))
-            players <- TestSession.resource.use(session =>
-                new PlayerRepo(session).listForMatch(f.game.gameId, started.matchId)
+            // Nobody pressed Start: the second acceptance filled the last seat.
+            matchId <- TestSession.resource.use(session =>
+                new ChallengeRepo(session).startedMatch(f.game.gameId, created.challengeId)
             )
-        } yield (f, created, listed, stored, players)
-        val (f, created, listed, stored, players) = result.timeout(caseTimeout).unsafeRunSync()
+            stored <- TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, matchId.get))
+            players <- TestSession.resource.use(session =>
+                new PlayerRepo(session).listForMatch(f.game.gameId, matchId.get)
+            )
+        } yield (f, created, stored, players)
+        val (f, created, stored, players) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(created.gameRoleId, None)
-        assertEquals(
-          listed.find(_.challenge.challengeId == created.challengeId).map(_.challenge.gameRoleId),
-          Some(None)
-        )
         assertEquals(stored.map(_.friendly), Some(false))
         assertEquals(players.map(_.playerId).toSet, Set(f.first.playerId, f.second.playerId))
+    }
+
+    test("a seatless challenge that would wait to be started is refused") {
+        val result = for {
+            f <- fixture()
+            refused <- services.challenges
+                .create(
+                  offer(f, f.host, None, friendly = true, autoStart = Some(false)),
+                  f.host.externalId,
+                  invitations(f)
+                )
+                .attempt
+        } yield refused
+        val refused = result.timeout(caseTimeout).unsafeRunSync()
+        assert(refused.left.exists(_.isInstanceOf[ValidationError]), refused)
+    }
+
+    test("if starting by itself fails, the host still sees the full challenge and can start it by hand") {
+        val flaky = TestServices.servicesWith(new StubEngine(failures = 1))
+        val result = for {
+            f <- fixture()
+            created <- flaky.challenges.create(
+              offer(f, f.host, None, friendly = true),
+              f.host.externalId,
+              invitations(f)
+            )
+            _ <- flaky.challenges.accept(
+              f.game.gameId,
+              created.challengeId,
+              None,
+              f.game.roles(0).gameRoleId,
+              f.first.externalId
+            )
+            _ <- flaky.challenges.accept(
+              f.game.gameId,
+              created.challengeId,
+              None,
+              f.game.roles(1).gameRoleId,
+              f.second.externalId
+            )
+            // Full, unstarted, and the host holds no seat in it: still theirs to see.
+            listed <- flaky.challenges.listByGame(f.game.gameId, f.host.externalId)
+            started <- flaky.engine.start(f.game.gameId, created.challengeId, f.host.externalId)
+        } yield (
+          listed.exists(_.challenge.challengeId == created.challengeId),
+          started.challengeId == created.challengeId
+        )
+        assertEquals(result.timeout(caseTimeout).unsafeRunSync(), (true, true))
     }
 
     test("a player who took a seat in a seatless challenge may still give it up") {
