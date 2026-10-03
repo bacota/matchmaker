@@ -109,6 +109,19 @@ body {
   color: var(--accent);
 }
 
+/* A game's entry and its reload button on one line: the name takes the room, the button sits at
+   the right edge. The button is the section heading's `.refresh`, so it is sized for a finger the
+   same way. */
+.menu-game {
+  display: flex;
+  align-items: center;
+}
+
+.menu-game > .menu-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .menu-item:hover:not(:disabled) {
   background: #eef2f8;
 }

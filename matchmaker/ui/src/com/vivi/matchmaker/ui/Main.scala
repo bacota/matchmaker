@@ -358,7 +358,7 @@ object Views {
           // entry after it is an entry that has to be scrolled to.
           menuItem("Find Players", Store.Page.FindPlayers),
           listing(Store.games.signal, Store.loading(Store.Fetch.Games))(p(cls := "empty", "No games yet."))(games =>
-              div(games.map(game => menuItem(game.displayName, Store.Page.OneGame(game.gameId))))
+              div(games.map(gameMenuItem))
           ),
           // Only for admins, because only an admin can create a game: the server answers anyone else
           // with a 403, and a menu entry that always fails is worse than no entry.
@@ -367,6 +367,34 @@ object Views {
               case _                              => emptyNode
           }
         )
+
+    /** A game's entry in the menu, with a button beside it that goes to the game's screen and reloads all of it.
+      *
+      * Going to the screen reloads the challenges, characters and admins already (`Store.show`), and the admin's match
+      * list with them, since it is asked for again whenever its admins are. What it does not reload are the player's
+      * own lists, which the main page shares: those are re-read here, through the same flags their sections' own
+      * buttons use, so each one dims while it reloads.
+      */
+    private def gameMenuItem(game: Game): HtmlElement =
+        div(
+          cls := "menu-game",
+          menuItem(game.displayName, Store.Page.OneGame(game.gameId)),
+          button(
+            cls := "refresh",
+            tpe := "button",
+            aria.label := s"Reload ${game.displayName}",
+            span(aria.hidden := true, "\u21bb"),
+            onClick --> (_ => reloadGamePage(game.gameId))
+          )
+        )
+
+    private def reloadGamePage(gameId: GameId): Unit = {
+        Store.show(Store.Page.OneGame(gameId))
+        refresh(refreshingDue, () => Store.reloadDue())
+        refresh(refreshingActive, () => Store.reloadActive())
+        refresh(refreshingAcceptances, () => Store.reloadAcceptances())
+        refresh(refreshingCompleted, () => Store.reloadCompleted())
+    }
 
     private def menuItem(caption: String, target: Store.Page): HtmlElement = {
         val isCurrent = Store.page.signal.map(_ == target)
