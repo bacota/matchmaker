@@ -182,6 +182,7 @@ object Generators {
             isPublic <- Gen.oneOf(true, false)
             timeLimitKind <- Gen.oneOf(TimeLimitKind.values.toSeq)
             timeLimitUnit <- Gen.oneOf(TimeLimitUnit.values.toSeq)
+            friendly <- Gen.oneOf(true, false)
         } yield CharacterChallenge(
           ChallengeId(0),
           challenger,
@@ -192,9 +193,10 @@ object Generators {
           gameId,
           characterId,
           isPublic,
-          gameRoleId,
+          Some(gameRoleId),
           timeLimitKind,
-          timeLimitUnit
+          timeLimitUnit,
+          friendly = friendly
         )
 
     /** A game, and a challenge in it, ready for a match to be started from.

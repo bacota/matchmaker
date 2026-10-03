@@ -32,14 +32,16 @@ sealed trait Challenge {
       */
     def isPublic: Boolean
 
-    /** The role the challenger will play.
+    /** The role the challenger will play, or nothing for a challenger who will not play at all: a game's admin who
+      * offers a match for other players to play (a seatless challenge), which only a game's admin may do, and only in a
+      * plain game.
       *
       * Not a column on `challenge`: creating a challenge also creates the challenger's own acceptance, so this is
       * stored on that acceptance like every other player's role, and is read back from it. Setting it on a challenge is
-      * how the challenger claims a role at creation; changing it afterwards means changing their acceptance. Mandatory,
-      * because the acceptance it is stored on is.
+      * how the challenger claims a role at creation; changing it afterwards means changing their acceptance. A seatless
+      * challenge has no acceptance for its challenger, which is what `None` reads back from.
       */
-    def gameRoleId: GameRoleId
+    def gameRoleId: Option[GameRoleId]
 
     /** Whether the match starts by itself as soon as every required role is taken, rather than waiting for the
       * challenger to press Start (V18).
@@ -72,6 +74,11 @@ sealed trait Challenge {
       * turns it runs.
       */
     def live: Boolean
+
+    /** Whether the match this becomes is friendly (V36, V37), copied to it at the start like the rest of its terms.
+      * Every challenge is, unless a game's admin offers one that is not — see `Match.friendly`.
+      */
+    def friendly: Boolean
 }
 
 case class PlainChallenge(
@@ -83,12 +90,13 @@ case class PlainChallenge(
     settings: String,
     gameId: GameId,
     isPublic: Boolean = false,
-    gameRoleId: GameRoleId,
+    gameRoleId: Option[GameRoleId],
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
     autoStart: Boolean = false,
     isOpen: Boolean = true,
-    live: Boolean = false
+    live: Boolean = false,
+    friendly: Boolean = true
 ) extends Challenge
 
 case class CharacterChallenge(
@@ -101,12 +109,13 @@ case class CharacterChallenge(
     gameId: GameId,
     characterId: CharacterId,
     isPublic: Boolean = false,
-    gameRoleId: GameRoleId,
+    gameRoleId: Option[GameRoleId],
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
     autoStart: Boolean = false,
     isOpen: Boolean = true,
-    live: Boolean = false
+    live: Boolean = false,
+    friendly: Boolean = true
 ) extends Challenge
 
 /** An open challenge together with how many players have accepted it so far.

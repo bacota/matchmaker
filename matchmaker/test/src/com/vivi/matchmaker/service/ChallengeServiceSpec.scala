@@ -82,7 +82,7 @@ class ChallengeServiceSpec extends PropertySuite {
           fixture.game.gameId,
           fixture.character.characterId,
           isPublic = false,
-          gameRoleId = fixture.game.roles.head.gameRoleId
+          gameRoleId = Some(fixture.game.roles.head.gameRoleId)
         )
 
     property("create creates a challenge when the caller owns the character") {
@@ -149,7 +149,7 @@ class ChallengeServiceSpec extends PropertySuite {
                 }
                 role = game.roles.head.gameRoleId
                 challenge = challengeFor(base) match {
-                    case c: CharacterChallenge => c.copy(gameRoleId = role)
+                    case c: CharacterChallenge => c.copy(gameRoleId = Some(role))
                     case other                 => other
                 }
                 created <- challengeService.create(challenge, externalId)
@@ -167,8 +167,10 @@ class ChallengeServiceSpec extends PropertySuite {
                     )
                 }
             } yield acceptance.exists(_.gameRoleId == role) &&
-                listed.exists(c => c.challenge.challengeId == created.challengeId && c.challenge.gameRoleId == role) &&
-                joined.exists((challenge, _, _) => challenge.gameRoleId == role)
+                listed.exists(c =>
+                    c.challenge.challengeId == created.challengeId && c.challenge.gameRoleId.contains(role)
+                ) &&
+                joined.exists((challenge, _, _) => challenge.gameRoleId.contains(role))
             result.timeout(10.seconds).unsafeRunSync()
         }
     }
@@ -580,7 +582,7 @@ class ChallengeServiceSpec extends PropertySuite {
           timeLimit = None,
           settings = "{}",
           gameId = fixture.game.gameId,
-          gameRoleId = fixture.game.roles.head.gameRoleId,
+          gameRoleId = Some(fixture.game.roles.head.gameRoleId),
           isOpen = isOpen
         )
 
@@ -1770,7 +1772,7 @@ class ChallengeServiceSpec extends PropertySuite {
                       timeLimit = None,
                       settings = "{}",
                       gameId = game.gameId,
-                      gameRoleId = game.roles.head.gameRoleId,
+                      gameRoleId = Some(game.roles.head.gameRoleId),
                       isOpen = false
                     )
                 val result = for {

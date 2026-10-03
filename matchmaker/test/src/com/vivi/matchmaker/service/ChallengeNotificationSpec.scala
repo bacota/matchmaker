@@ -109,7 +109,7 @@ class ChallengeNotificationSpec extends PropertySuite {
                 settings = "{}",
                 gameId = game.gameId,
                 isPublic = true,
-                gameRoleId = game.roles.head.gameRoleId,
+                gameRoleId = Some(game.roles.head.gameRoleId),
                 timeLimitKind = TimeLimitKind.PerTurn,
                 timeLimitUnit = TimeLimitUnit.Minutes,
                 autoStart = autoStart
@@ -484,7 +484,7 @@ class ChallengeNotificationSpec extends PropertySuite {
                     timeLimit = None,
                     settings = "{}",
                     gameId = f.game.gameId,
-                    gameRoleId = f.game.roles.head.gameRoleId,
+                    gameRoleId = Some(f.game.roles.head.gameRoleId),
                     isOpen = false
                   ),
                   f.challenger.externalId,

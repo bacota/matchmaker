@@ -91,7 +91,7 @@ class JsonSpec extends FunSuite {
           settings = "{}",
           gameId = GameId(4),
           characterId = CharacterId(5),
-          gameRoleId = GameRoleId(6)
+          gameRoleId = Some(GameRoleId(6))
         )
         assertEquals(read[Challenge](write(challenge)), challenge)
     }
@@ -108,7 +108,7 @@ class JsonSpec extends FunSuite {
               "{}",
               GameId(3),
               CharacterId(4),
-              gameRoleId = GameRoleId(5)
+              gameRoleId = Some(GameRoleId(5))
             )
           )
         )
@@ -131,7 +131,7 @@ class JsonSpec extends FunSuite {
             gameId = GameId(4),
             characterId = CharacterId(5),
             isPublic = true,
-            gameRoleId = GameRoleId(6)
+            gameRoleId = Some(GameRoleId(6))
           ),
           acceptances = 2,
           takenRoles = Seq(GameRoleId(6), GameRoleId(7))
@@ -145,7 +145,7 @@ class JsonSpec extends FunSuite {
             timeLimit = None,
             settings = "{}",
             gameId = GameId(9),
-            gameRoleId = GameRoleId(10)
+            gameRoleId = Some(GameRoleId(10))
           ),
           acceptances = 1,
           takenRoles = Seq(GameRoleId(10))
@@ -176,7 +176,7 @@ class JsonSpec extends FunSuite {
             timeLimit = None,
             settings = "{}",
             gameId = GameId(3),
-            gameRoleId = GameRoleId(4),
+            gameRoleId = Some(GameRoleId(4)),
             isOpen = false
           ),
           acceptances = 1,
@@ -213,7 +213,7 @@ class JsonSpec extends FunSuite {
             timeLimit = None,
             settings = "{}",
             gameId = GameId(3),
-            gameRoleId = GameRoleId(4)
+            gameRoleId = Some(GameRoleId(4))
           ),
           acceptances = 1
         )
@@ -271,7 +271,7 @@ class JsonSpec extends FunSuite {
                 None,
                 "{}",
                 GameId(3),
-                gameRoleId = GameRoleId(4)
+                gameRoleId = Some(GameRoleId(4))
               ),
               acceptances = 2
             )

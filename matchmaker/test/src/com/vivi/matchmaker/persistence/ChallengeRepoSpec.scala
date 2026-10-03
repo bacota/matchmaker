@@ -44,7 +44,7 @@ class ChallengeRepoSpec extends PropertySuite {
                             createdPlayer.playerId,
                             createdGame.gameId,
                             createdCharacter.characterId,
-                            challenge.gameRoleId
+                            challenge.gameRoleId.get
                           )
                         )
                         found <- challengeRepo.read(createdGame.gameId, created.challengeId)
@@ -88,7 +88,7 @@ class ChallengeRepoSpec extends PropertySuite {
                             createdPlayer.playerId,
                             createdGame.gameId,
                             createdCharacter.characterId,
-                            challenge.gameRoleId
+                            challenge.gameRoleId.get
                           )
                         )
                         found <- challengeRepo.read(createdGame.gameId, created.challengeId)

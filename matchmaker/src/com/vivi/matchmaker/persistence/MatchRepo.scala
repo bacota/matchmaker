@@ -269,7 +269,7 @@ class MatchRepo(session: Session[IO]) {
     private val seatRow =
         gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: float8.opt *: timeLimitKind *:
             timeLimitUnit *: bool *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt *:
-            text.opt
+            text.opt *: bool
 
     private def toSeatRow(
         row: (
@@ -293,7 +293,8 @@ class MatchRepo(session: Session[IO]) {
             Boolean,
             Boolean,
             Option[Instant],
-            Option[String]
+            Option[String],
+            Boolean
         )
     ): MatchSeatRow = {
         val (
@@ -317,7 +318,8 @@ class MatchRepo(session: Session[IO]) {
           seatPending,
           seatCompleted,
           seatDue,
-          publicUrl
+          publicUrl,
+          friendly
         ) = row
         MatchSeatRow(
           gameId,
@@ -340,7 +342,8 @@ class MatchRepo(session: Session[IO]) {
           seatPending,
           seatCompleted,
           seatDue,
-          publicUrl
+          publicUrl,
+          friendly
         )
     }
 
@@ -358,7 +361,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url
+                 m.public_url, m.friendly
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -396,7 +399,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url
+                 m.public_url, m.friendly
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -435,7 +438,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url
+                 m.public_url, m.friendly
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -469,7 +472,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url
+                 m.public_url, m.friendly
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -492,7 +495,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url
+                 m.public_url, m.friendly
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -611,7 +614,9 @@ object MatchRepo {
         seatDue: Option[Instant],
         // Where anyone may watch this match, and `None` for one that is not public. A fact about the
         // match rather than about this seat, and so the same on every row of it.
-        publicUrl: Option[String]
+        publicUrl: Option[String],
+        // Whether the match is friendly (V36), likewise the match's.
+        friendly: Boolean
     )
 
     /** What one seat has left of a chess-clock budget. */

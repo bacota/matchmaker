@@ -125,7 +125,7 @@ class MatchServiceSpec extends PropertySuite {
                 game.gameId,
                 character.characterId,
                 isPublic = false,
-                game.roles.head.gameRoleId
+                Some(game.roles.head.gameRoleId)
               )
             )
             matchId = MatchId(matchIdStr)

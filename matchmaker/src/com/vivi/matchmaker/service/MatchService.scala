@@ -131,7 +131,8 @@ class MatchService(
                   turnDue = onTheClock.flatMap(_.seatDue).minOption,
                   // A fact about the match, so it is the same on every row of it and comes off the
                   // first like the rest of them.
-                  publicUrl = first.publicUrl
+                  publicUrl = first.publicUrl,
+                  friendly = first.friendly
                 )
             }
 

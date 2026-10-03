@@ -192,7 +192,7 @@ class RouterSpec extends FunSuite {
           "{}",
           GameId(1),
           CharacterId(1),
-          gameRoleId = GameRoleId(1)
+          gameRoleId = Some(GameRoleId(1))
         )
 
     // Wrapped, and with an invitation in it: the nested challenge still has to go through the

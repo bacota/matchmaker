@@ -278,7 +278,8 @@ class GameEngineService[T](
                       timeLimitUnit = challenge.timeLimitUnit,
                       settings = challenge.settings,
                       isPublic = challenge.isPublic,
-                      live = challenge.live
+                      live = challenge.live,
+                      friendly = challenge.friendly
                     )
                     saved <- matchRepo.create(newMatch)
                     // Under the lock taken above, so the next start of this challenge sees the claim.

@@ -106,7 +106,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                 settings = "{}",
                 gameId = game.gameId,
                 isPublic = true,
-                gameRoleId = game.roles.head.gameRoleId,
+                gameRoleId = Some(game.roles.head.gameRoleId),
                 timeLimitKind = TimeLimitKind.PerTurn,
                 timeLimitUnit = TimeLimitUnit.Minutes
               ),
@@ -568,7 +568,7 @@ class MatchStartedNotificationSpec extends PropertySuite {
                     settings = "{}",
                     gameId = game.gameId,
                     isPublic = true,
-                    gameRoleId = game.roles.head.gameRoleId,
+                    gameRoleId = Some(game.roles.head.gameRoleId),
                     timeLimitKind = TimeLimitKind.PerTurn,
                     timeLimitUnit = TimeLimitUnit.Minutes
                   ),

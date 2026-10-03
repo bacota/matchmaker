@@ -70,7 +70,9 @@ case class MatchSummary(
     // spectator's url, not a player's: `playUrl` is the one that needs a seat, and it is
     // deliberately not on a summary at all, since a player's own row asks for the match when it
     // needs one.
-    publicUrl: Option[String] = None
+    publicUrl: Option[String] = None,
+    // Whether the match is friendly (V36). Every match is, unless a game's admin says otherwise.
+    friendly: Boolean = true
 ) {
 
     /** Whether the match was played to an end. */
