@@ -170,7 +170,8 @@ class Engine(
                 s.cognitoId,
                 s.participantId,
                 m.moves.count(_.side == s.side),
-                m.captured(s.side)
+                m.captured(s.side),
+                s.nickname
               )
           ),
           clock = core.clockView(m)

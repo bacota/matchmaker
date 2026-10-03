@@ -112,7 +112,8 @@ object Html {
 ${SignIn.css}
 ${PlayLive.css}
 ${TurnTimer.css}
-  #seats { margin-top: 1.25rem; font-size: .875rem; opacity: .7; }
+  #players h2 { font-size: 1rem; font-weight: 600; margin: 1.25rem 0 .25rem; }
+  #seats { font-size: .875rem; opacity: .7; }
   #seats div { margin: .125rem 0; }
   #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
 </style>
@@ -167,7 +168,10 @@ $icons
   <!-- The sign-in form, rendered by renderSignIn() and shown whenever there is a login to
        offer and no seat to show for it. -->
   <div id="signin" hidden></div>
-  <div id="seats"></div>
+  <section id="players" aria-labelledby="players-title" hidden>
+    <h2 id="players-title">Players</h2>
+    <div id="seats"></div>
+  </section>
   ${PlayLive.markup}
   <div id="error" role="alert"></div>
 </main>
@@ -224,8 +228,10 @@ ${TurnTimer.script}
     drawNews();
     drawLost();
 
+    // By nickname; a match created before matchmaker sent nicknames has only the sign-in id.
+    document.getElementById("players").hidden = !state;
     document.getElementById("seats").innerHTML = state
-      ? state.players.map(p => "<div>" + p.side + " · " + escapeHtml(p.cognitoId) + (p.side === (state.you || "") ? " (you)" : "") + "</div>").join("")
+      ? state.players.map(p => "<div>" + p.side + " · " + escapeHtml(p.nickname || p.cognitoId) + (p.side === (state.you || "") ? " (you)" : "") + "</div>").join("")
       : "";
   }
 

@@ -36,8 +36,8 @@ class ProtocolSpec extends FunSuite {
       settings = """{"variant":"standard"}""",
       timeLimitSeconds = Some(600L),
       players = List(
-        Protocol.EnginePlayer("sub-alice", 11L, Some("Red"), Some(101L), Some("""{"strength":5}""")),
-        // A seat with no character, as in a game that has none.
+        Protocol.EnginePlayer("sub-alice", 11L, Some("Red"), Some(101L), Some("""{"strength":5}"""), Some("alice")),
+        // A seat with no character, as in a game that has none, and no nickname, as from a matchmaker that predates them.
         Protocol.EnginePlayer("sub-bob", 22L, None, None, None)
       ),
       moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/moves"),
@@ -54,7 +54,7 @@ class ProtocolSpec extends FunSuite {
           timeLimitSeconds = create.timeLimitSeconds,
           players = create.players.map(p =>
               com.vivi.matchmaker.engine
-                  .EnginePlayer(p.cognitoId, p.participantId, p.role, p.characterId, p.characterState)
+                  .EnginePlayer(p.cognitoId, p.participantId, p.role, p.characterId, p.characterState, p.nickname)
           ),
           moveCallbackUrl = create.moveCallbackUrl,
           resultsCallbackUrl = create.resultsCallbackUrl

@@ -211,6 +211,8 @@ class GameEngineServiceSpec extends PropertySuite {
                 request.players.map(_.participantId).toSet == participants.map(_.participantId.value).toSet &&
                 request.players.map(_.cognitoId) == List(externalId) &&
                 request.players.flatMap(_.role) == List("attacker") &&
+                // And the nickname, for the engine to show the player by.
+                request.players.flatMap(_.nickname) == List(nickname) &&
                 request.moveCallbackUrl.exists(_.endsWith(s"/matches/${started.matchId.value}/moves")) &&
                 participants.size == 1 &&
                 participants.head.playerId == fixture.owner.playerId &&
@@ -486,7 +488,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     accepted.left.exists(_.isInstanceOf[ConflictError]) &&
                     deleted.left.exists(_.isInstanceOf[ConflictError]) &&
                     backedOut.left.exists(_.isInstanceOf[ConflictError]) &&
-                    roster.exists((acceptance, _, _) => acceptance.playerId == other.playerId)
+                    roster.exists(_.acceptance.playerId == other.playerId)
                 result.timeout(15.seconds).unsafeRunSync()
         }
     }
