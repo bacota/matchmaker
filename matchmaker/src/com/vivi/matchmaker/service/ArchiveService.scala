@@ -106,13 +106,15 @@ class ArchiveService(
       * The check is a call to S3, so it is made between two reads rather than inside a transaction, and what it found
       * is held against the match as it stands under the lock afterwards: a second request may have asked for a
       * different upload meanwhile, and only the one most recently asked for is accepted.
+      *
+      * Three borrowings of the pool rather than one: no connection is held while S3 answers, so a slow check cannot tie
+      * up the connections the API's other requests need.
       */
     def confirm(matchId: MatchId, callerExternalId: String): IO[Instant] =
-        sessionPool.use { session =>
-            val repo = new ArchiveRepo(session)
-            for {
-                before <- require(repo, matchId, callerExternalId)
-                archivedAt <- before.archivedAt match {
+        sessionPool
+            .use(session => require(new ArchiveRepo(session), matchId, callerExternalId))
+            .flatMap { before =>
+                before.archivedAt match {
                     case Some(at) => IO.pure(at)
                     case None =>
                         for {
@@ -120,40 +122,44 @@ class ArchiveService(
                               ConflictError(s"no upload was asked for for match ${matchId.value}")
                             )
                             found <- store.head(ArchiveBucket.of(before.friendly), key)
-                            at <- session.transaction.use { _ =>
-                                for {
-                                    row <- requireForUpdate(repo, matchId, callerExternalId)
-                                    at <- row.archivedAt match {
-                                        case Some(at) => IO.pure(at)
-                                        case None =>
-                                            for {
-                                                _ <- IO.raiseUnless(row.key.contains(key))(
-                                                  ConflictError(
-                                                    s"the upload asked for for match ${matchId.value} changed while it was being checked"
-                                                  )
-                                                )
-                                                arrived <- IO.fromOption(found)(
-                                                  ConflictError(s"no archive has arrived for match ${matchId.value}")
-                                                )
-                                                // A store that reports no checksum is trusted on the signature alone:
-                                                // the upload url was signed for this checksum, so nothing else could
-                                                // have been accepted under it.
-                                                _ <- IO.raiseWhen(
-                                                  arrived.sha256.exists(s => !row.sha256.contains(s))
-                                                )(
-                                                  ConflictError(
-                                                    s"the archive that arrived for match ${matchId.value} is not the one asked for"
-                                                  )
-                                                )
-                                                at <- repo.recordArchived(row.gameId, matchId)
-                                            } yield at
-                                    }
-                                } yield at
+                            at <- sessionPool.use { session =>
+                                val repo = new ArchiveRepo(session)
+                                session.transaction.use { _ =>
+                                    for {
+                                        row <- requireForUpdate(repo, matchId, callerExternalId)
+                                        at <- row.archivedAt match {
+                                            case Some(at) => IO.pure(at)
+                                            case None =>
+                                                for {
+                                                    _ <- IO.raiseUnless(row.key.contains(key))(
+                                                      ConflictError(
+                                                        s"the upload asked for for match ${matchId.value} changed while it was being checked"
+                                                      )
+                                                    )
+                                                    arrived <- IO.fromOption(found)(
+                                                      ConflictError(
+                                                        s"no archive has arrived for match ${matchId.value}"
+                                                      )
+                                                    )
+                                                    // A store that reports no checksum is trusted on the signature
+                                                    // alone: the upload url was signed for this checksum, so nothing
+                                                    // else could have been accepted under it.
+                                                    _ <- IO.raiseWhen(
+                                                      arrived.sha256.exists(s => !row.sha256.contains(s))
+                                                    )(
+                                                      ConflictError(
+                                                        s"the archive that arrived for match ${matchId.value} is not the one asked for"
+                                                      )
+                                                    )
+                                                    at <- repo.recordArchived(row.gameId, matchId)
+                                                } yield at
+                                        }
+                                    } yield at
+                                }
                             }
                         } yield at
                 }
-            } yield archivedAt
-        }
+            }
 
     /** A url the engine may read match `matchId`'s archive from, to show a finished match whose live copy is gone.
       *
