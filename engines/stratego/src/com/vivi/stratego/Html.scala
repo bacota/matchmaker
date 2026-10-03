@@ -111,11 +111,11 @@ object Html {
   /* A piece that has moved, which tells the other side it is neither a mine nor the flag. */
   #board button.moved::after { content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px;
                                border-radius: 50%; background: currentColor; opacity: .8; }
-  /* One of your own pieces whose rank the other side has seen. */
+  /* A piece whose rank its enemy has seen — in a replay, by the move shown. */
   #board button.known::before { content: ""; position: absolute; left: 25%; right: 25%; bottom: 2px; height: 2px;
                                 background: currentColor; }
   #news { min-height: 1.5rem; margin: .75rem 0 0; }
-  /* Stepping through the match: back, where the board is, forward, and back to the latest. */
+  /* Stepping through the match: to the opening, back, where the board is, forward, and to the latest. */
   #replay { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; align-items: center; margin-top: .75rem; }
   #replay[hidden] { display: none; }
   #replay button { font: inherit; font-size: 1rem; min-height: 44px; min-width: 44px; padding: 0 .75rem;
@@ -123,7 +123,8 @@ object Html {
                    cursor: pointer; }
   #replay button[aria-disabled="true"] { opacity: .5; cursor: default; }
   #replay button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-  #replay-at { min-width: 9rem; font-variant-numeric: tabular-nums; }
+  #replay-at { min-width: 9rem; text-align: center; font-variant-numeric: tabular-nums; }
+  #replay .double { letter-spacing: -.2em; }
   /* A past position, not the one being played: the board is ringed while it shows one. */
   #board.replaying { outline: 3px dashed var(--mark); outline-offset: 3px; }
   .controls { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; align-items: end; margin-top: 1rem; }
@@ -253,10 +254,11 @@ $icons
   <div id="board" role="group" aria-label="board"></div>
   <!-- Not a live region: what each step shows is announced by #news, below. -->
   <div id="replay" role="group" aria-label="replay" hidden>
+    <button type="button" id="replay-first" aria-label="Opening position" title="Opening position (Home)"><span class="double" aria-hidden="true">◀◀</span></button>
     <button type="button" id="replay-back" aria-label="Previous move" title="Previous move (left arrow)">◀</button>
     <span id="replay-at"></span>
     <button type="button" id="replay-forward" aria-label="Next move" title="Next move (right arrow)">▶</button>
-    <button type="button" id="replay-latest">Latest</button>
+    <button type="button" id="replay-latest" aria-label="Latest position" title="Latest position (End)"><span class="double" aria-hidden="true">▶▶</span></button>
   </div>
   <!-- Announced: what the last move did, which the other player's arrives while this page is idle. -->
   <p id="news" role="status" aria-live="polite"></p>
@@ -310,7 +312,8 @@ $icons
       <dt><span class="chip Blue">?<span class="dot"></span></span></dt><dd>An enemy piece that has moved — so it is not a mine or the flag</dd>
       <dt><span class="chip">${iconOf(
               "Sergeant"
-            )}<span class="bar"></span></span></dt><dd>One of your pieces the enemy has seen</dd>
+            )}<span class="bar"></span></span></dt><dd>A piece the enemy has seen — when stepping back through the moves, seen by
+        then</dd>
     </dl>
   </div>
   <!-- The sign-in form, rendered by renderSignIn() and shown whenever there is a login to
@@ -536,6 +539,7 @@ $replayScript
     let text = at + ", " + (mine ? "your " : p.side + " ") + (p.rank ? rankName(p.rank) : "unknown piece");
     if (p.moved && !p.rank) text += ", has moved";
     if (mine && p.revealed) text += ", seen by " + other(p.side);
+    else if (replaying() && p.rank && !mine) text += p.revealed ? ", revealed" : ", not yet revealed";
     return text;
   }
 
@@ -611,7 +615,9 @@ $replayScript
         '<use href="#rank-' + p.rank + '"/></svg>' + (NUMBER[p.rank] ? '<span class="number">' + NUMBER[p.rank] + "</span>" : "");
       b.className = LAKES.includes(sq) ? "lake" : p ? p.side : "";
       b.classList.toggle("moved", !!(p && p.moved && !p.rank));
-      b.classList.toggle("known", !!(p && p.rank && p.revealed && state && p.side === state.you));
+      // Either side's: a replay shows ranks that were not seen until later, and the mark is what tells them apart, so
+      // it means the same at every step — the latest included.
+      b.classList.toggle("known", !!(p && p.rank && p.revealed));
       b.classList.toggle("last", last.includes(sq));
       b.classList.toggle("target", targets.includes(sq));
       b.classList.toggle("selected", sq === selected);
@@ -861,12 +867,13 @@ $replayScript
   // ---- replaying ------------------------------------------------------------------------------
   //
   // Back and forward a move at a time, from the opening position to the one being played, with the
-  // buttons under the board or the left and right arrow keys. Looking back changes nothing: the
+  // buttons under the board or the left and right arrow keys, and straight to either end with the
+  // double arrows or Home and End. Looking back changes nothing: the
   // board cannot be played on until it is back at the latest position, and a move the other player
   // makes meanwhile is added to the end of what can be stepped through.
 
   const replayBack = document.getElementById("replay-back"), replayForward = document.getElementById("replay-forward");
-  const replayLatest = document.getElementById("replay-latest");
+  const replayFirst = document.getElementById("replay-first"), replayLatest = document.getElementById("replay-latest");
 
   function replayLength() { return state && state.replay ? state.replay.moves.length : 0; }
 
@@ -883,6 +890,7 @@ $replayScript
       ? (view === 0 ? "Opening position" : "Move " + view + " of " + n) : "Move " + n + " of " + n;
     // aria-disabled rather than disabled, so a button keeps the focus when it has stepped as far as
     // it goes, and the arrow keys still work from it.
+    replayFirst.setAttribute("aria-disabled", String(n === 0 || view === 0));
     replayBack.setAttribute("aria-disabled", String(n === 0 || view === 0));
     replayForward.setAttribute("aria-disabled", String(!replaying()));
     replayLatest.setAttribute("aria-disabled", String(!replaying()));
@@ -899,14 +907,17 @@ $replayScript
     render();
   }
 
+  replayFirst.addEventListener("click", () => stepReplay(-Infinity));
   replayBack.addEventListener("click", () => stepReplay(-1));
   replayForward.addEventListener("click", () => stepReplay(1));
   replayLatest.addEventListener("click", () => stepReplay(Infinity));
   document.addEventListener("keydown", e => {
-    const delta = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+    const delta = { ArrowLeft: -1, ArrowRight: 1, Home: -Infinity, End: Infinity }[e.key];
     if (delta === undefined || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     // Not where the arrows already mean something: a select, a field, or a dialog over the board.
     if (e.target.closest && e.target.closest("select, input, textarea, dialog, [popover]")) return;
+    // Home and End scroll the page anywhere else, so they go to the ends only from the board or its controls.
+    if (Math.abs(delta) === Infinity && !(e.target.closest && e.target.closest("#board, #replay"))) return;
     if (replayLength() === 0) return;
     e.preventDefault();
     stepReplay(delta);
@@ -1241,7 +1252,9 @@ $replayScript
       <li>All of your own pieces. An enemy piece is a ? until a battle or a Scout's long move reveals it, and is
         marked once it has moved, since it cannot be a Mine or the Flag.</li>
       <li>Hidden pieces stay hidden when the match ends.</li>
-      <li>◀ and ▶ under the board, or the left and right arrow keys, step back and forward through the moves.</li>
+      <li>◀ and ▶ under the board, or the left and right arrow keys, step back and forward through the moves; ◀◀ and
+        ▶▶, or Home and End on the board, go to the opening and the latest position. While stepping through, an underline marks
+        each piece whose rank had been seen by then.</li>
     </ul>"""
 
     /** The key's lines, strongest first, named as the page's `NAME` names them. Numbered the classic European way — 1
