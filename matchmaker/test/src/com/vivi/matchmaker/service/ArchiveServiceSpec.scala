@@ -50,7 +50,7 @@ class ArchiveServiceSpec extends FunSuite {
     private def unique(prefix: String): String = s"$prefix-${java.util.UUID.randomUUID()}"
 
     /** A player, a game whose engine is `engineId`, and one match of it — completed, unless told otherwise. */
-    private case class Fixture(player: Player, game: Game, matchId: MatchId)
+    private case class Fixture(player: Player, game: Game, matchId: MatchId, character: Character[String])
 
     private def fixture(
         completed: Boolean = true,
@@ -123,7 +123,56 @@ class ArchiveServiceSpec extends FunSuite {
                     game.roles.head.gameRoleId
                   )
                 )
-            } yield Fixture(player, game, matchId)
+            } yield Fixture(player, game, matchId, character)
+        }
+
+    /** Another completed, friendly, public match of `f`'s game for `f`'s player. */
+    private def addCompletedMatch(f: Fixture): IO[MatchId] =
+        TestSession.resource.use { session =>
+            for {
+                challenge <- new ChallengeRepo(session).create(
+                  CharacterChallenge(
+                    ChallengeId(0),
+                    f.player.playerId,
+                    "challenge",
+                    None,
+                    None,
+                    "{}",
+                    f.game.gameId,
+                    Some(f.character.characterId),
+                    isPublic = false,
+                    Some(f.game.roles.head.gameRoleId)
+                  )
+                )
+                matchId = MatchId(java.util.UUID.randomUUID().toString)
+                _ <- new MatchRepo(session).create(
+                  Match(
+                    f.game.gameId,
+                    matchId,
+                    challenge.challengeId,
+                    "description",
+                    Some(completedAt),
+                    Instant.ofEpochSecond(1000),
+                    None,
+                    "{}",
+                    isPublic = true,
+                    publicUrl = Some("https://engine.example.com/matches/m/board")
+                  )
+                )
+                _ <- new ParticipantRepo(session).create(
+                  CharacterParticipant(
+                    ParticipantId(0),
+                    f.game.gameId,
+                    matchId,
+                    f.player.playerId,
+                    pending = false,
+                    completed = true,
+                    None,
+                    f.character.characterId,
+                    f.game.roles.head.gameRoleId
+                  )
+                )
+            } yield matchId
         }
 
     private val content = """{"matchId":"m","board":[1,2,3]}""".getBytes(StandardCharsets.UTF_8)
@@ -324,6 +373,39 @@ class ArchiveServiceSpec extends FunSuite {
           "rock%20paper%2Fscissors/2026-01-31/m.json"
         )
         assertEquals(ArchiveService.keyFor("..", at, MatchId("m")), "%2E%2E/2026-01-31/m.json")
+    }
+
+    test("a game name too long for a key is cut short and hashed, without splitting an escape") {
+        val at = Instant.parse("2026-01-31T00:00:00Z")
+        val long = "é" * 300
+        val key = ArchiveService.keyFor(long, at, MatchId("m"))
+        val folder = key.split('/').head
+        assert(folder.length <= ArchiveService.MaxSegment, folder)
+        assert(folder.matches("(%[0-9A-F]{2})+-[0-9a-f]{16}"), folder)
+        // Two names alike in what is kept still get folders of their own.
+        assertNotEquals(ArchiveService.keyFor(long + "x", at, MatchId("m")).split('/').head, folder)
+        assert(key.getBytes("UTF-8").length < 1024)
+        // A short name is untouched.
+        assertEquals(ArchiveService.keyFor("stratego", at, MatchId("m")), "stratego/2026-01-31/m.json")
+    }
+
+    test("a long history checks only so many archives per list, and the next list carries on") {
+        val f = run(fixture(isPublic = true))
+        // More expired archives in one player's history than one list will check.
+        val extra = (1 to ArchiveService.ChecksPerRequest + 5).toList.map { _ =>
+            run(addCompletedMatch(f))
+        }
+        val all = f.matchId :: extra
+        all.foreach { id =>
+            val g = f.copy(matchId = id)
+            run(archived(g))
+            run(age(g, 31))
+            store.delete(ArchiveBucket.Friendly, run(row(g)).flatMap(_.key).get)
+        }
+        val first = run(services.matches.completed(f.player.externalId))
+        assertEquals(first.count(_.archiveExpired), ArchiveService.ChecksPerRequest)
+        val second = run(services.matches.completed(f.player.externalId))
+        assertEquals(second.count(_.archiveExpired), all.size)
     }
 
     test("only a friendly archive older than its retention may have expired") {

@@ -217,7 +217,12 @@ class ArchiveService(
 
     /** Lists' half of the expiry: for each friendly summary archived longer ago than its retention and not yet known to
       * have expired, checks whether the archive is still there, and marks the ones that are not. Every other summary
-      * passes through untouched, and the checks for one list run at once.
+      * passes through untouched.
+      *
+      * Bounded, because a list is unbounded and this is on a player's request: at most [[ChecksPerRequest]] matches are
+      * checked, [[CheckParallelism]] at a time. A match left unchecked keeps its link for now, and the next list it is
+      * in checks it — once one is found gone it is recorded, so a long history is worked through over a few loads and
+      * then costs nothing.
       *
       * A check that fails or takes too long counts as present. A link to the engine's "expired" page is a small cost;
       * hiding a match whose archive is still there is not.
@@ -227,11 +232,12 @@ class ArchiveService(
         val due = summaries.filter(s => !s.archiveExpired && s.archivedAt.exists(mayHaveExpired(s.friendly, _, at)))
         if (due.isEmpty) IO.pure(summaries)
         else
-            due.parTraverse(s => expiredNow(s.gameId, s.matchId).map(gone => (s.gameId, s.matchId) -> gone))
-                .map { found =>
-                    val gone = found.collect { case (id, true) => id }.toSet
-                    summaries.map(s => if (gone((s.gameId, s.matchId))) markExpired(s) else s)
-                }
+            IO.parTraverseN(CheckParallelism)(due.take(ChecksPerRequest))(s =>
+                expiredNow(s.gameId, s.matchId).map(gone => (s.gameId, s.matchId) -> gone)
+            ).map { found =>
+                val gone = found.collect { case (id, true) => id }.toSet
+                summaries.map(s => if (gone((s.gameId, s.matchId))) markExpired(s) else s)
+            }
     }
 
     /** [[settle]], for the one match a player is about to open. */
@@ -283,6 +289,15 @@ object ArchiveService {
     /** How long a friendly match's archive is kept: the friendly bucket's lifecycle rule. */
     val FriendlyRetention: Duration = Duration.ofDays(30)
 
+    /** How many possibly expired archives one list checks in S3, and how many of those checks run at once. */
+    val ChecksPerRequest: Int = 25
+    val CheckParallelism: Int = 8
+
+    /** The longest a key segment may be. S3 allows 1,024 bytes for a whole key; this keeps a key a person can read, and
+      * far inside that whatever a game is called.
+      */
+    val MaxSegment: Int = 100
+
     /** The largest archive accepted. Game states are kilobytes; this is a ceiling against a mistake, not a budget. */
     val MaxSize: Long = 16L * 1024 * 1024
 
@@ -294,11 +309,33 @@ object ArchiveService {
       * match id — laid out for a person browsing the bucket, who has a match id and a game in hand.
       *
       * The game's `name` is its stable handle: not `displayName`, which an admin may change, and not the numeric id,
-      * which means nothing to a reader. Characters that are not safe in a key are percent-encoded.
+      * which means nothing to a reader. Characters that are not safe in a key are percent-encoded, and a segment longer
+      * than [[MaxSegment]] once encoded is cut short and given a hash of the whole, so that two long names that begin
+      * alike still get folders of their own.
       */
     def keyFor(gameName: String, completedAt: Instant, matchId: MatchId): String = {
         val day = completedAt.atZone(ZoneOffset.UTC).toLocalDate
-        s"${segment(gameName)}/$day/${segment(matchId.value)}.json"
+        s"${bounded(gameName)}/$day/${bounded(matchId.value)}.json"
+    }
+
+    private def bounded(raw: String): String = {
+        val encoded = segment(raw)
+        if (encoded.length <= MaxSegment) encoded
+        else {
+            val hash = java.security.MessageDigest
+                .getInstance("SHA-256")
+                .digest(raw.getBytes(StandardCharsets.UTF_8))
+                .take(8)
+                .map(b => f"${b & 0xff}%02x")
+                .mkString
+            // Cut where it will not split a %XX escape in two.
+            val cut = encoded.take(MaxSegment - hash.length - 1)
+            val whole = cut.lastIndexOf('%') match {
+                case i if i >= 0 && i > cut.length - 3 => cut.take(i)
+                case _                                 => cut
+            }
+            s"$whole-$hash"
+        }
     }
 
     private def segment(raw: String): String =
