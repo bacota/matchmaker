@@ -187,6 +187,11 @@ resource "aws_lambda_function" "api" {
 
       # No engine API keys: each game's key is stored with it in the database (V34), set by an
       # admin on the game's form, and read from there in both directions.
+
+      # The two archive buckets (archive.tf). Without both, archiving is off and the engine is told
+      # so; see com.vivi.matchmaker.archive.ArchiveStore.fromEnvironment.
+      ARCHIVE_BUCKET          = aws_s3_bucket.archive["permanent"].bucket
+      FRIENDLY_ARCHIVE_BUCKET = aws_s3_bucket.archive["friendly"].bucket
     }
   }
 

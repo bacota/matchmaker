@@ -63,3 +63,8 @@ output "admin_email" {
   description = "Address the admin user signs in with, and where its invitation was sent."
   value       = one(aws_cognito_user.admin[*].username)
 }
+
+output "archive_buckets" {
+  description = "The two buckets completed matches are archived to: permanent, and friendly (kept 30 days)."
+  value       = { for kind, bucket in aws_s3_bucket.archive : kind => bucket.bucket }
+}
