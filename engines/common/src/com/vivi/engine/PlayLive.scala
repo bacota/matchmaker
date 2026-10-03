@@ -88,6 +88,27 @@ class PlayLive(storagePrefix: String) {
     toggle.checked = !!liveUrl && chosen();
     toggle.addEventListener("change", () => { choose(toggle.checked); sync(); });
 
+    /* What Play Live does, as a tooltip: after half a second's rest of a mouse on the switch, or at
+     * once when the keyboard reaches it. It stays while the pointer moves onto it, and goes with
+     * Escape, as content shown on hover must. A phone has no hover; its screen reader still reads it,
+     * as the checkbox's description. */
+    const label = box.querySelector("label"), hint = document.getElementById("live-hint");
+    let tipTimer = null, leaveTimer = null;
+    function showTip() { clearTimeout(leaveTimer); box.classList.add("tip"); }
+    function hideTip() { clearTimeout(tipTimer); clearTimeout(leaveTimer); box.classList.remove("tip"); }
+    label.addEventListener("pointerenter", e => {
+      if (e.pointerType !== "mouse") return;
+      clearTimeout(leaveTimer);
+      clearTimeout(tipTimer);
+      tipTimer = setTimeout(showTip, 500);
+    });
+    label.addEventListener("pointerleave", () => { clearTimeout(tipTimer); leaveTimer = setTimeout(hideTip, 200); });
+    hint.addEventListener("pointerenter", () => clearTimeout(leaveTimer));
+    hint.addEventListener("pointerleave", hideTip);
+    toggle.addEventListener("focus", () => { if (toggle.matches(":focus-visible")) showTip(); });
+    toggle.addEventListener("blur", hideTip);
+    document.addEventListener("keydown", e => { if (e.key === "Escape") hideTip(); });
+
     // Storage can be refused outright — a private window, a browser set to block site data — and
     // the switch must still work for the visit, just without being remembered.
     function chosen() { try { return localStorage.getItem(LiveChoiceKey) === "on"; } catch (e) { return false; } }
@@ -190,18 +211,21 @@ class PlayLive(storagePrefix: String) {
 
 object PlayLive {
 
-    /** The switch, hidden until the script finds the engine offers Play Live. */
+    /** The switch, hidden until the script finds the engine offers Play Live. What it does is a tooltip on it, which is
+      * also the checkbox's description: shown to a mouse resting on the switch or a keyboard reaching it, and always
+      * read by a screen reader, which finds a description whether or not it is on screen.
+      */
     val markup: String =
         """<div id="live" hidden>
     <label for="live-toggle"><input type="checkbox" id="live-toggle" aria-describedby="live-hint"> Play Live</label>
     <span id="live-status" role="status" aria-live="polite"></span>
-    <p id="live-hint">See every move the moment it is made, instead of every few seconds.</p>
+    <p id="live-hint" role="tooltip">See every move the moment it is made, instead of every few seconds.</p>
   </div>"""
 
     /** The styles of the switch, for a page to put among its own. */
     val css: String =
-        """  #live { margin: 1rem auto 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
-          gap: 0 .75rem; font-size: .875rem; }
+        """  #live { position: relative; margin: 1rem auto 0; display: flex; flex-wrap: wrap; align-items: center;
+          justify-content: center; gap: 0 .75rem; font-size: .875rem; }
   #live[hidden] { display: none; }
   /* The label is the target, so it is the one held to 44px; the box inside it is drawn larger
      than a browser's default so that it reads as the control it is. */
@@ -210,5 +234,10 @@ object PlayLive {
   #live input { width: 1.25rem; height: 1.25rem; margin: 0; accent-color: seagreen; cursor: pointer; }
   #live input:focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
   #live-status:empty { display: none; }
-  #live-hint { flex-basis: 100%; margin: 0; text-align: center; opacity: .75; }"""
+  /* The tooltip: under the switch, over whatever follows it, and only while asked for. */
+  #live-hint { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); z-index: 20; margin: .25rem 0 0;
+               width: max-content; max-width: min(18rem, calc(100vw - 32px)); padding: .375rem .625rem;
+               border-radius: 6px; background: var(--ink); color: var(--paper); font-size: .875rem; line-height: 1.3;
+               text-align: center; box-shadow: 0 4px 12px rgba(0, 0, 0, .25); visibility: hidden; }
+  #live.tip #live-hint { visibility: visible; }"""
 }
