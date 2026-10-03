@@ -8,9 +8,9 @@ import scala.util.control.NonFatal
   *
   * The store asks for a list whenever something says it may have changed, and a fault in what says so — a section that
   * fetches as it mounts, remounted by the very answer it fetched — asks for ever. Without this, every ask was a
-  * request: a player's page once sent fifty a few seconds, and would have gone on until the tab was closed. With it, a
-  * loop like that costs one request per `spacingMs` per list, and a list asked for while its request is out is answered
-  * by the one request that follows, rather than by one each.
+  * request: a player's page once sent fifty requests in a few seconds, and would have gone on until the tab was closed.
+  * With it, a loop like that costs one request per `spacingMs` per list, and a list asked for while its request is out
+  * is answered by the one request that follows, rather than by one each.
   *
   * Never by an answer that predates the ask. A list is often asked for *because* something just changed — a challenge
   * accepted, an invitation withdrawn — and the request already out may have left before the change, so its answer
