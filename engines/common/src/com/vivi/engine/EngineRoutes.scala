@@ -86,7 +86,16 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             try route(request)
             catch {
                 case e: ConcurrentModification => error(409, e.getMessage)
-                case NonFatal(e)               =>
+                // Raised by a read of a match whose archive has gone. A page, where a page was asked for:
+                // a player following a link to a finished friendly match should be told what happened to
+                // it, not shown a JSON error.
+                case e: ArchiveExpired =>
+                    (request.method.toUpperCase, request.segments) match {
+                        case ("GET", "matches" :: _ :: ("play" | "board") :: Nil) =>
+                            EngineResponse(410, ArchiveExpiredPage(e.matchId), "text/html; charset=utf-8")
+                        case _ => error(410, e.getMessage)
+                    }
+                case NonFatal(e) =>
                     // A bug or a failure of something behind the engine. The caller gets the shape of it;
                     // the trace has to be on stderr or the 500 is not diagnosable.
                     Log.failure(e, s"${request.method} ${request.path}")
@@ -113,8 +122,8 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
       * told so. A read changing a match is what a live match's clock costs: nothing else runs to end it. See
       * [[GameEngine.current]].
       */
-    protected def currentMatch(matchId: String): Either[Refusal, M] =
-        engine.current(matchId).map { settled =>
+    protected def currentMatch(matchId: String, archived: Boolean = false): Either[Refusal, M] =
+        engine.current(matchId, archived).map { settled =>
             if (settled.changed) live.foreach(_.changed(matchId))
             settled.state
         }
@@ -154,11 +163,25 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                 parseSince(request) match {
                     case Left(why) => error(400, why)
                     case Right(since) =>
-                        currentMatch(matchId).map(engine.statusOf(_, since)) match {
+                        currentMatch(matchId) match {
                             case Left(refusal) => error(refusal)
-                            case Right(status) => EngineResponse(200, write(status))
+                            case Right(m) =>
+                                val status = engine.statusOf(m, since)
+                                // A finished match still here is one whose archiving failed when it ended;
+                                // matchmaker asking about it is the prompt to try again. After the answer is
+                                // made, and unable to fail it.
+                                engine.archiveIfFinished(m)
+                                EngineResponse(200, write(status))
                         }
                 }
+
+            // Matchmaker saying the match was cancelled. Like status, it is matchmaker's alone; a
+            // player cancels through matchmaker, which owns who may.
+            case ("POST", "matches" :: matchId :: "cancel" :: Nil) if !fromMatchmaker(request) => unauthenticated
+
+            case ("POST", "matches" :: matchId :: "cancel" :: Nil) =>
+                engine.cancel(matchId)
+                EngineResponse(204, "")
 
             /* The play page itself, which is served to anyone who asks — signed in or not.
              *
@@ -169,7 +192,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
              * matchmaker gets a bare 401 with nowhere to sign in.
              */
             case ("GET", "matches" :: matchId :: "play" :: Nil) =>
-                currentMatch(matchId) match {
+                currentMatch(matchId, archivedHint(request)) match {
                     case Left(refusal) => error(refusal)
                     case Right(found) =>
                         val seat = playAuth.callerOf(request).toOption.flatMap(engine.seatOf(found, _).toOption)
@@ -206,7 +229,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             // The public board, for a match created public. Nobody's seat, so no token, no moves, and
             // no sight of anything a seat would hide — see `stateOf`.
             case ("GET", "matches" :: matchId :: "board" :: Nil) =>
-                withPublic(matchId)(m =>
+                withPublic(matchId, archivedHint(request))(m =>
                     html(page(matchId, Some(stateOf(m, None)), None, live.map(_.url), publicView = true))
                 )
 
@@ -288,8 +311,8 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
         }
     }
 
-    private def withPublic(matchId: String)(f: M => EngineResponse): EngineResponse =
-        currentMatch(matchId) match {
+    private def withPublic(matchId: String, archived: Boolean = false)(f: M => EngineResponse): EngineResponse =
+        currentMatch(matchId, archived) match {
             case Left(refusal) => error(refusal)
             // Not 404: the match exists, and saying so tells a would-be watcher nothing they could not
             // learn by being in it. What they may not do is watch.
@@ -300,6 +323,11 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
     protected def parse[A: Reader](body: String): Either[String, A] =
         try Right(read[A](body))
         catch { case NonFatal(e) => Left(s"unreadable request body: ${e.getMessage}") }
+
+    /** Whether matchmaker's link said the match is archived (`archived=1`): a hint about where to look first, and
+      * nothing more. A link without it still finds an archived match.
+      */
+    private def archivedHint(request: EngineRequest): Boolean = request.query.get("archived").contains("1")
 
     private def unauthenticated: EngineResponse = error(401, "this route is matchmaker's; a valid API key is required")
 

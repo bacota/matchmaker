@@ -2,6 +2,7 @@ package com.vivi.matchmaker.service
 
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.TestMigration
+import com.vivi.matchmaker.archive.ArchiveStore
 import com.vivi.matchmaker.engine.GameEngineClient
 import com.vivi.matchmaker.notify.{MailSettings, Notifier}
 import com.vivi.matchmaker.persistence.TextCodec.given
@@ -33,7 +34,7 @@ object TestServices {
         DbSession.pooled(config, poolSize).allocated.unsafeRunSync()._1
     }
 
-    lazy val services: Services[String] = Services.fromPool[String](pool)
+    lazy val services: Services[String] = Services.fromPool[String](pool, archiveStore = ArchiveStore.Unavailable)
 
     /** Services whose game-engine calls go to `engine` instead of over the network. A game engine is a remote system no
       * test can stand up, so the tests of the engine flow drive a stub.
@@ -42,9 +43,10 @@ object TestServices {
         engine: GameEngineClient,
         callbackBaseUrl: Option[String] = None,
         notifier: Notifier = Notifier.disabled,
-        mail: MailSettings = MailSettings.none
+        mail: MailSettings = MailSettings.none,
+        archiveStore: ArchiveStore = ArchiveStore.Unavailable
     ): Services[String] =
-        Services.fromPool[String](pool, engine, callbackBaseUrl, notifier, mail)
+        Services.fromPool[String](pool, engine, callbackBaseUrl, notifier, mail, archiveStore)
 
     /** What a deployment that can send mail is configured with. `MailSettings.none` is the default above, so a test
       * says nothing about notifications unless it is about them.

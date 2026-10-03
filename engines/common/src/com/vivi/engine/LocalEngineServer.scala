@@ -56,6 +56,13 @@ object LocalEngineServer {
         println(
           s"  identity  ${sys.env.getOrElse("GAME_EXTERNAL_ID", "<GAME_EXTERNAL_ID not set: matchmaker will refuse the callbacks>")}"
         )
+        println(s"  archive   ${
+                if (sys.env.get("MATCHMAKER_OFFLINE").contains("true")) "off (offline)"
+                else
+                    EngineConfig
+                        .matchmakerUrl(sys.env.get)
+                        .fold("off: MATCHMAKER_URL is not set, so finished matches are kept here and never archived")(url => s"finished matches archived through $url")
+            }")
 
         EngineConfig.playAuth(sys.env.get, baseUrl) match {
             case _: PlayAuth.VerifiedToken =>

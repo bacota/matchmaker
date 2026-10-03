@@ -32,6 +32,9 @@ class HttpGameEngineClient(
         send("GET", url, apiKey, None).map(parse[GameStatusResponse](url, _))
     }
 
+    override def cancel(cancelUrl: String, apiKey: Option[String]): IO[Unit] =
+        send("POST", cancelUrl, apiKey, Some("{}")).void
+
     /* `since` goes on the query string rather than in a body, because this is a GET and the engine
      * is free to ignore it: one that does not report turns answers the same either way. Appended
      * with the right separator, since the status url is the engine's own and may already carry a

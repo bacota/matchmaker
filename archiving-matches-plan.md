@@ -33,7 +33,8 @@ become part of that contract.
   never revealed), so it is read only through the engine, which serves the usual per-viewer masked
   view. A presigned GET is handed to the engine and never passed on.
 - **Write-once.** Once an archive is confirmed, matchmaker issues no further upload url for that
-  match. Bucket versioning on; Object Lock if that needs enforcing rather than relying on matchmaker.
+  match. Both buckets are versioned, so an overwrite or a delete keeps the earlier version for 30
+  days. No Object Lock: write-once is matchmaker's rule, and versioning is the safety net.
 - **The live copy is dropped as soon as the archive is confirmed, and not before.** An engine that
   crashes between finishing a match and uploading it leaves the match pending, and it is retried.
   Nothing is lost. There is no grace period: once matchmaker confirms, the engine removes its item,
@@ -42,9 +43,9 @@ become part of that contract.
   when a match is cancelled (see [Cancelled matches](#cancelled-matches)).
 - **Private buckets**, encrypted, all public access blocked.
 - **Two buckets, by retention.** A friendly match's archive is kept for 30 days; every other
-  match's is kept permanently. They go to separate buckets, and only the friendly bucket has a
-  lifecycle policy, so nothing in the permanent bucket can be expired by a misconfigured rule.
-  Matchmaker chooses the bucket from the match's `friendly` flag.
+  match's is kept permanently. They go to separate buckets, and only the friendly bucket's
+  lifecycle policy expires current objects; the permanent bucket's only removes versions that were
+  already deleted or overwritten. Matchmaker chooses the bucket from the match's `friendly` flag.
 - **A completed match's classification is fixed.** `MatchService.setFriendly` refuses to change
   whether a completed match is friendly (409), so the bucket its archive went to is always the one
   its flag names, and an archive never has to move. A cancelled match can still be changed; it is
@@ -58,12 +59,22 @@ All four are engine routes, authenticated with the game's API key, so they go in
 `local.engine_routes`, not `local.routes`. Matchmaker checks that the match belongs to the calling
 engine's game, as the results callback already does.
 
+They are addressed by match id alone, `/matches/{matchId}/archive...`, not under
+`/games/{gameId}/`. An engine whose live copy is gone no longer knows which of matchmaker's games
+the match was in, only the match id and its own identity. Matchmaker finds the match by its id and
+the caller's game external id; match ids are UUIDs, so the id alone picks one match, and the
+external id is what makes it this engine's. Another game's match is not found.
+
 ### 1. Ask for an upload
 
-`POST /games/{gameId}/matches/{matchId}/archive`, sent by the engine when the match finishes.
+`POST /matches/{matchId}/archive`, sent by the engine when the match finishes. The body is
+`{size, sha256, formatVersion}`: the archive's length, its SHA-256 (base64) and the engine's name
+for the format it wrote.
 
 Matchmaker:
-- refuses a match that is not over, and one already archived;
+- refuses a match that is not over, and a cancelled one. A match already archived is answered
+  `{archivedAt}` instead of a url, so an engine retrying after a lost confirm learns that it may
+  drop its copy;
 - picks the bucket from the match's `friendly` flag: the friendly bucket if it is friendly, the
   permanent bucket otherwise. The flag cannot change once the match is completed, so this choice
   holds;
@@ -84,8 +95,12 @@ Matchmaker:
   The key is fixed once recorded: a later rename of the game does not move its archives. The name
   goes into the key as it is if it is already safe for a key (letters, digits, `-`, `_`, `.`),
   and is percent-encoded otherwise;
-- returns a **presigned POST** rather than a PUT. Its policy can cap the size
-  (`content-length-range`) and pin the content type and checksum, which a presigned PUT cannot;
+- returns a **presigned PUT** with `content-length`, `content-type` and `x-amz-checksum-sha256`
+  among its signed headers, as `{upload: {url, method, headers, expiresAt}}`. The engine sends
+  every one of those headers. S3 refuses a body of a different length or checksum, so the url can
+  upload nothing but the archive that was asked for. (The plan first said a presigned POST, for
+  its policy's size cap; a signed length and checksum do the same with a plain PUT, and the SDK
+  presigns a PUT where a POST policy would have to be signed by hand.)
 - records the key and an `archive_requested` time on the match.
 
 The request body says which version of its stored format the engine wrote. It is kept as object
@@ -94,7 +109,7 @@ metadata, so a later engine version can still read an old archive.
 ### 2. Upload, then confirm
 
 The engine uploads to S3 itself, then calls
-`POST /games/{gameId}/matches/{matchId}/archive/confirm`.
+`POST /matches/{matchId}/archive/confirm`.
 
 Matchmaker checks the object exists (`HeadObject`: size and checksum match what was asked for) and
 sets `archived_at`. The engine removes its live copy as soon as the confirm returns success
@@ -106,7 +121,7 @@ to run locally, and it tells the engine in the same exchange that it may let go.
 ### 3. Read back
 
 When a finished match is viewed and the engine no longer has it, the engine calls
-`POST /games/{gameId}/matches/{matchId}/archive/read`, which returns a short-lived presigned GET.
+`POST /matches/{matchId}/archive/read`, which returns a short-lived presigned GET.
 The engine fetches the archive, decodes it with its normal stored-match codec, and serves the usual
 masked view and replay. It may cache the decoded match for the length of the request; it does not
 write it back to DynamoDB.
@@ -155,7 +170,7 @@ before offering a link.
   than 30 days old, matchmaker checks the object the same way. If it is gone, matchmaker records
   that and answers 410 Gone instead of a url; if it is still there, it issues the url.
 - **The engine reports a missing object too.** If a url matchmaker issued finds nothing (404), the
-  engine calls `POST /games/{gameId}/matches/{matchId}/archive/expired`. Matchmaker confirms with
+  engine calls `POST /matches/{matchId}/archive/expired`. Matchmaker confirms with
   `HeadObject` that the object really is gone before recording it, so a transient failure cannot
   hide a match. This covers an object deleted between matchmaker's check and the engine's download.
 - **The engine tells the player.** On a 410 or a 404 it serves a page saying the match was friendly
@@ -214,22 +229,29 @@ cheaper choice.
 
 `V38__match_archive.sql`, on `match`:
 
-- `archive_key TEXT`, `archive_requested TIMESTAMPTZ`, `archived_at TIMESTAMPTZ`, and an index on
-  unarchived completed matches for the sweep below;
+- `archive_key TEXT`, `archive_sha256 TEXT` (the checksum the upload was signed for, which the
+  confirm holds the arrived object to), `archive_requested TIMESTAMPTZ`, `archived_at TIMESTAMPTZ`,
+  and an index on unarchived completed matches for the sweep below;
 - `archive_expired_at TIMESTAMPTZ`, set when a friendly archive is found to have expired;
 - `cancel_url TEXT` and `engine_released TIMESTAMPTZ`, for cancelled matches.
 
 No bucket column: the bucket follows from `friendly`, which is fixed by then, and bucket names stay
 configuration.
 
+`V39__match_swept.sql` adds `swept_at`, when the sweep last asked about a match it found owed
+something; see [Sweep](#sweep).
+
 ### Code
 
 - An `ArchiveStore` trait with three operations: presign an upload, presign a download, and check
   an object. Each takes which bucket, friendly or permanent. An S3 implementation using the AWS
-  SDK's presigner (no network call to sign), and a local one.
-- `ArchiveService`: the four engine routes — upload, confirm, read, expired. One transaction per
-  call, with `FOR UPDATE` on the match row, per CLAUDE.md. Checking an object is a call outside the
-  database: re-read under lock after it.
+  SDK's presigner (no network call to sign), configured path-style because the bucket names
+  contain dots (see Terraform); a local one over a directory, whose urls the local server serves;
+  and an unavailable one, for a deployment with no buckets, which answers every call with 503.
+- `ArchiveService`: the four engine routes — upload, confirm, read, expired. The upload request
+  is one transaction, with `FOR UPDATE` on the match row, per CLAUDE.md. The confirm checks the
+  object between a plain read and a transaction that re-reads under lock. Recording an expiry is a
+  single conditional update, which needs no lock.
 - `GameEngineClient.cancel`, and `cancelUrl` on the create response and the `match` row. Called
   from `MatchService.cancel` after its commit.
 - `archived=1` appended to the play and public urls of an archived match wherever they are handed
@@ -243,26 +265,61 @@ configuration.
 
 ### Terraform
 
-- Two buckets, both private, versioned, encrypted, with public access blocked.
-  - **Permanent**: no lifecycle configuration at all. Object Lock, if write-once is to be enforced,
-    goes here.
-  - **Friendly**: one lifecycle rule. It expires current objects 30 days after creation. Because the
-    bucket is versioned, expiry only adds a delete marker, so the rule also expires noncurrent
-    versions (after a day) and removes expired delete markers; otherwise nothing is ever freed. No
-    Object Lock: a retention period would fight the expiry.
+- Two buckets, both private, versioned, encrypted, with public access blocked, with names ending
+  in `.vivi.com`:
+  - **Permanent**, `matchmaker-${var.environment}-archive.vivi.com`: a lifecycle rule that never
+    touches a current object. It removes noncurrent versions 30 days after they become noncurrent
+    (an object deleted or overwritten by mistake can be restored within that time), and removes
+    expired delete markers.
+  - **Friendly**, `matchmaker-${var.environment}-friendly-archive.vivi.com`: the same cleanup, and
+    it also expires current objects 30 days after creation. Because the bucket is versioned, that
+    expiry only adds a delete marker; the archive stops being readable at 30 days, and its data is
+    removed by the cleanup 30 days after that.
+
+  No Object Lock on either bucket.
+
+  The domain suffix keeps the names clear of everybody else's in S3's global namespace. S3 does not
+  check that the domain is ours, so it is a convention rather than a reservation, but nobody else
+  has reason to use it. Both names are well under the 63-character limit for any environment name
+  the root module's validation allows.
+
+  **Dots in a bucket name break virtual-hosted urls over HTTPS.** S3's certificate is a wildcard,
+  `*.s3.<region>.amazonaws.com`, which covers one label, so
+  `https://matchmaker-dev-archive.vivi.com.s3.us-east-1.amazonaws.com/...` fails certificate
+  validation. Every url matchmaker issues — the presigned PUT and every presigned
+  GET — must be **path-style**,
+  `https://s3.us-east-1.amazonaws.com/matchmaker-dev-archive.vivi.com/...`, by building the presigner and the S3 client with `forcePathStyle(true)`. Path-style is what
+  MinIO uses locally anyway. Transfer Acceleration does not work with dotted names; nothing here
+  needs it. The UI module's `bucket_name` validation forbids dots, so these buckets get their own
+  names rather than reusing that variable.
+
 - The matchmaker Lambda role gets `s3:PutObject`, `s3:GetObject` and `s3:GetObjectAttributes` on
-  both buckets, and `s3:ListBucket` on the friendly one. Without `ListBucket`, `HeadObject` on a
+  both buckets, and `s3:ListBucket` on both. Without `ListBucket`, `HeadObject` on a
   missing object answers 403 rather than 404, and an expired archive would be indistinguishable from
   a failed check — the links would never be hidden. Presigned urls act with the signer's
   permissions, so this role is the only one that needs them. Engines get nothing.
 - `ARCHIVE_BUCKET` and `FRIENDLY_ARCHIVE_BUCKET` in matchmaker's environment.
+- The engine role gets `dynamodb:DeleteItem` on its match table: it deletes the live copy once a
+  match is archived or cancelled.
 
 ### Sweep
 
-A scheduled check for completed matches with no `archived_at` after some grace period, to report
-them, or to prompt the engine through a status call. This is what catches an engine that finished a
-match and never asked to archive it. It also retries the cancel call for cancelled matches with no
-`engine_released`.
+`SweepService`, run once a day by an EventBridge schedule as a third function from the API's jar
+(`com.vivi.matchmaker.sweep.Handler`):
+
+- **Completed matches never archived**, an hour after they finished, are prompted through their
+  engine's status call. An engine asked for the status of a finished match it still holds archives
+  it (`GameEngine.archiveIfFinished`). This is what catches an engine that finished a match and
+  failed to archive it, or never reported its result, so that matchmaker refused the archive.
+- **Cancels the engine never acknowledged** are sent again.
+
+Nothing it catches is urgent: a match that is not archived yet is still served from its live copy.
+Each match is asked about at most once a run (`swept_at`, V39, with a retry interval a little under
+a day), and the ones asked about longest ago go last, so one that can never be settled, because its
+engine lost it or has gone, does not hold the front of the queue. A run takes on every match owed,
+with no batch limit, and runs for up to Lambda's 15 minutes: it stops starting on matches half a
+minute before then, and the next day's run carries on. Re-sent cancels go first, so that a long
+backlog of matches to archive cannot crowd them out. What a run asked about and found still owed is logged.
 
 
 ## Engine changes (`engines/common`)
@@ -278,21 +335,27 @@ match and never asked to archive it. It also retries the cancel call for cancell
 - On 410 from matchmaker, or a 404 from S3 (reported through the expired route), a page saying the
   friendly match's archive has expired.
 - A `Matchmaker` client method for each of the four routes, and its local test double.
-- A cancel route, whose url goes back to matchmaker as `cancelUrl` in the create response. It
-  deletes the match's item. Authenticated with the game's API key, like the other calls matchmaker
-  makes to the engine.
+- A cancel route, `POST /matches/{matchId}/cancel`, whose url goes back to matchmaker as
+  `cancelUrl` in the create response. It deletes the match's item, and answers 204 whether or not
+  there was one. Authenticated with the game's API key, like the other calls matchmaker makes to
+  the engine.
+- A status call for a finished match the engine still holds archives it, which is how the sweep
+  prompts an engine.
+
+All of this is in a store wrapped around the one each engine already has (`ArchivingMatchStore`),
+so no game changes. It is wrapped when `MATCHMAKER_URL` is set and matchmaker is not offline.
 
 
 ## Local development
 
-The local server needs an S3 stand-in so engines and tests run offline, as they do now. Either:
+The local server archives to a directory (`ARCHIVE_DIR`, a temporary one by default) through
+`LocalArchiveStore`, and serves its urls itself under `/local-archive/`, so engines and tests run
+offline as they did. Setting `ARCHIVE_BUCKET`, `FRIENDLY_ARCHIVE_BUCKET` and `ARCHIVE_ENDPOINT`
+points it at an S3 stand-in instead.
 
-- MinIO in a container, using the real presigner pointed at it; or
-- a small fake `ArchiveStore` that keeps objects in a directory and returns `http://localhost`
-  urls the local server handles itself.
-
-The fake keeps `local-test.sh` free of new dependencies; MinIO exercises the real signing. The fake
-is enough for the test suites, and MinIO is worth it once, for the end-to-end check.
+`e2e/archive.py` is the end-to-end check: matchmaker and the tic-tac-toe engine from their jars,
+with moto standing in for S3 under the real dotted bucket names. It exercises the real signing.
+MinIO, as first planned, could not be pulled where this was built; moto does the same job.
 
 
 ## Order of work
@@ -300,12 +363,13 @@ is enough for the test suites, and MinIO is worth it once, for the end-to-end ch
 1. Matchmaker: migration, `ArchiveStore` with the local fake, `ArchiveService`, the four routes
    (router, terraform, `RouterSpec`), `archived=1` on the urls, `archiveExpired` and the UI, and
    tests.
-2. Terraform: the two buckets, the friendly bucket's lifecycle rule, and the role's permissions.
+2. Terraform: the two buckets, their lifecycle rules, and the role's permissions.
 3. `engines/common`: the client calls, archiving beside `reportResults`, the `MatchStore` fallback,
    deleting the item after a confirm, and the cancel route. All four engines pick it up together.
 4. Matchmaker: `cancelUrl`, `GameEngineClient.cancel`, and the call from `MatchService.cancel`.
-5. An end-to-end check against MinIO: finish a Stratego match, see its live copy removed, and replay
-   it from the archive; cancel another and see its live copy removed.
+5. An end-to-end check against an S3 stand-in (moto, in `e2e/archive.py`): finish a match, see its
+   live copy removed, and replay it from the archive; expire a friendly one; cancel another and
+   see its live copy removed.
 6. The sweep.
 
 

@@ -60,7 +60,15 @@ object Protocol {
       */
     case class LiveTerms(timeLimitSeconds: Long, kind: String = "PER_TURN")
 
-    case class CreateGameResponse(statusUrl: String, playUrl: String, publicUrl: Option[String])
+    /** `cancelUrl` is where matchmaker says the match has been cancelled, so that the engine can drop it. Absent from
+      * an engine that predates it, which is then simply not told.
+      */
+    case class CreateGameResponse(
+        statusUrl: String,
+        playUrl: String,
+        publicUrl: Option[String],
+        cancelUrl: Option[String] = None
+    )
 
     case class EngineParticipantStatus(
         participantId: Long,
@@ -174,6 +182,34 @@ object Protocol {
       * engine keeps no characters of its own. Matchmaker's answer carries more fields; these are the ones read.
       */
     case class OwnedCharacter(characterId: Long, name: String, description: String, state: String)
+
+    // ---- archiving a completed match (archiving-matches-plan.md) ----------------------------
+
+    /** What an engine sends matchmaker's `POST /matches/{matchId}/archive` for a finished match: the length of its
+      * stored JSON, the SHA-256 of it (base64), and the engine's name for the format it is in. The first two are signed
+      * into the url matchmaker answers with, so nothing else can be uploaded to it.
+      */
+    case class ArchiveUploadRequest(size: Long, sha256: String, formatVersion: Option[String] = None)
+
+    /** Where to upload: `method` to `url`, with every one of `headers` — they were signed. */
+    case class ArchiveUpload(url: String, method: String, headers: Map[String, String], expiresAt: Instant)
+
+    /** Matchmaker's answer: an `upload` to make, or — for a match it already has — `archivedAt`, which is the engine's
+      * permission to drop its live copy.
+      */
+    case class ArchiveUploadAnswer(upload: Option[ArchiveUpload] = None, archivedAt: Option[Instant] = None)
+
+    /** `POST /matches/{matchId}/archive/confirm`'s answer: the archive arrived, and the live copy may go. */
+    case class ArchiveConfirmation(archivedAt: Instant)
+
+    /** `POST /matches/{matchId}/archive/read`'s answer: where to read the archive from, for this engine alone. */
+    case class ArchiveDownload(url: String, expiresAt: Instant)
+
+    given ReadWriter[ArchiveUploadRequest] = macroRW
+    given ReadWriter[ArchiveUpload] = macroRW
+    given ReadWriter[ArchiveUploadAnswer] = macroRW
+    given ReadWriter[ArchiveConfirmation] = macroRW
+    given ReadWriter[ArchiveDownload] = macroRW
 
     given ReadWriter[EnginePlayer] = macroRW
     given ReadWriter[LiveTerms] = macroRW

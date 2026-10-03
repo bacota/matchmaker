@@ -49,7 +49,15 @@ case class Match(
       */
     live: Boolean = false,
     /** Whether this is a friendly match (V36). Every match is, unless it is classified otherwise. */
-    friendly: Boolean = true
+    friendly: Boolean = true,
+    /** When the match's archive was confirmed (V38). From then on the engine has dropped its live copy, and its urls
+      * are handed out marked as an archived match's — see `ArchiveService.forViewer`.
+      */
+    archivedAt: Option[Instant] = None,
+    /** Whether a friendly match's archive has expired (V38). There is nothing left to view, so a player is not offered
+      * the urls; they are cleared where they are handed out.
+      */
+    archiveExpired: Boolean = false
 ) {
 
     /** Whether the match was played to an end. */

@@ -69,15 +69,24 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                   CreateGameResponse(
                     statusUrl = s"$base/matches/${created.matchId}/status",
                     playUrl = playUrl(created),
-                    publicUrl = Option.when(created.isPublic)(s"$base/matches/${created.matchId}/board")
+                    publicUrl = Option.when(created.isPublic)(s"$base/matches/${created.matchId}/board"),
+                    cancelUrl = Some(s"$base/matches/${created.matchId}/cancel")
                   )
                 )
         }
 
     def playUrl(m: M): String = s"$base/matches/${m.matchId}/play"
 
-    /** The match as it stands now, with any turn that has run out recorded. */
-    def read(matchId: String): Either[Refusal, M] = current(matchId).map(_.state)
+    /** Matchmaker has cancelled match `matchId`: it will never be played or archived, and is dropped. Answered the same
+      * whether or not there was anything to drop, so that matchmaker retrying a cancel it did not hear answered is
+      * harmless.
+      */
+    def cancel(matchId: String): Unit = store.delete(matchId)
+
+    /** The match as it stands now, with any turn that has run out recorded. `archived` is a request's word that the
+      * match has been archived, which reads the archive first — see [[MatchStore.getArchived]].
+      */
+    def read(matchId: String, archived: Boolean = false): Either[Refusal, M] = current(matchId, archived).map(_.state)
 
     /** The match as it stands now: if this is a live match whose pending turn has run out, the forfeit is recorded —
       * atomically, so that it and a move racing it cannot both land — and the result reported to matchmaker.
@@ -85,10 +94,10 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
       * The answer says whether this call is what recorded it, because that is news to whoever else is watching the
       * match, and telling them is the caller's: see `EngineRoutes`.
       */
-    def current(matchId: String): Either[Refusal, Settled[M]] = {
+    def current(matchId: String, archived: Boolean = false): Either[Refusal, Settled[M]] = {
         // The time is asked for only of a live match: nothing else depends on it.
         lazy val at = now()
-        store.get(matchId) match {
+        (if (archived) store.getArchived(matchId) else store.get(matchId)) match {
             case None => Left(Refusal.NotFound(s"no match '$matchId'"))
             case Some(m) if game.clock(m).isEmpty || timedOut(m, at).isEmpty => Right(Settled(m, changed = false))
             case Some(_) =>
@@ -366,11 +375,25 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         if (applied.finished) reportResults(m)
     }
 
-    /** Step 3, for a match that has just ended — by a move, or by its clock. */
-    private def reportResults(m: M): Unit =
+    /** Step 3, for a match that has just ended — by a move, or by its clock — and then its archive.
+      *
+      * In that order, and the archive only after the results have been sent: matchmaker archives only a match it knows
+      * is over. A results callback that failed leaves the archive refused too, and both are repaired later — the
+      * results by matchmaker's refresh, the archive by [[archiveIfFinished]] when matchmaker next asks for the status.
+      */
+    private def reportResults(m: M): Unit = {
         m.resultsCallbackUrl.foreach(url =>
             bestEffort(s"reporting the result of match '${m.matchId}'")(matchmaker.recordResults(url, resultsOf(m)))
         )
+        ArchivingMatchStore.bestEffort(m.matchId)(store.finished(m.matchId))
+    }
+
+    /** Archives `m` if it is over and still has a live copy here — for a status call, which is how matchmaker prompts
+      * an engine whose archiving failed when the match ended. Nothing, for a match still being played or already
+      * archived.
+      */
+    def archiveIfFinished(m: M): Unit =
+        if (game.isOver(m)) ArchivingMatchStore.bestEffort(m.matchId)(store.finished(m.matchId))
 
     private def bestEffort(what: String)(call: => Unit): Unit =
         try call

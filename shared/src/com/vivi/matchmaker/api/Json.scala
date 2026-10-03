@@ -359,6 +359,34 @@ object Json {
         timeTaken: Duration = Duration.ZERO
     )
 
+    // ---- archiving a completed match: the engine's four calls (archiving-matches-plan.md) ----
+
+    /** The engine asking for a url to upload a completed match's archive to: `size` bytes whose SHA-256 is `sha256`
+      * (base64). Both are signed into the url, so the store refuses anything else. `formatVersion` is the engine's own
+      * name for the format of what it is uploading, kept with the archive so that a later engine can still read it.
+      */
+    case class ArchiveUploadRequest(size: Long, sha256: String, formatVersion: Option[String] = None)
+
+    /** Where to upload: send the archive to `url` with `method`, carrying every one of `headers` exactly. */
+    case class ArchiveUpload(url: String, method: String, headers: Map[String, String], expiresAt: Instant)
+
+    /** The answer to an [[ArchiveUploadRequest]]: either `upload`, or — for a match already archived — `archivedAt`, in
+      * which case the engine's live copy is redundant and it may drop it.
+      */
+    case class ArchiveUploadAnswer(upload: Option[ArchiveUpload] = None, archivedAt: Option[Instant] = None)
+
+    /** The archive arrived and is recorded: the engine may drop its live copy. */
+    case class ArchiveConfirmation(archivedAt: Instant)
+
+    /** Where to read an archive from. For the engine only: it holds what the engine hides from players. */
+    case class ArchiveDownload(url: String, expiresAt: Instant)
+
+    given ReadWriter[ArchiveUploadRequest] = macroRW
+    given ReadWriter[ArchiveUpload] = macroRW
+    given ReadWriter[ArchiveUploadAnswer] = macroRW
+    given ReadWriter[ArchiveConfirmation] = macroRW
+    given ReadWriter[ArchiveDownload] = macroRW
+
     given ReadWriter[RegisterRequest] = macroRW
     given ReadWriter[NicknameRequest] = macroRW
     given ReadWriter[FriendlyRequest] = macroRW

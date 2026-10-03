@@ -194,6 +194,28 @@ Expect an apply that adds or changes the domain to spend several minutes deployi
 distribution. `ui_distribution_domain_name` stays reachable throughout: if the site is down,
 comparing it against `ui_url` separates a DNS problem from a CloudFront one.
 
+## Match archives
+
+Completed matches are archived to two buckets in `modules/api/archive.tf`
+(`archiving-matches-plan.md` has the design):
+
+- `matchmaker-<env>-archive.vivi.com` keeps every match that is not friendly, permanently.
+- `matchmaker-<env>-friendly-archive.vivi.com` keeps friendly matches for 30 days.
+
+Both are private, encrypted and versioned, without Object Lock. Each has a lifecycle rule that
+removes deleted or overwritten versions 30 days later; only the friendly bucket's also expires
+current objects. Only the API function's role can reach them. Engines upload and download with urls
+matchmaker signs, and hold no AWS credentials of their own.
+
+The names contain dots, so the urls are path-style (`s3.<region>.amazonaws.com/<bucket>/<key>`): a
+virtual-hosted url for a dotted bucket fails S3's certificate. The API function checks objects in
+S3 from inside its VPC, the way it already reaches the engines' public urls. An S3 gateway endpoint
+on the subnets' route tables would carry that traffic off the NAT for free; nothing here creates
+one.
+
+A daily function, `matchmaker-<env>-sweep`, asks again about completed matches never archived and
+cancels the engine never acknowledged; see `SweepService`.
+
 ## The hosted login domain
 
 Cognito serves sign-in from `https://<prefix>.auth.<region>.amazoncognito.com`, and that prefix has

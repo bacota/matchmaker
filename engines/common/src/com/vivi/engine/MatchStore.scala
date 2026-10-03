@@ -43,6 +43,19 @@ trait MatchStore[M <: HasMatchId] {
       * after this returns.
       */
     def modify[A](matchId: String)(f: M => (Option[M], A)): Option[A]
+
+    /** Removes a match: a finished one that has been archived, or a cancelled one. Nothing happens if there is none. */
+    def delete(matchId: String): Unit
+
+    /** [[get]], for a request that says the match has been archived. The same as [[get]] for a store that keeps no
+      * archive; [[ArchivingMatchStore]] reads the archive first.
+      */
+    def getArchived(matchId: String): Option[M] = get(matchId)
+
+    /** Match `matchId` is over and matchmaker has its result: a store that archives matches archives it now. Nothing,
+      * for one that does not. May raise; callers treat it as best-effort.
+      */
+    def finished(matchId: String): Unit = ()
 }
 
 object MatchStore {
@@ -81,6 +94,8 @@ class InMemoryMatchStore[M <: HasMatchId] extends MatchStore[M] {
         )
         answer
     }
+
+    def delete(matchId: String): Unit = matches.remove(matchId)
 
     def all: List[M] = matches.values.asScala.toList
 }
@@ -144,6 +159,15 @@ class DynamoDbMatchStore[M <: HasMatchId: ReadWriter](http: SignedHttp, table: S
     def get(matchId: String): Option[M] = load(matchId).map(_._1)
 
     def create(m: M): Unit = save(m, None)
+
+    /* A plain delete rather than setting `expiresAt` for the table's TTL to act on: setting it is a
+     * write of the whole item too, so TTL would cost the same and then take a day or two to happen.
+     * See archiving-matches-plan.md. */
+    def delete(matchId: String): Unit =
+        call(
+          "DeleteItem",
+          ujson.Obj("TableName" -> table, "Key" -> ujson.Obj("matchId" -> ujson.Obj("S" -> matchId)))
+        )
 
     def modify[A](matchId: String)(f: M => (Option[M], A)): Option[A] = {
         def attempt(remaining: Int): Option[A] =

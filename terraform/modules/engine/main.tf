@@ -37,6 +37,9 @@ locals {
   matchmaker_routes = [
     "POST /games",
     "GET /matches/{matchId}/status",
+    # A cancelled match, which the engine drops (GameEngine.cancel). Matchmaker posts here at the
+    # cancelUrl the create answered with.
+    "POST /matches/{matchId}/cancel",
   ]
 
   # A player's own routes: the state they see and the moves they make, and any the game adds — a
@@ -137,10 +140,11 @@ resource "aws_iam_role_policy_attachment" "basic_execution" {
 }
 
 /* The table, and nothing else in it: the engine reads and writes one item per match by key and
- * never queries or scans. */
+ * never queries or scans. It deletes one once the match is archived (ArchivingMatchStore) or
+ * cancelled; without DeleteItem every finished match would stay here for good. */
 data "aws_iam_policy_document" "matches" {
   statement {
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"]
     resources = [aws_dynamodb_table.matches.arn]
   }
 }

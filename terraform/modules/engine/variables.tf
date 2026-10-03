@@ -33,12 +33,12 @@ variable "extra_open_routes" {
 variable "matchmaker_url" {
   description = <<-EOT
     Matchmaker's API base url — its `api_endpoint` output — for the calls this engine makes on its
-    own account rather than about a match: a character game reporting a character a player has
-    built here. A match's callbacks come with their own urls, so a game without characters can
-    leave it empty.
+    own account rather than about one match's moves: archiving a finished match and reading it
+    back once its live copy is gone, which every engine does, and for a character game, reporting
+    a character a player has built here. Required, with no default: an engine left without it
+    would quietly never archive anything.
   EOT
   type        = string
-  default     = ""
 }
 
 variable "lambda_jar_path" {
@@ -115,9 +115,15 @@ variable "lambda_snap_start" {
 }
 
 variable "lambda_timeout_s" {
-  description = "Lambda timeout. A move is two DynamoDB calls and up to two callbacks to matchmaker; building a boxer waits on matchmaker's answer."
+  description = <<-EOT
+    Lambda timeout. A move is two DynamoDB calls and up to two callbacks to matchmaker; building a
+    boxer waits on matchmaker's answer. The move that ends a match also archives it -- a request to
+    matchmaker, an upload to S3, a confirm, and a delete -- after the results are sent, and that
+    work is what this allows a minute for. The gateway in front answers its caller after 30
+    seconds whatever happens; the function carries on to finish the archive.
+  EOT
   type        = number
-  default     = 15
+  default     = 60
 }
 
 variable "log_retention_days" {

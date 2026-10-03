@@ -54,7 +54,9 @@ class GameEngineService[T](
     /* Four things that happen here are worth an email -- a match starting, a move, a result, a
      * forfeit -- and which players hear about any of them is `Notifications`' business rather than
      * this service's. Silent by default, as in the other services that send mail. */
-    notifications: Notifications = Notifications.disabled
+    notifications: Notifications = Notifications.disabled,
+    /* For [[read]]: whether a finished friendly match's archive is still there to be reviewed. */
+    archives: Option[ArchiveService] = None
 )(using codec: TextCodec[T]) {
 
     /** Turns a challenge into a match: creates the game in the engine, and writes the match and one participant per
@@ -309,7 +311,7 @@ class GameEngineService[T](
             // way out is forward. Failing here leaves the challenge claimed and the match urlless,
             // which is the recoverable state `refresh` reports: the claim is now the permanent mark
             // of a spent challenge rather than something that has to be cleaned up.
-            started <- retrying(finish(session, withUrls).as(withUrls))
+            started <- retrying(finish(session, withUrls, response.cancelUrl).as(withUrls))
 
             // Whose turn it is first is the engine's to decide, and every participant was written
             // above with `pending = false`. Without asking, nobody's list of matches waiting on them
@@ -519,8 +521,8 @@ class GameEngineService[T](
      * match a creator. */
     /* The urls only: `withUrls` is the match as it was written before the engine call, and the row
      * may have changed since -- see `MatchRepo.setUrls`. */
-    private def finish(session: skunk.Session[IO], withUrls: Match): IO[Unit] =
-        new MatchRepo(session).setUrls(withUrls)
+    private def finish(session: skunk.Session[IO], withUrls: Match, cancelUrl: Option[String]): IO[Unit] =
+        new MatchRepo(session).setUrls(withUrls, cancelUrl)
 
     /* Retries a database action a few times before giving up. Used only for the work after the
      * engine call, where failing is not an option that leaves a sane state behind — everywhere
@@ -852,25 +854,31 @@ class GameEngineService[T](
     /** The match itself, for a player in it — which is how the UI gets the `playUrl` to send them to the game.
       */
     def read(gameId: GameId, matchId: MatchId, callerExternalId: String): IO[Match] =
-        sessionPool.use { session =>
-            val playerRepo = new PlayerRepo(session)
-            val matchRepo = new MatchRepo(session)
-            val participantRepo = new ParticipantRepo(session)
-            for {
-                player <- requireCaller(playerRepo, callerExternalId)
-                existing <- requireMatch(matchRepo, gameId, matchId)
-                participants <- participantRepo.listForMatch(gameId, matchId)
-                _ <- IO.raiseUnless(participants.exists(_._1.playerId == player.playerId))(
-                  UnauthorizedError(s"caller '$callerExternalId' is not in match ${matchId.value}")
-                )
-                // This is the call the UI makes when a player goes to take their turn — it is where the
-                // `playUrl` comes from — so it is one of the two moments a run-out clock is noticed. A
-                // player must not be handed a board to play on in a match that has already been
-                // forfeited, and the player whose clock ran out must not be able to outrun it by
-                // clicking Play.
-                result <- enforceTimeouts(session, gameId, matchId, existing)
-            } yield result
-        }
+        sessionPool
+            .use { session =>
+                val playerRepo = new PlayerRepo(session)
+                val matchRepo = new MatchRepo(session)
+                val participantRepo = new ParticipantRepo(session)
+                for {
+                    player <- requireCaller(playerRepo, callerExternalId)
+                    existing <- requireMatch(matchRepo, gameId, matchId)
+                    participants <- participantRepo.listForMatch(gameId, matchId)
+                    _ <- IO.raiseUnless(participants.exists(_._1.playerId == player.playerId))(
+                      UnauthorizedError(s"caller '$callerExternalId' is not in match ${matchId.value}")
+                    )
+                    // This is the call the UI makes when a player goes to take their turn — it is where the
+                    // `playUrl` comes from — so it is one of the two moments a run-out clock is noticed. A
+                    // player must not be handed a board to play on in a match that has already been
+                    // forfeited, and the player whose clock ran out must not be able to outrun it by
+                    // clicking Play.
+                    result <- enforceTimeouts(session, gameId, matchId, existing)
+                } yield result
+            }
+            // This is also how a player reaches a finished match's board -- "Review game" -- so an
+            // archived one's urls are marked as such, and an expired one's are not handed out at all.
+            // After the session is given back: the check may ask S3.
+            .flatMap(m => archives.fold(IO.pure(m))(_.settle(m)))
+            .map(ArchiveService.forViewer)
 
     /** Applies the game's timeout action to any participant whose turn has run out.
       *

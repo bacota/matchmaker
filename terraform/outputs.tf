@@ -6,6 +6,11 @@ output "lambda_function_name" {
   value = module.api.lambda_function_name
 }
 
+output "archive_buckets" {
+  description = "The two buckets completed matches are archived to: permanent, and friendly (kept 30 days)."
+  value       = module.api.archive_buckets
+}
+
 output "lambda_role_arn" {
   value = module.api.lambda_role_arn
 }

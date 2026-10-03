@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.service
 
 import cats.effect.{IO, Resource}
+import com.vivi.matchmaker.archive.ArchiveStore
 import com.vivi.matchmaker.engine.{GameEngineClient, HttpGameEngineClient}
 import com.vivi.matchmaker.notify.{MailSettings, Notifications, Notifier, SqsNotifier}
 import com.vivi.matchmaker.persistence.TextCodec
@@ -20,6 +21,8 @@ case class Services[T](
     acceptances: AcceptanceService,
     matches: MatchService,
     engine: GameEngineService[T],
+    archives: ArchiveService,
+    sweep: SweepService,
     notifications: NotificationService,
     suppression: SuppressionService
 )
@@ -50,11 +53,14 @@ object Services {
         engineClient: GameEngineClient = new HttpGameEngineClient(),
         callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
         notifier: Notifier = SqsNotifier.fromEnvironment(),
-        mail: MailSettings = MailSettings.fromEnvironment()
+        mail: MailSettings = MailSettings.fromEnvironment(),
+        archiveStore: ArchiveStore = ArchiveStore.fromEnvironment()
     )(using
         codec: TextCodec[T]
     ): Resource[IO, Services[T]] =
-        DbSession.pooled(config, poolSize).map(fromPool[T](_, engineClient, callbackBaseUrl, notifier, mail))
+        DbSession
+            .pooled(config, poolSize)
+            .map(fromPool[T](_, engineClient, callbackBaseUrl, notifier, mail, archiveStore))
 
     /** Builds the services over an already-open pool.
       *
@@ -66,16 +72,19 @@ object Services {
         engineClient: GameEngineClient = new HttpGameEngineClient(),
         callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
         notifier: Notifier = SqsNotifier.fromEnvironment(),
-        mail: MailSettings = MailSettings.fromEnvironment()
+        mail: MailSettings = MailSettings.fromEnvironment(),
+        archiveStore: ArchiveStore = ArchiveStore.fromEnvironment()
     )(using codec: TextCodec[T]): Services[T] = {
         val notifications = new Notifications(notifier, mail)
+        val archives = new ArchiveService(pool, archiveStore)
+        val matches = new MatchService(pool, notifications, Some(archives), Some(engineClient))
 
         /* Built before the services it is given to, because it is given to one of them: a challenge
          * offered as starting itself turns an acceptance into a start, and the acceptance is
          * `challenges`' to record while the start is this one's to carry out. Only the function is
          * shared, so neither service has to know about the other -- see
          * `ChallengeService.autoStart`. */
-        val engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications)
+        val engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications, Some(archives))
 
         Services(
           registration = new RegistrationService(pool),
@@ -88,8 +97,10 @@ object Services {
           // event came from -- that is the whole point of it being a class of its own.
           challenges = new ChallengeService[T](pool, notifications, engine.startIfReady(_, _, _, _).map(_.isMatch)),
           acceptances = new AcceptanceService(pool, notifications),
-          matches = new MatchService(pool, notifications),
+          matches = matches,
           engine = engine,
+          archives = archives,
+          sweep = new SweepService(pool, engineClient, matches),
           notifications = new NotificationService(pool),
           suppression = new SuppressionService(pool)
         )
