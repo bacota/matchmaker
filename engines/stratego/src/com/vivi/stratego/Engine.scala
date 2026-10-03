@@ -109,6 +109,23 @@ class Engine(
             }
         }
 
+    /** A player giving the match up, which their opponent wins.
+      *
+      * At any point before the match is over — during setup, and whether or not it is their turn — since a player who
+      * wants to stop should not have to wait to be allowed to. It is recorded as their turn, taken and started at the
+      * same instant: the concession is not a move anyone was waiting on, so no time is charged for it.
+      */
+    def concede(matchId: String, cognitoId: String): Either[Refusal, MoveApplied[StrategoMatch, Seat, MoveRecord]] =
+        core.applyMove(matchId, cognitoId) { (current, seat, at) =>
+            Either.cond(
+              !current.isOver, {
+                  val record = MoveRecord(seat.participantId, seat.side, at, at, concession = true)
+                  (current.copy(turns = current.turns :+ record), record)
+              },
+              Refusal.Invalid("this match is already over")
+            )
+        }
+
     /** The state a play page renders. `seat` is the viewer's own, absent on the public board.
       *
       * Everything a viewer may not see is left out here, and not merely left undrawn by the page: the response is what

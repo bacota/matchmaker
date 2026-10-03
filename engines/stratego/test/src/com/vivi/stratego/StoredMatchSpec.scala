@@ -67,6 +67,15 @@ class StoredMatchSpec extends FunSuite {
         assertEquals(write(stratego), stored)
     }
 
+    test("a concession is stored on its turn, and reads back; a turn that is not one stores nothing new") {
+        val conceded =
+            stratego.copy(turns = stratego.turns :+ MoveRecord(22L, Side.Blue, at(9), at(9), concession = true))
+        val stored = write(conceded)
+        assertEquals(read[StrategoMatch](stored), conceded)
+        assertEquals("\"concession\":true".r.findAllIn(stored).size, 1)
+        assert(!write(stratego).contains("concession"))
+    }
+
     test("a match already stored reads back as the same match") {
         assertEquals(read[StrategoMatch](stored), stratego)
     }
