@@ -5,7 +5,10 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all._
 import org.scalacheck.Prop._
 import org.scalacheck.Gen
+import cats.effect.IO
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
+import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.persistence.{GameRepo, TestSession}
 
 class PlayerServiceSpec extends PropertySuite {
     TestMigration.ensure()
@@ -24,6 +27,59 @@ class PlayerServiceSpec extends PropertySuite {
                 registered <- registrationService.register(nickname, externalId)
                 found <- playerService.me(externalId)
             } yield found == registered
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    /* Looking a nickname up, which is a game engine's call: the caller is a game's external id. */
+
+    private def makeGame(gameExternalId: String): IO[Game] =
+        TestSession.resource.use { session =>
+            new GameRepo[String](session).create(
+              Game(
+                GameId.unassigned,
+                GameType.Plain,
+                "game",
+                "game",
+                "description",
+                "url",
+                active = true,
+                Seq.empty,
+                Seq.empty,
+                gameExternalId
+              )
+            )
+        }
+
+    property("a game engine may look up what a player is called") {
+        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
+            val result = for {
+                _ <- registrationService.register(nickname, externalId)
+                _ <- makeGame(gameExternalId)
+                found <- playerService.nicknameFor(externalId, gameExternalId)
+            } yield found == nickname
+            result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a player may not look up who is behind a subject") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, otherNickname, otherExternalId) =>
+                val result = for {
+                    _ <- registrationService.register(nickname, externalId)
+                    _ <- registrationService.register(otherNickname, otherExternalId)
+                    found <- playerService.nicknameFor(externalId, otherExternalId).attempt
+                } yield found.left.exists(_.isInstanceOf[UnauthorizedError])
+                result.timeout(10.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a subject nobody registered under has no nickname") {
+        forAll(genUniqueString, genUniqueString) { (externalId, gameExternalId) =>
+            val result = for {
+                _ <- makeGame(gameExternalId)
+                found <- playerService.nicknameFor(externalId, gameExternalId).attempt
+            } yield found.left.exists(_.isInstanceOf[NotFoundError])
             result.timeout(10.seconds).unsafeRunSync()
         }
     }

@@ -1,20 +1,26 @@
 package com.vivi.boxing
 
 import upickle.default.write
-import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, Live, LoginConfig, PlayAuth}
+import com.vivi.engine.{EngineRequest, EngineResponse, EngineRoutes, Live, LoginConfig, Messages, PlayAuth}
 import Protocol.given
 
 /** The engine's HTTP surface: the routes every engine serves, which are [[EngineRoutes]]'s, what a round plan looks
   * like on the wire, and the routes only this game has — the fighters page, and building, listing, editing and giving
   * away fighters.
   */
-class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], live: Option[Live] = None)
-    extends EngineRoutes[Bout, Corner, Protocol.StateResponse](
+class Routes(
+    engine: Engine,
+    playAuth: PlayAuth,
+    matchmakerKey: Option[String],
+    live: Option[Live] = None,
+    messages: Option[Messages] = None
+) extends EngineRoutes[Bout, Corner, Protocol.StateResponse](
       engine.core,
       playAuth,
       matchmakerKey,
       Html.signIn,
-      live
+      live,
+      messages
     ) {
 
     protected def stateOf(m: Bout, corner: Option[Corner]): Protocol.StateResponse = engine.stateOf(m, corner)

@@ -21,7 +21,8 @@ object Config {
           engine(env, baseUrl, announce),
           EngineConfig.playAuth(env, baseUrl),
           EngineConfig.matchmakerKey(env),
-          live.orElse(EngineConfig.live(env, baseUrl))
+          live.orElse(EngineConfig.live(env, baseUrl)),
+          Some(EngineConfig.messages(env))
         )
     }
 

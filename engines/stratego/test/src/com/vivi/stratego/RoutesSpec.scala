@@ -2,7 +2,14 @@ package com.vivi.stratego
 
 import munit.FunSuite
 import upickle.default.{read, write}
-import com.vivi.engine.{EngineRequest, InMemoryMatchStore, PlayAuth, RecordingMatchmaker}
+import com.vivi.engine.{
+    EngineRequest,
+    InMemoryMatchStore,
+    InMemoryMessageStore,
+    Messages,
+    PlayAuth,
+    RecordingMatchmaker
+}
 import Protocol.given
 import Armies.{names, setup}
 
@@ -11,14 +18,16 @@ import Armies.{names, setup}
   */
 class RoutesSpec extends FunSuite {
 
-    private def fixture() = {
+    private def fixture(isPublic: Boolean = true) = {
         val store = InMemoryMatchStore[StrategoMatch]()
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
-        val routes = Routes(engine, PlayAuth.Trusted, None)
+        val nicknames = Map("sub-alice" -> "Alice", "sub-bob" -> "Bob", "sub-carol" -> "Carol")
+        val routes =
+            Routes(engine, PlayAuth.Trusted, None, messages = Some(Messages(InMemoryMessageStore(), nicknames.get)))
         val create = Protocol.CreateGameRequest(
           matchId = "m-9",
           gameName = "stratego",
-          isPublic = true,
+          isPublic = isPublic,
           parameters = Map.empty,
           settings = "{}",
           timeLimitSeconds = None,
@@ -71,6 +80,81 @@ class RoutesSpec extends FunSuite {
         assertEquals(store.get("m-9").get.conceded, Some(Side.Blue))
         // A concession with anything else in the body is neither shape.
         assertEquals(post(routes, "sub-alice", """{"concede":true,"from":30,"to":40}""").status, 400)
+    }
+
+    private def say(routes: Routes, who: String, board: String, text: String) =
+        routes(
+          EngineRequest(
+            "POST",
+            "/matches/m-9/messages",
+            Map("as" -> who),
+            ujson.write(ujson.Obj("board" -> board, "text" -> text))
+          )
+        )
+
+    private def boards(routes: Routes, who: Option[String]) = {
+        val response = who match {
+            case Some(w) => routes(EngineRequest("GET", "/matches/m-9/messages", Map("as" -> w), ""))
+            case None    => routes(EngineRequest("GET", "/matches/m-9/board/messages", Map.empty, ""))
+        }
+        (response.status, Option.when(response.status == 200)(ujson.read(response.body)))
+    }
+
+    private def texts(view: ujson.Value, board: String): Option[List[String]] =
+        view.obj.get(board).filterNot(_.isNull).map(_.arr.toList.map(_("text").str))
+
+    test("players write to each other, and a signed-in watcher of a public match writes on the observers' board") {
+        val (routes, _) = fixture()
+        assertEquals(say(routes, "sub-alice", "players", "good luck").status, 200)
+        assertEquals(say(routes, "sub-carol", "observers", "go red").status, 200)
+
+        val (_, Some(alice)) = boards(routes, Some("sub-alice")): @unchecked
+        assertEquals(texts(alice, "players"), Some(List("good luck")))
+        assertEquals(alice("players")(0)("name").str, "Alice")
+        assert(alice("players")(0)("mine").bool)
+        // Not until the match is over.
+        assertEquals(texts(alice, "observers"), None)
+
+        val (_, Some(carol)) = boards(routes, Some("sub-carol")): @unchecked
+        assertEquals(texts(carol, "players"), Some(List("good luck")))
+        assertEquals(texts(carol, "observers"), Some(List("go red")))
+        assertEquals(carol("canWrite").arr.map(_.str).toList, List("observers"))
+
+        // Somebody not signed in reads the public board's, and is told signing in would let them write.
+        val (_, Some(anyone)) = boards(routes, None): @unchecked
+        assertEquals(texts(anyone, "observers"), Some(List("go red")))
+        assert(anyone("signInToWrite").bool)
+    }
+
+    test("nobody writes on the other's board, and nobody signed out writes at all") {
+        val (routes, _) = fixture()
+        assertEquals(say(routes, "sub-alice", "observers", "psst").status, 403)
+        assertEquals(say(routes, "sub-carol", "players", "hi").status, 403)
+        assertEquals(
+          routes(
+            EngineRequest("POST", "/matches/m-9/messages", Map.empty, """{"board":"observers","text":"hi"}""")
+          ).status,
+          401
+        )
+        assertEquals(say(routes, "sub-alice", "lobby", "hi").status, 400)
+    }
+
+    test("a private match has no observers: nobody without a seat reads or writes its boards") {
+        val (routes, _) = fixture(isPublic = false)
+        assertEquals(say(routes, "sub-alice", "players", "gl").status, 200)
+        assertEquals(boards(routes, Some("sub-carol"))._1, 403)
+        assertEquals(boards(routes, None)._1, 403)
+        assertEquals(say(routes, "sub-carol", "observers", "hi").status, 403)
+    }
+
+    test("once the match is over the players read the observers' board, and nobody writes on either") {
+        val (routes, _) = fixture()
+        say(routes, "sub-carol", "observers", "go red")
+        post(routes, "sub-bob", """{"concede":true}""")
+        val (_, Some(alice)) = boards(routes, Some("sub-alice")): @unchecked
+        assertEquals(texts(alice, "observers"), Some(List("go red")))
+        assertEquals(alice("canWrite").arr.toList, Nil)
+        assertEquals(say(routes, "sub-alice", "players", "gg").status, 400)
     }
 
     test("a refused move answers with the reason, and a body that is none of the shapes is a 400") {

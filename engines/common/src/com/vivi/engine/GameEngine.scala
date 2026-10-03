@@ -48,6 +48,12 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
 
     private val base = baseUrl.stripSuffix("/")
 
+    /** Whether the match is over, as the game decides it. */
+    def isOver(m: M): Boolean = game.isOver(m)
+
+    /** What a player's place is called in this game, for what a caller with none is told. */
+    def seatName: String = game.seatName
+
     /** Step 1: create a game. The urls handed back are where matchmaker checks status, where the players play, and —
       * for a public game — where anyone may watch.
       *

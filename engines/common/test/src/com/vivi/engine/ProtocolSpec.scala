@@ -203,6 +203,11 @@ class ProtocolSpec extends FunSuite {
         assertEquals(asMatchmaker.state, request.state)
     }
 
+    test("matchmaker's answer to a nickname lookup reads as the engine's") {
+        import Json.given
+        assertEquals(read[Protocol.Nickname](write(Json.Nickname("Alice"))), Protocol.Nickname("Alice"))
+    }
+
     test("a character an engine registers reads as matchmaker's registration request, and its answer back") {
         val request = Protocol.RegisterCharacterRequest("Iron Mike", "a slugger", "sub-1", """{"strength":9}""")
         val asMatchmaker =

@@ -391,6 +391,9 @@ locals {
     # (it keeps none of its own), and its edits of one — name and description, and owner — which
     # matchmaker applies only for the player who owns it.
     "GET /characters",
+    # What a player is called, for an engine's message boards to show them by: a player or somebody
+    # watching a public match, who signed in on the engine's page.
+    "GET /nicknames",
     "PUT /characters/{characterId}",
     "PUT /characters/{characterId}/owner",
   ]

@@ -34,8 +34,8 @@ variable "matchmaker_url" {
   description = <<-EOT
     Matchmaker's API base url — its `api_endpoint` output — for the calls this engine makes on its
     own account rather than about a match: a character game reporting a character a player has
-    built here. A match's callbacks come with their own urls, so a game without characters can
-    leave it empty.
+    built here, and every game looking up the nickname of somebody writing on a message board.
+    Left empty, a writer is shown without one.
   EOT
   type        = string
   default     = ""

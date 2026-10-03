@@ -175,6 +175,9 @@ object Protocol {
       */
     case class OwnedCharacter(characterId: Long, name: String, description: String, state: String)
 
+    /** `GET /nicknames?externalId=`'s answer: what matchmaker calls a player. */
+    case class Nickname(nickname: String)
+
     given ReadWriter[EnginePlayer] = macroRW
     given ReadWriter[LiveTerms] = macroRW
     given ReadWriter[CreateGameRequest] = macroRW
@@ -193,4 +196,5 @@ object Protocol {
     given ReadWriter[EditCharacterRequest] = macroRW
     given ReadWriter[TransferCharacterRequest] = macroRW
     given ReadWriter[OwnedCharacter] = macroRW
+    given ReadWriter[Nickname] = macroRW
 }

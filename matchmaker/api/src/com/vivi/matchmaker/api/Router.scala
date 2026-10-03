@@ -185,6 +185,15 @@ object Router {
                     created(services.characters.create(r.name, r.description, r.ownerExternalId, r.state, caller))
                 }
 
+            // What a player is called, for a game engine to show them by on a match's message board. The
+            // engine's, not a player's: deployed, this is one of `local.engine_routes`.
+            case ("GET", "nicknames" :: Nil) =>
+                request.query.get("externalId").filter(_.nonEmpty) match {
+                    case None => IO.pure(Errors.badRequest("say whose nickname with ?externalId="))
+                    case Some(externalId) =>
+                        ok(services.players.nicknameFor(externalId, caller).map(Json.Nickname(_)))
+                }
+
             // One player's characters in the calling engine's game, for the engine to show them: it
             // keeps none of its own. The engine's, like the two below.
             case ("GET", "characters" :: Nil) =>

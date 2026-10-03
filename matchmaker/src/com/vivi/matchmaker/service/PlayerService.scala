@@ -3,7 +3,7 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import skunk.SqlState
 import com.vivi.matchmaker.model.{Player, PlayerSearchResult}
-import com.vivi.matchmaker.persistence.PlayerRepo
+import com.vivi.matchmaker.persistence.{GameRepo, PlayerRepo}
 
 /** The caller's own player record: reading it, and the two parts of it they may change.
   *
@@ -136,6 +136,26 @@ class PlayerService(sessionPool: SessionPool) {
      * else, and needs no row of the caller's beyond the fact that there is one. Unlocked -- nothing
      * here writes, and what is being checked is existence, which a read of somebody else's page
      * does not depend on staying true for. */
+    /** What the player registered under `externalId` is called, for a game engine to show them by on a match's message
+      * board — a player or somebody watching.
+      *
+      * A game's call only: the caller's identity must be a game's `external_id`, as on the engine's other calls. A
+      * player asking is refused, so that this cannot be used to find out who is behind a subject. A subject nobody has
+      * registered under is `NotFoundError`, which the engine takes as "show them without a name".
+      */
+    def nicknameFor(externalId: String, callerExternalId: String): IO[String] =
+        sessionPool.use { session =>
+            for {
+                games <- new GameRepo[String](session).readIdsByExternalId(callerExternalId)
+                _ <- IO.raiseWhen(games.isEmpty)(UnauthorizedError("only a game engine may look a nickname up"))
+                player <- new PlayerRepo(session).readByExternalId(externalId)
+                nickname <- player match {
+                    case Some(p) => IO.pure(p.nickname)
+                    case None    => IO.raiseError(NotFoundError(s"no player with externalId '$externalId'"))
+                }
+            } yield nickname
+        }
+
     private def requireRegistered(repo: PlayerRepo, callerExternalId: String): IO[Player] =
         repo.readByExternalId(callerExternalId).flatMap {
             case Some(player) => IO.pure(player)

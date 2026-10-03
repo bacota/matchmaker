@@ -233,6 +233,9 @@ module "tictactoe" {
   cognito_client_id = module.api.user_pool_client_id
   hosted_login_url  = module.api.hosted_login_url
 
+  # Where the engine asks what somebody writing on a match's message board is called.
+  matchmaker_url = module.api.api_endpoint
+
   lambda_snap_start  = var.lambda_snap_start
   log_retention_days = var.log_retention_days
 }
@@ -267,6 +270,9 @@ module "rps" {
   cognito_issuer    = module.api.jwt_issuer
   cognito_client_id = module.api.user_pool_client_id
   hosted_login_url  = module.api.hosted_login_url
+
+  # Where the engine asks what somebody writing on a match's message board is called.
+  matchmaker_url = module.api.api_endpoint
 
   lambda_snap_start  = var.lambda_snap_start
   log_retention_days = var.log_retention_days
@@ -343,6 +349,9 @@ module "stratego" {
   cognito_issuer    = module.api.jwt_issuer
   cognito_client_id = module.api.user_pool_client_id
   hosted_login_url  = module.api.hosted_login_url
+
+  # Where the engine asks what somebody writing on a match's message board is called.
+  matchmaker_url = module.api.api_endpoint
 
   lambda_snap_start  = var.lambda_snap_start
   log_retention_days = var.log_retention_days

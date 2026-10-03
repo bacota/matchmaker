@@ -25,6 +25,10 @@ import Protocol.given
   * watching it. A push follows the route rather than the move, so a route only one game has, like boxing's fighter, is
   * pushed without that game having to say so.
   *
+  * With `messages`, it serves the match's two message boards — see [[Messages]] — read by a player or a signed-in
+  * observer through `/messages`, by a watcher of the public board through `/board/messages`, and written through a
+  * `POST` to `/messages`, which, like any player `POST` on a match, is pushed to whoever is watching.
+  *
   * @tparam V
   *   the game's play state, as the play page and a scripted client read it
   */
@@ -33,7 +37,8 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
     playAuth: PlayAuth,
     matchmakerKey: Option[String],
     signIn: SignIn,
-    live: Option[Live] = None
+    live: Option[Live] = None,
+    messages: Option[Messages] = None
 ) extends (EngineRequest => EngineResponse) {
 
     /** The state a play page renders. `seat` is the viewer's own, absent on the public board — and what a viewer may
@@ -207,7 +212,8 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             // no sight of anything a seat would hide — see `stateOf`.
             case ("GET", "matches" :: matchId :: "board" :: Nil) =>
                 withPublic(matchId)(m =>
-                    html(page(matchId, Some(stateOf(m, None)), None, live.map(_.url), publicView = true))
+                    // With the sign-in, which a watcher needs only to write on the observers' board.
+                    html(page(matchId, Some(stateOf(m, None)), playAuth.login, live.map(_.url), publicView = true))
                 )
 
             case ("GET", "matches" :: matchId :: "board" :: "state" :: Nil) =>
@@ -226,6 +232,41 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             // The page's keep-alive, should one reach the function: deployed, the gateway answers it
             // without invoking anything.
             case ("MESSAGE", "live" :: Nil) if request.connectionId.isDefined => EngineResponse(200, "{}")
+
+            // The message boards. A player or a signed-in observer reads both as they may see them; the
+            // public board's watcher, who has no token, reads them as anyone may; and a signed-in caller
+            // writes on one.
+            case ("GET", "matches" :: matchId :: "messages" :: Nil) =>
+                withBoards { boards =>
+                    asViewer(request, matchId)((m, viewer, who) => boardsOf(boards, m, viewer, Some(who)))
+                }
+
+            case ("GET", "matches" :: matchId :: "board" :: "messages" :: Nil) =>
+                withBoards(boards => withPublic(matchId)(m => boardsOf(boards, m, Viewer.Anonymous, None)))
+
+            case ("POST", "matches" :: matchId :: "messages" :: Nil) =>
+                withBoards { boards =>
+                    parse[MessageWire.PostMessage](request.body) match {
+                        case Left(why) => error(400, why)
+                        case Right(post) =>
+                            MessageBoard.parse(post.board) match {
+                                case None => error(400, s"no board '${post.board}': it is players or observers")
+                                case Some(board) =>
+                                    asViewer(request, matchId) { (m, viewer, who) =>
+                                        val over = engine.isOver(m)
+                                        MessageRules.refusalToPost(board, viewer, m.isPublic, over) match {
+                                            case Some(refusal) => error(refusal)
+                                            case None =>
+                                                val known = engine.seatOf(m, who).toOption.flatMap(_.displayName)
+                                                boards.post(matchId, board, who, viewer, post.text, known) match {
+                                                    case Left(refusal) => error(refusal)
+                                                    case Right(_)      => boardsOf(boards, m, viewer, Some(who))
+                                                }
+                                        }
+                                    }
+                            }
+                    }
+                }
 
             case key if extra.isDefinedAt(key) => extra(key)(request)
 
@@ -286,6 +327,35 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             case Left(refusal)   => error(refusal)
             case Right(response) => response
         }
+    }
+
+    private def withBoards(f: Messages => EngineResponse): EngineResponse =
+        messages match {
+            case Some(boards) => f(boards)
+            case None         => error(404, "this engine has no message boards")
+        }
+
+    /** `f` with the match, the caller as a [[Viewer]] of it, and their subject: a player if they have a seat, an
+      * observer if they do not and the match is public. Somebody with no seat in a private match is no viewer of it at
+      * all.
+      */
+    private def asViewer(request: EngineRequest, matchId: String)(
+        f: (M, Viewer, String) => EngineResponse
+    ): EngineResponse =
+        (for {
+            m <- currentMatch(matchId)
+            who <- playAuth.callerOf(request)
+        } yield (m, who)) match {
+            case Left(refusal) => error(refusal)
+            case Right((m, who)) =>
+                if (engine.seatOf(m, who).isRight) f(m, Viewer.Player, who)
+                else if (m.isPublic) f(m, Viewer.Observer, who)
+                else error(Refusal.NotYours(s"you have no ${engine.seatName} in match '$matchId'"))
+        }
+
+    private def boardsOf(boards: Messages, m: M, viewer: Viewer, who: Option[String]): EngineResponse = {
+        import MessageWire.given
+        EngineResponse(200, write(MessageWire.view(boards, m.matchId, viewer, who, m.isPublic, engine.isOver(m))))
     }
 
     private def withPublic(matchId: String)(f: M => EngineResponse): EngineResponse =
