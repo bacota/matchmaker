@@ -475,6 +475,13 @@ ul {
   margin-left: auto;
 }
 
+/* A button that keeps its focus while its request is out -- marked aria-disabled rather than
+   disabled, which would drop the focus -- looks as a disabled one does. */
+button[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 .empty,
 .loading {
   color: var(--muted);
