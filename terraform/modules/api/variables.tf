@@ -384,3 +384,38 @@ variable "bounce_max_concurrency" {
     error_message = "maximum_concurrency for an SQS event source must be between 2 and 1000."
   }
 }
+
+variable "ending_memory_mb" {
+  description = <<-EOT
+    Memory for the function that settles the ends of matches (ending.tf). As little as it can be
+    trusted with: it runs a few queries and an engine call per match, nobody waits on its cold
+    start, and memory is what it is billed by.
+
+    Not Lambda's minimum of 128. The JVM settling one match from this jar peaks at about 119 MB
+    resident however small its heap is made -- loaded classes, code cache and threads, measured with
+    ending.Handler.main under -XX:MaxRAM of 128m, 96m and 80m alike -- which leaves too little
+    under 128 for the runtime around it. A function over its limit is killed, its batch fails, and
+    every ending in it is delivered again until it reaches the dead-letter queue.
+  EOT
+  type        = number
+  default     = 256
+}
+
+variable "ending_max_concurrency" {
+  description = <<-EOT
+    The most copies of the ending function Lambda may run at once, each holding up to two database
+    connections: a bound on its demand on the database, as bounce_max_concurrency is for the bounce
+    consumer, and for the same reason. AWS requires at least 2.
+  EOT
+  type        = number
+  default     = 2
+}
+
+variable "ending_max_receive_count" {
+  description = <<-EOT
+    How many times a match's ending is tried before it is moved to the dead-letter queue. Tries are
+    the queue's visibility timeout apart -- an hour and a half -- so ten is fifteen hours.
+  EOT
+  type        = number
+  default     = 10
+}

@@ -192,6 +192,10 @@ resource "aws_lambda_function" "api" {
       # so; see com.vivi.matchmaker.archive.ArchiveStore.fromEnvironment.
       ARCHIVE_BUCKET          = aws_s3_bucket.archive["permanent"].bucket
       FRIENDLY_ARCHIVE_BUCKET = aws_s3_bucket.archive["friendly"].bucket
+
+      # Where the end of each match is queued, to be rated and archived by the ending function
+      # (ending.tf). Reached the way the mail queue is, through the VPC's NAT.
+      MATCH_ENDED_QUEUE_URL = aws_sqs_queue.match_ended.url
     }
   }
 

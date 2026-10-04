@@ -63,7 +63,7 @@ object SqsNotifier {
       * be first builds one client rather than two, and the SDK's synchronous clients are documented as thread-safe and
       * intended to be shared.
       */
-    private def lazily(build: () => SqsClient): () => SqsClient = {
+    private[matchmaker] def lazily(build: () => SqsClient): () => SqsClient = {
         lazy val instance = build()
         () => instance
     }
@@ -76,7 +76,7 @@ object SqsNotifier {
      * is a handful of connections for the length of one request, which is what this transport's
      * per-request connections cost about the same as. It would be the wrong transport for sustained
      * parallel traffic, and that is not what a notification is. */
-    private def client(region: String): SqsClient =
+    private[matchmaker] def client(region: String): SqsClient =
         SqsClient
             .builder()
             .region(Region.of(region))
