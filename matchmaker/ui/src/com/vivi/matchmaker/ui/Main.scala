@@ -1046,6 +1046,42 @@ object Views {
         val busy = Store.completedLoading.signal.map(_.contains(list)).distinct
         val failed = Store.completedFailed.signal.map(_.contains(list)).distinct
 
+        /* Try again, for a list whose first window failed to load. It stays where it is while the
+         * retry is out -- so the focus on it is not dropped -- and refuses a second press rather than
+         * being disabled, which would drop the focus just the same. The status line says what is
+         * happening; once there is a window, the button gives way to it and the focus goes to that
+         * line, which is then saying which window it is. */
+        val retrying = Var(false)
+        var statusLine: Option[dom.html.Element] = None
+
+        def retry(): Unit =
+            if (!Store.completedLoading.now().contains(list)) {
+                retrying.set(true)
+                Store.showCompleted(list).onComplete { _ =>
+                    retrying.set(false)
+                    if (Store.completedView.now().exists(_.list == list)) statusLine.foreach(_.focus())
+                }
+            }
+
+        // Built once and shown or not, rather than rebuilt with each change of state, so that it is
+        // the same element -- and keeps the focus -- from the press to the answer.
+        val retryButton =
+            button(
+              tpe := "button",
+              cls := "link",
+              aria.disabled <-- busy,
+              child <-- busy.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
+              "Try again",
+              onClick --> (_ => retry())
+            )
+        val showRetry = view
+            .combineWith(failed, retrying.signal)
+            .map {
+                case (None, failedNow, asking) => failedNow || asking
+                case _                         => false
+            }
+            .distinct
+
         def move(to: CompletedPage => Int): Unit =
             Store.completedView.now().filter(_.list == list).foreach { current =>
                 Store.showCompleted(list, to(current.page), Some(current.page.asOf))
@@ -1086,35 +1122,33 @@ object Views {
               }
             )
           ),
-          // Which stretch of time the rows are from, said politely when it changes — which is what
-          // Prev, Next and the frame do, and the reader is owed word of where they have got to.
+          // What the list is: which stretch of time its rows are from, or that they are on their way, or
+          // that they could not be had. Said politely when it changes -- which is what Prev, Next, the
+          // frame and Try again do -- from one line that is always there, since a line that appears
+          // with its news is not announced. Focusable from script only: Try again sends the focus here
+          // once it is answered.
           p(
             cls := "detail",
             aria.live := "polite",
-            child.text <-- view.map {
-                case None                         => ""
-                case Some(page) if page.page == 0 => s"Finished in the ${page.frame.label.toLowerCase}"
-                case Some(page) =>
+            tabIndex := -1,
+            onMountCallback(context => statusLine = Some(context.thisNode.ref)),
+            onUnmountCallback(_ => statusLine = None),
+            child.text <-- view.combineWith(failed).map {
+                case (None, true)                      => "These matches could not be loaded."
+                case (None, false)                     => "Loading…"
+                case (Some(page), _) if page.page == 0 => s"Finished in the ${page.frame.label.toLowerCase}"
+                case (Some(page), _) =>
                     s"Finished between ${Format.instant(page.from)} and ${Format.instant(page.until)}"
             }
           ),
-          // Nothing held for this list yet: still on its way, or it failed -- which is not still on
-          // its way, so saying "Loading…" would be the worse lie, and what helps is asking again. The
-          // banner has said what went wrong; this says what the section is, and offers the retry.
-          child <-- view.combineWith(busy, failed).distinct.map {
-              case (None, false, true) =>
-                  div(
-                    p(cls := "empty", "These matches could not be loaded."),
-                    // Gone the moment it is pressed: asking clears the failure, and the section says
-                    // "Loading…" while it asks.
-                    button(tpe := "button", cls := "link", "Try again", onClick --> (_ => Store.showCompleted(list)))
-                  )
-              case (None, _, _)                                           => p(cls := "empty", "Loading…")
-              case (Some(page), _, _) if page.matches.nonEmpty            => ul(page.matches.map(row))
-              case (Some(page), _, _) if page.page == 0 && !page.hasOlder => p(cls := "empty", never)
-              case (Some(page), _, _) if page.hasOlder =>
+          child <-- showRetry.map(if (_) retryButton else emptyNode),
+          child <-- view.map {
+              case None                                           => emptyNode
+              case Some(page) if page.matches.nonEmpty            => ul(page.matches.map(row))
+              case Some(page) if page.page == 0 && !page.hasOlder => p(cls := "empty", never)
+              case Some(page) if page.hasOlder =>
                   p(cls := "empty", "None finished in this time. Next goes further back.")
-              case (Some(_), _, _) => p(cls := "empty", "None finished in this time.")
+              case Some(_) => p(cls := "empty", "None finished in this time.")
           },
           div(
             cls := "completed-steps",
