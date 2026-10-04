@@ -236,6 +236,62 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(resolved.round, 2)
     }
 
+    // ---------------------------------------------------------------------------
+    // What a corner can see of the other
+    // ---------------------------------------------------------------------------
+
+    test("an opponent is seen by the words for their highest and lowest characteristics, never by the numbers") {
+        // Strength alone is highest, agility alone lowest.
+        assertEquals(Fighter(8, 4, 3, 5, 5).impression, List("powerful", "short"))
+        // Strength ties chin for lowest: two, so strength is described, and chin has no word.
+        assertEquals(Fighter(3, 5, 8, 6, 3).impression, List("tall", "not very muscular"))
+        assertEquals(Fighter(4, 3, 4, 9, 5).impression, List("fit", "sluggish"))
+        assertEquals(Fighter(6, 6, 6, 2, 5).impression, List("flabby"))
+    }
+
+    test("two characteristics tied at an end are both described; three or more, and that end says nothing") {
+        assertEquals(Fighter(7, 7, 3, 4, 4).impression, List("powerful", "fast", "short"))
+        assertEquals(Fighter(2, 9, 2, 6, 6).impression, List("fast", "not very muscular", "short"))
+        // Three share the lowest, so only the highest is described.
+        assertEquals(Fighter(10, 3, 3, 3, 6).impression, List("powerful"))
+        // Everything the same: nothing stands out at either end.
+        assertEquals(Fighter(5, 5, 5, 5, 5).impression, Nil)
+    }
+
+    test("chin counts towards which characteristic is highest or lowest, but has no word of its own") {
+        // Chin alone is highest: nothing to say at that end.
+        assertEquals(Fighter(4, 5, 5, 1, 10).impression, List("flabby"))
+        // Chin tied with speed at the top: speed is still described.
+        assertEquals(Fighter(3, 8, 3, 3, 8).impression, List("fast"))
+        // Chin alone is lowest.
+        assertEquals(Fighter(9, 5, 5, 4, 2).impression, List("powerful"))
+    }
+
+    test("each corner sees its own fighter's numbers and only an impression of the other's; the public, neither") {
+        val (engine, _, store, _, _) = fixture(createRequest(blue = Some(Fighter(8, 4, 3, 5, 5)), isPublic = true))
+        engine.plan("m-1", alice, Allocation(5, 0, 0))
+        engine.plan("m-1", bob, Allocation(0, 5, 0))
+
+        val m = bout(store)
+        val asAlice = engine.stateOf(m, m.cornerOf(Side.Red))
+        val asBob = engine.stateOf(m, m.cornerOf(Side.Blue))
+        val asPublic = engine.stateOf(m, None)
+
+        assertEquals(asAlice.corners.map(c => (c.side, c.fighter.isDefined)), List("Red" -> true, "Blue" -> false))
+        assertEquals(asAlice.corners.map(_.impression), List(Nil, List("powerful", "short")))
+        assertEquals(asBob.corners.map(c => (c.side, c.fighter.isDefined)), List("Red" -> false, "Blue" -> true))
+        // Alice's fighter is five across the board, so nothing about it stands out.
+        assertEquals(asBob.corners.map(_.impression), List(Nil, Nil))
+        assert(asPublic.corners.forall(_.fighter.isEmpty))
+        assertEquals(asPublic.corners.map(_.impression), List(Nil, List("powerful", "short")))
+
+        // A round's numbers are its plan plus the characteristics, and the plans are public: so only
+        // the viewer's own are given.
+        assertEquals(asAlice.rounds.map(r => (r.redNumbers.isDefined, r.blueNumbers.isDefined)), List(true -> false))
+        assertEquals(asBob.rounds.map(r => (r.redNumbers.isDefined, r.blueNumbers.isDefined)), List(false -> true))
+        assertEquals(asPublic.rounds.map(r => (r.redNumbers.isDefined, r.blueNumbers.isDefined)), List(false -> false))
+    }
+
     test("a bout that goes the distance is won on points, and matchmaker is sent the results") {
         val (engine, recorder, store, _, _) = fixture()
 

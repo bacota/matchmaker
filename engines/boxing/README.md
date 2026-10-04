@@ -16,6 +16,23 @@ scheduled for 3–25 rounds. Each round, both players secretly split their fight
 - offense = plan + 2 × speed, defense = plan + 2 × agility, power = plan + 2 × strength
 - effective chin = defense + 3 × chin
 
+A player sees their own fighter's characteristics and nobody else's, and the public board shows
+neither corner's. In place of the numbers, a corner is described by its highest and lowest
+characteristic (`Fighter.impression`):
+
+| | Highest | Lowest |
+|---|---|---|
+| Strength | powerful | not very muscular |
+| Speed | fast | sluggish |
+| Agility | tall | short |
+| Workrate | fit | flabby |
+| Chin | — | — |
+
+When two characteristics tie at an end, both are described; when three or more do, nothing is said
+for that end. Chin counts when deciding which is highest or lowest, but has no word. A round's
+offense, defense, power and effective chin give the characteristics away once its plans are public,
+so each corner is sent only its own (`redNumbers` / `blueNumbers`), and the public board neither.
+
 Each test below is only looked at if nothing above it decided the round. "Both landed" is settled
 by higher offense, then higher defense. If that still ties, the round drops to the next test down.
 

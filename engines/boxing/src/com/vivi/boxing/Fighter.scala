@@ -14,9 +14,36 @@ case class Fighter(strength: Int, speed: Int, agility: Int, workrate: Int, chin:
 
     def characteristics: List[(String, Int)] =
         List("strength" -> strength, "speed" -> speed, "agility" -> agility, "workrate" -> workrate, "chin" -> chin)
+
+    /** What an opponent can tell of this fighter by looking at them: a word for its highest characteristic and one for
+      * its lowest, and never the numbers.
+      *
+      * Where two characteristics share the highest (or the lowest) value, both are described; where three or more do,
+      * nothing stands out at that end and neither is. Chin takes part in deciding which is highest and lowest — a
+      * fighter whose best feature is a chin has no other best feature — but has no word, since a chin cannot be seen.
+      */
+    def impression: List[String] = {
+        def at(value: Int): List[String] = {
+            val tied = characteristics.collect { case (name, v) if v == value => name }
+            if (tied.sizeIs <= 2) tied else Nil
+        }
+        val values = characteristics.map(_._2)
+        at(values.max).flatMap(name => Fighter.Looks.get(name).map(_._1)) ++
+            at(values.min).flatMap(name => Fighter.Looks.get(name).map(_._2))
+    }
 }
 
 object Fighter {
+
+    /** How a characteristic looks from the other corner, when it is the fighter's highest and when it is the lowest.
+      * Chin has no entry: it does not show.
+      */
+    val Looks: Map[String, (String, String)] = Map(
+      "strength" -> ("powerful", "not very muscular"),
+      "speed" -> ("fast", "sluggish"),
+      "agility" -> ("tall", "short"),
+      "workrate" -> ("fit", "flabby")
+    )
 
     /** Points a new fighter is built from. Every characteristic is at least [[Min]], so the choice is how to spread the
       * other twenty: an average fighter is five across the board.

@@ -82,8 +82,9 @@ object Protocol {
         clock: Option[ClockView] = None
     )
 
-    /** One corner as a viewer may see it. `fighter` is the fighter's characteristics once built — public, as a
-      * fighter's record is; `planned` says only that the corner has planned the current round, not how.
+    /** One corner as a viewer may see it. `fighter` is the fighter's characteristics, and only in the viewer's own
+      * corner: nobody sees an opponent's numbers, on the public board least of all, only its `impression`. `planned`
+      * says only that the corner has planned the current round, not how.
       */
     case class CornerView(
         side: String,
@@ -93,19 +94,26 @@ object Protocol {
         fighter: Option[FighterView],
         planned: Boolean,
         points: Int,
+        // What can be seen of a fighter whose characteristics are not the viewer's to know: see
+        // `Fighter.impression`. Empty for the viewer's own corner, whose `fighter` says it all.
+        impression: List[String] = Nil,
         // Who is in the corner, by matchmaker nickname; absent for a bout created before nicknames were kept.
         nickname: Option[String] = None
     )
 
     case class Numbers(offense: Int, defense: Int, power: Int, effectiveChin: Int)
 
-    /** A resolved round: both plans, both fighters' numbers, and how it was scored. */
+    /** A resolved round: both plans, the viewer's own numbers, and how it was scored.
+      *
+      * A corner's numbers are its plan plus its characteristics, and the plans are public once the round resolves — so
+      * the other corner's numbers would give its characteristics away, and are absent. The public board has neither.
+      */
     case class RoundView(
         number: Int,
         red: PlanRequest,
         blue: PlanRequest,
-        redNumbers: Numbers,
-        blueNumbers: Numbers,
+        redNumbers: Option[Numbers],
+        blueNumbers: Option[Numbers],
         decision: String,
         winner: Option[String],
         redPoints: Option[Int],

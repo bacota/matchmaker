@@ -306,6 +306,13 @@ ${Finale.script(victory, defeat)}
     await submit(movesUrl, body, document.getElementById("plan-submit"));
   });
 
+  /* "Looks powerful and sluggish." — the words as a sentence. */
+  function looks(words) {
+    if (!words.length) return "Nothing about this fighter stands out.";
+    const list = words.length === 1 ? words[0] : words.slice(0, -1).join(", ") + " and " + words[words.length - 1];
+    return "Looks " + list + ".";
+  }
+
   function cornerName(side) {
     return side + " corner" + (state && state.you === side ? " (you)" : "");
   }
@@ -314,9 +321,10 @@ ${Finale.script(victory, defeat)}
     const box = document.getElementById("corners");
     if (!state) { box.innerHTML = ""; return; }
     box.innerHTML = state.corners.map(c => {
+      // Your own fighter's numbers; of anybody else's, only what can be seen from across the ring.
       const stats = c.fighter
         ? "<dl>" + traits.map(([key, label]) => "<dt>" + label + "</dt><dd>" + c.fighter[key] + "</dd>").join("") + "</dl>"
-        : "";
+        : '<p class="looks">' + escapeHtml(looks(c.impression || [])) + "</p>";
       const doing = state.completed ? "" : c.planned ? "Round planned." : "Planning…";
       return '<div class="corner ' + escapeHtml(c.side) + '"><h3>' + escapeHtml(cornerName(c.side)) + "</h3>" +
         "<p>" + c.points + " points" + (doing ? " · " + doing : "") + "</p>" + stats +
