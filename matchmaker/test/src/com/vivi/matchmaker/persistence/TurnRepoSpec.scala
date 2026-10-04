@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
-import com.vivi.matchmaker.model.{MatchId, Turn}
+import com.vivi.matchmaker.model.{EloRating, MatchId, Turn}
 
 class TurnRepoSpec extends PropertySuite {
 
@@ -36,7 +36,8 @@ class TurnRepoSpec extends PropertySuite {
                         game.roles.head.gameRoleId
                       )
                       .sample
-                      .get
+                      .get,
+                  EloRating.initial
                 )
             } yield (session, game.gameId, matchId, participant.participantId)
         }

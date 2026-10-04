@@ -343,7 +343,7 @@ class FormatSpec extends FunSuite {
         assertEquals(Format.elo(1500, Some(0)), "Elo 1500 (\u00b10)")
     }
 
-    test("a result row's Elo is optional on the wire, and absent for a seat from before ratings") {
+    test("a result row's Elo round-trips, and its change is absent for a match that was not rated") {
         val rated = Json.ParticipantResultView(
           GameId(1),
           MatchId("m"),
@@ -353,14 +353,12 @@ class FormatSpec extends FunSuite {
           Some(1),
           Map.empty,
           isWinner = true,
-          eloStart = Some(1500),
+          eloStart = 1500,
           eloDelta = Some(16)
         )
         assertEquals(read[Json.ParticipantResultView](write(rated)), rated)
-        val older = read[Json.ParticipantResultView](
-          """{"gameId":1,"matchId":"m","participantId":2,"nickname":"alice","roleName":"First","rank":1,"scores":{},"isWinner":true}"""
-        )
-        assertEquals((older.eloStart, older.eloDelta), (None, None))
+        val friendly = rated.copy(eloDelta = None)
+        assertEquals(read[Json.ParticipantResultView](write(friendly)), friendly)
     }
 
     test("numeric parameter values are offered low to high, not in text order") {

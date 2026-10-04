@@ -164,7 +164,7 @@ class EloRatingServiceSpec extends PropertySuite {
             .map(_.map(r => r.player.playerId -> (r.rating, r.matches)).toMap)
 
     /** Each seat's V43 columns, by its player: what they began the match rated, and what it did to that. */
-    private def eloSeats(f: Fixture, matchId: MatchId): IO[Map[PlayerId, (Option[Int], Option[Int])]] =
+    private def eloSeats(f: Fixture, matchId: MatchId): IO[Map[PlayerId, (Int, Option[Int])]] =
         TestSession.resource.use(session =>
             new ParticipantRepo(session)
                 .eloSeatsForMatch(f.game.gameId, matchId)
@@ -172,7 +172,7 @@ class EloRatingServiceSpec extends PropertySuite {
         )
 
     /** The match's result rows as `player` is shown them: each seat's Elo as it began, and the match's change to it. */
-    private def resultElo(player: Player, matchId: MatchId): IO[Map[String, (Option[Int], Option[Int])]] =
+    private def resultElo(player: Player, matchId: MatchId): IO[Map[String, (Int, Option[Int])]] =
         services.matches
             .results(player.externalId)
             .map(_.filter(_.matchId == matchId).map(r => r.nickname -> (r.eloStart, r.eloDelta)).toMap)
@@ -195,11 +195,11 @@ class EloRatingServiceSpec extends PropertySuite {
         assertEquals(now, Map(f.first.playerId -> (1516, 1), f.second.playerId -> (1484, 1)))
         assertEquals(
           shown,
-          Map(f.first.nickname -> (Some(1500), Some(16)), f.second.nickname -> (Some(1500), Some(-16)))
+          Map(f.first.nickname -> (1500, Some(16)), f.second.nickname -> (1500, Some(-16)))
         )
         assertEquals(
           recorded,
-          Map(f.first.playerId -> (Some(1500), Some(16)), f.second.playerId -> (Some(1500), Some(-16)))
+          Map(f.first.playerId -> (1500, Some(16)), f.second.playerId -> (1500, Some(-16)))
         )
     }
 
@@ -217,7 +217,7 @@ class EloRatingServiceSpec extends PropertySuite {
         val (f, now, recorded) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(
           recorded,
-          Map(f.first.playerId -> (Some(1500), Some(16)), f.second.playerId -> (Some(1500), Some(-16)))
+          Map(f.first.playerId -> (1500, Some(16)), f.second.playerId -> (1500, Some(-16)))
         )
         assertEquals(now, Map(f.first.playerId -> (1716, 1), f.second.playerId -> (1484, 1)))
     }
@@ -347,9 +347,9 @@ class EloRatingServiceSpec extends PropertySuite {
         } yield (f, now, recorded, shown)
         val (f, now, recorded, shown) = result.timeout(caseTimeout).unsafeRunSync()
         // Shown with the results even though the match is friendly: it is who they were when they played.
-        assertEquals(shown, Map(f.first.nickname -> (Some(1600), None), f.second.nickname -> (Some(1500), None)))
+        assertEquals(shown, Map(f.first.nickname -> (1600, None), f.second.nickname -> (1500, None)))
         assertEquals(now, Map(f.first.playerId -> (1600, 0)))
-        assertEquals(recorded, Map(f.first.playerId -> (Some(1600), None), f.second.playerId -> (Some(1500), None)))
+        assertEquals(recorded, Map(f.first.playerId -> (1600, None), f.second.playerId -> (1500, None)))
     }
 
     test("a rating an admin of the game set is where the next rated match moves it from") {

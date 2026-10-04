@@ -295,10 +295,13 @@ class GameEngineService[T](
                     saved <- matchRepo.create(newMatch)
                     // Under the lock taken above, so the next start of this challenge sees the claim.
                     _ <- challengeRepo.claimForStart(gameId, challengeId, matchId)
-                    seats <- roster.traverse(entry => participantRepo.create(toParticipant(matchId, entry.acceptance)))
-                    // What each player is rated as they sit down, which is what the match is rated from
-                    // when it ends -- see `EloRatingService.recordStart`.
-                    _ <- EloRatingService.recordStart(session, gameId, seats)
+                    // What each player is rated as they sit down, written on their seat and what the
+                    // match is rated from when it ends -- see `EloRatingService.startingRatings`.
+                    starting <- EloRatingService.startingRatings(session, gameId, roster.map(_.acceptance.playerId))
+                    seats <- roster.traverse(entry =>
+                        participantRepo
+                            .create(toParticipant(matchId, entry.acceptance), starting(entry.acceptance.playerId))
+                    )
                     participants <- seats.zip(roster).traverse((p, entry) => enginePlayer(characterRepo)(p, entry))
                     // The key the engine is called with. Read plainly, like the game itself: it decides
                     // nothing written here, and is only handed to the engine below.

@@ -161,7 +161,8 @@ class MatchServiceSpec extends PropertySuite {
                 Some(Instant.ofEpochSecond(2000)),
                 character.characterId,
                 game.roles.head.gameRoleId
-              )
+              ),
+              EloRating.initial
             )
         } yield matchId
 

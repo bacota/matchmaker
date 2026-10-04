@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
-import com.vivi.matchmaker.model.MatchId
+import com.vivi.matchmaker.model.{EloRating, MatchId}
 
 class ResultRepoSpec extends PropertySuite {
     property("create then read returns the result just created") {
@@ -37,7 +37,8 @@ class ResultRepoSpec extends PropertySuite {
                                 createdGame.roles.head.gameRoleId
                               )
                               .sample
-                              .get
+                              .get,
+                          EloRating.initial
                         )
                         result <- IO.pure(
                           Generators.genResult(createdGame.gameId, createdParticipant.participantId).sample.get

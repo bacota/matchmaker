@@ -1882,10 +1882,8 @@ object Views {
                         if (row.isWinner) span(cls := "sr-only", "winner: ") else emptyNode,
                         span(cls := "who", s"${row.nickname} (${row.roleName})"),
                         // Their Elo rating as the match began, in a friendly match as in any other, and
-                        // where it went if the match was rated. Nothing for a seat from before ratings.
-                        row.eloStart.fold(emptyNode)(start =>
-                            span(cls := "detail", s" — ${Format.elo(start, row.eloDelta)}")
-                        ),
+                        // what the match did to it if it was rated.
+                        span(cls := "detail", s" — ${Format.elo(row.eloStart, row.eloDelta)}"),
                         // Which side of the forfeit this player was on. `isWinner` is what separates
                         // them, and without this a win by forfeit would read as a win on the board.
                         if (!row.forfeit) emptyNode

@@ -376,8 +376,9 @@ object Json {
         // like every other Duration here; zero for a match played before turns were recorded.
         timeTaken: Duration = Duration.ZERO,
         // The player's Elo rating as the match began, friendly or not, and what the match did to it,
-        // which only one that is not friendly does (V43). Absent for seats from before ratings.
-        eloStart: Option[Int] = None,
+        // which only one that is not friendly does (V43). Defaulted, like the fields above it, for a
+        // client that has not heard of it.
+        eloStart: Int = EloRating.initial,
         eloDelta: Option[Int] = None
     )
 

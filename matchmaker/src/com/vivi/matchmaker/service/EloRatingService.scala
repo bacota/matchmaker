@@ -2,7 +2,7 @@ package com.vivi.matchmaker.service
 
 import cats.effect.IO
 import cats.syntax.all._
-import com.vivi.matchmaker.model.{EloRating, GameId, MatchId, Participant, ParticipantId, Player, PlayerId}
+import com.vivi.matchmaker.model.{EloRating, GameId, MatchId, ParticipantId, Player, PlayerId}
 import com.vivi.matchmaker.persistence.{EloRatingRepo, GameAdminRepo, GameRepo, ParticipantRepo, PlayerRepo, TextCodec}
 
 /** Players' Elo ratings in each game (V42): the list anybody may read, and the setting of one that a game's admin may
@@ -72,25 +72,17 @@ class EloRatingService[T](sessionPool: SessionPool)(using TextCodec[T]) {
 
 object EloRatingService {
 
-    /** Records on each of a match's seats what its player was rated when it began (V43) — the starting rating for a
-      * player who has none yet. For every match, friendly or not: it is a fact about the seat either way.
+    /** What each of a match's players is rated as it begins (V43) — the starting rating for a player who has none yet —
+      * for the start to write on their seats. For every match, friendly or not: it is a fact about the seat either way.
       *
       * For the start's own transaction, the one that writes the seats. The ratings are read FOR SHARE, which a
       * contended table read on the way to a write is owed: a match of the same player completing at the same moment
       * either lands first and is in the number recorded, or waits until this start has committed and is not.
       */
-    def recordStart(session: skunk.Session[IO], gameId: GameId, seats: Seq[Participant]): IO[Unit] = {
-        val participantRepo = new ParticipantRepo(session)
-        new EloRatingRepo(session).readForShare(gameId, seats.map(_.playerId)).flatMap { ratings =>
-            seats.traverse_(seat =>
-                participantRepo.setEloStart(
-                  gameId,
-                  seat.participantId,
-                  ratings.getOrElse(seat.playerId, EloRating.initial)
-                )
-            )
-        }
-    }
+    def startingRatings(session: skunk.Session[IO], gameId: GameId, players: Seq[PlayerId]): IO[Map[PlayerId, Int]] =
+        new EloRatingRepo(session)
+            .readForShare(gameId, players)
+            .map(rated => players.map(player => player -> rated.getOrElse(player, EloRating.initial)).toMap)
 
     /** Rates a match that is not friendly and has just completed: each seat's delta, from the ratings its seats began
       * it at, recorded on the seat (V43), and each player's rating moved by their seats' deltas. `ranks` is where each
@@ -104,7 +96,8 @@ object EloRatingService {
       * The deltas come from `elo_start`, not from the ratings as they stand now: another of a player's matches
       * finishing while this one was played does not change what this one was played at. A seat made before V43 has no
       * start, and takes its player's rating now, which is the nearest thing there is. The ratings themselves are locked
-      * FOR UPDATE and moved by adding to them, so two matches finishing at once each add their own delta.
+      * FOR UPDATE by the update that moves them, which adds to them, so two matches finishing at once each add their
+      * own delta.
       */
     def rate(session: skunk.Session[IO], gameId: GameId, matchId: MatchId, ranks: Map[ParticipantId, Int]): IO[Unit] = {
         val participantRepo = new ParticipantRepo(session)
@@ -126,16 +119,16 @@ object EloRatingService {
             else if (ranked.size < 2) IO.unit
             else
                 for {
-                    current <- ratingRepo.lockForPlay(gameId, ranked.map(_.playerId))
+                    _ <- ratingRepo.ensureRated(gameId, ranked.map(_.playerId))
                     deltas = EloRating.deltas(ranked.map { row =>
                         EloRating.Seat(
                           row.participantId,
                           row.playerId,
-                          row.eloStart.getOrElse(current(row.playerId)),
+                          row.eloStart,
                           ranks(row.participantId)
                         )
                     })
-                    // In player order, as the locks were taken. One seat per player, so a seat's delta
+                    // In player order, as `ensureRated` went, which is the order the row locks are taken in. One seat per player, so a seat's delta
                     // is its player's.
                     _ <- ranked.sortBy(_.playerId.value).traverse_ { row =>
                         deltas.get(row.participantId).traverse_ { delta =>

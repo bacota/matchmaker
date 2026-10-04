@@ -46,9 +46,9 @@ case class ParticipantResult(
     // are not worth distinguishing to a reader, and a table of zeroes is one nothing is drawn
     // from.
     timeTaken: Duration = Duration.ZERO,
-    // What this player was rated when the match began (V43) -- friendly or not -- and what the match
-    // did to it, which only a match that is not friendly does. Both absent for a seat from before
-    // ratings were kept.
-    eloStart: Option[Int] = None,
+    // What this player was rated when the match began (V43) -- friendly or not, and the starting
+    // rating for a seat from before ratings were kept -- and what the match did to it, which only a
+    // match that is not friendly does.
+    eloStart: Int = EloRating.initial,
     eloDelta: Option[Int] = None
 )
