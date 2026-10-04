@@ -6,6 +6,7 @@ import skunk.Session
 import com.vivi.matchmaker.model.{
     CompletedPage,
     CompletedQuery,
+    EloRating,
     GameId,
     GameMatch,
     Match,
@@ -448,6 +449,15 @@ class MatchService(
                     }
                     _ <- IO.raiseWhen(existing.completed && existing.friendly != friendly)(
                       ConflictError("a completed match stays as friendly as it was when it finished")
+                    )
+                    // A match that is not friendly is rated (V42), and cannot rate a player against
+                    // themselves. Its seats are written once, at its start, so read under the match's
+                    // lock they are what they will be when it ends.
+                    players <- new ParticipantRepo(session)
+                        .listForMatch(gameId, matchId)
+                        .map(_.map((p, _, _) => p.playerId))
+                    _ <- IO.raiseWhen(!friendly && !EloRating.playersOnce(players))(
+                      ConflictError("a player holds more than one seat in this match, so it can only be friendly")
                     )
                     classified = existing.copy(friendly = friendly)
                     _ <- matchRepo.update(classified)

@@ -125,6 +125,15 @@ class ResultRepo(session: Session[IO]) {
                 TimeTakenRow(gameId, participantId, Duration.ofMillis((seconds * 1000).toLong))
             })
 
+    private val selectExistsForMatch: Query[(GameId, MatchId), Boolean] =
+        sql"""SELECT EXISTS (SELECT 1 FROM result r
+                              JOIN participant p ON p.game_id = r.game_id AND p.participant_id = r.participant_id
+                             WHERE p.game_id = $gameId AND p.match_id = ${SkunkIdCodecs.matchId})""".query(bool)
+
+    /** Whether any seat of the match has a result recorded: the engine's, or a forfeit's. */
+    def existsForMatch(gameId: GameId, matchId: MatchId): IO[Boolean] =
+        session.unique(selectExistsForMatch)((gameId, matchId))
+
     def create(result: Result): IO[Result] =
         session
             .execute(insertResult)(

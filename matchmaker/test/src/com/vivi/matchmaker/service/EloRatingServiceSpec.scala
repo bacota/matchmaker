@@ -7,7 +7,7 @@ import java.time.{Duration, Instant}
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{ChallengeRepo, GameRepo, ParticipantRepo, PlayerRepo, TestSession}
+import com.vivi.matchmaker.persistence.{ChallengeRepo, GameRepo, MatchRepo, ParticipantRepo, PlayerRepo, TestSession}
 
 /** Players' Elo ratings in a game (V42): moved by a match that is not friendly as it completes, left alone by one that
   * is, and set outright by an admin of the game.
@@ -104,6 +104,46 @@ class EloRatingServiceSpec extends PropertySuite {
                 new ChallengeRepo(session).startedMatch(f.game.gameId, created.challengeId)
             )
         } yield matchId.get
+
+    /** An open challenge the game's admin offers and will not play in, which anybody may accept — `first` included, for
+      * both of its seats when the challenge is friendly.
+      */
+    private def openChallenge(f: Fixture, friendly: Boolean): IO[Challenge] =
+        services.challenges.create(
+          PlainChallenge(
+            ChallengeId(0),
+            f.host.playerId,
+            "anybody",
+            start = None,
+            timeLimit = None,
+            settings = "{}",
+            gameId = f.game.gameId,
+            gameRoleId = None,
+            isOpen = true,
+            friendly = friendly,
+            autoStart = true
+          ),
+          f.host.externalId
+        )
+
+    /** A friendly match `first` plays both seats of.
+      *
+      * Not a thing the services will make — a challenge takes each player once — so the second player's seat is handed
+      * to the first in the table, which is how a match would look if that rule were ever relaxed.
+      */
+    private def playingThemselves(f: Fixture): IO[MatchId] =
+        for {
+            matchId <- started(f, friendly = true)
+            _ <- TestSession.resource.use { session =>
+                val repo = new ParticipantRepo(session)
+                repo.listForMatch(f.game.gameId, matchId).flatMap { seats =>
+                    seats.map(_._1).find(_.playerId == f.second.playerId) match {
+                        case Some(seat: PlainParticipant) => repo.update(seat.copy(playerId = f.first.playerId))
+                        case other                        => IO.raiseError(new IllegalStateException(s"seat: $other"))
+                    }
+                }
+            }
+        } yield matchId
 
     /** The engine reporting `winner` first and the other player second. */
     private def finish(f: Fixture, matchId: MatchId, winner: Player): IO[Unit] =
@@ -213,6 +253,75 @@ class EloRatingServiceSpec extends PropertySuite {
           recorded.view.mapValues(_._2).toMap,
           Map(f.first.playerId -> Some(-16), f.second.playerId -> Some(16))
         )
+    }
+
+    test("results arriving after a refresh completed the match from a status with no ranks still rate it, once") {
+        val result = (for {
+            f <- fixture()
+            matchId <- started(f, friendly = false)
+            // The results callback went astray, and a refresh found the game over.
+            _ <- IO { engine.status = GameStatusResponse(completed = true, participants = Nil) }
+            refreshed <- services.engine.refresh(f.game.gameId, matchId, f.first.externalId)
+            before <- ratings(f)
+            _ <- finish(f, matchId, f.first)
+            _ <- finish(f, matchId, f.first)
+            after <- ratings(f)
+        } yield (f, refreshed, before, after))
+            // The engine is shared with the cases after this one, which start matches of their own.
+            .guarantee(IO { engine.status = GameStatusResponse(completed = false, participants = Nil) })
+        val (f, refreshed, before, after) = result.timeout(caseTimeout).unsafeRunSync()
+        assert(refreshed.completed, refreshed)
+        assertEquals(before, Map.empty[PlayerId, (Int, Int)])
+        assertEquals(after, Map(f.first.playerId -> (1516, 1), f.second.playerId -> (1484, 1)))
+    }
+
+    test("a player cannot take two seats of a challenge that is not friendly") {
+        val result = for {
+            f <- fixture()
+            created <- openChallenge(f, friendly = false)
+            _ <- services.challenges
+                .accept(f.game.gameId, created.challengeId, None, f.game.roles(0).gameRoleId, f.first.externalId)
+            refused <- refusal(
+              services.challenges
+                  .accept(f.game.gameId, created.challengeId, None, f.game.roles(1).gameRoleId, f.first.externalId)
+            )
+        } yield refused
+        val refused = result.timeout(caseTimeout).unsafeRunSync()
+        assert(refused.isInstanceOf[ConflictError], refused)
+    }
+
+    test("a match a player holds two seats of cannot be made one that is not friendly") {
+        val result = for {
+            f <- fixture()
+            matchId <- playingThemselves(f)
+            refused <- refusal(
+              services.matches.setFriendly(f.game.gameId, matchId, friendly = false, f.host.externalId)
+            )
+            stored <- TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, matchId))
+        } yield (refused, stored)
+        val (refused, stored) = result.timeout(caseTimeout).unsafeRunSync()
+        assert(refused.isInstanceOf[ConflictError], refused)
+        assertEquals(stored.map(_.friendly), Some(true))
+    }
+
+    test("a match that is not friendly but has a player in two seats completes, and is not rated".tag(Quiet)) {
+        val result = for {
+            f <- fixture()
+            matchId <- playingThemselves(f)
+            // Past every check that would have refused it: written straight to the table.
+            _ <- TestSession.resource.use { session =>
+                val repo = new MatchRepo(session)
+                repo.read(f.game.gameId, matchId).flatMap(m => repo.update(m.get.copy(friendly = false)))
+            }
+            _ <- finish(f, matchId, f.first)
+            stored <- TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, matchId))
+            now <- ratings(f)
+            recorded <- eloSeats(f, matchId)
+        } yield (stored, now, recorded)
+        val (stored, now, recorded) = result.timeout(caseTimeout).unsafeRunSync()
+        assert(stored.exists(_.completed), stored)
+        assertEquals(now, Map.empty[PlayerId, (Int, Int)])
+        assertEquals(recorded.values.map(_._2).toSet, Set(Option.empty[Int]))
     }
 
     test("a friendly match records what its players began it rated, and moves nobody's rating nor gives anybody one") {

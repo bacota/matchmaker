@@ -109,34 +109,41 @@ object EloRatingService {
     def rate(session: skunk.Session[IO], gameId: GameId, matchId: MatchId, ranks: Map[ParticipantId, Int]): IO[Unit] = {
         val participantRepo = new ParticipantRepo(session)
         val ratingRepo = new EloRatingRepo(session)
-        for {
-            rows <- participantRepo.eloSeatsForMatch(gameId, matchId)
-            ranked = rows.filter(row => ranks.contains(row.participantId))
-            _ <-
-                if (ranked.map(_.playerId).distinct.size < 2) IO.unit
-                else
-                    for {
-                        current <- ratingRepo.lockForPlay(gameId, ranked.map(_.playerId))
-                        deltas = EloRating.deltas(ranked.map { row =>
-                            EloRating.Seat(
-                              row.participantId,
-                              row.playerId,
-                              row.eloStart.getOrElse(current(row.playerId)),
-                              ranks(row.participantId)
-                            )
-                        })
-                        _ <- ranked.traverse_(row =>
-                            deltas
-                                .get(row.participantId)
-                                .traverse_(participantRepo.setEloDelta(gameId, row.participantId, _))
+        participantRepo.eloSeatsForMatch(gameId, matchId).flatMap { rows =>
+            val ranked = rows.filter(row => ranks.contains(row.participantId))
+            /* Checked over every seat, ranked or not, before anything is touched. Accepting, starting and
+             * `setFriendly` all refuse a match that is not friendly and has a player in two seats, so
+             * this is the last word rather than the only one: a match like that is left unrated, and
+             * said so, rather than refused -- its results are still its results, and failing the
+             * callback that brought them would leave it unfinished as well. */
+            if (!EloRating.playersOnce(rows.map(_.playerId)))
+                IO(
+                  System.err.println(
+                    s"match ${matchId.value} of game ${gameId.value} is not friendly but has a player in two seats; " +
+                        "it is not rated"
+                  )
+                )
+            else if (ranked.size < 2) IO.unit
+            else
+                for {
+                    current <- ratingRepo.lockForPlay(gameId, ranked.map(_.playerId))
+                    deltas = EloRating.deltas(ranked.map { row =>
+                        EloRating.Seat(
+                          row.participantId,
+                          row.playerId,
+                          row.eloStart.getOrElse(current(row.playerId)),
+                          ranks(row.participantId)
                         )
-                        byPlayer = ranked.groupMapReduce(_.playerId)(row => deltas.getOrElse(row.participantId, 0))(
-                          _ + _
-                        )
-                        _ <- byPlayer.toList
-                            .sortBy(_._1.value)
-                            .traverse_((player, delta) => ratingRepo.played(gameId, player, delta))
-                    } yield ()
-        } yield ()
+                    })
+                    // In player order, as the locks were taken. One seat per player, so a seat's delta
+                    // is its player's.
+                    _ <- ranked.sortBy(_.playerId.value).traverse_ { row =>
+                        deltas.get(row.participantId).traverse_ { delta =>
+                            participantRepo.setEloDelta(gameId, row.participantId, delta) *>
+                                ratingRepo.played(gameId, row.playerId, delta)
+                        }
+                    }
+                } yield ()
+        }
     }
 }

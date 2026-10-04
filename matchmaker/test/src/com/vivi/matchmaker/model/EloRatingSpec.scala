@@ -42,11 +42,12 @@ class EloRatingSpec extends FunSuite {
         assertEquals(deltas(Seq(seat(1, a, 1500, 1))), Map.empty[ParticipantId, Int])
     }
 
-    test("a player in two seats does not play themselves, and each seat has its own delta") {
-        // a's first seat beats b and a's second loses to b: a win and a loss between equals.
+    test("a match with a player in two of its seats has no deltas, since they would not add up to nothing") {
         assertEquals(
           deltas(Seq(seat(1, a, 1500, 1), seat(2, b, 1500, 2), seat(3, a, 1500, 3))),
-          Map(by(1) -> 16, by(2) -> 0, by(3) -> -16)
+          Map.empty[ParticipantId, Int]
         )
+        assert(!EloRating.playersOnce(Seq(a, b, a)))
+        assert(EloRating.playersOnce(Seq(a, b, c)))
     }
 }
