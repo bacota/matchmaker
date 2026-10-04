@@ -2759,9 +2759,11 @@ object Views {
         // What the last save came to. Said aloud as well as shown: the box that was changed does not
         // say by itself that the change took.
         val said = Var("")
-        // Whether the last request for the list failed, so that the section says so rather than
-        // "Loading…" for ever.
-        val failed = Var(false)
+        // Why the last request for the list failed, if it did: so that the section says so rather than
+        // "Loading…" for ever. Apart from `said`, and cleared by the next answer, so that a list that
+        // loads on a retry is not shown beside the failure before it -- and a save's confirmation does
+        // not overwrite why the list is missing.
+        val loadError = Var(Option.empty[String])
         // Requests for the list, so that only the newest may write it. Moved on by an unmount too,
         // so that an answer to an earlier mount is not written into a later one, and by a row's save,
         // so that a list asked for before the save cannot answer after it with the rating it changed.
@@ -2778,14 +2780,16 @@ object Views {
                 .ratings(game.gameId)
                 .map { found =>
                     if (current) {
-                        failed.set(false)
+                        loadError.set(None)
                         ratings.set(Some(found))
                     }
                 }
                 .recover { case error =>
                     if (current) {
-                        failed.set(true)
-                        said.set(s"The ratings could not be loaded: ${error.getMessage}")
+                        // "Refreshed" when an older list is still on screen: it is still there, and
+                        // still what it was.
+                        val what = if (ratings.now().isDefined) "refreshed" else "loaded"
+                        loadError.set(Some(s"The ratings could not be $what: ${error.getMessage}"))
                     }
                 }
         }
@@ -2815,11 +2819,14 @@ object Views {
               s"Every match of this game that is not friendly moves its players' ratings. " +
                   s"A player's first rated match starts them at ${EloRating.initial}."
             ),
+            // Two regions, mounted with the section so that what arrives in them is announced: how
+            // loading the list went, and what the last save came to.
+            div(aria.live := "polite", cls := "empty", child.text <-- loadError.signal.map(_.getOrElse(""))),
             div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
-            child <-- ratings.signal.combineWith(failed.signal).map {
-                // What went wrong is said in the live region above; this only stops promising a list.
-                case (None, true)                      => p(cls := "empty", "The ratings could not be loaded.")
-                case (None, false)                     => p(cls := "empty", "Loading…")
+            child <-- ratings.signal.combineWith(loadError.signal).map {
+                // A failure is said in the region above; this only stops promising a list.
+                case (None, Some(_))                   => emptyNode
+                case (None, None)                      => p(cls := "empty", "Loading…")
                 case (Some(found), _) if found.isEmpty => p(cls := "empty", "Nobody is rated yet.")
                 case (Some(_), _)                      => emptyNode
             },
