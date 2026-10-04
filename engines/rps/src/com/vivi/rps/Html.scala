@@ -1,7 +1,7 @@
 package com.vivi.rps
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -70,6 +70,7 @@ object Html {
 ${SignIn.css}
 ${PlayLive.css}
 ${TurnTimer.css}
+${Finale.css}
   #seats { margin-top: 1.25rem; font-size: .875rem; opacity: .8; }
   #seats div { margin: .125rem 0; }
   #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
@@ -82,6 +83,7 @@ ${TurnTimer.css}
        just did, so it is announced: a screen-reader user must not have to go looking for it. -->
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   ${TurnTimer.markup}
+  ${Finale.markup}
   <fieldset id="throws" aria-label="your throw"></fieldset>
   <!-- The sign-in form, rendered by renderSignIn() and shown whenever there is a login to
        offer and no seat to show for it. -->
@@ -95,6 +97,7 @@ ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
 ${TurnTimer.script}
+${Finale.script(Finale.trophy, Finale.brighterDays)}
 
   const publicView = $publicView;
   // Urls are derived from this page's own, not built from a base: behind API Gateway the path
@@ -127,6 +130,7 @@ ${TurnTimer.script}
   const signin = document.getElementById("signin");
   renderSignIn();
   const showClock = turnClock(refresh);
+  const showFinale = finale();
 
   function render() {
     // Thrown already, or the match is over, or this viewer has no seat to throw with: the server
@@ -142,6 +146,7 @@ ${TurnTimer.script}
     // Each seat has its own clock, which starts when its player opens the game.
     const me = state && state.you ? state.players.find(p => p.side === state.you) : null;
     showClock(state && state.clock, me ? me.participantId : null);
+    showFinale(result());
 
     // Offered whenever there is a login to start and no seat to show for it — including after a
     // token expires mid-match, which is what turns a 401 back into a button.
@@ -159,6 +164,17 @@ ${TurnTimer.script}
   }
 
   /* The sides whose clock ran out in a live match, which is how it ended if there are any. */
+  /* "win" or "lose" for a player viewing their finished match, and nothing for a draw, a match
+   * still being played, or the public board. Decided as the status line decides it: by whoever ran
+   * out of time where somebody did, otherwise by the winner. */
+  function result() {
+    if (!state || !state.completed || !state.you || publicView) return null;
+    const late = ranOut();
+    if (late.length) return late.includes(state.you) ? "lose" : "win";
+    if (state.draw || !state.winner) return null;
+    return state.winner === state.you ? "win" : "lose";
+  }
+
   function ranOut() {
     if (!state || !state.clock) return [];
     return state.players.filter(p => state.clock.timedOut.includes(p.participantId)).map(p => p.side);

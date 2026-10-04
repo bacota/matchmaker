@@ -1,7 +1,7 @@
 package com.vivi.boxing
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -24,6 +24,55 @@ object Html {
 
     /** Play Live, its choice remembered under the same name. */
     val playLive: PlayLive = PlayLive("boxing")
+
+    /** The winner: a boxer with a glove raised. Drawn in the page's ink, so it reads in either theme, with red gloves
+      * and trunks.
+      */
+    val victory: Finale.Art = Finale.Art(
+      Finale.picture(
+        "A boxer with one glove raised in victory",
+        Finale.withConfetti(
+          """<g fill="currentColor">
+  <circle cx="100" cy="62" r="18"/>
+  <path d="M76 86 Q100 78 124 86 L116 142 L84 142 Z"/>
+  <rect x="84" y="164" width="13" height="44" rx="5"/><rect x="103" y="164" width="13" height="44" rx="5"/>
+</g>
+<g stroke="currentColor" stroke-width="12" stroke-linecap="round" fill="none">
+  <path d="M80 90 L66 60 L62 38"/>
+  <path d="M120 92 L134 116 L138 128"/>
+</g>
+<g fill="#c62828">
+  <circle cx="61" cy="28" r="14"/>
+  <circle cx="139" cy="136" r="12"/>
+  <path d="M82 140 H118 L120 168 H103 L100 154 L97 168 H80 Z"/>
+</g>"""
+        )
+      ),
+      "Winner! Your hand is raised."
+    )
+
+    /** The loser: slumped on the stool in the corner, a towel over the head. */
+    val defeat: Finale.Art = Finale.Art(
+      Finale.picture(
+        "A boxer sitting on the stool in his corner, a towel over his head",
+        """<g stroke="currentColor" stroke-width="5" stroke-linecap="round">
+  <line x1="64" y1="158" x2="58" y2="208"/><line x1="136" y1="158" x2="142" y2="208"/>
+</g>
+<rect x="56" y="150" width="88" height="10" rx="3" fill="currentColor"/>
+<g fill="currentColor">
+  <path d="M82 106 Q100 100 118 106 L114 152 L86 152 Z"/>
+  <rect x="72" y="160" width="14" height="46" rx="5"/><rect x="114" y="160" width="14" height="46" rx="5"/>
+</g>
+<g stroke="currentColor" stroke-width="11" stroke-linecap="round" fill="none">
+  <path d="M86 110 L78 150"/><path d="M114 110 L122 150"/>
+</g>
+<circle cx="100" cy="103" r="16" fill="currentColor"/>
+<path d="M74 122 Q72 74 100 70 Q128 74 126 122 L118 126 Q116 92 100 88 Q84 92 82 126 Z"
+      fill="#f4f4f4" stroke="#777" stroke-width="2" stroke-linejoin="round"/>
+<g fill="#c62828"><circle cx="77" cy="156" r="11"/><circle cx="123" cy="156" r="11"/></g>"""
+      ),
+      "You went the distance. Rest up — there's always a rematch."
+    )
 
     def board(
         matchId: String,
@@ -86,6 +135,7 @@ object Html {
 ${SignIn.css}
 ${PlayLive.css}
 ${TurnTimer.css}
+${Finale.css}
   #error { color: var(--error); min-height: 1.5rem; margin-top: .75rem; font-size: .875rem; }
 </style>
 </head>
@@ -97,6 +147,7 @@ ${TurnTimer.css}
   <p id="status" role="status" aria-live="polite">${escape(heading(state))}</p>
   <p id="round"></p>
   ${TurnTimer.markup}
+  ${Finale.markup}
 
   <section id="plan" hidden aria-labelledby="plan-heading">
     <form id="plan-form" novalidate>
@@ -121,6 +172,7 @@ ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
 ${TurnTimer.script}
+${Finale.script(victory, defeat)}
 
   const publicView = $publicView;
   // Urls are derived from this page's own, not built from a base: behind API Gateway the path
@@ -177,6 +229,7 @@ ${TurnTimer.script}
   const signin = document.getElementById("signin");
   renderSignIn();
   const showClock = turnClock(refresh);
+  const showFinale = finale();
 
   function mine() {
     return state && state.you ? state.corners.find(c => c.side === state.you) : null;
@@ -189,6 +242,7 @@ ${TurnTimer.script}
 
     document.getElementById("status").textContent = describe();
     showClock(state && state.clock, corner ? corner.participantId : null);
+    showFinale(result());
     document.getElementById("round").textContent = state
       ? (state.completed ? "Scheduled for " + state.scheduledRounds + " rounds"
                          : "Round " + state.round + " of " + state.scheduledRounds)
@@ -291,6 +345,19 @@ ${TurnTimer.script}
       '<thead><tr><th scope="col">Round</th><th scope="col" class="num">Red</th><th scope="col" class="num">Blue</th><th scope="col">Result</th></tr></thead>' +
       "<tbody>" + rows + "</tbody>" +
       '<tfoot><tr><th scope="row">Total</th><td class="num">' + total("Red") + '</td><td class="num">' + total("Blue") + "</td><td></td></tr></tfoot>";
+  }
+
+  /* "win" or "lose" for the corner viewing a finished bout, and nothing for a draw, a bout still
+   * being fought, or the public board. Decided as `describe` decides it, so the picture and the
+   * words never disagree: a forfeit by whoever ran out of time, otherwise by the winner. */
+  function result() {
+    if (!state || !state.completed || !state.you || publicView) return null;
+    if (state.method === "forfeit") {
+      const late = state.corners.filter(c => state.clock && state.clock.timedOut.includes(c.participantId)).map(c => c.side);
+      if (late.length) return late.includes(state.you) ? "lose" : "win";
+    }
+    if (state.draw || !state.winner) return null;
+    return state.winner === state.you ? "win" : "lose";
   }
 
   function describe() {

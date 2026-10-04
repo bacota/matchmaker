@@ -1,7 +1,7 @@
 package com.vivi.stratego
 
 import upickle.default.write
-import com.vivi.engine.{LoginConfig, PlayLive, SignIn, TurnTimer}
+import com.vivi.engine.{Finale, LoginConfig, PlayLive, SignIn, TurnTimer}
 import com.vivi.engine.HtmlText.{escape, scriptSafe}
 import Protocol.given
 
@@ -31,6 +31,35 @@ object Html {
 
     /** Play Live, its choice remembered under the same name. */
     val playLive: PlayLive = PlayLive("stratego")
+
+    /** The winner: the enemy's flag taken and planted on the hill, under a shower of confetti. */
+    val victory: Finale.Art = Finale.Art(
+      Finale.picture(
+        "A captured flag planted on a hilltop",
+        Finale.withConfetti(
+          """<path d="M20 206 Q100 150 180 206 Z" fill="#6d8f4e" stroke="#3f5a2a" stroke-width="3"/>
+<rect x="97" y="56" width="6" height="128" rx="2" fill="currentColor"/>
+<circle cx="100" cy="54" r="6" fill="#e0a800"/>
+<path d="M103 62 Q130 52 156 64 Q140 80 156 98 Q130 86 103 96 Z" fill="#c62828" stroke="#7a1712"
+      stroke-width="2" stroke-linejoin="round"/>
+<path d="M126 70 l3 6 7 1 -5 5 1 7 -6 -3 -6 3 1 -7 -5 -5 7 -1 z" fill="#fff6c8"/>"""
+        )
+      ),
+      "Victory! The flag is yours."
+    )
+
+    /** The loser: a white flag of surrender. */
+    val defeat: Finale.Art = Finale.Art(
+      Finale.picture(
+        "A white flag of surrender",
+        """<rect x="70" y="40" width="6" height="160" rx="2" fill="currentColor"/>
+<circle cx="73" cy="38" r="6" fill="currentColor"/>
+<path d="M76 48 Q104 38 130 50 Q156 62 170 52 L168 104 Q150 114 126 102 Q100 90 76 100 Z"
+      fill="#f4f4f4" stroke="#777" stroke-width="2.5" stroke-linejoin="round"/>
+<path d="M96 60 Q112 56 128 64 M96 78 Q114 72 140 84" fill="none" stroke="#bbb" stroke-width="2"/>"""
+      ),
+      "The army yields — this time. Regroup and go again."
+    )
 
     def board(
         matchId: String,
@@ -235,6 +264,7 @@ object Html {
 ${SignIn.css}
 ${PlayLive.css}
 ${TurnTimer.css}
+${Finale.css}
   #players h2 { font-size: 1rem; font-weight: 600; margin: 1.25rem 0 .25rem; }
   #seats { font-size: .875rem; opacity: .7; }
   #seats div { margin: .125rem 0; }
@@ -248,6 +278,7 @@ $icons
   <!-- Announced: the other player's move, and the result, arrive while this page is idle. -->
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   ${TurnTimer.markup}
+  ${Finale.markup}
   <div class="board-bar">
     <button type="button" id="rules-button" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5.5C4 4.7 4.7 4 5.5 4H11v16H5.5c-.8 0-1.5-.7-1.5-1.5zM20 5.5c0-.8-.7-1.5-1.5-1.5H13v16h5.5c.8 0 1.5-.7 1.5-1.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>Rules</button>
     <button type="button" id="key-button" popovertarget="key" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="7.5" r="1.4" fill="currentColor"/></svg>Key</button>
@@ -333,6 +364,7 @@ ${signIn.authScript(login)}
 ${signIn.signInScript}
 ${playLive.script(liveUrl, matchId)}
 ${TurnTimer.script}
+${Finale.script(victory, defeat)}
 $replayScript
 
   const publicView = $publicView;
@@ -354,6 +386,7 @@ $replayScript
   const signin = document.getElementById("signin");
   renderSignIn();
   const showClock = turnClock(refresh);
+  const showFinale = finale();
 
   function render() {
     settlePending();
@@ -373,6 +406,7 @@ $replayScript
 
     const me = state && state.you ? state.players.find(p => p.side === state.you) : null;
     showClock(state && state.clock, me ? me.participantId : null);
+    showFinale(result());
 
     // Offered whenever there is a login to start and no seat to show for it — including after a
     // token expires mid-match, which is what turns a 401 back into a button.
@@ -1003,6 +1037,17 @@ $replayScript
   }
 
   /* The sides whose clock ran out in a live match, which is how it ended if there are any. */
+  /* "win" or "lose" for a player viewing their finished match, and nothing for a draw, a match
+   * still being played, or the public board. Decided as the status line decides it: by whoever ran
+   * out of time where somebody did, otherwise by the winner. */
+  function result() {
+    if (!state || !state.completed || !state.you || publicView) return null;
+    const late = ranOut();
+    if (late.length) return late.includes(state.you) ? "lose" : "win";
+    if (state.draw || !state.winner) return null;
+    return state.winner === state.you ? "win" : "lose";
+  }
+
   function ranOut() {
     if (!state || !state.clock) return [];
     return state.players.filter(p => state.clock.timedOut.includes(p.participantId)).map(p => p.side);
