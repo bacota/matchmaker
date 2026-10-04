@@ -132,10 +132,14 @@ resource "aws_s3_bucket_lifecycle_configuration" "friendly_archive" {
  *
  * ListBucket is there for HeadObject's sake. Without it S3 answers a missing key with 403 rather
  * than 404, and matchmaker could not tell an expired friendly archive from a check that failed --
- * the Review and Watch links of an expired match would never be withdrawn. */
+ * the Review and Watch links of an expired match would never be withdrawn.
+ *
+ * DeleteObject is for moving an archive between the buckets, when a game's admin changes whether a
+ * finished match was friendly (V44): a server-side copy, which GetObject on the source and PutObject
+ * on the destination already cover, and then the original deleted. */
 data "aws_iam_policy_document" "archive" {
   statement {
-    actions   = ["s3:PutObject", "s3:GetObject", "s3:GetObjectAttributes"]
+    actions   = ["s3:PutObject", "s3:GetObject", "s3:GetObjectAttributes", "s3:DeleteObject"]
     resources = [for bucket in aws_s3_bucket.archive : "${bucket.arn}/*"]
   }
 

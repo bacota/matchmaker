@@ -30,15 +30,29 @@ class ArchiveRepo(session: Session[IO]) {
         Option[String],
         Option[Instant],
         Option[Instant],
-        Option[Instant]
+        Option[Instant],
+        Option[Boolean]
     )
 
     private val row =
         int4 *: text *: text *: instant.opt *: bool *: bool *: text.opt *: text.opt *: instant.opt *: instant.opt *:
-            instant.opt
+            instant.opt *: bool.opt
 
     private def toRow(r: Row): ArchiveRow = {
-        val (game, id, gameName, completedAt, cancelled, friendly, key, sha256, requestedAt, archivedAt, expiredAt) = r
+        val (
+          game,
+          id,
+          gameName,
+          completedAt,
+          cancelled,
+          friendly,
+          key,
+          sha256,
+          requestedAt,
+          archivedAt,
+          expiredAt,
+          archiveFriendly
+        ) = r
         ArchiveRow(
           GameId(game),
           MatchId(id),
@@ -50,7 +64,8 @@ class ArchiveRepo(session: Session[IO]) {
           sha256,
           requestedAt,
           archivedAt,
-          expiredAt
+          expiredAt,
+          archiveFriendly
         )
     }
 
@@ -60,14 +75,16 @@ class ArchiveRepo(session: Session[IO]) {
      * is what makes it this engine's. */
     private val selectForEngine: Query[(MatchId, String), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
-                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at
+                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
+                 m.archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.match_id = $matchId AND g.external_id = $text""".query(row)
 
     private val selectForEngineForUpdate: Query[(MatchId, String), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
-                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at
+                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
+                 m.archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.match_id = $matchId AND g.external_id = $text
@@ -75,7 +92,8 @@ class ArchiveRepo(session: Session[IO]) {
 
     private val selectByIds: Query[(GameId, MatchId), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
-                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at
+                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
+                 m.archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.game_id = $gameId AND m.match_id = $matchId""".query(row)
@@ -91,13 +109,25 @@ class ArchiveRepo(session: Session[IO]) {
     def read(game: GameId, id: MatchId): IO[Option[ArchiveRow]] =
         session.option(selectByIds)((game, id)).map(_.map(toRow))
 
-    private val updateRequest: Command[(String, String, GameId, MatchId)] =
-        sql"""UPDATE match SET archive_key = $text, archive_sha256 = $text, archive_requested = now()
+    private val updateRequest: Command[(String, String, Boolean, GameId, MatchId)] =
+        sql"""UPDATE match SET archive_key = $text, archive_sha256 = $text, archive_requested = now(),
+                 archive_friendly = $bool
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
-    /** Records that the engine has been given a url to upload `sha256`'s content to under `key`. */
-    def recordRequest(game: GameId, id: MatchId, key: String, sha256: String): IO[Unit] =
-        session.execute(updateRequest)((key, sha256, game, id)).void
+    /** Records that the engine has been given a url to upload `sha256`'s content to under `key`, in the friendly bucket
+      * or the permanent one (V44).
+      */
+    def recordRequest(game: GameId, id: MatchId, key: String, sha256: String, friendly: Boolean): IO[Unit] =
+        session.execute(updateRequest)((key, sha256, friendly, game, id)).void
+
+    private val updateBucket: Command[(Boolean, GameId, MatchId)] =
+        sql"""UPDATE match SET archive_friendly = $bool WHERE game_id = $gameId AND match_id = $matchId""".command
+
+    /** Records that the archive is now in the friendly bucket, or the permanent one: a move has copied it there, or an
+      * upload not yet made is to go there instead.
+      */
+    def recordMoved(game: GameId, id: MatchId, friendly: Boolean): IO[Unit] =
+        session.execute(updateBucket)((friendly, game, id)).void
 
     private val updateArchived: Query[(GameId, MatchId), Instant] =
         sql"""UPDATE match SET archived_at = now()
@@ -111,10 +141,17 @@ class ArchiveRepo(session: Session[IO]) {
     private val updateExpired: Command[(GameId, MatchId)] =
         sql"""UPDATE match SET archive_expired_at = now()
           WHERE game_id = $gameId AND match_id = $matchId
-            AND archived_at IS NOT NULL AND archive_expired_at IS NULL""".command
+            AND archived_at IS NOT NULL AND archive_expired_at IS NULL
+            AND COALESCE(archive_friendly, friendly)""".command
 
     /** Records a friendly archive as gone. The condition is in the update itself, so it needs no lock: two requests
       * that both found the object gone both write the same fact, and the second changes nothing.
+      *
+      * Only while the archive is recorded in the friendly bucket, the one bucket that expires anything. Not finding it
+      * there is also what a check sees that read the match just before its archive was moved to the permanent bucket
+      * (V44): the move records the permanent bucket before it deletes the friendly original, so a check that finds the
+      * original gone writes after that, and this matches nothing. See also [[ArchiveRepo.expiredAt]], which ignores a
+      * record that is not about the friendly bucket however it came to be there.
       */
     def recordExpired(game: GameId, id: MatchId): IO[Unit] =
         session.execute(updateExpired)((game, id)).void
@@ -188,6 +225,18 @@ class ArchiveRepo(session: Session[IO]) {
 
 object ArchiveRepo {
 
+    /** When the match's archive expired, as every read of it is to be answered: `archive_expired_at`, but only while
+      * the archive is in the friendly bucket (V44), and null otherwise — the permanent bucket expires nothing, so a
+      * record of expiry about an archive there is not one. The one place that rule is written; every query that says
+      * whether an archive has expired, here and in [[MatchRepo]], selects this rather than the column. `table` is how
+      * the query names `match`.
+      */
+    def expiredAt(table: String): String =
+        s"CASE WHEN COALESCE($table.archive_friendly, $table.friendly) THEN $table.archive_expired_at END"
+
+    /** Whether the match's archive has expired, by the same rule as [[expiredAt]]. */
+    def expired(table: String): String = s"(${expiredAt(table)}) IS NOT NULL"
+
     /** A match as archiving sees it: enough to decide what an engine may do with its archive, and where it is.
       *
       * @param gameName
@@ -204,7 +253,10 @@ object ArchiveRepo {
         sha256: Option[String],
         requestedAt: Option[Instant],
         archivedAt: Option[Instant],
-        expiredAt: Option[Instant]
+        expiredAt: Option[Instant],
+        // Which bucket the archive is in, or is to be uploaded to (V44): true for the friendly one. None until an
+        // upload has been asked for. Not `friendly`: a move to match a change of that takes time.
+        archiveFriendly: Option[Boolean]
     )
 
     /** A cancelled match whose engine is still to be told, at `cancelUrl`. */

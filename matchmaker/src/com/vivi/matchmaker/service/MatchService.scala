@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.service
 
 import cats.effect.IO
+import cats.syntax.all._
 import java.time.{Duration, Instant}
 import skunk.Session
 import com.vivi.matchmaker.model.{
@@ -421,50 +422,97 @@ class MatchService(
     /** Says whether the match is friendly (V36): a game admin's to decide, or an overall admin's, and nobody else's —
       * not even the match's creator. Saying what it already is changes nothing.
       *
-      * Not once the match is completed: by then it has been archived to the bucket its classification chose, the
-      * friendly one only for 30 days, so changing it afterwards would leave a permanent match in a bucket that expires.
-      * A cancelled match is not archived, and may still be changed. The match's own lock orders this against
-      * [[MatchRepo.complete]], whose update takes the same row.
+      * A completed match may change too, and is re-rated when it does — see [[EloRatingService.reclassify]], which
+      * refuses a change that would cascade into another match's rating. A match with a player in two of its seats can
+      * only be friendly, since rating it would rate that player against themselves.
       *
       * Under the match's row lock, which [[MatchRepo.update]] rewrites whole, and with the caller's admin held FOR
       * SHARE so that losing it waits for this to land.
+      *
+      * A completed match made not friendly has its archive moved from the friendly bucket, which expires it, to the
+      * permanent one — as part of this request, and before the change: the archive is copied first
+      * ([[ArchiveService.prepareMove]]), the copy is recorded in the transaction that makes the change
+      * ([[ArchiveService.recordMove]]), and the original is deleted once that has committed
+      * ([[ArchiveService.finishMove]]). If the copy fails, or the change does, the request fails and the archive is
+      * where it was. The copy is not made inside the transaction: S3 is not a thing to hold a transaction open across.
+      * A match made friendly keeps its archive where it is — moving it would only put it where it can expire.
       */
     def setFriendly(gameId: GameId, matchId: MatchId, friendly: Boolean, callerExternalId: String): IO[Match] =
-        sessionPool.use { session =>
-            val matchRepo = new MatchRepo(session)
-            session.transaction.use { _ =>
+        for {
+            // Whether to copy, decided before the transaction and without its locks, so that a caller the
+            // transaction would refuse has nothing copied for them. Everything here is asked again under
+            // the lock, and an answer that has changed is handled there.
+            wanted <-
+                if (friendly) IO.pure(false)
+                else sessionPool.use(session => mayMoveArchive(session, gameId, matchId, callerExternalId))
+            prepared <-
+                if (wanted) archives.flatTraverse(_.prepareMove(gameId, matchId))
+                else IO.pure(Option.empty[PreparedMove])
+            decided <- sessionPool.use { session =>
+                val matchRepo = new MatchRepo(session)
+                session.transaction.use { _ =>
+                    for {
+                        caller <- new PlayerRepo(session).readByExternalIdForShare(callerExternalId).flatMap {
+                            case Some(player) => IO.pure(player)
+                            case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
+                        }
+                        allowed <-
+                            if (caller.isAdmin) IO.pure(true)
+                            else new GameAdminRepo(session).isAdminForShare(caller.playerId, gameId)
+                        _ <- IO.raiseUnless(allowed)(
+                          UnauthorizedError("only an admin of this game may say whether its matches are friendly")
+                        )
+                        existing <- matchRepo.readForUpdate(gameId, matchId).flatMap {
+                            case Some(m) => IO.pure(m)
+                            case None =>
+                                IO.raiseError(
+                                  NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
+                                )
+                        }
+                        changed = existing.friendly != friendly
+                        // A match that is not friendly is rated (V42), and cannot rate a player against
+                        // themselves. Its seats are written once, at its start, so read under the match's
+                        // lock they are what they will be when it ends.
+                        players <- new ParticipantRepo(session)
+                            .listForMatch(gameId, matchId)
+                            .map(_.map((p, _, _) => p.playerId))
+                        _ <- IO.raiseWhen(changed && !friendly && !EloRating.playersOnce(players))(
+                          ConflictError("a player holds more than one seat in this match, so it can only be friendly")
+                        )
+                        _ <- IO.whenA(changed && existing.completed)(
+                          EloRatingService.reclassify(session, gameId, matchId, friendly)
+                        )
+                        moved <-
+                            if (changed && existing.completed && !friendly)
+                                archives.fold(IO.pure(false))(_.recordMove(session, prepared, gameId, matchId))
+                            else IO.pure(false)
+                        classified = existing.copy(friendly = friendly)
+                        _ <- IO.whenA(changed)(matchRepo.update(classified))
+                    } yield (classified, moved)
+                }
+            }
+            (classified, moved) = decided
+            _ <- prepared.filter(_ => moved).traverse_(p => archives.traverse_(_.finishMove(p)))
+        } yield classified
+
+    /* Whether this caller may make this match not friendly and it would then owe its archive a move:
+     * read plainly, for deciding whether to copy before the transaction that decides everything again.
+     * Whether the archive is in the friendly bucket is `ArchiveService.prepareMove`'s to ask. */
+    private def mayMoveArchive(
+        session: Session[IO],
+        gameId: GameId,
+        matchId: MatchId,
+        callerExternalId: String
+    ): IO[Boolean] =
+        new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+            case None => IO.pure(false)
+            case Some(caller) =>
                 for {
-                    caller <- new PlayerRepo(session).readByExternalIdForShare(callerExternalId).flatMap {
-                        case Some(player) => IO.pure(player)
-                        case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
-                    }
                     allowed <-
                         if (caller.isAdmin) IO.pure(true)
-                        else new GameAdminRepo(session).isAdminForShare(caller.playerId, gameId)
-                    _ <- IO.raiseUnless(allowed)(
-                      UnauthorizedError("only an admin of this game may say whether its matches are friendly")
-                    )
-                    existing <- matchRepo.readForUpdate(gameId, matchId).flatMap {
-                        case Some(m) => IO.pure(m)
-                        case None =>
-                            IO.raiseError(NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}"))
-                    }
-                    _ <- IO.raiseWhen(existing.completed && existing.friendly != friendly)(
-                      ConflictError("a completed match stays as friendly as it was when it finished")
-                    )
-                    // A match that is not friendly is rated (V42), and cannot rate a player against
-                    // themselves. Its seats are written once, at its start, so read under the match's
-                    // lock they are what they will be when it ends.
-                    players <- new ParticipantRepo(session)
-                        .listForMatch(gameId, matchId)
-                        .map(_.map((p, _, _) => p.playerId))
-                    _ <- IO.raiseWhen(!friendly && !EloRating.playersOnce(players))(
-                      ConflictError("a player holds more than one seat in this match, so it can only be friendly")
-                    )
-                    classified = existing.copy(friendly = friendly)
-                    _ <- matchRepo.update(classified)
-                } yield classified
-            }
+                        else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
+                    found <- new MatchRepo(session).read(gameId, matchId)
+                } yield allowed && found.exists(m => m.completed && m.friendly)
         }
 
     private def resolveCaller(session: Session[IO], callerExternalId: String) =

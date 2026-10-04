@@ -3,7 +3,15 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import cats.syntax.all._
 import com.vivi.matchmaker.model.{EloRating, GameId, MatchId, ParticipantId, Player, PlayerId}
-import com.vivi.matchmaker.persistence.{EloRatingRepo, GameAdminRepo, GameRepo, ParticipantRepo, PlayerRepo, TextCodec}
+import com.vivi.matchmaker.persistence.{
+    EloRatingRepo,
+    GameAdminRepo,
+    GameRepo,
+    ParticipantRepo,
+    PlayerRepo,
+    ResultRepo,
+    TextCodec
+}
 
 /** Players' Elo ratings in each game (V42): the list anybody may read, and the setting of one that a game's admin may
   * do. What moves them is a match that is not friendly completing, which is [[EloRatingService.rate]], called from
@@ -144,5 +152,95 @@ object EloRatingService {
                 } yield deltas
             }
         }
+    }
+
+    /** Re-rates a completed match a game's admin has just reclassified: `friendly` is what it now is. Made friendly,
+      * what it did to each rating is taken back; made not friendly, it is rated now, from the ratings its seats began
+      * it at, as if it had been when it finished. Either way each result's `elo_delta` says what it now did.
+      *
+      * Not allowed to cascade. A player who has begun *and* finished another match of the game since this one finished
+      * began that one at a rating that took in this one, and its result was worked out from it: changing this one would
+      * mean re-rating that one, and everything after it. So that is refused. A player still playing such a match began
+      * it at a rating that is about to be wrong, but nothing has been worked out from it yet — its seat's `elo_start`
+      * is moved by the same change, and the match will be rated from that when it ends.
+      *
+      * For the caller's transaction, which holds the match's lock. The locks, in the order every other writer of them
+      * takes them so that none of this can deadlock against a match completing:
+      *
+      *   1. The seats of those players' matches that began after this one and are still being played, FOR UPDATE. A
+      *      completion writes its seats before its ratings, so one that has its seats is let finish first — and is then
+      *      seen as finished below, and refused — and one that has not waits until this is done, and is rated from the
+      *      moved `elo_start`.
+      *   1. The ratings, by updating them, in player order.
+      *   1. The same seats again, for any match that began while (2) waited — its start read the rating before it
+      *      moved, and wrote the old one on its seats. NOWAIT, because a match holding its seats here may be completing
+      *      and waiting on the ratings (2) holds: that is refused, to be tried again, rather than deadlocked.
+      *
+      * Whether a later match has finished is asked after all three, when nothing that would change the answer can
+      * commit until this does, and refuses the whole of it if so.
+      */
+    def reclassify(session: skunk.Session[IO], gameId: GameId, matchId: MatchId, friendly: Boolean): IO[Unit] = {
+        val participantRepo = new ParticipantRepo(session)
+        val resultRepo = new ResultRepo(session)
+        val ratingRepo = new EloRatingRepo(session)
+
+        def refuseIfCascading(players: List[PlayerId]): IO[Unit] =
+            participantRepo.laterCompleted(gameId, matchId, players).flatMap { later =>
+                IO.raiseWhen(later)(
+                  ConflictError(
+                    "a player in this match has played another of this game's matches since it finished, so whether " +
+                        "it was friendly can no longer change"
+                  )
+                )
+            }
+
+        for {
+            seats <- participantRepo.eloSeatsForMatch(gameId, matchId)
+            players = seats.map(_.playerId).distinct
+            _ <- participantRepo.lockLaterSeats(gameId, matchId, players)
+            // Early, so that the common refusal costs no writes; and again at the end, which is the one that counts.
+            _ <- refuseIfCascading(players)
+            results <- resultRepo.forMatch(gameId, matchId)
+            deltas <-
+                if (friendly) IO.pure(Map.empty[ParticipantId, Int])
+                else
+                    IO.raiseUnless(EloRating.playersOnce(seats.map(_.playerId)))(
+                      ConflictError("a player holds more than one seat in this match, so it can only be friendly")
+                    ) *> IO.pure(
+                      EloRating.deltas(
+                        seats.flatMap(seat =>
+                            results
+                                .find(_.participantId == seat.participantId)
+                                .map(r => EloRating.Seat(seat.participantId, seat.playerId, seat.eloStart, r.rank))
+                        )
+                      )
+                    )
+            byPlayer = seats.map(seat => seat.participantId -> seat.playerId).toMap
+            // What each player's rating moves by: the new delta less the old one, seat by seat.
+            change = results
+                .groupMapReduce(r => byPlayer(r.participantId))(r =>
+                    deltas.getOrElse(r.participantId, 0) - r.eloDelta.getOrElse(0)
+                )(_ + _)
+            _ <- ratingRepo.ensureRated(gameId, deltas.keys.toList.map(byPlayer))
+            _ <- results.sortBy(r => byPlayer(r.participantId).value).traverse_ { r =>
+                val player = byPlayer(r.participantId)
+                r.eloDelta.traverse_(ratingRepo.unplayed(gameId, player, _)) *>
+                    deltas.get(r.participantId).traverse_(ratingRepo.played(gameId, player, _)) *>
+                    resultRepo.setEloDelta(gameId, r.participantId, deltas.get(r.participantId))
+            }
+            later <- participantRepo
+                .lockLaterSeats(gameId, matchId, players, noWait = true)
+                .adaptError {
+                    case e: skunk.exception.PostgresErrorException if e.code == "55P03" =>
+                        ConflictError("another match of a player in this one is finishing right now; try again")
+                }
+            _ <- refuseIfCascading(players)
+            _ <- later.filter(_.afterCompletion).traverse_ { seat =>
+                change
+                    .get(seat.playerId)
+                    .filter(_ != 0)
+                    .traverse_(participantRepo.adjustEloStart(gameId, seat.participantId, _))
+            }
+        } yield ()
     }
 }

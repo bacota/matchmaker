@@ -142,6 +142,28 @@ class ResultRepo(session: Session[IO]) {
     def existsForMatch(gameId: GameId, matchId: MatchId): IO[Boolean] =
         session.unique(selectExistsForMatch)((gameId, matchId))
 
+    private val selectForMatch: Query[(GameId, MatchId), (ParticipantId, Int, Option[Int])] =
+        sql"""SELECT r.participant_id, r.rank, r.elo_delta FROM result r
+          JOIN participant p ON p.game_id = r.game_id AND p.participant_id = r.participant_id
+          WHERE p.game_id = $gameId AND p.match_id = ${SkunkIdCodecs.matchId}
+          ORDER BY r.participant_id""".query(participantId *: int4 *: int4.opt)
+
+    /** Every result of the match, as rating sees it: the seat, where it finished, and what it did to the rating. */
+    def forMatch(gameId: GameId, matchId: MatchId): IO[List[ResultRepo.RatedResultRow]] =
+        session
+            .execute(selectForMatch)((gameId, matchId))
+            .map(_.map((id, rank, delta) => ResultRepo.RatedResultRow(id, rank, delta)))
+
+    private val updateEloDelta: Command[(Option[Int], GameId, ParticipantId)] =
+        sql"""UPDATE result SET elo_delta = ${int4.opt}
+          WHERE game_id = $gameId AND participant_id = $participantId""".command
+
+    /** Says what the match did to the seat's player's rating: for a completed match reclassified as friendly (none) or
+      * not (the delta worked out now).
+      */
+    def setEloDelta(gameId: GameId, id: ParticipantId, delta: Option[Int]): IO[Unit] =
+        session.execute(updateEloDelta)((delta, gameId, id)).void
+
     def create(result: Result): IO[Result] =
         session
             .execute(insertResult)(
@@ -202,6 +224,9 @@ object ResultRepo {
         eloStart: Int,
         eloDelta: Option[Int]
     )
+
+    /** A result as rating sees it: where the seat finished, and what the match did to its player's rating. */
+    case class RatedResultRow(participantId: ParticipantId, rank: Int, eloDelta: Option[Int])
 
     /** What one seat spent over its turns, all told. */
     case class TimeTakenRow(gameId: GameId, participantId: ParticipantId, timeTaken: Duration)

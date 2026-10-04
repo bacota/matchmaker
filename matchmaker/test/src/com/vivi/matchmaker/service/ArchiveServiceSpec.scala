@@ -21,6 +21,7 @@ import com.vivi.matchmaker.persistence.{
     GameRepo,
     MatchRepo,
     ParticipantRepo,
+    PlayerRepo,
     TestSession
 }
 
@@ -286,6 +287,153 @@ class ArchiveServiceSpec extends FunSuite {
             run(archives.requestUpload(f.matchId, 3, sha, None, f.game.externalId)): @unchecked
         assert(store.put(signed.url.split("/local-archive/")(1), "abc".getBytes, signed.headers).isLeft)
         assertEquals(run(row(f)).flatMap(_.archivedAt), None)
+    }
+
+    private def where(f: Fixture): (Boolean, Boolean) = {
+        val key = run(row(f)).flatMap(_.key).get
+        (
+          run(store.head(ArchiveBucket.Friendly, key)).isDefined,
+          run(store.head(ArchiveBucket.Permanent, key)).isDefined
+        )
+    }
+
+    private def makeAdmin(f: Fixture): Unit =
+        run(TestSession.resource.use(session => new PlayerRepo(session).update(f.player.copy(isAdmin = true))))
+
+    private def notFriendly(f: Fixture): IO[Match] =
+        services.matches.setFriendly(f.game.gameId, f.matchId, friendly = false, f.player.externalId)
+
+    test("a completed match an admin says was not friendly after all has its archive moved to the permanent bucket") {
+        val f = run(fixture(friendly = true).flatMap(archived))
+        makeAdmin(f)
+        run(notFriendly(f))
+        assertEquals(run(row(f)).flatMap(_.archiveFriendly), Some(false))
+        assertEquals(where(f), (false, true))
+        val download = run(archives.download(f.matchId, f.game.externalId))
+        assertEquals(store.get(download.url.split("/local-archive/")(1)).map(_.toSeq), Some(content.toSeq))
+    }
+
+    test("a completed match an admin says was friendly after all keeps its archive in the permanent bucket, for good") {
+        val f = run(fixture(friendly = false).flatMap(archived))
+        makeAdmin(f)
+        run(services.matches.setFriendly(f.game.gameId, f.matchId, friendly = true, f.player.externalId))
+        assertEquals(run(row(f)).flatMap(_.archiveFriendly), Some(false))
+        assertEquals(where(f), (false, true))
+        // And it does not expire: past a friendly archive's 30 days, it is read without a check.
+        run(age(f, 31))
+        val download = run(archives.download(f.matchId, f.game.externalId))
+        assert(download.url.contains("/local-archive/permanent/"), download.url)
+    }
+
+    test("a caller who may not make the change has nothing copied for them") {
+        val f = run(fixture(friendly = true).flatMap(archived))
+        assert(refusal(notFriendly(f)).isInstanceOf[UnauthorizedError])
+        assertEquals(where(f), (true, false))
+    }
+
+    test("a change refused after the copy leaves the archive recorded, and read, where it was") {
+        val f = run(fixture(friendly = true).flatMap(archived))
+        makeAdmin(f)
+        // A second seat for the same player: a match that can only be friendly, refused in the
+        // transaction -- after the copy has been made.
+        run(TestSession.resource.use { session =>
+            new ParticipantRepo(session).create(
+              CharacterParticipant(
+                ParticipantId(0),
+                f.game.gameId,
+                f.matchId,
+                f.player.playerId,
+                pending = false,
+                completed = true,
+                None,
+                f.character.characterId,
+                f.game.roles.head.gameRoleId
+              ),
+              EloRating.initial
+            )
+        })
+        assert(refusal(notFriendly(f)).isInstanceOf[ConflictError])
+        val stored = run(row(f)).get
+        assertEquals((stored.friendly, stored.archiveFriendly), (true, Some(true)))
+        // The copy is left in the permanent bucket, unrecorded; the original is untouched and still read.
+        assertEquals(where(f), (true, true))
+        val download = run(archives.download(f.matchId, f.game.externalId))
+        assert(download.url.contains("/local-archive/friendly/"), download.url)
+    }
+
+    test("a friendly archive its bucket expired before it could be moved is recorded as expired, and the change made") {
+        val f = run(fixture(friendly = true).flatMap(archived))
+        makeAdmin(f)
+        store.delete(ArchiveBucket.Friendly, run(row(f)).flatMap(_.key).get)
+        assertEquals(run(notFriendly(f)).friendly, false)
+        assert(run(row(f)).flatMap(_.expiredAt).isDefined)
+        assertEquals(where(f), (false, false))
+    }
+
+    test("an upload asked for in the friendly bucket and not yet made is sent to the permanent one instead") {
+        val f = run(fixture(friendly = true))
+        makeAdmin(f)
+        run(
+          archives.requestUpload(
+            f.matchId,
+            content.length.toLong,
+            ArchiveStore.sha256(content),
+            None,
+            f.game.externalId
+          )
+        )
+        run(notFriendly(f))
+        assertEquals(run(row(f)).flatMap(_.archiveFriendly), Some(false))
+        val UploadAnswer.Upload(signed) = run(
+          archives.requestUpload(
+            f.matchId,
+            content.length.toLong,
+            ArchiveStore.sha256(content),
+            None,
+            f.game.externalId
+          )
+        ): @unchecked
+        assert(signed.url.contains("/local-archive/permanent/"), signed.url)
+    }
+
+    test("a check that read the match before its archive was moved records nothing on finding the original gone") {
+        val f = run(fixture(friendly = true).flatMap(archived))
+        makeAdmin(f)
+        run(notFriendly(f))
+        // What such a check does next: the friendly bucket is empty, so it records the archive as gone.
+        run(TestSession.resource.use(session => new ArchiveRepo(session).recordExpired(f.game.gameId, f.matchId)))
+        val recorded = run(TestSession.resource.use { session =>
+            session.unique(
+              sql"SELECT archive_expired_at IS NOT NULL FROM match WHERE game_id = $int4 AND match_id = $text"
+                  .query(skunk.codec.all.bool)
+            )((f.game.gameId.value, f.matchId.value))
+        })
+        assertEquals(recorded, false)
+        run(age(f, 31))
+        val download = run(archives.download(f.matchId, f.game.externalId))
+        assert(download.url.contains("/local-archive/permanent/"), download.url)
+    }
+
+    test("a record of expiry about an archive in the permanent bucket is ignored by every read") {
+        val f = run(fixture(friendly = true).flatMap(archived))
+        makeAdmin(f)
+        run(notFriendly(f))
+        // However it came to be there.
+        run(TestSession.resource.use { session =>
+            session
+                .execute(
+                  sql"UPDATE match SET archive_expired_at = now() WHERE game_id = $int4 AND match_id = $text".command
+                )((f.game.gameId.value, f.matchId.value))
+                .void
+        })
+        assertEquals(run(row(f)).flatMap(_.expiredAt), None)
+        assertEquals(
+          run(TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, f.matchId)))
+              .map(_.archiveExpired),
+          Some(false)
+        )
+        val download = run(archives.download(f.matchId, f.game.externalId))
+        assert(download.url.contains("/local-archive/permanent/"), download.url)
     }
 
     test("a friendly archive past its 30 days that has gone is recorded, and the engine is told 410") {
