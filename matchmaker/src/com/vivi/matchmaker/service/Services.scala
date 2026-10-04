@@ -16,6 +16,7 @@ case class Services[T](
     players: PlayerService,
     games: GameService[T],
     gameAdmins: GameAdminService[T],
+    ratings: EloRatingService[T],
     characters: CharacterService[T],
     challenges: ChallengeService[T],
     acceptances: AcceptanceService,
@@ -91,6 +92,7 @@ object Services {
           players = new PlayerService(pool),
           games = new GameService[T](pool),
           gameAdmins = new GameAdminService[T](pool),
+          ratings = new EloRatingService[T](pool),
           characters = new CharacterService[T](pool),
           // One `Notifications` for the four services that cause something worth an email. One
           // rather than one each, because who is told what does not depend on which service the

@@ -187,6 +187,18 @@ object ApiClient {
           Some(write(Json.FriendlyRequest(friendly)))
         )
 
+    /** A game's Elo ratings (V42), highest first: anybody may see them. */
+    def ratings(gameId: GameId): Future[Seq[EloRating]] =
+        get[Seq[EloRating]](s"/games/${gameId.value}/ratings")
+
+    /** Sets a player's Elo rating in a game outright — a game's admin's to do (V42). */
+    def setRating(gameId: GameId, playerId: PlayerId, rating: Int): Future[EloRating] =
+        send[EloRating](
+          HttpMethod.PUT,
+          s"/games/${gameId.value}/ratings/${playerId.value}",
+          Some(write(Json.RatingRequest(rating)))
+        )
+
     def games(activeOnly: Boolean): Future[Seq[Game]] =
         get[Seq[Game]](if (activeOnly) "/games?activeOnly=true" else "/games")
 
