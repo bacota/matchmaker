@@ -617,21 +617,6 @@ class MatchRepo(session: Session[IO]) {
     def hasPublicCompletedBefore(playerId: PlayerId, gameId: Option[GameId], before: Instant): IO[Boolean] =
         session.unique(selectPublicCompletedBefore)((playerId, gameId, before))
 
-    /* How many public matches the player has finished in each game -- what their page says of each
-     * game before it is opened. Counted rather than listed, so a page of every game does not fetch
-     * every match. */
-    private val selectPublicCompletedCounts: Query[PlayerId, (GameId, Long)] =
-        sql"""SELECT p.game_id, count(*)
-          FROM participant p
-          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
-          WHERE p.player_id = $playerId AND m.public AND p.completed_at IS NOT NULL AND NOT m.cancelled
-          GROUP BY p.game_id
-          ORDER BY p.game_id""".query(gameId *: int8)
-
-    /** How many public matches the player has finished, game by game; a game with none is absent. */
-    def publicCompletedCounts(playerId: PlayerId): IO[List[CompletedCount]] =
-        session.execute(selectPublicCompletedCounts)(playerId).map(_.map(CompletedCount.apply))
-
     /** The database's clock, which a first window is measured back from, so that the windows and the completion times
       * they hold are read off one clock.
       */

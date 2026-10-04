@@ -50,8 +50,3 @@ case class CompletedPage(
     until: Instant,
     hasOlder: Boolean
 )
-
-/** How many matches of one game a player has finished in public: what a player's page says of each game before it is
-  * opened.
-  */
-case class CompletedCount(gameId: GameId, count: Long)

@@ -303,7 +303,7 @@ class MatchServiceSpec extends PropertySuite {
         assert(otherGame.hasOlder)
     }
 
-    test("another player's completed list holds their public matches only, never a cancelled one, and counts them") {
+    test("another player's completed list holds their public matches only, and never a cancelled one") {
         val now = Instant.now()
         val unique = genUniqueString.sample.get
         val watcher = s"w-$unique"
@@ -322,10 +322,6 @@ class MatchServiceSpec extends PropertySuite {
             run(matchService.publicCompleted(watcher, player.playerId, CompletedQuery(gameId = Some(game.gameId))))
         assertEquals(page.matches.map(_.matchId), List(shown))
         assert(!page.hasOlder)
-        assertEquals(
-          run(matchService.publicCompletedCounts(watcher, player.playerId)),
-          List(CompletedCount(game.gameId, 1))
-        )
     }
 
     /* Another player's page: the two lists a stranger is shown, which are the same two lists the

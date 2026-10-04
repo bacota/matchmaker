@@ -1366,15 +1366,15 @@ object Views {
         )
     }
 
-    /** One game on a player's page: its name, how much of it they have played, and — when opened — the matches.
+    /** One game on a player's page: its name, how many of its matches they are playing, and — when opened — the
+      * matches.
       *
-      * The counts are drawn whether or not the row is open, and they are what makes a page of every game readable: a
-      * row saying "0 being played, 0 finished" is one nobody needs to open, and that is most of them for most players.
+      * The count is drawn whether or not the row is open. Finished matches are not counted: they are a list a window of
+      * time at a time, fetched for the game that is opened, and the row does not fetch them all to count them.
       */
     private def publicGameRow(player: PublicPlayer, game: Game): HtmlElement = {
         val expanded = Store.expandedPublicGame.signal.map(_.contains(game.gameId))
         val running = Store.publicActive.signal.map(_.filter(_.gameId == game.gameId))
-        val finished = Store.publicCompletedCounts.signal.map(_.getOrElse(game.gameId, 0L)).distinct
         val completedList = Store.CompletedList.Public(player.playerId, game.gameId)
 
         li(
@@ -1402,9 +1402,9 @@ object Views {
             // there is nothing to count yet, which is a page just opened rather than a player with
             // nothing to show. Saying "0 being played" in that moment would be a number about to
             // change.
-            child.text <-- running.combineWith(finished, Store.publicMatchesLoading.signal).map {
-                case (active, done, loading) if active.isEmpty && done == 0 && loading => "loading…"
-                case (active, done, _) => s"${active.length} being played, $done finished"
+            child.text <-- running.combineWith(Store.publicMatchesLoading.signal).map {
+                case (active, loading) if active.isEmpty && loading => "loading…"
+                case (active, _)                                    => s"${active.length} being played"
             }
           ),
           child <-- expanded.map {

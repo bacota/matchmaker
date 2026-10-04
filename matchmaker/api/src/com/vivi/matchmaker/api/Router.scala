@@ -157,10 +157,6 @@ object Router {
                     withCompletedQuery(request)(query => ok(services.matches.publicCompleted(caller, id, query)))
                 )
 
-            // How many each game holds, for the page to say of every game before one is opened.
-            case ("GET", "players" :: playerId :: "matches" :: "completed" :: "counts" :: Nil) =>
-                withPlayerId(playerId)(id => ok(services.matches.publicCompletedCounts(caller, id)))
-
             case ("GET", "games" :: Nil) =>
                 ok(services.games.list(caller, activeOnly = request.query.get("activeOnly").contains("true")))
 

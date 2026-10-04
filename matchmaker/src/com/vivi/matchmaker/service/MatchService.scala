@@ -4,7 +4,6 @@ import cats.effect.IO
 import java.time.{Duration, Instant}
 import skunk.Session
 import com.vivi.matchmaker.model.{
-    CompletedCount,
     CompletedPage,
     CompletedQuery,
     GameId,
@@ -105,11 +104,6 @@ class MatchService(
               from => repo.hasPublicCompletedBefore(playerId, query.gameId, from)
             )
         }.flatMap(viewedPage)
-
-    /** How many public matches another player has finished in each game, for their page to say before a game is opened.
-      */
-    def publicCompletedCounts(callerExternalId: String, playerId: PlayerId): IO[List[CompletedCount]] =
-        forRegistered(callerExternalId)(_.publicCompletedCounts(playerId))
 
     /* One window of a completed list, whoever's it is: the window the query names, the matches in
      * it, and whether the list holds anything older -- which is what says the oldest match the list
