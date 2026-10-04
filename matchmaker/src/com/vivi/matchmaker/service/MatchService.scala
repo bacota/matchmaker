@@ -427,14 +427,28 @@ class MatchService(
       * only be friendly, since rating it would rate that player against themselves.
       *
       * Under the match's row lock, which [[MatchRepo.update]] rewrites whole, and with the caller's admin held FOR
-      * SHARE so that losing it waits for this to land. A match made not friendly has its archive, if it has one, moved
-      * from the friendly bucket to the permanent one once this has committed: a copy in S3 is not a thing to hold a
-      * transaction open across. A move that fails is logged and left to the sweep — see [[ArchiveService.relocate]]. A
-      * match made friendly keeps its archive where it is: moving it would only put it where it can expire.
+      * SHARE so that losing it waits for this to land.
+      *
+      * A completed match made not friendly has its archive moved from the friendly bucket, which expires it, to the
+      * permanent one — as part of this request, and before the change: the archive is copied first
+      * ([[ArchiveService.prepareMove]]), the copy is recorded in the transaction that makes the change
+      * ([[ArchiveService.recordMove]]), and the original is deleted once that has committed
+      * ([[ArchiveService.finishMove]]). If the copy fails, or the change does, the request fails and the archive is
+      * where it was. The copy is not made inside the transaction: S3 is not a thing to hold a transaction open across.
+      * A match made friendly keeps its archive where it is — moving it would only put it where it can expire.
       */
     def setFriendly(gameId: GameId, matchId: MatchId, friendly: Boolean, callerExternalId: String): IO[Match] =
-        sessionPool
-            .use { session =>
+        for {
+            // Whether to copy, decided before the transaction and without its locks, so that a caller the
+            // transaction would refuse has nothing copied for them. Everything here is asked again under
+            // the lock, and an answer that has changed is handled there.
+            wanted <-
+                if (friendly) IO.pure(false)
+                else sessionPool.use(session => mayMoveArchive(session, gameId, matchId, callerExternalId))
+            prepared <-
+                if (wanted) archives.flatTraverse(_.prepareMove(gameId, matchId))
+                else IO.pure(Option.empty[PreparedMove])
+            decided <- sessionPool.use { session =>
                 val matchRepo = new MatchRepo(session)
                 session.transaction.use { _ =>
                     for {
@@ -468,23 +482,38 @@ class MatchService(
                         _ <- IO.whenA(changed && existing.completed)(
                           EloRatingService.reclassify(session, gameId, matchId, friendly)
                         )
+                        moved <-
+                            if (changed && existing.completed && !friendly)
+                                archives.fold(IO.pure(false))(_.recordMove(session, prepared, gameId, matchId))
+                            else IO.pure(false)
                         classified = existing.copy(friendly = friendly)
                         _ <- IO.whenA(changed)(matchRepo.update(classified))
-                    } yield (classified, changed && existing.completed && !friendly)
+                    } yield (classified, moved)
                 }
             }
-            .flatTap { (_, rearchive) =>
-                IO.whenA(rearchive)(
-                  archives.traverse_(
-                    _.relocate(gameId, matchId).handleErrorWith(e =>
-                        IO.blocking(
-                          System.err.println(s"moving the archive of match ${matchId.value} failed; the sweep will: $e")
-                        )
-                    )
-                  )
-                )
-            }
-            .map(_._1)
+            (classified, moved) = decided
+            _ <- prepared.filter(_ => moved).traverse_(p => archives.traverse_(_.finishMove(p)))
+        } yield classified
+
+    /* Whether this caller may make this match not friendly and it would then owe its archive a move:
+     * read plainly, for deciding whether to copy before the transaction that decides everything again.
+     * Whether the archive is in the friendly bucket is `ArchiveService.prepareMove`'s to ask. */
+    private def mayMoveArchive(
+        session: Session[IO],
+        gameId: GameId,
+        matchId: MatchId,
+        callerExternalId: String
+    ): IO[Boolean] =
+        new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+            case None => IO.pure(false)
+            case Some(caller) =>
+                for {
+                    allowed <-
+                        if (caller.isAdmin) IO.pure(true)
+                        else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
+                    found <- new MatchRepo(session).read(gameId, matchId)
+                } yield allowed && found.exists(m => m.completed && m.friendly)
+        }
 
     private def resolveCaller(session: Session[IO], callerExternalId: String) =
         new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
