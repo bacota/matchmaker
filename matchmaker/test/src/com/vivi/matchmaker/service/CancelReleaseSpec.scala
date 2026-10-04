@@ -17,7 +17,7 @@ import com.vivi.matchmaker.engine.{
     GameStatusResponse
 }
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{ArchiveRepo, ChallengeRepo, GameRepo, MatchRepo, ParticipantRepo, TestSession}
+import com.vivi.matchmaker.persistence.{ChallengeRepo, GameRepo, MatchRepo, ParticipantRepo, TestSession}
 
 /** A cancelled match's engine is told, so that it can drop the match — and a cancel stands whether or not it hears. */
 class CancelReleaseSpec extends FunSuite with QuietTests {
@@ -110,13 +110,30 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
 
     private def run[A](io: IO[A]): A = io.timeout(30.seconds).unsafeRunSync()
 
-    test("the engine is told at its cancel url, with the game's key, and that it heard is recorded") {
+    /** Services whose match endings are recorded rather than settled: the settling is the test's to do, so that what it
+      * checks has happened by the time it checks it.
+      */
+    private class Queueing(engine: GameEngineClient) {
+        @volatile var ended: List[MatchId] = Nil
+        val services: Services[String] = TestServices.servicesWith(
+          engine,
+          matchEndings = Some((_, matchId) => IO { ended = ended :+ matchId })
+        )
+    }
+
+    test("a cancel says the match has ended, and settling it tells the engine with the game's key, once") {
         val engine = RecordingEngine()
-        val services = TestServices.servicesWith(engine)
+        val queueing = Queueing(engine)
+        val services = queueing.services
         val (player, game, matchId) = run(runningMatch(services, Some("https://engine/matches/m/cancel")))
 
         val cancelled = run(services.matches.cancel(game.gameId, matchId, player.externalId))
         assert(cancelled.cancelled)
+        assertEquals(queueing.ended, List(matchId))
+        // Not told by the cancel itself: that is the listener's.
+        assertEquals(engine.cancelled, Nil)
+
+        assertEquals(run(services.ending.settle(game.gameId, matchId)), Settlement.Settled)
         assertEquals(engine.cancelled.map(_._1), List("https://engine/matches/m/cancel"))
         assert(run(released(game.gameId, matchId)).isDefined)
         // Owed nothing more: settling the ending again tells the engine nothing.
@@ -124,24 +141,23 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
         assertEquals(engine.cancelled.size, 1)
     }
 
-    test("an engine that does not answer leaves the cancel standing, and the match owed a retry".tag(Quiet)) {
-        val services = TestServices.servicesWith(RecordingEngine(fail = true))
+    test("an engine that does not answer leaves the cancel standing, and the match owed a retry") {
+        val queueing = Queueing(RecordingEngine(fail = true))
+        val services = queueing.services
         val (player, game, matchId) = run(runningMatch(services, Some("https://engine/matches/m/cancel")))
 
-        val cancelled = run(services.matches.cancel(game.gameId, matchId, player.externalId))
-        assert(cancelled.cancelled)
-        assertEquals(run(released(game.gameId, matchId)), None)
-        // Still owed, for the queue to deliver again.
+        assert(run(services.matches.cancel(game.gameId, matchId, player.externalId)).cancelled)
         assert(run(services.ending.settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
+        assertEquals(run(released(game.gameId, matchId)), None)
     }
 
     test("an engine that gave no cancel url is not told, and is owed nothing") {
         val engine = RecordingEngine()
-        val services = TestServices.servicesWith(engine)
+        val services = Queueing(engine).services
         val (player, game, matchId) = run(runningMatch(services, None))
 
         run(services.matches.cancel(game.gameId, matchId, player.externalId))
-        assertEquals(engine.cancelled, Nil)
         assertEquals(run(services.ending.settle(game.gameId, matchId)), Settlement.Settled)
+        assertEquals(engine.cancelled, Nil)
     }
 }
