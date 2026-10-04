@@ -75,7 +75,7 @@ class ArchiveRepo(session: Session[IO]) {
      * is what makes it this engine's. */
     private val selectForEngine: Query[(MatchId, String), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
-                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at,
+                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
                  m.archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
@@ -83,7 +83,7 @@ class ArchiveRepo(session: Session[IO]) {
 
     private val selectForEngineForUpdate: Query[(MatchId, String), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
-                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at,
+                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
                  m.archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
@@ -92,7 +92,7 @@ class ArchiveRepo(session: Session[IO]) {
 
     private val selectByIds: Query[(GameId, MatchId), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
-                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at,
+                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
                  m.archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
@@ -141,10 +141,17 @@ class ArchiveRepo(session: Session[IO]) {
     private val updateExpired: Command[(GameId, MatchId)] =
         sql"""UPDATE match SET archive_expired_at = now()
           WHERE game_id = $gameId AND match_id = $matchId
-            AND archived_at IS NOT NULL AND archive_expired_at IS NULL""".command
+            AND archived_at IS NOT NULL AND archive_expired_at IS NULL
+            AND COALESCE(archive_friendly, friendly)""".command
 
     /** Records a friendly archive as gone. The condition is in the update itself, so it needs no lock: two requests
       * that both found the object gone both write the same fact, and the second changes nothing.
+      *
+      * Only while the archive is recorded in the friendly bucket, the one bucket that expires anything. Not finding it
+      * there is also what a check sees that read the match just before its archive was moved to the permanent bucket
+      * (V44): the move records the permanent bucket before it deletes the friendly original, so a check that finds the
+      * original gone writes after that, and this matches nothing. See also [[ArchiveRepo.expiredAt]], which ignores a
+      * record that is not about the friendly bucket however it came to be there.
       */
     def recordExpired(game: GameId, id: MatchId): IO[Unit] =
         session.execute(updateExpired)((game, id)).void
@@ -217,6 +224,18 @@ class ArchiveRepo(session: Session[IO]) {
 }
 
 object ArchiveRepo {
+
+    /** When the match's archive expired, as every read of it is to be answered: `archive_expired_at`, but only while
+      * the archive is in the friendly bucket (V44), and null otherwise — the permanent bucket expires nothing, so a
+      * record of expiry about an archive there is not one. The one place that rule is written; every query that says
+      * whether an archive has expired, here and in [[MatchRepo]], selects this rather than the column. `table` is how
+      * the query names `match`.
+      */
+    def expiredAt(table: String): String =
+        s"CASE WHEN COALESCE($table.archive_friendly, $table.friendly) THEN $table.archive_expired_at END"
+
+    /** Whether the match's archive has expired, by the same rule as [[expiredAt]]. */
+    def expired(table: String): String = s"(${expiredAt(table)}) IS NOT NULL"
 
     /** A match as archiving sees it: enough to decide what an engine may do with its archive, and where it is.
       *

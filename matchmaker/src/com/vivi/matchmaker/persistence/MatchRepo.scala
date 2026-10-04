@@ -81,7 +81,7 @@ class MatchRepo(session: Session[IO]) {
         sql"""SELECT challenge_id, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
-                 archived_at, archive_expired_at IS NOT NULL
+                 archived_at, #${ArchiveRepo.expired("match")}
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId"""
             .query(matchRow)
@@ -93,7 +93,7 @@ class MatchRepo(session: Session[IO]) {
         sql"""SELECT challenge_id, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
-                 archived_at, archive_expired_at IS NOT NULL
+                 archived_at, #${ArchiveRepo.expired("match")}
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
             .query(matchRow)
@@ -404,7 +404,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings,
+                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
@@ -444,7 +444,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings,
+                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
@@ -486,7 +486,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings,
+                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
@@ -522,7 +522,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings,
+                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
@@ -549,7 +549,7 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings,
+                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
                  m.result_summary
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id

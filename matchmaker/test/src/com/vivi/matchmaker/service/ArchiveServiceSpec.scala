@@ -396,6 +396,46 @@ class ArchiveServiceSpec extends FunSuite {
         assert(signed.url.contains("/local-archive/permanent/"), signed.url)
     }
 
+    test("a check that read the match before its archive was moved records nothing on finding the original gone") {
+        val f = run(fixture(friendly = true).flatMap(archived))
+        makeAdmin(f)
+        run(notFriendly(f))
+        // What such a check does next: the friendly bucket is empty, so it records the archive as gone.
+        run(TestSession.resource.use(session => new ArchiveRepo(session).recordExpired(f.game.gameId, f.matchId)))
+        val recorded = run(TestSession.resource.use { session =>
+            session.unique(
+              sql"SELECT archive_expired_at IS NOT NULL FROM match WHERE game_id = $int4 AND match_id = $text"
+                  .query(skunk.codec.all.bool)
+            )((f.game.gameId.value, f.matchId.value))
+        })
+        assertEquals(recorded, false)
+        run(age(f, 31))
+        val download = run(archives.download(f.matchId, f.game.externalId))
+        assert(download.url.contains("/local-archive/permanent/"), download.url)
+    }
+
+    test("a record of expiry about an archive in the permanent bucket is ignored by every read") {
+        val f = run(fixture(friendly = true).flatMap(archived))
+        makeAdmin(f)
+        run(notFriendly(f))
+        // However it came to be there.
+        run(TestSession.resource.use { session =>
+            session
+                .execute(
+                  sql"UPDATE match SET archive_expired_at = now() WHERE game_id = $int4 AND match_id = $text".command
+                )((f.game.gameId.value, f.matchId.value))
+                .void
+        })
+        assertEquals(run(row(f)).flatMap(_.expiredAt), None)
+        assertEquals(
+          run(TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, f.matchId)))
+              .map(_.archiveExpired),
+          Some(false)
+        )
+        val download = run(archives.download(f.matchId, f.game.externalId))
+        assert(download.url.contains("/local-archive/permanent/"), download.url)
+    }
+
     test("a friendly archive past its 30 days that has gone is recorded, and the engine is told 410") {
         val f = run(fixture(friendly = true).flatMap(archived))
         run(age(f, 31))
