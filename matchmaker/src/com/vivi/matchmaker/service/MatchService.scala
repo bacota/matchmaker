@@ -427,9 +427,10 @@ class MatchService(
       * only be friendly, since rating it would rate that player against themselves.
       *
       * Under the match's row lock, which [[MatchRepo.update]] rewrites whole, and with the caller's admin held FOR
-      * SHARE so that losing it waits for this to land. Its archive, if it has one, is in the bucket the old answer
-      * chose, and is moved once this has committed: a copy in S3 is not a thing to hold a transaction open across. A
-      * move that fails is logged and left to the sweep — see [[ArchiveService.relocate]].
+      * SHARE so that losing it waits for this to land. A match made not friendly has its archive, if it has one, moved
+      * from the friendly bucket to the permanent one once this has committed: a copy in S3 is not a thing to hold a
+      * transaction open across. A move that fails is logged and left to the sweep — see [[ArchiveService.relocate]]. A
+      * match made friendly keeps its archive where it is: moving it would only put it where it can expire.
       */
     def setFriendly(gameId: GameId, matchId: MatchId, friendly: Boolean, callerExternalId: String): IO[Match] =
         sessionPool
@@ -469,7 +470,7 @@ class MatchService(
                         )
                         classified = existing.copy(friendly = friendly)
                         _ <- IO.whenA(changed)(matchRepo.update(classified))
-                    } yield (classified, changed && existing.completed)
+                    } yield (classified, changed && existing.completed && !friendly)
                 }
             }
             .flatTap { (_, rearchive) =>

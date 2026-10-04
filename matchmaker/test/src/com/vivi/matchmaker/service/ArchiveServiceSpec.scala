@@ -315,7 +315,31 @@ class ArchiveServiceSpec extends FunSuite {
         assertEquals(store.get(download.url.split("/local-archive/")(1)).map(_.toSeq), Some(content.toSeq))
     }
 
-    test("an archive left in the other bucket is read from where it is, and the sweep moves it") {
+    test("a completed match an admin says was friendly after all keeps its archive in the permanent bucket, for good") {
+        val f = run(fixture(friendly = false).flatMap(archived))
+        run(TestSession.resource.use(session => new PlayerRepo(session).update(f.player.copy(isAdmin = true))))
+        run(services.matches.setFriendly(f.game.gameId, f.matchId, friendly = true, f.player.externalId))
+        assertEquals(run(row(f)).flatMap(_.archiveFriendly), Some(false))
+        assertEquals(where(f), (false, true))
+
+        // Not owed a move, so the sweep leaves it be.
+        val sweep = new SweepService(
+          TestServices.pool,
+          NoEngine,
+          services.matches,
+          game = Some(f.game.gameId),
+          archives = Some(archives)
+        )
+        assertEquals(run(sweep.run()).moved, 0)
+        assertEquals(where(f), (false, true))
+
+        // And it does not expire: past a friendly archive's 30 days, it is read without a check.
+        run(age(f, 31))
+        val download = run(archives.download(f.matchId, f.game.externalId))
+        assert(download.url.contains("/local-archive/permanent/"), download.url)
+    }
+
+    test("a friendly archive of a match no longer friendly is read from where it is, and the sweep moves it") {
         val f = run(fixture(friendly = true).flatMap(archived))
         run(reclassifyOnly(f, friendly = false))
         // Not moved yet, and still read: from the bucket it is in, not the one it belongs in.

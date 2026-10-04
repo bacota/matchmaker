@@ -20,8 +20,8 @@ case class SweepReport(
     released: Int,
     stillUnreleased: List[MatchId],
     deferred: Int = 0,
-    // Archives moved to the bucket their match's friendliness says, after a move made when an admin
-    // changed it failed part way (V44); and the ones still in the wrong one.
+    // Archives moved to the permanent bucket after a move made when an admin said their match was not
+    // friendly failed part way (V44); and the ones still waiting.
     moved: Int = 0,
     stillMisplaced: List[MatchId] = Nil
 )
@@ -33,8 +33,8 @@ case class SweepReport(
   *   - A completed match never archived: its engine finished it, and then failed to archive it — or never reported its
   *     result, so matchmaker refused the archive. The engine is asked for the match's status, which is how an engine is
   *     prompted to archive a finished match it still holds (`GameEngine.archiveIfFinished`).
-  *   - An archive in the wrong bucket: a game's admin changed whether its match was friendly after it was archived, and
-  *     the move that follows failed part way (`ArchiveService.relocate`). It is moved again.
+  *   - A friendly archive of a match no longer friendly: a game's admin said so after it was archived, and the move to
+  *     the permanent bucket that follows failed part way (`ArchiveService.relocate`). It is moved again.
   *
   * Cancels first: there are few of them and each is one quick call, so a long backlog of matches to archive — the
   * matches finished before archiving existed, the first time it runs — cannot crowd them out.
@@ -156,9 +156,7 @@ class SweepService(
                         new ArchiveRepo(session)
                             .read(row.gameId, row.matchId)
                             .map(
-                              _.exists(r =>
-                                  r.expiredAt.isEmpty && ArchiveService.bucketOf(r) != ArchiveBucket.of(r.friendly)
-                              )
+                              _.exists(r => ArchiveService.owesMove(r))
                             )
                     )
                 }

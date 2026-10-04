@@ -144,13 +144,14 @@ class ArchiveRepo(session: Session[IO]) {
      * match_misplaced_archive (V44). */
     private val selectMisplaced: Query[(Instant, Option[Int], Option[Int]), (Int, String)] =
         sql"""SELECT game_id, match_id FROM match
-          WHERE archived_at IS NOT NULL AND archive_expired_at IS NULL AND archive_friendly <> friendly
+          WHERE archived_at IS NOT NULL AND archive_expired_at IS NULL AND archive_friendly AND NOT friendly
             AND (swept_at IS NULL OR swept_at < $instant)
             AND (${int4.opt}::int IS NULL OR game_id = ${int4.opt})
           ORDER BY swept_at NULLS FIRST, game_id, match_id""".query(int4 *: text)
 
-    /** Archived matches whose archive is in the other bucket from the one their friendliness says — a move that failed
-      * part way — and that the sweep has not asked about since `sweptBefore`.
+    /** Archived matches no longer friendly whose archive is still in the friendly bucket — a move that failed part way
+      * — and that the sweep has not asked about since `sweptBefore`. Not the other way round: a friendly match's
+      * archive in the permanent bucket is where it stays.
       */
     def listMisplaced(sweptBefore: Instant, game: Option[GameId] = None): IO[List[MisplacedRow]] =
         session

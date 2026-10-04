@@ -272,53 +272,46 @@ class ArchiveService(
                 IO.blocking(System.err.println(s"archive check for match ${matchId.value} failed: $e")).as(false)
             )
 
-    /** Moves a match's archive to the bucket its friendliness now says (V44), after a game's admin changed that once
-      * the match was archived. Nothing to do for a match that has no archive, whose archive has expired, or whose
-      * archive is already where it belongs.
+    /** Moves a match's archive from the friendly bucket to the permanent one (V44), after a game's admin said a match
+      * archived as friendly was not. Only that way: an archive that has to be kept is moved to where it is kept, and
+      * one that may be let go is not moved at all — a match made friendly keeps its archive in the permanent bucket,
+      * where it is read from as before and never expires. Every move takes an archive out of reach of the friendly
+      * bucket's expiry, and none puts one into it.
+      *
+      * Nothing to do for a match that has no archive, whose archive has expired, or that does not owe a move.
       *
       * A copy and a delete in S3, so no transaction is open while either runs. The copy comes first, and the stored
-      * bucket changes only once the copy has landed — in a transaction that re-reads the match under its lock and
-      * checks the move is still wanted, since the friendliness may have changed back meanwhile — and the original is
-      * deleted only after that commits. So at every moment the stored bucket names a real copy: a move that fails part
-      * way leaves the archive readable where it was, and the sweep tries it again ([[ArchiveRepo.listMisplaced]]).
+      * bucket changes only once the copy has landed, in a transaction that re-reads the match under its lock; the
+      * original is deleted only after that commits. So at every moment the stored bucket names a real copy: a move that
+      * fails part way leaves the archive readable where it was, and the sweep tries it again
+      * ([[ArchiveRepo.listMisplaced]]). A match made friendly again while its archive was being copied still has the
+      * copy recorded: a permanent archive of a friendly match is allowed, and keeping it undoes nothing.
       *
-      * A friendly archive its bucket has already expired cannot be copied, and is recorded as expired instead. A
-      * permanent one that is missing is a fault, and is raised rather than recorded as something it is not.
+      * An archive the friendly bucket has already expired cannot be copied, and is recorded as expired instead.
       */
     def relocate(gameId: GameId, matchId: MatchId): IO[Unit] =
         sessionPool.use(session => new ArchiveRepo(session).read(gameId, matchId)).flatMap {
-            case Some(row @ ArchiveRow(_, _, _, _, _, _, Some(key), _, _, Some(_), None, _))
-                if bucketOf(row) != ArchiveBucket.of(row.friendly) =>
-                val from = bucketOf(row)
-                val to = ArchiveBucket.of(row.friendly)
-                store.copy(from, to, key).flatMap {
-                    case false if from.isFriendly => recordExpired(row)
-                    case false =>
-                        IO.raiseError(
-                          new IllegalStateException(s"match ${matchId.value}'s permanent archive is missing")
-                        )
+            case Some(row) if owesMove(row) =>
+                val key = row.key.get
+                store.copy(ArchiveBucket.Friendly, ArchiveBucket.Permanent, key).flatMap {
+                    case false => recordExpired(row)
                     case true =>
                         sessionPool
                             .use { session =>
                                 val repo = new ArchiveRepo(session)
                                 session.transaction.use { _ =>
                                     repo.readForUpdate(gameId, matchId).flatMap {
-                                        case Some(locked)
-                                            if bucketOf(locked) == from && ArchiveBucket.of(locked.friendly) == to =>
-                                            repo.recordMoved(gameId, matchId, to.isFriendly).as(true)
-                                        case _ => IO.pure(false)
+                                        case Some(locked) if bucketOf(locked).isFriendly =>
+                                            repo.recordMoved(gameId, matchId, friendly = false).as(true)
+                                        // Recorded as permanent already: a sweep and an admin's change
+                                        // moved it at the same time.
+                                        case Some(_) => IO.pure(true)
+                                        case None    => IO.pure(false)
                                     }
                                 }
                             }
-                            // The original once the move is recorded; the copy, if the move was overtaken --
-                            // changed back, or finished by somebody else -- and it is not the one recorded.
-                            .flatMap(moved =>
-                                if (moved) store.remove(from, key)
-                                else
-                                    sessionPool
-                                        .use(session => new ArchiveRepo(session).read(gameId, matchId))
-                                        .flatMap(now => IO.whenA(now.forall(bucketOf(_) != to))(store.remove(to, key)))
-                            )
+                            // The original, once the permanent copy is the one recorded and nothing reads it.
+                            .flatMap(moved => IO.whenA(moved)(store.remove(ArchiveBucket.Friendly, key)))
                 }
             case _ => IO.unit
         }
@@ -347,6 +340,13 @@ object ArchiveService {
       * which is where every such archive went, since a match could not change it then.
       */
     def bucketOf(row: ArchiveRow): ArchiveBucket = ArchiveBucket.of(row.archiveFriendly.getOrElse(row.friendly))
+
+    /** Whether the match's archive is owed a move ([[ArchiveService.relocate]]): it is in the friendly bucket, it has
+      * not expired, and the match is no longer friendly. Never the other way.
+      */
+    def owesMove(row: ArchiveRow): Boolean =
+        row.key.isDefined && row.archivedAt.isDefined && row.expiredAt.isEmpty && bucketOf(row).isFriendly &&
+            !row.friendly
 
     /** How long a friendly match's archive is kept: the friendly bucket's lifecycle rule. */
     val FriendlyRetention: Duration = Duration.ofDays(30)
