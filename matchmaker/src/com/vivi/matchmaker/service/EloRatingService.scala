@@ -75,14 +75,22 @@ object EloRatingService {
     /** What each of a match's players is rated as it begins (V43) — the starting rating for a player who has none yet —
       * for the start to write on their seats. For every match, friendly or not: it is a fact about the seat either way.
       *
-      * For the start's own transaction, the one that writes the seats. The ratings are read FOR SHARE, which a
-      * contended table read on the way to a write is owed: a match of the same player completing at the same moment
-      * either lands first and is in the number recorded, or waits until this start has committed and is not.
+      * For the start's own transaction, the one that writes the seats. Every seat's number has to come from the same
+      * moment: a match of some of these players completing alongside the start is either in all of them or in none. So
+      * the ratings are read FOR SHARE, which keeps a completion from moving one until this has committed — and a player
+      * with no rating yet is given a row at the starting rating first, since FOR SHARE locks only rows it finds. Read
+      * as "none" with nothing held, a completion could make and move that player's rating, and another's, between this
+      * reading the one and the other.
+      *
+      * All the rows made, then all of them locked, each in player order: the order a completion makes its rows and then
+      * moves them in, so that the two queue rather than deadlock. Making a row counts as holding it — a second
+      * transaction making the same one waits for the first to commit — so a start that made and locked one player's row
+      * before making the next could hold a row a completion was waiting for while waiting for one the completion held.
       */
-    def startingRatings(session: skunk.Session[IO], gameId: GameId, players: Seq[PlayerId]): IO[Map[PlayerId, Int]] =
-        new EloRatingRepo(session)
-            .readForShare(gameId, players)
-            .map(rated => players.map(player => player -> rated.getOrElse(player, EloRating.initial)).toMap)
+    def startingRatings(session: skunk.Session[IO], gameId: GameId, players: Seq[PlayerId]): IO[Map[PlayerId, Int]] = {
+        val repo = new EloRatingRepo(session)
+        repo.ensureRated(gameId, players) *> repo.readForShare(gameId, players)
+    }
 
     /** Rates a match that is not friendly and has just completed: works out each seat's delta from the ratings its
       * seats began it at, moves each player's rating by it, and answers with the deltas by seat, for the caller to

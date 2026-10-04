@@ -38,17 +38,23 @@ class EloRatingRepo(session: Session[IO]) {
 
     /* From the game outward, as GameAdminRepo's list is: no row at all is no game, and a game nobody
      * is rated in is one row of nulls. Highest first, and by nickname among equals so that the order
-     * does not shuffle between two reads. */
+     * does not shuffle between two reads.
+     *
+     * Only players who have a rating to show: one a rated match has moved, or an admin has set. A
+     * match's start makes a row at the starting rating for each of its players who has none, so that
+     * it has a row to lock (see `EloRatingService.startingRatings`), and a player who has only ever
+     * begun a match has not been rated by it. In the join rather than the WHERE, so that a game with
+     * no such player is still the one row of nulls that says the game exists. */
     private val selectForGame: Query[GameId, Option[(PlayerId, String, Int, Int)]] =
         sql"""SELECT p.player_id, p.nickname, r.rating, r.matches
           FROM game g
-          LEFT JOIN elo_rating r ON r.game_id = g.game_id
+          LEFT JOIN elo_rating r ON r.game_id = g.game_id AND (r.matches > 0 OR r.set_by IS NOT NULL)
           LEFT JOIN player p ON p.player_id = r.player_id
           WHERE g.game_id = $gameId
           ORDER BY r.rating DESC, p.nickname""".query((playerId *: text *: int4 *: int4).opt)
 
-    /** Gives each player a rating in the game at [[EloRating.initial]] if they have none yet, for a rated match about
-      * to move them all.
+    /** Gives each player a rating in the game at [[EloRating.initial]] if they have none yet: for a rated match about
+      * to move them all, and for a match about to begin, which needs a row to lock for each of its players.
       *
       * In player order, one at a time — the order [[played]] is called in after it — so that two matches finishing at
       * once with players in common take their row locks in the same order, and one waits for the other rather than each
@@ -60,15 +66,16 @@ class EloRatingRepo(session: Session[IO]) {
             .sortBy(_.value)
             .traverse_(player => session.execute(insertInitial)((game, player, EloRating.initial)))
 
-    /** Each player's rating in the game, for those who have one, held FOR SHARE until the transaction ends: what a
-      * match's start records as the rating its seats began at. In player order, as a completion takes its locks, so
-      * that a start and a completion with players in common queue rather than deadlock.
+    /** Each player's rating in the game, held FOR SHARE until the transaction ends: what a match's start records as the
+      * rating its seats began at. Every player must have a row already — [[ensureRated]] first — since FOR SHARE locks
+      * only the rows it finds, and a player read as "no row yet" is held by nothing. In player order, as a completion
+      * takes its locks.
       */
     def readForShare(game: GameId, players: Seq[PlayerId]): IO[Map[PlayerId, Int]] =
         players.distinct
             .sortBy(_.value)
-            .traverse(player => session.option(selectForShare)((game, player)).map(_.map(player -> _)))
-            .map(_.flatten.toMap)
+            .traverse(player => session.unique(selectForShare)((game, player)).map(player -> _))
+            .map(_.toMap)
 
     /** Records a rated match's effect on one player: their rating moved by `delta`, and one more match behind it. An
       * addition in the update itself rather than a value worked out from a read, so it needs no read to be locked: two
