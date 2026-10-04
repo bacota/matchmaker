@@ -35,12 +35,11 @@ class ParticipantRepo(session: Session[IO]) {
      * the chain -- so each value is bound twice. */
     private val insertParticipant
         : Query[(GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId), ParticipantId] =
-        // `completed_at` (V41) is the database's now() for a seat created already finished, as
-        // `updateParticipant` stamps one below; Scala says only whether it is.
-        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed_at, due, game_role_id,
+        // `completed` is still what is written; `completed_at` (V41) follows it, stamped by the
+        // trigger `participant_completed_at` -- see `updateParticipant`.
+        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed, due, game_role_id,
               notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended)
-          SELECT $gameId, $matchId, $gameType, $playerId, $bool, CASE WHEN $bool THEN now() END, ${instant.opt},
-                 $gameRoleId,
+          SELECT $gameId, $matchId, $gameType, $playerId, $bool, $bool, ${instant.opt}, $gameRoleId,
                  COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
                  COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
                  COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
@@ -126,11 +125,11 @@ class ParticipantRepo(session: Session[IO]) {
 
     private val updateParticipant
         : Command[(PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, GameId, ParticipantId)] =
-        // A seat finished keeps the time it was first finished at (V41): completing is sticky, and a
-        // later write to a finished seat -- a re-stamp of its settings, a repeated callback -- is not
-        // a second ending. One not finished has none.
-        sql"""UPDATE participant SET player_id = $playerId, pending = $bool,
-          completed_at = CASE WHEN $bool THEN COALESCE(completed_at, now()) END,
+        // `completed` is still the column written while the code that reads it may be live -- V41 is
+        // the expand half of replacing it. The trigger `participant_completed_at` keeps `completed_at`
+        // in step: stamped now() when a seat is first finished, kept through every later write to it,
+        // cleared if it is ever unfinished. Every read is of `completed_at`.
+        sql"""UPDATE participant SET player_id = $playerId, pending = $bool, completed = $bool,
           due = ${instant.opt}, game_role_id = $gameRoleId
           WHERE game_id = $gameId AND participant_id = $participantId""".command
 
@@ -190,13 +189,13 @@ class ParticipantRepo(session: Session[IO]) {
      * waiting on anybody, and no clock is running. One statement rather than a read and a write per
      * seat, since there is nothing to decide per seat.
      *
-     * `completed_at IS NULL` keeps a repeat harmless and keeps the row count honest: the flag is sticky
+     * `NOT completed` keeps a repeat harmless and keeps the row count honest: the flag is sticky
      * everywhere it is written, and a seat already retired has nothing to retire.
      *
      * update_date is left to `trg_participant_update_date`, as in `updateParticipant` above. */
     private val completeParticipantsForMatch: Command[(GameId, MatchId)] =
-        sql"""UPDATE participant SET pending = false, completed_at = now(), due = NULL
-          WHERE game_id = $gameId AND match_id = $matchId AND completed_at IS NULL""".command
+        sql"""UPDATE participant SET pending = false, completed = true, due = NULL
+          WHERE game_id = $gameId AND match_id = $matchId AND NOT completed""".command
 
     /** Retires every seat in a match: nobody's turn, no deadline, finished.
       *
