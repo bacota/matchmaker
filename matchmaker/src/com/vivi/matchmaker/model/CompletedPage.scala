@@ -36,10 +36,11 @@ case class CompletedQuery(
 /** One window of a completed list: the matches finished from `from` up to `until`, most recent first, and never a
   * cancelled one.
   *
-  * The most recent window (`page` 0) runs on past `until`, so a match finished since `asOf` is in it rather than in no
-  * window at all. `hasOlder` says whether anything in the same list — this player, this game, public or not — was
-  * finished before `from`: once the oldest match the list can hold is on screen there is nothing further back, and the
-  * list's Next goes.
+  * Every window ends at `until`, the most recent one included, so a list paged from one `asOf` shows the same windows
+  * whichever way the reader moves through it; a match finished since `asOf` is shown by asking again without one.
+  * `hasOlder` says whether anything in the same list — this player, this game, public or not — was finished before
+  * `from`: once the oldest match the list can hold is on screen there is nothing further back, and the list's Next
+  * goes.
   */
 case class CompletedPage(
     matches: Seq[MatchSummary],

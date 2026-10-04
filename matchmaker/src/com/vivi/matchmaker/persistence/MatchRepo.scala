@@ -426,7 +426,7 @@ class MatchRepo(session: Session[IO]) {
             .query(seatRow)
 
     /* One window of the player's finished matches: the seats they finished with from `from`, up to
-     * but not including `until` -- or with no end, for the most recent window -- by the seat's own
+     * but not including `until` -- by the seat's own
      * `completed_at` (V41), and in one game where `game` names one. Served by the index on
      * participant(player_id, completed_at).
      *
@@ -454,7 +454,7 @@ class MatchRepo(session: Session[IO]) {
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
           WHERE p.player_id = $playerId AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
-            AND p.completed_at >= $instant AND p.completed_at < COALESCE(${instant.opt}, 'infinity')
+            AND p.completed_at >= $instant AND p.completed_at < $instant
             AND NOT m.cancelled
           ORDER BY p.completed_at DESC, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
@@ -534,7 +534,7 @@ class MatchRepo(session: Session[IO]) {
           -- The other half of that: their seat is done, whatever the match is doing -- in one window
           -- of time, as the caller's own list above, and never a match called off.
           WHERE p.player_id = $playerId AND m.public AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
-            AND p.completed_at >= $instant AND p.completed_at < COALESCE(${instant.opt}, 'infinity')
+            AND p.completed_at >= $instant AND p.completed_at < $instant
             AND NOT m.cancelled
           ORDER BY p.completed_at DESC, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
@@ -791,9 +791,9 @@ object MatchRepo {
     )
 
     /** The stretch of time one window of a completed list covers: finished from `from`, up to but not including
-      * `until`, or with no end; and in one game where `gameId` names one.
+      * `until`; and in one game where `gameId` names one.
       */
-    case class CompletedSpan(from: Instant, until: Option[Instant], gameId: Option[GameId])
+    case class CompletedSpan(from: Instant, until: Instant, gameId: Option[GameId])
 
     /** What one seat has left of a chess-clock budget. */
     case class MatchClockRow(
