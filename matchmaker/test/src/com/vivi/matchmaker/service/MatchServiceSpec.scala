@@ -809,25 +809,23 @@ class MatchServiceSpec extends PropertySuite {
         assertEquals(result.timeout(30.seconds).unsafeRunSync(), Some(false))
     }
 
-    test(
-      "once a match is completed, nobody may change whether it is friendly, though saying what it is still answers"
-    ) {
+    // What it does to ratings is EloRatingServiceSpec's business; this is about who may, and that it sticks.
+    test("a completed match may still be said to be friendly or not, and saying what it already is changes nothing") {
         val result = for {
             f <- friendlyFixture(completed = true)
-            (_, game, matchId, gameAdmin) = f
-            overall <- overallAdmin()
-            byGameAdmin <- matchService
-                .setFriendly(game.gameId, matchId, friendly = false, gameAdmin.externalId)
-                .attempt
-            byOverall <- matchService.setFriendly(game.gameId, matchId, friendly = false, overall.externalId).attempt
-            unchanged <- matchService.setFriendly(game.gameId, matchId, friendly = true, gameAdmin.externalId)
-            stored <- friendlyOf(game, matchId)
-        } yield (byGameAdmin, byOverall, unchanged.friendly, stored)
-        val (byGameAdmin, byOverall, unchanged, stored) = result.timeout(30.seconds).unsafeRunSync()
-        assert(byGameAdmin.left.exists(_.isInstanceOf[ConflictError]), byGameAdmin)
-        assert(byOverall.left.exists(_.isInstanceOf[ConflictError]), byOverall)
-        assertEquals(unchanged, true)
-        assertEquals(stored, Some(true))
+            (creator, game, matchId, gameAdmin) = f
+            refused <- matchService.setFriendly(game.gameId, matchId, friendly = false, creator.externalId).attempt
+            same <- matchService.setFriendly(game.gameId, matchId, friendly = true, gameAdmin.externalId)
+            _ <- matchService.setFriendly(game.gameId, matchId, friendly = false, gameAdmin.externalId)
+            changed <- friendlyOf(game, matchId)
+            _ <- matchService.setFriendly(game.gameId, matchId, friendly = true, gameAdmin.externalId)
+            back <- friendlyOf(game, matchId)
+        } yield (refused, same.friendly, changed, back)
+        val (refused, same, changed, back) = result.timeout(30.seconds).unsafeRunSync()
+        assert(refused.left.exists(_.isInstanceOf[UnauthorizedError]), refused)
+        assertEquals(same, true)
+        assertEquals(changed, Some(false))
+        assertEquals(back, Some(true))
     }
 
     test("a game's admin lists the game's matches, each with who plays it and whether it is friendly") {

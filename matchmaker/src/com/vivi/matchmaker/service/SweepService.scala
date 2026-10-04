@@ -3,6 +3,7 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import cats.syntax.all._
 import java.time.{Duration, Instant}
+import com.vivi.matchmaker.archive.ArchiveBucket
 import com.vivi.matchmaker.engine.GameEngineClient
 import com.vivi.matchmaker.model.{GameId, MatchId}
 import com.vivi.matchmaker.persistence.{ArchiveRepo, GameApiKeyRepo}
@@ -18,7 +19,11 @@ case class SweepReport(
     stillUnarchived: List[MatchId],
     released: Int,
     stillUnreleased: List[MatchId],
-    deferred: Int = 0
+    deferred: Int = 0,
+    // Archives moved to the bucket their match's friendliness says, after a move made when an admin
+    // changed it failed part way (V44); and the ones still in the wrong one.
+    moved: Int = 0,
+    stillMisplaced: List[MatchId] = Nil
 )
 
 /** Catches what archiving and cancelling leave owed when something does not answer at the moment it should
@@ -28,6 +33,8 @@ case class SweepReport(
   *   - A completed match never archived: its engine finished it, and then failed to archive it — or never reported its
   *     result, so matchmaker refused the archive. The engine is asked for the match's status, which is how an engine is
   *     prompted to archive a finished match it still holds (`GameEngine.archiveIfFinished`).
+  *   - An archive in the wrong bucket: a game's admin changed whether its match was friendly after it was archived, and
+  *     the move that follows failed part way (`ArchiveService.relocate`). It is moved again.
   *
   * Cancels first: there are few of them and each is one quick call, so a long backlog of matches to archive — the
   * matches finished before archiving existed, the first time it runs — cannot crowd them out.
@@ -50,7 +57,9 @@ class SweepService(
     grace: Duration = Duration.ofHours(1),
     retryAfter: Duration = Duration.ofHours(20),
     /** One game's matches only, rather than every game's: for a run by hand against one engine, and for the tests. */
-    game: Option[GameId] = None
+    game: Option[GameId] = None,
+    /** What moves an archive between buckets; none, and misplaced archives are left for a run that has one. */
+    archives: Option[ArchiveService] = None
 ) {
 
     /** One run. `deadline` is when to stop starting on matches; none, for a run by hand that may take as long as it
@@ -59,13 +68,16 @@ class SweepService(
     def run(deadline: Option[Instant] = None): IO[SweepReport] =
         for {
             released <- release(deadline)
+            relocated <- relocate(deadline)
             prompted <- prompt(deadline)
         } yield SweepReport(
           prompted.asked,
           prompted.still,
           released.asked - released.still.size,
           released.still,
-          prompted.left + released.left
+          prompted.left + released.left + relocated.left,
+          relocated.asked - relocated.still.size,
+          relocated.still
         )
 
     private case class Pass(asked: Int, still: List[MatchId], left: Int)
@@ -125,6 +137,33 @@ class SweepService(
             }
         } yield Pass(asked.size, still.map(_.matchId), owed.size - asked.size)
     }
+
+    /* Before the prompts, for the reason cancels are: few of them, each quick. */
+    private def relocate(deadline: Option[Instant]): IO[Pass] =
+        archives.fold(IO.pure(Pass(0, Nil, 0))) { service =>
+            for {
+                owed <- sessionPool.use(session =>
+                    new ArchiveRepo(session).listMisplaced(now().minus(retryAfter), game)
+                )
+                asked <- within(deadline, owed) { row =>
+                    sessionPool.use(session => new ArchiveRepo(session).recordSwept(row.gameId, row.matchId)) *>
+                        service
+                            .relocate(row.gameId, row.matchId)
+                            .handleErrorWith(e => log(s"moving the archive of match ${row.matchId.value} failed: $e"))
+                }
+                still <- sessionPool.use { session =>
+                    asked.filterA(row =>
+                        new ArchiveRepo(session)
+                            .read(row.gameId, row.matchId)
+                            .map(
+                              _.exists(r =>
+                                  r.expiredAt.isEmpty && ArchiveService.bucketOf(r) != ArchiveBucket.of(r.friendly)
+                              )
+                            )
+                    )
+                }
+            } yield Pass(asked.size, still.map(_.matchId), owed.size - asked.size)
+        }
 
     private def log(message: String): IO[Unit] = IO.blocking(System.err.println(message))
 }

@@ -84,6 +84,16 @@ class EloRatingRepo(session: Session[IO]) {
     def played(game: GameId, player: PlayerId, delta: Int): IO[Unit] =
         session.execute(updatePlayed)((delta, game, player)).void
 
+    private val updateUnplayed: Command[(Int, GameId, PlayerId)] =
+        sql"""UPDATE elo_rating SET rating = rating - $int4, matches = matches - 1
+          WHERE game_id = $gameId AND player_id = $playerId""".command
+
+    /** Takes back a rated match's effect on one player, [[played]] in reverse: for a completed match a game's admin has
+      * since said was friendly.
+      */
+    def unplayed(game: GameId, player: PlayerId, delta: Int): IO[Unit] =
+        session.execute(updateUnplayed)((delta, game, player)).void
+
     /** Sets the player's rating outright, on `setBy`'s say, making the row if there is none. How many matches stand
       * behind it is left as it was.
       */

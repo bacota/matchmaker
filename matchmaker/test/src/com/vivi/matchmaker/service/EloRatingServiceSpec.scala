@@ -10,6 +10,7 @@ import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{
     ChallengeRepo,
+    EloRatingRepo,
     GameRepo,
     MatchRepo,
     ParticipantRepo,
@@ -171,6 +172,19 @@ class EloRatingServiceSpec extends PropertySuite {
         services.ratings
             .list(f.game.gameId, f.first.externalId)
             .map(_.map(r => r.player.playerId -> (r.rating, r.matches)).toMap)
+
+    /** The two players' rating rows as stored, listed or not: the list leaves out a player no rated match has moved and
+      * no admin has set, and the row is still there for the match that began it.
+      */
+    private def storedRatings(f: Fixture): IO[Map[PlayerId, (Int, Int)]] =
+        TestSession.resource.use { session =>
+            val repo = new EloRatingRepo(session)
+            List(f.first, f.second)
+                .traverse(p =>
+                    repo.read(f.game.gameId, p.playerId).map(_.map(r => p.playerId -> (r.rating, r.matches)))
+                )
+                .map(_.flatten.toMap)
+        }
 
     /** What V43 holds for each seat, by its player: what they began the match rated, from the seat, and what the match
       * did to that, from its result — none for a seat with no result, or a result with no delta.
@@ -350,6 +364,84 @@ class EloRatingServiceSpec extends PropertySuite {
         assert(stored.exists(_.completed), stored)
         assertEquals(now, Map.empty[PlayerId, (Int, Int)])
         assertEquals(recorded.values.map(_._2).toSet, Set(Option.empty[Int]))
+    }
+
+    test("a completed friendly match made one that is not is rated then, from the ratings its seats began it at") {
+        val result = for {
+            f <- fixture()
+            _ <- services.ratings.set(f.game.gameId, f.first.playerId, 1600, f.host.externalId)
+            matchId <- started(f, friendly = true)
+            _ <- finish(f, matchId, f.first)
+            before <- ratings(f)
+            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = false, f.host.externalId)
+            after <- ratings(f)
+            recorded <- eloSeats(f, matchId)
+        } yield (f, before, after, recorded)
+        val (f, before, after, recorded) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(before, Map(f.first.playerId -> (1600, 0)))
+        // Expected 0.64 for the favourite: 32 * 0.36 is 11.5, rounded to 12.
+        assertEquals(after, Map(f.first.playerId -> (1612, 1), f.second.playerId -> (1488, 1)))
+        assertEquals(recorded, Map(f.first.playerId -> (1600, Some(12)), f.second.playerId -> (1500, Some(-12))))
+    }
+
+    test("a completed match that was not friendly made friendly takes back what it did to the ratings") {
+        val result = for {
+            f <- fixture()
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.first)
+            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = true, f.host.externalId)
+            after <- ratings(f)
+            stored <- storedRatings(f)
+            recorded <- eloSeats(f, matchId)
+            // And back again: rated as it was the first time.
+            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = false, f.host.externalId)
+            again <- ratings(f)
+        } yield (f, after, stored, recorded, again)
+        val (f, after, stored, recorded, again) = result.timeout(caseTimeout).unsafeRunSync()
+        // Back where they began, with no rated match behind them -- and so no longer listed, as nobody is
+        // who has not been rated.
+        assertEquals(after, Map.empty[PlayerId, (Int, Int)])
+        assertEquals(stored, Map(f.first.playerId -> (1500, 0), f.second.playerId -> (1500, 0)))
+        assertEquals(recorded, Map(f.first.playerId -> (1500, None), f.second.playerId -> (1500, None)))
+        assertEquals(again, Map(f.first.playerId -> (1516, 1), f.second.playerId -> (1484, 1)))
+    }
+
+    test("a completed match cannot change once a player in it has begun and finished another match since") {
+        val result = for {
+            f <- fixture()
+            first <- started(f, friendly = false)
+            _ <- finish(f, first, f.first)
+            second <- started(f, friendly = false)
+            _ <- finish(f, second, f.second)
+            before <- ratings(f)
+            refused <- refusal(services.matches.setFriendly(f.game.gameId, first, friendly = true, f.host.externalId))
+            after <- ratings(f)
+            stored <- TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, first))
+        } yield (refused, before, after, stored)
+        val (refused, before, after, stored) = result.timeout(caseTimeout).unsafeRunSync()
+        assert(refused.isInstanceOf[ConflictError], refused)
+        assertEquals(after, before)
+        assertEquals(stored.map(_.friendly), Some(false))
+    }
+
+    test("a match still being played that began after the changed one has its starting ratings moved with it") {
+        val result = for {
+            f <- fixture()
+            first <- started(f, friendly = false)
+            _ <- finish(f, first, f.first)
+            // Begun at 1516 and 1484, which take in the first match.
+            second <- started(f, friendly = false)
+            began <- eloSeats(f, second)
+            _ <- services.matches.setFriendly(f.game.gameId, first, friendly = true, f.host.externalId)
+            moved <- eloSeats(f, second)
+            _ <- finish(f, second, f.second)
+            after <- ratings(f)
+        } yield (f, began, moved, after)
+        val (f, began, moved, after) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(began, Map(f.first.playerId -> (1516, None), f.second.playerId -> (1484, None)))
+        assertEquals(moved, Map(f.first.playerId -> (1500, None), f.second.playerId -> (1500, None)))
+        // Rated from 1500 apiece, as if the first match had always been friendly.
+        assertEquals(after, Map(f.first.playerId -> (1484, 1), f.second.playerId -> (1516, 1)))
     }
 
     test("a friendly match records what its players began it rated, and moves nobody's rating nor gives anybody one") {

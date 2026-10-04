@@ -7,7 +7,7 @@ import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import java.time.Instant
 import com.vivi.matchmaker.model._
-import ArchiveRepo.{ArchiveRow, PromptRow, ReleaseRow}
+import ArchiveRepo.{ArchiveRow, MisplacedRow, PromptRow, ReleaseRow}
 
 /** A match's archive (V38): where it went, whether it arrived, and whether a friendly one has since expired.
   *
@@ -30,15 +30,29 @@ class ArchiveRepo(session: Session[IO]) {
         Option[String],
         Option[Instant],
         Option[Instant],
-        Option[Instant]
+        Option[Instant],
+        Option[Boolean]
     )
 
     private val row =
         int4 *: text *: text *: instant.opt *: bool *: bool *: text.opt *: text.opt *: instant.opt *: instant.opt *:
-            instant.opt
+            instant.opt *: bool.opt
 
     private def toRow(r: Row): ArchiveRow = {
-        val (game, id, gameName, completedAt, cancelled, friendly, key, sha256, requestedAt, archivedAt, expiredAt) = r
+        val (
+          game,
+          id,
+          gameName,
+          completedAt,
+          cancelled,
+          friendly,
+          key,
+          sha256,
+          requestedAt,
+          archivedAt,
+          expiredAt,
+          archiveFriendly
+        ) = r
         ArchiveRow(
           GameId(game),
           MatchId(id),
@@ -50,7 +64,8 @@ class ArchiveRepo(session: Session[IO]) {
           sha256,
           requestedAt,
           archivedAt,
-          expiredAt
+          expiredAt,
+          archiveFriendly
         )
     }
 
@@ -60,14 +75,16 @@ class ArchiveRepo(session: Session[IO]) {
      * is what makes it this engine's. */
     private val selectForEngine: Query[(MatchId, String), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
-                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at
+                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at,
+                 m.archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.match_id = $matchId AND g.external_id = $text""".query(row)
 
     private val selectForEngineForUpdate: Query[(MatchId, String), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
-                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at
+                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at,
+                 m.archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.match_id = $matchId AND g.external_id = $text
@@ -75,7 +92,8 @@ class ArchiveRepo(session: Session[IO]) {
 
     private val selectByIds: Query[(GameId, MatchId), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
-                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at
+                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at,
+                 m.archive_friendly
           FROM match m
           JOIN game g ON g.game_id = m.game_id
           WHERE m.game_id = $gameId AND m.match_id = $matchId""".query(row)
@@ -91,13 +109,53 @@ class ArchiveRepo(session: Session[IO]) {
     def read(game: GameId, id: MatchId): IO[Option[ArchiveRow]] =
         session.option(selectByIds)((game, id)).map(_.map(toRow))
 
-    private val updateRequest: Command[(String, String, GameId, MatchId)] =
-        sql"""UPDATE match SET archive_key = $text, archive_sha256 = $text, archive_requested = now()
+    private val selectByIdsForUpdate: Query[(GameId, MatchId), Row] =
+        sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
+                 m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, m.archive_expired_at,
+                 m.archive_friendly
+          FROM match m
+          JOIN game g ON g.game_id = m.game_id
+          WHERE m.game_id = $gameId AND m.match_id = $matchId
+          FOR UPDATE OF m""".query(row)
+
+    /** As [[read]], holding the match's row until the transaction ends. */
+    def readForUpdate(game: GameId, id: MatchId): IO[Option[ArchiveRow]] =
+        session.option(selectByIdsForUpdate)((game, id)).map(_.map(toRow))
+
+    private val updateRequest: Command[(String, String, Boolean, GameId, MatchId)] =
+        sql"""UPDATE match SET archive_key = $text, archive_sha256 = $text, archive_requested = now(),
+                 archive_friendly = $bool
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
-    /** Records that the engine has been given a url to upload `sha256`'s content to under `key`. */
-    def recordRequest(game: GameId, id: MatchId, key: String, sha256: String): IO[Unit] =
-        session.execute(updateRequest)((key, sha256, game, id)).void
+    /** Records that the engine has been given a url to upload `sha256`'s content to under `key`, in the friendly bucket
+      * or the permanent one (V44).
+      */
+    def recordRequest(game: GameId, id: MatchId, key: String, sha256: String, friendly: Boolean): IO[Unit] =
+        session.execute(updateRequest)((key, sha256, friendly, game, id)).void
+
+    private val updateBucket: Command[(Boolean, GameId, MatchId)] =
+        sql"""UPDATE match SET archive_friendly = $bool WHERE game_id = $gameId AND match_id = $matchId""".command
+
+    /** Records that the archive is now in the friendly bucket, or the permanent one: a move has finished copying it. */
+    def recordMoved(game: GameId, id: MatchId, friendly: Boolean): IO[Unit] =
+        session.execute(updateBucket)((friendly, game, id)).void
+
+    /* Longest since asked about first, as the other two lists are ordered. Matches the partial index
+     * match_misplaced_archive (V44). */
+    private val selectMisplaced: Query[(Instant, Option[Int], Option[Int]), (Int, String)] =
+        sql"""SELECT game_id, match_id FROM match
+          WHERE archived_at IS NOT NULL AND archive_expired_at IS NULL AND archive_friendly <> friendly
+            AND (swept_at IS NULL OR swept_at < $instant)
+            AND (${int4.opt}::int IS NULL OR game_id = ${int4.opt})
+          ORDER BY swept_at NULLS FIRST, game_id, match_id""".query(int4 *: text)
+
+    /** Archived matches whose archive is in the other bucket from the one their friendliness says — a move that failed
+      * part way — and that the sweep has not asked about since `sweptBefore`.
+      */
+    def listMisplaced(sweptBefore: Instant, game: Option[GameId] = None): IO[List[MisplacedRow]] =
+        session
+            .execute(selectMisplaced)((sweptBefore, game.map(_.value), game.map(_.value)))
+            .map(_.map((game, id) => MisplacedRow(GameId(game), MatchId(id))))
 
     private val updateArchived: Query[(GameId, MatchId), Instant] =
         sql"""UPDATE match SET archived_at = now()
@@ -204,11 +262,17 @@ object ArchiveRepo {
         sha256: Option[String],
         requestedAt: Option[Instant],
         archivedAt: Option[Instant],
-        expiredAt: Option[Instant]
+        expiredAt: Option[Instant],
+        // Which bucket the archive is in, or is to be uploaded to (V44): true for the friendly one. None until an
+        // upload has been asked for. Not `friendly`: a move to match a change of that takes time.
+        archiveFriendly: Option[Boolean]
     )
 
     /** A cancelled match whose engine is still to be told, at `cancelUrl`. */
     case class ReleaseRow(gameId: GameId, matchId: MatchId, cancelUrl: String)
+
+    /** An archived match whose archive is in the other bucket from the one its friendliness says (V44). */
+    case class MisplacedRow(gameId: GameId, matchId: MatchId)
 
     /** A completed match never archived, whose engine is prompted at `statusUrl`. */
     case class PromptRow(gameId: GameId, matchId: MatchId, statusUrl: String)

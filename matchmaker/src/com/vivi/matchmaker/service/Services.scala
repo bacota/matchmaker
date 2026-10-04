@@ -102,7 +102,7 @@ object Services {
           matches = matches,
           engine = engine,
           archives = archives,
-          sweep = new SweepService(pool, engineClient, matches),
+          sweep = new SweepService(pool, engineClient, matches, archives = Some(archives)),
           notifications = new NotificationService(pool),
           suppression = new SuppressionService(pool)
         )

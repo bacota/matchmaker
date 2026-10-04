@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets
 import java.time.{Duration, Instant, ZoneOffset}
 import scala.concurrent.duration._
 import com.vivi.matchmaker.archive.{ArchiveBucket, ArchiveStore, SignedDownload, SignedUpload}
+import com.vivi.matchmaker.archive.ArchiveBucket.isFriendly
 import com.vivi.matchmaker.model.{GameId, Match, MatchId, MatchSummary}
 import com.vivi.matchmaker.persistence.ArchiveRepo
 import com.vivi.matchmaker.persistence.ArchiveRepo.ArchiveRow
@@ -84,7 +85,11 @@ class ArchiveService(
                                 // The key is fixed the first time it is chosen: a game renamed meanwhile does
                                 // not move an archive half-way through being made.
                                 val key = row.key.getOrElse(keyFor(row.gameName, completedAt, matchId))
-                                repo.recordRequest(row.gameId, matchId, key, sha256).as(Right((row, key)))
+                                // The bucket the url is signed for, recorded with it (V44): the match's as
+                                // it stands now, and where `confirm` will look.
+                                repo
+                                    .recordRequest(row.gameId, matchId, key, sha256, row.friendly)
+                                    .as(Right((row, key)))
                         }
                     } yield answer
                 }
@@ -121,7 +126,7 @@ class ArchiveService(
                             key <- IO.fromOption(before.key)(
                               ConflictError(s"no upload was asked for for match ${matchId.value}")
                             )
-                            found <- store.head(ArchiveBucket.of(before.friendly), key)
+                            found <- store.head(bucketOf(before), key)
                             at <- sessionPool.use { session =>
                                 val repo = new ArchiveRepo(session)
                                 session.transaction.use { _ =>
@@ -176,14 +181,15 @@ class ArchiveService(
                     )
                     key <- IO.fromOption(row.key)(NotFoundError(s"match ${matchId.value} has no archive"))
                     _ <- IO.raiseWhen(row.expiredAt.isDefined)(expired(matchId))
+                    bucket = bucketOf(row)
                     _ <-
-                        if (mayHaveExpired(row.friendly, archivedAt, now()))
-                            store.head(ArchiveBucket.of(row.friendly), key).flatMap {
+                        if (mayHaveExpired(bucket.isFriendly, archivedAt, now()))
+                            store.head(bucket, key).flatMap {
                                 case Some(_) => IO.unit
                                 case None    => recordExpired(row) *> IO.raiseError(expired(matchId))
                             }
                         else IO.unit
-                    signed <- store.signDownload(ArchiveBucket.of(row.friendly), key)
+                    signed <- store.signDownload(bucket, key)
                 } yield signed
             }
 
@@ -199,7 +205,7 @@ class ArchiveService(
                     key <- IO.fromOption(row.key.filter(_ => row.archivedAt.isDefined))(
                       NotFoundError(s"match ${matchId.value} has no archive")
                     )
-                    _ <- IO.raiseUnless(row.friendly)(
+                    _ <- IO.raiseUnless(bucketOf(row).isFriendly)(
                       ConflictError(
                         s"match ${matchId.value}'s archive is permanent and does not expire; a missing one is a fault"
                       )
@@ -252,9 +258,9 @@ class ArchiveService(
             .use(session => new ArchiveRepo(session).read(gameId, matchId))
             .flatMap {
                 case Some(row) if row.expiredAt.isDefined => IO.pure(true)
-                case Some(row @ ArchiveRow(_, _, _, _, _, _, Some(key), _, _, Some(_), _)) =>
+                case Some(row @ ArchiveRow(_, _, _, _, _, _, Some(key), _, _, Some(_), _, _)) =>
                     store
-                        .head(ArchiveBucket.of(row.friendly), key)
+                        .head(bucketOf(row), key)
                         .timeout(checkTimeout)
                         .flatMap {
                             case Some(_) => IO.pure(false)
@@ -265,6 +271,57 @@ class ArchiveService(
             .handleErrorWith(e =>
                 IO.blocking(System.err.println(s"archive check for match ${matchId.value} failed: $e")).as(false)
             )
+
+    /** Moves a match's archive to the bucket its friendliness now says (V44), after a game's admin changed that once
+      * the match was archived. Nothing to do for a match that has no archive, whose archive has expired, or whose
+      * archive is already where it belongs.
+      *
+      * A copy and a delete in S3, so no transaction is open while either runs. The copy comes first, and the stored
+      * bucket changes only once the copy has landed — in a transaction that re-reads the match under its lock and
+      * checks the move is still wanted, since the friendliness may have changed back meanwhile — and the original is
+      * deleted only after that commits. So at every moment the stored bucket names a real copy: a move that fails part
+      * way leaves the archive readable where it was, and the sweep tries it again ([[ArchiveRepo.listMisplaced]]).
+      *
+      * A friendly archive its bucket has already expired cannot be copied, and is recorded as expired instead. A
+      * permanent one that is missing is a fault, and is raised rather than recorded as something it is not.
+      */
+    def relocate(gameId: GameId, matchId: MatchId): IO[Unit] =
+        sessionPool.use(session => new ArchiveRepo(session).read(gameId, matchId)).flatMap {
+            case Some(row @ ArchiveRow(_, _, _, _, _, _, Some(key), _, _, Some(_), None, _))
+                if bucketOf(row) != ArchiveBucket.of(row.friendly) =>
+                val from = bucketOf(row)
+                val to = ArchiveBucket.of(row.friendly)
+                store.copy(from, to, key).flatMap {
+                    case false if from.isFriendly => recordExpired(row)
+                    case false =>
+                        IO.raiseError(
+                          new IllegalStateException(s"match ${matchId.value}'s permanent archive is missing")
+                        )
+                    case true =>
+                        sessionPool
+                            .use { session =>
+                                val repo = new ArchiveRepo(session)
+                                session.transaction.use { _ =>
+                                    repo.readForUpdate(gameId, matchId).flatMap {
+                                        case Some(locked)
+                                            if bucketOf(locked) == from && ArchiveBucket.of(locked.friendly) == to =>
+                                            repo.recordMoved(gameId, matchId, to.isFriendly).as(true)
+                                        case _ => IO.pure(false)
+                                    }
+                                }
+                            }
+                            // The original once the move is recorded; the copy, if the move was overtaken --
+                            // changed back, or finished by somebody else -- and it is not the one recorded.
+                            .flatMap(moved =>
+                                if (moved) store.remove(from, key)
+                                else
+                                    sessionPool
+                                        .use(session => new ArchiveRepo(session).read(gameId, matchId))
+                                        .flatMap(now => IO.whenA(now.forall(bucketOf(_) != to))(store.remove(to, key)))
+                            )
+                }
+            case _ => IO.unit
+        }
 
     private def recordExpired(row: ArchiveRow): IO[Unit] =
         sessionPool.use(session => new ArchiveRepo(session).recordExpired(row.gameId, row.matchId))
@@ -285,6 +342,11 @@ class ArchiveService(
 }
 
 object ArchiveService {
+
+    /** The bucket the archive is in (V44), or for a row from before that was recorded, the one its friendliness says —
+      * which is where every such archive went, since a match could not change it then.
+      */
+    def bucketOf(row: ArchiveRow): ArchiveBucket = ArchiveBucket.of(row.archiveFriendly.getOrElse(row.friendly))
 
     /** How long a friendly match's archive is kept: the friendly bucket's lifecycle rule. */
     val FriendlyRetention: Duration = Duration.ofDays(30)

@@ -2691,7 +2691,8 @@ object Views {
                   refreshableSection("Matches in this game", refreshing, () => fetch(mount), subsection = false)(
                     p(
                       cls := "detail",
-                      "As an admin of this game, you say whether each match is friendly, until it is completed."
+                      "As an admin of this game, you say whether each match is friendly — even once it is over, " +
+                          "until one of its players has played another match of this game since."
                     ),
                     if (found.isEmpty) p(cls := "empty", "None yet.")
                     else ul(found.map(adminMatchRow(game, _)))
@@ -2718,28 +2719,31 @@ object Views {
                 if (m.cancelled) "cancelled" else s"started ${Format.date(m.start)}"
             }
           ),
-          // A completed match keeps the classification it finished with — its archive was written to the
-          // bucket that chose — so it is said rather than offered as a box the server would refuse.
-          if (m.completedAt.isDefined) div(cls := "detail", if (m.friendly) "friendly" else "not friendly")
-          else
-              label(
-                input(
-                  tpe := "checkbox",
-                  // Not disabled while saving: a disabled box drops the keyboard's focus, so a click made
-                  // meanwhile is ignored instead, and the box keeps showing what is being saved.
-                  aria.busy <-- busy.signal,
-                  controlled(
-                    checked <-- friendly.signal,
-                    onClick.mapToChecked.filter(_ => !busy.now()) --> { on =>
-                        friendly.set(on)
-                        Store.run(ApiClient.setFriendly(game.gameId, m.matchId, on), busy, _ => friendly.set(!on))(
-                          saved => friendly.set(saved.friendly)
-                        )
-                    }
-                  )
-                ),
-                "Friendly"
+          // A completed match can change too, and is re-rated when it does: said beside the box, and read
+          // out with it, since that is a bigger thing than the box looks. The server refuses a change that
+          // would reach into a later match, and the banner says why.
+          if (m.completedAt.isDefined)
+              div(idAttr := s"friendly-note-${m.matchId.value}", cls := "detail", "Changing this re-rates the match.")
+          else emptyNode,
+          label(
+            input(
+              tpe := "checkbox",
+              if (m.completedAt.isDefined) aria.describedBy := s"friendly-note-${m.matchId.value}" else emptyMod,
+              // Not disabled while saving: a disabled box drops the keyboard's focus, so a click made
+              // meanwhile is ignored instead, and the box keeps showing what is being saved.
+              aria.busy <-- busy.signal,
+              controlled(
+                checked <-- friendly.signal,
+                onClick.mapToChecked.filter(_ => !busy.now()) --> { on =>
+                    friendly.set(on)
+                    Store.run(ApiClient.setFriendly(game.gameId, m.matchId, on), busy, _ => friendly.set(!on))(saved =>
+                        friendly.set(saved.friendly)
+                    )
+                }
               )
+            ),
+            "Friendly"
+          )
         )
     }
 

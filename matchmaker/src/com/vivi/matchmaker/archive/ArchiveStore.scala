@@ -13,7 +13,10 @@ import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.{S3Client, S3Configuration}
 import software.amazon.awssdk.services.s3.model.{
+    ChecksumAlgorithm,
     ChecksumMode,
+    CopyObjectRequest,
+    DeleteObjectRequest,
     GetObjectRequest,
     HeadObjectRequest,
     NoSuchKeyException,
@@ -24,9 +27,10 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner
 import software.amazon.awssdk.services.s3.presigner.model.{GetObjectPresignRequest, PutObjectPresignRequest}
 import com.vivi.matchmaker.service.UnavailableError
 
-/** Which of the two archive buckets a match's archive is in, which follows from whether the match is friendly: a
-  * friendly archive is kept for 30 days and every other one permanently, and only the friendly bucket's lifecycle rule
-  * expires anything current. See archiving-matches-plan.md.
+/** Which of the two archive buckets a match's archive is in: a friendly match's archive is kept for 30 days and every
+  * other one permanently, and only the friendly bucket's lifecycle rule expires anything current. See
+  * archiving-matches-plan.md. Where an archive *is* is recorded (V44) rather than worked out from the match, since a
+  * match whose friendliness changes after it is archived has its archive moved, and a move takes time.
   */
 enum ArchiveBucket {
     case Permanent, Friendly
@@ -34,6 +38,12 @@ enum ArchiveBucket {
 
 object ArchiveBucket {
     def of(friendly: Boolean): ArchiveBucket = if (friendly) Friendly else Permanent
+
+    extension (bucket: ArchiveBucket) {
+
+        /** Whether this is the bucket whose archives expire: the column's form of it (V44). */
+        def isFriendly: Boolean = bucket == Friendly
+    }
 }
 
 /** A signed upload: the engine sends the archive to `url` with `method`, carrying every one of `headers` exactly as
@@ -73,6 +83,15 @@ trait ArchiveStore {
       * is not evidence that the object is gone.
       */
     def head(bucket: ArchiveBucket, key: String): IO[Option[StoredObject]]
+
+    /** Copies the archive under `key` from one bucket to the other, keeping its checksum and its metadata, and answers
+      * whether there was anything to copy: `false` when nothing is stored under `key` in `from` — a friendly archive
+      * its bucket has expired. Any other failure is raised.
+      */
+    def copy(from: ArchiveBucket, to: ArchiveBucket, key: String): IO[Boolean]
+
+    /** Removes what is stored under `key`, if anything is: the other half of a move. */
+    def remove(bucket: ArchiveBucket, key: String): IO[Unit]
 }
 
 object ArchiveStore {
@@ -91,6 +110,8 @@ object ArchiveStore {
         def signUpload(b: ArchiveBucket, k: String, s: Long, sha: String, v: Option[String]): IO[SignedUpload] = off
         def signDownload(bucket: ArchiveBucket, key: String): IO[SignedDownload] = off
         def head(bucket: ArchiveBucket, key: String): IO[Option[StoredObject]] = off
+        def copy(from: ArchiveBucket, to: ArchiveBucket, key: String): IO[Boolean] = off
+        def remove(bucket: ArchiveBucket, key: String): IO[Unit] = off
     }
 
     /** The store a deployment gets: S3, when `ARCHIVE_BUCKET` and `FRIENDLY_ARCHIVE_BUCKET` name its two buckets, and
@@ -217,6 +238,36 @@ class S3ArchiveStore(permanent: String, friendly: String, region: String, endpoi
                 case e: S3Exception if e.statusCode() == 404 => None
             }
         }
+
+    /* Server side: the bytes never pass through matchmaker, and the SHA-256 is asked for again so
+     * that the copy carries the checksum `confirm` checked the original against. Metadata --
+     * the engine's format version -- is copied by default. Needs s3:GetObject on the source and
+     * s3:PutObject on the destination, which the terraform grants on both buckets. */
+    def copy(from: ArchiveBucket, to: ArchiveBucket, key: String): IO[Boolean] =
+        IO.blocking {
+            try {
+                client.copyObject(
+                  CopyObjectRequest
+                      .builder()
+                      .sourceBucket(bucketName(from))
+                      .sourceKey(key)
+                      .destinationBucket(bucketName(to))
+                      .destinationKey(key)
+                      .checksumAlgorithm(ChecksumAlgorithm.SHA256)
+                      .build()
+                )
+                true
+            } catch {
+                case _: NoSuchKeyException                   => false
+                case e: S3Exception if e.statusCode() == 404 => false
+            }
+        }
+
+    /* Deleting a key that is not there succeeds in S3, which is what a repeated move wants. */
+    def remove(bucket: ArchiveBucket, key: String): IO[Unit] =
+        IO.blocking {
+            client.deleteObject(DeleteObjectRequest.builder().bucket(bucketName(bucket)).key(key).build())
+        }.void
 }
 
 /** Archives kept in a directory, for the local server and the tests: no AWS, and no signing.
@@ -268,6 +319,19 @@ class LocalArchiveStore(dir: Path, baseUrl: String, now: () => Instant = () => I
             val bytes = Files.readAllBytes(file)
             StoredObject(bytes.length.toLong, Some(ArchiveStore.sha256(bytes)))
         })
+
+    def copy(from: ArchiveBucket, to: ArchiveBucket, key: String): IO[Boolean] =
+        IO.blocking {
+            (fileOf(bucketName(from), key), fileOf(bucketName(to), key)) match {
+                case (Some(source), Some(target)) if Files.isRegularFile(source) =>
+                    Files.createDirectories(target.getParent)
+                    Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
+                    true
+                case _ => false
+            }
+        }
+
+    def remove(bucket: ArchiveBucket, key: String): IO[Unit] = IO.blocking(delete(bucket, key))
 
     /** Stores an upload made to one of this store's urls: `path` is what follows `/local-archive/`. Refused, with the
       * reason, when the body is not the one whose checksum was signed.

@@ -261,10 +261,80 @@ class ParticipantRepo(session: Session[IO]) {
         session
             .execute(selectEloSeats)((gameId, matchId))
             .map(_.map((id, player, start) => ParticipantRepo.EloSeatRow(id, player, start)))
+
+    private val updateEloStartBy: Command[(Int, GameId, ParticipantId)] =
+        sql"""UPDATE participant SET elo_start = elo_start + $int4
+          WHERE game_id = $gameId AND participant_id = $participantId""".command
+
+    /** Moves a seat's starting rating by `change`: for a seat whose match began after another match of its player's was
+      * rated differently than it is now (MatchService.setFriendly). The one change made to `elo_start` after the seat
+      * is written.
+      */
+    def adjustEloStart(gameId: GameId, id: ParticipantId, change: Int): IO[Unit] =
+        session.execute(updateEloStartBy)((change, gameId, id)).void
+
+    /* `t` is the match being reclassified. Seats of its players in the same game's matches that
+     * began after it and are still being played, locked in seat order -- every caller takes them in
+     * the same order. Built per call, since the players are a list of their own length. */
+    private def selectLaterSeats(
+        players: Int,
+        noWait: Boolean
+    ): Query[(GameId, MatchId, GameId, MatchId, List[PlayerId]), (ParticipantId, PlayerId, Boolean)] =
+        sql"""SELECT p.participant_id, p.player_id, p.create_date > t.completed
+          FROM participant p
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN match t ON t.game_id = $gameId AND t.match_id = $matchId
+          WHERE p.game_id = $gameId AND p.match_id <> $matchId
+            AND p.player_id IN (${playerId.list(players)})
+            AND m.completed IS NULL AND NOT m.cancelled
+            AND m.create_date > t.create_date
+          ORDER BY p.participant_id
+          FOR UPDATE OF p #${if (noWait) "NOWAIT" else ""}""".query(participantId *: playerId *: bool)
+
+    /** The seats `players` hold in matches of the game that began after match `matchId` and are not over yet, each
+      * locked FOR UPDATE, with whether it was made after that match completed — and so with a starting rating that took
+      * in what that match did to its player. For reclassifying a completed match, which changes what it did.
+      *
+      * `noWait` refuses rather than waits for a seat somebody else holds: for a second look taken while holding rating
+      * rows, where waiting on a match that is completing — which holds its seats and wants those rows — would deadlock.
+      */
+    def lockLaterSeats(
+        gameId: GameId,
+        matchId: MatchId,
+        players: List[PlayerId],
+        noWait: Boolean = false
+    ): IO[List[ParticipantRepo.LaterSeatRow]] =
+        if (players.isEmpty) IO.pure(Nil)
+        else
+            session
+                .execute(selectLaterSeats(players.size, noWait))((gameId, matchId, gameId, matchId, players))
+                .map(_.map((id, player, after) => ParticipantRepo.LaterSeatRow(id, player, after)))
+
+    private def selectLaterCompleted(players: Int): Query[(GameId, MatchId, GameId, MatchId, List[PlayerId]), Boolean] =
+        sql"""SELECT EXISTS (
+            SELECT 1 FROM participant p
+            JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+            JOIN match t ON t.game_id = $gameId AND t.match_id = $matchId
+            WHERE p.game_id = $gameId AND p.match_id <> $matchId
+              AND p.player_id IN (${playerId.list(players)})
+              AND m.completed IS NOT NULL
+              AND p.create_date > t.completed)""".query(bool)
+
+    /** Whether any of `players` has begun and finished another match of the game since match `matchId` finished: a
+      * match whose starting ratings took in what that one did, and whose own result has been worked out from them.
+      */
+    def laterCompleted(gameId: GameId, matchId: MatchId, players: List[PlayerId]): IO[Boolean] =
+        if (players.isEmpty) IO.pure(false)
+        else session.unique(selectLaterCompleted(players.size))((gameId, matchId, gameId, matchId, players))
 }
 
 object ParticipantRepo {
 
     /** A seat's player, and what they were rated as the match began (V43). */
     case class EloSeatRow(participantId: ParticipantId, playerId: PlayerId, eloStart: Int)
+
+    /** A seat in a match still being played, which began after another of its player's matches: whether it began after
+      * that match had finished, and so took in its rating's change.
+      */
+    case class LaterSeatRow(participantId: ParticipantId, playerId: PlayerId, afterCompletion: Boolean)
 }

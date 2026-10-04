@@ -21,6 +21,7 @@ import com.vivi.matchmaker.persistence.{
     GameRepo,
     MatchRepo,
     ParticipantRepo,
+    PlayerRepo,
     TestSession
 }
 
@@ -286,6 +287,62 @@ class ArchiveServiceSpec extends FunSuite {
             run(archives.requestUpload(f.matchId, 3, sha, None, f.game.externalId)): @unchecked
         assert(store.put(signed.url.split("/local-archive/")(1), "abc".getBytes, signed.headers).isLeft)
         assertEquals(run(row(f)).flatMap(_.archivedAt), None)
+    }
+
+    /** Says, in the table and nowhere else, that the match is or is not friendly: a change whose move has not happened.
+      */
+    private def reclassifyOnly(f: Fixture, friendly: Boolean): IO[Unit] =
+        TestSession.resource.use { session =>
+            val repo = new MatchRepo(session)
+            repo.read(f.game.gameId, f.matchId).flatMap(m => repo.update(m.get.copy(friendly = friendly)))
+        }
+
+    private def where(f: Fixture): (Boolean, Boolean) = {
+        val key = run(row(f)).flatMap(_.key).get
+        (
+          run(store.head(ArchiveBucket.Friendly, key)).isDefined,
+          run(store.head(ArchiveBucket.Permanent, key)).isDefined
+        )
+    }
+
+    test("a completed match an admin says was not friendly after all has its archive moved to the permanent bucket") {
+        val f = run(fixture(friendly = true).flatMap(archived))
+        run(TestSession.resource.use(session => new PlayerRepo(session).update(f.player.copy(isAdmin = true))))
+        run(services.matches.setFriendly(f.game.gameId, f.matchId, friendly = false, f.player.externalId))
+        assertEquals(run(row(f)).flatMap(_.archiveFriendly), Some(false))
+        assertEquals(where(f), (false, true))
+        val download = run(archives.download(f.matchId, f.game.externalId))
+        assertEquals(store.get(download.url.split("/local-archive/")(1)).map(_.toSeq), Some(content.toSeq))
+    }
+
+    test("an archive left in the other bucket is read from where it is, and the sweep moves it") {
+        val f = run(fixture(friendly = true).flatMap(archived))
+        run(reclassifyOnly(f, friendly = false))
+        // Not moved yet, and still read: from the bucket it is in, not the one it belongs in.
+        assertEquals(where(f), (true, false))
+        val download = run(archives.download(f.matchId, f.game.externalId))
+        assert(download.url.contains("/local-archive/friendly/"), download.url)
+
+        val sweep = new SweepService(
+          TestServices.pool,
+          NoEngine,
+          services.matches,
+          game = Some(f.game.gameId),
+          archives = Some(archives)
+        )
+        val report = run(sweep.run())
+        assertEquals((report.moved, report.stillMisplaced), (1, Nil))
+        assertEquals(run(row(f)).flatMap(_.archiveFriendly), Some(false))
+        assertEquals(where(f), (false, true))
+    }
+
+    test("a friendly archive its bucket expired before it could be moved is recorded as expired") {
+        val f = run(fixture(friendly = true).flatMap(archived))
+        store.delete(ArchiveBucket.Friendly, run(row(f)).flatMap(_.key).get)
+        run(reclassifyOnly(f, friendly = false))
+        run(archives.relocate(f.game.gameId, f.matchId))
+        assert(run(row(f)).flatMap(_.expiredAt).isDefined)
+        assertEquals(where(f), (false, false))
     }
 
     test("a friendly archive past its 30 days that has gone is recorded, and the engine is told 410") {
