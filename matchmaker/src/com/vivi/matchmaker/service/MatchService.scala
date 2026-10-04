@@ -268,7 +268,9 @@ class MatchService(
                       row.forfeit,
                       // Absent means nothing was recorded against this seat, which reads as zero — both
                       // for a player who never moved and for a match played before turns were kept.
-                      byParticipant.getOrElse((row.gameId, row.participantId), Duration.ZERO)
+                      byParticipant.getOrElse((row.gameId, row.participantId), Duration.ZERO),
+                      row.eloStart,
+                      row.eloDelta
                     )
                 }
             }

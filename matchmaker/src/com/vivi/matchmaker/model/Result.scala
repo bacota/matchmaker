@@ -45,5 +45,10 @@ case class ParticipantResult(
     // for a player who never moved and for a match played before turns were recorded — the two
     // are not worth distinguishing to a reader, and a table of zeroes is one nothing is drawn
     // from.
-    timeTaken: Duration = Duration.ZERO
+    timeTaken: Duration = Duration.ZERO,
+    // What this player was rated when the match began (V43) -- friendly or not -- and what the match
+    // did to it, which only a match that is not friendly does. Both absent for a seat from before
+    // ratings were kept.
+    eloStart: Option[Int] = None,
+    eloDelta: Option[Int] = None
 )

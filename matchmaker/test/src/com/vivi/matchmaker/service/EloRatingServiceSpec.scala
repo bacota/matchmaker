@@ -171,6 +171,12 @@ class EloRatingServiceSpec extends PropertySuite {
                 .map(_.map(row => row.playerId -> (row.eloStart, row.eloDelta)).toMap)
         )
 
+    /** The match's result rows as `player` is shown them: each seat's Elo as it began, and the match's change to it. */
+    private def resultElo(player: Player, matchId: MatchId): IO[Map[String, (Option[Int], Option[Int])]] =
+        services.matches
+            .results(player.externalId)
+            .map(_.filter(_.matchId == matchId).map(r => r.nickname -> (r.eloStart, r.eloDelta)).toMap)
+
     private def refusal[A](io: IO[A]): IO[Throwable] =
         io.attempt.map(_.swap.getOrElse(fail("expected a refusal, but it was allowed")))
 
@@ -183,9 +189,14 @@ class EloRatingServiceSpec extends PropertySuite {
             _ <- finish(f, matchId, f.first)
             now <- ratings(f)
             recorded <- eloSeats(f, matchId)
-        } yield (f, now, recorded)
-        val (f, now, recorded) = result.timeout(caseTimeout).unsafeRunSync()
+            shown <- resultElo(f.second, matchId)
+        } yield (f, now, recorded, shown)
+        val (f, now, recorded, shown) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(now, Map(f.first.playerId -> (1516, 1), f.second.playerId -> (1484, 1)))
+        assertEquals(
+          shown,
+          Map(f.first.nickname -> (Some(1500), Some(16)), f.second.nickname -> (Some(1500), Some(-16)))
+        )
         assertEquals(
           recorded,
           Map(f.first.playerId -> (Some(1500), Some(16)), f.second.playerId -> (Some(1500), Some(-16)))
@@ -332,8 +343,11 @@ class EloRatingServiceSpec extends PropertySuite {
             _ <- finish(f, matchId, f.first)
             now <- ratings(f)
             recorded <- eloSeats(f, matchId)
-        } yield (f, now, recorded)
-        val (f, now, recorded) = result.timeout(caseTimeout).unsafeRunSync()
+            shown <- resultElo(f.first, matchId)
+        } yield (f, now, recorded, shown)
+        val (f, now, recorded, shown) = result.timeout(caseTimeout).unsafeRunSync()
+        // Shown with the results even though the match is friendly: it is who they were when they played.
+        assertEquals(shown, Map(f.first.nickname -> (Some(1600), None), f.second.nickname -> (Some(1500), None)))
         assertEquals(now, Map(f.first.playerId -> (1600, 0)))
         assertEquals(recorded, Map(f.first.playerId -> (Some(1600), None), f.second.playerId -> (Some(1500), None)))
     }

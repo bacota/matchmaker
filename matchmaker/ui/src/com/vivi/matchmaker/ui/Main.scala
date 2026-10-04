@@ -1838,6 +1838,11 @@ object Views {
                         if (row.isWinner) span(cls := "winner", aria.hidden := true, "🏆 ") else emptyNode,
                         if (row.isWinner) span(cls := "sr-only", "winner: ") else emptyNode,
                         span(cls := "who", s"${row.nickname} (${row.roleName})"),
+                        // Their Elo rating as the match began, in a friendly match as in any other, and
+                        // where it went if the match was rated. Nothing for a seat from before ratings.
+                        row.eloStart.fold(emptyNode)(start =>
+                            span(cls := "detail", s" — ${Format.elo(start, row.eloDelta)}")
+                        ),
                         // Which side of the forfeit this player was on. `isWinner` is what separates
                         // them, and without this a win by forfeit would read as a win on the board.
                         if (!row.forfeit) emptyNode
@@ -4524,6 +4529,16 @@ object Format {
       * towards anything and "left" would be wrong. Zero is `0:00` here rather than a phrase: in a table of times it is
       * a time like the others, and it means the player never moved.
       */
+    /** A seat's Elo rating as its match began, and the match's change to it when it was rated: "Elo 1500 (+16)". The
+      * change rather than where it ended up, because that is what this match did — the player's rating by the time it
+      * finished may also carry their other matches. A minus sign that reads out as one, rather than a hyphen.
+      */
+    def elo(start: Int, delta: Option[Int]): String =
+        delta.fold(s"Elo $start") { d =>
+            val signed = if (d > 0) s"+$d" else if (d < 0) s"\u2212${-d}" else "\u00b10"
+            s"Elo $start ($signed)"
+        }
+
     def spent(value: java.time.Duration): String = {
         val seconds = value.getSeconds
         val (hours, minutes, secs) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60)

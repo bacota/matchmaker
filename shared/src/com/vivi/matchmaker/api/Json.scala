@@ -374,7 +374,11 @@ object Json {
         forfeit: Boolean = false,
         // How long this player spent over their turns across the whole match. Seconds on the wire,
         // like every other Duration here; zero for a match played before turns were recorded.
-        timeTaken: Duration = Duration.ZERO
+        timeTaken: Duration = Duration.ZERO,
+        // The player's Elo rating as the match began, friendly or not, and what the match did to it,
+        // which only one that is not friendly does (V43). Absent for seats from before ratings.
+        eloStart: Option[Int] = None,
+        eloDelta: Option[Int] = None
     )
 
     // ---- archiving a completed match: the engine's four calls (archiving-matches-plan.md) ----

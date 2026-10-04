@@ -52,10 +52,13 @@ class ResultRepo(session: Session[IO]) {
           Option[Int],
           Option[Map[String, Any]],
           Option[Boolean],
-          Option[Boolean]
+          Option[Boolean],
+          Option[Int],
+          Option[Int]
       )
     ] =
-        sql"""SELECT p.game_id, p.match_id, p.participant_id, pl.nickname, gr.display_name, r.rank, r.scores, r.is_winner, r.forfeit
+        sql"""SELECT p.game_id, p.match_id, p.participant_id, pl.nickname, gr.display_name, r.rank, r.scores, r.is_winner, r.forfeit,
+                 p.elo_start, p.elo_delta
           FROM participant mine
           JOIN match m ON m.game_id = mine.game_id AND m.match_id = mine.match_id
           JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
@@ -66,7 +69,7 @@ class ResultRepo(session: Session[IO]) {
           ORDER BY p.match_id, r.rank ASC NULLS LAST, p.participant_id"""
             .query(
               gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text *: int4.opt *: scores.opt *: bool.opt *:
-                  bool.opt
+                  bool.opt *: int4.opt *: int4.opt
             )
 
     /** Every seat of every finished match this player is in, with its outcome — one row per seat, the winner of each
@@ -78,18 +81,21 @@ class ResultRepo(session: Session[IO]) {
     def listForPlayer(playerId: PlayerId): IO[List[ParticipantResultRow]] =
         session
             .execute(selectResultsForPlayer)(playerId)
-            .map(_.map { case (game, match_, id, nickname, roleName, rank, scores, isWinner, forfeit) =>
-                ParticipantResultRow(
-                  game,
-                  match_,
-                  id,
-                  nickname,
-                  roleName,
-                  rank,
-                  scores.getOrElse(Map.empty),
-                  isWinner.getOrElse(false),
-                  forfeit.getOrElse(false)
-                )
+            .map(_.map {
+                case (game, match_, id, nickname, roleName, rank, scores, isWinner, forfeit, eloStart, eloDelta) =>
+                    ParticipantResultRow(
+                      game,
+                      match_,
+                      id,
+                      nickname,
+                      roleName,
+                      rank,
+                      scores.getOrElse(Map.empty),
+                      isWinner.getOrElse(false),
+                      forfeit.getOrElse(false),
+                      eloStart,
+                      eloDelta
+                    )
             })
 
     /* How long each seat spent over its turns, across the caller's finished matches.
@@ -172,7 +178,10 @@ object ResultRepo {
         rank: Option[Int],
         scores: Map[String, Any],
         isWinner: Boolean,
-        forfeit: Boolean
+        forfeit: Boolean,
+        // The seat's V43 columns: its player's rating as the match began, and the match's change to it.
+        eloStart: Option[Int],
+        eloDelta: Option[Int]
     )
 
     /** What one seat spent over its turns, all told. */
