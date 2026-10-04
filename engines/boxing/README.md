@@ -28,9 +28,11 @@ characteristic (`Fighter.impression`):
 | Workrate | fit | flabby |
 | Chin | — | — |
 
-When two characteristics tie at an end, both are described; when three or more do, nothing is said
-for that end. Chin counts when deciding which is highest or lowest, but has no word. A round's
-offense, defense, power and effective chin give the characteristics away once its plans are public,
+Only strength, speed, agility and workrate are compared: chin is left out, so it neither gets a word
+nor stops another characteristic getting one. When two tie at an end, both are described; when
+three or more do, nothing is said for that end.
+
+A round's offense, defense, power and effective chin give the characteristics away once its plans are public,
 so each corner is sent only its own (`redNumbers` / `blueNumbers`), and the public board neither.
 
 Each test below is only looked at if nothing above it decided the round. "Both landed" is settled

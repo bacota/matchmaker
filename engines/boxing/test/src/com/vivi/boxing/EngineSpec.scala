@@ -243,7 +243,7 @@ class EngineSpec extends FunSuite with QuietTests {
     test("an opponent is seen by the words for their highest and lowest characteristics, never by the numbers") {
         // Strength alone is highest, agility alone lowest.
         assertEquals(Fighter(8, 4, 3, 5, 5).impression, List("powerful", "short"))
-        // Strength ties chin for lowest: two, so strength is described, and chin has no word.
+        // Strength alone is lowest of the four; chin's equal value plays no part.
         assertEquals(Fighter(3, 5, 8, 6, 3).impression, List("tall", "not very muscular"))
         assertEquals(Fighter(4, 3, 4, 9, 5).impression, List("fit", "sluggish"))
         assertEquals(Fighter(6, 6, 6, 2, 5).impression, List("flabby"))
@@ -258,13 +258,13 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(Fighter(5, 5, 5, 5, 5).impression, Nil)
     }
 
-    test("chin counts towards which characteristic is highest or lowest, but has no word of its own") {
-        // Chin alone is highest: nothing to say at that end.
-        assertEquals(Fighter(4, 5, 5, 1, 10).impression, List("flabby"))
-        // Chin tied with speed at the top: speed is still described.
+    test("chin is left out: the highest and lowest are found among the other four") {
+        // Chin is the highest of all five, and strength the highest of the four.
+        assertEquals(Fighter(5, 4, 4, 2, 10).impression, List("powerful", "flabby"))
+        // Chin is the lowest of all five, and workrate the lowest of the four.
+        assertEquals(Fighter(9, 5, 5, 4, 2).impression, List("powerful", "flabby"))
+        // Chin tied with speed at the top of all five does not make a tie among the four.
         assertEquals(Fighter(3, 8, 3, 3, 8).impression, List("fast"))
-        // Chin alone is lowest.
-        assertEquals(Fighter(9, 5, 5, 4, 2).impression, List("powerful"))
     }
 
     test("each corner sees its own fighter's numbers and only an impression of the other's; the public, neither") {
