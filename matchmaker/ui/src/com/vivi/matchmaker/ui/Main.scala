@@ -1041,7 +1041,10 @@ object Views {
         // This list's window, and nothing while another list's is held or this one's is on its way.
         val view: Signal[Option[CompletedPage]] =
             Store.completedView.signal.map(_.filter(_.list == list).map(_.page)).distinct
-        val busy = Store.loading(Store.Fetch.Completed)
+        // This list's own request and its own failure -- not `Fetch.Completed`'s, which is the last
+        // request's for whichever list asked.
+        val busy = Store.completedLoading.signal.map(_.contains(list)).distinct
+        val failed = Store.completedFailed.signal.map(_.contains(list)).distinct
 
         def move(to: CompletedPage => Int): Unit =
             Store.completedView.now().filter(_.list == list).foreach { current =>
@@ -1098,17 +1101,13 @@ object Views {
           // Nothing held for this list yet: still on its way, or it failed -- which is not still on
           // its way, so saying "Loading…" would be the worse lie, and what helps is asking again. The
           // banner has said what went wrong; this says what the section is, and offers the retry.
-          child <-- view.combineWith(busy, Store.failed(Store.Fetch.Completed)).distinct.map {
-              case (None, true, _) => p(cls := "empty", "Loading…")
+          child <-- view.combineWith(busy, failed).distinct.map {
               case (None, false, true) =>
                   div(
                     p(cls := "empty", "These matches could not be loaded."),
-                    // Busy while it asks: the list's own state says only that the last answer failed,
-                    // and would say so, unchanged, until the new one lands.
-                    busyButton("Try again", classes = Some("link")) { busy =>
-                        busy.set(true)
-                        Store.showCompleted(list).onComplete(_ => busy.set(false))
-                    }
+                    // Gone the moment it is pressed: asking clears the failure, and the section says
+                    // "Loading…" while it asks.
+                    button(tpe := "button", cls := "link", "Try again", onClick --> (_ => Store.showCompleted(list)))
                   )
               case (None, _, _)                                           => p(cls := "empty", "Loading…")
               case (Some(page), _, _) if page.matches.nonEmpty            => ul(page.matches.map(row))
