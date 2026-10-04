@@ -93,6 +93,8 @@ object Store {
         active.set(Seq.empty)
         completedView.set(None)
         completedAsked.set(None)
+        completedLoading.set(None)
+        completedFailed.set(None)
         completedFrame.set(CompletedFrame.Day)
         games.set(Seq.empty)
         unlistedGames.set(Map.empty)
@@ -263,6 +265,16 @@ object Store {
 
     /** The list most recently asked for, which a section compares with its own to know the answer coming is for it. */
     val completedAsked: Var[Option[CompletedList]] = Var(None)
+
+    /** The completed list whose window is being fetched now, and the one whose latest fetch failed — each a list rather
+      * than a flag, because `Fetch.Completed`'s own outcome is the last request's for *any* list, and says nothing
+      * about the one a section is showing. Asking for a list clears its failure; only the latest ask settles either.
+      */
+    val completedLoading: Var[Option[CompletedList]] = Var(None)
+    val completedFailed: Var[Option[CompletedList]] = Var(None)
+
+    /* Counts asks for a completed window, so that only the latest settles the two above. */
+    private var completedAsks = 0
     val games: Var[Seq[Game]] = Var(Seq.empty)
 
     /** Games reachable by a link but absent from the list above: the deactivated ones.
@@ -1038,14 +1050,33 @@ object Store {
       * for. A different list is emptied at once rather than showing the last list's rows under its heading.
       */
     def showCompleted(list: CompletedList, page: Int = 0, asOf: Option[java.time.Instant] = None): Future[Unit] = {
+        completedAsks += 1
+        val thisAsk = completedAsks
+        val signIn = currentSignIn
         completedAsked.set(Some(list))
+        completedLoading.set(Some(list))
+        completedFailed.set(None)
         if (!completedView.now().exists(_.list == list)) completedView.set(None)
         val query = CompletedQuery(completedFrame.now(), page, asOf, list.gameId)
         def fetch = list match {
             case CompletedList.Mine(_)             => ApiClient.completedMatches(query)
             case CompletedList.Public(playerId, _) => ApiClient.publicCompletedMatches(playerId, query)
         }
-        reload(fetch, Fetch.Completed)(answer => completedView.set(Some(CompletedView(list, answer))))
+        var answered = false
+        reload(fetch, Fetch.Completed) { answer =>
+            answered = true
+            completedView.set(Some(CompletedView(list, answer)))
+        }.map { _ =>
+            // `reload` succeeds whatever happened, having raised the banner for a failure; what tells
+            // the two apart here is whether an answer was committed. Only for the latest ask -- an older
+            // one settling is about a list or a window nobody is waiting for -- and only in the session
+            // that asked: after a sign-out the request is skipped unanswered, which is not a failure,
+            // and the next player is not to be told a list of theirs could not be loaded.
+            if (thisAsk == completedAsks && stillSignedInAs(signIn)) {
+                completedLoading.set(None)
+                if (!answered) completedFailed.set(Some(list))
+            }
+        }
     }
 
     def reloadChallenges(gameId: GameId): Future[Unit] =
