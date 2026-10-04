@@ -7,6 +7,7 @@ import java.time.Instant
 import java.util.UUID
 import skunk.Session
 import com.vivi.matchmaker.engine._
+import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence._
@@ -56,7 +57,10 @@ class GameEngineService[T](
      * this service's. Silent by default, as in the other services that send mail. */
     notifications: Notifications = Notifications.disabled,
     /* For [[read]]: whether a finished friendly match's archive is still there to be reviewed. */
-    archives: Option[ArchiveService] = None
+    archives: Option[ArchiveService] = None,
+    /* Where a match's end is said, once it has ended here, for what it owes afterwards to be settled: its
+     * archive. Nothing by default. */
+    endings: MatchEndings = MatchEndings.disabled
 )(using codec: TextCodec[T]) {
 
     /** Turns a challenge into a match: creates the game in the engine, and writes the match and one participant per
@@ -481,7 +485,8 @@ class GameEngineService[T](
                  * two cannot both fire: whichever of them completes the match leaves the other looking at
                  * a match that was already over. */
                 val told = if (endedHere) notifications.matchEnded(session, updated, MatchEnding.Finished) else IO.unit
-                told.as(updated)
+                // And its archive is owed: the engine is not told the match is over, it told matchmaker.
+                told *> IO.whenA(endedHere)(endings.ended(gameId, matchId)).as(updated)
             }
     }
 
@@ -808,7 +813,11 @@ class GameEngineService[T](
                     // Everyone in it, because nobody in it did this: the engine finished the game -- or,
                     // in a live match, ended it on a clock, which is told as a forfeit is.
                     val ending = if (results.exists(_.forfeit)) MatchEnding.Forfeited else MatchEnding.Finished
-                    reconciled *> (if (ended) notifications.matchEnded(session, played, ending) else IO.unit)
+                    reconciled *> (if (ended) notifications.matchEnded(session, played, ending) else IO.unit) *>
+                        /* Every time, and not only when this call ended the match: settling is idempotent, so
+                         * a repeated callback saying it again costs nothing, and is the one way a match whose
+                         * ending failed to be queued gets another chance at its archive. */
+                        endings.ended(gameId, matchId)
                 }
         }
 
@@ -1079,7 +1088,7 @@ class GameEngineService[T](
                  * cause it. After the commit and unable to fail the enforcement, as ever. */
                 val told =
                     if (endedHere) notifications.matchEnded(session, updated, MatchEnding.Forfeited) else IO.unit
-                told.as(updated)
+                told *> IO.whenA(endedHere)(endings.ended(gameId, matchId)).as(updated)
             }
     }
 

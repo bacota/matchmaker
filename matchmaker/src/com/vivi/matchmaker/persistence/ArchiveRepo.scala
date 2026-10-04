@@ -7,7 +7,7 @@ import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import java.time.Instant
 import com.vivi.matchmaker.model._
-import ArchiveRepo.{ArchiveRow, PromptRow, ReleaseRow}
+import ArchiveRepo.{ArchiveRow, EndingRow}
 
 /** A match's archive (V38): where it went, whether it arrived, and whether a friendly one has since expired.
   *
@@ -156,48 +156,26 @@ class ArchiveRepo(session: Session[IO]) {
     def recordExpired(game: GameId, id: MatchId): IO[Unit] =
         session.execute(updateExpired)((game, id)).void
 
-    /* Never asked about yet first, then the longest since: a match that keeps failing goes to the
-     * back of the queue rather than holding the front of it. */
-    private val selectUnarchived: Query[(Instant, Instant, Option[Int], Option[Int]), (Int, String, String)] =
-        sql"""SELECT game_id, match_id, status_url FROM match
-          WHERE completed IS NOT NULL AND archived_at IS NULL AND status_url IS NOT NULL
-            AND completed < $instant AND (swept_at IS NULL OR swept_at < $instant)
-            AND (${int4.opt}::int IS NULL OR game_id = ${int4.opt})
-          ORDER BY swept_at NULLS FIRST, completed""".query(int4 *: text *: text)
+    private val selectEnding: Query[
+      (GameId, MatchId),
+      (Option[Instant], Boolean, Option[Instant], Option[String], Option[String], Boolean)
+    ] =
+        sql"""SELECT completed, cancelled, archived_at, status_url, cancel_url, engine_released IS NOT NULL
+          FROM match WHERE game_id = $gameId AND match_id = $matchId"""
+            .query(instant.opt *: bool *: instant.opt *: text.opt *: text.opt *: bool)
 
-    /** Completed matches never archived: finished before `finishedBefore`, and not asked about by the sweep since
-      * `sweptBefore`. With the status url the engine is prompted through.
+    /** What is still owed to the end of match `id`, as `EndingService` reads it: whether it was completed or cancelled,
+      * whether it has been archived, and the engine's urls for prompting it to archive and telling it of a cancel. Read
+      * plainly: every decision taken from it is either re-asked of the engine or made by a conditional write.
       */
-    def listUnarchived(
-        finishedBefore: Instant,
-        sweptBefore: Instant,
-        game: Option[GameId] = None
-    ): IO[List[PromptRow]] =
+    def ending(game: GameId, id: MatchId): IO[Option[EndingRow]] =
         session
-            .execute(selectUnarchived)((finishedBefore, sweptBefore, game.map(_.value), game.map(_.value)))
-            .map(_.map((game, id, url) => PromptRow(GameId(game), MatchId(id), url)))
-
-    private val selectUnreleased: Query[(Instant, Option[Int], Option[Int]), (Int, String, String)] =
-        sql"""SELECT game_id, match_id, cancel_url FROM match
-          WHERE cancelled AND cancel_url IS NOT NULL AND engine_released IS NULL
-            AND (swept_at IS NULL OR swept_at < $instant)
-            AND (${int4.opt}::int IS NULL OR game_id = ${int4.opt})
-          ORDER BY swept_at NULLS FIRST, game_id, match_id""".query(int4 *: text *: text)
-
-    /** Cancelled matches whose engine has not acknowledged being told, and that the sweep has not asked about since
-      * `sweptBefore`.
-      */
-    def listUnreleased(sweptBefore: Instant, game: Option[GameId] = None): IO[List[ReleaseRow]] =
-        session
-            .execute(selectUnreleased)((sweptBefore, game.map(_.value), game.map(_.value)))
-            .map(_.map((game, id, url) => ReleaseRow(GameId(game), MatchId(id), url)))
-
-    private val updateSwept: Command[(GameId, MatchId)] =
-        sql"""UPDATE match SET swept_at = now() WHERE game_id = $gameId AND match_id = $matchId""".command
-
-    /** Records that the sweep has just asked about this match. */
-    def recordSwept(game: GameId, id: MatchId): IO[Unit] =
-        session.execute(updateSwept)((game, id)).void
+            .option(selectEnding)((game, id))
+            .map(
+              _.map((completedAt, cancelled, archivedAt, statusUrl, cancelUrl, released) =>
+                  EndingRow(game, id, completedAt, cancelled, archivedAt, statusUrl, cancelUrl, released)
+              )
+            )
 
     private val selectCancelUrl: Query[(GameId, MatchId), Option[String]] =
         sql"""SELECT cancel_url FROM match WHERE game_id = $gameId AND match_id = $matchId""".query(text.opt)
@@ -259,9 +237,15 @@ object ArchiveRepo {
         archiveFriendly: Option[Boolean]
     )
 
-    /** A cancelled match whose engine is still to be told, at `cancelUrl`. */
-    case class ReleaseRow(gameId: GameId, matchId: MatchId, cancelUrl: String)
-
-    /** A completed match never archived, whose engine is prompted at `statusUrl`. */
-    case class PromptRow(gameId: GameId, matchId: MatchId, statusUrl: String)
+    /** A match as its ending is settled: see [[ArchiveRepo.ending]]. */
+    case class EndingRow(
+        gameId: GameId,
+        matchId: MatchId,
+        completedAt: Option[Instant],
+        cancelled: Boolean,
+        archivedAt: Option[Instant],
+        statusUrl: Option[String],
+        cancelUrl: Option[String],
+        released: Boolean
+    )
 }

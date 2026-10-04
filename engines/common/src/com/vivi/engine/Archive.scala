@@ -104,8 +104,8 @@ class InMemoryArchiveTransfer extends ArchiveTransfer {
   *
   *   - [[finished]]: once a match is over and matchmaker has its result, its stored JSON is uploaded, matchmaker
   *     confirms it arrived, and the live copy is deleted — at once, and only then. Anything short of the confirm leaves
-  *     the live copy where it is, to be archived the next time something asks (matchmaker's sweep, through a status
-  *     call).
+  *     the live copy where it is, to be archived the next time something asks (matchmaker settling the match's end,
+  *     through a status call).
   *   - [[get]]: a match not in the live store is read from the archive. An archived match is over and never changes, so
   *     what is read is decoded with the same codec that wrote it (the stored JSON is pinned by `StoredMatchSpec`) and
   *     kept for a few minutes: a play page polls its state every two seconds.
@@ -158,16 +158,18 @@ class ArchivingMatchStore[M <: HasMatchId: ReadWriter](
       * Bounded by [[budget]], because it runs inside the request that made the final move — a player is waiting on the
       * answer, and the gateway in front gives up at 30 seconds. No step is started once the budget is spent, and each
       * is limited to ten seconds by its client, so the whole is at most the budget and one step more. One cut short
-      * leaves the live copy, and matchmaker's daily sweep prompts the engine to finish it. The delete after a confirm
-      * is not subject to it: once matchmaker has the archive, nothing would prompt the engine again, and the live copy
-      * would stay for good.
+      * leaves the live copy, and matchmaker, settling the match's end, prompts the engine to finish it. The delete
+      * after a confirm is not subject to it: once matchmaker has the archive, nothing would prompt the engine again,
+      * and the live copy would stay for good.
       */
     override def finished(matchId: String): Unit =
         live.get(matchId).foreach { m =>
             val deadline = now().plus(budget)
             def withinBudget(step: String): Unit =
                 if (!now().isBefore(deadline))
-                    throw AwsError(s"archiving match '$matchId' ran out of time before $step; the sweep will finish it")
+                    throw AwsError(
+                      s"archiving match '$matchId' ran out of time before $step; matchmaker will prompt it again"
+                    )
             val body = write(m).getBytes(StandardCharsets.UTF_8)
             val answer = matchmaker.requestArchiveUpload(
               matchmakerUrl,

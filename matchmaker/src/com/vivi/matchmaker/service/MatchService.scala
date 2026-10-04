@@ -20,12 +20,10 @@ import com.vivi.matchmaker.model.{
     TimeLimitKind
 }
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
-import com.vivi.matchmaker.engine.GameEngineClient
+import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.util.ChallengeSettings
 import com.vivi.matchmaker.persistence.{
-    ArchiveRepo,
     GameAdminRepo,
-    GameApiKeyRepo,
     MatchRepo,
     ChallengeRepo,
     ParticipantRepo,
@@ -45,8 +43,8 @@ class MatchService(
     notifications: Notifications = Notifications.disabled,
     /* For the finished lists: whether a friendly match's archive is still there to be watched. */
     archives: Option[ArchiveService] = None,
-    /* For a cancel: telling the engine, so that it can drop the match. */
-    engine: Option[GameEngineClient] = None
+    /* For a cancel: saying the match has ended, so that its engine is told and can drop it. */
+    endings: MatchEndings = MatchEndings.disabled
 ) {
 
     /** Matches in which it is the caller's turn. */
@@ -288,8 +286,9 @@ class MatchService(
       * than silently doing nothing.
       *
       * The game engine is told afterwards, at the cancel url it gave when it created the game, so that it can drop the
-      * match — see [[releaseEngine]]. Whether or not it hears, matchmaker stops listening: [[GameEngineService]]
-      * refuses the move and result callbacks for a cancelled match, and refuses to refresh it.
+      * match — by the listener the match's ending is queued to (`EndingService`), which tries again until it hears.
+      * Whether or not it hears, matchmaker stops listening: [[GameEngineService]] refuses the move and result callbacks
+      * for a cancelled match, and refuses to refresh it.
       *
       * Under the match's row lock, so that a cancel racing a result callback resolves one way or the other rather than
       * both writing.
@@ -356,40 +355,9 @@ class MatchService(
                             .as(cancelled)
                     }
             }
-            // And the engine, once the session above is given back: telling it borrows a session of its own.
-            .flatTap(cancelled => releaseEngine(cancelled.gameId, cancelled.matchId))
-
-    /** Tells the engine a cancelled match is cancelled, so that it drops the match, and records that it heard.
-      *
-      * Unable to fail the cancel, which is committed: an engine that does not answer keeps its copy until the sweep
-      * tells it again (`ArchiveRepo.listUnreleased`). An engine that gave no cancel url when the game was created is
-      * not told at all, and its board stays up — matchmaker refuses its callbacks for the match either way.
-      *
-      * The engine is asked with no transaction open, per the rule on external calls; what is recorded afterwards is a
-      * single conditional update, which needs no lock.
-      */
-    def releaseEngine(gameId: GameId, matchId: MatchId): IO[Unit] =
-        engine
-            .fold(IO.unit) { client =>
-                sessionPool
-                    .use { session =>
-                        for {
-                            url <- new ArchiveRepo(session).cancelUrl(gameId, matchId)
-                            key <- new GameApiKeyRepo(session).forGame(gameId)
-                        } yield (url, key)
-                    }
-                    .flatMap {
-                        case (Some(url), key) =>
-                            client.cancel(url, key) *>
-                                sessionPool.use(session => new ArchiveRepo(session).recordReleased(gameId, matchId))
-                        case (None, _) => IO.unit
-                    }
-            }
-            .handleErrorWith(e =>
-                IO.blocking(
-                  System.err.println(s"telling the engine match ${matchId.value} was cancelled failed: $e")
-                )
-            )
+            // And the engine, by way of the match's ending: telling it is the listener's to do, and to try
+            // again until it hears.
+            .flatTap(cancelled => endings.ended(cancelled.gameId, cancelled.matchId))
 
     private def forCaller[A](
         callerExternalId: String

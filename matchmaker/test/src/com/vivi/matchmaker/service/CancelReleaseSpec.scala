@@ -119,10 +119,9 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
         assert(cancelled.cancelled)
         assertEquals(engine.cancelled.map(_._1), List("https://engine/matches/m/cancel"))
         assert(run(released(game.gameId, matchId)).isDefined)
-        // Listed for the sweep no longer.
-        val owed =
-            run(TestSession.resource.use(session => new ArchiveRepo(session).listUnreleased(Instant.now())))
-        assert(!owed.exists(_.matchId == matchId))
+        // Owed nothing more: settling the ending again tells the engine nothing.
+        assertEquals(run(services.ending.settle(game.gameId, matchId)), Settlement.Settled)
+        assertEquals(engine.cancelled.size, 1)
     }
 
     test("an engine that does not answer leaves the cancel standing, and the match owed a retry".tag(Quiet)) {
@@ -132,9 +131,8 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
         val cancelled = run(services.matches.cancel(game.gameId, matchId, player.externalId))
         assert(cancelled.cancelled)
         assertEquals(run(released(game.gameId, matchId)), None)
-        val owed =
-            run(TestSession.resource.use(session => new ArchiveRepo(session).listUnreleased(Instant.now())))
-        assert(owed.exists(row => row.matchId == matchId && row.cancelUrl == "https://engine/matches/m/cancel"))
+        // Still owed, for the queue to deliver again.
+        assert(run(services.ending.settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
     }
 
     test("an engine that gave no cancel url is not told, and is owed nothing") {
@@ -144,8 +142,6 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
 
         run(services.matches.cancel(game.gameId, matchId, player.externalId))
         assertEquals(engine.cancelled, Nil)
-        val owed =
-            run(TestSession.resource.use(session => new ArchiveRepo(session).listUnreleased(Instant.now())))
-        assert(!owed.exists(_.matchId == matchId))
+        assertEquals(run(services.ending.settle(game.gameId, matchId)), Settlement.Settled)
     }
 }

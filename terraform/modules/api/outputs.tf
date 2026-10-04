@@ -68,3 +68,8 @@ output "archive_buckets" {
   description = "The two buckets completed matches are archived to: permanent, and friendly (kept 30 days)."
   value       = { for kind, bucket in aws_s3_bucket.archive : kind => bucket.bucket }
 }
+
+# Where the ends of matches that could not be settled go: a depth worth alarming on.
+output "match_ended_dead_letter_queue_url" {
+  value = aws_sqs_queue.match_ended_dead_letter.url
+}

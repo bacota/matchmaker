@@ -65,7 +65,7 @@ object EngineConfig {
       *
       * Every engine that talks to matchmaker needs `MATCHMAKER_URL`. One without it still plays matches and sends their
       * callbacks, which arrive with urls of their own, but archives nothing: its finished matches stay in its own
-      * store, and matchmaker's sweep cannot get them out. The local server says so when it starts.
+      * store, and matchmaker's prompts to archive them cannot get them out. The local server says so when it starts.
       */
     def matchmakerUrl(env: String => Option[String]): Option[String] =
         env("MATCHMAKER_URL").map(_.trim).filter(_.nonEmpty)
