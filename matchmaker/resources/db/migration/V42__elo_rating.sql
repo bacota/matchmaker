@@ -24,6 +24,12 @@ CREATE TABLE elo_rating (
     PRIMARY KEY (game_id, player_id)
 );
 
+-- The primary key leads with the game, which serves a game's list and a match's completion. These
+-- serve the other direction -- a player's ratings across games -- and keep a player's deletion,
+-- which has to check both references to them, from scanning the table.
+CREATE INDEX elo_rating_player ON elo_rating (player_id);
+CREATE INDEX elo_rating_set_by ON elo_rating (set_by);
+
 CREATE TRIGGER trg_elo_rating_update_date
     BEFORE UPDATE ON elo_rating
     FOR EACH ROW EXECUTE FUNCTION set_update_date();
