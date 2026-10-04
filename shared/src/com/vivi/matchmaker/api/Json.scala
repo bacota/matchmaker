@@ -105,7 +105,6 @@ object Json {
     given ReadWriter[CompletedFrame] =
         readwriter[String].bimap(_.code, code => CompletedFrame.fromCode(code).getOrElse(CompletedFrame.Day))
     given ReadWriter[CompletedPage] = macroRW
-    given ReadWriter[CompletedCount] = macroRW
     given ReadWriter[Match] = macroRW
 
     /** Structural twin of `Game` with the existential in `parameters` pinned to `String`.

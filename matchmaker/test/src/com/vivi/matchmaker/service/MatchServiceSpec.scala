@@ -261,6 +261,15 @@ class MatchServiceSpec extends PropertySuite {
         assertEquals(second.matches.map(_.matchId), List(yesterday))
         assertEquals(second.until, first.from)
         assert(second.hasOlder)
+        // Back to the most recent window from the same moment: the same window, which ends at that
+        // moment. Pinned three hours back, the match finished two hours ago is after it, so is not in it.
+        val again = run(matchService.completed(externalId, CompletedQuery(asOf = Some(first.asOf))))
+        assertEquals(again.matches.map(_.matchId), List(recent))
+        assertEquals(again.until, first.asOf)
+        val earlier = first.asOf.minus(Duration.ofHours(3))
+        val pinned = run(matchService.completed(externalId, CompletedQuery(asOf = Some(earlier))))
+        assertEquals(pinned.matches, Nil)
+        assertEquals(pinned.until, earlier)
 
         // A week at a time: the first holds both recent ones, the second the oldest -- and with the
         // oldest match on screen there is nothing further back.
@@ -303,7 +312,7 @@ class MatchServiceSpec extends PropertySuite {
         assert(otherGame.hasOlder)
     }
 
-    test("another player's completed list holds their public matches only, never a cancelled one, and counts them") {
+    test("another player's completed list holds their public matches only, and never a cancelled one") {
         val now = Instant.now()
         val unique = genUniqueString.sample.get
         val watcher = s"w-$unique"
@@ -322,10 +331,6 @@ class MatchServiceSpec extends PropertySuite {
             run(matchService.publicCompleted(watcher, player.playerId, CompletedQuery(gameId = Some(game.gameId))))
         assertEquals(page.matches.map(_.matchId), List(shown))
         assert(!page.hasOlder)
-        assertEquals(
-          run(matchService.publicCompletedCounts(watcher, player.playerId)),
-          List(CompletedCount(game.gameId, 1))
-        )
     }
 
     /* Another player's page: the two lists a stranger is shown, which are the same two lists the

@@ -31,15 +31,33 @@ case class CompletedQuery(
     page: Int = 0,
     asOf: Option[Instant] = None,
     gameId: Option[GameId] = None
-)
+) {
+
+    /** Where the window ends: `page` frames before `asOf`. */
+    def until(asOf: Instant): Instant = asOf.minus(frame.span.multipliedBy(page.toLong))
+
+    /** Where the window begins: one frame before it ends. */
+    def from(asOf: Instant): Instant = until(asOf).minus(frame.span)
+
+    /** Whether this is a window anybody's history could hold, measured from `now` where it names no `asOf`: one that
+      * ends no later than a day after now and begins no earlier than 1970. Outside that, the arithmetic is not
+      * guaranteed to give an instant at all, let alone one the database can hold.
+      */
+    def inRange(now: Instant): Boolean =
+        try {
+            val base = asOf.getOrElse(now)
+            !base.isAfter(now.plus(Duration.ofDays(1))) && !from(base).isBefore(Instant.EPOCH)
+        } catch { case _: ArithmeticException | _: java.time.DateTimeException => false }
+}
 
 /** One window of a completed list: the matches finished from `from` up to `until`, most recent first, and never a
   * cancelled one.
   *
-  * The most recent window (`page` 0) runs on past `until`, so a match finished since `asOf` is in it rather than in no
-  * window at all. `hasOlder` says whether anything in the same list — this player, this game, public or not — was
-  * finished before `from`: once the oldest match the list can hold is on screen there is nothing further back, and the
-  * list's Next goes.
+  * Every window ends at `until`, the most recent one included, so a list paged from one `asOf` shows the same windows
+  * whichever way the reader moves through it; a match finished since `asOf` is shown by asking again without one.
+  * `hasOlder` says whether anything in the same list — this player, this game, public or not — was finished before
+  * `from`: once the oldest match the list can hold is on screen there is nothing further back, and the list's Next
+  * goes.
   */
 case class CompletedPage(
     matches: Seq[MatchSummary],
@@ -50,8 +68,3 @@ case class CompletedPage(
     until: Instant,
     hasOlder: Boolean
 )
-
-/** How many matches of one game a player has finished in public: what a player's page says of each game before it is
-  * opened.
-  */
-case class CompletedCount(gameId: GameId, count: Long)

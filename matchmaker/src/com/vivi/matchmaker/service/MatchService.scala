@@ -4,7 +4,6 @@ import cats.effect.IO
 import java.time.{Duration, Instant}
 import skunk.Session
 import com.vivi.matchmaker.model.{
-    CompletedCount,
     CompletedPage,
     CompletedQuery,
     GameId,
@@ -106,28 +105,24 @@ class MatchService(
             )
         }.flatMap(viewedPage)
 
-    /** How many public matches another player has finished in each game, for their page to say before a game is opened.
-      */
-    def publicCompletedCounts(callerExternalId: String, playerId: PlayerId): IO[List[CompletedCount]] =
-        forRegistered(callerExternalId)(_.publicCompletedCounts(playerId))
-
     /* One window of a completed list, whoever's it is: the window the query names, the matches in
      * it, and whether the list holds anything older -- which is what says the oldest match the list
      * could ever show is already on screen.
      *
      * The window is measured back from `asOf`, which the server sets on a first ask from the
-     * database's own clock, and which is then sent back for every later window of the same list. The
-     * most recent window has no end, so that a match finished since `asOf` is in it rather than in
-     * none. */
+     * database's own clock, and which is then sent back for every later window of the same list.
+     * Every window ends where the next newer one begins, the most recent included: a list paged
+     * back and forth from one `asOf` shows the same windows each time. A match finished since then
+     * is shown by asking afresh -- a refresh, or a change of frame -- which takes a new `asOf`. */
     private def completedPage(repo: MatchRepo, query: CompletedQuery)(
         rows: MatchRepo.CompletedSpan => IO[List[MatchRepo.MatchSeatRow]],
         olderThan: Instant => IO[Boolean]
     ): IO[CompletedPage] =
         for {
             asOf <- query.asOf.fold(repo.now)(IO.pure)
-            until = asOf.minus(query.frame.span.multipliedBy(query.page.toLong))
-            from = until.minus(query.frame.span)
-            found <- rows(MatchRepo.CompletedSpan(from, Option.when(query.page > 0)(until), query.gameId))
+            until = query.until(asOf)
+            from = query.from(asOf)
+            found <- rows(MatchRepo.CompletedSpan(from, until, query.gameId))
             summaries <- summarised(repo, found)
             older <- olderThan(from)
         } yield CompletedPage(summaries, query.frame, query.page, asOf, from, until, older)

@@ -133,6 +133,19 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request("GET", "/players/2/matches/completed?gameId=abc")).statusCode, 400)
     }
 
+    // Well formed, but naming a window that cannot be computed or stored: refused, not a 500.
+    test("a completed list's window out of any history's range is a bad request") {
+        // Parses, as Instant.MIN; a day before it is not an instant at all.
+        assertEquals(
+          dispatch(request("GET", "/me/matches/completed?asOf=-1000000000-01-01T00:00:00Z")).statusCode,
+          400
+        )
+        // Ten thousand years back from now.
+        assertEquals(dispatch(request("GET", "/me/matches/completed?frame=year&page=10000")).statusCode, 400)
+        // A moment nobody's history reaches yet.
+        assertEquals(dispatch(request("GET", "/me/matches/completed?asOf=2999-01-01T00:00:00Z")).statusCode, 400)
+    }
+
     test("a non-numeric game id is a bad request") {
         assertEquals(dispatch(request("GET", "/games/abc/challenges")).statusCode, 400)
     }
@@ -245,7 +258,6 @@ class RouterSpec extends FunSuite {
       ("GET", "/players?prefix=a", "{}"),
       ("GET", "/players/2/matches", "{}"),
       ("GET", "/players/2/matches/completed", "{}"),
-      ("GET", "/players/2/matches/completed/counts", "{}"),
       ("GET", "/games", "{}"),
       ("POST", "/games", gameBody),
       ("GET", "/games/1/admins", "{}"),
@@ -313,7 +325,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 55)
+        assertEquals(routed.size, 54)
         assertEquals(routed.distinct.size, routed.size)
     }
 
