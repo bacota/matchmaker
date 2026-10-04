@@ -1881,6 +1881,9 @@ object Views {
                         if (row.isWinner) span(cls := "winner", aria.hidden := true, "🏆 ") else emptyNode,
                         if (row.isWinner) span(cls := "sr-only", "winner: ") else emptyNode,
                         span(cls := "who", s"${row.nickname} (${row.roleName})"),
+                        // Their Elo rating as the match began, in a friendly match as in any other, and
+                        // what the match did to it if it was rated.
+                        span(cls := "detail", s" — ${Format.elo(row.eloStart, row.eloDelta)}"),
                         // Which side of the forfeit this player was on. `isWinner` is what separates
                         // them, and without this a win by forfeit would read as a win on the board.
                         if (!row.forfeit) emptyNode
@@ -2756,20 +2759,41 @@ object Views {
         // What the last save came to. Said aloud as well as shown: the box that was changed does not
         // say by itself that the change took.
         val said = Var("")
-        // Mounts of this section, so that an answer to an earlier one is not written into a later one.
-        var mount = 0
+        // Whether the last request for the list failed, so that the section says so rather than
+        // "Loading…" for ever.
+        val failed = Var(false)
+        // Requests for the list, so that only the newest may write it. Moved on by an unmount too,
+        // so that an answer to an earlier mount is not written into a later one, and by a row's save,
+        // so that a list asked for before the save cannot answer after it with the rating it changed.
+        var request = 0
 
-        /* Dropped if it belongs to another mount or another sign-in, as `adminMatchList`'s is. */
-        def fetch(asked: Int): Future[Unit] = {
+        /* Dropped if a newer request, mount or save has overtaken it, or it belongs to another sign-in --
+         * its failure as well as its answer: the section is the next session's by then. */
+        def fetch(): Future[Unit] = {
+            request += 1
+            val asked = request
             val signIn = Store.currentSignIn
-            ApiClient.ratings(game.gameId).map { found =>
-                if (asked == mount && Store.stillSignedInAs(signIn)) ratings.set(Some(found))
-            }
+            def current = asked == request && Store.stillSignedInAs(signIn)
+            ApiClient
+                .ratings(game.gameId)
+                .map { found =>
+                    if (current) {
+                        failed.set(false)
+                        ratings.set(Some(found))
+                    }
+                }
+                .recover { case error =>
+                    if (current) {
+                        failed.set(true)
+                        said.set(s"The ratings could not be loaded: ${error.getMessage}")
+                    }
+                }
         }
 
         /* A row's save is put in the row's place rather than re-sorted into the list: moving the row
          * the keyboard is in would take the focus with it. The next refresh puts it in order. */
         def savedRow(saved: EloRating): Unit = {
+            request += 1
             said.set(s"${saved.player.nickname} is now rated ${saved.rating}.")
             ratings.update(_.map(_.map(r => if (r.player.playerId == saved.player.playerId) saved else r)))
         }
@@ -2777,28 +2801,27 @@ object Views {
         /* A new player's save brings a row that is not on screen yet, so the list is asked again. */
         def savedNew(saved: EloRating): Unit = {
             said.set(s"${saved.player.nickname} is now rated ${saved.rating}.")
-            fetch(mount)
+            fetch()
         }
 
         val administers = Store.administers(game.gameId, player)
 
         div(
-          onMountCallback { _ =>
-              mount += 1
-              fetch(mount)
-          },
-          onUnmountCallback(_ => mount += 1),
-          refreshableSection("Elo Ratings", refreshing, () => fetch(mount), subsection = false)(
+          onMountCallback(_ => fetch()),
+          onUnmountCallback(_ => request += 1),
+          refreshableSection("Elo Ratings", refreshing, () => fetch(), subsection = false)(
             p(
               cls := "detail",
               s"Every match of this game that is not friendly moves its players' ratings. " +
                   s"A player's first rated match starts them at ${EloRating.initial}."
             ),
             div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
-            child <-- ratings.signal.map {
-                case None                         => p(cls := "empty", "Loading…")
-                case Some(found) if found.isEmpty => p(cls := "empty", "Nobody is rated yet.")
-                case Some(_)                      => emptyNode
+            child <-- ratings.signal.combineWith(failed.signal).map {
+                // What went wrong is said in the live region above; this only stops promising a list.
+                case (None, true)                      => p(cls := "empty", "The ratings could not be loaded.")
+                case (None, false)                     => p(cls := "empty", "Loading…")
+                case (Some(found), _) if found.isEmpty => p(cls := "empty", "Nobody is rated yet.")
+                case (Some(_), _)                      => emptyNode
             },
             // Split by player, so that a row keeps its element -- and whatever is typed in its box --
             // when the list around it is answered again.
@@ -4547,6 +4570,16 @@ object Format {
       * towards anything and "left" would be wrong. Zero is `0:00` here rather than a phrase: in a table of times it is
       * a time like the others, and it means the player never moved.
       */
+    /** A seat's Elo rating as its match began, and the match's change to it when it was rated: "Elo 1500 (+16)". The
+      * change rather than where it ended up, because that is what this match did — the player's rating by the time it
+      * finished may also carry their other matches. A minus sign that reads out as one, rather than a hyphen.
+      */
+    def elo(start: Int, delta: Option[Int]): String =
+        delta.fold(s"Elo $start") { d =>
+            val signed = if (d > 0) s"+$d" else if (d < 0) s"\u2212${-d}" else "\u00b10"
+            s"Elo $start ($signed)"
+        }
+
     def spent(value: java.time.Duration): String = {
         val seconds = value.getSeconds
         val (hours, minutes, secs) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60)

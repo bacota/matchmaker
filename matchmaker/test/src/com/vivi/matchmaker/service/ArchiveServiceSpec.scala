@@ -121,7 +121,8 @@ class ArchiveServiceSpec extends FunSuite {
                     None,
                     character.characterId,
                     game.roles.head.gameRoleId
-                  )
+                  ),
+                  EloRating.initial
                 )
             } yield Fixture(player, game, matchId, character)
         }
@@ -170,7 +171,8 @@ class ArchiveServiceSpec extends FunSuite {
                     None,
                     f.character.characterId,
                     f.game.roles.head.gameRoleId
-                  )
+                  ),
+                  EloRating.initial
                 )
             } yield matchId
         }

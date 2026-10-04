@@ -12,7 +12,7 @@ case class EloRating(player: PublicPlayer, rating: Int, matches: Int)
   * their average strength, rather than a multiple of it.
   *
   * Pure, so that the arithmetic can be tested without a database, and in the model so that a screen could say what a
-  * result would do. The rounding is the last step and per player, so the changes add to zero only up to it.
+  * result would do. The rounding is the last step and per seat, so the changes add to zero only up to it.
   */
 object EloRating {
 
@@ -26,32 +26,35 @@ object EloRating {
     val minimum: Int = 0
     val maximum: Int = 9999
 
-    /** One seat of a finished match, as rating sees it: whose it was, and where it finished. */
-    case class Seat(player: PlayerId, rank: Int)
+    /** One seat of a finished match, as rating sees it: whose it was, what they were rated when it began, and where it
+      * finished.
+      */
+    case class Seat(participant: ParticipantId, player: PlayerId, rating: Int, rank: Int)
+
+    /** Whether every seat is a different player's — which a match that is not friendly requires (V42): a player in two
+      * of its seats would be rated against themselves, and the deltas would no longer add up to nothing.
+      */
+    def playersOnce(players: Seq[PlayerId]): Boolean = players.distinct.size == players.size
 
     /** The chance Elo gives a player rated `mine` of beating one rated `theirs`, a draw counting as half. */
     def expected(mine: Int, theirs: Int): Double = 1.0 / (1.0 + math.pow(10.0, (theirs - mine) / 400.0))
 
-    /** Every player's rating after the match: `ratings` before it, for each player with a seat, moved by how they did.
+    /** What the match did to each seat's rating, by seat, worked out from the ratings the seats began it at.
       *
-      * A seat's opponents are the seats of *other* players, so that a player who held two seats does not play
-      * themselves; their change is the sum of their seats'. A match with fewer than two players in it has nobody to
-      * have beaten, and moves nothing.
+      * Each delta is rounded on its own, so that the deltas stored are exactly what the ratings moved by; before the
+      * rounding they add up to nothing. That needs every seat to be a different player's — see [[playersOnce]] — and a
+      * match that is not has no deltas at all, as has one with fewer than two seats: there is nobody to have beaten.
       */
-    def adjusted(seats: Seq[Seat], ratings: Map[PlayerId, Int]): Map[PlayerId, Int] =
-        if (seats.map(_.player).distinct.size < 2) Map.empty
-        else {
-            val changes = seats.map { seat =>
-                val opponents = seats.filter(_.player != seat.player)
+    def deltas(seats: Seq[Seat]): Map[ParticipantId, Int] =
+        if (seats.size < 2 || !playersOnce(seats.map(_.player))) Map.empty
+        else
+            seats.map { seat =>
+                val opponents = seats.filter(_ != seat)
                 val surprise = opponents.map { other =>
                     val scored =
                         if (seat.rank < other.rank) 1.0 else if (seat.rank == other.rank) 0.5 else 0.0
-                    scored - expected(ratings(seat.player), ratings(other.player))
+                    scored - expected(seat.rating, other.rating)
                 }.sum
-                seat.player -> k * surprise / opponents.size
-            }
-            changes
-                .groupMapReduce(_._1)(_._2)(_ + _)
-                .map((player, change) => player -> (ratings(player) + math.round(change).toInt))
-        }
+                seat.participant -> math.round(k * surprise / opponents.size).toInt
+            }.toMap
 }

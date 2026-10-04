@@ -33,14 +33,16 @@ class ParticipantRepo(session: Session[IO]) {
      *
      * The player and the game are each named twice -- once as the seat's own column, once to resolve
      * the chain -- so each value is bound twice. */
-    private val insertParticipant
-        : Query[(GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId), ParticipantId] =
+    private val insertParticipant: Query[
+      (GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Int),
+      ParticipantId
+    ] =
         // `completed_at` (V41) is the database's now() for a seat created already finished, as
         // `updateParticipant` stamps one below; Scala says only whether it is.
         sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed_at, due, game_role_id,
-              notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended)
+              elo_start, notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended)
           SELECT $gameId, $matchId, $gameType, $playerId, $bool, CASE WHEN $bool THEN now() END, ${instant.opt},
-                 $gameRoleId,
+                 $gameRoleId, $int4,
                  COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
                  COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
                  COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
@@ -50,7 +52,7 @@ class ParticipantRepo(session: Session[IO]) {
           WHERE pl.player_id = $playerId
           RETURNING participant_id"""
             .query(participantId)
-            .contramap { case t @ (game, _, _, player, _, _, _, _) => t ++ (game, player) }
+            .contramap { case t @ (game, _, _, player, _, _, _, _, _) => t ++ (game, player) }
 
     private val insertCharacterParticipant: Command[(GameId, ParticipantId, CharacterId)] =
         sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id)
@@ -153,14 +155,15 @@ class ParticipantRepo(session: Session[IO]) {
         }
     }
 
-    def create(p: Participant): IO[Participant] = {
+    /** Seats `p`, whose player was rated `eloStart` in the game as the match began (V43). */
+    def create(p: Participant, eloStart: Int): IO[Participant] = {
         val gt = p match {
             case _: CharacterParticipant => GameType.Character
             case _: PlainParticipant     => GameType.Plain
         }
         for {
             id <- session.unique(insertParticipant)(
-              (p.gameId, p.matchId, gt, p.playerId, p.pending, p.completed, p.due, p.gameRoleId)
+              (p.gameId, p.matchId, gt, p.playerId, p.pending, p.completed, p.due, p.gameRoleId, eloStart)
             )
             _ <- p match {
                 case cp: CharacterParticipant =>
@@ -247,4 +250,21 @@ class ParticipantRepo(session: Session[IO]) {
                     )
                     (participant, externalId, roleName)
             })
+
+    private val selectEloSeats: Query[(GameId, MatchId), (ParticipantId, PlayerId, Int)] =
+        sql"""SELECT participant_id, player_id, elo_start FROM participant
+          WHERE game_id = $gameId AND match_id = $matchId
+          ORDER BY participant_id""".query(participantId *: playerId *: int4)
+
+    /** Every seat in a match as rating sees it: whose it is, and what they were rated as it began (V43). */
+    def eloSeatsForMatch(gameId: GameId, matchId: MatchId): IO[List[ParticipantRepo.EloSeatRow]] =
+        session
+            .execute(selectEloSeats)((gameId, matchId))
+            .map(_.map((id, player, start) => ParticipantRepo.EloSeatRow(id, player, start)))
+}
+
+object ParticipantRepo {
+
+    /** A seat's player, and what they were rated as the match began (V43). */
+    case class EloSeatRow(participantId: ParticipantId, playerId: PlayerId, eloStart: Int)
 }

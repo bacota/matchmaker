@@ -336,6 +336,31 @@ class FormatSpec extends FunSuite {
     test("sub-second precision is dropped rather than shown") {
         assertEquals(Format.instant(Instant.parse("2026-08-07T12:34:56.789Z")), "2026-08-07 12:34:56 UTC")
     }
+    test("a seat's Elo is its rating as the match began, with the match's change when it was rated") {
+        assertEquals(Format.elo(1500, None), "Elo 1500")
+        assertEquals(Format.elo(1500, Some(16)), "Elo 1500 (+16)")
+        assertEquals(Format.elo(1500, Some(-16)), "Elo 1500 (\u221216)")
+        assertEquals(Format.elo(1500, Some(0)), "Elo 1500 (\u00b10)")
+    }
+
+    test("a result row's Elo round-trips, and its change is absent for a match that was not rated") {
+        val rated = Json.ParticipantResultView(
+          GameId(1),
+          MatchId("m"),
+          ParticipantId(2),
+          "alice",
+          "First",
+          Some(1),
+          Map.empty,
+          isWinner = true,
+          eloStart = 1500,
+          eloDelta = Some(16)
+        )
+        assertEquals(read[Json.ParticipantResultView](write(rated)), rated)
+        val friendly = rated.copy(eloDelta = None)
+        assertEquals(read[Json.ParticipantResultView](write(friendly)), friendly)
+    }
+
     test("numeric parameter values are offered low to high, not in text order") {
         assertEquals(Format.parameterValues(Seq("10", "25", "3", "12", "9")), Seq("3", "9", "10", "12", "25"))
     }

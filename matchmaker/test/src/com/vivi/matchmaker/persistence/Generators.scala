@@ -157,7 +157,9 @@ object Generators {
             rank <- Gen.choose(1, 100)
             scores <- genScores
             isWinner <- Gen.oneOf(true, false)
-        } yield Result(gameId, participantId, rank, scores, isWinner)
+            // A friendly match's result has none, a rated one's has one (V43).
+            eloDelta <- Gen.option(Gen.choose(-32, 32))
+        } yield Result(gameId, participantId, rank, scores, isWinner, eloDelta = eloDelta)
 
     /* Values are restricted to the shapes a jsonb round trip preserves exactly: a Double comes
      * back a Double, but an Int would come back a Double too, so ints are not generated here. */

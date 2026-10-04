@@ -92,7 +92,8 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                     completed = false,
                     None,
                     game.roles.head.gameRoleId
-                  )
+                  ),
+                  EloRating.initial
                 )
             } yield (player, game, matchId)
         }

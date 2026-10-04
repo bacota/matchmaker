@@ -264,6 +264,15 @@ class GameEngineService[T](
                             unfilled.map(_.displayName).mkString(", ")
                       )
                     )
+                    // Accepting refuses a second seat in a challenge that is not friendly, but a roster
+                    // accepted before that rule may still hold one, and starting it would make a rated
+                    // match with a player in it twice.
+                    _ <- IO.raiseUnless(challenge.friendly || EloRating.playersOnce(roster.map(_.acceptance.playerId)))(
+                      ValidationError(
+                        s"challenge ${challengeId.value} is not friendly, and a player holds more than one of its " +
+                            "seats; one of them must withdraw before it can start"
+                      )
+                    )
                     newMatch = Match(
                       gameId = gameId,
                       matchId = matchId,
@@ -286,11 +295,14 @@ class GameEngineService[T](
                     saved <- matchRepo.create(newMatch)
                     // Under the lock taken above, so the next start of this challenge sees the claim.
                     _ <- challengeRepo.claimForStart(gameId, challengeId, matchId)
-                    participants <- roster.traverse { entry =>
+                    // What each player is rated as they sit down, written on their seat and what the
+                    // match is rated from when it ends -- see `EloRatingService.startingRatings`.
+                    starting <- EloRatingService.startingRatings(session, gameId, roster.map(_.acceptance.playerId))
+                    seats <- roster.traverse(entry =>
                         participantRepo
-                            .create(toParticipant(matchId, entry.acceptance))
-                            .flatMap(p => enginePlayer(characterRepo)(p, entry))
-                    }
+                            .create(toParticipant(matchId, entry.acceptance), starting(entry.acceptance.playerId))
+                    )
+                    participants <- seats.zip(roster).traverse((p, entry) => enginePlayer(characterRepo)(p, entry))
                     // The key the engine is called with. Read plainly, like the game itself: it decides
                     // nothing written here, and is only handed to the engine below.
                     apiKey <- new GameApiKeyRepo(session).forGame(gameId)
@@ -720,11 +732,20 @@ class GameEngineService[T](
                                 _ <- recordTurns(session, existing, reported, since = None)
                             } yield ()
                         }
-                        // Whether this call is what ended the match, rather than a retry of a callback
-                        // that already did: only the first one is news, and the check is the same
-                        // `completed` guard that makes the write idempotent.
+                        /* Whether the results are already recorded, which is what makes a repeated
+                         * callback a no-op. Not the same question as whether the match is completed: a
+                         * match whose results callback went astray is completed by `applyEngineStatus`
+                         * when somebody refreshes it, from a status that carries no ranks -- and the
+                         * callback arriving after that is the first word on how it came out. It is
+                         * recorded, and the match rated, as if it had arrived first; only the completion
+                         * itself, and the news of it, are already done. Under the match's lock, so two
+                         * deliveries of it cannot both find nothing recorded. */
+                        recorded <-
+                            if (existing.completed) resultRepo.existsForMatch(gameId, matchId) else IO.pure(false)
+                        // Whether this call is what ended the match, rather than a late or repeated
+                        // callback: only the first ending is news.
                         ended <-
-                            if (existing.completed) IO.pure(false)
+                            if (recorded) IO.pure(false)
                             else
                                 for {
                                     participants <- participantRepo.listForMatch(gameId, matchId)
@@ -735,40 +756,49 @@ class GameEngineService[T](
                                         s"participant(s) ${unknown.map(_.value).mkString(", ")} are not in match ${matchId.value}"
                                       )
                                     )
-                                    _ <- participants.traverse((participant, _, _) =>
-                                        participantRepo.update(
-                                          withTurn(participant, pending = false, due = None, completed = true)
-                                        )
-                                    )
-                                    _ <- results.traverse(r =>
-                                        resultRepo.create(
-                                          Result(gameId, r.participantId, r.rank, r.scores, r.isWinner, r.forfeit)
-                                        )
-                                    )
-                                    // In this transaction, under the match's lock: the ratings move exactly
-                                    // when the match completes, and a retried callback, finding it completed,
-                                    // does not move them again. A friendly match does not move them at all.
-                                    _ <- IO.unlessA(existing.friendly)(
-                                      EloRatingService.rate(
-                                        session,
-                                        gameId,
-                                        results.flatMap(r =>
-                                            participants
-                                                .find(_._1.participantId == r.participantId)
-                                                .map((p, _, _) => EloRating.Seat(p.playerId, r.rank))
-                                        )
+                                    _ <- IO.unlessA(existing.completed)(
+                                      participants.traverse_((participant, _, _) =>
+                                          participantRepo.update(
+                                            withTurn(participant, pending = false, due = None, completed = true)
+                                          )
                                       )
                                     )
-                                    // Guarded by the `existing.completed` check above, under the lock, so this
-                                    // stamps the match once — with the database's clock, not the lambda's.
-                                    _ <- matchRepo.complete(gameId, matchId)
+                                    // In this transaction, under the match's lock: the ratings move exactly
+                                    // when the results are recorded, and a repeated callback, finding them
+                                    // recorded, does not move them again. A friendly match does not move them.
+                                    // Before the results, which carry what the match did to each rating.
+                                    deltas <-
+                                        if (existing.friendly) IO.pure(Map.empty[ParticipantId, Int])
+                                        else
+                                            EloRatingService.rate(
+                                              session,
+                                              gameId,
+                                              matchId,
+                                              results.map(r => r.participantId -> r.rank).toMap
+                                            )
+                                    _ <- results.traverse(r =>
+                                        resultRepo.create(
+                                          Result(
+                                            gameId,
+                                            r.participantId,
+                                            r.rank,
+                                            r.scores,
+                                            r.isWinner,
+                                            r.forfeit,
+                                            deltas.get(r.participantId)
+                                          )
+                                        )
+                                    )
+                                    // Once, under the lock — with the database's clock, not the lambda's. A
+                                    // match `applyEngineStatus` completed keeps the time it did so.
+                                    _ <- IO.unlessA(existing.completed)(matchRepo.complete(gameId, matchId).void)
                                     // Cleaned rather than refused: a summary that is unsafe or too long is the
                                     // engine's mistake, and the results it came with are still the results. What
                                     // is left of it is stored; nothing at all, and the table is shown instead.
                                     _ <- SummaryHtml
                                         .accept(summary)
                                         .traverse_(matchRepo.setResultSummary(gameId, matchId, _))
-                                } yield true
+                                } yield !existing.completed
                     } yield (existing, ended)
                 }
                 .flatMap { (played, ended) =>
@@ -1016,30 +1046,29 @@ class GameEngineService[T](
                                 _ <- participants.traverse((p, _, _) =>
                                     participantRepo.update(withTurn(p, pending = false, due = None, completed = true))
                                 )
+                                ranks = participants
+                                    .map((p, _, _) => p.participantId -> (if (overdue(p.participantId)) 2 else 1))
+                                    .toMap
+                                // A forfeit is a result like any other to a rating: the player who ran out
+                                // of time lost. Rated as the engine's results are, in this transaction, and
+                                // before the results that carry what it did to each rating.
+                                deltas <-
+                                    if (locked.friendly) IO.pure(Map.empty[ParticipantId, Int])
+                                    else EloRatingService.rate(session, gameId, matchId, ranks)
                                 _ <- participants.traverse { (p, _, _) =>
                                     val lost = overdue.contains(p.participantId)
                                     resultRepo.create(
                                       Result(
                                         gameId = gameId,
                                         participantId = p.participantId,
-                                        rank = if (lost) 2 else 1,
+                                        rank = ranks(p.participantId),
                                         scores = Map.empty,
                                         isWinner = !lost,
-                                        forfeit = true
+                                        forfeit = true,
+                                        eloDelta = deltas.get(p.participantId)
                                       )
                                     )
                                 }
-                                // A forfeit is a result like any other to a rating: the player who ran out
-                                // of time lost. Rated as the engine's results are, in this transaction.
-                                _ <- IO.unlessA(locked.friendly)(
-                                  EloRatingService.rate(
-                                    session,
-                                    gameId,
-                                    participants.map((p, _, _) =>
-                                        EloRating.Seat(p.playerId, if (overdue.contains(p.participantId)) 2 else 1)
-                                    )
-                                  )
-                                )
                                 completedAt <- matchRepo.complete(gameId, matchId)
                             } yield (locked.copy(completedAt = Some(completedAt)), true)
                 } yield outcome

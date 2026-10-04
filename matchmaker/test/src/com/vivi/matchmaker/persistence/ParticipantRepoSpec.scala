@@ -7,7 +7,7 @@ import org.scalacheck.Prop._
 import skunk.implicits._
 import skunk.codec.all.int8
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.{CharacterParticipant, MatchId, Participant, PlainParticipant}
+import com.vivi.matchmaker.model.{CharacterParticipant, EloRating, MatchId, Participant, PlainParticipant}
 
 class ParticipantRepoSpec extends PropertySuite {
     property("create then read returns the participant just created") {
@@ -42,7 +42,7 @@ class ParticipantRepoSpec extends PropertySuite {
                               .sample
                               .get
                         )
-                        created <- participantRepo.create(participant)
+                        created <- participantRepo.create(participant, EloRating.initial)
                         found <- participantRepo.read(created.gameId, created.participantId)
                     } yield found == Some(created)
                 }
@@ -89,7 +89,8 @@ class ParticipantRepoSpec extends PropertySuite {
                             .sample
                             .get,
                         done = false
-                      )
+                      ),
+                      EloRating.initial
                     )
                     before <- stamp(seat)
                     _ <- participantRepo.update(finished(seat, done = true))

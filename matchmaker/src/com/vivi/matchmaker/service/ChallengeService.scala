@@ -667,7 +667,11 @@ class ChallengeService[T](
                     //
                     // The rule may be relaxed one day — a player holding two seats in a six-player game is
                     // a coherent thing to want — and relaxing it means deleting these four lines and
-                    // nothing else, which is why it lives here rather than in the schema.
+                    // nothing else, which is why it lives here rather than in the schema. Not for a match
+                    // that is not friendly, though: that one is rated (V42), and a player in two of its
+                    // seats would be rated against themselves. Starting one, `MatchService.setFriendly`
+                    // and the rating itself each refuse that on their own, so relaxing this for friendly
+                    // matches stays a matter of these four lines.
                     already <- acceptanceRepo.hasAccepted(gameId, challengeId, acceptance.playerId)
                     _ <- IO.raiseWhen(already)(
                       ConflictError(

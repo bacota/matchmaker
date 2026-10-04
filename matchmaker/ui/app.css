@@ -960,6 +960,7 @@ button.toggle {
   /* The fields grow with the buttons, so a form does not read as a row of tall buttons between
      short boxes. */
   .card input:not([type="checkbox"]),
+  .row form.compound input,
   select {
     min-height: 2.75rem;
   }
