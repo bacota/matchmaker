@@ -907,7 +907,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       turns = Some(Nil),
                       summary = Some("<strong>me</strong> won<script>alert(1)</script>")
                     )
-                    completed <- services.matches.completed(externalId)
+                    completed <- services.matches.completed(externalId).map(_.matches.toList)
                 } yield completed.filter(_.matchId == started.matchId).map(_.resultSummary)
                 assertEquals(
                   result.timeout(15.seconds).unsafeRunSync(),
@@ -1114,7 +1114,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 _ <- services.engine.recordResults(fixture.game.gameId, started.matchId, List(reported), gameExternalId)
                 stored <- TestSession.resource.use(session => new ResultRepo(session).read(fixture.game.gameId, seat))
                 after <- participantsOf(started)
-                completed <- services.matches.completed(externalId)
+                completed <- services.matches.completed(externalId).map(_.matches.toList)
                 // Not just that it is over, but when: the column is a timestamp, and a match completed
                 // by this callback is stamped as the callback runs.
                 reread <- services.engine.read(fixture.game.gameId, started.matchId, externalId)

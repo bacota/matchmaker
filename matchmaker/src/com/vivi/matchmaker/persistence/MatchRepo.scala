@@ -8,7 +8,7 @@ import natchez.Trace.Implicits.noop
 import skunk.data.Arr
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
-import MatchRepo.{GameParameterRow, MatchClockRow, MatchSeatRow}
+import MatchRepo.{CompletedSpan, GameParameterRow, MatchClockRow, MatchSeatRow}
 
 class MatchRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
@@ -399,7 +399,7 @@ class MatchRepo(session: Session[IO]) {
                  ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
                  -- Where anyone may watch, for a match created public: the engine issues one only
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
@@ -425,20 +425,21 @@ class MatchRepo(session: Session[IO]) {
           ORDER BY p.due ASC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
-    /* Over, which a cancelled match is: it will never be played again and never gain a result, so
-     * leaving it among the active ones would make cancel do nothing a player could see. It is
-     * listed here instead, flagged, so that calling a match off does not erase it from the
-     * creator's own history.
+    /* One window of the player's finished matches: the seats they finished with from `from`, up to
+     * but not including `until` -- or with no end, for the most recent window -- by the seat's own
+     * `completed_at` (V41), and in one game where `game` names one. Served by the index on
+     * participant(player_id, completed_at).
      *
-     * Most recently finished first — a history read from the top. A cancelled match has no
-     * completion time at all, so NULLS LAST puts those after the played-out ones rather than
-     * ahead of everything, and `start` orders them among themselves. */
+     * Not a cancelled match: one called off was never finished, and is not listed as though it had
+     * been. Its seats are retired, so it is not among the running matches either.
+     *
+     * Most recently finished first -- a history read from the top. */
     private val selectOverForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed, m.cancelled,
                  ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
                  -- Where anyone may watch, for a match created public: the engine issues one only
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
@@ -452,8 +453,10 @@ class MatchRepo(session: Session[IO]) {
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
-          WHERE p.player_id = $playerId AND (m.completed IS NOT NULL OR m.cancelled)
-          ORDER BY m.completed DESC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
+          WHERE p.player_id = $playerId AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
+            AND p.completed_at >= $instant AND p.completed_at < COALESCE(${instant.opt}, 'infinity')
+            AND NOT m.cancelled
+          ORDER BY p.completed_at DESC, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
     /* The same two lists, for a player who is not the caller: only the matches marked public.
@@ -478,7 +481,7 @@ class MatchRepo(session: Session[IO]) {
                  ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
                  -- Where anyone may watch, for a match created public: the engine issues one only
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
@@ -497,12 +500,13 @@ class MatchRepo(session: Session[IO]) {
           -- finished with it, and it belongs among what they have played rather than among what they
           -- are playing.
           --
-          -- Nothing about the match is consulted, so a seat is in exactly one of these two lists and
-          -- the flag alone decides which. That puts the weight on `participant.completed` being kept
-          -- true: a match ending retires its seats through the engine's status (`applyEngineStatus`)
-          -- and a cancel retires them outright (V15), which is what makes the flag the whole answer.
-          -- Supported by the index on participant(player_id, completed) -- V19.
-          WHERE p.player_id = $playerId AND m.public AND NOT p.completed
+          -- Nothing about the match is consulted, so a seat is in at most one of these two lists and
+          -- `completed_at` alone decides which. That puts the weight on it being kept: a match ending
+          -- retires its seats through the engine's status (`applyEngineStatus`) and a cancel retires
+          -- them outright (V15), which is what makes it the whole answer -- and keeps a cancelled match
+          -- out of this list, as the next one leaves it out on purpose.
+          -- Supported by the index on participant(player_id, completed_at) -- V41.
+          WHERE p.player_id = $playerId AND m.public AND p.completed_at IS NULL
           -- Not by the caller's deadline, which is nothing to a reader who is not in the match:
           -- most recently started first, which is the order a stranger reads a list of games in.
           ORDER BY m.start DESC, m.match_id, seat.participant_id"""
@@ -513,7 +517,7 @@ class MatchRepo(session: Session[IO]) {
                  ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
                  -- Where anyone may watch, for a match created public: the engine issues one only
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
@@ -527,9 +531,12 @@ class MatchRepo(session: Session[IO]) {
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
-          -- The other half of that: their seat is done, whatever the match is doing.
-          WHERE p.player_id = $playerId AND m.public AND p.completed
-          ORDER BY m.completed DESC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
+          -- The other half of that: their seat is done, whatever the match is doing -- in one window
+          -- of time, as the caller's own list above, and never a match called off.
+          WHERE p.player_id = $playerId AND m.public AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
+            AND p.completed_at >= $instant AND p.completed_at < COALESCE(${instant.opt}, 'infinity')
+            AND NOT m.cancelled
+          ORDER BY p.completed_at DESC, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
     private val selectDueForPlayer =
@@ -537,7 +544,7 @@ class MatchRepo(session: Session[IO]) {
                  ch.challenger = p.player_id, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
-                 seat_player.nickname, seat.pending, seat.completed, seat.due,
+                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
                  -- Where anyone may watch, for a match created public: the engine issues one only
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
@@ -555,24 +562,80 @@ class MatchRepo(session: Session[IO]) {
           ORDER BY p.due ASC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
 
-    /** Every match the player is in, either still running (`over = false`) or over — where over means completed or
-      * cancelled, one row per seat.
-      *
-      * Two queries rather than one parameterized by `over`, because the two lists are read for different reasons and
-      * are ordered differently: what is urgent first, or what finished most recently first.
-      */
-    def listForPlayer(playerId: PlayerId, over: Boolean): IO[List[MatchSeatRow]] =
-        session.execute(if (over) selectOverForPlayer else selectActiveForPlayer)(playerId).map(_.map(toSeatRow))
+    /** Every match the player is in that is still running, most urgent first, one row per seat. */
+    def listActiveForPlayer(playerId: PlayerId): IO[List[MatchSeatRow]] =
+        session.execute(selectActiveForPlayer)(playerId).map(_.map(toSeatRow))
 
-    /** The public matches one player is in, still running or over, one row per seat.
-      *
-      * For somebody else's page: `listForPlayer` above answers about the caller and shows everything, this one answers
-      * about anybody and shows only what that player marked public.
+    /** One window of the matches the player has finished, most recent first, one row per seat: see [[CompletedSpan]].
       */
-    def listPublicForPlayer(playerId: PlayerId, over: Boolean): IO[List[MatchSeatRow]] =
+    def listCompletedForPlayer(playerId: PlayerId, span: CompletedSpan): IO[List[MatchSeatRow]] =
         session
-            .execute(if (over) selectPublicOverForPlayer else selectPublicActiveForPlayer)(playerId)
+            .execute(selectOverForPlayer)((playerId, span.gameId, span.from, span.until))
             .map(_.map(toSeatRow))
+
+    /** The public matches one player is in that are still running, one row per seat.
+      *
+      * For somebody else's page: the lists above answer about the caller and show everything, this one and the next
+      * answer about anybody and show only what that player marked public.
+      */
+    def listPublicActiveForPlayer(playerId: PlayerId): IO[List[MatchSeatRow]] =
+        session.execute(selectPublicActiveForPlayer)(playerId).map(_.map(toSeatRow))
+
+    /** One window of the public matches the player has finished, most recent first, one row per seat. */
+    def listPublicCompletedForPlayer(playerId: PlayerId, span: CompletedSpan): IO[List[MatchSeatRow]] =
+        session
+            .execute(selectPublicOverForPlayer)((playerId, span.gameId, span.from, span.until))
+            .map(_.map(toSeatRow))
+
+    /* Whether anything the same list could show was finished before a window began: what decides
+     * whether there is an older window to go to. The same rules as the two lists -- the player's
+     * seats, the one game where there is one, never a cancelled match, and only public ones for
+     * somebody else's page -- and the same reason for writing the two out rather than flagging one. */
+    private val selectCompletedBefore: Query[(PlayerId, Option[GameId], Instant), Boolean] =
+        sql"""SELECT EXISTS (
+            SELECT 1 FROM participant p
+            JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+            WHERE p.player_id = $playerId AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
+              AND p.completed_at < $instant AND NOT m.cancelled
+          )""".query(bool)
+
+    private val selectPublicCompletedBefore: Query[(PlayerId, Option[GameId], Instant), Boolean] =
+        sql"""SELECT EXISTS (
+            SELECT 1 FROM participant p
+            JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+            WHERE p.player_id = $playerId AND m.public AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
+              AND p.completed_at < $instant AND NOT m.cancelled
+          )""".query(bool)
+
+    /** Whether the player finished anything before `before`, in the one game where there is one, that their own
+      * completed list would show.
+      */
+    def hasCompletedBefore(playerId: PlayerId, gameId: Option[GameId], before: Instant): IO[Boolean] =
+        session.unique(selectCompletedBefore)((playerId, gameId, before))
+
+    /** The same, for the public list on the player's page. */
+    def hasPublicCompletedBefore(playerId: PlayerId, gameId: Option[GameId], before: Instant): IO[Boolean] =
+        session.unique(selectPublicCompletedBefore)((playerId, gameId, before))
+
+    /* How many public matches the player has finished in each game -- what their page says of each
+     * game before it is opened. Counted rather than listed, so a page of every game does not fetch
+     * every match. */
+    private val selectPublicCompletedCounts: Query[PlayerId, (GameId, Long)] =
+        sql"""SELECT p.game_id, count(*)
+          FROM participant p
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          WHERE p.player_id = $playerId AND m.public AND p.completed_at IS NOT NULL AND NOT m.cancelled
+          GROUP BY p.game_id
+          ORDER BY p.game_id""".query(gameId *: int8)
+
+    /** How many public matches the player has finished, game by game; a game with none is absent. */
+    def publicCompletedCounts(playerId: PlayerId): IO[List[CompletedCount]] =
+        session.execute(selectPublicCompletedCounts)(playerId).map(_.map(CompletedCount.apply))
+
+    /** The database's clock, which a first window is measured back from, so that the windows and the completion times
+      * they hold are read off one clock.
+      */
+    def now: IO[Instant] = session.unique(sql"SELECT now()".query(instant))
 
     /** The running matches in which it is this player's turn, one row per seat. */
     def listDueForPlayer(playerId: PlayerId): IO[List[MatchSeatRow]] =
@@ -741,6 +804,11 @@ object MatchRepo {
         defaultValue: Option[String],
         values: List[String]
     )
+
+    /** The stretch of time one window of a completed list covers: finished from `from`, up to but not including
+      * `until`, or with no end; and in one game where `gameId` names one.
+      */
+    case class CompletedSpan(from: Instant, until: Option[Instant], gameId: Option[GameId])
 
     /** What one seat has left of a chess-clock budget. */
     case class MatchClockRow(

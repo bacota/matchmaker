@@ -328,7 +328,7 @@ class ArchiveServiceSpec extends FunSuite {
 
     test("a player's finished list marks an archived match's links, and drops an expired one's") {
         val kept = run(fixture(isPublic = true).flatMap(archived))
-        val listed = run(services.matches.completed(kept.player.externalId))
+        val listed = run(services.matches.completed(kept.player.externalId).map(_.matches.toList))
         assertEquals(
           listed.map(_.publicUrl),
           List(Some("https://engine.example.com/matches/m/board?view=1&archived=1"))
@@ -338,7 +338,7 @@ class ArchiveServiceSpec extends FunSuite {
         val lost = run(fixture(isPublic = true).flatMap(archived))
         run(age(lost, 31))
         store.delete(ArchiveBucket.Friendly, run(row(lost)).flatMap(_.key).get)
-        val after = run(services.matches.completed(lost.player.externalId))
+        val after = run(services.matches.completed(lost.player.externalId).map(_.matches.toList))
         assertEquals(after.map(s => (s.archiveExpired, s.publicUrl)), List((true, None)))
         // Recorded, so the next list answers from the database without asking the store.
         assert(run(row(lost)).flatMap(_.expiredAt).isDefined)
@@ -402,9 +402,9 @@ class ArchiveServiceSpec extends FunSuite {
             run(age(g, 31))
             store.delete(ArchiveBucket.Friendly, run(row(g)).flatMap(_.key).get)
         }
-        val first = run(services.matches.completed(f.player.externalId))
+        val first = run(services.matches.completed(f.player.externalId).map(_.matches.toList))
         assertEquals(first.count(_.archiveExpired), ArchiveService.ChecksPerRequest)
-        val second = run(services.matches.completed(f.player.externalId))
+        val second = run(services.matches.completed(f.player.externalId).map(_.matches.toList))
         assertEquals(second.count(_.archiveExpired), all.size)
     }
 

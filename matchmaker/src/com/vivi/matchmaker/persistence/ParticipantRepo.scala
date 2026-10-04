@@ -35,9 +35,12 @@ class ParticipantRepo(session: Session[IO]) {
      * the chain -- so each value is bound twice. */
     private val insertParticipant
         : Query[(GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId), ParticipantId] =
-        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed, due, game_role_id,
+        // `completed_at` (V41) is the database's now() for a seat created already finished, as
+        // `updateParticipant` stamps one below; Scala says only whether it is.
+        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed_at, due, game_role_id,
               notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended)
-          SELECT $gameId, $matchId, $gameType, $playerId, $bool, $bool, ${instant.opt}, $gameRoleId,
+          SELECT $gameId, $matchId, $gameType, $playerId, $bool, CASE WHEN $bool THEN now() END, ${instant.opt},
+                 $gameRoleId,
                  COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
                  COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
                  COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
@@ -64,7 +67,7 @@ class ParticipantRepo(session: Session[IO]) {
       (GameId, ParticipantId),
       (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])
     ] =
-        sql"""SELECT p.game_type, p.match_id, p.player_id, p.pending, p.completed, p.due, p.game_role_id,
+        sql"""SELECT p.game_type, p.match_id, p.player_id, p.pending, p.completed_at IS NOT NULL, p.due, p.game_role_id,
                  cp.character_id
           FROM participant p
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
@@ -77,8 +80,8 @@ class ParticipantRepo(session: Session[IO]) {
       (GameId, MatchId),
       (ParticipantId, GameType, PlayerId, String, Boolean, Boolean, Option[Instant], GameRoleId, String, Option[Long])
     ] =
-        sql"""SELECT p.participant_id, p.game_type, p.player_id, pl.external_id, p.pending, p.completed,
-                 p.due, p.game_role_id, r.name, cp.character_id
+        sql"""SELECT p.participant_id, p.game_type, p.player_id, pl.external_id, p.pending,
+                 p.completed_at IS NOT NULL, p.due, p.game_role_id, r.name, cp.character_id
           FROM participant p
           JOIN player pl ON pl.player_id = p.player_id
           JOIN game_role r ON r.game_id = p.game_id AND r.game_role_id = p.game_role_id
@@ -96,19 +99,19 @@ class ParticipantRepo(session: Session[IO]) {
      * and the API runs in lambdas whose clocks are not the database's and need not agree with each
      * other — a player's turn must not end early or late because of which instance they reached.
      *
-     * `pending AND NOT completed` is what "it is still their turn" means; `due` is only set while
+     * `pending` on a seat not yet completed is what "it is still their turn" means; `due` is only set while
      * that is true and the match has a time limit, so a row with a past `due` is exactly a run-out
      * turn. */
     private val selectOverdueForMatch: Query[
       (GameId, MatchId),
       (ParticipantId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])
     ] =
-        sql"""SELECT p.participant_id, p.game_type, p.player_id, p.pending, p.completed,
+        sql"""SELECT p.participant_id, p.game_type, p.player_id, p.pending, p.completed_at IS NOT NULL,
                  p.due, p.game_role_id, cp.character_id
           FROM participant p
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           WHERE p.game_id = $gameId AND p.match_id = $matchId
-            AND p.pending AND NOT p.completed AND p.due < now()
+            AND p.pending AND p.completed_at IS NULL AND p.due < now()
           ORDER BY p.participant_id"""
             .query(participantId *: gameType *: playerId *: bool *: bool *: instant.opt *: gameRoleId *: int8.opt)
 
@@ -123,7 +126,11 @@ class ParticipantRepo(session: Session[IO]) {
 
     private val updateParticipant
         : Command[(PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, GameId, ParticipantId)] =
-        sql"""UPDATE participant SET player_id = $playerId, pending = $bool, completed = $bool,
+        // A seat finished keeps the time it was first finished at (V41): completing is sticky, and a
+        // later write to a finished seat -- a re-stamp of its settings, a repeated callback -- is not
+        // a second ending. One not finished has none.
+        sql"""UPDATE participant SET player_id = $playerId, pending = $bool,
+          completed_at = CASE WHEN $bool THEN COALESCE(completed_at, now()) END,
           due = ${instant.opt}, game_role_id = $gameRoleId
           WHERE game_id = $gameId AND participant_id = $participantId""".command
 
@@ -183,13 +190,13 @@ class ParticipantRepo(session: Session[IO]) {
      * waiting on anybody, and no clock is running. One statement rather than a read and a write per
      * seat, since there is nothing to decide per seat.
      *
-     * `NOT completed` keeps a repeat harmless and keeps the row count honest: the flag is sticky
+     * `completed_at IS NULL` keeps a repeat harmless and keeps the row count honest: the flag is sticky
      * everywhere it is written, and a seat already retired has nothing to retire.
      *
      * update_date is left to `trg_participant_update_date`, as in `updateParticipant` above. */
     private val completeParticipantsForMatch: Command[(GameId, MatchId)] =
-        sql"""UPDATE participant SET pending = false, completed = true, due = NULL
-          WHERE game_id = $gameId AND match_id = $matchId AND NOT completed""".command
+        sql"""UPDATE participant SET pending = false, completed_at = now(), due = NULL
+          WHERE game_id = $gameId AND match_id = $matchId AND completed_at IS NULL""".command
 
     /** Retires every seat in a match: nobody's turn, no deadline, finished.
       *
