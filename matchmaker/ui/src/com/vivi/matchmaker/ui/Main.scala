@@ -1049,17 +1049,26 @@ object Views {
         /* Try again, for a list whose first window failed to load. It stays where it is while the
          * retry is out -- so the focus on it is not dropped -- and refuses a second press rather than
          * being disabled, which would drop the focus just the same. The status line says what is
-         * happening; once there is a window, the button gives way to it and the focus goes to that
-         * line, which is then saying which window it is. */
+         * happening; once there is a window, the button gives way to it.
+         *
+         * The focus follows to the status line, which is then saying which window it is -- but only if
+         * the button still had it when it went. A reader who moved on while the retry was out is left
+         * where they went, and hears the result from the live line. Whether it had it is noted as the
+         * button is unmounted, which Laminar does before taking it out of the page: by the time the
+         * retry's answer is handled it is gone, and the focus with it. */
         val retrying = Var(false)
         var statusLine: Option[dom.html.Element] = None
+        var retryHadFocus = false
 
         def retry(): Unit =
             if (!Store.completedLoading.now().contains(list)) {
                 retrying.set(true)
+                retryHadFocus = false
                 Store.showCompleted(list).onComplete { _ =>
                     retrying.set(false)
-                    if (Store.completedView.now().exists(_.list == list)) statusLine.foreach(_.focus())
+                    if (retryHadFocus && Store.completedView.now().exists(_.list == list))
+                        statusLine.foreach(_.focus())
+                    retryHadFocus = false
                 }
             }
 
@@ -1072,7 +1081,8 @@ object Views {
               aria.disabled <-- busy,
               child <-- busy.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
               "Try again",
-              onClick --> (_ => retry())
+              onClick --> (_ => retry()),
+              onUnmountCallback(button => retryHadFocus = dom.document.activeElement == button.ref)
             )
         val showRetry = view
             .combineWith(failed, retrying.signal)
