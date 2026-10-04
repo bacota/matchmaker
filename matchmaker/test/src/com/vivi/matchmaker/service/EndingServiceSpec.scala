@@ -9,7 +9,9 @@ import munit.FunSuite
 import com.vivi.matchmaker.{QuietTests, TestMigration}
 import com.vivi.matchmaker.archive.{ArchiveStore, LocalArchiveStore}
 import com.vivi.matchmaker.engine.{CreateGameRequest, CreateGameResponse, GameEngineClient, GameStatusResponse}
+import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.persistence.TextCodec.given
 import com.vivi.matchmaker.persistence.{ArchiveRepo, ChallengeRepo, GameRepo, MatchRepo, TestSession}
 
 /** Settling a match's end, as the listener its ending is queued to does: a completed match not yet archived is prompted
@@ -184,5 +186,31 @@ class EndingServiceSpec extends FunSuite with QuietTests {
         assertEquals(run(endingOf(engine).settle(game.gameId, matchId)), Settlement.Settled)
         assertEquals(run(endingOf(engine).settle(game.gameId, MatchId("no-such-match"))), Settlement.Settled)
         assertEquals((engine.asked, engine.cancelled), (Nil, Nil))
+    }
+
+    test("an ending settled in this process waits for the connection its caller holds, rather than deadlocking") {
+        // One connection, which the results callback holds while it says the match has ended. Settling it there and
+        // then would wait for that connection forever.
+        val pool = TestServices.poolOf(1)
+        val engine = Engine(archiveOnStatus = false)
+        val ending = EndingService(pool, engine)
+        @volatile var settled = List.empty[Settlement]
+        val services = Services.fromPool[String](
+          pool,
+          engine,
+          archiveStore = store,
+          matchEndings =
+              Some(MatchEndings.inline((gameId, matchId) => ending.settle(gameId, matchId).map(s => settled :+= s)))
+        )
+        val (game, matchId) = run(matchOf(services, None))
+
+        run(services.engine.recordResults(game.gameId, matchId, Nil, game.externalId))
+        assert(
+          run(TestSession.resource.use(session => new MatchRepo(session).read(game.gameId, matchId)))
+              .exists(_.completed)
+        )
+        // And it is settled once the connection is given back: just finished, so owed its archive.
+        run(IO.sleep(50.millis).iterateUntil(_ => settled.nonEmpty))
+        assert(settled.head.isInstanceOf[Settlement.Owed], settled)
     }
 }

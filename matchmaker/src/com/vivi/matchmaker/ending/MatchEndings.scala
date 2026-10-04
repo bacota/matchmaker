@@ -62,15 +62,24 @@ object MatchEndings {
     /** Says nothing to anybody: for a service built where no ending is ever to be settled. */
     val disabled: MatchEndings = (_, _) => IO.unit
 
-    /** Settles the ending at once, in the request that ended the match, rather than queueing it: for an environment
-      * with no queue — the local server and the tests. Once: nothing retries what is left owed, which is what the queue
-      * is for. Unable to fail the request, like the queue.
+    /** Settles the ending in this process rather than queueing it: for an environment with no queue — the local server
+      * and the tests. Once: nothing retries what is left owed, which is what the queue is for. Unable to fail the
+      * request, like the queue.
+      *
+      * On a fiber of its own, which the request does not wait for, as it does not wait for the queue's listener. Not
+      * merely for speed: the ending is said by a caller still holding its session — `GameEngineService` says it from
+      * inside one, and an automatic start from inside `ChallengeService`'s — and settling borrows a connection of its
+      * own. Run in the request, it would wait for a connection while holding one, which with a pool of one is a
+      * deadlock and with more is a way to exhaust it. On its own fiber it simply waits until one is given back.
       */
     def inline(settle: (GameId, MatchId) => IO[Unit]): MatchEndings =
         (gameId, matchId) =>
-            settle(gameId, matchId).handleErrorWith(e =>
-                IO.blocking(System.err.println(s"settling the end of match ${matchId.value} failed: $e"))
-            )
+            settle(gameId, matchId)
+                .handleErrorWith(e =>
+                    IO.blocking(System.err.println(s"settling the end of match ${matchId.value} failed: $e"))
+                )
+                .start
+                .void
 
     /** The queue named by `MATCH_ENDED_QUEUE_URL`, or `inline` when there is none. */
     def fromEnvironment(
