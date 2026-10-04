@@ -116,7 +116,6 @@ object Store {
         nicknames.set(Map.empty)
         playerResults.set(None)
         publicActive.set(Seq.empty)
-        publicCompletedCounts.set(Map.empty)
         publicMatchesLoading.set(false)
         // Dropped with the rest: they are one player's answers, and the next player to sign in
         // must not be shown them, let alone save them back.
@@ -421,11 +420,6 @@ object Store {
       */
     val publicActive: Var[Seq[MatchSummary]] = Var(Seq.empty)
 
-    /** How many public matches the player whose page is open has finished in each game: what each game's row says
-      * before it is opened, and its list is fetched.
-      */
-    val publicCompletedCounts: Var[Map[GameId, Long]] = Var(Map.empty)
-
     /** Whether a fetch of somebody's public matches is in flight, for the sections to say "Loading…" on.
       *
       * A flag rather than reading emptiness as "still coming", which is what this replaced: a player with no public
@@ -476,11 +470,11 @@ object Store {
             }
     }
 
-    /** Both of a player's public lists. Used when their page is opened and by that page's refresh button.
+    /** A player's public running matches, and the window of finished ones for the game opened on their page if one is.
+      * Used when their page is opened and by that page's refresh button.
       *
-      * Two requests, one question: they are the two halves of one page, so they share a stamp rather than taking one
-      * each, and the page stops saying it is loading when both have settled. Each commits only if that stamp is still
-      * the one the page is waiting for — see the note above [[Fetch.PublicMatches]] for the two races that guards.
+      * The running list commits only if its stamp is still the one the page is waiting for — see the note above
+      * [[Fetch.PublicMatches]] for the two races that guards.
       */
     def reloadPublicMatches(playerId: PlayerId): Future[Unit] = {
         val lists = Seq(Fetch.PublicMatches)
@@ -492,17 +486,14 @@ object Store {
         val stamp = ask(lists)
         gated(lists) { () =>
             val running = reloadAs(ApiClient.publicMatches(playerId), stamp, lists)(publicActive.set)
-            val over = reloadAs(ApiClient.publicCompletedCounts(playerId), stamp, lists)(counts =>
-                publicCompletedCounts.set(counts.map(c => c.gameId -> c.count).toMap)
-            )
             // And the game opened on the page, if one is: its window is a list of its own.
             expandedPublicGame.now().foreach(game => showCompleted(CompletedList.Public(playerId, game)))
 
-            // However they settled: `reloadAs` reports a failure and succeeds, so this runs on either
+            // However it settled: `reloadAs` reports a failure and succeeds, so this runs on either
             // outcome, which is what stops a failed fetch from leaving the page loading for ever. Guarded
-            // like the two commits are, and by the same stamp: a newer fetch has already set the flag for
+            // like the commit is, and by the same stamp: a newer fetch has already set the flag for
             // itself, and this one clearing it would say that fetch had finished.
-            running.zip(over).map(_ => if (newest(stamp, lists)) publicMatchesLoading.set(false))
+            running.map(_ => if (newest(stamp, lists)) publicMatchesLoading.set(false))
         }
     }
 
@@ -605,7 +596,6 @@ object Store {
             case Page.OnePlayer(player) =>
                 expandedPublicGame.set(None)
                 publicActive.set(Seq.empty)
-                publicCompletedCounts.set(Map.empty)
                 reloadPublicMatches(player.playerId)
             case _ => ()
         }
@@ -967,9 +957,10 @@ object Store {
 
     /** `reload`, against a stamp already taken rather than one of its own.
       *
-      * For the caller whose one question takes two requests: stamping each separately would have the second supersede
-      * the first, and the page would commit half of what it asked for. One stamp shared between them makes the pair a
-      * single question, which is what it is. `reloadPublicMatches` is the case.
+      * For a caller that must stamp at the moment of asking rather than when the request is let go —
+      * `reloadPublicMatches`, whose answer for the player shown before must stop being the newest the moment another
+      * player is asked for. And for one whose question takes two requests: stamping each separately would have the
+      * second supersede the first, and one stamp shared between them makes the pair the single question it is.
       */
     private def reloadAs[A](action: Future[A], stamp: Int, fetches: Seq[Fetch])(onSuccess: A => Unit): Future[Unit] = {
         val signIn = currentSignIn

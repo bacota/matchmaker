@@ -331,7 +331,6 @@ locals {
     "GET /players",
     "GET /players/{playerId}/matches",
     "GET /players/{playerId}/matches/completed",
-    "GET /players/{playerId}/matches/completed/counts",
 
     "GET /games",
     "POST /games",

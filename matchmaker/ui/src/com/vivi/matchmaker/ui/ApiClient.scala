@@ -80,10 +80,6 @@ object ApiClient {
     def publicCompletedMatches(playerId: PlayerId, query: CompletedQuery): Future[CompletedPage] =
         get[CompletedPage](s"/players/${playerId.value}/matches/completed" + completedQueryString(query))
 
-    /** How many public matches another player has finished in each game. */
-    def publicCompletedCounts(playerId: PlayerId): Future[Seq[CompletedCount]] =
-        get[Seq[CompletedCount]](s"/players/${playerId.value}/matches/completed/counts")
-
     /* The window as the server reads it, each part only when it says something. `asOf` encoded: an
      * instant carries a `:` and may carry a `+`. */
     private def completedQueryString(query: CompletedQuery): String = {
