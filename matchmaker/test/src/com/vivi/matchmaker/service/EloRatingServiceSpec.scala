@@ -2,12 +2,21 @@ package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
 import cats.effect.IO
+import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{ChallengeRepo, GameRepo, MatchRepo, ParticipantRepo, PlayerRepo, TestSession}
+import com.vivi.matchmaker.persistence.{
+    ChallengeRepo,
+    GameRepo,
+    MatchRepo,
+    ParticipantRepo,
+    PlayerRepo,
+    ResultRepo,
+    TestSession
+}
 
 /** Players' Elo ratings in a game (V42): moved by a match that is not friendly as it completes, left alone by one that
   * is, and set outright by an admin of the game.
@@ -163,13 +172,21 @@ class EloRatingServiceSpec extends PropertySuite {
             .list(f.game.gameId, f.first.externalId)
             .map(_.map(r => r.player.playerId -> (r.rating, r.matches)).toMap)
 
-    /** Each seat's V43 columns, by its player: what they began the match rated, and what it did to that. */
+    /** What V43 holds for each seat, by its player: what they began the match rated, from the seat, and what the match
+      * did to that, from its result — none for a seat with no result, or a result with no delta.
+      */
     private def eloSeats(f: Fixture, matchId: MatchId): IO[Map[PlayerId, (Int, Option[Int])]] =
-        TestSession.resource.use(session =>
+        TestSession.resource.use { session =>
+            val results = new ResultRepo(session)
             new ParticipantRepo(session)
                 .eloSeatsForMatch(f.game.gameId, matchId)
-                .map(_.map(row => row.playerId -> (row.eloStart, row.eloDelta)).toMap)
-        )
+                .flatMap(_.traverse { row =>
+                    results
+                        .read(f.game.gameId, row.participantId)
+                        .map(result => row.playerId -> (row.eloStart, result.flatMap(_.eloDelta)))
+                })
+                .map(_.toMap)
+        }
 
     /** The match's result rows as `player` is shown them: each seat's Elo as it began, and the match's change to it. */
     private def resultElo(player: Player, matchId: MatchId): IO[Map[String, (Int, Option[Int])]] =

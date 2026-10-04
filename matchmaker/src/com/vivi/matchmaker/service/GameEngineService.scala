@@ -763,21 +763,31 @@ class GameEngineService[T](
                                           )
                                       )
                                     )
-                                    _ <- results.traverse(r =>
-                                        resultRepo.create(
-                                          Result(gameId, r.participantId, r.rank, r.scores, r.isWinner, r.forfeit)
-                                        )
-                                    )
                                     // In this transaction, under the match's lock: the ratings move exactly
                                     // when the results are recorded, and a repeated callback, finding them
                                     // recorded, does not move them again. A friendly match does not move them.
-                                    _ <- IO.unlessA(existing.friendly)(
-                                      EloRatingService.rate(
-                                        session,
-                                        gameId,
-                                        matchId,
-                                        results.map(r => r.participantId -> r.rank).toMap
-                                      )
+                                    // Before the results, which carry what the match did to each rating.
+                                    deltas <-
+                                        if (existing.friendly) IO.pure(Map.empty[ParticipantId, Int])
+                                        else
+                                            EloRatingService.rate(
+                                              session,
+                                              gameId,
+                                              matchId,
+                                              results.map(r => r.participantId -> r.rank).toMap
+                                            )
+                                    _ <- results.traverse(r =>
+                                        resultRepo.create(
+                                          Result(
+                                            gameId,
+                                            r.participantId,
+                                            r.rank,
+                                            r.scores,
+                                            r.isWinner,
+                                            r.forfeit,
+                                            deltas.get(r.participantId)
+                                          )
+                                        )
                                     )
                                     // Once, under the lock — with the database's clock, not the lambda's. A
                                     // match `applyEngineStatus` completed keeps the time it did so.
@@ -1036,31 +1046,29 @@ class GameEngineService[T](
                                 _ <- participants.traverse((p, _, _) =>
                                     participantRepo.update(withTurn(p, pending = false, due = None, completed = true))
                                 )
+                                ranks = participants
+                                    .map((p, _, _) => p.participantId -> (if (overdue(p.participantId)) 2 else 1))
+                                    .toMap
+                                // A forfeit is a result like any other to a rating: the player who ran out
+                                // of time lost. Rated as the engine's results are, in this transaction, and
+                                // before the results that carry what it did to each rating.
+                                deltas <-
+                                    if (locked.friendly) IO.pure(Map.empty[ParticipantId, Int])
+                                    else EloRatingService.rate(session, gameId, matchId, ranks)
                                 _ <- participants.traverse { (p, _, _) =>
                                     val lost = overdue.contains(p.participantId)
                                     resultRepo.create(
                                       Result(
                                         gameId = gameId,
                                         participantId = p.participantId,
-                                        rank = if (lost) 2 else 1,
+                                        rank = ranks(p.participantId),
                                         scores = Map.empty,
                                         isWinner = !lost,
-                                        forfeit = true
+                                        forfeit = true,
+                                        eloDelta = deltas.get(p.participantId)
                                       )
                                     )
                                 }
-                                // A forfeit is a result like any other to a rating: the player who ran out
-                                // of time lost. Rated as the engine's results are, in this transaction.
-                                _ <- IO.unlessA(locked.friendly)(
-                                  EloRatingService.rate(
-                                    session,
-                                    gameId,
-                                    matchId,
-                                    participants
-                                        .map((p, _, _) => p.participantId -> (if (overdue(p.participantId)) 2 else 1))
-                                        .toMap
-                                  )
-                                )
                                 completedAt <- matchRepo.complete(gameId, matchId)
                             } yield (locked.copy(completedAt = Some(completedAt)), true)
                 } yield outcome

@@ -84,25 +84,28 @@ object EloRatingService {
             .readForShare(gameId, players)
             .map(rated => players.map(player => player -> rated.getOrElse(player, EloRating.initial)).toMap)
 
-    /** Rates a match that is not friendly and has just completed: each seat's delta, from the ratings its seats began
-      * it at, recorded on the seat (V43), and each player's rating moved by their seats' deltas. `ranks` is where each
-      * seat with a result finished; a seat with none has nothing to be rated by, and is left without a delta.
+    /** Rates a match that is not friendly and has just completed: works out each seat's delta from the ratings its
+      * seats began it at, moves each player's rating by it, and answers with the deltas by seat, for the caller to
+      * write on the result rows it is about to insert (V43). `ranks` is where each seat with a result finished; a seat
+      * with none has nothing to be rated by, and has no delta.
       *
-      * For the caller's transaction, the one that completes the match: the ratings move exactly when the match becomes
-      * completed, and a retried completion that finds it already so does not call this again. The caller decides that
-      * the match is not friendly, and holds the match's lock, which keeps the two from disagreeing — and keeps its
-      * seats, which only a holder of that lock writes, as they were read here.
+      * For the caller's transaction, the one that records the results: the ratings move exactly when the results are
+      * recorded, and a repeated callback that finds them recorded does not call this again. The caller decides that the
+      * match is not friendly, and holds the match's lock, which keeps the two from disagreeing — and keeps its seats,
+      * which only a holder of that lock writes, as they were read here.
       *
       * The deltas come from `elo_start`, not from the ratings as they stand now: another of a player's matches
-      * finishing while this one was played does not change what this one was played at. A seat made before V43 has no
-      * start, and takes its player's rating now, which is the nearest thing there is. The ratings themselves are locked
-      * FOR UPDATE by the update that moves them, which adds to them, so two matches finishing at once each add their
-      * own delta.
+      * finishing while this one was played does not change what this one was played at. The ratings are locked by the
+      * update that moves them, which adds to them, so two matches finishing at once each add their own delta.
       */
-    def rate(session: skunk.Session[IO], gameId: GameId, matchId: MatchId, ranks: Map[ParticipantId, Int]): IO[Unit] = {
-        val participantRepo = new ParticipantRepo(session)
+    def rate(
+        session: skunk.Session[IO],
+        gameId: GameId,
+        matchId: MatchId,
+        ranks: Map[ParticipantId, Int]
+    ): IO[Map[ParticipantId, Int]] = {
         val ratingRepo = new EloRatingRepo(session)
-        participantRepo.eloSeatsForMatch(gameId, matchId).flatMap { rows =>
+        new ParticipantRepo(session).eloSeatsForMatch(gameId, matchId).flatMap { rows =>
             val ranked = rows.filter(row => ranks.contains(row.participantId))
             /* Checked over every seat, ranked or not, before anything is touched. Accepting, starting and
              * `setFriendly` all refuse a match that is not friendly and has a player in two seats, so
@@ -115,28 +118,23 @@ object EloRatingService {
                     s"match ${matchId.value} of game ${gameId.value} is not friendly but has a player in two seats; " +
                         "it is not rated"
                   )
+                ).as(Map.empty)
+            else {
+                val deltas = EloRating.deltas(
+                  ranked.map(row =>
+                      EloRating.Seat(row.participantId, row.playerId, row.eloStart, ranks(row.participantId))
+                  )
                 )
-            else if (ranked.size < 2) IO.unit
-            else
                 for {
-                    _ <- ratingRepo.ensureRated(gameId, ranked.map(_.playerId))
-                    deltas = EloRating.deltas(ranked.map { row =>
-                        EloRating.Seat(
-                          row.participantId,
-                          row.playerId,
-                          row.eloStart,
-                          ranks(row.participantId)
-                        )
-                    })
-                    // In player order, as `ensureRated` went, which is the order the row locks are taken in. One seat per player, so a seat's delta
-                    // is its player's.
+                    _ <- ratingRepo
+                        .ensureRated(gameId, ranked.filter(row => deltas.contains(row.participantId)).map(_.playerId))
+                    // In player order, as `ensureRated` went, which is the order the row locks are taken in.
+                    // One seat per player, so a seat's delta is its player's.
                     _ <- ranked.sortBy(_.playerId.value).traverse_ { row =>
-                        deltas.get(row.participantId).traverse_ { delta =>
-                            participantRepo.setEloDelta(gameId, row.participantId, delta) *>
-                                ratingRepo.played(gameId, row.playerId, delta)
-                        }
+                        deltas.get(row.participantId).traverse_(ratingRepo.played(gameId, row.playerId, _))
                     }
-                } yield ()
+                } yield deltas
+            }
         }
     }
 }

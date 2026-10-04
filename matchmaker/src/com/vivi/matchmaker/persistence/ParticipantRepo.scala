@@ -251,35 +251,20 @@ class ParticipantRepo(session: Session[IO]) {
                     (participant, externalId, roleName)
             })
 
-    private val updateEloDelta: Command[(Int, GameId, ParticipantId)] =
-        sql"""UPDATE participant SET elo_delta = $int4
-          WHERE game_id = $gameId AND participant_id = $participantId""".command
-
-    private val selectEloSeats: Query[(GameId, MatchId), (ParticipantId, PlayerId, Int, Option[Int])] =
-        sql"""SELECT participant_id, player_id, elo_start, elo_delta FROM participant
+    private val selectEloSeats: Query[(GameId, MatchId), (ParticipantId, PlayerId, Int)] =
+        sql"""SELECT participant_id, player_id, elo_start FROM participant
           WHERE game_id = $gameId AND match_id = $matchId
-          ORDER BY participant_id""".query(participantId *: playerId *: int4 *: int4.opt)
+          ORDER BY participant_id""".query(participantId *: playerId *: int4)
 
-    /** Records what the match did to the seat's player's rating (V43). */
-    def setEloDelta(gameId: GameId, id: ParticipantId, delta: Int): IO[Unit] =
-        session.execute(updateEloDelta)((delta, gameId, id)).void
-
-    /** Every seat in a match as rating sees it: whose it is, and what V43 holds for it. */
+    /** Every seat in a match as rating sees it: whose it is, and what they were rated as it began (V43). */
     def eloSeatsForMatch(gameId: GameId, matchId: MatchId): IO[List[ParticipantRepo.EloSeatRow]] =
         session
             .execute(selectEloSeats)((gameId, matchId))
-            .map(_.map((id, player, start, delta) => ParticipantRepo.EloSeatRow(id, player, start, delta)))
+            .map(_.map((id, player, start) => ParticipantRepo.EloSeatRow(id, player, start)))
 }
 
 object ParticipantRepo {
 
-    /** A seat's player and its V43 columns: what they were rated as the match began, and `eloDelta` once a match that
-      * is not friendly completes with a result for it.
-      */
-    case class EloSeatRow(
-        participantId: ParticipantId,
-        playerId: PlayerId,
-        eloStart: Int,
-        eloDelta: Option[Int]
-    )
+    /** A seat's player, and what they were rated as the match began (V43). */
+    case class EloSeatRow(participantId: ParticipantId, playerId: PlayerId, eloStart: Int)
 }
