@@ -123,6 +123,14 @@ class EloRatingServiceSpec extends PropertySuite {
             .list(f.game.gameId, f.first.externalId)
             .map(_.map(r => r.player.playerId -> (r.rating, r.matches)).toMap)
 
+    /** Each seat's V43 columns, by its player: what they began the match rated, and what it did to that. */
+    private def eloSeats(f: Fixture, matchId: MatchId): IO[Map[PlayerId, (Option[Int], Option[Int])]] =
+        TestSession.resource.use(session =>
+            new ParticipantRepo(session)
+                .eloSeatsForMatch(f.game.gameId, matchId)
+                .map(_.map(row => row.playerId -> (row.eloStart, row.eloDelta)).toMap)
+        )
+
     private def refusal[A](io: IO[A]): IO[Throwable] =
         io.attempt.map(_.swap.getOrElse(fail("expected a refusal, but it was allowed")))
 
@@ -134,9 +142,33 @@ class EloRatingServiceSpec extends PropertySuite {
             // The engine's callback retried: the match is already completed, so nothing moves again.
             _ <- finish(f, matchId, f.first)
             now <- ratings(f)
-        } yield (f, now)
-        val (f, now) = result.timeout(caseTimeout).unsafeRunSync()
+            recorded <- eloSeats(f, matchId)
+        } yield (f, now, recorded)
+        val (f, now, recorded) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(now, Map(f.first.playerId -> (1516, 1), f.second.playerId -> (1484, 1)))
+        assertEquals(
+          recorded,
+          Map(f.first.playerId -> (Some(1500), Some(16)), f.second.playerId -> (Some(1500), Some(-16)))
+        )
+    }
+
+    test("the delta is worked out from the ratings the match began at, and added to the rating as it is now") {
+        val result = for {
+            f <- fixture()
+            matchId <- started(f, friendly = false)
+            // Changed while the match is played. The match was begun at 1500 apiece, and is rated as
+            // such; the change stands, and the delta is added to it.
+            _ <- services.ratings.set(f.game.gameId, f.first.playerId, 1700, f.host.externalId)
+            _ <- finish(f, matchId, f.first)
+            now <- ratings(f)
+            recorded <- eloSeats(f, matchId)
+        } yield (f, now, recorded)
+        val (f, now, recorded) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(
+          recorded,
+          Map(f.first.playerId -> (Some(1500), Some(16)), f.second.playerId -> (Some(1500), Some(-16)))
+        )
+        assertEquals(now, Map(f.first.playerId -> (1716, 1), f.second.playerId -> (1484, 1)))
     }
 
     test("a turn that runs out in a match that is not friendly is a loss to the player who ran out") {
@@ -172,20 +204,29 @@ class EloRatingServiceSpec extends PropertySuite {
             }
             refreshed <- services.engine.refresh(f.game.gameId, matchId, f.second.externalId)
             now <- ratings(f)
-        } yield (f, refreshed, now)
-        val (f, refreshed, now) = result.timeout(caseTimeout).unsafeRunSync()
+            recorded <- eloSeats(f, matchId)
+        } yield (f, refreshed, now, recorded)
+        val (f, refreshed, now, recorded) = result.timeout(caseTimeout).unsafeRunSync()
         assert(refreshed.completed, refreshed)
         assertEquals(now, Map(f.first.playerId -> (1484, 1), f.second.playerId -> (1516, 1)))
+        assertEquals(
+          recorded.view.mapValues(_._2).toMap,
+          Map(f.first.playerId -> Some(-16), f.second.playerId -> Some(16))
+        )
     }
 
-    test("a friendly match moves nobody's rating, and gives nobody one") {
+    test("a friendly match records what its players began it rated, and moves nobody's rating nor gives anybody one") {
         val result = for {
             f <- fixture()
+            _ <- services.ratings.set(f.game.gameId, f.first.playerId, 1600, f.host.externalId)
             matchId <- started(f, friendly = true)
             _ <- finish(f, matchId, f.first)
             now <- ratings(f)
-        } yield now
-        assertEquals(result.timeout(caseTimeout).unsafeRunSync(), Map.empty[PlayerId, (Int, Int)])
+            recorded <- eloSeats(f, matchId)
+        } yield (f, now, recorded)
+        val (f, now, recorded) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(now, Map(f.first.playerId -> (1600, 0)))
+        assertEquals(recorded, Map(f.first.playerId -> (Some(1600), None), f.second.playerId -> (Some(1500), None)))
     }
 
     test("a rating an admin of the game set is where the next rated match moves it from") {

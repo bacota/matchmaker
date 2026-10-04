@@ -23,8 +23,12 @@ class EloRatingRepo(session: Session[IO]) {
         sql"""SELECT rating FROM elo_rating WHERE game_id = $gameId AND player_id = $playerId FOR UPDATE"""
             .query(int4)
 
+    private val selectForShare: Query[(GameId, PlayerId), Int] =
+        sql"""SELECT rating FROM elo_rating WHERE game_id = $gameId AND player_id = $playerId FOR SHARE"""
+            .query(int4)
+
     private val updatePlayed: Command[(Int, GameId, PlayerId)] =
-        sql"""UPDATE elo_rating SET rating = $int4, matches = matches + 1
+        sql"""UPDATE elo_rating SET rating = rating + $int4, matches = matches + 1
           WHERE game_id = $gameId AND player_id = $playerId""".command
 
     private val upsertSet: Command[(GameId, PlayerId, Int, PlayerId)] =
@@ -64,9 +68,19 @@ class EloRatingRepo(session: Session[IO]) {
             .map(_.toMap)
     }
 
-    /** Records a rated match's effect on one player: their new rating, and one more match behind it. */
-    def played(game: GameId, player: PlayerId, rating: Int): IO[Unit] =
-        session.execute(updatePlayed)((rating, game, player)).void
+    /** Each player's rating in the game, for those who have one, held FOR SHARE until the transaction ends: what a
+      * match's start records as the rating its seats began at. In player order, as [[lockForPlay]] takes its locks, so
+      * that a start and a completion with players in common queue rather than deadlock.
+      */
+    def readForShare(game: GameId, players: Seq[PlayerId]): IO[Map[PlayerId, Int]] =
+        players.distinct
+            .sortBy(_.value)
+            .traverse(player => session.option(selectForShare)((game, player)).map(_.map(player -> _)))
+            .map(_.flatten.toMap)
+
+    /** Records a rated match's effect on one player: their rating moved by `delta`, and one more match behind it. */
+    def played(game: GameId, player: PlayerId, delta: Int): IO[Unit] =
+        session.execute(updatePlayed)((delta, game, player)).void
 
     /** Sets the player's rating outright, on `setBy`'s say, making the row if there is none. How many matches stand
       * behind it is left as it was.

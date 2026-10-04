@@ -247,4 +247,44 @@ class ParticipantRepo(session: Session[IO]) {
                     )
                     (participant, externalId, roleName)
             })
+
+    private val updateEloStart: Command[(Int, GameId, ParticipantId)] =
+        sql"""UPDATE participant SET elo_start = $int4
+          WHERE game_id = $gameId AND participant_id = $participantId""".command
+
+    private val updateEloDelta: Command[(Int, GameId, ParticipantId)] =
+        sql"""UPDATE participant SET elo_delta = $int4
+          WHERE game_id = $gameId AND participant_id = $participantId""".command
+
+    private val selectEloSeats: Query[(GameId, MatchId), (ParticipantId, PlayerId, Option[Int], Option[Int])] =
+        sql"""SELECT participant_id, player_id, elo_start, elo_delta FROM participant
+          WHERE game_id = $gameId AND match_id = $matchId
+          ORDER BY participant_id""".query(participantId *: playerId *: int4.opt *: int4.opt)
+
+    /** Records what the seat's player was rated when the match began (V43). */
+    def setEloStart(gameId: GameId, id: ParticipantId, rating: Int): IO[Unit] =
+        session.execute(updateEloStart)((rating, gameId, id)).void
+
+    /** Records what the match did to the seat's player's rating (V43). */
+    def setEloDelta(gameId: GameId, id: ParticipantId, delta: Int): IO[Unit] =
+        session.execute(updateEloDelta)((delta, gameId, id)).void
+
+    /** Every seat in a match as rating sees it: whose it is, and what V43 holds for it. */
+    def eloSeatsForMatch(gameId: GameId, matchId: MatchId): IO[List[ParticipantRepo.EloSeatRow]] =
+        session
+            .execute(selectEloSeats)((gameId, matchId))
+            .map(_.map((id, player, start, delta) => ParticipantRepo.EloSeatRow(id, player, start, delta)))
+}
+
+object ParticipantRepo {
+
+    /** A seat's player and its V43 columns: `eloStart` null for a seat made before them, `eloDelta` until a match that
+      * is not friendly completes with a result for it.
+      */
+    case class EloSeatRow(
+        participantId: ParticipantId,
+        playerId: PlayerId,
+        eloStart: Option[Int],
+        eloDelta: Option[Int]
+    )
 }

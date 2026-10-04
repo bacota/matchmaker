@@ -2,8 +2,8 @@ package com.vivi.matchmaker.service
 
 import cats.effect.IO
 import cats.syntax.all._
-import com.vivi.matchmaker.model.{EloRating, GameId, Player, PlayerId}
-import com.vivi.matchmaker.persistence.{EloRatingRepo, GameAdminRepo, GameRepo, PlayerRepo, TextCodec}
+import com.vivi.matchmaker.model.{EloRating, GameId, MatchId, Participant, ParticipantId, Player, PlayerId}
+import com.vivi.matchmaker.persistence.{EloRatingRepo, GameAdminRepo, GameRepo, ParticipantRepo, PlayerRepo, TextCodec}
 
 /** Players' Elo ratings in each game (V42): the list anybody may read, and the setting of one that a game's admin may
   * do. What moves them is a match that is not friendly completing, which is [[EloRatingService.rate]], called from
@@ -72,25 +72,71 @@ class EloRatingService[T](sessionPool: SessionPool)(using TextCodec[T]) {
 
 object EloRatingService {
 
-    /** Moves the ratings of everybody seated in a match that has just completed, by where each seat finished.
+    /** Records on each of a match's seats what its player was rated when it began (V43) — the starting rating for a
+      * player who has none yet. For every match, friendly or not: it is a fact about the seat either way.
       *
-      * For the caller's transaction, the one that completes the match: a rating moves exactly when the match it is for
-      * becomes completed, and a retried completion that finds the match already so does not call this again. The caller
-      * decides whether the match is rated at all — that it is not friendly — and holds the match's lock, which is what
-      * keeps the two from disagreeing.
-      *
-      * Each player's rating is read FOR UPDATE and the new one is worked out from what was read under the lock: two of
-      * a player's matches finishing at once both move it, one after the other, rather than the second overwriting the
-      * first. A seat with no result has no rank to be rated by and is left out.
+      * For the start's own transaction, the one that writes the seats. The ratings are read FOR SHARE, which a
+      * contended table read on the way to a write is owed: a match of the same player completing at the same moment
+      * either lands first and is in the number recorded, or waits until this start has committed and is not.
       */
-    def rate(session: skunk.Session[IO], gameId: GameId, seats: Seq[EloRating.Seat]): IO[Unit] =
-        if (seats.map(_.player).distinct.size < 2) IO.unit
-        else {
-            val repo = new EloRatingRepo(session)
-            for {
-                before <- repo.lockForPlay(gameId, seats.map(_.player))
-                after = EloRating.adjusted(seats, before)
-                _ <- after.toList.sortBy(_._1.value).traverse_((player, rating) => repo.played(gameId, player, rating))
-            } yield ()
+    def recordStart(session: skunk.Session[IO], gameId: GameId, seats: Seq[Participant]): IO[Unit] = {
+        val participantRepo = new ParticipantRepo(session)
+        new EloRatingRepo(session).readForShare(gameId, seats.map(_.playerId)).flatMap { ratings =>
+            seats.traverse_(seat =>
+                participantRepo.setEloStart(
+                  gameId,
+                  seat.participantId,
+                  ratings.getOrElse(seat.playerId, EloRating.initial)
+                )
+            )
         }
+    }
+
+    /** Rates a match that is not friendly and has just completed: each seat's delta, from the ratings its seats began
+      * it at, recorded on the seat (V43), and each player's rating moved by their seats' deltas. `ranks` is where each
+      * seat with a result finished; a seat with none has nothing to be rated by, and is left without a delta.
+      *
+      * For the caller's transaction, the one that completes the match: the ratings move exactly when the match becomes
+      * completed, and a retried completion that finds it already so does not call this again. The caller decides that
+      * the match is not friendly, and holds the match's lock, which keeps the two from disagreeing — and keeps its
+      * seats, which only a holder of that lock writes, as they were read here.
+      *
+      * The deltas come from `elo_start`, not from the ratings as they stand now: another of a player's matches
+      * finishing while this one was played does not change what this one was played at. A seat made before V43 has no
+      * start, and takes its player's rating now, which is the nearest thing there is. The ratings themselves are locked
+      * FOR UPDATE and moved by adding to them, so two matches finishing at once each add their own delta.
+      */
+    def rate(session: skunk.Session[IO], gameId: GameId, matchId: MatchId, ranks: Map[ParticipantId, Int]): IO[Unit] = {
+        val participantRepo = new ParticipantRepo(session)
+        val ratingRepo = new EloRatingRepo(session)
+        for {
+            rows <- participantRepo.eloSeatsForMatch(gameId, matchId)
+            ranked = rows.filter(row => ranks.contains(row.participantId))
+            _ <-
+                if (ranked.map(_.playerId).distinct.size < 2) IO.unit
+                else
+                    for {
+                        current <- ratingRepo.lockForPlay(gameId, ranked.map(_.playerId))
+                        deltas = EloRating.deltas(ranked.map { row =>
+                            EloRating.Seat(
+                              row.participantId,
+                              row.playerId,
+                              row.eloStart.getOrElse(current(row.playerId)),
+                              ranks(row.participantId)
+                            )
+                        })
+                        _ <- ranked.traverse_(row =>
+                            deltas
+                                .get(row.participantId)
+                                .traverse_(participantRepo.setEloDelta(gameId, row.participantId, _))
+                        )
+                        byPlayer = ranked.groupMapReduce(_.playerId)(row => deltas.getOrElse(row.participantId, 0))(
+                          _ + _
+                        )
+                        _ <- byPlayer.toList
+                            .sortBy(_._1.value)
+                            .traverse_((player, delta) => ratingRepo.played(gameId, player, delta))
+                    } yield ()
+        } yield ()
+    }
 }

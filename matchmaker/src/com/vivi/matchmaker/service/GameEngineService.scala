@@ -286,11 +286,11 @@ class GameEngineService[T](
                     saved <- matchRepo.create(newMatch)
                     // Under the lock taken above, so the next start of this challenge sees the claim.
                     _ <- challengeRepo.claimForStart(gameId, challengeId, matchId)
-                    participants <- roster.traverse { entry =>
-                        participantRepo
-                            .create(toParticipant(matchId, entry.acceptance))
-                            .flatMap(p => enginePlayer(characterRepo)(p, entry))
-                    }
+                    seats <- roster.traverse(entry => participantRepo.create(toParticipant(matchId, entry.acceptance)))
+                    // What each player is rated as they sit down, which is what the match is rated from
+                    // when it ends -- see `EloRatingService.recordStart`.
+                    _ <- EloRatingService.recordStart(session, gameId, seats)
+                    participants <- seats.zip(roster).traverse((p, entry) => enginePlayer(characterRepo)(p, entry))
                     // The key the engine is called with. Read plainly, like the game itself: it decides
                     // nothing written here, and is only handed to the engine below.
                     apiKey <- new GameApiKeyRepo(session).forGame(gameId)
@@ -752,11 +752,8 @@ class GameEngineService[T](
                                       EloRatingService.rate(
                                         session,
                                         gameId,
-                                        results.flatMap(r =>
-                                            participants
-                                                .find(_._1.participantId == r.participantId)
-                                                .map((p, _, _) => EloRating.Seat(p.playerId, r.rank))
-                                        )
+                                        matchId,
+                                        results.map(r => r.participantId -> r.rank).toMap
                                       )
                                     )
                                     // Guarded by the `existing.completed` check above, under the lock, so this
@@ -1035,9 +1032,10 @@ class GameEngineService[T](
                                   EloRatingService.rate(
                                     session,
                                     gameId,
-                                    participants.map((p, _, _) =>
-                                        EloRating.Seat(p.playerId, if (overdue.contains(p.participantId)) 2 else 1)
-                                    )
+                                    matchId,
+                                    participants
+                                        .map((p, _, _) => p.participantId -> (if (overdue(p.participantId)) 2 else 1))
+                                        .toMap
                                   )
                                 )
                                 completedAt <- matchRepo.complete(gameId, matchId)

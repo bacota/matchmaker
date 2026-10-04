@@ -26,32 +26,31 @@ object EloRating {
     val minimum: Int = 0
     val maximum: Int = 9999
 
-    /** One seat of a finished match, as rating sees it: whose it was, and where it finished. */
-    case class Seat(player: PlayerId, rank: Int)
+    /** One seat of a finished match, as rating sees it: whose it was, what they were rated when it began, and where it
+      * finished.
+      */
+    case class Seat(participant: ParticipantId, player: PlayerId, rating: Int, rank: Int)
 
     /** The chance Elo gives a player rated `mine` of beating one rated `theirs`, a draw counting as half. */
     def expected(mine: Int, theirs: Int): Double = 1.0 / (1.0 + math.pow(10.0, (theirs - mine) / 400.0))
 
-    /** Every player's rating after the match: `ratings` before it, for each player with a seat, moved by how they did.
+    /** What the match did to each seat's rating, by seat, worked out from the ratings the seats began it at.
       *
       * A seat's opponents are the seats of *other* players, so that a player who held two seats does not play
-      * themselves; their change is the sum of their seats'. A match with fewer than two players in it has nobody to
-      * have beaten, and moves nothing.
+      * themselves; their rating moves by the sum of their seats' deltas. Each delta is rounded on its own, so that the
+      * deltas stored are exactly what the ratings moved by. A match with fewer than two players in it has nobody to
+      * have beaten, and has no deltas at all.
       */
-    def adjusted(seats: Seq[Seat], ratings: Map[PlayerId, Int]): Map[PlayerId, Int] =
+    def deltas(seats: Seq[Seat]): Map[ParticipantId, Int] =
         if (seats.map(_.player).distinct.size < 2) Map.empty
-        else {
-            val changes = seats.map { seat =>
+        else
+            seats.map { seat =>
                 val opponents = seats.filter(_.player != seat.player)
                 val surprise = opponents.map { other =>
                     val scored =
                         if (seat.rank < other.rank) 1.0 else if (seat.rank == other.rank) 0.5 else 0.0
-                    scored - expected(ratings(seat.player), ratings(other.player))
+                    scored - expected(seat.rating, other.rating)
                 }.sum
-                seat.player -> k * surprise / opponents.size
-            }
-            changes
-                .groupMapReduce(_._1)(_._2)(_ + _)
-                .map((player, change) => player -> (ratings(player) + math.round(change).toInt))
-        }
+                seat.participant -> math.round(k * surprise / opponents.size).toInt
+            }.toMap
 }
