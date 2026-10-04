@@ -120,8 +120,8 @@ class MatchService(
     ): IO[CompletedPage] =
         for {
             asOf <- query.asOf.fold(repo.now)(IO.pure)
-            until = asOf.minus(query.frame.span.multipliedBy(query.page.toLong))
-            from = until.minus(query.frame.span)
+            until = query.until(asOf)
+            from = query.from(asOf)
             found <- rows(MatchRepo.CompletedSpan(from, until, query.gameId))
             summaries <- summarised(repo, found)
             older <- olderThan(from)

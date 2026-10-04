@@ -133,6 +133,19 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request("GET", "/players/2/matches/completed?gameId=abc")).statusCode, 400)
     }
 
+    // Well formed, but naming a window that cannot be computed or stored: refused, not a 500.
+    test("a completed list's window out of any history's range is a bad request") {
+        // Parses, as Instant.MIN; a day before it is not an instant at all.
+        assertEquals(
+          dispatch(request("GET", "/me/matches/completed?asOf=-1000000000-01-01T00:00:00Z")).statusCode,
+          400
+        )
+        // Ten thousand years back from now.
+        assertEquals(dispatch(request("GET", "/me/matches/completed?frame=year&page=10000")).statusCode, 400)
+        // A moment nobody's history reaches yet.
+        assertEquals(dispatch(request("GET", "/me/matches/completed?asOf=2999-01-01T00:00:00Z")).statusCode, 400)
+    }
+
     test("a non-numeric game id is a bad request") {
         assertEquals(dispatch(request("GET", "/games/abc/challenges")).statusCode, 400)
     }

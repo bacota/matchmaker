@@ -31,7 +31,24 @@ case class CompletedQuery(
     page: Int = 0,
     asOf: Option[Instant] = None,
     gameId: Option[GameId] = None
-)
+) {
+
+    /** Where the window ends: `page` frames before `asOf`. */
+    def until(asOf: Instant): Instant = asOf.minus(frame.span.multipliedBy(page.toLong))
+
+    /** Where the window begins: one frame before it ends. */
+    def from(asOf: Instant): Instant = until(asOf).minus(frame.span)
+
+    /** Whether this is a window anybody's history could hold, measured from `now` where it names no `asOf`: one that
+      * ends no later than a day after now and begins no earlier than 1970. Outside that, the arithmetic is not
+      * guaranteed to give an instant at all, let alone one the database can hold.
+      */
+    def inRange(now: Instant): Boolean =
+        try {
+            val base = asOf.getOrElse(now)
+            !base.isAfter(now.plus(Duration.ofDays(1))) && !from(base).isBefore(Instant.EPOCH)
+        } catch { case _: ArithmeticException | _: java.time.DateTimeException => false }
+}
 
 /** One window of a completed list: the matches finished from `from` up to `until`, most recent first, and never a
   * cancelled one.

@@ -536,9 +536,9 @@ object Router {
     private def withChallengeId(raw: String)(f: ChallengeId => IO[Response]): IO[Response] =
         raw.toLongOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a challenge id")))(id => f(ChallengeId(id)))
 
-    /* The window a completed list is asked for: every parameter optional, and each one that is given
-     * well formed, or the request is refused rather than answered with a window nobody asked for.
-     * `page` is bounded so that `asOf - page * frame` stays an instant Postgres can hold. */
+    /* The window a completed list is asked for: every parameter optional, each one that is given
+     * well formed, and the window they name one that can be computed and stored -- or the request is
+     * refused rather than answered with a window nobody asked for. */
     private def withCompletedQuery(request: Request)(f: CompletedQuery => IO[Response]): IO[Response] = {
         def param[A](name: String)(parse: String => Option[A]): Either[String, Option[A]] =
             request.query.get(name) match {
@@ -550,7 +550,16 @@ object Router {
             page <- param("page")(_.toIntOption.filter(n => n >= 0 && n <= MaxCompletedPage))
             asOf <- param("asOf")(raw => scala.util.Try(java.time.Instant.parse(raw)).toOption)
             game <- param("gameId")(_.toIntOption.map(GameId.apply))
-        } yield CompletedQuery(frame.getOrElse(CompletedFrame.Day), page.getOrElse(0), asOf, game)
+            window = CompletedQuery(frame.getOrElse(CompletedFrame.Day), page.getOrElse(0), asOf, game)
+            // Each part well formed is not enough: `asOf` far in the past or the future, or a page
+            // far enough back, names an instant that cannot be computed or stored, and that is the
+            // request's mistake to be told about rather than a 500.
+            inRange <- Either.cond(
+              window.inRange(java.time.Instant.now()),
+              window,
+              "that window of completed matches is out of range"
+            )
+        } yield inRange
         query.fold(message => IO.pure(Errors.badRequest(message)), f)
     }
 
