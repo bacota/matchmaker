@@ -403,6 +403,20 @@ ul {
   border-left: 2px solid var(--line);
 }
 
+/* An engine's account of how the match ended, in place of the result table: under the row, in
+   the row's own type, indented like the table it stands in for. */
+.result-summary {
+  margin-top: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line);
+}
+
+.result-summary p,
+.result-summary ul,
+.result-summary ol {
+  margin: 0;
+}
+
 .result-rows {
   list-style: none;
   margin: 0;

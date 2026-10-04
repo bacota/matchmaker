@@ -96,6 +96,16 @@ trait Game[M <: MatchLike, S <: SeatLike, T <: TurnLike] {
     /** What the game records about a seat beside its outcome. Matchmaker stores the map without reading it. */
     def scores(m: M, seat: S): Map[String, ujson.Value]
 
+    /** How a finished match came out, in a line of HTML that matchmaker shows players in place of the result table: who
+      * won and how, in the game's own terms. Only meaningful once the match is over, and `None` for a game that has
+      * nothing to say beyond the table.
+      *
+      * Formatting tags only — `strong`, `em` and the like, with no attributes — since matchmaker keeps those and shows
+      * anything else as text. A player's nickname is theirs to choose, so it goes through [[ResultText.name]], which
+      * escapes it.
+      */
+    def summary(m: M): Option[String] = None
+
     /** The turn clock of a live match, and `None` for a match that is not live. */
     def clock(m: M): Option[TurnClock]
 

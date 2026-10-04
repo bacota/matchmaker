@@ -246,6 +246,13 @@ class MatchRepo(session: Session[IO]) {
           RETURNING completed"""
             .query(instant)
 
+    private val updateResultSummary: Command[(String, GameId, MatchId)] =
+        sql"UPDATE match SET result_summary = $text WHERE game_id = $gameId AND match_id = $matchId".command
+
+    /** Records how the match came out, as its engine said it: HTML already cleaned by `SummaryHtml.accept`. */
+    def setResultSummary(gameId: GameId, matchId: MatchId, summary: String): IO[Unit] =
+        session.execute(updateResultSummary)((summary, gameId, matchId)).void
+
     /** Marks a match completed, as of the database's clock, and returns when that was.
       *
       * Overwrites an existing completion time, so callers that mean "complete it if it is not already" must check first
@@ -293,7 +300,7 @@ class MatchRepo(session: Session[IO]) {
     private val seatRow =
         gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: float8.opt *: timeLimitKind *:
             timeLimitUnit *: bool *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt *:
-            text.opt *: bool *: instant.opt *: bool *: settings
+            text.opt *: bool *: instant.opt *: bool *: settings *: text.opt
 
     private def toSeatRow(
         row: (
@@ -321,7 +328,8 @@ class MatchRepo(session: Session[IO]) {
             Boolean,
             Option[Instant],
             Boolean,
-            String
+            String,
+            Option[String]
         )
     ): MatchSeatRow = {
         val (
@@ -349,7 +357,8 @@ class MatchRepo(session: Session[IO]) {
           friendly,
           archivedAt,
           archiveExpired,
-          matchSettings
+          matchSettings,
+          resultSummary
         ) = row
         MatchSeatRow(
           gameId,
@@ -376,7 +385,8 @@ class MatchRepo(session: Session[IO]) {
           friendly,
           archivedAt,
           archiveExpired,
-          matchSettings
+          matchSettings,
+          resultSummary
         )
     }
 
@@ -394,7 +404,8 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings
+                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings,
+                 m.result_summary
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -432,7 +443,8 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings
+                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings,
+                 m.result_summary
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -471,7 +483,8 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings
+                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings,
+                 m.result_summary
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -505,7 +518,8 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings
+                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings,
+                 m.result_summary
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -528,7 +542,8 @@ class MatchRepo(session: Session[IO]) {
                  -- then, so it is null for every private match and is the field a Watch link
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
-                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings
+                 m.public_url, m.friendly, m.archived_at, m.archive_expired_at IS NOT NULL, m.settings,
+                 m.result_summary
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -713,7 +728,9 @@ object MatchRepo {
         archiveExpired: Boolean = false,
         // The match's settings, which hold the challenger's choice for each of the game's
         // parameters (see `ChallengeSettings`); likewise the match's.
-        settings: String = "{}"
+        settings: String = "{}",
+        // How the match came out, in the engine's words (V40); likewise the match's.
+        resultSummary: Option[String] = None
     )
 
     /** One of a game's parameters, with every value it may take: what a match's settings are resolved against. */

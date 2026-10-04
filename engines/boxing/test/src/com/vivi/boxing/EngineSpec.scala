@@ -321,6 +321,11 @@ class EngineSpec extends FunSuite with QuietTests {
         // The scheduled length is the game's `rounds` parameter, which matchmaker lists under the
         // match itself; the result says only how many were fought.
         assert(results.results.forall(!_.scores.contains("scheduledRounds")))
+        // And the line matchmaker shows the finished bout with, by the nicknames it sent.
+        assertEquals(
+          results.summary,
+          Some("<strong>Alice</strong> beat <strong>Bob</strong> on points, 30–27 after 3 rounds.")
+        )
         // The last plan ends the bout, so it names nobody next.
         assertEquals(recorder.moves.last._2.next, Nil)
 
@@ -347,6 +352,10 @@ class EngineSpec extends FunSuite with QuietTests {
         val results = recorder.results.head._2.results
         assertEquals(results.find(_.isWinner).map(_.participantId), Some(11L))
         assert(results.forall(_.scores("method").str == "knockout"))
+        assertEquals(
+          recorder.results.head._2.summary,
+          Some("<strong>Alice</strong> knocked out <strong>Bob</strong> in round 1.")
+        )
         assertEquals(engine.status("m-1").toOption.get.completed, true)
     }
 
@@ -363,6 +372,10 @@ class EngineSpec extends FunSuite with QuietTests {
         val results = recorder.results.head._2.results
         assertEquals(results.map(_.rank), List(1, 1))
         assert(results.forall(r => !r.isWinner && r.scores("outcome").str == "draw"))
+        assertEquals(
+          recorder.results.head._2.summary,
+          Some("<strong>Alice</strong> and <strong>Bob</strong> fought to a draw, 30–30 after 3 rounds.")
+        )
     }
 
     test("knockdowns are scored 10–8 and counted in the results") {

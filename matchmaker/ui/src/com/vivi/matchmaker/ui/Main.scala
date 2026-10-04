@@ -1509,6 +1509,9 @@ object Views {
           summary.completedAt
               .map(when => div(cls := "detail", s"completed ${Format.date(when)}"))
               .getOrElse(emptyNode),
+          // How it came out, where the engine said: a reader of somebody's page has no result table,
+          // and this is the one line that tells them.
+          summary.resultSummary.map(resultSummary).getOrElse(emptyNode),
           // Whose move it is, for a match still being played. Named, as on the caller's own rows,
           // and never "your turn": a turn on this page is somebody else's by construction.
           if (summary.completed || summary.cancelled) emptyNode
@@ -1634,7 +1637,9 @@ object Views {
           // and nothing left for the engine to tell us, so it shows how it ended instead.
           if (summary.completed || summary.cancelled)
               div(
-                resultTable(summary),
+                // The engine's own account of how it ended where it gave one, and the table of
+                // every seat's result where it did not.
+                summary.resultSummary.fold(resultTable(summary))(resultSummary),
                 // A finished match still has a board, and the engine keeps it: this is how a player
                 // goes and looks at how it ended. Fetched the same way "Play" fetches it — the urls
                 // live on the match, not on the summary — and `publicUrl` is the fallback for a match
@@ -1770,6 +1775,18 @@ object Views {
                   }
           }
         )
+    }
+
+    /** How a finished match ended, in its game engine's words: a line of HTML sent with the results.
+      *
+      * Cleaned again here although the server stored it cleaned, so that what reaches `innerHTML` is never only as safe
+      * as the server's copy — see `SummaryHtml`. A `div` rather than a `p`, since a summary may hold a list.
+      */
+    private def resultSummary(html: String): HtmlElement = {
+        val element = dom.document.createElement("div").asInstanceOf[dom.html.Div]
+        element.className = "result-summary"
+        element.innerHTML = SummaryHtml.clean(html)
+        foreignHtmlElement(element)
     }
 
     /** How a finished match ended: every seat, the winner first.

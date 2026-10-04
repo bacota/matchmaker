@@ -689,7 +689,8 @@ class GameEngineService[T](
         matchId: MatchId,
         results: List[ReportedResult],
         callerExternalId: String,
-        turns: Option[List[EngineTurn]] = None
+        turns: Option[List[EngineTurn]] = None,
+        summary: Option[String] = None
     ): IO[Unit] =
         sessionPool.use { session =>
             val gameRepo = new GameRepo[T](session)
@@ -747,6 +748,12 @@ class GameEngineService[T](
                                     // Guarded by the `existing.completed` check above, under the lock, so this
                                     // stamps the match once — with the database's clock, not the lambda's.
                                     _ <- matchRepo.complete(gameId, matchId)
+                                    // Cleaned rather than refused: a summary that is unsafe or too long is the
+                                    // engine's mistake, and the results it came with are still the results. What
+                                    // is left of it is stored; nothing at all, and the table is shown instead.
+                                    _ <- SummaryHtml
+                                        .accept(summary)
+                                        .traverse_(matchRepo.setResultSummary(gameId, matchId, _))
                                 } yield true
                     } yield (existing, ended)
                 }

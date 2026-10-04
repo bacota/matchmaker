@@ -886,6 +886,36 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
+    /* The engine's own line about how the match ended, which the finished match is shown with. It is
+     * HTML from another system, so it is stored as `SummaryHtml` cleaned it -- the formatting kept,
+     * a script turned into text -- and it reaches the player's completed list. */
+    property("a summary sent with the results is stored cleaned, and the completed match carries it") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val services = TestServices.servicesWith(StubEngine())
+                val result = for {
+                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    (fixture, started, mine, theirs) = seated
+                    _ <- services.engine.recordResults(
+                      fixture.game.gameId,
+                      started.matchId,
+                      List(
+                        ReportedResult(mine.participantId, rank = 1, scores = Map.empty, isWinner = true),
+                        ReportedResult(theirs.participantId, rank = 2, scores = Map.empty, isWinner = false)
+                      ),
+                      gameExternalId,
+                      turns = Some(Nil),
+                      summary = Some("<strong>me</strong> won<script>alert(1)</script>")
+                    )
+                    completed <- services.matches.completed(externalId)
+                } yield completed.filter(_.matchId == started.matchId).map(_.resultSummary)
+                assertEquals(
+                  result.timeout(15.seconds).unsafeRunSync(),
+                  List(Some("<strong>me</strong> won&lt;script&gt;alert(1)&lt;/script&gt;"))
+                )
+        }
+    }
+
     property("turns sent with the results are recorded with them, and the engine is not asked") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>

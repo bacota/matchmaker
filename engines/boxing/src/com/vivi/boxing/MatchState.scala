@@ -3,7 +3,7 @@ package com.vivi.boxing
 import scala.util.control.NonFatal
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
-import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
+import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
 
 /** One corner of a bout.
   *
@@ -262,6 +262,28 @@ object Bout extends Game[Bout, Corner, Plan] {
           "knockdowns" -> ujson.Num(m.knockdownsScored(corner.side)),
           "corner" -> ujson.Str(corner.side.toString)
         )
+
+    /** "<strong>alice</strong> knocked out <strong>bob</strong> in round 4." — who won, how, and when or by how much.
+      */
+    override def summary(m: Bout): Option[String] =
+        Option.when(m.isOver) {
+            def who(c: Corner) = ResultText.name(c.nickname, s"${c.side} corner")
+            def rounds(n: Int) = if (n == 1) "1 round" else s"$n rounds"
+            val fought = m.rounds.size
+            (m.winner, m.corners.find(c => !m.winner.contains(c))) match {
+                case (Some(w), Some(l)) if m.ranOut =>
+                    s"${who(w)} won by forfeit: ${who(l)} ran out of time after ${rounds(fought)}."
+                case (Some(w), Some(l)) if m.knockout.isDefined =>
+                    s"${who(w)} knocked out ${who(l)} in round ${m.knockout.map(_.number).getOrElse(fought)}."
+                case (Some(w), Some(l)) =>
+                    s"${who(w)} beat ${who(l)} on points, ${m.points(w.side)}–${m.points(l.side)} after ${rounds(fought)}."
+                case _ if m.ranOut => "Both corners ran out of time. Nobody wins."
+                case _ =>
+                    val names = m.corners.map(who).mkString(" and ")
+                    val each = m.corners.headOption.map(c => m.points(c.side)).getOrElse(0)
+                    s"$names fought to a draw, $each–$each after ${rounds(fought)}."
+            }
+        }
 
     def create(request: Protocol.CreateGameRequest, now: Instant): Either[String, Bout] =
         for {

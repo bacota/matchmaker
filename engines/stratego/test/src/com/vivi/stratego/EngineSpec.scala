@@ -292,6 +292,8 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(byParticipant(22L).rank, 2)
         // Setups are turns too: matchmaker charges their time.
         assertEquals(results.turns.get.map(_.participantId), List(11L, 22L, 11L))
+        // By side: these players were seated without nicknames, as a match from before them was.
+        assertEquals(results.summary, Some("<strong>Red</strong> captured <strong>Blue</strong>'s flag in 1 move."))
 
         assertEquals(f.engine.move("m-1", bob, 61, 51), Left(Refusal.Invalid("this match is already over")))
     }
@@ -326,6 +328,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(results.results.forall(!_.forfeit))
         // The concession is the conceding player's last turn.
         assertEquals(results.turns.get.map(_.participantId), List(11L, 22L, 22L))
+        assertEquals(results.summary, Some("<strong>Blue</strong> surrendered to <strong>Red</strong>."))
 
         assertEquals(f.engine.move("m-1", alice, 30, 40), Left(Refusal.Invalid("this match is already over")))
         assertEquals(f.engine.concede("m-1", alice), Left(Refusal.Invalid("this match is already over")))

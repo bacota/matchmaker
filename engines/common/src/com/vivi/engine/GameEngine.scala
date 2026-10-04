@@ -420,7 +420,8 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
           },
           // Every turn, so that matchmaker records them with the results rather than relying on each
           // move callback having arrived. See `Protocol.MatchResults`.
-          turns = Some(engineTurns(game.turns(m)))
+          turns = Some(engineTurns(game.turns(m))),
+          summary = game.summary(m)
         )
     }
 

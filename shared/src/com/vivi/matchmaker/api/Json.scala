@@ -330,8 +330,16 @@ object Json {
       * record its turns in one transaction. A move callback is best-effort, and a turn whose callback was lost is
       * otherwise found only by asking the engine afterwards — which can fail in turn, and is never asked again once the
       * match is over. Absent from an engine that does not send them; matchmaker then asks.
+      *
+      * `summary` is the engine's one line of HTML saying how the match came out, which the finished match is shown with
+      * in place of its result table. Cleaned before it is stored — see `SummaryHtml` — and absent from an engine that
+      * sends none.
       */
-    case class MatchResults(results: List[ResultEntry], turns: Option[List[ResultTurn]] = None)
+    case class MatchResults(
+        results: List[ResultEntry],
+        turns: Option[List[ResultTurn]] = None,
+        summary: Option[String] = None
+    )
 
     /** One turn, as a status answer reports it: who, when it was taken, and when that player's clock started for it. */
     case class ResultTurn(participantId: ParticipantId, takenAt: Instant, startedAt: Option[Instant] = None)

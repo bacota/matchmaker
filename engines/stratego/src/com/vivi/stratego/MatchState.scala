@@ -2,7 +2,7 @@ package com.vivi.stratego
 
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
-import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
+import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
 
 /** One player's seat in a match.
   *
@@ -268,6 +268,25 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
     def clock(m: StrategoMatch): Option[TurnClock] = m.clock
 
     def withClock(m: StrategoMatch, clock: TurnClock): StrategoMatch = m.copy(clock = Some(clock))
+
+    /** "<strong>alice</strong> captured <strong>bob</strong>'s flag in 87 moves." — who won and how the match ended. */
+    override def summary(m: StrategoMatch): Option[String] =
+        m.ending.map { ending =>
+            def who(side: Side) = ResultText.name(m.seats.find(_.side == side).flatMap(_.nickname), side.toString)
+            def moves(n: Int) = if (n == 1) "1 move" else s"$n moves"
+            (ending, m.winner) match {
+                case (Ending.Forfeit, Some(w))  => s"${who(w)} won by forfeit: ${who(w.other)} ran out of time."
+                case (Ending.Forfeit, None)     => "Both sides ran out of time. Nobody wins."
+                case (Ending.Conceded, Some(w)) => s"${who(w.other)} surrendered to ${who(w)}."
+                case (Ending.FlagTaken, Some(w)) =>
+                    s"${who(w)} captured ${who(w.other)}'s flag in ${moves(m.moves.size)}."
+                case (Ending.NoMoves, Some(w)) => s"${who(w.other)} had no piece left to move. ${who(w)} wins."
+                case (Ending.NoMoves, None)    => "Neither side could move. A draw."
+                case (Ending.MoveCap, _)       => s"A draw: the limit of ${moves(m.maxMoves)} was reached."
+                case (_, Some(w))              => s"${who(w)} wins."
+                case (_, None)                 => "A draw."
+            }
+        }
 
     def scores(m: StrategoMatch, seat: Seat): Map[String, ujson.Value] =
         Map(

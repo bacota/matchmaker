@@ -187,7 +187,8 @@ class MatchService(
                   publicUrl = first.publicUrl,
                   friendly = first.friendly,
                   archivedAt = first.archivedAt,
-                  archiveExpired = first.archiveExpired
+                  archiveExpired = first.archiveExpired,
+                  resultSummary = first.resultSummary
                 )
             }
 

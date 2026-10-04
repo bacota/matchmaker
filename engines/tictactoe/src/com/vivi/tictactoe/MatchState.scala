@@ -2,7 +2,7 @@ package com.vivi.tictactoe
 
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
-import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
+import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
 
 /** One player's seat in a match.
   *
@@ -10,7 +10,9 @@ import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
   * how the engine recognises them. `participantId` is matchmaker's key for the seat and is what every callback quotes
   * back.
   */
-case class Seat(mark: Mark, cognitoId: String, participantId: Long) extends SeatLike
+/* `nickname` is what the player is shown as, as matchmaker named them when the match was created; defaulted, so a match
+ * stored before it was kept reads as it was written. */
+case class Seat(mark: Mark, cognitoId: String, participantId: Long, nickname: Option[String] = None) extends SeatLike
 
 /** One move that was made: who made it, when, and when their clock started for it.
   *
@@ -99,7 +101,7 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
             val marks =
                 if (requested.flatten.distinct.sizeIs == 2) requested.map(_.get)
                 else List(Mark.X, Mark.O)
-            Right(players.zip(marks).map((p, mark) => Seat(mark, p.cognitoId, p.participantId)))
+            Right(players.zip(marks).map((p, mark) => Seat(mark, p.cognitoId, p.participantId, p.nickname)))
         }
 
     def seats(m: TicTacToeMatch): List[Seat] = m.seats
@@ -130,6 +132,23 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
     def withClock(m: TicTacToeMatch, clock: TurnClock): TicTacToeMatch = m.copy(clock = Some(clock))
 
     /** `moves` is how many marks the seat placed. */
+    /** "<strong>alice</strong> (X) got three in a row against <strong>bob</strong> (O)." */
+    override def summary(m: TicTacToeMatch): Option[String] =
+        Option.when(m.isOver) {
+            // By nickname with the mark beside it, or by the mark alone for a match from before nicknames.
+            def who(mark: Mark) =
+                m.seats.find(_.mark == mark).flatMap(_.nickname) match {
+                    case Some(nickname) => ResultText.name(Some(nickname), mark.toString) + s" ($mark)"
+                    case None           => ResultText.name(None, mark.toString)
+                }
+            m.winner match {
+                case Some(w) if m.ranOut => s"${who(w)} won by forfeit: ${who(w.other)} ran out of time."
+                case None if m.ranOut    => "Both players ran out of time. Nobody wins."
+                case Some(w)             => s"${who(w)} got three in a row against ${who(w.other)}."
+                case None                => s"${who(Mark.X)} and ${who(Mark.O)} filled the board. A draw."
+            }
+        }
+
     def scores(m: TicTacToeMatch, seat: Seat): Map[String, ujson.Value] =
         Map("moves" -> ujson.Num(m.moveCount(seat.mark).toDouble), "mark" -> ujson.Str(seat.mark.toString))
 

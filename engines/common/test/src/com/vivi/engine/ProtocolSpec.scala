@@ -158,6 +158,12 @@ class ProtocolSpec extends FunSuite {
         )
     }
 
+    test("results carrying a summary read as matchmaker's MatchResults, summary and all") {
+        val results = Protocol.MatchResults(Nil, summary = Some("<strong>alice</strong> won"))
+        val asMatchmaker = read[Json.MatchResults](write(results))(using Json.given_ReadWriter_MatchResults)
+        assertEquals(asMatchmaker.summary, Some("<strong>alice</strong> won"))
+    }
+
     test("matchmaker's create request for a live match reads as the engine's, clock and all") {
         val fromMatchmaker = MmCreateGameRequest(
           matchId = "m-2",

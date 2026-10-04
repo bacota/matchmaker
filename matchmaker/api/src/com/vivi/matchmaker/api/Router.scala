@@ -463,7 +463,9 @@ object Router {
                               com.vivi.matchmaker.engine.EngineTurn(t.participantId.value, t.takenAt, t.startedAt)
                           )
                         )
-                        noContent(services.engine.recordResults(gid, MatchId(matchId), results, caller, turns))
+                        noContent(
+                          services.engine.recordResults(gid, MatchId(matchId), results, caller, turns, r.summary)
+                        )
                     }
                 }
 

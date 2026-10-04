@@ -80,7 +80,11 @@ case class MatchSummary(
     archiveExpired: Boolean = false,
     // The value of each of the game's parameters this match is played under, in the order the
     // game defines them; empty for a game that has none.
-    parameters: Seq[MatchParameter] = Nil
+    parameters: Seq[MatchParameter] = Nil,
+    // How a finished match came out, as its game engine said it with the results (V40): a line of
+    // HTML, cleaned by `SummaryHtml`, shown in place of the result table. `None` for an engine that
+    // sends none, for a match completed before engines could, and for one still being played.
+    resultSummary: Option[String] = None
 ) {
 
     /** Whether the match was played to an end. */

@@ -2,7 +2,7 @@ package com.vivi.rps
 
 import upickle.default.{ReadWriter, macroRW}
 import java.time.Instant
-import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
+import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnClock, TurnLike}
 
 /** One player's seat in a match.
   *
@@ -10,7 +10,9 @@ import com.vivi.engine.{Game, MatchLike, Outcome, SeatLike, TurnClock, TurnLike}
   * how the engine recognises them. `participantId` is matchmaker's key for the seat and is what every callback quotes
   * back.
   */
-case class Seat(side: Side, cognitoId: String, participantId: Long) extends SeatLike
+/* `nickname` is what the player is shown as, as matchmaker named them when the match was created; defaulted, so a match
+ * stored before it was kept reads as it was written. */
+case class Seat(side: Side, cognitoId: String, participantId: Long, nickname: Option[String] = None) extends SeatLike
 
 /** One throw that was made: by whom, what it was, when it was made, and when that player's clock started for it.
   *
@@ -131,7 +133,7 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
             val sides =
                 if (requested.flatten.distinct.sizeIs == 2) requested.map(_.get)
                 else List(Side.One, Side.Two)
-            Right(players.zip(sides).map((p, side) => Seat(side, p.cognitoId, p.participantId)))
+            Right(players.zip(sides).map((p, side) => Seat(side, p.cognitoId, p.participantId, p.nickname)))
         }
 
     def seats(m: RpsMatch): List[Seat] = m.seats
@@ -157,6 +159,28 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
     /** The throws are in the scores, because this is the first moment they may be told at all and because a result
       * nobody can read back is not much of a record.
       */
+    /** "<strong>alice</strong>'s rock beat <strong>bob</strong>'s scissors." — both throws, and which won. */
+    override def summary(m: RpsMatch): Option[String] =
+        Option.when(m.isOver) {
+            def who(s: Seat) = ResultText.name(s.nickname, s"Player ${s.side}")
+            def threw(s: Seat) = m.throwOf(s).map(_.shape.toString.toLowerCase).getOrElse("nothing")
+            (m.winner, m.seats) match {
+                case (Some(w), _) if m.ranOut =>
+                    m.seats
+                        .find(_ != w)
+                        .fold(s"${who(w)} won by forfeit.")(l =>
+                            s"${who(w)} won by forfeit: ${who(l)} did not throw in time."
+                        )
+                case (None, _) if m.ranOut => "Neither player threw in time. Nobody wins."
+                case (Some(w), _) =>
+                    m.seats
+                        .find(_ != w)
+                        .fold(s"${who(w)} wins.")(l => s"${who(w)}'s ${threw(w)} beat ${who(l)}'s ${threw(l)}.")
+                case (None, a :: b :: Nil) => s"${who(a)} and ${who(b)} both threw ${threw(a)}. A draw."
+                case (None, _)             => "A draw."
+            }
+        }
+
     def scores(m: RpsMatch, seat: Seat): Map[String, ujson.Value] =
         Map(
           "throw" -> m.throwOf(seat).map(t => ujson.Str(t.shape.toString)).getOrElse(ujson.Null),

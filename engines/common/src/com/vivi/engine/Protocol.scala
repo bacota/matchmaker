@@ -144,8 +144,17 @@ object Protocol {
     /** `turns` is every turn of the match, in the same shape as a status answer's. Matchmaker records them in the
       * transaction that completes the match, so a turn whose move callback was lost is not lost with it — once a match
       * is over, matchmaker does not ask the engine again.
+      *
+      * `summary` is how the match came out, said in a line of HTML — "<strong>alice</strong> beat <strong>bob</strong>
+      * by knockout in round 4" — which matchmaker shows on the finished match in place of its result table. Formatting
+      * only: matchmaker keeps a handful of tags without attributes and shows everything else as text. See
+      * [[Game.summary]].
       */
-    case class MatchResults(results: List[ResultEntry], turns: Option[List[EngineTurn]] = None)
+    case class MatchResults(
+        results: List[ResultEntry],
+        turns: Option[List[EngineTurn]] = None,
+        summary: Option[String] = None
+    )
 
     /** What an engine writes to matchmaker's `PUT /characters/{id}/state`, for a game whose seats are characters.
       * `state` is whatever the game keeps about the character, carried as a string: matchmaker stores a character's

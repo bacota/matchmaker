@@ -175,6 +175,8 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(byParticipant(22L).rank, 2)
         assert(!byParticipant(22L).isWinner)
         assertEquals(byParticipant(22L).scores("outcome").str, "loss")
+        // By mark alone: these players were seated without nicknames, as a match from before them was.
+        assertEquals(results.summary, Some("<strong>X</strong> got three in a row against <strong>O</strong>."))
     }
 
     test("a drawn match ranks both players first and neither a winner") {
@@ -191,6 +193,10 @@ class EngineSpec extends FunSuite with QuietTests {
         val results = recorder.results.head._2.results
         assert(results.forall(r => r.rank == 1 && !r.isWinner))
         assert(results.forall(_.scores("outcome").str == "draw"))
+        assertEquals(
+          recorder.results.head._2.summary,
+          Some("<strong>X</strong> and <strong>O</strong> filled the board. A draw.")
+        )
     }
 
     test("moving in a finished match is refused rather than reopening it") {

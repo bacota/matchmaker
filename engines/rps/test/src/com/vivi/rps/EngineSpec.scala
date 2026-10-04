@@ -28,8 +28,8 @@ class EngineSpec extends FunSuite with QuietTests {
           settings = "{}",
           timeLimitSeconds = Some(600),
           players = List(
-            Protocol.EnginePlayer("sub-alice", 11L, roles.head, None, None),
-            Protocol.EnginePlayer("sub-bob", 22L, roles(1), None, None)
+            Protocol.EnginePlayer("sub-alice", 11L, roles.head, None, None, Some("Alice")),
+            Protocol.EnginePlayer("sub-bob", 22L, roles(1), None, None, Some("Bob"))
           ),
           moveCallbackUrl = Some(moveUrl),
           resultsCallbackUrl = Some(resultsUrl)
@@ -208,6 +208,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(!byParticipant(22L).isWinner)
         assertEquals(byParticipant(22L).scores("outcome").str, "loss")
         assertEquals(byParticipant(22L).scores("throw").str, "Scissors")
+        assertEquals(results.summary, Some("<strong>Alice</strong>'s rock beat <strong>Bob</strong>'s scissors."))
     }
 
     test("the same throw twice is a draw: both first, neither a winner") {
@@ -219,6 +220,10 @@ class EngineSpec extends FunSuite with QuietTests {
         val results = recorder.results.head._2.results
         assert(results.forall(r => r.rank == 1 && !r.isWinner))
         assert(results.forall(_.scores("outcome").str == "draw"))
+        assertEquals(
+          recorder.results.head._2.summary,
+          Some("<strong>Alice</strong> and <strong>Bob</strong> both threw paper. A draw.")
+        )
     }
 
     test("every pairing comes out the way the game says it does") {
