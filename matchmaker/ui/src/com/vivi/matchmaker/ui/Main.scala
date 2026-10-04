@@ -1095,13 +1095,27 @@ object Views {
                     s"Finished between ${Format.instant(page.from)} and ${Format.instant(page.until)}"
             }
           ),
-          child <-- view.combineWith(busy).map {
-              case (None, _)                                           => p(cls := "empty", "Loading…")
-              case (Some(page), _) if page.matches.nonEmpty            => ul(page.matches.map(row))
-              case (Some(page), _) if page.page == 0 && !page.hasOlder => p(cls := "empty", never)
-              case (Some(page), _) if page.hasOlder =>
+          // Nothing held for this list yet: still on its way, or it failed -- which is not still on
+          // its way, so saying "Loading…" would be the worse lie, and what helps is asking again. The
+          // banner has said what went wrong; this says what the section is, and offers the retry.
+          child <-- view.combineWith(busy, Store.failed(Store.Fetch.Completed)).distinct.map {
+              case (None, true, _) => p(cls := "empty", "Loading…")
+              case (None, false, true) =>
+                  div(
+                    p(cls := "empty", "These matches could not be loaded."),
+                    // Busy while it asks: the list's own state says only that the last answer failed,
+                    // and would say so, unchanged, until the new one lands.
+                    busyButton("Try again", classes = Some("link")) { busy =>
+                        busy.set(true)
+                        Store.showCompleted(list).onComplete(_ => busy.set(false))
+                    }
+                  )
+              case (None, _, _)                                           => p(cls := "empty", "Loading…")
+              case (Some(page), _, _) if page.matches.nonEmpty            => ul(page.matches.map(row))
+              case (Some(page), _, _) if page.page == 0 && !page.hasOlder => p(cls := "empty", never)
+              case (Some(page), _, _) if page.hasOlder =>
                   p(cls := "empty", "None finished in this time. Next goes further back.")
-              case (Some(_), _) => p(cls := "empty", "None finished in this time.")
+              case (Some(_), _, _) => p(cls := "empty", "None finished in this time.")
           },
           div(
             cls := "completed-steps",
