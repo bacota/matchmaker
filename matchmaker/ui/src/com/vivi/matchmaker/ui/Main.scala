@@ -1013,58 +1013,7 @@ object Views {
         )
     }
 
-    /* Which page of the finished matches is being looked at, counted from 0 at the most recent.
-     *
-     * Owned here rather than inside the section for the same reason `refreshingCompleted` is: the
-     * section's own reload rebuilds nothing, but a sign-out and a re-fetch both change the list
-     * under it, and a page number thrown away with the element would send the reader back to the
-     * top every time. It is deliberately not reset by a refresh either -- somebody reading page
-     * three and asking whether it is still true means to stay on page three.
-     *
-     * Never trusted as-is: what it holds can be past the end of a list that has since been
-     * re-fetched shorter, so every use of it goes through `completedWindow`, which clamps. */
-    private val completedPage: Var[Int] = Var(0)
-
-    /** What the completed list shows right now: the rows on this page, the page they are (clamped), and how many
-      * finished matches there are altogether.
-      *
-      * Derived rather than stored, so the held page number can be stale without anything on screen being wrong: a
-      * reload that shortens the list moves the reader to the last page that exists instead of showing them a blank one,
-      * and the clamp is in one place rather than at each of the three things that read it.
-      */
-    private val completedWindow: Signal[(Seq[MatchSummary], Int, Int)] =
-        Store.completed.signal.combineWith(completedPage.signal).map { case (all, wanted) =>
-            val page = clampCompletedPage(wanted, all.length)
-            val from = page * Store.recentlyCompleted
-            (all.slice(from, from + Store.recentlyCompleted), page, all.length)
-        }
-
-    /** The nearest page that exists to the one asked for: 0 when the list is empty or shorter than a page. */
-    private def clampCompletedPage(wanted: Int, total: Int): Int =
-        math.min(math.max(wanted, 0), math.max(0, (total - 1) / Store.recentlyCompleted))
-
-    /** Moves the completed list a page towards the older matches (`by` positive) or the newer ones.
-      *
-      * Clamped against the list as it stands now rather than as it stood when the button was drawn, because a reload
-      * may have landed in between — and clamped on the way in as well as on the way out, so stepping back from a page
-      * that no longer exists lands beside it rather than somewhere further past the end.
-      */
-    private def stepCompleted(by: Int): Unit = {
-        val total = Store.completed.now().length
-        completedPage.set(clampCompletedPage(clampCompletedPage(completedPage.now(), total) + by, total))
-    }
-
-    /** The finished matches, whatever game they were played in, a page at a time.
-      *
-      * The list arrives most recently finished first, so the first page is the most recent matches — no sorting here,
-      * and nothing that would disagree with the game screens, which show the same list filtered rather than a
-      * differently ordered one.
-      *
-      * Paged rather than truncated because the whole list is already here: `completedMatches()` answers with all of
-      * them, the older ones were simply being dropped on the floor, and paging through what is already loaded costs no
-      * request at all. The page is still a page — a hundred finished matches at the bottom of the home screen is
-      * something to scroll past, which is what the truncation was right about.
-      */
+    /** The caller's finished matches in every game, a window of time at a time. */
     private def recentlyCompletedSection: HtmlElement =
         refreshableSection(
           "Recently Completed",
@@ -1072,51 +1021,95 @@ object Views {
           () => Store.reloadCompleted(),
           subsection = false
         )(
-          listing(completedWindow.map(_._1), Store.loading(Store.Fetch.Completed))(
-            p(cls := "empty", "Nothing finished yet.")
-          )(matches => ul(matches.map(matchRow(_, showDue = false)))),
-          completedPager
+          completedWindow(Store.CompletedList.Mine(None), "Nothing finished yet.")(matchRow(_, showDue = false))
         )
 
-    /** The two buttons and the position line under the completed list.
+    /** One completed list, a window of time at a time: the frame to look back over, which window this is, the matches
+      * in it, and Prev and Next to move to the newer and older windows of the same length.
       *
-      * One element that is always mounted and hidden while everything fits on a page, rather than one that appears and
-      * disappears: the position line is a live region, and a live region created at the moment its text changes is
-      * announced by nothing. Hidden, it says nothing either — which is right, because with a single page there is no
-      * position to be in.
+      * The same for every completed list — the main page's, a game's, a game's on somebody's page — with what is shown
+      * of a row left to the caller. Fetches nothing when drawn: the list is asked for when its screen is arrived at or
+      * its game opened, and again by the controls here, each of which is a click. See `Store.showCompleted`.
       *
-      * "Newer" and "Older" rather than "Previous" and "Next": the list is ordered by when a match finished, and which
-      * direction "next" goes in is exactly the thing the reader would have to work out.
+      * Prev is there once the reader has gone back from the most recent window, and Next while the list holds anything
+      * older than the window shown: once the oldest match this list could ever show is on screen, there is no Next.
+      * `never` is what an empty most-recent window says when there is nothing further back either.
       */
-    private def completedPager: HtmlElement =
-        div(
-          cls := "pager",
-          hidden <-- completedWindow.map { case (_, _, total) => total <= Store.recentlyCompleted },
-          button(
-            tpe := "button",
-            disabled <-- completedWindow.map { case (_, page, _) => page == 0 },
-            onClick --> (_ => stepCompleted(-1)),
-            "Newer"
+    private def completedWindow(list: Store.CompletedList, never: String)(
+        row: MatchSummary => HtmlElement
+    ): Modifier[HtmlElement] = {
+        // This list's window, and nothing while another list's is held or this one's is on its way.
+        val view: Signal[Option[CompletedPage]] =
+            Store.completedView.signal.map(_.filter(_.list == list).map(_.page)).distinct
+        val busy = Store.loading(Store.Fetch.Completed)
+
+        def move(to: CompletedPage => Int): Unit =
+            Store.completedView.now().filter(_.list == list).foreach { current =>
+                Store.showCompleted(list, to(current.page), Some(current.page.asOf))
+            }
+
+        def step(
+            caption: String,
+            direction: String,
+            label: String,
+            shown: CompletedPage => Boolean,
+            to: CompletedPage => Int
+        ) =
+            child <-- view.map {
+                case Some(page) if shown(page) =>
+                    button(
+                      tpe := "button",
+                      cls := s"link $direction",
+                      // The visible word first, then which way it goes, which the word alone does not say.
+                      aria.label := label,
+                      disabled <-- busy,
+                      caption,
+                      onClick --> (_ => move(to))
+                    )
+                case _ => emptyNode
+            }
+
+        Seq(
+          field(
+            "Show",
+            select(
+              CompletedFrame.values.toSeq.map(frame => option(value := frame.code, frame.label)),
+              value <-- Store.completedFrame.signal.map(_.code),
+              onChange.mapToValue --> { code =>
+                  CompletedFrame.fromCode(code).foreach { frame =>
+                      Store.completedFrame.set(frame)
+                      Store.showCompleted(list)
+                  }
+              }
+            )
           ),
-          // Which matches these are, in the terms the reader can see: rows counted from the most
-          // recent, not a page number they would have to multiply out for themselves.
-          div(
+          // Which stretch of time the rows are from, said politely when it changes — which is what
+          // Prev, Next and the frame do, and the reader is owed word of where they have got to.
+          p(
             cls := "detail",
             aria.live := "polite",
-            child.text <-- completedWindow.map { case (rows, page, total) =>
-                val from = page * Store.recentlyCompleted
-                if (rows.isEmpty) s"$total finished" else s"${from + 1}–${from + rows.length} of $total"
+            child.text <-- view.map {
+                case None                         => ""
+                case Some(page) if page.page == 0 => s"Finished in the ${page.frame.label.toLowerCase}"
+                case Some(page) =>
+                    s"Finished between ${Format.instant(page.from)} and ${Format.instant(page.until)}"
             }
           ),
-          button(
-            tpe := "button",
-            disabled <-- completedWindow.map { case (_, page, total) =>
-                (page + 1) * Store.recentlyCompleted >= total
-            },
-            onClick --> (_ => stepCompleted(1)),
-            "Older"
+          child <-- view.combineWith(busy).map {
+              case (None, _)                                           => p(cls := "empty", "Loading…")
+              case (Some(page), _) if page.matches.nonEmpty            => ul(page.matches.map(row))
+              case (Some(page), _) if page.page == 0 && !page.hasOlder => p(cls := "empty", never)
+              case (Some(page), _) if page.hasOlder =>
+                  p(cls := "empty", "None finished in this time. Next goes further back.")
+              case (Some(_), _) => p(cls := "empty", "None finished in this time.")
+          },
+          div(
+            cls := "completed-steps",
+            step("Prev", "newer", "Prev: newer completed matches", _.page > 0, _.page - 1),
+            step("Next", "older", "Next: older completed matches", _.hasOlder, _.page + 1)
           )
         )
+    }
 
     // -------------------------------------------------------------------------
     // Players
@@ -1381,7 +1374,8 @@ object Views {
     private def publicGameRow(player: PublicPlayer, game: Game): HtmlElement = {
         val expanded = Store.expandedPublicGame.signal.map(_.contains(game.gameId))
         val running = Store.publicActive.signal.map(_.filter(_.gameId == game.gameId))
-        val over = Store.publicCompleted.signal.map(_.filter(_.gameId == game.gameId))
+        val finished = Store.publicCompletedCounts.signal.map(_.getOrElse(game.gameId, 0L)).distinct
+        val completedList = Store.CompletedList.Public(player.playerId, game.gameId)
 
         li(
           cls := "row",
@@ -1396,6 +1390,9 @@ object Views {
                 Store.expandedPublicGame.update(current =>
                     if (current.contains(game.gameId)) None else Some(game.gameId)
                 )
+                // Opened: its finished matches are a list of their own, asked for now -- on the click,
+                // not when the panel is drawn. See `completedWindow`.
+                if (Store.expandedPublicGame.now().contains(game.gameId)) Store.showCompleted(completedList)
             }
           ),
           div(
@@ -1405,9 +1402,9 @@ object Views {
             // there is nothing to count yet, which is a page just opened rather than a player with
             // nothing to show. Saying "0 being played" in that moment would be a number about to
             // change.
-            child.text <-- running.combineWith(over, Store.publicMatchesLoading.signal).map {
-                case (active, finished, loading) if active.isEmpty && finished.isEmpty && loading => "loading…"
-                case (active, finished, _) => s"${active.length} being played, ${finished.length} finished"
+            child.text <-- running.combineWith(finished, Store.publicMatchesLoading.signal).map {
+                case (active, done, loading) if active.isEmpty && done == 0 && loading => "loading…"
+                case (active, done, _) => s"${active.length} being played, $done finished"
             }
           ),
           child <-- expanded.map {
@@ -1418,7 +1415,7 @@ object Views {
                     h3("Current Matches"),
                     publicMatches(running, "None being played in public."),
                     h3("Completed Matches"),
-                    publicMatches(over, "None finished in public.")
+                    div(completedWindow(completedList, "None finished in public.")(publicMatchRow))
                   )
               else emptyNode
           }
@@ -2033,11 +2030,8 @@ object Views {
           () => Store.reloadCompleted(),
           subsection = false
         )(
-          listing(
-            Store.completed.signal.map(_.filter(_.gameId == game.gameId)),
-            Store.loading(Store.Fetch.Completed)
-          )(p(cls := "empty", "You have not finished a match of this yet."))(matches =>
-              ul(matches.map(matchRow(_, showDue = false)))
+          completedWindow(Store.CompletedList.Mine(Some(game.gameId)), "You have not finished a match of this yet.")(
+            matchRow(_, showDue = false)
           )
         )
 

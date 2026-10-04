@@ -448,17 +448,18 @@ ul {
   margin-top: 0.25rem;
 }
 
-/* The completed list's pager: two buttons with the position between them, pushed to the outside
-   edges so "Newer" and "Older" land where a reader tapping through pages expects them and the
-   line saying which rows these are stays centred between them. Wraps on a narrow screen, where
-   the buttons are already at their 44px tap size. */
-.pager {
+/* Prev and Next under a completed list: newer at the left, older at the right, as a history read
+   from the top runs. Either may be absent -- Prev on the most recent window, Next once the oldest
+   match is shown -- and the other keeps its side. */
+.completed-steps {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 0.6rem;
+}
+
+.completed-steps > .older {
+  margin-left: auto;
 }
 
 .empty,

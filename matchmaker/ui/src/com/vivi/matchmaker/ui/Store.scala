@@ -91,7 +91,9 @@ object Store {
         player.set(PlayerState.Loading)
         due.set(Seq.empty)
         active.set(Seq.empty)
-        completed.set(Seq.empty)
+        completedView.set(None)
+        completedAsked.set(None)
+        completedFrame.set(CompletedFrame.Day)
         games.set(Seq.empty)
         unlistedGames.set(Map.empty)
         lookingForGames.set(Set.empty)
@@ -114,7 +116,7 @@ object Store {
         nicknames.set(Map.empty)
         playerResults.set(None)
         publicActive.set(Seq.empty)
-        publicCompleted.set(Seq.empty)
+        publicCompletedCounts.set(Map.empty)
         publicMatchesLoading.set(false)
         // Dropped with the rest: they are one player's answers, and the next player to sign in
         // must not be shown them, let alone save them back.
@@ -233,7 +235,35 @@ object Store {
 
     val due: Var[Seq[MatchSummary]] = Var(Seq.empty)
     val active: Var[Seq[MatchSummary]] = Var(Seq.empty)
-    val completed: Var[Seq[MatchSummary]] = Var(Seq.empty)
+
+    /** Which completed list a window belongs to: the caller's own, in every game or in one, or another player's public
+      * matches in one game. Each has its own oldest match, so each has its own last window.
+      */
+    enum CompletedList {
+        case Mine(game: Option[GameId])
+        case Public(playerId: PlayerId, game: GameId)
+
+        def gameId: Option[GameId] = this match {
+            case Mine(game)      => game
+            case Public(_, game) => Some(game)
+        }
+    }
+
+    /** The window of a completed list being shown, with the list it is a window of. */
+    case class CompletedView(list: CompletedList, page: CompletedPage)
+
+    /** How long a window is, as the viewer last chose: the last day until they choose otherwise, and kept as they move
+      * from one list to another.
+      */
+    val completedFrame: Var[CompletedFrame] = Var(CompletedFrame.Day)
+
+    /** The one completed list on screen, a window of it at a time. One, because only one is ever shown — the main
+      * page's, a game's, or a game's on somebody's page — and each is asked for when it is arrived at.
+      */
+    val completedView: Var[Option[CompletedView]] = Var(None)
+
+    /** The list most recently asked for, which a section compares with its own to know the answer coming is for it. */
+    val completedAsked: Var[Option[CompletedList]] = Var(None)
     val games: Var[Seq[Game]] = Var(Seq.empty)
 
     /** Games reachable by a link but absent from the list above: the deactivated ones.
@@ -390,7 +420,11 @@ object Store {
       * loaded. `publicMatchesLoading` is what says a fetch is in flight instead.
       */
     val publicActive: Var[Seq[MatchSummary]] = Var(Seq.empty)
-    val publicCompleted: Var[Seq[MatchSummary]] = Var(Seq.empty)
+
+    /** How many public matches the player whose page is open has finished in each game: what each game's row says
+      * before it is opened, and its list is fetched.
+      */
+    val publicCompletedCounts: Var[Map[GameId, Long]] = Var(Map.empty)
 
     /** Whether a fetch of somebody's public matches is in flight, for the sections to say "Loading…" on.
       *
@@ -458,7 +492,11 @@ object Store {
         val stamp = ask(lists)
         gated(lists) { () =>
             val running = reloadAs(ApiClient.publicMatches(playerId), stamp, lists)(publicActive.set)
-            val over = reloadAs(ApiClient.publicCompletedMatches(playerId), stamp, lists)(publicCompleted.set)
+            val over = reloadAs(ApiClient.publicCompletedCounts(playerId), stamp, lists)(counts =>
+                publicCompletedCounts.set(counts.map(c => c.gameId -> c.count).toMap)
+            )
+            // And the game opened on the page, if one is: its window is a list of its own.
+            expandedPublicGame.now().foreach(game => showCompleted(CompletedList.Public(playerId, game)))
 
             // However they settled: `reloadAs` reports a failure and succeeds, so this runs on either
             // outcome, which is what stops a failed fetch from leaving the page loading for ever. Guarded
@@ -552,6 +590,9 @@ object Store {
         }
 
         page.set(next)
+        // The completed list this screen shows, if it shows one of the caller's: asked for on arriving,
+        // like the rest of what a screen needs, and again on arriving again, which is a refresh.
+        completedFor(next).foreach(showCompleted(_))
         next match {
             case Page.OneGame(gameId) =>
                 refreshChallenges(gameId)
@@ -564,7 +605,7 @@ object Store {
             case Page.OnePlayer(player) =>
                 expandedPublicGame.set(None)
                 publicActive.set(Seq.empty)
-                publicCompleted.set(Seq.empty)
+                publicCompletedCounts.set(Map.empty)
                 reloadPublicMatches(player.playerId)
             case _ => ()
         }
@@ -907,7 +948,7 @@ object Store {
     def refreshMatches(): Unit = {
         load(ApiClient.dueMatches(), Fetch.Due)(due.set)
         load(ApiClient.activeMatches(), Fetch.Active)(active.set)
-        load(ApiClient.completedMatches(), Fetch.Completed)(completed.set)
+        completedFor(page.now()).foreach(showCompleted(_))
         load(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
         load(ApiClient.invitations(), Fetch.Invitations)(invitations.set)
         load(ApiClient.results(), Fetch.Results)(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
@@ -976,9 +1017,44 @@ object Store {
       * reloading one without the other would leave a match beside somebody else's outcome.
       */
     def reloadCompleted(): Future[Unit] = {
-        val matches = reload(ApiClient.completedMatches(), Fetch.Completed)(completed.set)
+        val matches = completedView.now() match {
+            // The same window, measured from the same moment, unless it is the most recent one --
+            // asking that again is asking what has finished since, so it is measured from now.
+            case Some(view) if completedAsked.now().contains(view.list) =>
+                val page = view.page.page
+                showCompleted(view.list, page, Option.when(page > 0)(view.page.asOf))
+            case _ => completedAsked.now().fold(Future.unit)(showCompleted(_))
+        }
         val rows = reload(ApiClient.results(), Fetch.Results)(r => resultsByMatch.set(r.groupBy(_.matchId)))
         matches.zip(rows).map(_ => ())
+    }
+
+    /** The completed list a screen shows, if it shows one of the caller's: the main page's, or a game's. Another
+      * player's page shows a list only for the game opened on it, and asks for it when it is opened.
+      */
+    def completedFor(screen: Page): Option[CompletedList] = screen match {
+        case Page.Home            => Some(CompletedList.Mine(None))
+        case Page.OneGame(gameId) => Some(CompletedList.Mine(Some(gameId)))
+        case _                    => None
+    }
+
+    /** Asks for one window of a completed list, in the frame the viewer has chosen: `page` windows back from `asOf`, or
+      * from the server's now on a first ask.
+      *
+      * Called when a list is arrived at and when the viewer moves through it — never when a section is drawn, which
+      * would ask again every time the answer redrew it. Through `reload`, so that only the latest ask is committed: a
+      * Prev, a Next and a change of frame in quick succession, or a move to another screen, leave the window last asked
+      * for. A different list is emptied at once rather than showing the last list's rows under its heading.
+      */
+    def showCompleted(list: CompletedList, page: Int = 0, asOf: Option[java.time.Instant] = None): Future[Unit] = {
+        completedAsked.set(Some(list))
+        if (!completedView.now().exists(_.list == list)) completedView.set(None)
+        val query = CompletedQuery(completedFrame.now(), page, asOf, list.gameId)
+        def fetch = list match {
+            case CompletedList.Mine(_)             => ApiClient.completedMatches(query)
+            case CompletedList.Public(playerId, _) => ApiClient.publicCompletedMatches(playerId, query)
+        }
+        reload(fetch, Fetch.Completed)(answer => completedView.set(Some(CompletedView(list, answer))))
     }
 
     def reloadChallenges(gameId: GameId): Future[Unit] =

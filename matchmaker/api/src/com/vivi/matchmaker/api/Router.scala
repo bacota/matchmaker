@@ -133,8 +133,10 @@ object Router {
             case ("GET", "me" :: "matches" :: "due" :: Nil) =>
                 ok(services.matches.due(caller))
 
+            /* Completed lists are a window of time at a time -- `CompletedQuery`, read from
+             * `?frame=day|week|month|year&page=<n>&asOf=<instant>&gameId=<id>`, every one optional. */
             case ("GET", "me" :: "matches" :: "completed" :: Nil) =>
-                ok(services.matches.completed(caller))
+                withCompletedQuery(request)(query => ok(services.matches.completed(caller, query)))
 
             /* Finding somebody, and then looking at them. Three routes and no body between them:
              * the prefix is a query parameter because this is a GET that reads, and the player's
@@ -148,10 +150,16 @@ object Router {
                 ok(services.players.search(caller, request.query.getOrElse("prefix", "")))
 
             case ("GET", "players" :: playerId :: "matches" :: Nil) =>
-                withPlayerId(playerId)(id => ok(services.matches.publicFor(caller, id, over = false)))
+                withPlayerId(playerId)(id => ok(services.matches.publicActive(caller, id)))
 
             case ("GET", "players" :: playerId :: "matches" :: "completed" :: Nil) =>
-                withPlayerId(playerId)(id => ok(services.matches.publicFor(caller, id, over = true)))
+                withPlayerId(playerId)(id =>
+                    withCompletedQuery(request)(query => ok(services.matches.publicCompleted(caller, id, query)))
+                )
+
+            // How many each game holds, for the page to say of every game before one is opened.
+            case ("GET", "players" :: playerId :: "matches" :: "completed" :: "counts" :: Nil) =>
+                withPlayerId(playerId)(id => ok(services.matches.publicCompletedCounts(caller, id)))
 
             case ("GET", "games" :: Nil) =>
                 ok(services.games.list(caller, activeOnly = request.query.get("activeOnly").contains("true")))
@@ -531,6 +539,26 @@ object Router {
 
     private def withChallengeId(raw: String)(f: ChallengeId => IO[Response]): IO[Response] =
         raw.toLongOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a challenge id")))(id => f(ChallengeId(id)))
+
+    /* The window a completed list is asked for: every parameter optional, and each one that is given
+     * well formed, or the request is refused rather than answered with a window nobody asked for.
+     * `page` is bounded so that `asOf - page * frame` stays an instant Postgres can hold. */
+    private def withCompletedQuery(request: Request)(f: CompletedQuery => IO[Response]): IO[Response] = {
+        def param[A](name: String)(parse: String => Option[A]): Either[String, Option[A]] =
+            request.query.get(name) match {
+                case None      => Right(None)
+                case Some(raw) => parse(raw).map(Some(_)).toRight(s"'$raw' is not a valid $name")
+            }
+        val query = for {
+            frame <- param("frame")(CompletedFrame.fromCode)
+            page <- param("page")(_.toIntOption.filter(n => n >= 0 && n <= MaxCompletedPage))
+            asOf <- param("asOf")(raw => scala.util.Try(java.time.Instant.parse(raw)).toOption)
+            game <- param("gameId")(_.toIntOption.map(GameId.apply))
+        } yield CompletedQuery(frame.getOrElse(CompletedFrame.Day), page.getOrElse(0), asOf, game)
+        query.fold(message => IO.pure(Errors.badRequest(message)), f)
+    }
+
+    private val MaxCompletedPage = 10000
 
     private def withPlayerId(raw: String)(f: PlayerId => IO[Response]): IO[Response] =
         raw.toLongOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a player id")))(id => f(PlayerId(id)))

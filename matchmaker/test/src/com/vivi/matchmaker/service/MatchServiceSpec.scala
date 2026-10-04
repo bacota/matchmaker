@@ -5,7 +5,10 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import org.scalacheck.Prop._
 import org.scalacheck.Gen
-import java.time.Instant
+import java.time.{Duration, Instant}
+import skunk.implicits._
+import skunk.codec.all.{int4, text}
+import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{
@@ -16,6 +19,7 @@ import com.vivi.matchmaker.persistence.{
     ParticipantRepo,
     PlayerRepo,
     ResultRepo,
+    SkunkCodecs,
     TestSession
 }
 
@@ -161,11 +165,174 @@ class MatchServiceSpec extends PropertySuite {
             )
         } yield matchId
 
+    // ---------------------------------------------------------------------------
+    // Completed lists, a window of time at a time
+    // ---------------------------------------------------------------------------
+
+    /** Sets when the player's seat in a match was finished with — the column the windows are drawn on, which an
+      * ordinary finish stamps with the database's now.
+      */
+    private def finishedAt(session: skunk.Session[IO], gameId: GameId, matchId: MatchId, at: Instant): IO[Unit] =
+        session
+            .execute(
+              sql"""UPDATE participant SET completed_at = ${SkunkCodecs.instant}
+                WHERE game_id = $int4 AND match_id = $text""".command
+            )((at, gameId.value, matchId.value))
+            .void
+
+    /** A finished match for the player, finished at `at`. */
+    private def finished(
+        session: skunk.Session[IO],
+        player: Player,
+        game: Game,
+        character: Character[String],
+        at: Instant,
+        isPublic: Boolean = false
+    ): IO[MatchId] =
+        for {
+            id <- addMatch(session, player, game, character, genUniqueString.sample.get, Some(at), false, isPublic)
+            _ <- finishedAt(session, game.gameId, id, at)
+        } yield id
+
+    /** A match the player called off at `at`: the match cancelled and its seats retired, as `MatchService.cancel` does.
+      */
+    private def calledOff(
+        session: skunk.Session[IO],
+        player: Player,
+        game: Game,
+        character: Character[String],
+        at: Instant,
+        isPublic: Boolean = false
+    ): IO[MatchId] =
+        for {
+            id <- addMatch(session, player, game, character, genUniqueString.sample.get, None, true, isPublic)
+            m <- new MatchRepo(session).read(game.gameId, id).map(_.get)
+            _ <- new MatchRepo(session).update(m.copy(cancelled = true))
+            _ <- new ParticipantRepo(session).completeForMatch(game.gameId, id)
+            _ <- finishedAt(session, game.gameId, id, at)
+        } yield id
+
+    /** Another game, and a character in it, for a player who already has one. */
+    private def anotherGame(session: skunk.Session[IO], player: Player): IO[(Game, Character[String])] =
+        for {
+            game <- new GameRepo[String](session).create(
+              Game(
+                GameId.unassigned,
+                GameType.Character,
+                "other",
+                "other",
+                "description",
+                "url",
+                active = true,
+                Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false, displayName = "only")),
+                Seq.empty,
+                genUniqueString.sample.get
+              )
+            )
+            character <- new CharacterRepo[String](session).create(
+              Character(CharacterId(0), game.gameId, "character", "description", "", Some(player.playerId))
+            )
+        } yield (game, character)
+
+    private def run[A](io: IO[A]): A = io.timeout(60.seconds).unsafeRunSync()
+
+    test("a completed list shows the last 24 hours, and each Next the day before, until the oldest match is shown") {
+        val now = Instant.now()
+        val unique = genUniqueString.sample.get
+        val (externalId, recent, yesterday, lastWeek) = run(TestSession.resource.use { session =>
+            for {
+                prepared <- setup(session, unique, unique)
+                (player, game, character) = prepared
+                recent <- finished(session, player, game, character, now.minus(Duration.ofHours(2)))
+                yesterday <- finished(session, player, game, character, now.minus(Duration.ofHours(30)))
+                lastWeek <- finished(session, player, game, character, now.minus(Duration.ofHours(9 * 24 + 12)))
+                // Called off an hour ago: never in a completed list, whatever the window.
+                _ <- calledOff(session, player, game, character, now.minus(Duration.ofHours(1)))
+            } yield (unique, recent, yesterday, lastWeek)
+        })
+
+        // The default: the last day, and something older to go back to.
+        val first = run(matchService.completed(externalId))
+        assertEquals(first.frame, CompletedFrame.Day)
+        assertEquals(first.matches.map(_.matchId), List(recent))
+        assert(first.hasOlder)
+        // The day before, measured from the same moment the first window was.
+        val second = run(matchService.completed(externalId, CompletedQuery(page = 1, asOf = Some(first.asOf))))
+        assertEquals(second.matches.map(_.matchId), List(yesterday))
+        assertEquals(second.until, first.from)
+        assert(second.hasOlder)
+
+        // A week at a time: the first holds both recent ones, the second the oldest -- and with the
+        // oldest match on screen there is nothing further back.
+        val week = run(matchService.completed(externalId, CompletedQuery(frame = CompletedFrame.Week)))
+        assertEquals(week.matches.map(_.matchId), List(recent, yesterday))
+        assert(week.hasOlder)
+        val older = run(
+          matchService.completed(externalId, CompletedQuery(CompletedFrame.Week, page = 1, asOf = Some(week.asOf)))
+        )
+        assertEquals(older.matches.map(_.matchId), List(lastWeek))
+        assert(!older.hasOlder)
+        assertEquals(older.frame.span, Duration.ofDays(7))
+    }
+
+    test("the oldest match a list can show is the oldest in that list: the game's own, on a game's screen") {
+        val now = Instant.now()
+        val unique = genUniqueString.sample.get
+        val (externalId, game, other, here) = run(TestSession.resource.use { session =>
+            for {
+                prepared <- setup(session, unique, unique)
+                (player, game, character) = prepared
+                here <- finished(session, player, game, character, now.minus(Duration.ofHours(2)))
+                elsewhere <- anotherGame(session, player)
+                (other, otherCharacter) = elsewhere
+                _ <- finished(session, player, other, otherCharacter, now.minus(Duration.ofDays(20)))
+            } yield (unique, game, other, here)
+        })
+
+        // Every game: the other game's match is older, so there is a Next.
+        val everything = run(matchService.completed(externalId))
+        assertEquals(everything.matches.map(_.matchId), List(here))
+        assert(everything.hasOlder)
+        // This game alone: nothing older, so none.
+        val thisGame = run(matchService.completed(externalId, CompletedQuery(gameId = Some(game.gameId))))
+        assertEquals(thisGame.matches.map(_.matchId), List(here))
+        assert(!thisGame.hasOlder)
+        // The other game: nothing today, but something to go back to.
+        val otherGame = run(matchService.completed(externalId, CompletedQuery(gameId = Some(other.gameId))))
+        assertEquals(otherGame.matches, Nil)
+        assert(otherGame.hasOlder)
+    }
+
+    test("another player's completed list holds their public matches only, never a cancelled one, and counts them") {
+        val now = Instant.now()
+        val unique = genUniqueString.sample.get
+        val watcher = s"w-$unique"
+        val (player, game, shown) = run(TestSession.resource.use { session =>
+            for {
+                prepared <- setup(session, unique, unique)
+                (player, game, character) = prepared
+                shown <- finished(session, player, game, character, now.minus(Duration.ofHours(2)), isPublic = true)
+                _ <- finished(session, player, game, character, now.minus(Duration.ofHours(3)))
+                _ <- calledOff(session, player, game, character, now.minus(Duration.ofHours(1)), isPublic = true)
+                _ <- registrationService.register(watcher, watcher)
+            } yield (player, game, shown)
+        })
+
+        val page =
+            run(matchService.publicCompleted(watcher, player.playerId, CompletedQuery(gameId = Some(game.gameId))))
+        assertEquals(page.matches.map(_.matchId), List(shown))
+        assert(!page.hasOlder)
+        assertEquals(
+          run(matchService.publicCompletedCounts(watcher, player.playerId)),
+          List(CompletedCount(game.gameId, 1))
+        )
+    }
+
     /* Another player's page: the two lists a stranger is shown, which are the same two lists the
      * caller sees of their own matches minus every match that was not offered as public. The rule is
      * in the query, so what these check is that the query is the one being used. */
 
-    property("publicFor shows a public match and hides a private one") {
+    property("publicActive shows a public match and hides a private one") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, watcherId, openId, hiddenId) =>
                 val result = TestSession.resource.use { session =>
@@ -185,7 +352,7 @@ class MatchServiceSpec extends PropertySuite {
                         _ <- addMatch(session, player, game, character, hiddenId, None, pending = true)
                         // A second player, because this list is read by somebody who is not in the match.
                         _ <- registrationService.register(watcherId, watcherId)
-                        seen <- matchService.publicFor(watcherId, player.playerId, over = false)
+                        seen <- matchService.publicActive(watcherId, player.playerId)
                         // And the player's own list is unchanged by any of it: they see both.
                         mine <- matchService.active(externalId)
                     } yield seen.map(_.matchId) == List(open) &&
@@ -195,7 +362,9 @@ class MatchServiceSpec extends PropertySuite {
         }
     }
 
-    property("publicFor splits the public matches into running and finished, as the caller's own lists are split") {
+    property(
+      "the public lists split a player's matches into running and finished, as the caller's own lists are split"
+    ) {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, watcherId, runningId, finishedId) =>
                 val result = TestSession.resource.use { session =>
@@ -223,8 +392,10 @@ class MatchServiceSpec extends PropertySuite {
                           isPublic = true
                         )
                         _ <- registrationService.register(watcherId, watcherId)
-                        running <- matchService.publicFor(watcherId, player.playerId, over = false)
-                        over <- matchService.publicFor(watcherId, player.playerId, over = true)
+                        running <- matchService.publicActive(watcherId, player.playerId)
+                        over <- matchService
+                            .publicCompleted(watcherId, player.playerId, CompletedQuery())
+                            .map(_.matches.toList)
                     } yield running.map(_.matchId) == List(MatchId(runningId)) &&
                         over.map(_.matchId) == List(MatchId(finishedId)) &&
                         // The rows describe the player asked about, not the caller: it is their turn in
@@ -279,7 +450,7 @@ class MatchServiceSpec extends PropertySuite {
                           settings = """{"rounds":"6","venue":"moon"}"""
                         )
                         running <- matchService.active(externalId)
-                        over <- matchService.completed(externalId)
+                        over <- matchService.completed(externalId).map(_.matches.toList)
                     } yield (running.map(_.parameters), over.map(_.parameters))
                 }
                 val (running, over) = result.timeout(15.seconds).unsafeRunSync()
@@ -312,7 +483,7 @@ class MatchServiceSpec extends PropertySuite {
                         )
                         _ <- addMatch(session, player, game, character, plainId, None, pending = true, isPublic = true)
                         _ <- registrationService.register(watcherId, watcherId)
-                        seen <- matchService.publicFor(watcherId, player.playerId, over = false)
+                        seen <- matchService.publicActive(watcherId, player.playerId)
                         // And on the player's own list, which is the same summary read by its owner.
                         mine <- matchService.active(externalId)
                     } yield seen.find(_.matchId == MatchId(watchableId)).flatMap(_.publicUrl).contains(url) &&
@@ -325,7 +496,7 @@ class MatchServiceSpec extends PropertySuite {
 
     /* The split is the seat's, not the match's: a player who is out of a match that is still being
      * played has finished with it, and their page should say so. */
-    property("publicFor puts a retired seat among the finished matches, though the match runs on") {
+    property("the public lists put a retired seat among the finished matches, though the match runs on") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, watcherId, matchIdStr) =>
                 val result = TestSession.resource.use { session =>
@@ -345,8 +516,10 @@ class MatchServiceSpec extends PropertySuite {
                           seatCompleted = Some(true)
                         )
                         _ <- registrationService.register(watcherId, watcherId)
-                        running <- matchService.publicFor(watcherId, player.playerId, over = false)
-                        over <- matchService.publicFor(watcherId, player.playerId, over = true)
+                        running <- matchService.publicActive(watcherId, player.playerId)
+                        over <- matchService
+                            .publicCompleted(watcherId, player.playerId, CompletedQuery())
+                            .map(_.matches.toList)
                     } yield running.isEmpty && over.map(_.matchId) == List(MatchId(matchIdStr)) &&
                         // Still an unfinished match, which is why the row cannot say it completed.
                         over.forall(s => !s.completed && !s.cancelled)
@@ -355,10 +528,10 @@ class MatchServiceSpec extends PropertySuite {
         }
     }
 
-    property("publicFor rejects a caller who has never registered") {
+    property("publicActive rejects a caller who has never registered") {
         forAll(genUniqueString) { externalId =>
             matchService
-                .publicFor(externalId, PlayerId(1), over = false)
+                .publicActive(externalId, PlayerId(1))
                 .attempt
                 .timeout(10.seconds)
                 .unsafeRunSync() match {
@@ -396,16 +569,15 @@ class MatchServiceSpec extends PropertySuite {
                 made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
                 (_, game, matchId) = made
                 active <- matchService.active(externalId)
-                completed <- matchService.completed(externalId)
+                completed <- matchService.completed(externalId).map(_.matches.toList)
             } yield active.map(s => (s.gameId, s.matchId)) == List((game.gameId, matchId)) && completed.isEmpty
             result.timeout(10.seconds).unsafeRunSync()
         }
     }
 
-    /* The completed list is a history, so it is read from the most recent end: the order is
-     * `completed` descending. A cancelled match has no completion time and sorts after the ones
-     * that were played out, rather than ahead of them where a NULLS FIRST default would put it. */
-    property("completed matches come back most recently finished first, cancelled ones last") {
+    /* The completed list is a history, so it is read from the most recent end: by when each of the
+     * player's seats was finished with (V41). A cancelled match is not in it at all. */
+    property("completed matches come back most recently finished first, and a cancelled one not at all") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, olderId, newerId, cancelledId) =>
                 val result = TestSession.resource.use { session =>
@@ -435,8 +607,8 @@ class MatchServiceSpec extends PropertySuite {
                             case Some(m) => new MatchRepo(session).update(m.copy(cancelled = true))
                             case None => IO.raiseError(new IllegalStateException("the match just written is not there"))
                         }
-                        over <- matchService.completed(externalId)
-                    } yield over.map(_.matchId.value) == List(newerId, olderId, cancelledId)
+                        over <- matchService.completed(externalId).map(_.matches.toList)
+                    } yield over.map(_.matchId.value) == List(newerId, olderId)
                 }
                 result.timeout(10.seconds).unsafeRunSync()
         }
@@ -448,7 +620,7 @@ class MatchServiceSpec extends PropertySuite {
                 made <- makeMatch(nickname, externalId, matchIdStr, completed = true, pending = false)
                 (_, game, matchId) = made
                 active <- matchService.active(externalId)
-                completed <- matchService.completed(externalId)
+                completed <- matchService.completed(externalId).map(_.matches.toList)
             } yield completed.map(s => (s.gameId, s.matchId)) == List((game.gameId, matchId)) && active.isEmpty
             result.timeout(10.seconds).unsafeRunSync()
         }
@@ -491,12 +663,11 @@ class MatchServiceSpec extends PropertySuite {
                 cancelled <- matchService.cancel(game.gameId, matchId, externalId)
                 due <- matchService.due(externalId)
                 active <- matchService.active(externalId)
-                over <- matchService.completed(externalId)
+                over <- matchService.completed(externalId).map(_.matches.toList)
             } yield cancelled.cancelled &&
-                // Gone from the lists of things still to play, and present among the ones that are over:
-                // a cancelled match is finished, not erased.
-                due.isEmpty && active.isEmpty &&
-                over.map(s => (s.matchId, s.cancelled)) == List((matchId, true))
+                // Gone from the lists of things still to play, and not among the finished ones either: a
+                // match called off was never finished, and completed lists leave it out.
+                due.isEmpty && active.isEmpty && over.isEmpty
             result.timeout(10.seconds).unsafeRunSync()
         }
     }

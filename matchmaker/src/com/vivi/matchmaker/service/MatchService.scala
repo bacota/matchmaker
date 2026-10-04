@@ -1,9 +1,12 @@
 package com.vivi.matchmaker.service
 
 import cats.effect.IO
-import java.time.Duration
+import java.time.{Duration, Instant}
 import skunk.Session
 import com.vivi.matchmaker.model.{
+    CompletedCount,
+    CompletedPage,
+    CompletedQuery,
     GameId,
     GameMatch,
     Match,
@@ -54,7 +57,7 @@ class MatchService(
       */
     def active(callerExternalId: String): IO[List[MatchSummary]] =
         forCaller(callerExternalId) { (repo, playerId) =>
-            repo.listForPlayer(playerId, over = false).flatMap(summarised(repo, _)).flatMap { summaries =>
+            repo.listActiveForPlayer(playerId).flatMap(summarised(repo, _)).flatMap { summaries =>
                 // Asked for at all only when one of these matches is played under a chess clock, which
                 // most are not.
                 if (summaries.exists(s => s.timeLimit.isDefined && s.timeLimitKind == TimeLimitKind.Total))
@@ -63,41 +66,80 @@ class MatchService(
             }
         }
 
-    /** Matches the caller has finished playing.
+    /** One window of the matches the caller has finished: see [[CompletedQuery]] and [[CompletedPage]]. Never a
+      * cancelled match.
       *
       * No clocks: a finished match's budgets are not something anybody can spend, and what each player *did* spend is
       * on the result rows instead.
       */
-    def completed(callerExternalId: String): IO[List[MatchSummary]] =
-        forCaller(callerExternalId)((repo, playerId) =>
-            repo.listForPlayer(playerId, over = true).flatMap(summarised(repo, _))
-        )
-            .flatMap(viewed)
+    def completed(callerExternalId: String, query: CompletedQuery = CompletedQuery()): IO[CompletedPage] =
+        forCaller(callerExternalId) { (repo, playerId) =>
+            completedPage(repo, query)(
+              span => repo.listCompletedForPlayer(playerId, span),
+              from => repo.hasCompletedBefore(playerId, query.gameId, from)
+            )
+        }.flatMap(viewedPage)
 
-    /** The matches another player has marked public, either still running or finished.
+    /** The matches another player has marked public that are still running.
       *
-      * The one list here that is not about the caller, and so the one with a visibility rule: only matches whose
-      * challenge was offered as public. That rule lives in the query (`MatchRepo.listPublicForPlayer`) rather than
-      * here, so a private match is never read at all.
+      * The one kind of list here that is not about the caller, and so the one with a visibility rule: only matches
+      * whose challenge was offered as public. That rule lives in the queries (`MatchRepo.listPublicActiveForPlayer` and
+      * its counterparts) rather than here, so a private match is never read at all.
       *
       * The caller still has to be a registered player -- who plays here is for the people who play here -- but there is
       * nothing else to authorize: a public match is public to all of them, and the caller's own relationship to it
       * makes no difference to what this says.
       *
-      * No clocks, even for the running list. A chess clock is a thing its owner spends, `withClocks` reads the caller's
-      * own budgets, and a stranger's remaining seconds are not what somebody reading their page came for.
+      * No clocks. A chess clock is a thing its owner spends, `withClocks` reads the caller's own budgets, and a
+      * stranger's remaining seconds are not what somebody reading their page came for.
       */
-    def publicFor(callerExternalId: String, playerId: PlayerId, over: Boolean): IO[List[MatchSummary]] =
-        sessionPool
-            .use { session =>
-                for {
-                    _ <- resolveCaller(session, callerExternalId)
-                    repo = new MatchRepo(session)
-                    rows <- repo.listPublicForPlayer(playerId, over)
-                    summaries <- summarised(repo, rows)
-                } yield summaries
-            }
+    def publicActive(callerExternalId: String, playerId: PlayerId): IO[List[MatchSummary]] =
+        forRegistered(callerExternalId)(repo => repo.listPublicActiveForPlayer(playerId).flatMap(summarised(repo, _)))
             .flatMap(viewed)
+
+    /** One window of the public matches another player has finished, as [[completed]] is of the caller's own. */
+    def publicCompleted(callerExternalId: String, playerId: PlayerId, query: CompletedQuery): IO[CompletedPage] =
+        forRegistered(callerExternalId) { repo =>
+            completedPage(repo, query)(
+              span => repo.listPublicCompletedForPlayer(playerId, span),
+              from => repo.hasPublicCompletedBefore(playerId, query.gameId, from)
+            )
+        }.flatMap(viewedPage)
+
+    /** How many public matches another player has finished in each game, for their page to say before a game is opened.
+      */
+    def publicCompletedCounts(callerExternalId: String, playerId: PlayerId): IO[List[CompletedCount]] =
+        forRegistered(callerExternalId)(_.publicCompletedCounts(playerId))
+
+    /* One window of a completed list, whoever's it is: the window the query names, the matches in
+     * it, and whether the list holds anything older -- which is what says the oldest match the list
+     * could ever show is already on screen.
+     *
+     * The window is measured back from `asOf`, which the server sets on a first ask from the
+     * database's own clock, and which is then sent back for every later window of the same list. The
+     * most recent window has no end, so that a match finished since `asOf` is in it rather than in
+     * none. */
+    private def completedPage(repo: MatchRepo, query: CompletedQuery)(
+        rows: MatchRepo.CompletedSpan => IO[List[MatchRepo.MatchSeatRow]],
+        olderThan: Instant => IO[Boolean]
+    ): IO[CompletedPage] =
+        for {
+            asOf <- query.asOf.fold(repo.now)(IO.pure)
+            until = asOf.minus(query.frame.span.multipliedBy(query.page.toLong))
+            from = until.minus(query.frame.span)
+            found <- rows(MatchRepo.CompletedSpan(from, Option.when(query.page > 0)(until), query.gameId))
+            summaries <- summarised(repo, found)
+            older <- olderThan(from)
+        } yield CompletedPage(summaries, query.frame, query.page, asOf, from, until, older)
+
+    private def viewedPage(page: CompletedPage): IO[CompletedPage] =
+        viewed(page.matches.toList).map(matches => page.copy(matches = matches))
+
+    /* A list that may be about anybody: the caller only has to be a registered player. */
+    private def forRegistered[A](callerExternalId: String)(query: MatchRepo => IO[A]): IO[A] =
+        sessionPool.use { session =>
+            resolveCaller(session, callerExternalId).flatMap(_ => query(new MatchRepo(session)))
+        }
 
     /** A finished list as a player is shown it: any friendly archive that may have expired checked, and the links of an
       * archived match marked as such — see [[ArchiveService.settle]].
@@ -350,9 +392,9 @@ class MatchService(
                 )
             )
 
-    private def forCaller(
+    private def forCaller[A](
         callerExternalId: String
-    )(query: (MatchRepo, PlayerId) => IO[List[MatchSummary]]): IO[List[MatchSummary]] =
+    )(query: (MatchRepo, PlayerId) => IO[A]): IO[A] =
         sessionPool.use { session =>
             for {
                 player <- resolveCaller(session, callerExternalId)

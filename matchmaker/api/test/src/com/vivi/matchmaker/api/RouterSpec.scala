@@ -124,6 +124,15 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request("POST", "/register", body = """{"wrong":"field"}""")).statusCode, 400)
     }
 
+    // Every part of a completed list's window is optional, and each one given has to be well formed.
+    test("a completed list's window with a part that is not well formed is a bad request") {
+        assertEquals(dispatch(request("GET", "/me/matches/completed?frame=fortnight")).statusCode, 400)
+        assertEquals(dispatch(request("GET", "/me/matches/completed?page=-1")).statusCode, 400)
+        assertEquals(dispatch(request("GET", "/me/matches/completed?page=many")).statusCode, 400)
+        assertEquals(dispatch(request("GET", "/me/matches/completed?asOf=yesterday")).statusCode, 400)
+        assertEquals(dispatch(request("GET", "/players/2/matches/completed?gameId=abc")).statusCode, 400)
+    }
+
     test("a non-numeric game id is a bad request") {
         assertEquals(dispatch(request("GET", "/games/abc/challenges")).statusCode, 400)
     }
@@ -236,6 +245,7 @@ class RouterSpec extends FunSuite {
       ("GET", "/players?prefix=a", "{}"),
       ("GET", "/players/2/matches", "{}"),
       ("GET", "/players/2/matches/completed", "{}"),
+      ("GET", "/players/2/matches/completed/counts", "{}"),
       ("GET", "/games", "{}"),
       ("POST", "/games", gameBody),
       ("GET", "/games/1/admins", "{}"),
@@ -303,7 +313,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 54)
+        assertEquals(routed.size, 55)
         assertEquals(routed.distinct.size, routed.size)
     }
 

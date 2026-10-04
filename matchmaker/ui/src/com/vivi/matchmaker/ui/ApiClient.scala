@@ -55,7 +55,9 @@ object ApiClient {
 
     def activeMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches")
 
-    def completedMatches(): Future[Seq[MatchSummary]] = get[Seq[MatchSummary]]("/me/matches/completed")
+    /** One window of the caller's finished matches — see `CompletedQuery`. */
+    def completedMatches(query: CompletedQuery): Future[CompletedPage] =
+        get[CompletedPage]("/me/matches/completed" + completedQueryString(query))
 
     /** Players whose nickname begins with `prefix`, case insensitively, and whether there were more than the answer
       * shows.
@@ -74,8 +76,25 @@ object ApiClient {
     def publicMatches(playerId: PlayerId): Future[Seq[MatchSummary]] =
         get[Seq[MatchSummary]](s"/players/${playerId.value}/matches")
 
-    def publicCompletedMatches(playerId: PlayerId): Future[Seq[MatchSummary]] =
-        get[Seq[MatchSummary]](s"/players/${playerId.value}/matches/completed")
+    /** One window of the public matches another player has finished. */
+    def publicCompletedMatches(playerId: PlayerId, query: CompletedQuery): Future[CompletedPage] =
+        get[CompletedPage](s"/players/${playerId.value}/matches/completed" + completedQueryString(query))
+
+    /** How many public matches another player has finished in each game. */
+    def publicCompletedCounts(playerId: PlayerId): Future[Seq[CompletedCount]] =
+        get[Seq[CompletedCount]](s"/players/${playerId.value}/matches/completed/counts")
+
+    /* The window as the server reads it, each part only when it says something. `asOf` encoded: an
+     * instant carries a `:` and may carry a `+`. */
+    private def completedQueryString(query: CompletedQuery): String = {
+        val parts = Seq(
+          Some(s"frame=${query.frame.code}"),
+          Some(s"page=${query.page}"),
+          query.asOf.map(at => s"asOf=${js.URIUtils.encodeURIComponent(at.toString)}"),
+          query.gameId.map(id => s"gameId=${id.value}")
+        ).flatten
+        parts.mkString("?", "&", "")
+    }
 
     /** Everything the caller has said yes to and that has not yet become a match. Takes no player id: the server scopes
       * it to whoever the token says is calling.

@@ -350,7 +350,7 @@ class NotificationRepo(session: Session[IO]) {
                   LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = g.game_id
               WHERE pl.player_id = $playerId AND g.game_id = COALESCE(${gameId.opt}, g.game_id)
           ) r
-          WHERE p.player_id = $playerId AND p.game_id = r.game_id AND NOT p.completed""".command
+          WHERE p.player_id = $playerId AND p.game_id = r.game_id AND p.completed_at IS NULL""".command
             // Four flags, in `NotificationType.onSeat` order: since V24 those are the only columns a
             // seat has, so they are the only kinds a cascade into one can touch -- a player who changed
             // what they hear about challenges has changed nothing a seat holds. Bound positionally like
