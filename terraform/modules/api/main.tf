@@ -338,6 +338,9 @@ locals {
     "GET /games/{gameId}/admins",
     "PUT /games/{gameId}/admins/{playerId}",
     "DELETE /games/{gameId}/admins/{playerId}",
+    # Players' Elo ratings in a game (V42): the list, and an admin of the game setting one.
+    "GET /games/{gameId}/ratings",
+    "PUT /games/{gameId}/ratings/{playerId}",
     "GET /games/{gameId}/challenges",
     "GET /games/{gameId}/characters",
     # Another player's characters by name, for inviting one (V25). No state.

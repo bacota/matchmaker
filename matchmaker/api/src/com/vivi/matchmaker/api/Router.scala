@@ -184,6 +184,20 @@ object Router {
                     withPlayerId(playerId)(pid => noContent(services.gameAdmins.revoke(gid, pid, caller)))
                 )
 
+            /* Players' Elo ratings in a game (V42): anybody registered may see them, and an admin, or an
+             * admin of this game, may set one. A PUT, because what is sent is the rating, not a change to it. */
+            case ("GET", "games" :: gameId :: "ratings" :: Nil) =>
+                withGameId(gameId)(id => ok(services.ratings.list(id, caller)))
+
+            case ("PUT", "games" :: gameId :: "ratings" :: playerId :: Nil) =>
+                withGameId(gameId)(gid =>
+                    withPlayerId(playerId)(pid =>
+                        body[Json.RatingRequest](request).flatMap(r =>
+                            ok(services.ratings.set(gid, pid, r.rating, caller))
+                        )
+                    )
+                )
+
             case ("GET", "games" :: gameId :: "challenges" :: Nil) =>
                 withGameId(gameId)(id => ok(services.challenges.listByGame(id, caller)))
 

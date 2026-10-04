@@ -745,6 +745,20 @@ class GameEngineService[T](
                                           Result(gameId, r.participantId, r.rank, r.scores, r.isWinner, r.forfeit)
                                         )
                                     )
+                                    // In this transaction, under the match's lock: the ratings move exactly
+                                    // when the match completes, and a retried callback, finding it completed,
+                                    // does not move them again. A friendly match does not move them at all.
+                                    _ <- IO.unlessA(existing.friendly)(
+                                      EloRatingService.rate(
+                                        session,
+                                        gameId,
+                                        results.flatMap(r =>
+                                            participants
+                                                .find(_._1.participantId == r.participantId)
+                                                .map((p, _, _) => EloRating.Seat(p.playerId, r.rank))
+                                        )
+                                      )
+                                    )
                                     // Guarded by the `existing.completed` check above, under the lock, so this
                                     // stamps the match once — with the database's clock, not the lambda's.
                                     _ <- matchRepo.complete(gameId, matchId)
@@ -1015,6 +1029,17 @@ class GameEngineService[T](
                                       )
                                     )
                                 }
+                                // A forfeit is a result like any other to a rating: the player who ran out
+                                // of time lost. Rated as the engine's results are, in this transaction.
+                                _ <- IO.unlessA(locked.friendly)(
+                                  EloRatingService.rate(
+                                    session,
+                                    gameId,
+                                    participants.map((p, _, _) =>
+                                        EloRating.Seat(p.playerId, if (overdue.contains(p.participantId)) 2 else 1)
+                                    )
+                                  )
+                                )
                                 completedAt <- matchRepo.complete(gameId, matchId)
                             } yield (locked.copy(completedAt = Some(completedAt)), true)
                 } yield outcome

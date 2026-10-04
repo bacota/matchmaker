@@ -372,6 +372,19 @@ ul {
   min-width: 0;
 }
 
+/* The box on a rating's row that an admin of the game sets it with (V42). Outside a `.card`, so it
+   is given the card's field styling itself; narrower than the row, since a rating is four digits. */
+.row form.compound {
+  margin-top: 0.4rem;
+  max-width: 18rem;
+}
+
+.row form.compound input {
+  padding: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
 /* Each player's remaining time under a chess clock. A list rather than a table: it is two or
    three name/time pairs, and a table would bring headers and a caption to say what "name" and
    "time" mean. */

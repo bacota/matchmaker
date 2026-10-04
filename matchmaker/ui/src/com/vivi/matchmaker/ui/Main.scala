@@ -1975,6 +1975,7 @@ object Views {
                         myMatchesSection(Some(game)),
                         pendingAcceptances(Some(game)),
                         gameChallenges(game),
+                        ratingsSection(game),
                         adminMatchesSection(game),
                         gameHistory(game)
                       )
@@ -2738,6 +2739,184 @@ object Views {
               )
         )
     }
+
+    /** The game's Elo ratings (V42), highest first, for anybody signed in; and for its admins, a box on each row that
+      * sets that player's rating, and a form that rates a player who has none yet.
+      *
+      * Held in the section rather than the store, as [[adminMatchList]] holds its matches and for the same reason: an
+      * answer written into the store would rebuild the page this sits in, remount it, and ask again.
+      */
+    private def ratingsSection(game: Game): HtmlElement =
+        div(child <-- currentPlayer.map(_.fold(emptyNode)(player => ratingsList(game, player))))
+
+    private def ratingsList(game: Game, player: Player): HtmlElement = {
+        // `None` until the list has come back.
+        val ratings = Var(Option.empty[Seq[EloRating]])
+        val refreshing = Var(false)
+        // What the last save came to. Said aloud as well as shown: the box that was changed does not
+        // say by itself that the change took.
+        val said = Var("")
+        // Mounts of this section, so that an answer to an earlier one is not written into a later one.
+        var mount = 0
+
+        /* Dropped if it belongs to another mount or another sign-in, as `adminMatchList`'s is. */
+        def fetch(asked: Int): Future[Unit] = {
+            val signIn = Store.currentSignIn
+            ApiClient.ratings(game.gameId).map { found =>
+                if (asked == mount && Store.stillSignedInAs(signIn)) ratings.set(Some(found))
+            }
+        }
+
+        /* A row's save is put in the row's place rather than re-sorted into the list: moving the row
+         * the keyboard is in would take the focus with it. The next refresh puts it in order. */
+        def savedRow(saved: EloRating): Unit = {
+            said.set(s"${saved.player.nickname} is now rated ${saved.rating}.")
+            ratings.update(_.map(_.map(r => if (r.player.playerId == saved.player.playerId) saved else r)))
+        }
+
+        /* A new player's save brings a row that is not on screen yet, so the list is asked again. */
+        def savedNew(saved: EloRating): Unit = {
+            said.set(s"${saved.player.nickname} is now rated ${saved.rating}.")
+            fetch(mount)
+        }
+
+        val administers = Store.administers(game.gameId, player)
+
+        div(
+          onMountCallback { _ =>
+              mount += 1
+              fetch(mount)
+          },
+          onUnmountCallback(_ => mount += 1),
+          refreshableSection("Elo Ratings", refreshing, () => fetch(mount), subsection = false)(
+            p(
+              cls := "detail",
+              s"Every match of this game that is not friendly moves its players' ratings. " +
+                  s"A player's first rated match starts them at ${EloRating.initial}."
+            ),
+            div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
+            child <-- ratings.signal.map {
+                case None                         => p(cls := "empty", "Loading…")
+                case Some(found) if found.isEmpty => p(cls := "empty", "Nobody is rated yet.")
+                case Some(_)                      => emptyNode
+            },
+            // Split by player, so that a row keeps its element -- and whatever is typed in its box --
+            // when the list around it is answered again.
+            ul(
+              children <-- ratings.signal
+                  .map(_.getOrElse(Seq.empty))
+                  .split(_.player.playerId)((_, first, rating) =>
+                      ratingRow(game, first.player, rating, administers, savedRow)
+                  )
+            ),
+            child <-- administers.map(if (_) rateNewPlayer(game, savedNew, said) else emptyNode)
+          )
+        )
+    }
+
+    /** One player's rating; for an admin of the game, with the box that sets it. */
+    private def ratingRow(
+        game: Game,
+        rated: PublicPlayer,
+        rating: Signal[EloRating],
+        administers: Signal[Boolean],
+        onSaved: EloRating => Unit
+    ): HtmlElement =
+        li(
+          cls := "row",
+          div(cls := "title", rated.nickname),
+          div(
+            cls := "detail",
+            child.text <-- rating.map(r =>
+                s"${r.rating}, after ${r.matches} rated ${if (r.matches == 1) "match" else "matches"}"
+            )
+          ),
+          child <-- administers.map {
+              case false => emptyNode
+              case true =>
+                  val typed = Var("")
+                  val busy = Var(false)
+                  val id = s"rating-${game.gameId.value}-${rated.playerId.value}"
+                  form(
+                    cls := "compound",
+                    onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
+                        typed.now().trim.toIntOption.foreach { n =>
+                            Store.run(ApiClient.setRating(game.gameId, rated.playerId, n), busy) { saved =>
+                                typed.set("")
+                                onSaved(saved)
+                            }
+                        }
+                    },
+                    label(cls := "sr-only", forId := id, s"New rating for ${rated.nickname}"),
+                    ratingInput(id, typed, placeholder := "New rating"),
+                    // Not disabled while saving: a disabled button drops the keyboard's focus. A press
+                    // made meanwhile is ignored by the filter above instead.
+                    button(tpe := "submit", aria.busy <-- busy.signal, "Set")
+                  )
+          }
+        )
+
+    /** For an admin of the game: rating a player who has no rating yet, by nickname. Setting the rating of one who has
+      * is what each row's box is for, but this will do that too.
+      */
+    private def rateNewPlayer(game: Game, onSaved: EloRating => Unit, said: Var[String]): HtmlElement = {
+        val nickname = Var("")
+        val typed = Var("")
+        val busy = Var(false)
+
+        /* By the player search, which matches a prefix: the nickname typed in full is the one meant,
+         * and nothing else that merely starts with it. */
+        def rate(name: String, rating: Int): Future[Option[EloRating]] =
+            ApiClient.searchPlayers(name).flatMap { found =>
+                found.players.find(_.nickname == name) match {
+                    case Some(player) => ApiClient.setRating(game.gameId, player.playerId, rating).map(Some(_))
+                    case None         => Future.successful(None)
+                }
+            }
+
+        form(
+          cls := "card",
+          onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
+              val name = nickname.now().trim
+              typed.now().trim.toIntOption.filter(_ => name.nonEmpty).foreach { n =>
+                  Store.run(rate(name, n), busy) {
+                      case Some(saved) =>
+                          nickname.set("")
+                          typed.set("")
+                          onSaved(saved)
+                      case None => said.set(s"There is no player called $name.")
+                  }
+              }
+          },
+          h3("Rate a Player"),
+          field(
+            "Nickname",
+            input(
+              tpe := "text",
+              required := true,
+              autoComplete := "off",
+              controlled(value <-- nickname.signal, onInput.mapToValue --> nickname)
+            )
+          ),
+          field("Rating", ratingInput(s"rate-new-${game.gameId.value}", typed)),
+          button(tpe := "submit", aria.busy <-- busy.signal, "Set rating")
+        )
+    }
+
+    /** A box for a rating: a whole number in the range the server accepts, which the browser checks before sending. */
+    private def ratingInput(id: String, typed: Var[String], modifiers: Modifier[Input]*): Input =
+        input(
+          idAttr := id,
+          tpe := "number",
+          required := true,
+          minAttr := EloRating.minimum.toString,
+          maxAttr := EloRating.maximum.toString,
+          stepAttr := "1",
+          // The number pad on a phone, rather than the full keyboard.
+          inputMode := "numeric",
+          controlled(value <-- typed.signal, onInput.mapToValue --> typed),
+          modifiers
+        )
 
     /** What can be played in this game right now: the open challenges, and the form that offers one. A game that needs
       * characters needs one of this player's before either is possible, so that form stands in for both until there is
