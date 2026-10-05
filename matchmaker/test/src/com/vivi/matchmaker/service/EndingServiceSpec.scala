@@ -199,8 +199,12 @@ class EndingServiceSpec extends FunSuite with QuietTests {
           pool,
           engine,
           archiveStore = store,
-          matchEndings =
-              Some(MatchEndings.inline((gameId, matchId) => ending.settle(gameId, matchId).map(s => settled :+= s)))
+          matchEndings = Some(
+            MatchEndings.inline(
+              (gameId, matchId) => ending.settle(gameId, matchId).map(s => settled :+= s),
+              ending.rank(_).void
+            )
+          )
         )
         val (game, matchId) = run(matchOf(services, None))
 

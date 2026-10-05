@@ -36,6 +36,22 @@ class EndingHandlerSpec extends FunSuite {
         )
     }
 
+    test("a game's ratings changing is read back as that, and a match's ending is not mistaken for it") {
+        val records = Handler.records(
+          sqsEvent(
+            "m-1" -> upickle.default.write(RatingsChanged(7)),
+            "m-2" -> upickle.default.write(MatchEnded.of(GameId(7), MatchId("3f1c-match")))
+          )
+        )
+        assertEquals(
+          records,
+          Seq(
+            Handler.Record.Understood("m-1", RatingsChanged(7)),
+            Handler.Record.Understood("m-2", MatchEnded(7, "3f1c-match"))
+          )
+        )
+    }
+
     test("a body that is not a match's ending is unreadable, and one without an id is skipped") {
         val records = Handler.records(sqsEvent("m-1" -> "not json", "m-2" -> """{"gameId":"seven"}"""))
         assertEquals(records.map(_.getClass.getSimpleName), Seq("Unreadable", "Unreadable"))

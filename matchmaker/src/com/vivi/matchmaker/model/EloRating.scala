@@ -1,8 +1,18 @@
 package com.vivi.matchmaker.model
 
-/** A player's Elo rating in one game (V42), as anybody may see it: the number, and how many rated matches moved it.
+/** A player's Elo rating in one game (V42), as anybody may see it: the number, how many rated matches moved it, and
+  * their place on the game's leaderboard (V45) — none for a player rated a moment ago and not placed yet.
   */
-case class EloRating(player: PublicPlayer, rating: Int, matches: Int)
+case class EloRating(player: PublicPlayer, rating: Int, matches: Int, rank: Option[Int] = None)
+
+/** One page of a game's leaderboard, best first, and whether there is a page after it. */
+case class Leaderboard(ratings: List[EloRating], more: Boolean)
+
+object Leaderboard {
+
+    /** How many players a page of it holds. */
+    val pageSize: Int = 20
+}
 
 /** How a match that is not friendly moves its players' ratings.
   *

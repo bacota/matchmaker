@@ -5,8 +5,11 @@
 /* When a match ends -- its results arrive, a refresh finds it over, a clock runs out, its creator
  * cancels it -- the API function puts the match's id on this queue, and the function below settles
  * what the end owes: its engine is prompted to archive it if it has not, and a cancel is told to
- * the engine. See com.vivi.matchmaker.service.EndingService. Ratings are not among it: they move
- * in the API call that ends the match, in its transaction, and depend on no queue.
+ * the engine, and its players are placed on the game's leaderboard (RankingService). See
+ * com.vivi.matchmaker.service.EndingService. Ratings are not among it: they move in the API call
+ * that ends the match, in its transaction, and depend on no queue -- only the places they earn
+ * follow here. An admin setting a rating, or reclassifying a finished match, puts just the game's
+ * id on this queue, for its leaderboard.
  *
  * This replaces the daily sweep, and the queue's redelivery is what replaces its retries: a match
  * still owed something is failed back to the queue, delivered again once the visibility timeout has

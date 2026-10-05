@@ -184,10 +184,20 @@ object Router {
                     withPlayerId(playerId)(pid => noContent(services.gameAdmins.revoke(gid, pid, caller)))
                 )
 
-            /* Players' Elo ratings in a game (V42): anybody registered may see them, and an admin, or an
-             * admin of this game, may set one. A PUT, because what is sent is the rating, not a change to it. */
+            /* Players' Elo ratings in a game (V42): anybody registered may see its leaderboard (V45), a page
+             * at a time from `page` 0, and an admin, or an admin of this game, may set one. A PUT, because
+             * what is sent is the rating, not a change to it. */
             case ("GET", "games" :: gameId :: "ratings" :: Nil) =>
-                withGameId(gameId)(id => ok(services.ratings.list(id, caller)))
+                withGameId(gameId)(id =>
+                    request.query.get("page") match {
+                        case None => ok(services.ratings.leaderboard(id, 0, caller))
+                        case Some(raw) =>
+                            raw.toIntOption.filter(_ >= 0) match {
+                                case Some(page) => ok(services.ratings.leaderboard(id, page, caller))
+                                case None       => IO.pure(Errors.badRequest(s"'$raw' is not a valid page"))
+                            }
+                    }
+                )
 
             case ("PUT", "games" :: gameId :: "ratings" :: playerId :: Nil) =>
                 withGameId(gameId)(gid =>

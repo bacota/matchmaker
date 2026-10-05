@@ -170,8 +170,8 @@ class EloRatingServiceSpec extends PropertySuite {
 
     private def ratings(f: Fixture): IO[Map[PlayerId, (Int, Int)]] =
         services.ratings
-            .list(f.game.gameId, f.first.externalId)
-            .map(_.map(r => r.player.playerId -> (r.rating, r.matches)).toMap)
+            .leaderboard(f.game.gameId, 0, f.first.externalId)
+            .map(_.ratings.map(r => r.player.playerId -> (r.rating, r.matches)).toMap)
 
     /** The two players' rating rows as stored, listed or not: the list leaves out a player no rated match has moved and
       * no admin has set, and the row is still there for the match that began it.
@@ -231,6 +231,22 @@ class EloRatingServiceSpec extends PropertySuite {
         assertEquals(
           recorded,
           Map(f.first.playerId -> (1500, Some(16)), f.second.playerId -> (1500, Some(-16)))
+        )
+    }
+
+    test("settling a rated match's ending places its players on the leaderboard") {
+        val result = for {
+            f <- fixture()
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.second)
+            // Whatever it says of the archive, which is not this test's business.
+            _ <- services.ending.settle(f.game.gameId, matchId)
+            board <- services.ratings.leaderboard(f.game.gameId, 0, f.first.externalId)
+        } yield (f, board)
+        val (f, board) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(
+          board.ratings.map(r => (r.player.playerId, r.rank)),
+          List(f.second.playerId -> Some(1), f.first.playerId -> Some(2))
         )
     }
 
@@ -475,19 +491,22 @@ class EloRatingServiceSpec extends PropertySuite {
         assertEquals(now, Map(f.first.playerId -> (1612, 1), f.second.playerId -> (1488, 1)))
     }
 
-    test("setting a rating leaves alone how many matches stand behind it, and the list is highest first") {
+    test("setting a rating leaves alone how many matches stand behind it, and the leaderboard is highest first") {
         val result = for {
             f <- fixture()
             matchId <- started(f, friendly = false)
             _ <- finish(f, matchId, f.first)
             _ <- services.ratings.set(f.game.gameId, f.second.playerId, 2000, f.overall.externalId)
-            listed <- services.ratings.list(f.game.gameId, f.host.externalId)
+            // What the listener does once the set has said so: here, a run of it that has finished.
+            _ <- services.ending.rank(f.game.gameId)
+            listed <- services.ratings.leaderboard(f.game.gameId, 0, f.host.externalId)
         } yield (f, listed)
         val (f, listed) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(
-          listed.map(r => (r.player.playerId, r.rating, r.matches)),
-          List((f.second.playerId, 2000, 1), (f.first.playerId, 1516, 1))
+          listed.ratings.map(r => (r.player.playerId, r.rating, r.matches, r.rank)),
+          List((f.second.playerId, 2000, 1, Some(1)), (f.first.playerId, 1516, 1, Some(2)))
         )
+        assert(!listed.more)
     }
 
     test("only an admin may set a rating, within the range, of a player and game that exist") {
@@ -513,10 +532,10 @@ class EloRatingServiceSpec extends PropertySuite {
         assertEquals(now, Map.empty[PlayerId, (Int, Int)])
     }
 
-    test("the ratings of a game that does not exist are not found") {
+    test("the leaderboard of a game that does not exist is not found") {
         val result = for {
             player <- register()
-            refused <- refusal(services.ratings.list(GameId(-1), player.externalId))
+            refused <- refusal(services.ratings.leaderboard(GameId(-1), 0, player.externalId))
         } yield refused
         val refused = result.timeout(caseTimeout).unsafeRunSync()
         assert(refused.isInstanceOf[NotFoundError], refused)

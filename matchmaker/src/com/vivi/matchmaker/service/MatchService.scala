@@ -456,11 +456,13 @@ class MatchService(
                             else IO.pure(false)
                         classified = existing.copy(friendly = friendly)
                         _ <- IO.whenA(changed)(matchRepo.update(classified))
-                    } yield (classified, moved)
+                    } yield (classified, moved, changed && existing.completed)
                 }
             }
-            (classified, moved) = decided
+            (classified, moved, rerated) = decided
             _ <- prepared.filter(_ => moved).traverse_(p => archives.traverse_(_.finishMove(p)))
+            // Its players' ratings moved, and the leaderboard follows them in the listener, as it does a match's end.
+            _ <- IO.whenA(rerated)(endings.ratingsChanged(gameId))
         } yield classified
 
     /* Whether this caller may make this match not friendly and it would then owe its archive a move:

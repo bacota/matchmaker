@@ -8,8 +8,8 @@ import com.vivi.matchmaker.model.{GameId, MatchId}
 import com.vivi.matchmaker.notify.SqsNotifier
 
 /** That a match has ended — played out, forfeited or cancelled — and what its end still owes is to be settled: its
-  * archive made, its engine told of a cancel (`EndingService.settle`). Its rating is not among them: that moves in the
-  * transaction that ended it.
+  * archive made, its engine told of a cancel, its players placed on the game's leaderboard (`EndingService.settle`).
+  * Its rating is not among them: that moves in the transaction that ended it.
   *
   * Said after the transaction that ended the match has committed, so that whoever settles it reads the match as it
   * ended. Never fails the call that ended it, which has already happened: a failure here is logged, and the match is
@@ -18,6 +18,12 @@ import com.vivi.matchmaker.notify.SqsNotifier
   */
 trait MatchEndings {
     def ended(gameId: GameId, matchId: MatchId): IO[Unit]
+
+    /** That ratings in the game have moved other than by a match ending — an admin set one, or said a finished match
+      * was or was not friendly — and its leaderboard is to be put in order (`RankingService`). Said, and failing, as
+      * [[ended]] is; one that is lost is put in order by the next ending of the game.
+      */
+    def ratingsChanged(gameId: GameId): IO[Unit]
 }
 
 /** What goes on the queue: the match, and nothing about it. Whoever settles it reads the rest from the database, as it
@@ -30,10 +36,24 @@ object MatchEnded {
 
     def of(gameId: GameId, matchId: MatchId): MatchEnded = MatchEnded(gameId.value, matchId.value)
 
-    /** A message body, or why it is not one. */
-    def parse(body: String): Either[String, MatchEnded] =
+    /** A message body, or why it is not one: a match's ending, or else a game's ratings changing. In that order,
+      * because a match's ending is a game's ratings changing with a match id besides, and is read as one by a reader
+      * that ignores the field it does not know.
+      */
+    def parse(body: String): Either[String, MatchEnded | RatingsChanged] =
         try Right(read[MatchEnded](body))
-        catch { case e: Exception => Left(s"not a match ending: ${e.getMessage}") }
+        catch {
+            case _: Exception =>
+                try Right(read[RatingsChanged](body))
+                catch { case e: Exception => Left(s"not a match ending: ${e.getMessage}") }
+        }
+}
+
+/** What goes on the queue when a game's ratings have moved with no match ending: the game, for its leaderboard. */
+case class RatingsChanged(gameId: Int)
+
+object RatingsChanged {
+    given ReadWriter[RatingsChanged] = macroRW
 }
 
 /** Puts the ending on the queue the ending listener drains (`ending.Handler`), so that the request that ended the match
@@ -43,24 +63,31 @@ object MatchEnded {
 class SqsMatchEndings(queueUrl: String, client: () => SqsClient) extends MatchEndings {
 
     def ended(gameId: GameId, matchId: MatchId): IO[Unit] =
+        send(
+          write(MatchEnded.of(gameId, matchId)),
+          s"the end of match ${matchId.value} of game ${gameId.value} was not queued, and is not settled"
+        )
+
+    def ratingsChanged(gameId: GameId): IO[Unit] =
+        send(
+          write(RatingsChanged(gameId.value)),
+          s"the change to game ${gameId.value}'s ratings was not queued, and its leaderboard waits for its next ending"
+        )
+
+    private def send(body: String, failed: String): IO[Unit] =
         IO.blocking {
-            client().sendMessage(
-              SendMessageRequest.builder().queueUrl(queueUrl).messageBody(write(MatchEnded.of(gameId, matchId))).build()
-            )
+            client().sendMessage(SendMessageRequest.builder().queueUrl(queueUrl).messageBody(body).build())
         }.void
-            .handleErrorWith(e =>
-                IO.blocking(
-                  System.err.println(
-                    s"the end of match ${matchId.value} of game ${gameId.value} was not queued, and is not settled: $e"
-                  )
-                )
-            )
+            .handleErrorWith(e => IO.blocking(System.err.println(s"$failed: $e")))
 }
 
 object MatchEndings {
 
     /** Says nothing to anybody: for a service built where no ending is ever to be settled. */
-    val disabled: MatchEndings = (_, _) => IO.unit
+    val disabled: MatchEndings = new MatchEndings {
+        def ended(gameId: GameId, matchId: MatchId): IO[Unit] = IO.unit
+        def ratingsChanged(gameId: GameId): IO[Unit] = IO.unit
+    }
 
     /** Settles the ending in this process rather than queueing it: for an environment with no queue — the local server
       * and the tests. Once: nothing retries what is left owed, which is what the queue is for. Unable to fail the
@@ -72,14 +99,17 @@ object MatchEndings {
       * own. Run in the request, it would wait for a connection while holding one, which with a pool of one is a
       * deadlock and with more is a way to exhaust it. On its own fiber it simply waits until one is given back.
       */
-    def inline(settle: (GameId, MatchId) => IO[Unit]): MatchEndings =
-        (gameId, matchId) =>
-            settle(gameId, matchId)
-                .handleErrorWith(e =>
-                    IO.blocking(System.err.println(s"settling the end of match ${matchId.value} failed: $e"))
-                )
-                .start
-                .void
+    def inline(settle: (GameId, MatchId) => IO[Unit], rank: GameId => IO[Unit]): MatchEndings =
+        new MatchEndings {
+            def ended(gameId: GameId, matchId: MatchId): IO[Unit] =
+                background(settle(gameId, matchId), s"settling the end of match ${matchId.value} failed")
+
+            def ratingsChanged(gameId: GameId): IO[Unit] =
+                background(rank(gameId), s"ranking game ${gameId.value} failed")
+
+            private def background(work: IO[Unit], failed: String): IO[Unit] =
+                work.handleErrorWith(e => IO.blocking(System.err.println(s"$failed: $e"))).start.void
+        }
 
     /** The queue named by `MATCH_ENDED_QUEUE_URL`, or `inline` when there is none. */
     def fromEnvironment(

@@ -84,7 +84,9 @@ object Services {
         val archives = new ArchiveService(pool, archiveStore)
         val ending = new EndingService(pool, engineClient)
         val endings = matchEndings.getOrElse(
-          MatchEndings.fromEnvironment(MatchEndings.inline((gameId, matchId) => ending.settle(gameId, matchId).void))
+          MatchEndings.fromEnvironment(
+            MatchEndings.inline((gameId, matchId) => ending.settle(gameId, matchId).void, ending.rank(_).void)
+          )
         )
         val matches = new MatchService(pool, notifications, Some(archives), endings)
 
@@ -101,7 +103,7 @@ object Services {
           players = new PlayerService(pool),
           games = new GameService[T](pool),
           gameAdmins = new GameAdminService[T](pool),
-          ratings = new EloRatingService[T](pool),
+          ratings = new EloRatingService[T](pool, endings),
           characters = new CharacterService[T](pool),
           // One `Notifications` for the four services that cause something worth an email. One
           // rather than one each, because who is told what does not depend on which service the

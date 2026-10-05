@@ -16,6 +16,7 @@ import com.vivi.matchmaker.engine.{
     GameEngineError,
     GameStatusResponse
 }
+import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{ChallengeRepo, GameRepo, MatchRepo, ParticipantRepo, TestSession}
 
@@ -117,7 +118,10 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
         @volatile var ended: List[MatchId] = Nil
         val services: Services[String] = TestServices.servicesWith(
           engine,
-          matchEndings = Some((_, matchId) => IO { ended = ended :+ matchId })
+          matchEndings = Some(new MatchEndings {
+              def ended(gameId: GameId, matchId: MatchId): IO[Unit] = IO { Queueing.this.ended :+= matchId }
+              def ratingsChanged(gameId: GameId): IO[Unit] = IO.unit
+          })
         )
     }
 

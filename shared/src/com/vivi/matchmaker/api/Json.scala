@@ -72,6 +72,7 @@ object Json {
     given ReadWriter[PlayerSearchResult] = macroRW
     given ReadWriter[GameAdmin] = macroRW
     given ReadWriter[EloRating] = macroRW
+    given ReadWriter[Leaderboard] = macroRW
     given ReadWriter[GameMatch] = macroRW
     given ReadWriter[GameRole] = macroRW
     given ReadWriter[GameParameterValue[String]] = macroRW

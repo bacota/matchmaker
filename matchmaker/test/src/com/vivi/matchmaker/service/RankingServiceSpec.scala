@@ -1,0 +1,216 @@
+package com.vivi.matchmaker.service
+
+import scala.concurrent.duration._
+import cats.effect.IO
+import cats.syntax.all._
+import cats.effect.unsafe.implicits.global
+import org.scalacheck.Gen
+import org.scalacheck.Prop._
+import skunk._
+import skunk.implicits._
+import skunk.codec.all.{bool, int4, int8}
+import natchez.Trace.Implicits.noop
+import com.vivi.matchmaker.{PropertySuite, TestMigration}
+import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.persistence.{GameRepo, TestSession}
+
+/** A game's leaderboard (V45): whatever order ratings are moved in, and however many move before the leaderboard is put
+  * in order, it ends up in the order the ratings are in — equal ratings sharing a place, and the places after them
+  * skipped — and a placing that cannot have a lock gives up and is tried again rather than waiting.
+  */
+class RankingServiceSpec extends PropertySuite {
+    TestMigration.ensure()
+
+    /* A ceiling on a case that has hung: see CLAUDE.md. */
+    private val caseTimeout = 60.seconds
+
+    private val services = TestServices.services
+    private val ranking = new RankingService(TestServices.pool)
+
+    private def unique(prefix: String): String = s"$prefix-${java.util.UUID.randomUUID()}"
+
+    private def makeGame(): IO[Game] =
+        TestSession.resource.use { session =>
+            new GameRepo[String](session).create(
+              Game(
+                GameId.unassigned,
+                GameType.Plain,
+                "Ladder",
+                "Ladder",
+                "description",
+                "https://engine.example.com/games",
+                active = true,
+                Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false, displayName = "Only")),
+                Seq.empty,
+                unique("ladder")
+              )
+            )
+        }
+
+    private def players(n: Int): IO[List[Player]] =
+        List.fill(n)(()).traverse(_ => services.registration.register(unique("rank"), unique("rank-sub")))
+
+    /** A player's rating as play or an admin leaves it: `rated` is whether the leaderboard shows it — a match has moved
+      * it — or not, as for a row a match's start made.
+      */
+    private case class Rating(rating: Int, rated: Boolean)
+
+    private val upsert: Command[(Int, Long, Int, Int)] =
+        sql"""INSERT INTO elo_rating (game_id, player_id, rating, matches) VALUES ($int4, $int8, $int4, $int4)
+          ON CONFLICT (game_id, player_id) DO UPDATE SET rating = EXCLUDED.rating, matches = EXCLUDED.matches""".command
+
+    /** Moves the ratings the way a completion does: the rating, and nothing about places. */
+    private def write(game: Game, ratings: Map[Player, Rating]): IO[Unit] =
+        TestSession.resource.use { session =>
+            ratings.toList.traverse_((player, r) =>
+                session.execute(upsert)((game.gameId.value, player.playerId.value, r.rating, if (r.rated) 1 else 0))
+            )
+        }
+
+    private val selectPlaces: Query[Int, (Long, Option[Int], Option[Int], Int)] =
+        sql"""SELECT player_id, rank, ranked_rating, rating FROM elo_rating WHERE game_id = $int4"""
+            .query(int8 *: int4.opt *: int4.opt *: int4)
+
+    private def places(game: Game): IO[Map[Long, Option[Int]]] =
+        TestSession.resource.use(session =>
+            session.execute(selectPlaces)(game.gameId.value).map { rows =>
+                rows.foreach((player, rank, rankedRating, rating) =>
+                    assert(rank.isEmpty || rankedRating.contains(rating), s"$player is placed by a stale rating")
+                )
+                rows.map((player, rank, _, _) => player -> rank).toMap
+            }
+        )
+
+    /** Where everybody belongs: one more than how many rated players are rated higher, for the rated; none for the
+      * rest.
+      */
+    private def expected(ratings: Map[Player, Rating]): Map[Long, Option[Int]] = {
+        val rated = ratings.values.filter(_.rated).map(_.rating).toList
+        ratings.map((player, r) => player.playerId.value -> Option.when(r.rated)(rated.count(_ > r.rating) + 1))
+    }
+
+    // Close together, so that ties are common, and some unrated, so that players come and go.
+    private val genRating: Gen[Rating] =
+        for {
+            rating <- Gen.choose(1490, 1500)
+            rated <- Gen.frequency(5 -> true, 1 -> false)
+        } yield Rating(rating, rated)
+
+    /** Rounds of moves: in each, some of the players' ratings move, and then the leaderboard is put in order. */
+    private val genRounds: Gen[(Int, List[Map[Int, Rating]])] =
+        for {
+            n <- Gen.choose(1, 10)
+            first <- Gen.listOfN(n, genRating).map(_.zipWithIndex.map(_.swap).toMap)
+            later <- Gen.listOfN(
+              6,
+              Gen.choose(1, n)
+                  .flatMap(k =>
+                      Gen.pick(k, 0 until n)
+                          .flatMap(who =>
+                              Gen.sequence[List[Rating], Rating](who.map(_ => genRating)).map(who.zip(_).toMap)
+                          )
+                  )
+            )
+        } yield (n, first :: later)
+
+    property("however many ratings move before it is put in order, the leaderboard ends in the order they are in") {
+        forAll(genRounds) { (n, rounds) =>
+            val result = for {
+                game <- makeGame()
+                people <- players(n)
+                checked <- rounds.foldLeft(IO.pure((Map.empty[Player, Rating], List.empty[Boolean]))) { (acc, round) =>
+                    acc.flatMap { (ratings, verdicts) =>
+                        val moved = round.map((i, r) => people(i) -> r)
+                        val now = ratings ++ moved
+                        for {
+                            _ <- write(game, moved)
+                            settled <- ranking.rank(game.gameId)
+                            placed <- places(game)
+                        } yield (now, verdicts :+ (settled == Settlement.Settled && placed == expected(now)))
+                    }
+                }
+            } yield checked._2
+            val verdicts = result.timeout(caseTimeout).unsafeRunSync()
+            assert(verdicts.forall(identity), verdicts)
+        }
+    }
+
+    test("a player who moves past the place above swaps with it, and a tie shares a place and skips the next") {
+        val result = for {
+            game <- makeGame()
+            people <- players(4)
+            List(a, b, c, d) = people: @unchecked
+            _ <- write(game, Map(a -> Rating(1600, true), b -> Rating(1550, true), c -> Rating(1500, true)))
+            _ <- ranking.rank(game.gameId)
+            before <- places(game)
+            // c climbs past b; d arrives level with a.
+            _ <- write(game, Map(c -> Rating(1580, true), d -> Rating(1600, true)))
+            _ <- ranking.rank(game.gameId)
+            after <- places(game)
+        } yield (List(a, b, c, d).map(_.playerId.value), before, after)
+        val (List(a, b, c, d), before, after) = result.timeout(caseTimeout).unsafeRunSync(): @unchecked
+        assertEquals(before, Map(a -> Some(1), b -> Some(2), c -> Some(3)))
+        assertEquals(after, Map(a -> Some(1), d -> Some(1), c -> Some(3), b -> Some(4)))
+    }
+
+    test("a placing that cannot have a row's lock gives up rather than waiting, and is placed once it can".tag(Quiet)) {
+        val impatient = new RankingService(TestServices.pool, attempts = 3, pause = _ => IO.sleep(10.millis))
+        val lockRow: Query[(Int, Long), Boolean] =
+            sql"""SELECT true FROM elo_rating WHERE game_id = $int4 AND player_id = $int8 FOR UPDATE""".query(bool)
+        val result = for {
+            game <- makeGame()
+            people <- players(2)
+            List(a, b) = people: @unchecked
+            _ <- write(game, Map(a -> Rating(1600, true), b -> Rating(1500, true)))
+            // Somebody else -- a completion, say -- holds b's row while the leaderboard is put in order.
+            held <- TestSession.resource.use(session =>
+                session.transaction.use(_ =>
+                    session.unique(lockRow)((game.gameId.value, b.playerId.value)) *>
+                        impatient.rank(game.gameId).timeout(10.seconds)
+                )
+            )
+            whileHeld <- places(game)
+            released <- impatient.rank(game.gameId)
+            after <- places(game)
+        } yield (a.playerId.value, b.playerId.value, held, whileHeld, released, after)
+        val (a, b, held, whileHeld, released, after) = result.timeout(caseTimeout).unsafeRunSync()
+        assert(held.isInstanceOf[Settlement.Owed], held)
+        // a was placed: one player's lock does not hold up the others'.
+        assertEquals(whileHeld, Map(a -> Some(1), b -> None))
+        assertEquals(released, Settlement.Settled)
+        assertEquals(after, Map(a -> Some(1), b -> Some(2)))
+    }
+
+    test("placings of one game run at once take turns, and leave it in order") {
+        val patient = new RankingService(TestServices.pool, attempts = 100)
+        val result = for {
+            game <- makeGame()
+            people <- players(8)
+            ratings = people.zipWithIndex.map((p, i) => p -> Rating(1500 + (i % 3) * 10 + i, true)).toMap
+            _ <- write(game, ratings)
+            settled <- List.fill(4)(patient.rank(game.gameId)).parSequence
+            placed <- places(game)
+        } yield (settled, placed, expected(ratings))
+        val (settled, placed, wanted) = result.timeout(caseTimeout).unsafeRunSync()
+        assert(settled.forall(_ == Settlement.Settled), settled)
+        assertEquals(placed, wanted)
+    }
+
+    test("the leaderboard is paged twenty at a time, and says whether there is more") {
+        val result = for {
+            game <- makeGame()
+            people <- players(25)
+            _ <- write(game, people.zipWithIndex.map((p, i) => p -> Rating(2000 - i, true)).toMap)
+            _ <- ranking.rank(game.gameId)
+            first <- services.ratings.leaderboard(game.gameId, 0, people.head.externalId)
+            second <- services.ratings.leaderboard(game.gameId, 1, people.head.externalId)
+            third <- services.ratings.leaderboard(game.gameId, 2, people.head.externalId)
+        } yield (first, second, third)
+        val (first, second, third) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(first.ratings.flatMap(_.rank), (1 to 20).toList)
+        assert(first.more)
+        assertEquals(second.ratings.flatMap(_.rank), (21 to 25).toList)
+        assert(!second.more)
+        assertEquals(third, Leaderboard(Nil, more = false))
+    }
+}
