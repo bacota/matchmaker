@@ -62,8 +62,10 @@ object Views {
       * back. The handler is handed the flag to pass to `Store.run`, which clears it however the request ends: a failure
       * re-enables the button rather than leaving it spinning on an answer that already arrived.
       *
-      * `disabledWhen` is combined here rather than passed in as another `disabled` binding, since two bindings writing
-      * the same property would fight over it.
+      * Busy is said with `aria-disabled` rather than `disabled`: a disabled button drops the keyboard's focus, so a
+      * player who pressed it with a key would find themselves back at the top of the page while they wait. The press a
+      * busy button refuses is refused by the handler instead. `disabledWhen` is a real `disabled` -- a button that
+      * cannot be used yet is one to skip over.
       */
     private def busyButton(
         label: String,
@@ -74,12 +76,12 @@ object Views {
 
         button(
           classes.map(cls := _).getOrElse(emptyMod),
-          disabled <-- disabledWhen.combineWith(busy.signal).map { case (blocked, waiting) => blocked || waiting },
+          disabled <-- disabledWhen,
+          aria.disabled <-- busy.signal,
           // Before the label rather than after it, so the label does not shift as the spinner appears.
           child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
           label,
-          // The disabled binding above already refuses a second click; this covers the instant
-          // between the click and the flag being seen.
+          // A second press while the first is out is refused here, since the button stays pressable.
           onClick --> (_ => if (!busy.now()) action(busy))
         )
     }
@@ -159,9 +161,11 @@ object Views {
               // The glyph is decorative; the button needs a name a screen reader can read out, and
               // naming the section it belongs to is what distinguishes it from the others.
               aria.label := s"Refresh $heading",
-              disabled <-- refreshing.signal,
+              // Not disabled while the section reloads, which would drop the keyboard's focus: a press
+              // made meanwhile is refused instead.
+              aria.disabled <-- refreshing.signal,
               span(aria.hidden := true, "\u21bb"),
-              onClick --> (_ => refresh(refreshing, reload))
+              onClick --> (_ => if (!refreshing.now()) refresh(refreshing, reload))
             )
           ),
           div(
@@ -184,14 +188,14 @@ object Views {
      * It used to be skipped outright while a reload was already in flight, which was right when
      * the only caller was the button — a second click asks the same question. It is wrong for the
      * callers below, which reload because something *has changed*: dropping one of those would
-     * leave a match that now exists off a list until somebody asked again. The refresh button is
-     * disabled while its section is refreshing, so the repeated-click case it guarded against
-     * cannot arise from there anyway.
+     * leave a match that now exists off a list until somebody asked again. The refresh button
+     * refuses a press while its section is refreshing, so the repeated-click case it guarded
+     * against cannot arise from there anyway.
      *
      * Two reloads can share the one flag — a cross-refresh landing while the player has the
      * section's own button in flight, or the two challenge lists that are refreshed together — so
      * the flag is cleared by the last of them rather than the first. The flag is not just the
-     * dimming: it also drives `aria.busy` and the refresh button's `disabled`, and clearing it
+     * dimming: it also drives `aria.busy` and the refresh button's `aria-disabled`, and clearing it
      * early would tell a screen reader the list had settled while it was still being replaced, and
      * offer a button for a refresh already underway. */
     private def refresh(refreshing: Var[Boolean], reload: () => Future[Unit]): Unit = {
@@ -228,7 +232,7 @@ object Views {
     // -------------------------------------------------------------------------
 
     private def header: HtmlElement =
-        div(
+        headerTag(
           cls := "header",
           h1("Matchmaker"),
           // Unmissable, because a page that looks like the real thing but authenticates nobody is
@@ -335,16 +339,47 @@ object Views {
         div(
           cls := "layout",
           menu,
-          div(
+          mainTag(
             cls := "screen",
+            // Focusable from script only: where the focus goes on a new screen that has no heading yet.
+            tabIndex := -1,
             child <-- Store.page.signal.map {
                 case Store.Page.Home              => mainPage
                 case Store.Page.OneGame(gameId)   => gamePage(gameId)
                 case Store.Page.NewGame           => newGamePage
                 case Store.Page.FindPlayers       => findPlayersPage
                 case Store.Page.OnePlayer(player) => playerPage(player)
-            }
+            },
+            inContext(screen => Store.page.signal.changes --> (_ => focusNewScreen(screen.ref)))
           )
+        )
+
+    /** Takes the focus to a screen that has just replaced another: to its first heading, or to the screen itself while
+      * it has none.
+      *
+      * A link on a screen -- an opponent's name, "Back to search" -- is taken out of the page with the screen it was
+      * on, and the focus with it: a keyboard was left at the top of the document and a screen reader told nothing about
+      * where it had arrived. A menu entry stays, but the page it opened is elsewhere, and the heading is what says
+      * which page it is. Focus already inside the new screen -- the challenge dialog a player's page opens onto takes
+      * it as it mounts -- is left where it is. A turn later than the change, so that the new screen has been drawn.
+      */
+    private def focusNewScreen(screen: dom.html.Element): Unit =
+        dom.window.setTimeout(
+          () => {
+              val active = dom.document.activeElement
+              val lost = active == null || active == dom.document.body || !dom.document.body.contains(active) ||
+                  active.closest(".menu") != null
+              if (lost) {
+                  val target = screen.querySelector("h2") match {
+                      case heading: dom.html.Element =>
+                          heading.setAttribute("tabindex", "-1")
+                          heading
+                      case _ => screen
+                  }
+                  target.focus()
+              }
+          },
+          0
         )
 
     /** The left-hand menu: the main page, then every game, then — for an admin — the form that adds one.
@@ -1130,9 +1165,16 @@ object Views {
                       cls := s"link $direction",
                       // The visible words first, then which way they go, which "next" alone does not say.
                       aria.label := s"$caption: $direction completed matches",
-                      disabled <-- busy,
+                      // Not disabled while a window is on its way, which would drop the keyboard's focus.
+                      aria.disabled <-- busy,
                       caption,
-                      onClick --> (_ => move(to))
+                      onClick --> (_ => if (!Store.completedLoading.now().contains(list)) move(to)),
+                      // Gone as the window it asked for arrives, so a step that had the focus hands it to the
+                      // line saying which window is now shown, rather than letting it fall to the top of the
+                      // page.
+                      onUnmountCallback(node =>
+                          if (dom.document.activeElement == node.ref) statusLine.foreach(_.focus())
+                      )
                     )
                 case _ => emptyNode
             }
@@ -1215,7 +1257,7 @@ object Views {
               cls := "search",
               // Enter in the field submits, which is what a search box does; without this it would
               // reload the page and sign the player out of the screen they are looking at.
-              onSubmit.preventDefault --> (_ => runPlayerSearch()),
+              onSubmit.preventDefault.filter(_ => !searchingPlayers.now()) --> (_ => runPlayerSearch()),
               field(
                 "Nickname begins with",
                 input(
@@ -1228,9 +1270,10 @@ object Views {
               ),
               button(
                 tpe := "submit",
-                disabled <-- searchingPlayers.signal
-                    .combineWith(Store.playerSearch.signal)
-                    .map { case (busy, typed) => busy || typed.trim.isEmpty },
+                disabled <-- Store.playerSearch.signal.map(_.trim.isEmpty),
+                // Not disabled while searching, which would drop the keyboard's focus: the form refuses
+                // a second search meanwhile instead.
+                aria.disabled <-- searchingPlayers.signal,
                 child <-- searchingPlayers.signal.map(
                   if (_) span(cls := "spinner", aria.hidden := true) else emptyNode
                 ),
@@ -1929,11 +1972,13 @@ object Views {
             // The button is the form's control, so it says whether the form is open — both in the
             // label, which is what a sighted user reads, and in the state, which is what is announced.
             aria.expanded <-- shown.signal,
-            disabled <-- busy.signal,
+            // Not disabled while the form is fetched, which would drop the keyboard's focus.
+            aria.disabled <-- busy.signal,
             child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
             child.text <-- shown.signal.map(if (_) "Hide notifications" else "Notifications"),
             onClick --> { _ =>
-                if (shown.now()) shown.set(false)
+                if (busy.now()) ()
+                else if (shown.now()) shown.set(false)
                 else if (fetched.now()) shown.set(true)
                 else
                     Store.run(ApiClient.matchNotifications(summary.gameId, summary.matchId), busy) { current =>
@@ -2463,27 +2508,22 @@ object Views {
                 "default has to be one of its values, and a game may have none at all."
           )(h4("Parameters")),
           children <-- parameters.signal.map(_.map { draft =>
+              // A caption on each box, as on a role's: a placeholder is gone at the first keystroke, and with it
+              // any way of telling which of four alike boxes is which.
               div(
                 cls := "row",
-                input(
-                  aria.label := "parameter name",
-                  placeholder := "parameter name",
-                  controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name)
+                field("Name", input(controlled(value <-- draft.name.signal, onInput.mapToValue --> draft.name))),
+                field(
+                  "Display name (left blank, the name)",
+                  input(controlled(value <-- draft.displayName.signal, onInput.mapToValue --> draft.displayName))
                 ),
-                input(
-                  aria.label := "display name, what players see; left blank, the name",
-                  placeholder := "display name (blank: the name)",
-                  controlled(value <-- draft.displayName.signal, onInput.mapToValue --> draft.displayName)
+                field(
+                  "Values, comma separated",
+                  input(controlled(value <-- draft.values.signal, onInput.mapToValue --> draft.values))
                 ),
-                input(
-                  aria.label := "possible values, comma separated",
-                  placeholder := "values, comma separated",
-                  controlled(value <-- draft.values.signal, onInput.mapToValue --> draft.values)
-                ),
-                input(
-                  aria.label := "default value",
-                  placeholder := "default value",
-                  controlled(value <-- draft.default.signal, onInput.mapToValue --> draft.default)
+                field(
+                  "Default value",
+                  input(controlled(value <-- draft.default.signal, onInput.mapToValue --> draft.default))
                 ),
                 button(
                   cls := "link",
@@ -3158,7 +3198,7 @@ object Views {
     private def footRow(standing: EloRating, kind: String, note: String, administers: Boolean): HtmlElement =
         tr(
           cls := kind,
-          td(standing.rank.fold[Modifier[HtmlElement]](span(aria.label := "not ranked yet", "—"))(_.toString)),
+          td(standing.rank.fold[Modifier[HtmlElement]](notRanked)(_.toString)),
           th(scopeAttr := "row", playerLink(standing.player), span(cls := "foot-note", s" ($note)")),
           td(standing.rating.toString),
           td(standing.matches.toString),
@@ -3221,6 +3261,12 @@ object Views {
         )
     }
 
+    /** The rank of a player not yet placed: a dash to the eye, and words to a screen reader. Text rather than an
+      * `aria-label`, which a screen reader ignores on a span.
+      */
+    private def notRanked: HtmlElement =
+        span(span(aria.hidden := true, "—"), span(cls := "sr-only", "not ranked yet"))
+
     /** A player's win–loss–draw record (V46), as the rankings show it: "12 (2)–5 (1)–3", the numbers in parentheses the
       * wins and losses that came by forfeit, and left out when there are none. Said in words to a screen reader, which
       * would otherwise read the dashes and parentheses as punctuation.
@@ -3229,13 +3275,21 @@ object Views {
         def byForfeit(n: Int) = if (n > 0) s" ($n)" else ""
         def count(n: Int, one: String, many: String) = s"$n ${if (n == 1) one else many}"
         def spoken(said: String, forfeits: Int) = said + (if (forfeits > 0) s", $forfeits by forfeit" else "")
+        // The words as text a screen reader reads in place of the figures, rather than as an `aria-label`, which it
+        // ignores on a span.
         span(
-          aria.label := List(
-            spoken(count(r.wins, "win", "wins"), r.forfeitWins),
-            spoken(count(r.losses, "loss", "losses"), r.forfeitLosses),
-            count(r.draws, "draw", "draws")
-          ).mkString("; "),
-          s"${r.wins}${byForfeit(r.forfeitWins)}–${r.losses}${byForfeit(r.forfeitLosses)}–${r.draws}"
+          span(
+            aria.hidden := true,
+            s"${r.wins}${byForfeit(r.forfeitWins)}–${r.losses}${byForfeit(r.forfeitLosses)}–${r.draws}"
+          ),
+          span(
+            cls := "sr-only",
+            List(
+              spoken(count(r.wins, "win", "wins"), r.forfeitWins),
+              spoken(count(r.losses, "loss", "losses"), r.forfeitLosses),
+              count(r.draws, "draw", "draws")
+            ).mkString("; ")
+          )
         )
     }
 
@@ -3257,7 +3311,7 @@ object Views {
             child <-- rating.map(_.rank match {
                 case Some(rank) => span(rank.toString)
                 // Rated a moment ago, and placed a moment from now.
-                case None => span(aria.label := "not ranked yet", "—")
+                case None => notRanked
             })
           ),
           // Their page, as a "Find Players" search would open it.
@@ -4339,6 +4393,9 @@ object Views {
             tpe := "button",
             cls := "tip-toggle",
             aria.label := s"About $subject",
+            // So that the tip is read out as the "?" is reached, rather than only shown: a screen reader is not
+            // told what appeared when it opened.
+            aria.describedBy := id,
             aria.expanded <-- open.signal,
             aria.controls := id,
             "?",
@@ -4475,19 +4532,24 @@ object Views {
       * `choices` are the roles still available. There is no "any role" entry: every seat names a role, so the first
       * available one stands pre-selected and the picker only changes which.
       */
-    private def roleSelect(choices: Seq[GameRole], selected: Var[Option[GameRoleId]]): Node =
+    private def roleSelect(
+        choices: Seq[GameRole],
+        selected: Var[Option[GameRoleId]],
+        captioned: Boolean = false
+    ): Node =
         if (choices.isEmpty) emptyNode
-        else
-            select(
-              // Named here rather than by a caption at each call site: one of the two is a control in
-              // the middle of a challenge row, where a caption would be a word on its own line.
-              aria.label := "the role you will play",
+        else {
+            val picker = select(
               onChange.mapToValue --> { raw =>
                   selected.set(raw.toIntOption.map(GameRoleId.apply).filter(id => choices.exists(_.gameRoleId == id)))
               },
               value <-- selected.signal.map(_.map(_.value.toString).getOrElse("")),
               choices.map(r => option(value := r.gameRoleId.value.toString, r.displayName))
             )
+            // Captioned on the challenge form, and named without one in the middle of a challenge row, where a
+            // caption would be a word on its own line.
+            if (captioned) field("Your role", picker) else picker.amend(aria.label := "the role you will play")
+        }
 
     /** The form that offers a challenge, and — when `invitee` is set — invites one player to it in the same request.
       *
@@ -4641,7 +4703,7 @@ object Views {
                   )
           },
           // The challenger's own seat, which a game's admin who is not playing has none of.
-          child <-- seated.map(if (_) roleSelect(game.roles, role) else emptyNode),
+          child <-- seated.map(if (_) roleSelect(game.roles, role, captioned = true) else emptyNode),
           // One picker per parameter, captioned with what players are shown for it and keyed by the
           // name the engine is sent. Built once: the game's parameters do not change while the form is open.
           parameterChoices(game).map { choice =>
@@ -4699,11 +4761,18 @@ object Views {
                 tpe := "number",
                 minAttr := "1",
                 stepAttr := "1",
-                aria.label := "how much time",
+                // Each named with the caption's words, which a name of its own would replace rather than add
+                // to: a reader who hears only "how much time" is not told it is the limit, or that blank is
+                // unlimited. Marked wrong while the line under it says it is, and pointed at that line.
+                aria.label := "Time limit, blank for unlimited",
+                aria.invalid <-- timeLimit.signal
+                    .combineWith(live.signal)
+                    .map((raw, isLive) => limitProblem(raw, isLive).isDefined.toString),
+                aria.describedBy := "time-limit-problem",
                 controlled(value <-- timeLimit.signal, onInput.mapToValue --> timeLimit)
               ),
               select(
-                aria.label := "the unit that time is in",
+                aria.label := "Time limit unit",
                 onChange.mapToValue --> (raw => timeLimitUnit.set(TimeLimitUnit.fromCode(raw))),
                 value <-- timeLimitUnit.signal.map(_.code),
                 TimeLimitUnit.offered.map(unit => option(value := unit.code, unit.label))
@@ -4730,6 +4799,7 @@ object Views {
           // is valid, which is most of the time, and an empty `p` would hold its margins open under
           // the input. The class comes and goes with the text.
           div(
+            idAttr := "time-limit-problem",
             aria.live := "polite",
             cls <-- timeLimit.signal
                 .combineWith(live.signal)

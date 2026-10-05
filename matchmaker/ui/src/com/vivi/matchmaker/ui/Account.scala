@@ -312,11 +312,17 @@ object Account {
     // The menu
     // -------------------------------------------------------------------------
 
-    def view: HtmlElement = {
-        // Held so that closing the panel can put focus back where it came from. A keyboard user who
-        // presses Escape and lands at the top of the document has been sent somewhere, not returned.
-        var trigger: Option[dom.html.Element] = None
+    /* Held so that closing the panel can put focus back where it came from. A keyboard user who
+     * presses Escape -- or the panel's own Close, which goes with the panel -- and lands at the top of
+     * the document has been sent somewhere, not returned. */
+    private var trigger: Option[dom.html.Element] = None
 
+    private def closeToTrigger(): Unit = {
+        close()
+        trigger.foreach(_.focus())
+    }
+
+    def view: HtmlElement =
         div(
           cls := "account",
           button(
@@ -331,10 +337,7 @@ object Account {
           // are listened for on the document, because the panel is not what has focus when either
           // happens — and both are bound here rather than on the panel so they are torn down with
           // this element rather than left behind by it.
-          documentEvents(_.onKeyDown).filter(e => open.now() && e.key == "Escape") --> { _ =>
-              close()
-              trigger.foreach(_.focus())
-          },
+          documentEvents(_.onKeyDown).filter(e => open.now() && e.key == "Escape") --> (_ => closeToTrigger()),
           documentEvents(_.onClick).filter(_ => open.now()) --> { event =>
               val target = event.target
               val inside = target match {
@@ -345,7 +348,6 @@ object Account {
           },
           child <-- open.signal.map(if (_) menu else emptyNode)
         )
-    }
 
     /* The rendered panel, so the outside-click test has something to ask about. Set when the panel
      * mounts and cleared when it unmounts, which is the only time either happens. */
@@ -374,7 +376,10 @@ object Account {
               p(cls := "empty", "Email and password are managed by the sign-in service, which is not in use locally.")
           else
               div(emailForm, passwordForm),
-          div(cls := "alternatives", button(tpe := "button", cls := "link", "Close", onClick --> (_ => close())))
+          div(
+            cls := "alternatives",
+            button(tpe := "button", cls := "link", "Close", onClick --> (_ => closeToTrigger()))
+          )
         )
 
     /** What the player wants to be told about, in general and per game.
@@ -658,14 +663,14 @@ object Account {
                         tpe := "button",
                         cls := "link",
                         "Send a new code",
-                        disabled <-- busy.signal,
+                        aria.disabled <-- busy.signal,
                         onClick --> (_ => if (!busy.now()) sendEmailCode(busy))
                       ),
                       button(
                         tpe := "button",
                         cls := "link",
                         "Use a different address",
-                        disabled <-- busy.signal,
+                        aria.disabled <-- busy.signal,
                         onClick --> (_ => if (!busy.now()) restartEmailChange())
                       )
                     )
@@ -767,7 +772,9 @@ object Account {
 
         button(
           tpe := "button",
-          disabled <-- busy.signal,
+          // Not disabled while it is out, which would drop the keyboard's focus; the handler refuses a
+          // second press instead.
+          aria.disabled <-- busy.signal,
           child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
           "Try sending to this address again",
           onClick --> { _ =>
@@ -789,7 +796,10 @@ object Account {
           // `blocked` is for a form that can tell there is nothing to send yet -- the email form,
           // whose field has to hold an address before there is any point offering to mail a code to
           // it. Never the only guard: the save it disables checks the same thing for itself.
-          disabled <-- busy.signal.combineWith(blocked).map(_ || _),
+          disabled <-- blocked,
+          // Busy is `aria-disabled` rather than `disabled`, which would drop the keyboard's focus while
+          // the change is out; each form's submit handler refuses a second press meanwhile.
+          aria.disabled <-- busy.signal,
           child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
           label
         )

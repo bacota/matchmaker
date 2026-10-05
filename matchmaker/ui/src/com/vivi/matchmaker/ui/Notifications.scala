@@ -222,17 +222,20 @@ object Notifications {
         def saveButton(press: () => Unit, isTrigger: Boolean): HtmlElement =
             button(
               tpe := "button",
-              disabled <-- busy.signal.combineWith(preferences.signal).map { case (waiting, current) =>
+              disabled <-- preferences.signal.map { current =>
                   // On the game form every question must be answered before there is anything to save;
                   // elsewhere "unanswered" is itself an answer, so only the request blocks the button.
                   // Only the questions being asked can hold the button: one that is not on screen cannot
                   // be answered, so waiting for it would disable the button with nothing to click.
-                  waiting || (!withDefault && current.unsaid.exists(kinds.contains))
+                  !withDefault && current.unsaid.exists(kinds.contains)
               },
+              // The request holds it with `aria-disabled` rather than `disabled`, which would drop the
+              // keyboard's focus while the save is out; a press meanwhile is refused below.
+              aria.disabled <-- busy.signal,
               child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
               saveLabel,
               if (isTrigger) onMountCallback(context => trigger = Some(context.thisNode.ref)) else emptyMod,
-              onClick --> (_ => press())
+              onClick --> (_ => if (!busy.now()) press())
             )
 
         /* The dialog: the cascades, a button that does the save this time, and whatever the screen
