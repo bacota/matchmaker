@@ -460,7 +460,11 @@ ul {
 }
 
 /* The winner's line is the one being looked for, so it is the one that is not muted. */
+/* Inline, and not pushed to the right: `.who` is also the header's nickname, a flex box with an
+   auto margin, and that rule put the trophy, the name and the rating on three lines of their own. */
 .result-row .who {
+  display: inline;
+  margin-left: 0;
   font-weight: 600;
 }
 
@@ -1240,86 +1244,129 @@ button.toggle {
   }
 }
 
-/* Finished matches, as a table: a row per match, and under it a row across the table saying how
-   it came out, tinted so that the pair reads as one and the outcome as the thing to read. */
-.completed {
+/* Matches, as a table -- finished ones and running ones: a row per match, and under it a row
+   across the table saying how it came out or whom it waits for, tinted so that the pair reads as
+   one and the outcome as the thing to read. */
+.match-table {
   width: 100%;
   border-collapse: collapse;
 }
 
-.completed th,
-.completed td {
+.match-table th,
+.match-table td {
   padding: 0.4rem 0.5rem;
   text-align: left;
   vertical-align: top;
 }
 
-.completed thead th {
+.match-table thead th {
   border-bottom: 2px solid var(--line);
 }
 
-.completed tbody th {
+.match-table tbody th {
   font-weight: 600;
 }
 
-/* A long message is cut to the column, with the whole of it on hover; a screen reader hears all of it. */
-.completed .message {
-  display: inline-block;
-  max-width: 16rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: bottom;
+/* Each opponent is a way to their page: underlined so it reads as a link in the row's heading, in
+   the heading's own weight. A list of several wraps between names, never inside one. */
+.match-table .opponent button.link {
+  font-weight: inherit;
+  text-align: left;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
 }
 
-.completed .friendly {
+/* A date is one thing, and never broken at its hyphens. */
+.match-table time {
+  white-space: nowrap;
+}
+
+.match-table .friendly {
   text-align: center;
 }
 
-.completed th.friendly .with-tip {
+.match-table th.friendly .with-tip {
   justify-content: center;
 }
 
-.completed tr.outcome td {
+.match-table tr.outcome td {
   background: #f3f6fb;
   border-bottom: 1px solid var(--line);
   padding-top: 0.25rem;
   padding-bottom: 0.5rem;
 }
 
-.completed tr.outcome .results,
-.completed tr.outcome .result-summary {
+/* Won, lost or drawn, in its own column: a small coloured disc. */
+.match-table .result {
+  text-align: center;
+}
+
+.outcome-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.outcome-mark.won {
+  background: #2f7a2f;
+}
+
+.outcome-mark.lost {
+  background: var(--warn);
+}
+
+.outcome-mark.drew {
+  background: var(--muted);
+}
+
+.match-table tr.outcome .results,
+.match-table tr.outcome .result-summary {
   margin-top: 0;
 }
 
-.completed tr.outcome td:empty {
+.match-table tr.outcome td:empty {
   padding: 0;
+}
+
+/* Play, Refresh and Cancel, side by side where there is room and wrapping where there is not. */
+.match-table td.board .controls {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.75rem;
 }
 
 /* The .detail lines in a cell -- "archive expired", under Review -- wrap between words here, not
    anywhere: `overflow-wrap: anywhere` lets a table squeeze the column to one letter's width, and
    the note became a column of single letters a screen tall. */
-.completed .detail {
+.match-table .detail {
   overflow-wrap: break-word;
 }
 
 /* A phone: a card per match rather than a table to scroll sideways, where the way to the board
-   was off the right-hand edge. The match's name heads the card, what is known about it runs on a
+   was off the right-hand edge. Who it was against heads the card, what is known about it runs on a
    line under it with the board's button at the end, and the outcome is the tinted foot.
 
    The headings are still there for a screen reader, which is told it is a table by the roles
    Main gives each part. Their "?" goes, since a button that cannot be seen should not take the
    focus; what a parameter is called moves into its cell, and the check mark says "friendly". */
 @media (max-width: 40rem) {
-  .completed,
-  .completed tbody,
-  .completed tr,
-  .completed td,
-  .completed th {
+  .match-table,
+  .match-table tbody,
+  .match-table tr,
+  .match-table td,
+  .match-table th {
     display: block;
   }
 
-  .completed thead {
+  .match-table thead {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -1328,12 +1375,12 @@ button.toggle {
     white-space: nowrap;
   }
 
-  .completed thead .tip-toggle,
-  .completed thead .tip {
+  .match-table thead .tip-toggle,
+  .match-table thead .tip {
     display: none;
   }
 
-  .completed tbody {
+  .match-table tbody {
     border: 1px solid var(--line);
     border-radius: 4px;
     background: #fff;
@@ -1341,7 +1388,7 @@ button.toggle {
     overflow: hidden;
   }
 
-  .completed tr.match {
+  .match-table tr.match {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -1352,7 +1399,7 @@ button.toggle {
   /* Free to shrink and to break anywhere: a flex item is otherwise as wide as its longest word,
      and an unbroken name or value -- which these are, typed by players and admins -- would push
      the card wider than the phone. */
-  .completed tr.match > * {
+  .match-table tr.match > * {
     min-width: 0;
     overflow-wrap: anywhere;
     padding: 0;
@@ -1360,33 +1407,27 @@ button.toggle {
     font-size: 0.9rem;
   }
 
-  .completed tr.match > th {
+  .match-table tr.match > th {
     order: -1;
     flex-basis: 100%;
     color: inherit;
     font-size: 1rem;
   }
 
-  .completed .message {
-    display: inline;
-    max-width: none;
-    white-space: normal;
-  }
-
-  .completed td[data-label]::before {
+  .match-table td[data-label]::before {
     content: attr(data-label) ": ";
     content: attr(data-label) ": " / "";
   }
 
-  .completed td.friendly .mark::after {
+  .match-table td.friendly .mark::after {
     content: " friendly";
   }
 
-  .completed td.board {
+  .match-table td.board {
     margin-left: auto;
   }
 
-  .completed tr.outcome td {
+  .match-table tr.outcome td {
     padding: 0.4rem 0.75rem 0.5rem;
     border-bottom: 0;
   }

@@ -2,6 +2,7 @@ package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
 import cats.effect.IO
+import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import org.scalacheck.Prop._
 import org.scalacheck.Gen
@@ -332,6 +333,55 @@ class MatchServiceSpec extends PropertySuite {
             run(matchService.publicCompleted(watcher, player.playerId, CompletedQuery(gameId = Some(game.gameId))))
         assertEquals(page.matches.map(_.matchId), List(shown))
         assert(!page.hasOlder)
+    }
+
+    test("a finished match names whom each player played, and says which of them won") {
+        val now = Instant.now()
+        val unique = genUniqueString.sample.get
+        val rival = s"r-$unique"
+        val (game, matchId) = run(TestSession.resource.use { session =>
+            for {
+                prepared <- setup(session, unique, unique)
+                (player, game, character) = prepared
+                matchId <- addMatch(session, player, game, character, unique, Some(now), pending = false)
+                other <- registrationService.register(rival, rival)
+                theirs <- new CharacterRepo[String](session).create(
+                  Character(CharacterId(0), game.gameId, "rival", "description", "", Some(other.playerId))
+                )
+                _ <- new ParticipantRepo(session).create(
+                  CharacterParticipant(
+                    ParticipantId(0),
+                    game.gameId,
+                    matchId,
+                    other.playerId,
+                    false,
+                    true,
+                    None,
+                    theirs.characterId,
+                    game.roles.head.gameRoleId
+                  ),
+                  EloRating.initial
+                )
+                _ <- finishedAt(session, game.gameId, matchId, now.minus(Duration.ofMinutes(5)))
+                seats <- new ParticipantRepo(session).listForMatch(game.gameId, matchId)
+                results = new ResultRepo(session)
+                _ <- seats.traverse_ { case (seat, _, _) =>
+                    val won = seat.playerId == player.playerId
+                    results.create(
+                      com.vivi.matchmaker.model
+                          .Result(game.gameId, seat.participantId, rank = if (won) 1 else 2, Map.empty, isWinner = won)
+                    )
+                }
+            } yield (game, matchId)
+        })
+
+        def summary(externalId: String) =
+            run(matchService.completed(externalId, CompletedQuery(gameId = Some(game.gameId)))).matches
+                .find(_.matchId == matchId)
+                .map(s => (s.opponents.map(_.nickname), s.outcome))
+
+        assertEquals(summary(unique), Some((Seq(rival), Some(MatchOutcome.Won))))
+        assertEquals(summary(rival), Some((Seq(unique), Some(MatchOutcome.Lost))))
     }
 
     /* Another player's page: the two lists a stranger is shown, which are the same two lists the

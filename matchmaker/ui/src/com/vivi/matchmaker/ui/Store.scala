@@ -242,11 +242,11 @@ object Store {
       */
     enum CompletedList {
         case Mine(game: Option[GameId])
-        case Public(playerId: PlayerId, game: GameId)
+        case Public(playerId: PlayerId, game: Option[GameId])
 
         def gameId: Option[GameId] = this match {
             case Mine(game)      => game
-            case Public(_, game) => Some(game)
+            case Public(_, game) => game
         }
     }
 
@@ -259,7 +259,7 @@ object Store {
     val completedFrame: Var[CompletedFrame] = Var(CompletedFrame.Day)
 
     /** The one completed list on screen, a window of it at a time. One, because only one is ever shown — the main
-      * page's, a game's, or a game's on somebody's page — and each is asked for when it is arrived at.
+      * page's, a game's, or somebody else's page's — and each is asked for when it is arrived at.
       */
     val completedView: Var[Option[CompletedView]] = Var(None)
 
@@ -482,8 +482,8 @@ object Store {
             }
     }
 
-    /** A player's public running matches, and the window of finished ones for the game opened on their page if one is.
-      * Used when their page is opened and by that page's refresh button.
+    /** A player's public running matches, and a window of their finished public ones in every game. Used when their
+      * page is opened and by that page's refresh button.
       *
       * The running list commits only if its stamp is still the one the page is waiting for — see the note above
       * [[Fetch.PublicMatches]] for the two races that guards.
@@ -498,8 +498,8 @@ object Store {
         val stamp = ask(lists)
         gated(lists) { () =>
             val running = reloadAs(ApiClient.publicMatches(playerId), stamp, lists)(publicActive.set)
-            // And the game opened on the page, if one is: its window is a list of its own.
-            expandedPublicGame.now().foreach(game => showCompleted(CompletedList.Public(playerId, game)))
+            // And their finished public matches in every game, a window of them: a list of its own.
+            showCompleted(CompletedList.Public(playerId, None))
 
             // However it settled: `reloadAs` reports a failure and succeeds, so this runs on either
             // outcome, which is what stops a failed fetch from leaving the page loading for ever. Guarded
@@ -1033,7 +1033,7 @@ object Store {
     }
 
     /** The completed list a screen shows, if it shows one of the caller's: the main page's, or a game's. Another
-      * player's page shows a list only for the game opened on it, and asks for it when it is opened.
+      * player's page asks for its own with the rest of that page, in `reloadPublicMatches`.
       */
     def completedFor(screen: Page): Option[CompletedList] = screen match {
         case Page.Home            => Some(CompletedList.Mine(None))

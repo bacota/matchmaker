@@ -12,11 +12,13 @@ import com.vivi.matchmaker.model.{
     GameMatch,
     Match,
     MatchId,
+    MatchOutcome,
     MatchParameter,
     MatchSummary,
     ParticipantResult,
     PlayerClock,
     PlayerId,
+    PublicPlayer,
     TimeLimitKind
 }
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
@@ -198,6 +200,8 @@ class MatchService(
                 // Whose turn it is: every seat still waited on. Usually one, but a game where several
                 // players move at once has several, and a match that is over has none.
                 val onTheClock = seats.filter(seat => seat.seatPending && !seat.seatCompleted)
+                // The caller's seat and everyone else's: who they played, and where each finished.
+                val (own, others) = seats.partition(_.seatParticipantId == first.callerParticipantId)
                 MatchSummary(
                   gameId = first.gameId,
                   matchId = first.matchId,
@@ -225,7 +229,12 @@ class MatchService(
                   friendly = first.friendly,
                   archivedAt = first.archivedAt,
                   archiveExpired = first.archiveExpired,
-                  resultSummary = first.resultSummary
+                  resultSummary = first.resultSummary,
+                  opponents = others.map(seat => PublicPlayer(seat.seatPlayerId, seat.seatNickname)),
+                  // Not for a match called off, whose results -- if any -- are not how it ended.
+                  outcome =
+                      if (first.cancelled) None
+                      else MatchOutcome.of(own.headOption.flatMap(_.seatRank), seats.flatMap(_.seatRank))
                 )
             }
 

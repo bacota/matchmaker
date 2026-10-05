@@ -84,9 +84,44 @@ case class MatchSummary(
     // How a finished match came out, as its game engine said it with the results (V40): a line of
     // HTML, cleaned by `SummaryHtml`, shown in place of the result table. `None` for an engine that
     // sends none, for a match completed before engines could, and for one still being played.
-    resultSummary: Option[String] = None
+    resultSummary: Option[String] = None,
+    // Everyone else in the match, in seat order: who it was played against, each a way to their page.
+    // "Else" is relative to the player the list is about, who on somebody's own page is that player.
+    opponents: Seq[PublicPlayer] = Nil,
+    // How the match came out for that same player, once there is a result to say so; `None` for a
+    // match still being played, one called off, and one the engine reported no result for.
+    outcome: Option[MatchOutcome] = None
 ) {
 
     /** Whether the match was played to an end. */
     def completed: Boolean = completedAt.isDefined
+}
+
+/** How a finished match came out for one player in it: what it added to their win-loss-draw record ([[MatchRecord]]),
+  * so that a match marked won here is one counted as a win in the rankings.
+  */
+enum MatchOutcome(val code: String) {
+
+    /** First on their own. */
+    case Won extends MatchOutcome("WON")
+
+    /** Anywhere below first. */
+    case Lost extends MatchOutcome("LOST")
+
+    /** First, but sharing it. */
+    case Drew extends MatchOutcome("DREW")
+}
+
+object MatchOutcome {
+    def fromCode(code: String): MatchOutcome =
+        values.find(_.code == code).getOrElse(throw new IllegalArgumentException(s"unknown match outcome '$code'"))
+
+    /** The outcome for a seat that finished at `rank`, among every seat's rank that has a result — the seat's own
+      * included. Nothing for a seat with no result of its own: there is no outcome to read.
+      */
+    def of(rank: Option[Int], ranks: Seq[Int]): Option[MatchOutcome] =
+        rank.map { mine =>
+            val record = MatchRecord.of(mine, ranks, forfeit = false)
+            if (record.wins > 0) Won else if (record.draws > 0) Drew else Lost
+        }
 }

@@ -104,6 +104,9 @@ object Json {
 
     given ReadWriter[PlayerClock] = macroRW
     given ReadWriter[MatchParameter] = macroRW
+
+    /** By its code: 'WON', 'LOST' or 'DREW'. */
+    given ReadWriter[MatchOutcome] = readwriter[String].bimap(_.code, MatchOutcome.fromCode)
     given ReadWriter[MatchSummary] = macroRW
     given ReadWriter[CompletedFrame] =
         readwriter[String].bimap(_.code, code => CompletedFrame.fromCode(code).getOrElse(CompletedFrame.Day))

@@ -890,7 +890,7 @@ object Views {
               cls := "empty",
               game.fold("Nothing is waiting on you.")(g => s"Nothing is waiting on you in ${g.displayName}.")
             )
-          )(matches => ul(matches.map(matchRow(_, showDue = true))))
+          )(matches => ul(matches.map(matchRow)))
         )
 
     /* One game's matches, or all of them. The game screens show a slice of each list rather than a
@@ -912,7 +912,18 @@ object Views {
               cls := "empty",
               game.fold("You are not in any matches.")(g => s"You are not in any matches of ${g.displayName}.")
             )
-          )(matches => ul(matches.map(matchRow(_, showDue = false))))
+          )(
+            matchTable(
+              _,
+              showGame = game.isEmpty,
+              showParameters = game.nonEmpty,
+              outcome = playingStatus,
+              view = playControls,
+              dateHeading = "Started",
+              dated = summary => Some(summary.start),
+              showResult = false
+            )
+          )
         )
 
     /** "Also shows pending acceptances with option to back out."
@@ -1027,16 +1038,16 @@ object Views {
         )(
           completedWindow(Store.CompletedList.Mine(None), "Nothing finished yet.")(
             // Every game's, so no column for any one game's parameters: they differ from game to game.
-            completedTable(_, showGame = true, showParameters = false, outcome = playerOutcome, view = reviewControl)
+            matchTable(_, showGame = true, showParameters = false, outcome = playerOutcome, view = reviewControl)
           )
         )
 
     /** One completed list, a window of time at a time: the frame to look back over, which window this is, the matches
       * in it, and Prev and Next to move to the newer and older windows of the same length.
       *
-      * The same for every completed list — the main page's, a game's, a game's on somebody's page — with what is shown
-      * of a row left to the caller. Fetches nothing when drawn: the list is asked for when its screen is arrived at or
-      * its game opened, and again by the controls here, each of which is a click. See `Store.showCompleted`.
+      * The same for every completed list — the main page's, a game's, somebody else's page's — with what is shown of a
+      * row left to the caller. Fetches nothing when drawn: the list is asked for when its screen is arrived at or its
+      * game opened, and again by the controls here, each of which is a click. See `Store.showCompleted`.
       *
       * Prev is there once the reader has gone back from the most recent window, and Next while the list holds anything
       * older than the window shown: once the oldest match this list could ever show is on screen, there is no Next.
@@ -1296,12 +1307,43 @@ object Views {
             onClick --> (_ => Store.show(Store.Page.FindPlayers))
           ),
           inviteControl(player),
+          // Their matches in every game, as the main page lists the reader's own -- but only the ones
+          // they made public. One reload fills both, so both are marked as reloading by it.
           refreshableSection(
-            "Public Matches",
+            "Current Matches",
             refreshingPublicMatches,
             () => Store.reloadPublicMatches(player.playerId),
             subsection = false
           )(
+            listing(Store.publicActive.signal, Store.publicMatchesLoading.signal)(
+              p(cls := "empty", "None being played in public.")
+            )(
+              matchTable(
+                _,
+                showGame = true,
+                showParameters = false,
+                outcome = waitingFor,
+                view = watchControl,
+                dateHeading = "Started",
+                dated = summary => Some(summary.start),
+                showResult = false
+              )
+            )
+          ),
+          refreshableSection(
+            "Recently Completed",
+            refreshingPublicMatches,
+            () => Store.reloadPublicMatches(player.playerId),
+            subsection = false
+          )(
+            completedWindow(Store.CompletedList.Public(player.playerId, None), "None finished in public.")(
+              matchTable(_, showGame = true, showParameters = false, outcome = publicOutcome, view = watchControl)
+            )
+          ),
+          // A game at a time, for what is about one game: the challenges the reader has offered them in
+          // it, and an admin's view of their matches there.
+          sectionTag(
+            h2("Games"),
             listing(Store.games.signal, Store.loading(Store.Fetch.Games))(p(cls := "empty", "No games yet."))(games =>
                 ul(games.map(publicGameRow(player, _)))
             )
@@ -1443,7 +1485,6 @@ object Views {
     private def publicGameRow(player: PublicPlayer, game: Game): HtmlElement = {
         val expanded = Store.expandedPublicGame.signal.map(_.contains(game.gameId))
         val running = Store.publicActive.signal.map(_.filter(_.gameId == game.gameId))
-        val completedList = Store.CompletedList.Public(player.playerId, game.gameId)
 
         li(
           cls := "row",
@@ -1458,9 +1499,6 @@ object Views {
                 Store.expandedPublicGame.update(current =>
                     if (current.contains(game.gameId)) None else Some(game.gameId)
                 )
-                // Opened: its finished matches are a list of their own, asked for now -- on the click,
-                // not when the panel is drawn. See `completedWindow`.
-                if (Store.expandedPublicGame.now().contains(game.gameId)) Store.showCompleted(completedList)
             }
           ),
           div(
@@ -1480,20 +1518,6 @@ object Views {
                   div(
                     cls := "detail-panel",
                     offeredChallenges(game, player),
-                    h3("Current Matches"),
-                    publicMatches(running, "None being played in public."),
-                    h3("Completed Matches"),
-                    div(
-                      completedWindow(completedList, "None finished in public.")(
-                        completedTable(
-                          _,
-                          showGame = false,
-                          showParameters = true,
-                          outcome = publicOutcome,
-                          view = watchControl
-                        )
-                      )
-                    ),
                     adminMatchesSection(game, player)
                   )
               else emptyNode
@@ -1553,59 +1577,12 @@ object Views {
         )
     }
 
-    /* The same three states every other list on screen distinguishes -- still coming, empty, full --
-     * and through the same `listing` helper. What stands in for the caller's `Fetch` flag is
-     * `publicMatchesLoading`: a `Fetch` records that something answered once this session, and these
-     * lists are re-fetched for every player whose page is opened. */
-    private def publicMatches(matches: Signal[Seq[MatchSummary]], empty: String): Modifier[HtmlElement] =
-        listing(matches, Store.publicMatchesLoading.signal)(p(cls := "empty", empty))(summaries =>
-            ul(summaries.map(publicMatchRow))
-        )
-
-    /** One of another player's matches.
-      *
-      * Its own row rather than `matchRow`, which is written for the caller's own matches: it offers Play, Refresh and
-      * Cancel, says "your turn", and shows the clocks a player spends — none of which mean anything on somebody else's
-      * page, and the buttons would fail against a match the reader has no seat in. What is left is what a reader can
-      * use: what the match is, when it happened, and who it is waiting on.
+    /** Who a match still being played is waiting on, under its row on somebody else's page. Named, and never "your
+      * turn": a turn on this page is somebody else's by construction.
       */
-    private def publicMatchRow(summary: MatchSummary): HtmlElement =
-        li(
-          cls := "row",
-          // The game's name is the row this sits under, so what names the match here is what its
-          // creator called it -- and an unnamed match is said to be one, never named by its id.
-          div(
-            cls := "title",
-            if (summary.description.trim.nonEmpty) summary.description else "an unnamed match"
-          ),
-          div(cls := "detail", s"started ${Format.date(summary.start)}"),
-          if (summary.friendly) friendlyLabel() else emptyNode,
-          matchParameters(summary),
-          if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
-          summary.completedAt
-              .map(when => div(cls := "detail", s"completed ${Format.date(when)}"))
-              .getOrElse(emptyNode),
-          // How it came out, where the engine said: a reader of somebody's page has no result table,
-          // and this is the one line that tells them.
-          summary.resultSummary.map(resultSummary).getOrElse(emptyNode),
-          // Whose move it is, for a match still being played. Named, as on the caller's own rows,
-          // and never "your turn": a turn on this page is somebody else's by construction.
-          if (summary.completed || summary.cancelled) emptyNode
-          else if (summary.whoseTurn.nonEmpty) div(cls := "detail", s"waiting for ${summary.whoseTurn.mkString(", ")}")
-          else div(cls := "detail", "waiting for the other players"),
-          // The board, for anyone who cares to look: this is what being public gets you, and the
-          // engine issued the url when the match was created. Straight off the summary, with no
-          // request behind the click — unlike "Review game" on the player's own rows, which has
-          // to ask for a play url that is not on a summary.
-          //
-          // Absent when there is no url. A match is only listed here if it is public, but an engine
-          // that serves no spectator page answers with none, and a button that opens nothing is
-          // worse than no button.
-          //
-          // A friendly match's archive is kept for 30 days, and once it has gone there is nothing to
-          // watch: the url is cleared, and the row says why the button is missing.
-          watchControl(summary)
-        )
+    private def waitingFor(summary: MatchSummary): Modifier[HtmlElement] =
+        if (summary.whoseTurn.nonEmpty) div(cls := "detail", s"waiting for ${summary.whoseTurn.mkString(", ")}")
+        else div(cls := "detail", "waiting for the other players")
 
     /** A finished match's board, for its own player: "Review game". Fetched the way "Play" is — the urls live on the
       * match, not on the summary — with `publicUrl` the fallback for a match whose play url the engine has since
@@ -1651,29 +1628,42 @@ object Views {
     private def publicOutcome(summary: MatchSummary): Modifier[HtmlElement] =
         summary.resultSummary.map(resultSummary).getOrElse(emptyNode)
 
-    /** A window of finished matches as a table: a row per match — its game (on the main page, which mixes games), what
-      * its creator called it, when it ended, whether it was friendly, one column per game parameter (on a page about
-      * one game, where every match has the same ones), and the way to look at its board — and under each, a row of its
-      * own across the table saying how it came out.
+    /** Matches as a table: a row per match — its game (where the list mixes games), who it was played against, when it
+      * ended (or, for matches still being played, started), whether it was friendly, one column per game parameter (on
+      * a page about one game, where every match has the same ones), and the way to look at its board — and under each,
+      * a row of its own across the table: how a finished match came out, marked won, lost or drawn, or whom a running
+      * one is waiting for.
       *
       * The parameter columns are the parameters the matches shown were played under, in the order the first of them
       * lists them, so a game with none has no such column.
       */
-    private def completedTable(
+    private def matchTable(
         matches: Seq[MatchSummary],
         showGame: Boolean,
         showParameters: Boolean,
         outcome: MatchSummary => Modifier[HtmlElement],
-        view: MatchSummary => HtmlElement
+        view: MatchSummary => HtmlElement,
+        // The date column: when a finished match ended, or -- for a list of matches still being played --
+        // when one started.
+        dateHeading: String = "Completed",
+        dated: MatchSummary => Option[java.time.Instant] = _.completedAt,
+        // A column for won, lost or drawn: only where the matches are finished and there is one to say.
+        showResult: Boolean = true
     ): HtmlElement = {
         val parameters =
             if (showParameters) matches.flatMap(_.parameters.map(_.displayName)).distinct else Seq.empty
-        val columns = (if (showGame) 1 else 0) + 4 + parameters.size
+        val columns = (if (showGame) 1 else 0) + (if (showResult) 1 else 0) + 4 + parameters.size
 
         def matchRow(summary: MatchSummary): Seq[HtmlElement] = {
-            val name = if (summary.description.trim.nonEmpty) summary.description else "an unnamed match"
+            // Everyone else in it, each a way to their page; a match played alone has nobody to name.
+            val against: Modifier[HtmlElement] =
+                if (summary.opponents.isEmpty) "nobody"
+                else
+                    summary.opponents.zipWithIndex.map { (opponent, i) =>
+                        span(if (i > 0) ", " else emptyNode, playerLink(opponent))
+                    }
             val ended: Modifier[HtmlElement] =
-                summary.completedAt match {
+                dated(summary) match {
                     case Some(when) =>
                         // The day, with the instant it was trimmed from kept machine-readable.
                         timeTag(
@@ -1688,9 +1678,11 @@ object Views {
                 cls := "match",
                 role := "row",
                 if (showGame) td(role := "cell", cls := "game", summary.gameName) else emptyNode,
-                // The match's name heads its row, for a screen reader; cut short to the column when long, and in
-                // full on hover, while a reader hears all of it.
-                th(scopeAttr := "row", role := "rowheader", span(cls := "message", title := name, name)),
+                // Who it was against heads its row, for a screen reader.
+                th(scopeAttr := "row", role := "rowheader", span(cls := "opponent", against)),
+                if (showResult)
+                    td(role := "cell", cls := "result", summary.outcome.map(outcomeMark).getOrElse(emptyNode))
+                else emptyNode,
                 td(role := "cell", ended),
                 // A mark for a friendly match and nothing for a rated one, with a word for a screen reader either way.
                 td(
@@ -1709,13 +1701,15 @@ object Views {
                 ),
                 td(role := "cell", cls := "board", view(summary))
               ),
-              // How it came out, across the whole table and set apart in colour: the line to read under the row.
+              // How it came out, set apart in colour: the line to read under the row. Indented by a column, an
+              // empty cell under the first, so that it reads as the row's own detail.
               tr(
                 cls := "outcome",
                 role := "row",
+                td(role := "cell", cls := "indent"),
                 td(
                   role := "cell",
-                  colSpan := columns,
+                  colSpan := columns - 1,
                   if (summary.cancelled) div(cls := "detail", "Cancelled by its creator.") else emptyNode,
                   told
                 )
@@ -1731,15 +1725,16 @@ object Views {
         div(
           cls := "table-scroll",
           table(
-            cls := "completed",
+            cls := "match-table",
             role := "table",
             thead(
               role := "rowgroup",
               tr(
                 role := "row",
                 if (showGame) heading("Game") else emptyNode,
-                heading("Match"),
-                heading("Completed"),
+                heading("Opponent"),
+                if (showResult) heading(cls := "result", "Result") else emptyNode,
+                heading(dateHeading),
                 heading(cls := "friendly", friendlyHeading()),
                 parameters.map(parameter => heading(parameter)),
                 heading(span(cls := "sr-only", "Board"))
@@ -1748,6 +1743,23 @@ object Views {
             // A body per match, so its two rows read as one.
             matches.map(summary => tbody(role := "rowgroup", matchRow(summary)))
           )
+        )
+    }
+
+    /** A finished match's Result cell: won, lost or drawn, for whoever the list is about. The mark is drawn for the
+      * eye, and the word is what a screen reader hears.
+      */
+    private def outcomeMark(outcome: MatchOutcome): HtmlElement = {
+        val (glyph, word) = outcome match {
+            case MatchOutcome.Won  => ("✓", "Won")
+            case MatchOutcome.Lost => ("✗", "Lost")
+            case MatchOutcome.Drew => ("=", "Drawn")
+        }
+        span(
+          cls := s"outcome-mark ${outcome.code.toLowerCase}",
+          title := word,
+          span(aria.hidden := true, glyph),
+          span(cls := "sr-only", word)
         )
     }
 
@@ -1784,103 +1796,70 @@ object Views {
         }
     }
 
-    private def matchRow(summary: MatchSummary, showDue: Boolean): HtmlElement =
+    /** A match it is the caller's turn in, on the "Your Turn" list: what it is, and the clock on that turn. Saying
+      * "your turn" here would repeat the heading on every row.
+      */
+    private def matchRow(summary: MatchSummary): HtmlElement =
         li(
           cls := "row",
           div(cls := "title", summary.gameName),
           div(cls := "detail", summary.description),
           if (summary.friendly) friendlyLabel() else emptyNode,
           matchParameters(summary),
-          if (showDue) summary.due.map(countdown).getOrElse(emptyNode)
-          else emptyNode,
-          // The rule behind that deadline, which the deadline itself does not give away: the same
-          // "due" line comes of a per-turn limit and of a budget nearly spent, and they call for
-          // opposite decisions. Shown only while the match is being played — the terms of a game
-          // that is over are history nobody can act on, and the result table is what that row is
-          // for.
-          if (summary.completed || summary.cancelled) emptyNode
-          else timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit, summary.live),
-          // `pending` means it is this player's turn: it is the flag the "Your turn" list selects
-          // on, so saying it there would repeat the heading on every row. Said here only for the
-          // matches still being played — a finished match has no turn to be waiting for.
-          if (showDue || summary.completed || summary.cancelled) emptyNode
-          else if (summary.pending) div(cls := "pending", "your turn")
+          summary.due.map(countdown).getOrElse(emptyNode),
+          timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit, summary.live),
+          playControls(summary),
+          matchNotifications(summary)
+        )
+
+    /** How a match the caller is playing stands, under its row in "Current Matches": whose turn it is, the clock on
+      * that turn and the rule behind it, and what they want to hear about the match.
+      */
+    private def playingStatus(summary: MatchSummary): Modifier[HtmlElement] =
+        div(
+          // `pending` means it is this player's turn: it is the flag the "Your Turn" list selects on.
+          if (summary.pending) div(cls := "pending", "your turn")
           // Matchmaker is never told whose turn it is in a live match -- the game keeps that -- so
-          // "waiting for the other players" below would be a guess, and usually a wrong one.
+          // "waiting for the other players" would be a guess, and usually a wrong one.
           else if (summary.live) div(cls := "detail", "being played live: open the game to see whose turn it is")
           // Named, rather than "the other players": in a match of three it is the difference
-          // between knowing who to chase and knowing only that it is not you. The old wording is
-          // still the fallback for a match matchmaker has not yet heard a turn for.
-          else if (summary.whoseTurn.nonEmpty) div(cls := "detail", s"waiting for ${summary.whoseTurn.mkString(", ")}")
-          else div(cls := "detail", "waiting for the other players"),
-          // The clock on the turn now being taken, whoever is taking it. On the "Your turn" list it
-          // is the caller's own and is drawn above from `due`; here it may be somebody else's, which
-          // is the more useful thing to know about a match you cannot move in.
-          if (showDue || summary.completed || summary.cancelled) emptyNode
-          else summary.turnDue.map(countdown).getOrElse(emptyNode),
+          // between knowing who to chase and knowing only that it is not you.
+          else waitingFor(summary),
+          // The clock on the turn now being taken, whoever is taking it -- the more useful thing to
+          // know about a match you cannot move in.
+          summary.turnDue.map(countdown).getOrElse(emptyNode),
           // Under a chess clock the deadline above is only half the story: it says when this turn
-          // runs out, not how much either player has to last the rest of the match on. Empty for
-          // every other kind of limit, so nothing is drawn.
-          if (showDue || summary.completed || summary.cancelled || summary.clocks.isEmpty) emptyNode
-          else clockTable(summary.clocks),
-          // A cancelled match is over and has no result, so it sits in the completed list; without
-          // this it would be indistinguishable from one that was played to an end.
-          if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
-          // When it ended. The completed list is ordered by this, so the row says what it is sorted
-          // on; a cancelled match has no completion time and simply says nothing here.
-          summary.completedAt
-              .map(when =>
-                  div(
-                    cls := "detail",
-                    "completed ",
-                    // The rendered date is a day with no zone on it; `dateTime` carries the instant it
-                    // was trimmed from, so the date is machine-readable as well as legible.
-                    timeTag(
-                      htmlAttr("datetime", com.raquo.laminar.codecs.StringAsIsCodec) := when.toString,
-                      Format.date(when)
-                    )
-                  )
-              )
-              .getOrElse(emptyNode),
-          // Play and Refresh are for a match still being played. A finished one has no turn to take
-          // and nothing left for the engine to tell us, so it shows how it ended instead.
-          if (summary.completed || summary.cancelled)
-              div(
-                // The engine's own account of how it ended where it gave one, and the table of
-                // every seat's result where it did not.
-                summary.resultSummary.fold(resultTable(summary))(resultSummary),
-                // A finished match still has a board, and the engine keeps it: this is how a player
-                // goes and looks at how it ended. Fetched the same way "Play" fetches it — the urls
-                // live on the match, not on the summary — and `publicUrl` is the fallback for a match
-                // whose play url the engine has since stopped honouring for a game that is over.
-                reviewControl(summary)
-              )
-          else
-              div(
-                // The play url lives on the match rather than the summary, and is the game engine's,
-                // not matchmaker's — so it is fetched when asked for and opened directly.
-                busyButton("Play", classes = Some("link")) { busy =>
-                    Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
-                        m.playUrl match {
-                            case Some(url) => openSignedIn(url)
-                            case None      => Store.reportProblem("This match has no play url yet.")
-                        }
-                    }
-                },
-                // Step 4 of the engine flow: any participant may ask matchmaker to re-check with the
-                // engine, which is what recovers from a callback that never arrived.
-                busyButton("Refresh", classes = Some("link")) { busy =>
-                    Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId), busy)(
-                      reloadAfterMatchRefresh
-                    )
-                }
-              ),
-          // Nothing to mute about a match that is over, so this goes with Play and Refresh rather
-          // than with the result table.
-          if (summary.completed || summary.cancelled) emptyNode else matchNotifications(summary),
-          // Only the creator's, and only while there is still something to call off. The engine is
-          // not told — its board stays playable — so the confirmation says what actually happens.
-          if (summary.isCreator && !summary.completed && !summary.cancelled)
+          // runs out, not how much either player has to last the rest of the match on.
+          if (summary.clocks.isEmpty) emptyNode else clockTable(summary.clocks),
+          // The rule behind that deadline, which the deadline itself does not give away: the same
+          // "due" line comes of a per-turn limit and of a budget nearly spent, and they call for
+          // opposite decisions.
+          timeLimitDetail(summary.timeLimit, summary.timeLimitKind, summary.timeLimitUnit, summary.live),
+          matchNotifications(summary)
+        )
+
+    /** The caller's way into a match still being played, and the way out of it for its creator. */
+    private def playControls(summary: MatchSummary): HtmlElement =
+        div(
+          cls := "controls",
+          // The play url lives on the match rather than the summary, and is the game engine's,
+          // not matchmaker's — so it is fetched when asked for and opened directly.
+          busyButton("Play", classes = Some("link")) { busy =>
+              Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
+                  m.playUrl match {
+                      case Some(url) => openSignedIn(url)
+                      case None      => Store.reportProblem("This match has no play url yet.")
+                  }
+              }
+          },
+          // Step 4 of the engine flow: any participant may ask matchmaker to re-check with the
+          // engine, which is what recovers from a callback that never arrived.
+          busyButton("Refresh", classes = Some("link")) { busy =>
+              Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId), busy)(reloadAfterMatchRefresh)
+          },
+          // Only the creator's. The engine is not told — its board stays playable — so the
+          // confirmation says what actually happens.
+          if (summary.isCreator)
               busyButton("Cancel", classes = Some("link")) { busy =>
                   if (
                     dom.window.confirm("Cancel this match? It will stop counting here, but the game board stays open.")
@@ -2231,7 +2210,7 @@ object Views {
           subsection = false
         )(
           completedWindow(Store.CompletedList.Mine(Some(game.gameId)), "You have not finished a match of this yet.")(
-            completedTable(_, showGame = false, showParameters = true, outcome = playerOutcome, view = reviewControl)
+            matchTable(_, showGame = false, showParameters = true, outcome = playerOutcome, view = reviewControl)
           )
         )
 
