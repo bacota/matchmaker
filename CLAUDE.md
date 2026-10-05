@@ -10,6 +10,9 @@ request. Finish the work, run the tests, report what changed and what is uncommi
 Permission to commit covers only the request that gave it; it is not standing permission for the
 next task.
 
+Commit on the branch that is checked out, `main` included. Do not create a branch unless the user
+asks for one.
+
 ## Build and test
 
 Always pass both flags: `mill -j 4 --ticker false <target>`. The ticker's progress redraws make
