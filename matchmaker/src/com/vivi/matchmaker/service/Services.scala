@@ -2,6 +2,7 @@ package com.vivi.matchmaker.service
 
 import cats.effect.{IO, Resource}
 import com.vivi.matchmaker.archive.ArchiveStore
+import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.engine.{GameEngineClient, HttpGameEngineClient}
 import com.vivi.matchmaker.notify.{MailSettings, Notifications, Notifier, SqsNotifier}
 import com.vivi.matchmaker.persistence.TextCodec
@@ -23,7 +24,7 @@ case class Services[T](
     matches: MatchService,
     engine: GameEngineService[T],
     archives: ArchiveService,
-    sweep: SweepService,
+    ending: EndingService,
     notifications: NotificationService,
     suppression: SuppressionService
 )
@@ -74,18 +75,26 @@ object Services {
         callbackBaseUrl: Option[String] = Option(System.getenv("MATCHMAKER_BASE_URL")),
         notifier: Notifier = SqsNotifier.fromEnvironment(),
         mail: MailSettings = MailSettings.fromEnvironment(),
-        archiveStore: ArchiveStore = ArchiveStore.fromEnvironment()
+        archiveStore: ArchiveStore = ArchiveStore.fromEnvironment(),
+        /** Where a match's end is said. `None` is the queue the environment names, or, with none, settling it inline.
+          */
+        matchEndings: Option[MatchEndings] = None
     )(using codec: TextCodec[T]): Services[T] = {
         val notifications = new Notifications(notifier, mail)
         val archives = new ArchiveService(pool, archiveStore)
-        val matches = new MatchService(pool, notifications, Some(archives), Some(engineClient))
+        val ending = new EndingService(pool, engineClient)
+        val endings = matchEndings.getOrElse(
+          MatchEndings.fromEnvironment(MatchEndings.inline((gameId, matchId) => ending.settle(gameId, matchId).void))
+        )
+        val matches = new MatchService(pool, notifications, Some(archives), endings)
 
         /* Built before the services it is given to, because it is given to one of them: a challenge
          * offered as starting itself turns an acceptance into a start, and the acceptance is
          * `challenges`' to record while the start is this one's to carry out. Only the function is
          * shared, so neither service has to know about the other -- see
          * `ChallengeService.autoStart`. */
-        val engine = new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications, Some(archives))
+        val engine =
+            new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications, Some(archives), endings)
 
         Services(
           registration = new RegistrationService(pool),
@@ -102,7 +111,7 @@ object Services {
           matches = matches,
           engine = engine,
           archives = archives,
-          sweep = new SweepService(pool, engineClient, matches),
+          ending = ending,
           notifications = new NotificationService(pool),
           suppression = new SuppressionService(pool)
         )

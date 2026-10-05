@@ -164,7 +164,7 @@ class ArchiveSpec extends FunSuite with QuietTests {
         assertEquals(routes(EngineRequest("POST", "/matches/m-1/cancel")).status, 204)
     }
 
-    test("an archive that runs out of time keeps its live copy, for the sweep to finish".tag(Quiet)) {
+    test("an archive that runs out of time keeps its live copy, for matchmaker to prompt again".tag(Quiet)) {
         val live = InMemoryMatchStore[TicTacToeMatch]()
         val recorder = RecordingMatchmaker()
         // A clock that moves a minute every time it is read: the budget is spent before the upload.

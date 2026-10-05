@@ -213,8 +213,11 @@ S3 from inside its VPC, the way it already reaches the engines' public urls. An 
 on the subnets' route tables would carry that traffic off the NAT for free; nothing here creates
 one.
 
-A daily function, `matchmaker-<env>-sweep`, asks again about completed matches never archived and
-cancels the engine never acknowledged; see `SweepService`.
+When a match ends, the API function puts its id on the `matchmaker-<env>-match-ended` queue, and
+`matchmaker-<env>-ending` drains it: it prompts the match's engine to archive it if the engine has
+not, and tells the engine of a cancel. (Ratings move in the API call that ends the match.) Whatever is still owed is delivered again after
+the queue's visibility timeout, and after the last try lands in the `-dlq` queue beside it; see
+`EndingService` and `terraform/modules/api/ending.tf`.
 
 ## The hosted login domain
 

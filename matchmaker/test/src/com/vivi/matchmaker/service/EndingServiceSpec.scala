@@ -9,19 +9,22 @@ import munit.FunSuite
 import com.vivi.matchmaker.{QuietTests, TestMigration}
 import com.vivi.matchmaker.archive.{ArchiveStore, LocalArchiveStore}
 import com.vivi.matchmaker.engine.{CreateGameRequest, CreateGameResponse, GameEngineClient, GameStatusResponse}
+import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.persistence.TextCodec.given
 import com.vivi.matchmaker.persistence.{ArchiveRepo, ChallengeRepo, GameRepo, MatchRepo, TestSession}
 
-/** The sweep: completed matches never archived are prompted through their engine's status, cancels the engine never
-  * acknowledged are sent again, and neither is asked about more than once a day.
+/** Settling a match's end, as the listener its ending is queued to does: a completed match not yet archived is prompted
+  * through its engine's status, once its engine has had time to archive it itself; a cancel the engine has not
+  * acknowledged is sent; and what is still owed is said so, to be tried again.
   */
-class SweepServiceSpec extends FunSuite with QuietTests {
+class EndingServiceSpec extends FunSuite with QuietTests {
     TestMigration.ensure()
 
-    private val store = LocalArchiveStore(Files.createTempDirectory("sweep-spec"), "http://localhost:0")
+    private val store = LocalArchiveStore(Files.createTempDirectory("ending-spec"), "http://localhost:0")
 
     /** An engine that answers a status call by archiving the match, as a real one does for a finished match it still
-      * holds — through matchmaker's own archive service, so what it does is recorded where the sweep reads it back.
+      * holds — through matchmaker's own archive service, so what it does is recorded where settling reads it back.
       */
     private class Engine(archiveOnStatus: Boolean = true) extends GameEngineClient {
         @volatile var asked: List[String] = Nil
@@ -61,7 +64,7 @@ class SweepServiceSpec extends FunSuite with QuietTests {
     ): IO[(Game, MatchId)] =
         TestSession.resource.use { session =>
             for {
-                player <- services.registration.register(unique("swept"), unique("sub"))
+                player <- services.registration.register(unique("ended"), unique("sub"))
                 game <- new GameRepo[String](session).create(
                   Game(
                     GameId.unassigned,
@@ -109,8 +112,8 @@ class SweepServiceSpec extends FunSuite with QuietTests {
             } yield (game, matchId)
         }
 
-    private def sweepOf(services: Services[String], engine: Engine, game: Game, now: Instant = Instant.now()) =
-        SweepService(TestServices.pool, engine, services.matches, now = () => now, game = Some(game.gameId))
+    private def endingOf(engine: Engine, now: Instant = Instant.now()) =
+        EndingService(TestServices.pool, engine, now = () => now)
 
     private def run[A](io: IO[A]): A = io.timeout(30.seconds).unsafeRunSync()
 
@@ -125,47 +128,46 @@ class SweepServiceSpec extends FunSuite with QuietTests {
         val (game, matchId) = run(matchOf(services, Some(Duration.ofHours(2))))
         engine.archiving = Some(matchId -> game.externalId)
 
-        val report = run(sweepOf(services, engine, game).run())
+        assertEquals(run(endingOf(engine).settle(game.gameId, matchId)), Settlement.Settled)
         assertEquals(engine.asked, List(s"https://engine/matches/${matchId.value}/status"))
-        assertEquals((report.prompted, report.stillUnarchived), (1, Nil))
         assert(archivedAt(game, matchId).isDefined)
+
+        // Settled already: a second delivery of the same ending asks nothing.
+        assertEquals(run(endingOf(engine).settle(game.gameId, matchId)), Settlement.Settled)
+        assertEquals(engine.asked.size, 1)
     }
 
-    test("one the engine does not archive is reported, and not asked about again until a day has passed") {
+    test("one the engine does not archive is still owed, and asked about again each time") {
         val engine = Engine(archiveOnStatus = false)
         val services = TestServices.servicesWith(engine, archiveStore = store)
         val (game, matchId) = run(matchOf(services, Some(Duration.ofHours(2))))
 
-        val first = run(sweepOf(services, engine, game).run())
-        assertEquals(first.stillUnarchived, List(matchId))
-        val again = run(sweepOf(services, engine, game).run())
-        assertEquals(again.prompted, 0)
-        val tomorrow = run(sweepOf(services, engine, game, Instant.now().plus(Duration.ofHours(25))).run())
-        assertEquals(tomorrow.prompted, 1)
+        assert(run(endingOf(engine).settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
+        assert(run(endingOf(engine).settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
         assertEquals(engine.asked.size, 2)
     }
 
-    test("a match finished within the hour is left to the engine, which is archiving it already") {
+    test("a match that has only just finished is left to its engine, which is archiving it already") {
         val engine = Engine()
         val services = TestServices.servicesWith(engine, archiveStore = store)
-        val (game, _) = run(matchOf(services, Some(Duration.ofMinutes(5))))
-        assertEquals(run(sweepOf(services, engine, game).run()).prompted, 0)
+        val (game, matchId) = run(matchOf(services, Some(Duration.ofMinutes(1))))
+        assert(run(endingOf(engine).settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
         assertEquals(engine.asked, Nil)
     }
 
-    test("a cancel the engine never acknowledged is sent again, and recorded once it is") {
+    test("a cancel the engine has not acknowledged is sent, and recorded once it is") {
         val engine = Engine()
         val services = TestServices.servicesWith(engine, archiveStore = store)
         val (game, matchId) = run(matchOf(services, None, cancelled = true))
 
-        val report = run(sweepOf(services, engine, game).run())
+        assertEquals(run(endingOf(engine).settle(game.gameId, matchId)), Settlement.Settled)
         assertEquals(engine.cancelled, List(s"https://engine/matches/${matchId.value}/cancel"))
-        assertEquals((report.released, report.stillUnreleased), (1, Nil))
         assert(run(TestSession.resource.use(session => new ArchiveRepo(session).isReleased(game.gameId, matchId))))
-        assertEquals(run(sweepOf(services, engine, game).run()).released, 0)
+        assertEquals(run(endingOf(engine).settle(game.gameId, matchId)), Settlement.Settled)
+        assertEquals(engine.cancelled.size, 1)
     }
 
-    test("a cancel the engine does not acknowledge is reported as still owed, and not as released".tag(Quiet)) {
+    test("a cancel the engine does not acknowledge is still owed, and not recorded as heard") {
         val engine = new Engine() {
             override def cancel(url: String, key: Option[String]): IO[Unit] =
                 IO.raiseError(new IllegalStateException("engine is down"))
@@ -173,21 +175,42 @@ class SweepServiceSpec extends FunSuite with QuietTests {
         val services = TestServices.servicesWith(engine, archiveStore = store)
         val (game, matchId) = run(matchOf(services, None, cancelled = true))
 
-        val report = run(sweepOf(services, engine, game).run())
-        assertEquals((report.released, report.stillUnreleased), (0, List(matchId)))
+        assert(run(endingOf(engine).settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
+        assert(!run(TestSession.resource.use(session => new ArchiveRepo(session).isReleased(game.gameId, matchId))))
     }
 
-    test("a run whose deadline has passed starts on nothing, and leaves every match owed to the next") {
-        val engine = Engine(archiveOnStatus = false)
+    test("a match still being played, or one that does not exist, owes nothing") {
+        val engine = Engine()
         val services = TestServices.servicesWith(engine, archiveStore = store)
-        val (game, matchId) = run(matchOf(services, Some(Duration.ofHours(2))))
+        val (game, matchId) = run(matchOf(services, None))
+        assertEquals(run(endingOf(engine).settle(game.gameId, matchId)), Settlement.Settled)
+        assertEquals(run(endingOf(engine).settle(game.gameId, MatchId("no-such-match"))), Settlement.Settled)
+        assertEquals((engine.asked, engine.cancelled), (Nil, Nil))
+    }
 
-        val late = run(sweepOf(services, engine, game).run(deadline = Some(Instant.now().minusSeconds(1))))
-        assertEquals((late.prompted, late.deferred), (0, 1))
-        assertEquals(engine.asked, Nil)
+    test("an ending settled in this process waits for the connection its caller holds, rather than deadlocking") {
+        // One connection, which the results callback holds while it says the match has ended. Settling it there and
+        // then would wait for that connection forever.
+        val pool = TestServices.poolOf(1)
+        val engine = Engine(archiveOnStatus = false)
+        val ending = EndingService(pool, engine)
+        @volatile var settled = List.empty[Settlement]
+        val services = Services.fromPool[String](
+          pool,
+          engine,
+          archiveStore = store,
+          matchEndings =
+              Some(MatchEndings.inline((gameId, matchId) => ending.settle(gameId, matchId).map(s => settled :+= s)))
+        )
+        val (game, matchId) = run(matchOf(services, None))
 
-        // Not recorded as asked, so the next run takes it on at once.
-        val next = run(sweepOf(services, engine, game).run(deadline = Some(Instant.now().plusSeconds(60))))
-        assertEquals((next.prompted, next.deferred, next.stillUnarchived), (1, 0, List(matchId)))
+        run(services.engine.recordResults(game.gameId, matchId, Nil, game.externalId))
+        assert(
+          run(TestSession.resource.use(session => new MatchRepo(session).read(game.gameId, matchId)))
+              .exists(_.completed)
+        )
+        // And it is settled once the connection is given back: just finished, so owed its archive.
+        run(IO.sleep(50.millis).iterateUntil(_ => settled.nonEmpty))
+        assert(settled.head.isInstanceOf[Settlement.Owed], settled)
     }
 }

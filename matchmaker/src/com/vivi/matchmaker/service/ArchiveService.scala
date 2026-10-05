@@ -305,7 +305,8 @@ class ArchiveService(
       * Re-read under that lock, since time has passed since the copy. An archive confirmed in the friendly bucket in
       * between was never copied, and the request is refused to be tried again rather than leave it there to expire. An
       * upload asked for and not yet made is pointed at the permanent bucket instead: the url the engine holds is for
-      * the friendly one, so its confirm finds nothing and it uploads again — prompted by the sweep, if not before.
+      * the friendly one, so its confirm finds nothing and it uploads again — prompted by the listener settling the
+      * match's ending, which goes on asking until the match is archived (`EndingService`), if not before.
       */
     def recordMove(
         session: skunk.Session[IO],
