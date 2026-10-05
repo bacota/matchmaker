@@ -957,7 +957,9 @@ object Views {
               view = playControls,
               dateHeading = "Started",
               dated = summary => Some(summary.start),
-              showResult = false
+              showResult = false,
+              // The main page lists every game's matches as a plain game's: who was played, not as what.
+              characterColumns = game.nonEmpty
             )
           )
         )
@@ -1074,7 +1076,14 @@ object Views {
         )(
           completedWindow(Store.CompletedList.Mine(None), "Nothing finished yet.")(
             // Every game's, so no column for any one game's parameters: they differ from game to game.
-            matchTable(_, showGame = true, showParameters = false, outcome = playerOutcome, view = reviewControl)
+            matchTable(
+              _,
+              showGame = true,
+              showParameters = false,
+              outcome = playerOutcome,
+              view = reviewControl,
+              characterColumns = false
+            )
           )
         )
 
@@ -1774,11 +1783,14 @@ object Views {
         // A column for won, lost or drawn: only where the matches are finished and there is one to say.
         showResult: Boolean = true,
         // Whether the list is one character's matches, which leaves out the column naming it.
-        aboutCharacter: Boolean = false
+        aboutCharacter: Boolean = false,
+        // Whether a character game's matches get its columns at all; without them every row is laid out as a plain
+        // game's, the opponent named as a player.
+        characterColumns: Boolean = true
     ): HtmlElement = {
         val parameters =
             if (showParameters) matches.flatMap(_.parameters.map(_.displayName)).distinct else Seq.empty
-        val showOwner = matches.exists(_.character.isDefined)
+        val showOwner = characterColumns && matches.exists(_.character.isDefined)
         val showCharacter = showOwner && !aboutCharacter
         val columns = Seq(showGame, showResult, showCharacter, showOwner).count(identity) + 4 + parameters.size
 
@@ -1789,10 +1801,14 @@ object Views {
                 links.zipWithIndex.map((link, i) => span(if (i > 0) ", " else emptyNode, link))
             val against: Modifier[HtmlElement] =
                 if (summary.opponents.isEmpty) "nobody"
-                else listed(summary.opponents.map(o => o.character.fold(playerLink(o.player))(characterLink)))
+                else
+                    listed(summary.opponents.map { o =>
+                        o.character.filter(_ => showOwner).fold(playerLink(o.player))(characterLink)
+                    })
             // Who owned each opposing character for the match; nothing for a plain game's row, whose opponent is
             // already the player.
             val owners = summary.opponents.filter(_.character.isDefined).map(o => playerLink(o.player))
+
             val ended: Modifier[HtmlElement] =
                 dated(summary) match {
                     case Some(when) =>
