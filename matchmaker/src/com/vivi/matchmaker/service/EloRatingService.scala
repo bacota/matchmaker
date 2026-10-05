@@ -289,11 +289,15 @@ object EloRatingService {
                     deltas.getOrElse(r.participantId, 0) - r.eloDelta.getOrElse(0)
                 )(_ + _)
             _ <- ratingRepo.ensureRated(gameId, deltas.keys.toList.map(byPlayer))
+            // Whether a turn running out ended it, for the whole match, as `rate` decided when it completed: one
+            // row's flag is enough. Read row by row instead, a match an engine flagged on the loser's row alone
+            // would give its winner a forfeit win and never take it back.
+            forfeit = results.exists(_.forfeit)
             _ <- results.sortBy(r => byPlayer(r.participantId).value).traverse_ { r =>
                 val player = byPlayer(r.participantId)
                 // What the match is to the player's record, as it was when it was rated: taken back with the
                 // rating it moved, and given again with the one it now moves.
-                val record = MatchRecord.of(r.rank, results.map(_.rank), r.forfeit)
+                val record = MatchRecord.of(r.rank, results.map(_.rank), forfeit)
                 r.eloDelta.traverse_(ratingRepo.unplayed(gameId, player, _, record)) *>
                     deltas.get(r.participantId).traverse_(ratingRepo.played(gameId, player, _, record)) *>
                     resultRepo.setEloDelta(gameId, r.participantId, deltas.get(r.participantId))

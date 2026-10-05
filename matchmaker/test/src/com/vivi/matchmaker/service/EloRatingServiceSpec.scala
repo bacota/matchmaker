@@ -157,14 +157,28 @@ class EloRatingServiceSpec extends PropertySuite {
         } yield matchId
 
     /** The engine reporting `winner` first and the other player second. */
-    private def finish(f: Fixture, matchId: MatchId, winner: Player, through: Services[String] = services): IO[Unit] =
+    /* `forfeitOnLoser` flags a forfeit on the loser's result alone, as an engine may: the match is a forfeit all the
+     * same. */
+    private def finish(
+        f: Fixture,
+        matchId: MatchId,
+        winner: Player,
+        through: Services[String] = services,
+        forfeitOnLoser: Boolean = false
+    ): IO[Unit] =
         for {
             seats <- TestSession.resource.use(session =>
                 new ParticipantRepo(session).listForMatch(f.game.gameId, matchId)
             )
             results = seats.map { (p, _, _) =>
                 val won = p.playerId == winner.playerId
-                ReportedResult(p.participantId, rank = if (won) 1 else 2, scores = Map.empty, isWinner = won)
+                ReportedResult(
+                  p.participantId,
+                  rank = if (won) 1 else 2,
+                  scores = Map.empty,
+                  isWinner = won,
+                  forfeit = forfeitOnLoser && !won
+                )
             }
             _ <- through.engine.recordResults(f.game.gameId, matchId, results, f.game.externalId)
         } yield ()
@@ -334,6 +348,32 @@ class EloRatingServiceSpec extends PropertySuite {
         val (first, second) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(first.map(_.record), Some(MatchRecord(wins = 1)))
         assertEquals(second.map(_.record), Some(MatchRecord(losses = 1)))
+    }
+
+    test(
+      "a forfeit flagged on one result alone is a forfeit to both records, and made friendly and back, is still one"
+    ) {
+        def records(f: Fixture) =
+            TestSession.resource.use { session =>
+                val repo = new EloRatingRepo(session)
+                (repo.read(f.game.gameId, f.first.playerId), repo.read(f.game.gameId, f.second.playerId)).tupled
+                    .map((a, b) => (a.map(_.record), b.map(_.record)))
+            }
+        val result = for {
+            f <- fixture()
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.first, forfeitOnLoser = true)
+            rated <- records(f)
+            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = true, f.host.externalId)
+            friendly <- records(f)
+            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = false, f.host.externalId)
+            again <- records(f)
+        } yield (rated, friendly, again)
+        val (rated, friendly, again) = result.timeout(caseTimeout).unsafeRunSync()
+        val forfeited = (Some(MatchRecord(wins = 1, forfeitWins = 1)), Some(MatchRecord(losses = 1, forfeitLosses = 1)))
+        assertEquals(rated, forfeited)
+        assertEquals(friendly, (Some(MatchRecord()), Some(MatchRecord())))
+        assertEquals(again, forfeited)
     }
 
     test("a match made friendly after it finished takes its result off both players' records") {
