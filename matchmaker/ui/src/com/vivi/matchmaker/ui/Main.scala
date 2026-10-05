@@ -1025,7 +1025,10 @@ object Views {
           () => Store.reloadCompleted(),
           subsection = false
         )(
-          completedWindow(Store.CompletedList.Mine(None), "Nothing finished yet.")(matchRow(_, showDue = false))
+          completedWindow(Store.CompletedList.Mine(None), "Nothing finished yet.")(
+            // Every game's, so no column for any one game's parameters: they differ from game to game.
+            completedTable(_, showGame = true, showParameters = false, outcome = playerOutcome, view = reviewControl)
+          )
         )
 
     /** One completed list, a window of time at a time: the frame to look back over, which window this is, the matches
@@ -1040,7 +1043,7 @@ object Views {
       * `never` is what an empty most-recent window says when there is nothing further back either.
       */
     private def completedWindow(list: Store.CompletedList, never: String)(
-        row: MatchSummary => HtmlElement
+        render: Seq[MatchSummary] => HtmlElement
     ): Modifier[HtmlElement] = {
         // This list's window, and nothing while another list's is held or this one's is on its way.
         val view: Signal[Option[CompletedPage]] =
@@ -1159,7 +1162,7 @@ object Views {
           child <-- showRetry.map(if (_) retryButton else emptyNode),
           child <-- view.map {
               case None                                           => emptyNode
-              case Some(page) if page.matches.nonEmpty            => ul(page.matches.map(row))
+              case Some(page) if page.matches.nonEmpty            => render(page.matches)
               case Some(page) if page.page == 0 && !page.hasOlder => p(cls := "empty", never)
               case Some(page) if page.hasOlder =>
                   p(cls := "empty", s"None finished in this time. Previous ${page.frame.period} goes further back.")
@@ -1480,7 +1483,17 @@ object Views {
                     h3("Current Matches"),
                     publicMatches(running, "None being played in public."),
                     h3("Completed Matches"),
-                    div(completedWindow(completedList, "None finished in public.")(publicMatchRow)),
+                    div(
+                      completedWindow(completedList, "None finished in public.")(
+                        completedTable(
+                          _,
+                          showGame = false,
+                          showParameters = true,
+                          outcome = publicOutcome,
+                          view = watchControl
+                        )
+                      )
+                    ),
                     adminMatchesSection(game, player)
                   )
               else emptyNode
@@ -1591,19 +1604,135 @@ object Views {
           //
           // A friendly match's archive is kept for 30 days, and once it has gone there is nothing to
           // watch: the url is cleared, and the row says why the button is missing.
-          if (summary.archiveExpired) archiveExpiredNote
-          else
-              summary.publicUrl
-                  .map(url =>
-                      button(
-                        tpe := "button",
-                        cls := "link",
-                        "Watch",
-                        onClick --> (_ => openSignedIn(url))
-                      )
-                  )
-                  .getOrElse(emptyNode)
+          watchControl(summary)
         )
+
+    /** A finished match's board, for its own player: "Review game". Fetched the way "Play" is — the urls live on the
+      * match, not on the summary — with `publicUrl` the fallback for a match whose play url the engine has since
+      * stopped honouring. Nothing for a cancelled match, which has no board worth looking at; a note instead of the
+      * button once a friendly match's archive has expired.
+      */
+    private def reviewControl(summary: MatchSummary): HtmlElement =
+        if (summary.completed && summary.archiveExpired) archiveExpiredNote
+        else if (summary.completed)
+            busyButton("Review game", classes = Some("link")) { busy =>
+                Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
+                    m.playUrl.orElse(m.publicUrl) match {
+                        case Some(url) => openSignedIn(url)
+                        // Found expired by this very request: the list was read before it was.
+                        case None if m.archiveExpired =>
+                            Store.reportProblem(
+                              "This match's archive has expired: friendly matches are kept for 30 days."
+                            )
+                        case None => Store.reportProblem("This match has no url to view.")
+                    }
+                }
+            }
+        else span()
+
+    /** Somebody else's public match, for anyone who cares to look: "Watch", straight off the summary's public url. None
+      * where the engine serves no spectator page — a button that opens nothing is worse than none — and a note instead
+      * once a friendly match's archive has expired.
+      */
+    private def watchControl(summary: MatchSummary): HtmlElement =
+        if (summary.archiveExpired) archiveExpiredNote
+        else
+            summary.publicUrl
+                .map(url => button(tpe := "button", cls := "link", "Watch", onClick --> (_ => openSignedIn(url))))
+                .getOrElse(span())
+
+    /** How the caller's own finished match came out: the engine's account where it gave one, and every seat's result
+      * where it did not.
+      */
+    private def playerOutcome(summary: MatchSummary): Modifier[HtmlElement] =
+        summary.resultSummary.fold(resultTable(summary))(resultSummary)
+
+    /** How somebody else's public match came out, where the engine said: their page has no result table. */
+    private def publicOutcome(summary: MatchSummary): Modifier[HtmlElement] =
+        summary.resultSummary.map(resultSummary).getOrElse(emptyNode)
+
+    /** A window of finished matches as a table: a row per match — its game (on the main page, which mixes games), what
+      * its creator called it, when it ended, whether it was friendly, one column per game parameter (on a page about
+      * one game, where every match has the same ones), and the way to look at its board — and under each, a row of its
+      * own across the table saying how it came out.
+      *
+      * The parameter columns are the parameters the matches shown were played under, in the order the first of them
+      * lists them, so a game with none has no such column.
+      */
+    private def completedTable(
+        matches: Seq[MatchSummary],
+        showGame: Boolean,
+        showParameters: Boolean,
+        outcome: MatchSummary => Modifier[HtmlElement],
+        view: MatchSummary => HtmlElement
+    ): HtmlElement = {
+        val parameters =
+            if (showParameters) matches.flatMap(_.parameters.map(_.displayName)).distinct else Seq.empty
+        val columns = (if (showGame) 1 else 0) + 4 + parameters.size
+
+        def matchRow(summary: MatchSummary): Seq[HtmlElement] = {
+            val name = if (summary.description.trim.nonEmpty) summary.description else "an unnamed match"
+            val ended: Modifier[HtmlElement] =
+                summary.completedAt match {
+                    case Some(when) =>
+                        // The day, with the instant it was trimmed from kept machine-readable.
+                        timeTag(
+                          htmlAttr("datetime", com.raquo.laminar.codecs.StringAsIsCodec) := when.toString,
+                          Format.date(when)
+                        )
+                    case None => if (summary.cancelled) "cancelled" else ""
+                }
+            val told = outcome(summary)
+            Seq(
+              tr(
+                cls := "match",
+                if (showGame) td(summary.gameName) else emptyNode,
+                // The match's name heads its row, for a screen reader; cut short to the column when long, and in
+                // full on hover, while a reader hears all of it.
+                th(scopeAttr := "row", span(cls := "message", title := name, name)),
+                td(ended),
+                // A mark for a friendly match and nothing for a rated one, with a word for a screen reader either way.
+                td(
+                  cls := "friendly",
+                  if (summary.friendly) span(aria.hidden := true, "✓") else emptyNode,
+                  span(cls := "sr-only", if (summary.friendly) "friendly" else "rated")
+                ),
+                parameters.map(parameter =>
+                    td(summary.parameters.find(_.displayName == parameter).map(_.value).getOrElse(""))
+                ),
+                td(view(summary))
+              ),
+              // How it came out, across the whole table and set apart in colour: the line to read under the row.
+              tr(
+                cls := "outcome",
+                td(
+                  colSpan := columns,
+                  if (summary.cancelled) div(cls := "detail", "Cancelled by its creator.") else emptyNode,
+                  told
+                )
+              )
+            )
+        }
+
+        div(
+          cls := "table-scroll",
+          table(
+            cls := "completed",
+            thead(
+              tr(
+                if (showGame) th(scopeAttr := "col", "Game") else emptyNode,
+                th(scopeAttr := "col", "Match"),
+                th(scopeAttr := "col", "Completed"),
+                th(scopeAttr := "col", cls := "friendly", friendlyHeading()),
+                parameters.map(parameter => th(scopeAttr := "col", parameter)),
+                th(scopeAttr := "col", span(cls := "sr-only", "Board"))
+              )
+            ),
+            // A body per match, so its two rows read as one.
+            matches.map(summary => tbody(matchRow(summary)))
+          )
+        )
+    }
 
     /** The game's parameters as this match is played under them, one to a line, under what names the match.
       *
@@ -1707,22 +1836,7 @@ object Views {
                 // goes and looks at how it ended. Fetched the same way "Play" fetches it — the urls
                 // live on the match, not on the summary — and `publicUrl` is the fallback for a match
                 // whose play url the engine has since stopped honouring for a game that is over.
-                if (summary.completed && summary.archiveExpired) archiveExpiredNote
-                else if (summary.completed)
-                    busyButton("Review game", classes = Some("link")) { busy =>
-                        Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
-                            m.playUrl.orElse(m.publicUrl) match {
-                                case Some(url) => openSignedIn(url)
-                                // Found expired by this very request: the list was read before it was.
-                                case None if m.archiveExpired =>
-                                    Store.reportProblem(
-                                      "This match's archive has expired: friendly matches are kept for 30 days."
-                                    )
-                                case None => Store.reportProblem("This match has no url to view.")
-                            }
-                        }
-                    }
-                else emptyNode
+                reviewControl(summary)
               )
           else
               div(
@@ -2100,7 +2214,7 @@ object Views {
           subsection = false
         )(
           completedWindow(Store.CompletedList.Mine(Some(game.gameId)), "You have not finished a match of this yet.")(
-            matchRow(_, showDue = false)
+            completedTable(_, showGame = false, showParameters = true, outcome = playerOutcome, view = reviewControl)
           )
         )
 
@@ -4155,19 +4269,45 @@ object Views {
     /** "friendly" under a match or a challenge that is one, with what that means a tap away. Said only when it is: a
       * rated match is the ordinary kind, and needs no saying.
       */
+    private val friendlyMeaning =
+        "A friendly match is played for fun: it does not change either player's Elo rating or place in the " +
+            "rankings. Every other match is rated."
+
     private def friendlyLabel(): HtmlElement =
         withTip(
           freshTipId("friendly-tip"),
           "friendly",
-          "A friendly match is played for fun: it does not change either player's Elo rating or place in the " +
-              "rankings. Every other match is rated."
+          friendlyMeaning
         )(div(cls := "detail", "friendly")).amend(cls := "inline-tip")
+
+    /** The "Friendly" column's heading, with what a friendly match is a tap away. */
+    private def friendlyHeading(): HtmlElement =
+        withTip(freshTipId("friendly-tip"), "friendly matches", friendlyMeaning)(span("Friendly"))
+            .amend(cls := "inline-tip")
 
     private def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement = {
         val open = Var(false)
         // Escape hides a tip that hover or keyboard focus is showing, which `open` knows nothing about: this holds it
         // hidden, with focus left where it was, until the pointer or focus arrives afresh.
         val dismissed = Var(false)
+        val tip = span(
+          idAttr := id,
+          role := "tooltip",
+          cls := "tip",
+          cls("open") <-- open.signal,
+          cls("dismissed") <-- dismissed.signal,
+          text
+        )
+        // In a table that scrolls sideways, the scrolling box would clip a tip hanging below its heading, so there the
+        // tip is pinned to the window instead (`.table-scroll .tip`), under its "?" as it is about to show.
+        def place(toggle: dom.Element): Unit =
+            if (toggle.closest(".table-scroll") != null) {
+                val at = toggle.getBoundingClientRect()
+                val width = math.min(352.0, dom.window.innerWidth - 32)
+                val left = math.max(16.0, math.min(at.left, dom.window.innerWidth - 16 - width))
+                tip.ref.style.top = s"${at.bottom}px"
+                tip.ref.style.left = s"${left}px"
+            }
         div(
           cls := "with-tip",
           control,
@@ -4178,12 +4318,19 @@ object Views {
             aria.expanded <-- open.signal,
             aria.controls := id,
             "?",
-            onClick --> { _ =>
+            onClick --> { event =>
+                place(event.currentTarget.asInstanceOf[dom.Element])
                 dismissed.set(false)
                 open.update(!_)
             },
-            onFocus --> (_ => dismissed.set(false)),
-            onMouseEnter --> (_ => dismissed.set(false)),
+            onFocus --> { event =>
+                place(event.currentTarget.asInstanceOf[dom.Element])
+                dismissed.set(false)
+            },
+            onMouseEnter --> { event =>
+                place(event.currentTarget.asInstanceOf[dom.Element])
+                dismissed.set(false)
+            },
             onBlur --> (_ => open.set(false)),
             // A tip that is showing takes the Escape that hides it, so a dialog the tip is in stays open. Showing by
             // `open`, or by the CSS, which shows it for keyboard focus and hover without telling `open` -- and a
@@ -4201,14 +4348,7 @@ object Views {
                 }
             )
           ),
-          span(
-            idAttr := id,
-            role := "tooltip",
-            cls := "tip",
-            cls("open") <-- open.signal,
-            cls("dismissed") <-- dismissed.signal,
-            text
-          )
+          tip
         )
     }
 

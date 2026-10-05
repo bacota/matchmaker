@@ -725,6 +725,11 @@ label.field > .hint {
   line-height: 1.4;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
+/* In a table that scrolls sideways, which would clip it, a tip is pinned to the window under its "?"
+   (withTip places it). */
+.table-scroll .tip {
+  position: fixed;
+}
 .tip.open,
 .tip-toggle:hover + .tip:not(.dismissed),
 .tip-toggle:focus-visible + .tip:not(.dismissed) {
@@ -1212,4 +1217,60 @@ button.toggle {
     grid-column: 2;
     margin-top: 0;
   }
+}
+
+/* Finished matches, as a table: a row per match, and under it a row across the table saying how
+   it came out, tinted so that the pair reads as one and the outcome as the thing to read. */
+.completed {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.completed th,
+.completed td {
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.completed thead th {
+  border-bottom: 2px solid var(--line);
+}
+
+.completed tbody th {
+  font-weight: 600;
+}
+
+/* A long message is cut to the column, with the whole of it on hover; a screen reader hears all of it. */
+.completed .message {
+  display: inline-block;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.completed .friendly {
+  text-align: center;
+}
+
+.completed th.friendly .with-tip {
+  justify-content: center;
+}
+
+.completed tr.outcome td {
+  background: #f3f6fb;
+  border-bottom: 1px solid var(--line);
+  padding-top: 0.25rem;
+  padding-bottom: 0.5rem;
+}
+
+.completed tr.outcome .results,
+.completed tr.outcome .result-summary {
+  margin-top: 0;
+}
+
+.completed tr.outcome td:empty {
+  padding: 0;
 }
