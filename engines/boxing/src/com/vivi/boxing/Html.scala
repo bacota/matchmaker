@@ -76,6 +76,7 @@ object Html {
 
     def board(
         matchId: String,
+        title: String,
         state: Option[Protocol.StateResponse],
         login: Option[LoginConfig],
         liveUrl: Option[String] = None,
@@ -86,7 +87,7 @@ object Html {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>boxing — ${escape(matchId)}</title>
+<title>${escape(title)}</title>
 <style>
   /* --error is 6.3:1 on the light page and 7.8:1 on the dark one; crimson, which it replaces, was 3.6:1
      in dark mode, under the 4.5:1 normal text needs. */

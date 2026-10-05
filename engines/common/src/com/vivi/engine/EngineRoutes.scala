@@ -42,15 +42,20 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
     protected def stateOf(m: M, seat: Option[S]): V
 
     /** The play page, with `state` inlined when the viewer has a seat. `publicView` is the public board, and `liveUrl`
-      * where its Play Live connection is opened — absent when this engine offers none, and the switch with it.
+      * where its Play Live connection is opened — absent when this engine offers none, and the switch with it. `title`
+      * is the page's title ([[MatchTitle]]).
       */
     protected def page(
         matchId: String,
+        title: String,
         state: Option[V],
         login: Option[LoginConfig],
         liveUrl: Option[String],
         publicView: Boolean
     ): String
+
+    /** The engine's own name for its game: a match's title when matchmaker sent it none. */
+    protected def gameTitle: String
 
     /** `POST /matches/{matchId}/moves`: the body read as one of this game's moves, and made by the caller. Answered,
       * when it is made, with [[moved]].
@@ -198,7 +203,16 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                         val seat = playAuth.callerOf(request).toOption.flatMap(engine.seatOf(found, _).toOption)
                         val m = seat.flatMap(openedBy(found, _).toOption).getOrElse(found)
                         val state = Option.when(seat.isDefined)(stateOf(m, seat))
-                        html(page(matchId, state, playAuth.login, live.map(_.url), publicView = false))
+                        html(
+                          page(
+                            matchId,
+                            MatchTitle.of(m, gameTitle),
+                            state,
+                            playAuth.login,
+                            live.map(_.url),
+                            publicView = false
+                          )
+                        )
                 }
 
             // A seat's player fetching its state has the board open: it is what the page does first, and deployed it is
@@ -230,7 +244,9 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             // no sight of anything a seat would hide — see `stateOf`.
             case ("GET", "matches" :: matchId :: "board" :: Nil) =>
                 withPublic(matchId, archivedHint(request))(m =>
-                    html(page(matchId, Some(stateOf(m, None)), None, live.map(_.url), publicView = true))
+                    html(
+                      page(matchId, MatchTitle.of(m, gameTitle), Some(stateOf(m, None)), None, live.map(_.url), true)
+                    )
                 )
 
             case ("GET", "matches" :: matchId :: "board" :: "state" :: Nil) =>

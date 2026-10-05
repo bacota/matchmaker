@@ -11,6 +11,24 @@ trait MatchLike extends HasMatchId {
     def isPublic: Boolean
     def moveCallbackUrl: Option[String]
     def resultsCallbackUrl: Option[String]
+
+    /** What players call the game, and the match's own message, as matchmaker sent them: what its pages are titled by.
+      * None for a match created before they were kept, or by a matchmaker that predates them.
+      */
+    def gameDisplayName: Option[String] = None
+    def description: Option[String] = None
+}
+
+object MatchTitle {
+
+    /** A match's pages' title: the game's name and the match's message — "Boxing — Title fight" — or the game's name
+      * alone when it has none. `fallback` is the engine's own name for its game, for a match that kept no name. Never
+      * the match id: an internal id means nothing to anybody.
+      */
+    def of(m: MatchLike, fallback: String): String = {
+        val game = m.gameDisplayName.map(_.trim).filter(_.nonEmpty).getOrElse(fallback)
+        m.description.map(_.trim).filter(_.nonEmpty).fold(game)(message => s"$game — $message")
+    }
 }
 
 /** One player's place in a match: a seat, a corner, whatever the game calls it.

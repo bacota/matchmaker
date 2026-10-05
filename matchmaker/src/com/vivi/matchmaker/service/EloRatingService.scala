@@ -167,7 +167,7 @@ object EloRatingService {
             if (!EloRating.playersOnce(rows.map(_.playerId)))
                 IO(
                   System.err.println(
-                    s"match ${matchId.value} of game ${gameId.value} is not friendly but has a player in two seats; " +
+                    s"match ${matchId.value} of game ${gameId.value} is rated but has a player in two seats; " +
                         "it is not rated"
                   )
                 ).as(Map.empty)

@@ -17,13 +17,16 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], 
 
     protected def stateOf(m: RpsMatch, seat: Option[Seat]): Protocol.StateResponse = engine.stateOf(m, seat)
 
+    protected def gameTitle: String = "rock · paper · scissors"
+
     protected def page(
         matchId: String,
+        title: String,
         state: Option[Protocol.StateResponse],
         login: Option[LoginConfig],
         liveUrl: Option[String],
         publicView: Boolean
-    ): String = Html.board(matchId, state, login, liveUrl, publicView)
+    ): String = Html.board(matchId, title, state, login, liveUrl, publicView)
 
     protected def move(request: EngineRequest, matchId: String): EngineResponse =
         // Two ways to be a bad throw, answered the same way: a body that is not a move at all,

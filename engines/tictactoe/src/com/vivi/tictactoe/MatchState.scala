@@ -45,7 +45,11 @@ case class TicTacToeMatch(
     // none, and matchmaker charges nothing for the moves made before this existed.
     turns: List[TurnRecord] = Nil,
     // Defaulted for the same reason: a match stored before live matches existed is not one.
-    clock: Option[TurnClock] = None
+    clock: Option[TurnClock] = None,
+    // What the match's pages are titled by (`MatchTitle`). Defaulted, so a match stored before they
+    // were kept reads back as it was, and is titled by the game alone.
+    override val gameDisplayName: Option[String] = None,
+    override val description: Option[String] = None
 ) extends MatchLike {
 
     def seatOf(mark: Mark): Option[Seat] = seats.find(_.mark == mark)
@@ -164,7 +168,9 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
               createdAt = now,
               lastMoveAt = None,
               moveCallbackUrl = request.moveCallbackUrl,
-              resultsCallbackUrl = request.resultsCallbackUrl
+              resultsCallbackUrl = request.resultsCallbackUrl,
+              gameDisplayName = request.gameDisplayName,
+              description = request.description
             )
         }
 

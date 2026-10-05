@@ -1558,12 +1558,14 @@ object Views {
         li(
           cls := "row",
           // The game's name is the row this sits under, so what names the match here is what its
-          // creator called it — and an unnamed match is said by its id rather than by a blank line.
+          // creator called it -- and an unnamed match is said to be one, never named by its id.
           div(
             cls := "title",
-            if (summary.description.trim.nonEmpty) summary.description else s"match ${summary.matchId.value}"
+            if (summary.description.trim.nonEmpty) summary.description else "an unnamed match"
           ),
           div(cls := "detail", s"started ${Format.date(summary.start)}"),
+          // Said only when it is: a rated match is the ordinary kind, and needs no saying.
+          if (summary.friendly) div(cls := "detail", "friendly") else emptyNode,
           matchParameters(summary),
           if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
           summary.completedAt
@@ -1640,6 +1642,7 @@ object Views {
           cls := "row",
           div(cls := "title", summary.gameName),
           div(cls := "detail", summary.description),
+          if (summary.friendly) div(cls := "detail", "friendly") else emptyNode,
           matchParameters(summary),
           if (showDue) summary.due.map(countdown).getOrElse(emptyNode)
           else emptyNode,
@@ -2716,7 +2719,7 @@ object Views {
         val busy = Var(false)
         li(
           cls := "row",
-          div(cls := "title", if (m.description.trim.nonEmpty) m.description else s"match ${m.matchId.value}"),
+          div(cls := "title", if (m.description.trim.nonEmpty) m.description else "an unnamed match"),
           div(cls := "detail", if (m.players.isEmpty) "nobody seated yet" else m.players.mkString(", ")),
           div(
             cls := "detail",
@@ -2893,7 +2896,7 @@ object Views {
             tip = Some(
               s"ratings-tip-${game.gameId.value}" ->
                   (s"Players are ranked by Elo rating, and by rated matches between equal ratings. " +
-                      s"Every match of this game that is not friendly moves its players' ratings. " +
+                      s"Every rated match of this game moves its players' ratings; a friendly one does not. " +
                       s"A player's first rated match starts them at ${EloRating.initial}.")
             )
           )(
@@ -3427,7 +3430,8 @@ object Views {
           timeLimitDetail(challenge),
           parameterDetail(game, challenge),
           if (challenge.isPublic) div(cls := "detail", "public") else emptyNode,
-          if (challenge.friendly) emptyNode else div(cls := "detail", "not friendly"),
+          // Said only when it is: a rated match is the ordinary kind, and needs no saying.
+          if (challenge.friendly) div(cls := "detail", "friendly") else emptyNode,
           // A game's admin offering a match for others to play: said, because nothing else on the row
           // tells it from one they are seated in.
           if (challenge.gameRoleId.isEmpty) div(cls := "detail", "you are not playing in it") else emptyNode,
@@ -3987,7 +3991,8 @@ object Views {
           div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
           timeLimitDetail(challenge),
           parameterDetail(game, challenge),
-          if (challenge.friendly) emptyNode else div(cls := "detail", "not friendly"),
+          // Said only when it is: a rated match is the ordinary kind, and needs no saying.
+          if (challenge.friendly) div(cls := "detail", "friendly") else emptyNode,
           // A seat held for this player is said rather than offered: a picker with one entry asks a
           // question whose answer is already settled, and what they need to know is which seat they
           // were asked for.
@@ -4410,8 +4415,8 @@ object Views {
                     withTip(
                       "friendly-tip",
                       "Friendly",
-                      "Untick to make the match one that is not friendly. As an admin of this game you can change " +
-                          "it later, until the match is completed."
+                      "A friendly match does not move its players' ratings; untick for a rated one. As an admin of " +
+                          "this game you can change it later, until the match is completed."
                     )(
                       label(
                         input(

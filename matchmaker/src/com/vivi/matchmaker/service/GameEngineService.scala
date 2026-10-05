@@ -273,7 +273,7 @@ class GameEngineService[T](
                     // match with a player in it twice.
                     _ <- IO.raiseUnless(challenge.friendly || EloRating.playersOnce(roster.map(_.acceptance.playerId)))(
                       ValidationError(
-                        s"challenge ${challengeId.value} is not friendly, and a player holds more than one of its " +
+                        s"challenge ${challengeId.value} is rated, and a player holds more than one of its " +
                             "seats; one of them must withdraw before it can start"
                       )
                     )
@@ -1123,6 +1123,8 @@ class GameEngineService[T](
           live = challenge.timeLimit
               .filter(_ => challenge.live)
               .map(limit => LiveTerms(limit.getSeconds, challenge.timeLimitKind.code)),
+          gameDisplayName = Some(game.displayName),
+          description = Some(challenge.message.trim).filter(_.nonEmpty),
           moveCallbackUrl =
               callbackBaseUrl.map(base => s"$base/games/${game.gameId.value}/matches/${matchId.value}/moves"),
           resultsCallbackUrl =
