@@ -403,3 +403,32 @@ variable "mail_sender" {
   type        = string
   default     = ""
 }
+
+/* Each engine's friendly url is "<subdomain>.<ui_domain_name>", in hosted_zone_id. A subdomain of
+ * "" gives that engine none, and so does an environment with no ui_domain_name: it stays on its
+ * generated execute-api host. One variable each, so that an environment changing one does not have
+ * to restate the others. */
+
+variable "tictactoe_subdomain" {
+  description = "Tic-tac-toe's friendly url, under ui_domain_name: tictactoe.<ui_domain_name>. Empty for none."
+  type        = string
+  default     = "tictactoe"
+}
+
+variable "rps_subdomain" {
+  description = "Rock-paper-scissors' friendly url, under ui_domain_name: rps.<ui_domain_name>. Empty for none."
+  type        = string
+  default     = "rps"
+}
+
+variable "boxing_subdomain" {
+  description = "Boxing's friendly url, under ui_domain_name: simple-boxing.<ui_domain_name>. Empty for none."
+  type        = string
+  default     = "simple-boxing"
+}
+
+variable "stratego_subdomain" {
+  description = "Capture the flag's friendly url, under ui_domain_name: capture-the-flag.<ui_domain_name>. Empty for none."
+  type        = string
+  default     = "capture-the-flag"
+}
