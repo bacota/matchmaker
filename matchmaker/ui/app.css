@@ -535,6 +535,20 @@ ul {
   font-variant-numeric: tabular-nums;
 }
 
+/* The player's own line, at the foot: set apart by colour and a rule above it, since it is their
+   rating as it stands now rather than a place in the page above. */
+.leaderboard tfoot tr.mine th,
+.leaderboard tfoot tr.mine td {
+  color: var(--accent);
+  background: #eef3fb;
+  border-top: 2px solid var(--accent);
+}
+
+.leaderboard .mine-note {
+  font-weight: normal;
+  font-size: 0.85rem;
+}
+
 .leaderboard .compound {
   margin: 0;
   flex-wrap: nowrap;

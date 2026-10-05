@@ -215,7 +215,8 @@ one.
 
 When a match ends, the API function puts its id on the `matchmaker-<env>-match-ended` queue, and
 `matchmaker-<env>-ending` drains it: it prompts the match's engine to archive it if the engine has
-not, and tells the engine of a cancel. (Ratings move in the API call that ends the match.) Whatever is still owed is delivered again after
+not, tells the engine of a cancel, and places the match's players on the game's leaderboard.
+(Ratings move in the API call that ends the match; only the places they earn follow here.) Whatever is still owed is delivered again after
 the queue's visibility timeout, and after the last try lands in the `-dlq` queue beside it; see
 `EndingService` and `terraform/modules/api/ending.tf`.
 
@@ -260,6 +261,11 @@ deploy can be rolled back by moving it to the previous version without touching 
 
 Both are unconditional, so turning `lambda_snap_start` off removes the snapshot without rearranging
 how the gateway reaches the function.
+
+The ending function, `matchmaker-<env>-ending`, follows the same variable and the same pattern: it
+publishes, has a `live` alias of its own, and its SQS event source mapping invokes that alias. It is
+safe to snapshot for the same reason the API function is -- it reaches the database pool and the
+SQS client only through lazy vals that init never touches.
 
 ### What must not be in the snapshot
 

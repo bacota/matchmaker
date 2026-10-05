@@ -196,7 +196,8 @@ class Engine(
                 impression = if (yours(c)) Nil else c.fighter.map(_.impression).getOrElse(Nil),
                 planned = !over && m.planOf(c, m.currentRound).isDefined,
                 points = m.points(c.side),
-                nickname = c.nickname
+                nickname = c.nickname,
+                fighterName = c.fighterName
               )
           ),
           rounds = m.rounds.map(r =>

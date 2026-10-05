@@ -13,6 +13,7 @@ import java.time.Instant
   *
   * `nickname` is for the engine to show players by, as it stood when the match started: a rename afterwards does not
   * reach a match already under way. Optional, so an engine that predates it reads the request as it always did.
+  * `characterName` is the same for the character a seat is played by, and absent for a seat with none.
   */
 case class EnginePlayer(
     cognitoId: String,
@@ -20,7 +21,8 @@ case class EnginePlayer(
     role: Option[String],
     characterId: Option[Long],
     characterState: Option[String],
-    nickname: Option[String] = None
+    nickname: Option[String] = None,
+    characterName: Option[String] = None
 )
 
 /** The request of step 1: create a game, given its parameters, its players and their roles, and whether it is public.

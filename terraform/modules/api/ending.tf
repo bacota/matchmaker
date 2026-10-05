@@ -87,8 +87,7 @@ resource "aws_cloudwatch_log_group" "ending" {
 /* A further function from the api's jar, inside the VPC beside it, with its role: it reads and
  * writes the same tables, calls the same engines with the same keys, and checks the same buckets.
  *
- * Small, because nobody waits on it: a queue absorbs a slow cold start, and what it does is a few
- * queries and an engine call per match. */
+ * Small, because what it does is a few queries and an engine call per match. */
 resource "aws_lambda_function" "ending" {
   function_name = local.ending_name
   role          = aws_iam_role.lambda.arn
@@ -102,8 +101,24 @@ resource "aws_lambda_function" "ending" {
   memory_size = var.ending_memory_mb
   timeout     = local.ending_timeout_s
 
-  # No SnapStart, alias or publish: the event source mapping invokes $LATEST, and nobody waits on
-  # its cold start.
+  /* SnapStart, as the api function has it and on the same terms (see main.tf): nobody waits on this
+   * function, but a cold JVM is most of what a small batch costs, and the leaderboard a player is
+   * waiting to see is placed here. Safe for the same reason -- `ending.Handler` reaches the api's
+   * services, and through them the database pool and the SQS client, only through lazy vals,
+   * which nothing touches during init, so the snapshot holds no connection.
+   *
+   * Like the api function's, it applies only to published versions: so this one publishes, and the
+   * queue's event source mapping invokes its alias rather than $LATEST, which has no snapshot. */
+  dynamic "snap_start" {
+    for_each = var.lambda_snap_start ? [1] : []
+    content {
+      apply_on = "PublishedVersions"
+    }
+  }
+
+  # Unconditional, as the api function's is, so that toggling lambda_snap_start does not also
+  # change what the event source mapping invokes.
+  publish = true
 
   vpc_config {
     subnet_ids         = var.subnet_ids
@@ -134,6 +149,16 @@ resource "aws_lambda_function" "ending" {
   ]
 }
 
+/* What the event source mapping invokes: always the version this apply published, whose snapshot
+ * it resumes. As with the api's alias, an apply that changes the jar waits a minute or two while
+ * AWS takes the snapshot, and a bad deploy is rolled back by moving the alias. */
+resource "aws_lambda_alias" "ending_live" {
+  name             = "live"
+  description      = "Version currently settling the ends of matches."
+  function_name    = aws_lambda_function.ending.function_name
+  function_version = aws_lambda_function.ending.version
+}
+
 /* The poller. `ReportBatchItemFailures`, as the other consumers have: the handler answers with the
  * matches still owed something, so one engine that is down costs its own matches a redelivery
  * rather than the whole batch.
@@ -141,7 +166,8 @@ resource "aws_lambda_function" "ending" {
  * No batching window: a cancelled match is dropped by its engine as soon as it can be. */
 resource "aws_lambda_event_source_mapping" "match_ended" {
   event_source_arn = aws_sqs_queue.match_ended.arn
-  function_name    = aws_lambda_function.ending.arn
+  # The alias, not the function: an unqualified function runs $LATEST, which has no snapshot.
+  function_name = aws_lambda_alias.ending_live.arn
 
   batch_size              = 10
   function_response_types = ["ReportBatchItemFailures"]

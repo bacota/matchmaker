@@ -2914,56 +2914,84 @@ object Views {
                       else s"Nobody is ranked $first to $last."
               }
             ),
-            child <-- rows.map(_.nonEmpty).distinct.map {
-                case false => emptyNode
-                case true  =>
-                    // Its own scroll, so that a phone scrolls the table sideways rather than the page.
-                    div(
-                      cls := "table-scroll",
-                      table(
-                        cls := "leaderboard",
-                        caption(cls := "sr-only", s"Player rankings in ${game.name}"),
-                        thead(
-                          tr(
-                            th(scopeAttr := "col", "Rank"),
-                            th(scopeAttr := "col", "Player"),
-                            th(scopeAttr := "col", "Ranked rating"),
-                            th(scopeAttr := "col", "Matches"),
-                            child <-- administers.map(if (_) th(scopeAttr := "col", "Set rating") else emptyNode)
-                          )
-                        ),
-                        // Split by player, so that a row keeps its element -- and whatever is typed in its
-                        // box -- when the page around it is answered again.
-                        tbody(
-                          children <-- rows.split(_.player.playerId)((_, first, rating) =>
-                              ratingRow(game, first.player, rating, administers, savedRow)
+            // Shown when the page has anybody on it, or the player has a standing of their own to show in
+            // it -- a player ranked below the page, or not ranked yet, still sees their own line.
+            child <-- rows
+                .map(_.nonEmpty)
+                .combineWith(mine.signal.map(_.exists(_.isRight)))
+                .map(_ || _)
+                .distinct
+                .map {
+                    case false => emptyNode
+                    case true  =>
+                        // Its own scroll, so that a phone scrolls the table sideways rather than the page.
+                        div(
+                          cls := "table-scroll",
+                          table(
+                            cls := "leaderboard",
+                            caption(cls := "sr-only", s"Player rankings in ${game.name}"),
+                            thead(
+                              tr(
+                                th(scopeAttr := "col", "Rank"),
+                                th(scopeAttr := "col", "Player"),
+                                th(scopeAttr := "col", "Ranked rating"),
+                                th(scopeAttr := "col", "Matches"),
+                                child <-- administers.map(if (_) th(scopeAttr := "col", "Set rating") else emptyNode)
+                              )
+                            ),
+                            // Split by player, so that a row keeps its element -- and whatever is typed in its
+                            // box -- when the page around it is answered again.
+                            tbody(
+                              children <-- rows.split(_.player.playerId)((_, first, rating) =>
+                                  ratingRow(game, first.player, rating, administers, savedRow)
+                              )
+                            ),
+                            // The player's own line, after the page and set apart from it: their place, with their
+                            // rating and matches as they stand now rather than as they were placed by, which a match
+                            // that has just finished may have moved.
+                            tfoot(
+                              child <-- mine.signal.combineWith(administers).map {
+                                  case (Some(Right(you)), admin) => ownRow(you, admin)
+                                  case _                         => emptyNode
+                              }
+                            )
                           )
                         )
-                      )
-                    )
-            },
+                },
+            // What there is to say instead of the player's own line: that it is on its way, that they have no
+            // rating here, or that it could not be had. Mounted with the section, so that it is announced.
+            div(
+              aria.live := "polite",
+              child <-- mine.signal.map {
+                  case None            => p(cls := "empty", "Loading your standing…")
+                  case Some(Left(why)) => p(cls := "empty", why)
+                  case Some(Right(_))  => emptyNode
+              }
+            ),
             div(
               cls := "completed-steps",
               step("Previous", "Previous 20 ranks", page.signal.map(_ > 0), _ - 1),
               step("Next", "Next 20 ranks", board.signal.map(_.exists(_.more)), _ + 1)
-            ),
-            div(
-              cls := "card",
-              h3("Your Standing"),
-              div(
-                aria.live := "polite",
-                child <-- mine.signal.map {
-                    case None               => p(cls := "empty", "Loading…")
-                    case Some(Left(why))    => p(cls := "empty", why)
-                    case Some(Right(found)) => standingDetails(found)
-                }
-              )
             ),
             findPlayer(game),
             child <-- administers.map(if (_) rateNewPlayer(game, savedNew, said) else emptyNode)
           )
         )
     }
+
+    /** The signed-in player's own line at the foot of the leaderboard: their place, and their rating and matches as
+      * they stand now. Named as theirs in words as well as by its colour, which a screen reader does not see.
+      */
+    private def ownRow(you: EloRating, administers: Boolean): HtmlElement =
+        tr(
+          cls := "mine",
+          td(you.rank.fold[Modifier[HtmlElement]](span(aria.label := "not ranked yet", "—"))(_.toString)),
+          th(scopeAttr := "row", you.player.nickname, span(cls := "mine-note", " (you, now)")),
+          td(you.rating.toString),
+          td(you.matches.toString),
+          // Nothing to set here: an admin sets their own rating from their row in the page, if it is on it.
+          if (administers) td() else emptyNode
+        )
 
     /** A player's standing in a game: their place, the rating it was worked out from — what the leaderboard shows — and
       * their rating as it stands, which a match that has just finished may have moved since.

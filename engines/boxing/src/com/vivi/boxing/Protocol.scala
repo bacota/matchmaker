@@ -98,7 +98,9 @@ object Protocol {
         // `Fighter.impression`. Empty for the viewer's own corner, whose `fighter` says it all.
         impression: List[String] = Nil,
         // Who is in the corner, by matchmaker nickname; absent for a bout created before nicknames were kept.
-        nickname: Option[String] = None
+        nickname: Option[String] = None,
+        // The fighter's name, the matchmaker character's; absent for a bout created before it was kept.
+        fighterName: Option[String] = None
     )
 
     case class Numbers(offense: Int, defense: Int, power: Int, effectiveChin: Int)

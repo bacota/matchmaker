@@ -1146,7 +1146,8 @@ class GameEngineService[T](
               role = Some(entry.roleName),
               characterId = c.map(_.characterId.value),
               characterState = c.map(ch => codec.encode(ch.state)),
-              nickname = Some(entry.nickname)
+              nickname = Some(entry.nickname),
+              characterName = c.map(_.name)
             )
         }
     }

@@ -126,6 +126,7 @@ object Html {
   .corner dt { opacity: .75; }
   .corner dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
   .corner .who { font-size: .75rem; opacity: .7; overflow-wrap: anywhere; }
+  .corner .fighter-name { font-size: 1.1rem; font-weight: 600; margin: .25rem 0; overflow-wrap: anywhere; }
   table { width: 100%; border-collapse: collapse; font-size: .875rem; font-variant-numeric: tabular-nums; }
   caption { text-align: left; font-weight: 600; font-size: 1.125rem; margin-bottom: .5rem; }
   th, td { padding: .375rem .25rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
@@ -327,6 +328,8 @@ ${Finale.script(victory, defeat)}
         : '<p class="looks">' + escapeHtml(looks(c.impression || [])) + "</p>";
       const doing = state.completed ? "" : c.planned ? "Round planned." : "Planning…";
       return '<div class="corner ' + escapeHtml(c.side) + '"><h3>' + escapeHtml(cornerName(c.side)) + "</h3>" +
+        // The fighter by name, first under the corner: who is in the ring is what the page is about.
+        (c.fighterName ? '<p class="fighter-name">' + escapeHtml(c.fighterName) + "</p>" : "") +
         "<p>" + c.points + " points" + (doing ? " · " + doing : "") + "</p>" + stats +
         // By nickname, never the sign-in id, which means nothing to anybody; a bout created before
         // nicknames were kept has none to show.

@@ -46,7 +46,8 @@ class EngineSpec extends FunSuite with QuietTests {
               roles.head,
               Some(101L),
               Some(red.map(Fighter.toState).getOrElse("")),
-              Some("Alice")
+              Some("Alice"),
+              Some("Iron Mike")
             ),
             Protocol.EnginePlayer(
               bob,
@@ -54,7 +55,8 @@ class EngineSpec extends FunSuite with QuietTests {
               roles(1),
               Some(202L),
               Some(blue.map(Fighter.toState).getOrElse("")),
-              Some("Bob")
+              Some("Bob"),
+              Some("Sugar Ray")
             )
           ),
           moveCallbackUrl = Some(moveUrl),
@@ -100,6 +102,18 @@ class EngineSpec extends FunSuite with QuietTests {
         val corners = engine.stateOf(bout(store), None).corners
 
         assertEquals(corners.map(c => c.side -> c.nickname), List("Red" -> Some("Alice"), "Blue" -> Some("Bob")))
+    }
+
+    test("each corner carries its fighter's name, as matchmaker sent it, for the page to show to both players") {
+        val (engine, _, store, _, _) = fixture()
+        // Seen from either corner, and by a spectator: a name is not a characteristic, and is no secret.
+        for (viewer <- None :: bout(store).corners.map(Some(_))) {
+            val corners = engine.stateOf(bout(store), viewer).corners
+            assertEquals(
+              corners.map(c => c.side -> c.fighterName),
+              List("Red" -> Some("Iron Mike"), "Blue" -> Some("Sugar Ray"))
+            )
+        }
     }
 
     test("the number of rounds comes from the challenge's settings, then the game's parameter, then the default") {

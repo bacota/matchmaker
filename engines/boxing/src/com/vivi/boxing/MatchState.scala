@@ -11,15 +11,17 @@ import com.vivi.engine.{Game, MatchLike, Outcome, ResultText, SeatLike, TurnCloc
   * the seat and is what every callback quotes back. `characterId` is the fighter, which is a matchmaker character, and
   * `fighter` its characteristics: `None` until the player has built it, which a fighter's first bout is where they do.
   */
-/* `nickname` is what the player is shown as, as matchmaker named them when the bout was created. Defaulted, so a bout
- * stored before it was kept reads as it was written, and is shown without one. */
+/* `nickname` is what the player is shown as, and `fighterName` what their fighter is, as matchmaker named them when the
+ * bout was created. Defaulted, so a bout stored before either was kept reads as it was written, and is shown without
+ * it. */
 case class Corner(
     side: Side,
     cognitoId: String,
     participantId: Long,
     characterId: Long,
     fighter: Option[Fighter],
-    nickname: Option[String] = None
+    nickname: Option[String] = None,
+    fighterName: Option[String] = None
 ) extends SeatLike
 
 /** One corner's plan for one round: how the workrate was spent, when it was submitted, and when that player's clock
@@ -201,7 +203,8 @@ object Bout extends Game[Bout, Corner, Plan] {
                   p.participantId,
                   p.characterId.get,
                   p.characterState.flatMap(Fighter.fromState),
-                  p.nickname
+                  p.nickname,
+                  p.characterName
                 )
             })
         }

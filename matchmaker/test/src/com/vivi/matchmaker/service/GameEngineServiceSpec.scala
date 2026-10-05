@@ -214,6 +214,8 @@ class GameEngineServiceSpec extends PropertySuite {
                 request.players.flatMap(_.role) == List("attacker") &&
                 // And the nickname, for the engine to show the player by.
                 request.players.flatMap(_.nickname) == List(nickname) &&
+                // And the character's name, for the engine to show it by.
+                request.players.flatMap(_.characterName) == List("character") &&
                 request.moveCallbackUrl.exists(_.endsWith(s"/matches/${started.matchId.value}/moves")) &&
                 participants.size == 1 &&
                 participants.head.playerId == fixture.owner.playerId &&
