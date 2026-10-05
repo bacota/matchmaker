@@ -3,23 +3,6 @@
 Conventions that are not visible from the code alone. Everything here is the kind of thing that
 gets silently undone by someone who did not know it was a decision.
 
-## Commits and pull requests are the user's
-
-Do not `git commit`, `git push` or `gh pr create` unless the user explicitly asks for it in that
-request. Finish the work, run the tests, report what changed and what is uncommitted, and stop.
-Permission to commit covers only the request that gave it; it is not standing permission for the
-next task.
-
-Commit on the branch that is checked out, `main` included. Do not create a branch unless the user
-asks for one.
-
-Small changes and work meant for review are never mixed. A small change — wording, layout, a
-label, a tooltip, a default — needs no review and is committed on its own on the checked-out
-branch, normally `main`. Work meant for review — a feature, a schema change, a new route,
-infrastructure — goes on a branch and PR that hold only that work. A request that arrives while
-other work is in progress is committed apart from it, never folded in; when it is unclear which
-kind a request is, ask in one line before committing.
-
 ## Build and test
 
 Always pass both flags: `mill -j 4 --ticker false <target>`. The ticker's progress redraws make
