@@ -167,7 +167,8 @@ body {
    section from the last, and there is nothing above this one. */
 .screen > div > h2:first-child,
 .screen > div > section:first-child > h2,
-.screen > div > section:first-child > .section-head > h2 {
+.screen > div > section:first-child > .section-head > h2,
+.screen > div > section:first-child > .section-head > .with-tip > h2 {
   margin-top: 0;
 }
 
@@ -182,8 +183,17 @@ body {
 }
 
 .section-head > h2,
-.section-head > h3 {
+.section-head > h3,
+.section-head > .with-tip,
+.section-head > .with-tip > h2,
+.section-head > .with-tip > h3 {
   min-width: 0;
+}
+
+/* A heading with a tip beside it ([[withTip]] in Main): the heading keeps its own spacing, so the
+   wrapper adds none of the margin it gives a form row. */
+.section-head > .with-tip {
+  margin-bottom: 0;
 }
 
 /* Quiet until it is wanted: this is a button beside every heading on the page, and eight of them

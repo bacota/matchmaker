@@ -125,7 +125,7 @@ object Views {
     private def refreshableSection(
         heading: String,
         reload: () => Future[Unit],
-        subsection: Boolean = false
+        subsection: Boolean
     )(content: Modifier[HtmlElement]*): HtmlElement =
         refreshableSection(heading, Var(false), reload, subsection)(content*)
 
@@ -142,14 +142,17 @@ object Views {
         heading: String,
         refreshing: Var[Boolean],
         reload: () => Future[Unit],
-        subsection: Boolean
-    )(content: Modifier[HtmlElement]*): HtmlElement =
+        subsection: Boolean,
+        /** What the section is, as a tip beside its heading ([[withTip]]): the tip's id, and its text. */
+        tip: Option[(String, String)] = None
+    )(content: Modifier[HtmlElement]*): HtmlElement = {
+        val title = if (subsection) h3(heading) else h2(heading)
         sectionTag(
           cls := "refreshable",
           cls("refreshing") <-- refreshing.signal,
           div(
             cls := "section-head",
-            if (subsection) h3(heading) else h2(heading),
+            tip.fold(title)((id, text) => withTip(id, heading, text)(title)),
             button(
               cls := "refresh",
               tpe := "button",
@@ -169,6 +172,7 @@ object Views {
             content
           )
         )
+    }
 
     /** How long the dimming is held for, whether or not the request takes that long. Short enough not to be in the way,
       * long enough to be seen.
@@ -2817,12 +2821,17 @@ object Views {
         div(
           onMountCallback(_ => fetch()),
           onUnmountCallback(_ => request += 1),
-          refreshableSection("Elo Ratings", refreshing, () => fetch(), subsection = false)(
-            p(
-              cls := "detail",
-              s"Every match of this game that is not friendly moves its players' ratings. " +
-                  s"A player's first rated match starts them at ${EloRating.initial}."
-            ),
+          refreshableSection(
+            "Elo Ratings",
+            refreshing,
+            () => fetch(),
+            subsection = false,
+            tip = Some(
+              s"ratings-tip-${game.gameId.value}" ->
+                  (s"Every match of this game that is not friendly moves its players' ratings. " +
+                      s"A player's first rated match starts them at ${EloRating.initial}.")
+            )
+          )(
             // Two regions, mounted with the section so that what arrives in them is announced: how
             // loading the list went, and what the last save came to.
             div(aria.live := "polite", cls := "empty", child.text <-- loadError.signal.map(_.getOrElse(""))),
