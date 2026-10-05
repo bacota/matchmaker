@@ -57,8 +57,9 @@ object Html {
           background: var(--line); border: 4px solid var(--line); border-radius: 8px; margin: 0 auto; }
   button.cell { font: 700 2.75rem/1 ui-monospace, monospace; color: var(--ink); background: var(--paper);
                 border: 0; cursor: pointer; padding: 0; }
-  button.cell:disabled { cursor: default; }
-  button.cell:not(:disabled):hover { background: color-mix(in srgb, var(--paper) 85%, var(--ink)); }
+  button.cell[aria-disabled="true"] { cursor: default; }
+  button.cell:focus-visible { outline: 3px solid seagreen; outline-offset: -3px; }
+  button.cell:not([aria-disabled="true"]):hover { background: color-mix(in srgb, var(--paper) 85%, var(--ink)); }
   button.cell.win { background: color-mix(in srgb, var(--paper) 70%, seagreen); }
 ${SignIn.css}
 ${PlayLive.css}
@@ -76,7 +77,7 @@ ${Finale.css}
   <p id="status" role="status" aria-live="polite">${escape(heading)}</p>
   ${TurnTimer.markup}
   ${Finale.markup}
-  <div id="grid"></div>
+  <div id="grid" role="group" aria-label="board"></div>
   <!-- The sign-in form, rendered by renderSignIn() and shown whenever there is a login to
        offer and no seat to show for it. -->
   <div id="signin" hidden></div>
@@ -109,10 +110,13 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
 
   const grid = document.getElementById("grid");
   const cells = [];
+  // Each square is named by where it is, since an empty one has no text to name it.
+  const rows = ["top", "middle", "bottom"], columns = ["left", "centre", "right"];
   for (let i = 0; i < 9; i++) {
     const b = document.createElement("button");
+    b.type = "button";
     b.className = "cell";
-    b.addEventListener("click", () => play(i));
+    b.addEventListener("click", () => { if (b.getAttribute("aria-disabled") !== "true") play(i); });
     grid.appendChild(b);
     cells.push(b);
   }
@@ -128,9 +132,13 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     for (let i = 0; i < 9; i++) {
       const mark = board[i] === "." ? "" : board[i];
       cells[i].textContent = mark;
+      cells[i].setAttribute("aria-label", rows[Math.floor(i / 3)] + " " + columns[i % 3] + ": " + (mark || "empty"));
       // Playable only when this viewer holds the seat whose turn it is and the cell is free. The
       // server checks all of it again; this only keeps the page from asking for a refusal.
-      cells[i].disabled = !state || !state.you || mark !== "" || state.completed || state.turn !== state.you;
+      // `aria-disabled` rather than `disabled`: a square that went disabled as it was played took
+      // the keyboard's focus off the board with it.
+      const off = !state || !state.you || mark !== "" || state.completed || state.turn !== state.you;
+      cells[i].setAttribute("aria-disabled", String(off));
       cells[i].classList.toggle("win", line.includes(i));
     }
 

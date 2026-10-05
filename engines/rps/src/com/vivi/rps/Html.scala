@@ -64,9 +64,9 @@ object Html {
                  padding: .75rem 1rem; border-radius: 8px; border: 1px solid var(--line);
                  background: var(--paper); color: var(--ink); cursor: pointer; }
   button.throw .glyph { display: block; font-size: 2rem; line-height: 1.2; }
-  button.throw:disabled { cursor: default; opacity: .45; }
+  button.throw[aria-disabled="true"] { cursor: default; opacity: .45; }
   button.throw[aria-pressed="true"] { border-color: seagreen; background: color-mix(in srgb, var(--paper) 70%, seagreen); opacity: 1; }
-  button.throw:not(:disabled):hover { background: color-mix(in srgb, var(--paper) 85%, var(--ink)); }
+  button.throw:not([aria-disabled="true"]):hover { background: color-mix(in srgb, var(--paper) 85%, var(--ink)); }
   :focus-visible { outline: 3px solid seagreen; outline-offset: 2px; }
 ${SignIn.css}
 ${PlayLive.css}
@@ -123,7 +123,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     b.className = "throw";
     b.type = "button";
     b.innerHTML = '<span class="glyph" aria-hidden="true">' + glyph + '</span>' + name;
-    b.addEventListener("click", () => play(name));
+    b.addEventListener("click", () => { if (b.getAttribute("aria-disabled") !== "true") play(name); });
     throws.appendChild(b);
     return b;
   });
@@ -138,7 +138,9 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
     // checks all of it again, and this only keeps the page from asking for a refusal.
     const canThrow = !!(state && state.you && !state.yourThrow && !state.completed);
     shapes.forEach(([name], i) => {
-      buttons[i].disabled = !canThrow;
+      // `aria-disabled` rather than `disabled`, which took the keyboard's focus off the page as the
+      // throw was made.
+      buttons[i].setAttribute("aria-disabled", String(!canThrow));
       buttons[i].setAttribute("aria-pressed", String(mine() === name));
     });
     throws.hidden = !!(state && !state.you);

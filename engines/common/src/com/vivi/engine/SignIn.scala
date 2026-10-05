@@ -418,8 +418,19 @@ ${authScript(Some(login))}
     const box = document.getElementById("signin");
     if (!login) { box.innerHTML = ""; return; }
 
+    /* The form is redrawn whole at every step, which takes the focus with it. Put back on the
+     * element of the same id when there is one -- the same box, or the same button -- and otherwise,
+     * on a stage the focus was in that is now a different form, on its first box. */
+    const active = document.activeElement;
+    const hadFocus = !!(active && box.contains(active));
+    const focusedId = hadFocus ? active.id : "";
+    const sameStage = box.dataset.stage === stage.kind;
+    box.dataset.stage = stage.kind;
+
     const trouble = problem ? '<p class="problem" role="alert">' + escapeHtml(problem) + "</p>" : "";
-    const off = busy ? " disabled" : "";
+    // `aria-disabled` rather than `disabled` while a step is out, which would drop the focus; `step`
+    // refuses a second one meanwhile.
+    const off = busy ? ' aria-disabled="true"' : "";
     const field = (id, type, complete, label, value, extra) =>
       '<label for="' + id + '">' + label + "</label>" +
       '<input id="' + id + '" type="' + type + '" autocomplete="' + complete + '" value="' +
@@ -430,7 +441,7 @@ ${authScript(Some(login))}
         "<form><h2>Sign In</h2>" +
         field("si-email", "email", "username", "Email", signInEmail) +
         field("si-password", "password", "current-password", "Password", signInPassword) +
-        '<button type="submit"' + off + ">Sign in</button>" +
+        '<button type="submit" id="si-submit"' + off + ">Sign in</button>" +
         '<div class="alternatives">' +
         // The passwordless route, kept but not put first — which is the whole reason this form
         // exists instead of a redirect to managed login.
@@ -468,7 +479,7 @@ ${authScript(Some(login))}
         "</p>" +
         // one-time-code lets phones offer the code straight from the notification.
         field("si-code-value", "text", "one-time-code", "Code", "", ' inputmode="numeric"') +
-        '<button type="submit"' + off + ">Sign in</button>" +
+        '<button type="submit" id="si-submit"' + off + ">Sign in</button>" +
         '<div class="alternatives"><button type="button" id="si-restart">Start again</button></div></form>';
 
       const code = document.getElementById("si-code-value");
@@ -485,7 +496,7 @@ ${authScript(Some(login))}
         "<form><h2>Choose a Password</h2>" +
         "<p>This account is signed in with a temporary password. Pick a permanent one to continue.</p>" +
         field("si-new-password", "password", "new-password", "New password", "") +
-        '<button type="submit"' + off + ">Save and sign in</button>" +
+        '<button type="submit" id="si-submit"' + off + ">Save and sign in</button>" +
         '<div class="alternatives"><button type="button" id="si-restart">Start again</button></div></form>';
 
       const chosen = document.getElementById("si-new-password");
@@ -497,6 +508,13 @@ ${authScript(Some(login))}
         }));
       });
       document.getElementById("si-restart").addEventListener("click", resetSignIn);
+    }
+
+    if (hadFocus) {
+      const again = focusedId && document.getElementById(focusedId);
+      const first = box.querySelector("input");
+      if (sameStage && again && box.contains(again)) again.focus();
+      else if (first) first.focus();
     }
   }
 
@@ -635,7 +653,7 @@ object SignIn {
   #signin .alternatives { display: flex; flex-direction: column; align-items: flex-start; margin-top: .25rem; }
   #signin .alternatives button { font: inherit; min-height: 44px; padding: 0; border: 0; background: none;
                   color: inherit; text-decoration: underline; cursor: pointer; }
-  #signin button:disabled { opacity: .45; cursor: default; }
+  #signin button:disabled, #signin button[aria-disabled="true"] { opacity: .45; cursor: default; }
   #signin .problem { color: var(--error); font-size: .875rem; margin-bottom: .5rem; }"""
 }
 

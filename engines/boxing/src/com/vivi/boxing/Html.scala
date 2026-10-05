@@ -115,7 +115,7 @@ ${rulesDialogCss}
   button.primary { font: inherit; font-weight: 600; width: 100%; min-height: 44px; margin-top: .5rem; border-radius: 6px;
                    border: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 80%, var(--ink));
                    color: var(--ink); cursor: pointer; }
-  button.primary:disabled { opacity: .45; cursor: default; }
+  button.primary:disabled, button.primary[aria-disabled="true"] { opacity: .45; cursor: default; }
   .left { margin: .5rem 0 0; font-weight: 600; }
   .left.off { color: var(--error); }
   .preview { font-size: .875rem; opacity: .85; margin: .25rem 0 0; }
@@ -400,11 +400,14 @@ ${Finale.script(victory, defeat)}
   function show(message) { document.getElementById("error").textContent = message || ""; }
 
   async function submit(url, body, button) {
+    // `aria-disabled` while it is out rather than `disabled`, which would drop the keyboard's focus; a
+    // second press meanwhile is refused here.
+    if (button.getAttribute("aria-disabled") === "true") return;
     show("");
-    button.disabled = true;
+    button.setAttribute("aria-disabled", "true");
     const ticket = ask();
     const response = await send(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, ticket);
-    button.disabled = false;
+    button.removeAttribute("aria-disabled");
     if (!response) return;
     const answer = await response.json();
     // A refusal is dropped under a newer state, which says more; see PlayLive for the two orders.

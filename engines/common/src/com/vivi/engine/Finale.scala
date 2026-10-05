@@ -60,7 +60,14 @@ object Finale {
     const arts = """ + arts + """;
     const box = document.getElementById("finale");
     let shown = null, closed = false;
-    document.getElementById("finale-close").addEventListener("click", () => { closed = true; box.hidden = true; });
+    // The button goes with the box, so the focus is handed to the page's status line rather than
+    // left to fall to the top of the page.
+    document.getElementById("finale-close").addEventListener("click", () => {
+      closed = true;
+      box.hidden = true;
+      const status = document.getElementById("status");
+      if (status) { if (!status.hasAttribute("tabindex")) status.setAttribute("tabindex", "-1"); status.focus(); }
+    });
     return function (result) {
       if (result === shown) return;
       shown = result;

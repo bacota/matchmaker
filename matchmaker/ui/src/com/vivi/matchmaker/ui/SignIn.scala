@@ -134,10 +134,12 @@ object SignIn {
             challenge.name match {
                 case name if codeResponseKeys.contains(name) =>
                     code.set("")
+                    focusNextStage = true
                     stage.set(Stage.Code(name, username, challenge.session, challenge.deliveredTo))
 
                 case "NEW_PASSWORD_REQUIRED" =>
                     newPassword.set("")
+                    focusNextStage = true
                     stage.set(Stage.NewPassword(username, challenge.session))
 
                 /* Cognito asking for the password separately rather than accepting the one already sent.
@@ -232,25 +234,53 @@ object SignIn {
     // The form
     // -------------------------------------------------------------------------
 
-    /** The button that sends the step. `busy` already disables it — this adds the spinner, since a disabled button on
-      * its own says "not now" rather than "waiting for an answer", and the round trip to Cognito is the slowest thing
-      * on this page.
+    /** The button that sends the step, marked `aria-disabled` while one is out — not `disabled`, which would drop the
+      * keyboard's focus mid sign-in; `run` refuses a second step meanwhile — with a spinner, since "not now" alone does
+      * not say "waiting for an answer", and the round trip to Cognito is the slowest thing on this page.
       */
     private def submit(label: String): HtmlElement =
         button(
           tpe := "submit",
-          disabled <-- busy.signal,
+          aria.disabled <-- busy.signal,
           child <-- busy.signal.map(if (_) span(cls := "spinner", aria.hidden := true) else emptyNode),
           label
         )
 
+    /* Whether the next form to be shown takes the focus. Each step replaces the form before it, and the
+     * button that was pressed with it, so the focus would otherwise fall to the top of the page -- and a
+     * screen reader would not be told the page now wants a code. Set by a step the player took, not by
+     * the first drawing of the page, which is no reason to move anybody's focus. */
+    private var focusNextStage = false
+
+    /* The first box of a form just shown, if a step of the player's showed it. */
+    private def focusFirstField: Modifier[HtmlElement] =
+        onMountCallback { context =>
+            if (focusNextStage) {
+                focusNextStage = false
+                context.thisNode.ref.querySelector("input") match {
+                    case field: org.scalajs.dom.html.Element => field.focus()
+                    case _                                   => ()
+                }
+            }
+        }
+
+    private def startAgain(): Unit = {
+        focusNextStage = true
+        reset()
+    }
+
     def view: HtmlElement =
         div(
           cls := "card sign-in",
-          child <-- problem.signal.map {
-              case Some(message) => div(cls := "error", message)
-              case None          => emptyNode
-          },
+          // An alert that is there before its message, so that the message is read out as it arrives: a
+          // refused password is otherwise news only to somebody looking at the box.
+          div(
+            role := "alert",
+            child <-- problem.signal.map {
+                case Some(message) => div(cls := "error", message)
+                case None          => emptyNode
+            }
+          ),
           child <-- stage.signal.map {
               case Stage.Credentials    => credentials
               case s: Stage.Code        => codeEntry(s)
@@ -263,6 +293,7 @@ object SignIn {
           // The browser's own submit is what makes Enter work in either field, and what gets password
           // managers to offer to fill and to save. preventDefault, or the page reloads.
           onSubmit.preventDefault --> (_ => withPassword()),
+          focusFirstField,
           h2("Sign In"),
           label(
             "Email",
@@ -286,7 +317,7 @@ object SignIn {
               tpe := "button",
               cls := "link",
               "Email me a code instead",
-              disabled <-- busy.signal,
+              aria.disabled <-- busy.signal,
               onClick --> (_ => withEmailCode())
             ),
             button(
@@ -307,6 +338,7 @@ object SignIn {
     private def codeEntry(stageNow: Stage.Code): HtmlElement =
         form(
           onSubmit.preventDefault --> (_ => answerCode(stageNow)),
+          focusFirstField,
           h2("Enter Your Code"),
           p(
             stageNow.deliveredTo match {
@@ -326,12 +358,16 @@ object SignIn {
             )
           ),
           submit("Sign in"),
-          div(cls := "alternatives", button(tpe := "button", cls := "link", "Start again", onClick --> (_ => reset())))
+          div(
+            cls := "alternatives",
+            button(tpe := "button", cls := "link", "Start again", onClick --> (_ => startAgain()))
+          )
         )
 
     private def newPasswordEntry(stageNow: Stage.NewPassword): HtmlElement =
         form(
           onSubmit.preventDefault --> (_ => answerNewPassword(stageNow)),
+          focusFirstField,
           h2("Choose a Password"),
           p("This account is signed in with a temporary password. Pick a permanent one to continue."),
           label(
@@ -344,6 +380,9 @@ object SignIn {
             )
           ),
           submit("Save and sign in"),
-          div(cls := "alternatives", button(tpe := "button", cls := "link", "Start again", onClick --> (_ => reset())))
+          div(
+            cls := "alternatives",
+            button(tpe := "button", cls := "link", "Start again", onClick --> (_ => startAgain()))
+          )
         )
 }
