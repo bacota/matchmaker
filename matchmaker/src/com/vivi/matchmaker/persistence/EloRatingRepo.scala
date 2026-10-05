@@ -32,10 +32,11 @@ class EloRatingRepo(session: Session[IO]) {
         sql"""INSERT INTO elo_rating (game_id, player_id, rating, set_by) VALUES ($gameId, $playerId, $int4, $playerId)
           ON CONFLICT (game_id, player_id) DO UPDATE SET rating = EXCLUDED.rating, set_by = EXCLUDED.set_by""".command
 
-    private val select: Query[(GameId, PlayerId), (String, Int, Int, Option[Int])] =
-        sql"""SELECT p.nickname, r.rating, r.matches, r.rank
+    private val select: Query[(GameId, PlayerId), (String, Int, Int, Option[Int], Option[Int], Boolean)] =
+        sql"""SELECT p.nickname, r.rating, r.matches, r.rank, r.ranked_rating, r.matches > 0 OR r.set_by IS NOT NULL
           FROM elo_rating r JOIN player p ON p.player_id = r.player_id
-          WHERE r.game_id = $gameId AND r.player_id = $playerId""".query(text *: int4 *: int4 *: int4.opt)
+          WHERE r.game_id = $gameId AND r.player_id = $playerId"""
+            .query(text *: int4 *: int4 *: int4.opt *: int4.opt *: bool)
 
     private val gameExists: Query[GameId, Boolean] =
         sql"""SELECT EXISTS (SELECT 1 FROM game WHERE game_id = $gameId)""".query(bool)
@@ -49,12 +50,12 @@ class EloRatingRepo(session: Session[IO]) {
      * match's start makes a row at the starting rating for each of its players who has none, so that
      * it has a row to lock (see `EloRatingService.startingRatings`), and a player who has only ever
      * begun a match has not been rated by it. */
-    private val selectPage: Query[(GameId, Int, Int), (PlayerId, String, Int, Int, Option[Int])] =
-        sql"""SELECT p.player_id, p.nickname, r.rating, r.matches, r.rank
+    private val selectPage: Query[(GameId, Int, Int), (PlayerId, String, Int, Int, Option[Int], Option[Int])] =
+        sql"""SELECT p.player_id, p.nickname, r.rating, r.matches, r.rank, r.ranked_rating
           FROM elo_rating r JOIN player p ON p.player_id = r.player_id
           WHERE r.game_id = $gameId AND (r.matches > 0 OR r.set_by IS NOT NULL)
           ORDER BY r.rank NULLS LAST, r.rating DESC, p.nickname
-          OFFSET $int4 LIMIT $int4""".query(playerId *: text *: int4 *: int4 *: int4.opt)
+          OFFSET $int4 LIMIT $int4""".query(playerId *: text *: int4 *: int4 *: int4.opt *: int4.opt)
 
     /** Gives each player a rating in the game at [[EloRating.initial]] if they have none yet: for a rated match about
       * to move them all, and for a match about to begin, which needs a row to lock for each of its players.
@@ -103,15 +104,20 @@ class EloRatingRepo(session: Session[IO]) {
     def set(game: GameId, player: PlayerId, rating: Int, setBy: PlayerId): IO[Unit] =
         session.execute(upsertSet)((game, player, rating, setBy)).void
 
-    /** The player's rating in the game, as anybody may see it, or nothing if they have none. */
-    def read(game: GameId, player: PlayerId): IO[Option[EloRating]] =
+    private def readWhere(game: GameId, player: PlayerId)(keep: Boolean => Boolean): IO[Option[EloRating]] =
         session
             .option(select)((game, player))
-            .map(
-              _.map((nickname, rating, matches, rank) =>
-                  EloRating(PublicPlayer(player, nickname), rating, matches, rank)
-              )
-            )
+            .map(_.filter((_, _, _, _, _, rated) => keep(rated)).map { (nickname, rating, matches, rank, ranked, _) =>
+                EloRating(PublicPlayer(player, nickname), rating, matches, rank, ranked)
+            })
+
+    /** The player's row in the game, rated or not: nothing only if there is no row at all. */
+    def read(game: GameId, player: PlayerId): IO[Option[EloRating]] = readWhere(game, player)(_ => true)
+
+    /** The player's rating in the game as the leaderboard counts it, or nothing if they have none: a row a match's
+      * start made, which nothing has rated yet, is none.
+      */
+    def readRated(game: GameId, player: PlayerId): IO[Option[EloRating]] = readWhere(game, player)(identity)
 
     /** A page of the game's leaderboard, `size` players from `offset`, best first — or nothing, if there is no such
       * game. One more than `size` is asked for, so the page can say whether there is another after it.
@@ -126,8 +132,8 @@ class EloRatingRepo(session: Session[IO]) {
                         Some(
                           Leaderboard(
                             rows.take(size)
-                                .map((id, nickname, rating, matches, rank) =>
-                                    EloRating(PublicPlayer(id, nickname), rating, matches, rank)
+                                .map((id, nickname, rating, matches, rank, ranked) =>
+                                    EloRating(PublicPlayer(id, nickname), rating, matches, rank, ranked)
                                 ),
                             more = rows.size > size
                           )

@@ -517,6 +517,23 @@ ul {
   font-variant-numeric: tabular-nums;
 }
 
+/* A player's standing: three labelled numbers, label and number side by side. */
+.standing {
+  display: grid;
+  grid-template-columns: max-content auto;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0 0;
+}
+
+.standing dt {
+  color: var(--muted);
+}
+
+.standing dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .leaderboard .compound {
   margin: 0;
   flex-wrap: nowrap;

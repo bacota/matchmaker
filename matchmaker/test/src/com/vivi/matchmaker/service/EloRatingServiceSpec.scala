@@ -6,6 +6,7 @@ import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
+import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{
@@ -156,7 +157,7 @@ class EloRatingServiceSpec extends PropertySuite {
         } yield matchId
 
     /** The engine reporting `winner` first and the other player second. */
-    private def finish(f: Fixture, matchId: MatchId, winner: Player): IO[Unit] =
+    private def finish(f: Fixture, matchId: MatchId, winner: Player, through: Services[String] = services): IO[Unit] =
         for {
             seats <- TestSession.resource.use(session =>
                 new ParticipantRepo(session).listForMatch(f.game.gameId, matchId)
@@ -165,7 +166,7 @@ class EloRatingServiceSpec extends PropertySuite {
                 val won = p.playerId == winner.playerId
                 ReportedResult(p.participantId, rank = if (won) 1 else 2, scores = Map.empty, isWinner = won)
             }
-            _ <- services.engine.recordResults(f.game.gameId, matchId, results, f.game.externalId)
+            _ <- through.engine.recordResults(f.game.gameId, matchId, results, f.game.externalId)
         } yield ()
 
     private def ratings(f: Fixture): IO[Map[PlayerId, (Int, Int)]] =
@@ -248,6 +249,38 @@ class EloRatingServiceSpec extends PropertySuite {
           board.ratings.map(r => (r.player.playerId, r.rank)),
           List(f.second.playerId -> Some(1), f.first.playerId -> Some(2))
         )
+    }
+
+    test("a player's standing is their place, the rating it was worked out from, and their rating now") {
+        // Ended with nothing settling it in the background, which would place the moved rating whenever it ran: the
+        // listener is this test's to run.
+        val unsettled = TestServices.servicesWith(engine, matchEndings = Some(MatchEndings.disabled))
+        val result = for {
+            f <- fixture()
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.first, unsettled)
+            _ <- services.ending.settle(f.game.gameId, matchId)
+            winner <- services.ratings.standing(f.game.gameId, f.first.playerId, f.second.externalId)
+            // A rating moved since the player was placed: the place, and what it was worked out from, trail it until
+            // the listener places them again.
+            _ <- TestSession.resource.use(session =>
+                new EloRatingRepo(session).played(f.game.gameId, f.second.playerId, 40)
+            )
+            moved <- services.ratings.standing(f.game.gameId, f.second.playerId, f.first.externalId)
+            board <- services.ratings.leaderboard(f.game.gameId, 0, f.first.externalId)
+            unrated <- refusal(services.ratings.standing(f.game.gameId, f.host.playerId, f.first.externalId))
+            noGame <- refusal(services.ratings.standing(GameId(-1), f.first.playerId, f.first.externalId))
+        } yield (winner, moved, board, unrated, noGame)
+        val (winner, moved, board, unrated, noGame) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals((winner.rank, winner.rankedRating, winner.rating), (Some(1), Some(1516), 1516))
+        assertEquals((moved.rank, moved.rankedRating, moved.rating), (Some(2), Some(1484), 1524))
+        // The leaderboard is in order by what it was placed by, which is what it shows.
+        assertEquals(
+          board.ratings.map(r => (r.rank, r.rankedRating)),
+          List((Some(1), Some(1516)), (Some(2), Some(1484)))
+        )
+        assert(unrated.isInstanceOf[NotFoundError], unrated)
+        assert(noGame.isInstanceOf[NotFoundError], noGame)
     }
 
     test("the delta is worked out from the ratings the match began at, and added to the rating as it is now") {

@@ -2780,9 +2780,13 @@ object Views {
         // that an answer to an earlier mount is not written into a later one, and by a row's save, so
         // that a page asked for before the save cannot answer after it with the rating it changed.
         var request = 0
+        // The signed-in player's own standing, under the table: `None` until it has come back, and then
+        // either it or what to say instead -- that they have no rating here, or that it could not be had.
+        val mine = Var(Option.empty[Either[String, EloRating]])
 
         /* Dropped if a newer request, mount or save has overtaken it, or it belongs to another sign-in --
-         * its failure as well as its answer: the section is the next session's by then. */
+         * its failure as well as its answer: the section is the next session's by then. Asks for the
+         * player's own standing alongside the page, so that a refresh refreshes both. */
         def fetch(at: Int = page.now()): Future[Unit] = {
             request += 1
             val asked = request
@@ -2790,6 +2794,14 @@ object Views {
             def current = asked == request && Store.stillSignedInAs(signIn)
             page.set(at)
             busy.set(true)
+            ApiClient
+                .standing(game.gameId, player.playerId)
+                .map(Right(_))
+                .recover {
+                    case ApiError(404, _) => Left("You have no rating in this game yet.")
+                    case error            => Left(s"Your standing could not be loaded: ${error.getMessage}")
+                }
+                .foreach(answer => if (current) mine.set(Some(answer)))
             ApiClient
                 .leaderboard(game.gameId, at)
                 .map { found =>
@@ -2816,15 +2828,12 @@ object Views {
             request += 1
             busy.set(false)
             said.set(s"${saved.player.nickname} is now rated ${saved.rating}.")
-            board.update(
-              _.map(b =>
-                  b.copy(ratings =
-                      b.ratings.map(r =>
-                          if (r.player.playerId == saved.player.playerId) saved.copy(rank = r.rank) else r
-                      )
-                  )
-              )
-            )
+            // The rating as saved, and the place and the rating it was worked out from as they were: the
+            // listener places the player again, and the next refresh shows where.
+            def updated(r: EloRating) =
+                if (r.player.playerId != saved.player.playerId) r
+                else saved.copy(rank = r.rank, rankedRating = r.rankedRating)
+            board.update(_.map(b => b.copy(ratings = b.ratings.map(updated))))
         }
 
         /* A new player's save brings a row that may not be on screen, so the page is asked again. */
@@ -2899,7 +2908,7 @@ object Views {
                           tr(
                             th(scopeAttr := "col", "Rank"),
                             th(scopeAttr := "col", "Player"),
-                            th(scopeAttr := "col", "Rating"),
+                            th(scopeAttr := "col", "Ranked rating"),
                             th(scopeAttr := "col", "Matches"),
                             child <-- administers.map(if (_) th(scopeAttr := "col", "Set rating") else emptyNode)
                           )
@@ -2919,7 +2928,85 @@ object Views {
               step("Previous", "Previous 20 players", page.signal.map(_ > 0), _ - 1),
               step("Next", "Next 20 players", board.signal.map(_.exists(_.more)), _ + 1)
             ),
+            div(
+              cls := "card",
+              h3("Your Standing"),
+              div(
+                aria.live := "polite",
+                child <-- mine.signal.map {
+                    case None               => p(cls := "empty", "Loading…")
+                    case Some(Left(why))    => p(cls := "empty", why)
+                    case Some(Right(found)) => standingDetails(found)
+                }
+              )
+            ),
+            findPlayer(game),
             child <-- administers.map(if (_) rateNewPlayer(game, savedNew, said) else emptyNode)
+          )
+        )
+    }
+
+    /** A player's standing in a game: their place, the rating it was worked out from — what the leaderboard shows — and
+      * their rating as it stands, which a match that has just finished may have moved since.
+      */
+    private def standingDetails(rating: EloRating): HtmlElement = {
+        val notYet = "Not ranked yet"
+        dl(
+          cls := "standing",
+          dt("Rank"),
+          dd(rating.rank.fold(notYet)(_.toString)),
+          dt("Ranked rating"),
+          dd(rating.rankedRating.fold(notYet)(_.toString)),
+          dt("Latest rating"),
+          dd(rating.rating.toString)
+        )
+    }
+
+    /** Any player's standing in the game, by nickname: the one typed in full, as [[rateNewPlayer]] finds one. */
+    private def findPlayer(game: Game): HtmlElement = {
+        val nickname = Var("")
+        val busy = Var(false)
+        // The last answer: a player's standing, or what to say instead.
+        val found = Var(Option.empty[Either[String, EloRating]])
+
+        def look(name: String): Future[Either[String, EloRating]] =
+            ApiClient.searchPlayers(name).flatMap { result =>
+                result.players.find(_.nickname == name) match {
+                    case None => Future.successful(Left(s"There is no player called $name."))
+                    case Some(player) =>
+                        ApiClient
+                            .standing(game.gameId, player.playerId)
+                            .map(Right(_))
+                            .recover { case ApiError(404, _) => Left(s"$name has no rating in this game.") }
+                }
+            }
+
+        form(
+          cls := "card",
+          onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
+              val name = nickname.now().trim
+              if (name.nonEmpty) Store.runSignedIn(look(name), busy)(answer => found.set(Some(answer)))
+          },
+          h3("Find a Player"),
+          field(
+            "Nickname",
+            input(
+              tpe := "text",
+              required := true,
+              autoComplete := "off",
+              controlled(value <-- nickname.signal, onInput.mapToValue --> nickname)
+            )
+          ),
+          // Not disabled while searching: a disabled button drops the keyboard's focus.
+          button(tpe := "submit", aria.busy <-- busy.signal, "Find"),
+          // Mounted before it has anything to say, so that what arrives in it is announced.
+          div(
+            aria.live := "polite",
+            child <-- found.signal.map {
+                case None              => emptyNode
+                case Some(Left(why))   => p(cls := "empty", why)
+                case Some(Right(them)) => div(h4(them.player.nickname), standingDetails(them))
+            }
           )
         )
     }
@@ -2944,7 +3031,9 @@ object Views {
             })
           ),
           th(scopeAttr := "row", rated.nickname),
-          td(child.text <-- rating.map(_.rating.toString)),
+          // The rating the place was worked out from, so that the column reads in order with the places; the
+          // rating as it stands now is under the table, for the player and for anybody searched for.
+          td(child.text <-- rating.map(r => r.rankedRating.getOrElse(r.rating).toString)),
           td(child.text <-- rating.map(_.matches.toString)),
           child <-- administers.map {
               case false => emptyNode

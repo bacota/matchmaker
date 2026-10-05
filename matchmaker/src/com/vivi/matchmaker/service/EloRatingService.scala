@@ -40,6 +40,27 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
             } yield board
         }
 
+    /** One player's rating in the game — their place, the rating it was worked out from, and the rating as it stands —
+      * for any registered player, as the leaderboard is. Not found if there is no such game, or the player has no
+      * rating in it.
+      */
+    def standing(gameId: GameId, playerId: PlayerId, callerExternalId: String): IO[EloRating] =
+        sessionPool.use { session =>
+            for {
+                _ <- requireCaller(new PlayerRepo(session).readByExternalId(callerExternalId), callerExternalId)
+                // Read plainly: nothing is written.
+                _ <- new GameRepo[T](session).read(gameId).flatMap {
+                    case Some(_) => IO.unit
+                    case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+                }
+                rating <- new EloRatingRepo(session).readRated(gameId, playerId).flatMap {
+                    case Some(rating) => IO.pure(rating)
+                    case None =>
+                        IO.raiseError(NotFoundError(s"player ${playerId.value} has no rating in game ${gameId.value}"))
+                }
+            } yield rating
+        }
+
     /** Sets `playerId`'s rating in the game outright, if the caller is an overall admin or an admin of that game — for
       * a player bringing a rating from elsewhere, or a correction. A player with no rating yet is given one.
       *
