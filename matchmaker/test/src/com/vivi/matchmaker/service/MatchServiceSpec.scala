@@ -453,6 +453,37 @@ class MatchServiceSpec extends PropertySuite {
         intercept[NotFoundError](
           run(characterService.profile(GameId(game.gameId.value + 1), theirs.characterId, buyer))
         )
+
+        // Its record counts the finished match once it has results, and only once it is not friendly -- a forfeit
+        // win for this player's character, a forfeit loss for the rival's.
+        def record(of: CharacterId) = run(characterService.profile(game.gameId, of, buyer)).record
+        run(TestSession.resource.use { session =>
+            new ParticipantRepo(session)
+                .listForMatch(game.gameId, done)
+                .flatMap(_.traverse_ { case (seat, _, _) =>
+                    val won = seat.playerId == player.playerId
+                    new ResultRepo(session).create(
+                      com.vivi.matchmaker.model.Result(
+                        game.gameId,
+                        seat.participantId,
+                        rank = if (won) 1 else 2,
+                        Map.empty,
+                        isWinner = won,
+                        forfeit = true
+                      )
+                    )
+                })
+        })
+        assertEquals(record(character.characterId), MatchRecord())
+        run(TestSession.resource.use { session =>
+            session
+                .execute(sql"UPDATE match SET friendly = false WHERE game_id = $int4 AND match_id = $text".command)(
+                  (game.gameId.value, done.value)
+                )
+                .void
+        })
+        assertEquals(record(character.characterId), MatchRecord(wins = 1, forfeitWins = 1))
+        assertEquals(record(theirs.characterId), MatchRecord(losses = 1, forfeitLosses = 1))
     }
 
     /* Another player's page: the two lists a stranger is shown, which are the same two lists the

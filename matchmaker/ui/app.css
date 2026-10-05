@@ -1494,3 +1494,8 @@ button.toggle {
   white-space: pre-line;
   overflow-wrap: break-word;
 }
+
+/* A character's record, beside its owner on its page. */
+.character-record {
+  margin: 0;
+}

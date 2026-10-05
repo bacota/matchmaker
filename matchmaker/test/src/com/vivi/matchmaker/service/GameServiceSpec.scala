@@ -303,10 +303,10 @@ class GameServiceSpec extends PropertySuite {
     test("an edit can disable a game and enable it again") {
         val result = for {
             admin <- makeAdmin()
-created <- gameService.createOrUpdate(
-  admin.externalId,
-  Generators.genGameWithRole.sample.get.copy(active = true)
-)
+            created <- gameService.createOrUpdate(
+              admin.externalId,
+              Generators.genGameWithRole.sample.get.copy(active = true)
+            )
             _ <- gameService.createOrUpdate(admin.externalId, created.copy(active = false))
             whileDisabled <- gameService.list(admin.externalId, activeOnly = true)
             everything <- gameService.list(admin.externalId)

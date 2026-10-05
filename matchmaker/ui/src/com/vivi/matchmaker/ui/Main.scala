@@ -1431,6 +1431,12 @@ object Views {
                           span("owned by ", playerLink(owner))
                       )
                     ),
+                    withTip(
+                      freshTipId("record-tip"),
+                      "record",
+                      "Wins, losses and draws in the matches it has finished that were not friendly, whoever owned " +
+                          "it for them. In brackets, how many of the wins and losses came by forfeit."
+                    )(p(cls := "character-record", "Record: ", recordText(profile.record))),
                     if (profile.description.trim.isEmpty) emptyNode
                     else p(cls := "character-description", profile.description)
                   )
