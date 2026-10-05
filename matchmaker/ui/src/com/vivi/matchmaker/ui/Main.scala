@@ -4279,7 +4279,7 @@ object Views {
                 aria.label := "the unit that time is in",
                 onChange.mapToValue --> (raw => timeLimitUnit.set(TimeLimitUnit.fromCode(raw))),
                 value <-- timeLimitUnit.signal.map(_.code),
-                TimeLimitUnit.values.toSeq.map(unit => option(value := unit.code, unit.label))
+                TimeLimitUnit.offered.map(unit => option(value := unit.code, unit.label))
               )
             )
           ),
@@ -4327,14 +4327,7 @@ object Views {
                 aria.describedBy := "live-tip",
                 controlled(
                   checked <-- live.signal,
-                  onClick.mapToChecked --> { on =>
-                      live.set(on)
-                      if (on) {
-                          // A live turn is usually seconds long. Only when nothing has been typed yet:
-                          // a number already there was typed in the unit beside it.
-                          if (timeLimit.now().trim.isEmpty) timeLimitUnit.set(TimeLimitUnit.Seconds)
-                      }
-                  }
+                  onClick.mapToChecked --> live
                 )
               ),
               "Live"

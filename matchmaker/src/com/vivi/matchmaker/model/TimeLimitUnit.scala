@@ -8,12 +8,15 @@ import java.time.Duration
   * than worked out on the way to the screen, because several units are right for the same duration — 48 hours and 2
   * days are the same offer — and which of them to show is a fact about the offer, not a calculation over it.
   *
-  * The set is the set the challenge form offers. Anything a limit could be that is not a whole number of one of these
-  * (an API caller's 90 seconds) is displayed as what it is instead; see the UI's `Format.duration`.
+  * The challenge form offers [[TimeLimitUnit.offered]]; seconds stay here for the limits already offered in them, and
+  * for an API caller. Anything a limit could be that is not a whole number of one of these (an API caller's 90 seconds)
+  * is displayed as what it is instead; see the UI's `Format.duration`.
   */
 enum TimeLimitUnit(val code: String, val label: String, val perUnit: Duration) {
 
-    /** What a live match's turns are measured in (V27). */
+    /** What a live match's turns were measured in (V27). No longer offered by the challenge form, but read and shown
+      * for the challenges and matches that were.
+      */
     case Seconds extends TimeLimitUnit("SECONDS", "seconds", Duration.ofSeconds(1))
     case Minutes extends TimeLimitUnit("MINUTES", "minutes", Duration.ofMinutes(1))
     case Hours extends TimeLimitUnit("HOURS", "hours", Duration.ofHours(1))
@@ -21,6 +24,10 @@ enum TimeLimitUnit(val code: String, val label: String, val perUnit: Duration) {
 }
 
 object TimeLimitUnit {
+
+    /** The units the challenge form offers: a turn is offered in minutes at the least. */
+    val offered: Seq[TimeLimitUnit] = Seq(Minutes, Hours, Days)
+
     def fromCode(code: String): TimeLimitUnit =
         values
             .find(_.code == code)
