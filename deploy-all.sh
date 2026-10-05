@@ -26,6 +26,12 @@
 # Which engines are deployed is not this script's decision. It is deploy_tictactoe, deploy_rps,
 # deploy_boxing and deploy_stratego in environments/<env>.settings.tfvars, the same flags terraform reads; an engine
 # that is off there is skipped here, and said so.
+#
+# Which of them are *rebuilt* is, and it is the last field of ENGINES below. An engine marked `keep`
+# stays deployed but is not tested or rebuilt: terraform is handed the jar already in out/, whose
+# hash is the deployed function's, so the apply leaves it as it is. Tic-tac-toe and rock-paper-
+# scissors are kept for now. To change one of them deliberately, run its own deploy script
+# (deploy-tictactoe.sh, deploy-rps.sh), which builds and applies it on purpose.
 
 set -euo pipefail
 
@@ -33,12 +39,12 @@ cd "$(dirname "$0")"
 
 readonly TERRAFORM_DIR="terraform"
 
-# module name : mill module : jar path : settings flag, for each bundled engine.
+# module name : mill module : jar path : settings flag : build or keep, for each bundled engine.
 readonly ENGINES=(
-  "tictactoe:engines.tictactoe:out/engines/tictactoe/assembly.dest/out.jar:deploy_tictactoe"
-  "rps:engines.rps:out/engines/rps/assembly.dest/out.jar:deploy_rps"
-  "boxing:engines.boxing:out/engines/boxing/assembly.dest/out.jar:deploy_boxing"
-  "stratego:engines.stratego:out/engines/stratego/assembly.dest/out.jar:deploy_stratego"
+  "tictactoe:engines.tictactoe:out/engines/tictactoe/assembly.dest/out.jar:deploy_tictactoe:keep"
+  "rps:engines.rps:out/engines/rps/assembly.dest/out.jar:deploy_rps:keep"
+  "boxing:engines.boxing:out/engines/boxing/assembly.dest/out.jar:deploy_boxing:build"
+  "stratego:engines.stratego:out/engines/stratego/assembly.dest/out.jar:deploy_stratego:build"
 )
 
 usage() {
@@ -103,13 +109,20 @@ step() {
 # build and without needing AWS credentials. It is the same file terraform is given, so the two
 # cannot disagree.
 
-enabled_engines=()
+enabled_engines=()  # deployed: built, or kept
+built_engines=()    # deployed, and tested and rebuilt on the way
+kept_engines=()     # deployed from the jar already there
 disabled_engines=()
 
 for engine in "${ENGINES[@]}"; do
-  IFS=: read -r name _ _ flag <<<"$engine"
+  IFS=: read -r name _ _ flag rebuild <<<"$engine"
   if grep -Eq "^[[:space:]]*${flag}[[:space:]]*=[[:space:]]*true" "$settings" 2>/dev/null; then
     enabled_engines+=("$engine")
+    if [ "$rebuild" = keep ]; then
+      kept_engines+=("$engine")
+    else
+      built_engines+=("$engine")
+    fi
   else
     disabled_engines+=("$name:$flag")
   fi
@@ -121,9 +134,13 @@ echo "    matchmaker    api, ui, database"
 if [ ${#enabled_engines[@]} -eq 0 ]; then
   echo "    engines       none enabled in $settings"
 else
-  for engine in "${enabled_engines[@]}"; do
-    IFS=: read -r name _ _ _ <<<"$engine"
+  for engine in "${built_engines[@]+"${built_engines[@]}"}"; do
+    IFS=: read -r name _ _ _ _ <<<"$engine"
     echo "    engine        $name"
+  done
+  for engine in "${kept_engines[@]+"${kept_engines[@]}"}"; do
+    IFS=: read -r name _ jar _ _ <<<"$engine"
+    echo "    keeping       $name (not rebuilt; deployed as it is, from $jar)"
   done
 fi
 
@@ -160,37 +177,50 @@ fi
 # it fails when an engine and matchmaker have stopped agreeing on the wire format, which is
 # exactly the mistake a deploy would otherwise ship.
 
+# A kept engine's jar has to be there whatever else happens: terraform reads it, and it is what
+# says the deployed function is unchanged. Checked before anything is built, so that a missing one
+# stops the deploy at once rather than halfway through a plan. Building it again would deploy the
+# engine's current code, which is what keeping it is to avoid -- so that is left to its own script.
+for engine in "${kept_engines[@]+"${kept_engines[@]}"}"; do
+  IFS=: read -r name module jar _ _ <<<"$engine"
+  if [ ! -f "$jar" ]; then
+    echo "no $name jar at $jar; it is kept rather than rebuilt, so this deploy has nothing to give terraform" >&2
+    echo "deploy it on purpose with ./deploy-$name.sh $env (which builds its current code), or turn it off in $settings" >&2
+    exit 1
+  fi
+done
+
 if [ "$skip_build" = true ]; then
   step "Skipping the engine builds"
-  for engine in "${enabled_engines[@]}"; do
-    IFS=: read -r name _ jar _ <<<"$engine"
+  for engine in "${built_engines[@]+"${built_engines[@]}"}"; do
+    IFS=: read -r name _ jar _ _ <<<"$engine"
     if [ ! -f "$jar" ]; then
       echo "no $name jar at $jar; run without --skip-build" >&2
       exit 1
     fi
   done
-elif [ ${#enabled_engines[@]} -gt 0 ]; then
+elif [ ${#built_engines[@]} -gt 0 ]; then
   if [ "$skip_tests" != true ]; then
     step "Testing the engines"
     # engines.common first, since every jar carries it and testing an engine does not run a
     # dependency's tests. Then each engine, joined by `+`: without it mill passes every name after
     # the first to the first task as an argument, and only that one suite runs.
     mill_tasks=(engines.common.test)
-    for engine in "${enabled_engines[@]}"; do
-      IFS=: read -r _ module _ _ <<<"$engine"
+    for engine in "${built_engines[@]}"; do
+      IFS=: read -r _ module _ _ _ <<<"$engine"
       mill_tasks+=(+ "$module.test")
     done
     mill -j 4 --ticker false "${mill_tasks[@]}"
   fi
 
   step "Building the engine jars"
-  for engine in "${enabled_engines[@]}"; do
-    IFS=: read -r _ module _ _ <<<"$engine"
+  for engine in "${built_engines[@]}"; do
+    IFS=: read -r _ module _ _ _ <<<"$engine"
     mill -j 4 --ticker false "$module.assembly"
   done
 
-  for engine in "${enabled_engines[@]}"; do
-    IFS=: read -r name _ jar _ <<<"$engine"
+  for engine in "${built_engines[@]}"; do
+    IFS=: read -r name _ jar _ _ <<<"$engine"
     echo "    $name $jar ($(du -h "$jar" | cut -f1))"
   done
 fi
@@ -241,7 +271,7 @@ step "Games to add on matchmaker's admin page"
 # database the unit tests run against, and refuses any other. Each API key is printed as the command
 # that reads it, not as the key, so that it is not left in a terminal's scrollback.
 for engine in "${enabled_engines[@]}"; do
-  IFS=: read -r name _ _ _ <<<"$engine"
+  IFS=: read -r name _ _ _ _ <<<"$engine"
 
   create_game_url=$(output "${name}_create_game_url")
   external_id=$(output "${name}_external_id")
