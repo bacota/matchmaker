@@ -518,23 +518,6 @@ ul {
   font-variant-numeric: tabular-nums;
 }
 
-/* A player's standing: three labelled numbers, label and number side by side. */
-.standing {
-  display: grid;
-  grid-template-columns: max-content auto;
-  gap: 0.25rem 1rem;
-  margin: 0.5rem 0 0;
-}
-
-.standing dt {
-  color: var(--muted);
-}
-
-.standing dd {
-  margin: 0;
-  font-variant-numeric: tabular-nums;
-}
-
 /* The player's own line, at the foot: set apart by colour and a rule above it, since it is their
    rating as it stands now rather than a place in the page above. */
 .leaderboard tfoot tr.mine th,
@@ -544,7 +527,30 @@ ul {
   border-top: 2px solid var(--accent);
 }
 
-.leaderboard .mine-note {
+/* A player searched for, at the foot too: the same treatment, in another colour, so that the two
+   lines are told apart when both are there. */
+.leaderboard tfoot tr.found th,
+.leaderboard tfoot tr.found td {
+  color: #7a4500;
+  background: #fff4e0;
+  border-top: 2px solid #b36200;
+}
+
+/* A name is the way to the player's page. Underlined so it reads as a link among the numbers, and
+   in the foot rows in the row's own colour, so the found line stays amber throughout. Tall enough
+   to tap. */
+.leaderboard th button.link {
+  min-height: 44px;
+  font-weight: inherit;
+  text-align: left;
+  text-decoration: underline;
+}
+
+.leaderboard tfoot th button.link {
+  color: inherit;
+}
+
+.leaderboard .foot-note {
   font-weight: normal;
   font-size: 0.85rem;
 }

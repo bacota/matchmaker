@@ -1255,14 +1255,15 @@ object Views {
     /* The nickname is the link, rather than a name beside a "View" button: the row has one thing to
      * do, and a control whose name is the player being opened needs no other label. */
     private def playerResultRow(player: PublicPlayer): HtmlElement =
-        li(
-          cls := "row",
-          button(
-            tpe := "button",
-            cls := "link",
-            player.nickname,
-            onClick --> (_ => Store.show(Store.Page.OnePlayer(player)))
-          )
+        li(cls := "row", playerLink(player))
+
+    /** A player's nickname as the way to their page: the page a "Find Players" search opens onto. */
+    private def playerLink(player: PublicPlayer): HtmlElement =
+        button(
+          tpe := "button",
+          cls := "link",
+          player.nickname,
+          onClick --> (_ => Store.show(Store.Page.OnePlayer(player)))
         )
 
     /* One flag for the whole of a player's page, because one button reloads all of it: both lists
@@ -2788,6 +2789,9 @@ object Views {
         // must not drop an answer still on its way. A save of the player's own row moves this on, as the
         // save is newer than anything asked before it.
         var mineRequest = 0
+        // The last Find a Player answer: a player's standing, shown as a line of its own at the foot of the
+        // table, or what to say instead.
+        val found = Var(Option.empty[Either[String, EloRating]])
 
         /* Dropped if a newer request, mount or save has overtaken it, or it belongs to another sign-in --
          * its failure as well as its answer: the section is the next session's by then. Asks for the
@@ -2914,12 +2918,12 @@ object Views {
                       else s"Nobody is ranked $first to $last."
               }
             ),
-            // Shown when the page has anybody on it, or the player has a standing of their own to show in
-            // it -- a player ranked below the page, or not ranked yet, still sees their own line.
+            // Shown when the page has anybody on it, or there is a line of its own to show at its foot -- the
+            // player's own standing, or one they searched for -- whoever is on the page.
             child <-- rows
                 .map(_.nonEmpty)
-                .combineWith(mine.signal.map(_.exists(_.isRight)))
-                .map(_ || _)
+                .combineWith(mine.signal.map(_.exists(_.isRight)), found.signal.map(_.exists(_.isRight)))
+                .map(_ || _ || _)
                 .distinct
                 .map {
                     case false => emptyNode
@@ -2951,8 +2955,12 @@ object Views {
                             // that has just finished may have moved.
                             tfoot(
                               child <-- mine.signal.combineWith(administers).map {
-                                  case (Some(Right(you)), admin) => ownRow(you, admin)
+                                  case (Some(Right(you)), admin) => footRow(you, "mine", "you, now", admin)
                                   case _                         => emptyNode
+                              },
+                              child <-- found.signal.combineWith(administers).map {
+                                  case (Some(Right(them)), admin) => footRow(them, "found", "found, now", admin)
+                                  case _                          => emptyNode
                               }
                             )
                           )
@@ -2973,48 +2981,33 @@ object Views {
               step("Previous", "Previous 20 ranks", page.signal.map(_ > 0), _ - 1),
               step("Next", "Next 20 ranks", board.signal.map(_.exists(_.more)), _ + 1)
             ),
-            findPlayer(game),
+            findPlayer(game, found),
             child <-- administers.map(if (_) rateNewPlayer(game, savedNew, said) else emptyNode)
           )
         )
     }
 
-    /** The signed-in player's own line at the foot of the leaderboard: their place, and their rating and matches as
-      * they stand now. Named as theirs in words as well as by its colour, which a screen reader does not see.
+    /** A line of its own at the foot of the leaderboard — the signed-in player's (`mine`), or one they searched for
+      * (`found`): their place, and their rating and matches as they stand now. Told apart from the page by its colour,
+      * and in words, `note`, which a screen reader hears where it cannot see the colour.
       */
-    private def ownRow(you: EloRating, administers: Boolean): HtmlElement =
+    private def footRow(standing: EloRating, kind: String, note: String, administers: Boolean): HtmlElement =
         tr(
-          cls := "mine",
-          td(you.rank.fold[Modifier[HtmlElement]](span(aria.label := "not ranked yet", "—"))(_.toString)),
-          th(scopeAttr := "row", you.player.nickname, span(cls := "mine-note", " (you, now)")),
-          td(you.rating.toString),
-          td(you.matches.toString),
-          // Nothing to set here: an admin sets their own rating from their row in the page, if it is on it.
+          cls := kind,
+          td(standing.rank.fold[Modifier[HtmlElement]](span(aria.label := "not ranked yet", "—"))(_.toString)),
+          th(scopeAttr := "row", playerLink(standing.player), span(cls := "foot-note", s" ($note)")),
+          td(standing.rating.toString),
+          td(standing.matches.toString),
+          // Nothing to set here: an admin sets a rating from the player's row in the page, if it is on it.
           if (administers) td() else emptyNode
         )
 
-    /** A player's standing in a game: their place, the rating it was worked out from — what the leaderboard shows — and
-      * their rating as it stands, which a match that has just finished may have moved since.
+    /** Any player's standing in the game, by nickname: the one typed in full, as [[rateNewPlayer]] finds one. What is
+      * found goes into `found`, which the leaderboard shows as a line at its foot.
       */
-    private def standingDetails(rating: EloRating): HtmlElement = {
-        val notYet = "Not ranked yet"
-        dl(
-          cls := "standing",
-          dt("Rank"),
-          dd(rating.rank.fold(notYet)(_.toString)),
-          dt("Ranked rating"),
-          dd(rating.rankedRating.fold(notYet)(_.toString)),
-          dt("Latest rating"),
-          dd(rating.rating.toString)
-        )
-    }
-
-    /** Any player's standing in the game, by nickname: the one typed in full, as [[rateNewPlayer]] finds one. */
-    private def findPlayer(game: Game): HtmlElement = {
+    private def findPlayer(game: Game, found: Var[Option[Either[String, EloRating]]]): HtmlElement = {
         val nickname = Var("")
         val busy = Var(false)
-        // The last answer: a player's standing, or what to say instead.
-        val found = Var(Option.empty[Either[String, EloRating]])
 
         def look(name: String): Future[Either[String, EloRating]] =
             ApiClient.searchPlayers(name).flatMap { result =>
@@ -3034,7 +3027,7 @@ object Views {
               val name = nickname.now().trim
               if (name.nonEmpty) Store.runSignedIn(look(name), busy)(answer => found.set(Some(answer)))
           },
-          h3("Find a Player"),
+          h3("Find a Player in Rankings"),
           field(
             "Nickname",
             input(
@@ -3049,10 +3042,16 @@ object Views {
           // Mounted before it has anything to say, so that what arrives in it is announced.
           div(
             aria.live := "polite",
+            // The line itself is in the table, which is not announced; this says where it went.
             child <-- found.signal.map {
-                case None              => emptyNode
-                case Some(Left(why))   => p(cls := "empty", why)
-                case Some(Right(them)) => div(h4(them.player.nickname), standingDetails(them))
+                case None            => emptyNode
+                case Some(Left(why)) => p(cls := "empty", why)
+                case Some(Right(them)) =>
+                    val place = them.rank.fold("not ranked yet")(rank => s"ranked $rank")
+                    p(
+                      cls := "detail",
+                      s"${them.player.nickname} is $place, rated ${them.rating} now; shown at the foot of the rankings."
+                    )
             }
           )
         )
@@ -3077,7 +3076,8 @@ object Views {
                 case None => span(aria.label := "not ranked yet", "—")
             })
           ),
-          th(scopeAttr := "row", rated.nickname),
+          // Their page, as a "Find Players" search would open it.
+          th(scopeAttr := "row", playerLink(rated)),
           // The rating and matches the place was worked out from, so that the columns read in order with the
           // places -- matches telling equal ratings apart; the rating as it stands now is under the table, for
           // the player and for anybody searched for.
