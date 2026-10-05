@@ -779,7 +779,9 @@ class GameEngineService[T](
                                               session,
                                               gameId,
                                               matchId,
-                                              results.map(r => r.participantId -> r.rank).toMap
+                                              results.map(r => r.participantId -> r.rank).toMap,
+                                              // An engine's own forfeit: a live match it ended on a clock.
+                                              forfeit = results.exists(_.forfeit)
                                             )
                                     _ <- results.traverse(r =>
                                         resultRepo.create(
@@ -1063,7 +1065,7 @@ class GameEngineService[T](
                                 // before the results that carry what it did to each rating.
                                 deltas <-
                                     if (locked.friendly) IO.pure(Map.empty[ParticipantId, Int])
-                                    else EloRatingService.rate(session, gameId, matchId, ranks)
+                                    else EloRatingService.rate(session, gameId, matchId, ranks, forfeit = true)
                                 _ <- participants.traverse { (p, _, _) =>
                                     val lost = overdue.contains(p.participantId)
                                     resultRepo.create(

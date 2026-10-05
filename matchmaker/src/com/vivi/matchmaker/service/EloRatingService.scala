@@ -3,7 +3,7 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import cats.syntax.all._
 import com.vivi.matchmaker.ending.MatchEndings
-import com.vivi.matchmaker.model.{EloRating, GameId, Leaderboard, MatchId, ParticipantId, Player, PlayerId}
+import com.vivi.matchmaker.model.{EloRating, GameId, Leaderboard, MatchId, MatchRecord, ParticipantId, Player, PlayerId}
 import com.vivi.matchmaker.persistence.{
     EloRatingRepo,
     GameAdminRepo,
@@ -158,7 +158,8 @@ object EloRatingService {
     /** Rates a match that is not friendly and has just completed: works out each seat's delta from the ratings its
       * seats began it at, moves each player's rating by it, and answers with the deltas by seat, for the caller to
       * write on the result rows it is about to insert (V43). `ranks` is where each seat with a result finished; a seat
-      * with none has nothing to be rated by, and has no delta.
+      * with none has nothing to be rated by, and has no delta. Each rated player's record (V46) moves with their
+      * rating, a win or a loss counted as one by forfeit too when `forfeit` says a turn running out ended the match.
       *
       * For the caller's transaction, the one that records the results: the ratings move exactly when the results are
       * recorded, and a repeated callback that finds them recorded does not call this again. The caller decides that the
@@ -173,7 +174,8 @@ object EloRatingService {
         session: skunk.Session[IO],
         gameId: GameId,
         matchId: MatchId,
-        ranks: Map[ParticipantId, Int]
+        ranks: Map[ParticipantId, Int],
+        forfeit: Boolean = false
     ): IO[Map[ParticipantId, Int]] = {
         val ratingRepo = new EloRatingRepo(session)
         new ParticipantRepo(session).eloSeatsForMatch(gameId, matchId).flatMap { rows =>
@@ -201,8 +203,18 @@ object EloRatingService {
                         .ensureRated(gameId, ranked.filter(row => deltas.contains(row.participantId)).map(_.playerId))
                     // In player order, as `ensureRated` went, which is the order the row locks are taken in.
                     // One seat per player, so a seat's delta is its player's.
+                    // And each player's record (V46), from where they finished among the seats with a result.
                     _ <- ranked.sortBy(_.playerId.value).traverse_ { row =>
-                        deltas.get(row.participantId).traverse_(ratingRepo.played(gameId, row.playerId, _))
+                        deltas
+                            .get(row.participantId)
+                            .traverse_(
+                              ratingRepo.played(
+                                gameId,
+                                row.playerId,
+                                _,
+                                MatchRecord.of(ranks(row.participantId), ranks.values.toSeq, forfeit)
+                              )
+                            )
                     }
                 } yield deltas
             }
@@ -279,8 +291,11 @@ object EloRatingService {
             _ <- ratingRepo.ensureRated(gameId, deltas.keys.toList.map(byPlayer))
             _ <- results.sortBy(r => byPlayer(r.participantId).value).traverse_ { r =>
                 val player = byPlayer(r.participantId)
-                r.eloDelta.traverse_(ratingRepo.unplayed(gameId, player, _)) *>
-                    deltas.get(r.participantId).traverse_(ratingRepo.played(gameId, player, _)) *>
+                // What the match is to the player's record, as it was when it was rated: taken back with the
+                // rating it moved, and given again with the one it now moves.
+                val record = MatchRecord.of(r.rank, results.map(_.rank), r.forfeit)
+                r.eloDelta.traverse_(ratingRepo.unplayed(gameId, player, _, record)) *>
+                    deltas.get(r.participantId).traverse_(ratingRepo.played(gameId, player, _, record)) *>
                     resultRepo.setEloDelta(gameId, r.participantId, deltas.get(r.participantId))
             }
             later <- participantRepo

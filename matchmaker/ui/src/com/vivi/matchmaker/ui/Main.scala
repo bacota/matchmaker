@@ -2965,6 +2965,7 @@ object Views {
                                 th(scopeAttr := "col", "Player"),
                                 th(scopeAttr := "col", "Ranked rating"),
                                 th(scopeAttr := "col", "Matches"),
+                                th(scopeAttr := "col", "Record"),
                                 child <-- administers.map(if (_) th(scopeAttr := "col", "Set rating") else emptyNode)
                               )
                             ),
@@ -3023,6 +3024,7 @@ object Views {
           th(scopeAttr := "row", playerLink(standing.player), span(cls := "foot-note", s" ($note)")),
           td(standing.rating.toString),
           td(standing.matches.toString),
+          recordCell(standing.record),
           // Nothing to set here: an admin sets a rating from the player's row in the page, if it is on it.
           if (administers) td() else emptyNode
         )
@@ -3081,6 +3083,26 @@ object Views {
         )
     }
 
+    /** A player's win–loss–draw record (V46), as the rankings show it: "12 (2)–5 (1)–3", the numbers in parentheses the
+      * wins and losses that came by forfeit, and left out when there are none. Said in words to a screen reader, which
+      * would otherwise read the dashes and parentheses as punctuation.
+      */
+    private def recordText(r: MatchRecord): HtmlElement = {
+        def byForfeit(n: Int) = if (n > 0) s" ($n)" else ""
+        def count(n: Int, one: String, many: String) = s"$n ${if (n == 1) one else many}"
+        def spoken(said: String, forfeits: Int) = said + (if (forfeits > 0) s", $forfeits by forfeit" else "")
+        span(
+          aria.label := List(
+            spoken(count(r.wins, "win", "wins"), r.forfeitWins),
+            spoken(count(r.losses, "loss", "losses"), r.forfeitLosses),
+            count(r.draws, "draw", "draws")
+          ).mkString("; "),
+          s"${r.wins}${byForfeit(r.forfeitWins)}–${r.losses}${byForfeit(r.forfeitLosses)}–${r.draws}"
+        )
+    }
+
+    private def recordCell(r: MatchRecord): HtmlElement = td(recordText(r))
+
     /** Which cells a table header names: its column, or its row. Not among Laminar's attributes. */
     private val scopeAttr = htmlAttr("scope", com.raquo.laminar.codecs.StringAsIsCodec)
 
@@ -3107,6 +3129,7 @@ object Views {
           // the player and for anybody searched for.
           td(child.text <-- rating.map(r => r.rankedRating.getOrElse(r.rating).toString)),
           td(child.text <-- rating.map(r => r.rankedMatches.getOrElse(r.matches).toString)),
+          td(child <-- rating.map(r => recordText(r.record))),
           child <-- administers.map {
               case false => emptyNode
               case true =>
@@ -4138,7 +4161,7 @@ object Views {
           "friendly",
           "A friendly match is played for fun: it does not change either player's Elo rating or place in the " +
               "rankings. Every other match is rated."
-        )(div(cls := "detail", "friendly"))
+        )(div(cls := "detail", "friendly")).amend(cls := "inline-tip")
 
     private def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement = {
         val open = Var(false)

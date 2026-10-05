@@ -11,8 +11,42 @@ case class EloRating(
     matches: Int,
     rank: Option[Int] = None,
     rankedRating: Option[Int] = None,
-    rankedMatches: Option[Int] = None
+    rankedMatches: Option[Int] = None,
+    record: MatchRecord = MatchRecord()
 )
+
+/** A player's win–loss–draw record in one game (V46), over the rated matches that moved their rating: friendly ones are
+  * not in it. `forfeitWins` and `forfeitLosses` are the wins and losses that came of a turn running out, and are
+  * counted in `wins` and `losses` as well.
+  */
+case class MatchRecord(wins: Int = 0, losses: Int = 0, draws: Int = 0, forfeitWins: Int = 0, forfeitLosses: Int = 0) {
+
+    def +(other: MatchRecord): MatchRecord =
+        MatchRecord(
+          wins + other.wins,
+          losses + other.losses,
+          draws + other.draws,
+          forfeitWins + other.forfeitWins,
+          forfeitLosses + other.forfeitLosses
+        )
+
+    def unary_- : MatchRecord = MatchRecord(-wins, -losses, -draws, -forfeitWins, -forfeitLosses)
+}
+
+object MatchRecord {
+
+    /** What one match adds to one seat's record, given where it finished and where every seat with a result finished:
+      * first on its own is a win, first with others a draw, anything below first a loss. Two seats is the ordinary
+      * reading; with more, sharing first is the draw and everybody under it lost. A forfeit — a match a turn running
+      * out ended — counts the win or the loss as one by forfeit too.
+      */
+    def of(rank: Int, ranks: Seq[Int], forfeit: Boolean): MatchRecord = {
+        val best = ranks.minOption.getOrElse(rank)
+        if (rank == best && ranks.count(_ == best) <= 1) MatchRecord(wins = 1, forfeitWins = if (forfeit) 1 else 0)
+        else if (rank == best) MatchRecord(draws = 1)
+        else MatchRecord(losses = 1, forfeitLosses = if (forfeit) 1 else 0)
+    }
+}
 
 /** One page of a game's leaderboard — everybody placed in its range of places, best first — and whether anybody is
   * placed after it.

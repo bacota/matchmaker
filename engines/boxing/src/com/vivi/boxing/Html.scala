@@ -97,9 +97,8 @@ object Html {
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { margin: 0 auto; padding: 1.5rem 1rem 3rem; max-width: 34rem; }
   h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; text-align: center; }
-  /* The rules, a tap away: a link of a size to be hit, under the name of the game. */
-  .help { text-align: center; margin: 0 0 .5rem; font-size: .875rem; }
-  .help a { color: inherit; display: inline-block; min-height: 44px; line-height: 44px; }
+  /* The rules, a tap away, in a dialog over the page. */
+${rulesDialogCss}
   h2 { font-size: 1.125rem; margin: 0 0 .5rem; }
   #status { font-size: 1.5rem; font-weight: 700; margin: 0; min-height: 2rem; text-align: center; }
   #round { margin: 0 0 1.25rem; text-align: center; opacity: .8; min-height: 1.5rem; }
@@ -147,7 +146,7 @@ ${Finale.css}
 <body>
 <main>
   <h1>boxing</h1>
-  <p class="help"><a href="/rules">How to play</a></p>
+  ${rulesDialog}
   <!-- A round resolves while the page is idle rather than in answer to anything this player just
        did, so what happened is announced rather than left to be found. -->
   <p id="status" role="status" aria-live="polite">${escape(heading(state))}</p>
@@ -478,49 +477,21 @@ ${Finale.script(victory, defeat)}
 </html>
 """
 
-    /** How boxing is played: the rules, for anybody, signed in or not. Static apart from the numbers, which come from
-      * the code that enforces them, so the page cannot say one thing while the engine does another.
+    /** How boxing is played, as the sections of a page or a dialog: `section` is the heading level each section is
+      * headed at under the title. Static apart from the numbers, which come from the code that enforces them, so what
+      * it says cannot drift from what the engine does.
       */
-    def rulesPage: String = {
+    private def rulesContent(section: String): String = {
         val looks = List("strength", "speed", "agility", "workrate")
             .map { name =>
                 val (high, low) = Fighter.Looks(name)
                 s"<tr><th scope=\"row\">${name.capitalize}</th><td>$high</td><td>$low</td></tr>"
             }
             .mkString("\n        ")
-        s"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Boxing — how to play</title>
-<style>
-  :root { color-scheme: light dark; --line: #8886; --ink: #222; --paper: #fafafa; --muted: #555; }
-  @media (prefers-color-scheme: dark) { :root { --ink: #eee; --paper: #16181c; --muted: #bbb; } }
-  body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
-         font: 16px/1.6 ui-sans-serif, system-ui, sans-serif; }
-  main { margin: 0 auto; padding: 1.5rem 1rem 3rem; max-width: 40rem; }
-  h1 { font-size: 1.5rem; margin: 0 0 .5rem; }
-  h2 { font-size: 1.2rem; margin: 2rem 0 .5rem; }
-  p, li { margin: .5rem 0; }
-  .lead { color: var(--muted); }
-  /* Its own scroll, so a narrow phone scrolls a table sideways rather than the page. */
-  .table { overflow-x: auto; margin: .75rem 0; }
-  table { border-collapse: collapse; width: 100%; }
-  caption { text-align: left; font-weight: 600; padding-bottom: .25rem; }
-  th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
-  thead th { border-bottom-width: 2px; }
-  code { font: inherit; font-weight: 600; }
-  a { color: inherit; }
-</style>
-</head>
-<body>
-<main>
-  <h1>How to play boxing</h1>
-  <p class="lead">Two fighters, a set number of rounds. Each round both players secretly decide how their fighter
+        s"""  <p class="lead">Two fighters, a set number of rounds. Each round both players secretly decide how their fighter
   spends its energy, and the round is scored when both have decided.</p>
 
-  <h2>Your fighter</h2>
+  <$section>Your fighter</$section>
   <p>A fighter has five characteristics. You build one by sharing <strong>${Fighter.Budget} points</strong> among
   them, each between <strong>${Fighter.Min} and ${Fighter.Max}</strong>. You build it once, on the fighters page,
   and it fights every bout as it is.</p>
@@ -538,7 +509,7 @@ ${Finale.script(victory, defeat)}
     </table>
   </div>
 
-  <h2>Planning a round</h2>
+  <$section>Planning a round</$section>
   <p>Each round you split your fighter's <strong>workrate</strong> among <strong>offense</strong>,
   <strong>defense</strong> and <strong>power</strong>. You must spend all of it, and none of the three can be
   negative. Your opponent plans at the same time, and neither of you sees the other's plan until both are in.</p>
@@ -549,7 +520,7 @@ ${Finale.script(victory, defeat)}
     <li>power = what you put on power + 2 × strength</li>
   </ul>
 
-  <h2>How a round is scored</h2>
+  <$section>How a round is scored</$section>
   <p>The tests below are taken in order, and the first one that either fighter passes decides the round. Each one
   compares your power with what your opponent can stand:</p>
   <div class="table">
@@ -568,7 +539,7 @@ ${Finale.script(victory, defeat)}
   <p>If both fighters land the same kind of blow, the one with more offense gets it, then the one with more defense.
   If they are level on both, neither does, and the round goes to the next test down.</p>
 
-  <h2>Winning the bout</h2>
+  <$section>Winning the bout</$section>
   <ul>
     <li>A knockout ends the bout, and the fighter who landed it wins.</li>
     <li>Otherwise the bout goes the distance, and the fighter with more points after the last round wins. Equal
@@ -578,7 +549,7 @@ ${Finale.script(victory, defeat)}
     <li>If the match has a time limit and you run out of time, you lose the bout.</li>
   </ul>
 
-  <h2>Sizing up your opponent</h2>
+  <$section>Sizing up your opponent</$section>
   <p>You see your own fighter's numbers but never your opponent's. Instead you get a word for their highest
   characteristic and one for their lowest. Chin cannot be seen, so it is never described. When two
   characteristics share the highest (or lowest) value, both are described; when three or more do, nothing stands
@@ -595,11 +566,87 @@ ${Finale.script(victory, defeat)}
   </div>
   <p>Once a round is scored, both plans are shown to both players, but each of you sees only your own fighter's
   offense, defense and power for it.</p>
-</main>
+"""
+    }
+
+    /** The rules' own look, under `.rules`, so that it reads the same on its page and in the dialog and touches nothing
+      * else on a page it is put in.
+      */
+    private val rulesCss: String =
+        """  .rules p, .rules li { margin: .5rem 0; }
+  .rules .lead { opacity: .8; }
+  /* Its own scroll, so a narrow phone scrolls a table sideways rather than the page. */
+  .rules .table { overflow-x: auto; margin: .75rem 0; }
+  .rules table { border-collapse: collapse; width: 100%; }
+  .rules caption { text-align: left; font-weight: 600; padding-bottom: .25rem; }
+  .rules th, .rules td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .rules thead th { border-bottom-width: 2px; }
+  .rules h2, .rules h3 { font-size: 1.15rem; margin: 1.5rem 0 .5rem; }"""
+
+    /** How boxing is played, as a page of its own: for a link from outside a bout, and for anybody, signed in or not.
+      */
+    def rulesPage: String =
+        s"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boxing — how to play</title>
+<style>
+  :root { color-scheme: light dark; --line: #8886; --ink: #222; --paper: #fafafa; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #eee; --paper: #16181c; } }
+  body { margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
+         font: 16px/1.6 ui-sans-serif, system-ui, sans-serif; }
+  main { margin: 0 auto; padding: 1.5rem 1rem 3rem; max-width: 40rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .5rem; }
+$rulesCss
+</style>
+</head>
+<body>
+<main class="rules">
+  <h1>How to play boxing</h1>
+${rulesContent("h2")}</main>
 </body>
 </html>
 """
-    }
+
+    /** "How to play", and the rules it opens over the page in a modal dialog: the browser's own, which keeps the focus
+      * inside it, closes on Escape, and gives the focus back to the button. A tap outside the box closes it too. For
+      * the play page and the fighters page, under the name of the game.
+      */
+    private val rulesDialog: String =
+        s"""<p class="help"><button type="button" id="rules-open" aria-haspopup="dialog">How to play</button></p>
+  <dialog id="rules" class="rules" aria-labelledby="rules-title">
+    <div class="rules-head">
+      <h2 id="rules-title">How to play boxing</h2>
+      <button type="button" id="rules-close" aria-label="Close">×</button>
+    </div>
+${rulesContent("h3")}  </dialog>
+  <script>
+  (function () {
+    const dialog = document.getElementById("rules");
+    document.getElementById("rules-open").addEventListener("click", () => dialog.showModal());
+    document.getElementById("rules-close").addEventListener("click", () => dialog.close());
+    // The backdrop is the dialog element itself; a click on it, outside the box, closes it.
+    dialog.addEventListener("click", e => { if (e.target === dialog) dialog.close(); });
+  })();
+  </script>"""
+
+    /** The dialog's look: a box of a size to read on a phone, scrolled inside itself, over a dimmed page. */
+    private val rulesDialogCss: String =
+        s"""  .help { text-align: center; margin: 0 0 .5rem; font-size: .875rem; }
+  .help button { font: inherit; color: inherit; background: none; border: none; text-decoration: underline;
+                 cursor: pointer; min-height: 44px; padding: 0 .5rem; }
+  dialog.rules { width: min(40rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); padding: 0 1rem 1rem;
+                 background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+                 font-size: 1rem; line-height: 1.6; }
+  dialog.rules::backdrop { background: #0008; }
+  .rules-head { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between;
+                gap: .5rem; background: var(--paper); border-bottom: 1px solid var(--line); }
+  .rules-head h2 { margin: .75rem 0; font-size: 1.25rem; }
+  #rules-close { font: inherit; font-size: 1.5rem; line-height: 1; color: inherit; background: none; border: none;
+                 cursor: pointer; min-width: 44px; min-height: 44px; }
+$rulesCss"""
 
     /** The fighters page: a player's fighters, each of which they may edit here, and the form a new one is built with.
       * Giving one away has its route but is not offered on the page yet. Every change to a fighter is made in this
@@ -624,9 +671,8 @@ ${Finale.script(victory, defeat)}
          font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; }
   main { margin: 0 auto; padding: 1.5rem 1rem 3rem; max-width: 34rem; }
   h1 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .6; margin: 0 0 .25rem; text-align: center; }
-  /* The rules, a tap away: a link of a size to be hit, under the name of the game. */
-  .help { text-align: center; margin: 0 0 .5rem; font-size: .875rem; }
-  .help a { color: inherit; display: inline-block; min-height: 44px; line-height: 44px; }
+  /* The rules, a tap away, in a dialog over the page. */
+${rulesDialogCss}
   h2 { font-size: 1.25rem; margin: 1.5rem 0 .5rem; }
   h3 { font-size: 1.0625rem; margin: 0 0 .25rem; overflow-wrap: anywhere; }
   section[hidden], div[hidden], p[hidden] { display: none; }
@@ -675,7 +721,7 @@ ${SignIn.css}
 <body>
 <main>
   <h1>boxing</h1>
-  <p class="help"><a href="/rules">How to play</a></p>
+  ${rulesDialog}
 
   <!-- What the last change or build did. Focus is moved here when it is said, since the list it is
        about is redrawn; it is a live region as well, for readers that do not follow focus. -->
