@@ -138,8 +138,12 @@ body {
    The turn is at 48rem rather than at the width where the two collide: 11rem of menu beside a
    27rem screen is not a layout anybody wants, it is just one that fits. */
 @media (max-width: 48rem) {
+  /* Stretched, not sized to its content as `flex-start` would size it: a table wider than the
+     phone would otherwise make the screen wider than the phone too, and the page would scroll
+     sideways instead of the table's own box. */
   .layout {
     flex-direction: column;
+    align-items: stretch;
   }
 
   .menu {
@@ -389,7 +393,11 @@ ul {
   max-width: 18rem;
 }
 
-.row form.compound input {
+/* The boxes outside a `.card` -- that one, and the player searches -- given the card's field
+   styling. The searches had none, and stood at the browser's 28px: too small a box for a thumb. */
+.row form.compound input,
+.search input,
+.inline-form .compound input {
   padding: 0.4rem;
   border: 1px solid var(--line);
   border-radius: 3px;
@@ -515,6 +523,10 @@ ul {
 .table-scroll {
   max-width: 100%;
   overflow-x: auto;
+  /* The containing block of what is absolutely positioned inside it -- the screen-reader text
+     (`.sr-only`) in its cells. Without this they are placed against the page instead, outside the
+     box's clipping, and a cell scrolled out to the right widens the whole page. */
+  position: relative;
 }
 
 .leaderboard {
@@ -710,6 +722,10 @@ label.field > .hint {
 }
 .tip {
   display: none;
+  /* Its own type, whatever it is beside: a tip on a column heading would otherwise be set bold and
+     centred like the heading. */
+  font-weight: normal;
+  text-align: left;
   position: absolute;
   top: 100%;
   left: 0;
@@ -1100,6 +1116,8 @@ button.toggle {
      short boxes. */
   .card input:not([type="checkbox"]),
   .row form.compound input,
+  .search input,
+  .inline-form .compound input,
   select {
     min-height: 2.75rem;
   }
@@ -1171,6 +1189,9 @@ button.toggle {
 .modal {
   width: min(32rem, 100%);
   max-height: calc(100vh - 2rem);
+  /* A phone's browser counts the room under its own toolbar in 100vh, which hid the dialog's last
+     line behind it; the dynamic unit is the room actually showing. */
+  max-height: calc(100dvh - 2rem);
   overflow-y: auto;
   margin: 0;
   text-align: left;
@@ -1273,4 +1294,95 @@ button.toggle {
 
 .completed tr.outcome td:empty {
   padding: 0;
+}
+
+/* The .detail lines in a cell -- "archive expired", under Review -- wrap between words here, not
+   anywhere: `overflow-wrap: anywhere` lets a table squeeze the column to one letter's width, and
+   the note became a column of single letters a screen tall. */
+.completed .detail {
+  overflow-wrap: break-word;
+}
+
+/* A phone: a card per match rather than a table to scroll sideways, where the way to the board
+   was off the right-hand edge. The match's name heads the card, what is known about it runs on a
+   line under it with the board's button at the end, and the outcome is the tinted foot.
+
+   The headings are still there for a screen reader, which is told it is a table by the roles
+   Main gives each part. Their "?" goes, since a button that cannot be seen should not take the
+   focus; what a parameter is called moves into its cell, and the check mark says "friendly". */
+@media (max-width: 40rem) {
+  .completed,
+  .completed tbody,
+  .completed tr,
+  .completed td,
+  .completed th {
+    display: block;
+  }
+
+  .completed thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .completed thead .tip-toggle,
+  .completed thead .tip {
+    display: none;
+  }
+
+  .completed tbody {
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: #fff;
+    margin-bottom: 0.5rem;
+    overflow: hidden;
+  }
+
+  .completed tr.match {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 0.75rem;
+    padding: 0.5rem 0.75rem 0.25rem;
+  }
+
+  .completed tr.match > * {
+    padding: 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+
+  .completed tr.match > th {
+    order: -1;
+    flex-basis: 100%;
+    color: inherit;
+    font-size: 1rem;
+  }
+
+  .completed .message {
+    display: inline;
+    max-width: none;
+    white-space: normal;
+  }
+
+  .completed td[data-label]::before {
+    content: attr(data-label) ": ";
+    content: attr(data-label) ": " / "";
+  }
+
+  .completed td.friendly .mark::after {
+    content: " friendly";
+  }
+
+  .completed td.board {
+    margin-left: auto;
+  }
+
+  .completed tr.outcome td {
+    padding: 0.4rem 0.75rem 0.5rem;
+    border-bottom: 0;
+  }
 }

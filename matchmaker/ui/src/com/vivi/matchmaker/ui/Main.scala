@@ -1686,26 +1686,35 @@ object Views {
             Seq(
               tr(
                 cls := "match",
-                if (showGame) td(summary.gameName) else emptyNode,
+                role := "row",
+                if (showGame) td(role := "cell", cls := "game", summary.gameName) else emptyNode,
                 // The match's name heads its row, for a screen reader; cut short to the column when long, and in
                 // full on hover, while a reader hears all of it.
-                th(scopeAttr := "row", span(cls := "message", title := name, name)),
-                td(ended),
+                th(scopeAttr := "row", role := "rowheader", span(cls := "message", title := name, name)),
+                td(role := "cell", ended),
                 // A mark for a friendly match and nothing for a rated one, with a word for a screen reader either way.
                 td(
+                  role := "cell",
                   cls := "friendly",
-                  if (summary.friendly) span(aria.hidden := true, "✓") else emptyNode,
+                  if (summary.friendly) span(cls := "mark", aria.hidden := true, "✓") else emptyNode,
                   span(cls := "sr-only", if (summary.friendly) "friendly" else "rated")
                 ),
+                // Named in the cell as well as the heading, for the narrow layout that has no heading row to show.
                 parameters.map(parameter =>
-                    td(summary.parameters.find(_.displayName == parameter).map(_.value).getOrElse(""))
+                    td(
+                      role := "cell",
+                      dataAttr("label") := parameter,
+                      summary.parameters.find(_.displayName == parameter).map(_.value).getOrElse("")
+                    )
                 ),
-                td(view(summary))
+                td(role := "cell", cls := "board", view(summary))
               ),
               // How it came out, across the whole table and set apart in colour: the line to read under the row.
               tr(
                 cls := "outcome",
+                role := "row",
                 td(
+                  role := "cell",
                   colSpan := columns,
                   if (summary.cancelled) div(cls := "detail", "Cancelled by its creator.") else emptyNode,
                   told
@@ -1714,22 +1723,30 @@ object Views {
             )
         }
 
+        def heading(content: Modifier[HtmlElement]*): HtmlElement =
+            th(scopeAttr := "col", role := "columnheader", content)
+
+        // The roles are the ones the elements have anyway, said outright: on a phone the table is laid out as a card
+        // per match, and a browser may stop treating a table whose parts are no longer displayed as one as a table.
         div(
           cls := "table-scroll",
           table(
             cls := "completed",
+            role := "table",
             thead(
+              role := "rowgroup",
               tr(
-                if (showGame) th(scopeAttr := "col", "Game") else emptyNode,
-                th(scopeAttr := "col", "Match"),
-                th(scopeAttr := "col", "Completed"),
-                th(scopeAttr := "col", cls := "friendly", friendlyHeading()),
-                parameters.map(parameter => th(scopeAttr := "col", parameter)),
-                th(scopeAttr := "col", span(cls := "sr-only", "Board"))
+                role := "row",
+                if (showGame) heading("Game") else emptyNode,
+                heading("Match"),
+                heading("Completed"),
+                heading(cls := "friendly", friendlyHeading()),
+                parameters.map(parameter => heading(parameter)),
+                heading(span(cls := "sr-only", "Board"))
               )
             ),
             // A body per match, so its two rows read as one.
-            matches.map(summary => tbody(matchRow(summary)))
+            matches.map(summary => tbody(role := "rowgroup", matchRow(summary)))
           )
         )
     }
