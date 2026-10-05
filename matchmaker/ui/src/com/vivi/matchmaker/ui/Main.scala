@@ -2764,7 +2764,8 @@ object Views {
     private def ratingsList(game: Game, player: Player): HtmlElement = {
         // `None` until a page has come back.
         val board = Var(Option.empty[Leaderboard])
-        // The page asked for last: the one shown once it arrives, and the one a refresh asks for again.
+        // The page on screen: moved only when the page asked for arrives, so that what the section says
+        // about the rows, and where Previous, Next and a refresh go from, are about the rows it shows.
         val page = Var(0)
         val refreshing = Var(false)
         val busy = Var(false)
@@ -2783,6 +2784,10 @@ object Views {
         // The signed-in player's own standing, under the table: `None` until it has come back, and then
         // either it or what to say instead -- that they have no rating here, or that it could not be had.
         val mine = Var(Option.empty[Either[String, EloRating]])
+        // Requests for it, apart from the page's: a save of somebody else's row says nothing about it, and
+        // must not drop an answer still on its way. A save of the player's own row moves this on, as the
+        // save is newer than anything asked before it.
+        var mineRequest = 0
 
         /* Dropped if a newer request, mount or save has overtaken it, or it belongs to another sign-in --
          * its failure as well as its answer: the section is the next session's by then. Asks for the
@@ -2792,7 +2797,8 @@ object Views {
             val asked = request
             val signIn = Store.currentSignIn
             def current = asked == request && Store.stillSignedInAs(signIn)
-            page.set(at)
+            mineRequest += 1
+            val askedMine = mineRequest
             busy.set(true)
             ApiClient
                 .standing(game.gameId, player.playerId)
@@ -2801,12 +2807,16 @@ object Views {
                     case ApiError(404, _) => Left("You have no rating in this game yet.")
                     case error            => Left(s"Your standing could not be loaded: ${error.getMessage}")
                 }
-                .foreach(answer => if (current) mine.set(Some(answer)))
+                .foreach(answer =>
+                    if (askedMine == mineRequest && Store.stillSignedInAs(signIn)) mine.set(Some(answer))
+                )
             ApiClient
                 .leaderboard(game.gameId, at)
                 .map { found =>
                     if (current) {
                         loadError.set(None)
+                        // The page first: what is said about the rows is worked out as the rows arrive.
+                        page.set(at)
                         board.set(Some(found))
                     }
                 }
@@ -2828,12 +2838,19 @@ object Views {
             request += 1
             busy.set(false)
             said.set(s"${saved.player.nickname} is now rated ${saved.rating}.")
-            // The rating as saved, and the place and the rating it was worked out from as they were: the
-            // listener places the player again, and the next refresh shows where.
+            // The rating as saved, and the place with everything it was worked out from as they were, so
+            // that the row's place, ranked rating and matches still agree with each other and with the
+            // page: the listener places the player again, and the next refresh shows where.
             def updated(r: EloRating) =
                 if (r.player.playerId != saved.player.playerId) r
-                else saved.copy(rank = r.rank, rankedRating = r.rankedRating)
+                else saved.copy(rank = r.rank, rankedRating = r.rankedRating, rankedMatches = r.rankedMatches)
             board.update(_.map(b => b.copy(ratings = b.ratings.map(updated))))
+            // The player's own standing is the save's answer whole: it was read as the save committed, so
+            // it is newer than any standing asked for before it, which is dropped.
+            if (saved.player.playerId == player.playerId) {
+                mineRequest += 1
+                mine.set(Some(Right(saved)))
+            }
         }
 
         /* A new player's save brings a row that may not be on screen, so the page is asked again. */
