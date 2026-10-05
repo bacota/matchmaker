@@ -471,29 +471,30 @@ ul {
   margin-top: 0.25rem;
 }
 
-/* "Find a Player" under the rankings: a caption, a box and a button on one row, with what it found
-   said under them -- a way into the table rather than a form of its own. */
-.find-in-rankings {
+/* A small form of one field: a caption, a box and a button on one row, with what came of it said
+   under them -- "Find a Player" under the rankings, and an admin's "Rate <player>" on a player's
+   page. */
+.inline-form {
   margin-top: 0.75rem;
 }
 
-.find-in-rankings label {
+.inline-form label {
   display: block;
   font-weight: 600;
 }
 
-.find-in-rankings .compound {
+.inline-form .compound {
   display: flex;
   gap: 0.5rem;
 }
 
-.find-in-rankings .compound input {
+.inline-form .compound input {
   flex: 1;
   min-width: 0;
   font-size: 16px;
 }
 
-.find-in-rankings button {
+.inline-form button {
   margin-top: 0;
   min-height: 44px;
 }

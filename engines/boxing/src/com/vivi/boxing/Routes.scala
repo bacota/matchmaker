@@ -40,6 +40,10 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], 
         }
 
     override protected def extra: PartialFunction[(String, List[String]), EngineRequest => EngineResponse] = {
+        // How the game is played, for anybody: nothing in it is anybody's.
+        case ("GET", "rules" :: Nil) =>
+            _ => EngineResponse(200, Html.rulesPage, "text/html; charset=utf-8")
+
         // The fighters page, served to anyone for the reason the play page is: a browser navigation
         // carries no token, so the page is the shell that signs the player in and then fetches and
         // posts with one. It shows nothing that is anybody's.

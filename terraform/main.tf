@@ -331,7 +331,8 @@ module "boxing" {
 
   # The fighters page, which signs the player in itself, and what it does with their token: list
   # their fighters, build one, edit one, give one away. Each is passed on to matchmaker's own API.
-  extra_open_routes = ["GET /fighters"]
+  # And the rules, which are anybody's to read.
+  extra_open_routes = ["GET /fighters", "GET /rules"]
   extra_player_routes = [
     "GET /fighters/mine",
     "POST /fighters",

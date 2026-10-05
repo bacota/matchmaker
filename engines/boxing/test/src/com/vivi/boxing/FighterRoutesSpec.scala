@@ -115,6 +115,18 @@ class FighterRoutesSpec extends FunSuite with QuietTests {
         assert(response.body.contains("sign in to matchmaker"), response.body)
     }
 
+    test("the rules page is served to anyone, with the numbers the engine plays by, and the fighters page links it") {
+        val (routes, _) = fixture()
+        val page = routes(EngineRequest("GET", "/rules"))
+        assertEquals(page.status, 200)
+        assert(page.contentType.startsWith("text/html"), page.contentType)
+        assert(page.body.contains("How to play boxing"))
+        assert(page.body.contains(s"${Fighter.Budget} points"))
+        assert(page.body.contains(s"between <strong>${Fighter.Min} and ${Fighter.Max}</strong>"))
+        assert(page.body.contains(Fighter.Looks("speed")._1))
+        assert(routes(EngineRequest("GET", "/fighters")).body.contains("""href="/rules""""))
+    }
+
     test("the fighters page is served to anyone, with the rules a fighter is built to") {
         val (routes, _) = fixture()
         val page = routes(EngineRequest("GET", "/fighters"))
