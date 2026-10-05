@@ -5,11 +5,12 @@ import java.time.{Duration, Instant}
 /** How long a window of a completed list is: what the viewer picks, the last day by default. A month is thirty days and
   * a year 365 — a window is a length of time, not a calendar page.
   */
-enum CompletedFrame(val code: String, val label: String, val days: Long) {
-    case Day extends CompletedFrame("day", "Last 24 hours", 1)
-    case Week extends CompletedFrame("week", "Last week", 7)
-    case Month extends CompletedFrame("month", "Last month", 30)
-    case Year extends CompletedFrame("year", "Last year", 365)
+/** `period` is the window as a step back or forward names it: "Previous week", "Next 24 hours". */
+enum CompletedFrame(val code: String, val label: String, val period: String, val days: Long) {
+    case Day extends CompletedFrame("day", "Last 24 hours", "24 hours", 1)
+    case Week extends CompletedFrame("week", "Last week", "week", 7)
+    case Month extends CompletedFrame("month", "Last month", "month", 30)
+    case Year extends CompletedFrame("year", "Last year", "year", 365)
 
     def span: Duration = Duration.ofDays(days)
 }

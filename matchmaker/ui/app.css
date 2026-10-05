@@ -471,9 +471,10 @@ ul {
   margin-top: 0.25rem;
 }
 
-/* Prev and Next under a completed list: newer at the left, older at the right, as a history read
-   from the top runs. Either may be absent -- Prev on the most recent window, Next once the oldest
-   match is shown -- and the other keeps its side. */
+/* Previous and Next under a completed list, each named by the window it goes to ("Previous week"):
+   earlier at the left, later at the right, as the leaderboard's are. Either may be absent -- Next
+   on the most recent window, Previous once the oldest match is shown -- and the other keeps its
+   side. */
 .completed-steps {
   display: flex;
   justify-content: space-between;
@@ -539,7 +540,8 @@ ul {
   flex-wrap: nowrap;
 }
 
-.completed-steps > .older {
+/* Next, toward now, keeps the right edge when Previous is not there. */
+.completed-steps > .newer {
   margin-left: auto;
 }
 

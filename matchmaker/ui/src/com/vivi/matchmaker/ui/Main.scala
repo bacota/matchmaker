@@ -1101,20 +1101,21 @@ object Views {
                 Store.showCompleted(list, to(current.page), Some(current.page.asOf))
             }
 
+        /* Named by the window it goes to -- "Previous week", "Next 24 hours" -- in the frame shown. */
         def step(
-            caption: String,
+            word: String,
             direction: String,
-            label: String,
             shown: CompletedPage => Boolean,
             to: CompletedPage => Int
         ) =
             child <-- view.map {
                 case Some(page) if shown(page) =>
+                    val caption = s"$word ${page.frame.period}"
                     button(
                       tpe := "button",
                       cls := s"link $direction",
-                      // The visible word first, then which way it goes, which the word alone does not say.
-                      aria.label := label,
+                      // The visible words first, then which way they go, which "next" alone does not say.
+                      aria.label := s"$caption: $direction completed matches",
                       disabled <-- busy,
                       caption,
                       onClick --> (_ => move(to))
@@ -1161,13 +1162,14 @@ object Views {
               case Some(page) if page.matches.nonEmpty            => ul(page.matches.map(row))
               case Some(page) if page.page == 0 && !page.hasOlder => p(cls := "empty", never)
               case Some(page) if page.hasOlder =>
-                  p(cls := "empty", "None finished in this time. Next goes further back.")
+                  p(cls := "empty", s"None finished in this time. Previous ${page.frame.period} goes further back.")
               case Some(_) => p(cls := "empty", "None finished in this time.")
           },
           div(
             cls := "completed-steps",
-            step("Prev", "newer", "Prev: newer completed matches", _.page > 0, _.page - 1),
-            step("Next", "older", "Next: older completed matches", _.hasOlder, _.page + 1)
+            // Earlier on the left, later on the right, as time reads.
+            step("Previous", "older", _.hasOlder, _.page + 1),
+            step("Next", "newer", _.page > 0, _.page - 1)
           )
         )
     }
