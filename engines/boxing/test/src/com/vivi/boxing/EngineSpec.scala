@@ -335,10 +335,10 @@ class EngineSpec extends FunSuite with QuietTests {
         // The scheduled length is the game's `rounds` parameter, which matchmaker lists under the
         // match itself; the result says only how many were fought.
         assert(results.results.forall(!_.scores.contains("scheduledRounds")))
-        // And the line matchmaker shows the finished bout with, by the nicknames it sent.
+        // And the line matchmaker shows the finished bout with, by the fighters' names it sent.
         assertEquals(
           results.summary,
-          Some("<strong>Alice</strong> beat <strong>Bob</strong> on points, 30–27 after 3 rounds.")
+          Some("<strong>Iron Mike</strong> beat <strong>Sugar Ray</strong> on points, 30–27 after 3 rounds.")
         )
         // The last plan ends the bout, so it names nobody next.
         assertEquals(recorder.moves.last._2.next, Nil)
@@ -368,7 +368,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(results.forall(_.scores("method").str == "knockout"))
         assertEquals(
           recorder.results.head._2.summary,
-          Some("<strong>Alice</strong> knocked out <strong>Bob</strong> in round 1.")
+          Some("<strong>Iron Mike</strong> knocked out <strong>Sugar Ray</strong> in round 1.")
         )
         assertEquals(engine.status("m-1").toOption.get.completed, true)
     }
@@ -388,6 +388,19 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(results.forall(r => !r.isWinner && r.scores("outcome").str == "draw"))
         assertEquals(
           recorder.results.head._2.summary,
+          Some("<strong>Iron Mike</strong> and <strong>Sugar Ray</strong> fought to a draw, 30–30 after 3 rounds.")
+        )
+    }
+
+    test("a bout stored before fighters' names were kept is summed up by the players' nicknames") {
+        val (engine, _, store, _, _) = fixture()
+        (1 to 3).foreach { _ =>
+            engine.plan("m-1", alice, Allocation(2, 2, 1))
+            engine.plan("m-1", bob, Allocation(2, 2, 1))
+        }
+        val unnamed = bout(store).copy(corners = bout(store).corners.map(_.copy(fighterName = None)))
+        assertEquals(
+          Bout.summary(unnamed),
           Some("<strong>Alice</strong> and <strong>Bob</strong> fought to a draw, 30–30 after 3 rounds.")
         )
     }

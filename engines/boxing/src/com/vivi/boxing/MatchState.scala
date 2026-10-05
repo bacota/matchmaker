@@ -270,11 +270,13 @@ object Bout extends Game[Bout, Corner, Plan] {
           "corner" -> ujson.Str(corner.side.toString)
         )
 
-    /** "<strong>alice</strong> knocked out <strong>bob</strong> in round 4." — who won, how, and when or by how much.
+    /** "<strong>Iron Mike</strong> knocked out <strong>Glass Joe</strong> in round 4." — who won, how, and when or by
+      * how much. Each corner by its fighter, since the fighters are who boxed; by the player's nickname for a bout
+      * stored before fighters' names were kept.
       */
     override def summary(m: Bout): Option[String] =
         Option.when(m.isOver) {
-            def who(c: Corner) = ResultText.name(c.nickname, s"${c.side} corner")
+            def who(c: Corner) = ResultText.name(c.fighterName.orElse(c.nickname), s"${c.side} corner")
             def rounds(n: Int) = if (n == 1) "1 round" else s"$n rounds"
             val fought = m.rounds.size
             (m.winner, m.corners.find(c => !m.winner.contains(c))) match {
