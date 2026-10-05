@@ -167,7 +167,7 @@ class EloRatingRepo(session: Session[IO]) {
             AND (rank IS NULL OR ranked_rating IS DISTINCT FROM rating OR ranked_matches IS DISTINCT FROM matches))
           OR (NOT (matches > 0 OR set_by IS NOT NULL) AND rank IS NOT NULL)"""
 
-    // The predicate is V46's `elo_rating_unplaced` word for word, so that the index serves it.
+    // The predicate is V45's `elo_rating_unplaced` word for word, so that the index serves it.
     private val selectUnplaced: Query[(GameId, Int), PlayerId] =
         sql"""SELECT player_id FROM elo_rating WHERE game_id = $gameId AND (#$unplacedWhere)
           ORDER BY player_id LIMIT $int4""".query(playerId)
