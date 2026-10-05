@@ -1916,16 +1916,21 @@ object Views {
         )
     }
 
-    /** A finished match's Elo cell: the change it made to the player's rating, signed, or "friendly" -- the word itself
-      * showing what that means -- for a match that changed nobody's. Empty for one with no change recorded: called off,
-      * or finished before ratings were kept. Labelled for the narrow layout, which has no heading row to show.
+    /** A finished match's Elo cell: the change it made to the player's rating, signed, or a "?" saying it was friendly
+      * -- a tip on what that means -- for a match that changed nobody's. Empty for one with no change recorded: called
+      * off, or finished before ratings were kept. Labelled for the narrow layout, which has no heading row to show.
       */
     private def eloCell(summary: MatchSummary): HtmlElement =
         if (summary.friendly)
             td(
               role := "cell",
               cls := "elo",
-              tipWord(freshTipId("friendly-tip"), "friendly", friendlyMeaning)
+              // Only the "?", a word being too wide for the column; named for a screen reader by what it marks.
+              tipped(freshTipId("friendly-tip"), friendlyMeaning, emptyNode)(
+                cls := "tip-toggle",
+                aria.label := "Friendly match",
+                "?"
+              ).amend(cls := "inline-tip")
             )
         else
             td(
@@ -4495,9 +4500,9 @@ object Views {
         tipped(id, text, control)(cls := "tip-toggle", aria.label := s"About $subject", "?")
 
     /** A word that is its own tip: hovered, focused or tapped, it shows what it means, as a "?" beside it would. For a
-      * cell too narrow to hold both a word and a "?" -- "friendly", in a completed match's Elo column, and the heading
-      * of a running match's Friendly column. A button, so that a keyboard and a finger can reach the tip as well as a
-      * mouse can, but set as the word with a dotted line under it.
+      * cell too narrow to hold both a word and a "?" -- the heading of a running match's Friendly column. A button, so
+      * that a keyboard and a finger can reach the tip as well as a mouse can, but set as the word with a dotted line
+      * under it.
       */
     private def tipWord(id: String, word: String, text: String): HtmlElement =
         tipped(id, text, emptyNode)(cls := "tip-toggle tip-word", word).amend(cls := "inline-tip")
