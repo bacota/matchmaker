@@ -1299,8 +1299,11 @@ button.toggle {
 }
 
 /* Each opponent is a way to their page: underlined so it reads as a link in the row's heading, in
-   the heading's own weight. A list of several wraps between names, never inside one. */
-.match-table .opponent button.link {
+   the heading's own weight. A list of several wraps between names, never inside one. The character
+   and owner columns of a character game are links of the same kind. */
+.match-table .opponent button.link,
+.match-table .character button.link,
+.match-table .owner button.link {
   font-weight: inherit;
   text-align: left;
   text-decoration: underline;
@@ -1484,4 +1487,10 @@ button.toggle {
     padding: 0.4rem 0.75rem 0.5rem;
     border-bottom: 0;
   }
+}
+
+/* What a character's owner wrote about it, as they wrote it: their line breaks kept. */
+.character-description {
+  white-space: pre-line;
+  overflow-wrap: break-word;
 }

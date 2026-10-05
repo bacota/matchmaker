@@ -86,19 +86,27 @@ case class MatchSummary(
     // sends none, for a match completed before engines could, and for one still being played.
     resultSummary: Option[String] = None,
     // Everyone else in the match, in seat order: who it was played against, each a way to their page.
-    // "Else" is relative to the player the list is about, who on somebody's own page is that player.
-    opponents: Seq[PublicPlayer] = Nil,
+    // "Else" is relative to the seat the list is about -- the player's on a player's page, the
+    // character's on a character's -- and in a character game each comes with the character they played.
+    opponents: Seq[Opponent] = Nil,
     // How the match came out for that same player, once there is a result to say so; `None` for a
     // match still being played, one called off, and one the engine reported no result for.
     outcome: Option[MatchOutcome] = None,
     // What the match did to that same player's Elo rating; `None` where `outcome` is, and for a friendly match, which
     // moves nobody.
-    eloDelta: Option[Int] = None
+    eloDelta: Option[Int] = None,
+    // The character in the seat the list is about, by name, in a character game; `None` in a plain one.
+    character: Option[CharacterName] = None
 ) {
 
     /** Whether the match was played to an end. */
     def completed: Boolean = completedAt.isDefined
 }
+
+/** One of the other seats in a match: the player in it -- in a character game, the one who owned the character when the
+  * match was played, which is not necessarily who owns it now -- and the character they played, where there was one.
+  */
+case class Opponent(player: PublicPlayer, character: Option[CharacterName] = None)
 
 /** How a finished match came out for one player in it: what it added to their win-loss-draw record ([[MatchRecord]]),
   * so that a match marked won here is one counted as a win in the rankings.

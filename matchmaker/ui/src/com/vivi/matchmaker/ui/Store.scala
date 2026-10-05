@@ -119,6 +119,7 @@ object Store {
         playerResults.set(None)
         publicActive.set(Seq.empty)
         publicMatchesLoading.set(false)
+        characterProfile.set(None)
         // Dropped with the rest: they are one player's answers, and the next player to sign in
         // must not be shown them, let alone save them back.
         notificationSettings.set(None)
@@ -244,9 +245,13 @@ object Store {
         case Mine(game: Option[GameId])
         case Public(playerId: PlayerId, game: Option[GameId])
 
+        /** A character's public matches, which are all in its own game. */
+        case OfCharacter(character: CharacterName)
+
         def gameId: Option[GameId] = this match {
-            case Mine(game)      => game
-            case Public(_, game) => game
+            case Mine(game)             => game
+            case Public(_, game)        => game
+            case OfCharacter(character) => Some(character.gameId)
         }
     }
 
@@ -509,6 +514,28 @@ object Store {
         }
     }
 
+    /** The character whose page is open, as anybody may see it: `None` until it has arrived. */
+    val characterProfile: Var[Option[CharacterProfile]] = Var(None)
+
+    /** A character's page: the character, its public running matches, and a window of its finished ones.
+      *
+      * Into the same slots as a player's page and under the same stamp, [[Fetch.PublicMatches]], since one of the two
+      * pages is on screen at a time and the answer wanted is the one to the question that page is asking now -- see the
+      * note above it.
+      */
+    def reloadCharacterMatches(character: CharacterName): Future[Unit] = {
+        val lists = Seq(Fetch.PublicMatches)
+        publicMatchesLoading.set(true)
+        val stamp = ask(lists)
+        gated(lists) { () =>
+            val profile =
+                reloadAs(ApiClient.characterProfile(character), stamp, lists)(p => characterProfile.set(Some(p)))
+            val running = reloadAs(ApiClient.characterMatches(character), stamp, lists)(publicActive.set)
+            showCompleted(CompletedList.OfCharacter(character))
+            profile.zip(running).map(_ => if (newest(stamp, lists)) publicMatchesLoading.set(false))
+        }
+    }
+
     /** What the caller wants to be told about, once something has asked.
       *
       * `None` is "not fetched", not "nothing set": the settings form is inside the account panel, which most sessions
@@ -565,6 +592,11 @@ object Store {
           * the previous screen had in its hand.
           */
         case OnePlayer(player: PublicPlayer)
+
+        /** A character's page, in a character game. Carries the character's name and game for the reason `OnePlayer`
+          * carries the player: whatever linked here already knew them, and the page is headed with the name.
+          */
+        case OneCharacter(character: CharacterName)
     }
 
     val page: Var[Page] = Var(Page.Home)
@@ -609,6 +641,11 @@ object Store {
                 expandedPublicGame.set(None)
                 publicActive.set(Seq.empty)
                 reloadPublicMatches(player.playerId)
+            // Emptied for the same reason, the description with the lists.
+            case Page.OneCharacter(character) =>
+                characterProfile.set(None)
+                publicActive.set(Seq.empty)
+                reloadCharacterMatches(character)
             case _ => ()
         }
     }
@@ -1061,6 +1098,7 @@ object Store {
         def fetch = list match {
             case CompletedList.Mine(_)             => ApiClient.completedMatches(query)
             case CompletedList.Public(playerId, _) => ApiClient.publicCompletedMatches(playerId, query)
+            case CompletedList.OfCharacter(c)      => ApiClient.characterCompletedMatches(c, query)
         }
         var answered = false
         reload(fetch, Fetch.Completed) { answer =>

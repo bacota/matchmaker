@@ -29,6 +29,7 @@ class MatchServiceSpec extends PropertySuite {
 
     private val matchService = TestServices.services.matches
     private val registrationService = TestServices.services.registration
+    private val characterService = TestServices.services.characters
 
     private def genUniqueString: Gen[String] =
         Gen.choose(24, 40)
@@ -385,10 +386,73 @@ class MatchServiceSpec extends PropertySuite {
         def summary(externalId: String) =
             run(matchService.completed(externalId, CompletedQuery(gameId = Some(game.gameId)))).matches
                 .find(_.matchId == matchId)
-                .map(s => (s.opponents.map(_.nickname), s.outcome, s.eloDelta))
+                .map(s => (s.opponents.map(_.player.nickname), s.outcome, s.eloDelta))
 
         assertEquals(summary(unique), Some((Seq(rival), Some(MatchOutcome.Won), Some(16))))
         assertEquals(summary(rival), Some((Seq(unique), Some(MatchOutcome.Lost), Some(-16))))
+    }
+
+    test("a character's page lists its public matches, naming each opposing character and who owned it then") {
+        val unique = genUniqueString.sample.get
+        val rival = s"r-$unique"
+        val buyer = s"b-$unique"
+        val (player, game, character, theirs, other, running, done) = run(TestSession.resource.use { session =>
+            for {
+                prepared <- setup(session, unique, unique)
+                (player, game, character) = prepared
+                running <- addMatch(session, player, game, character, s"run-$unique", None, true, isPublic = true)
+                done <- addMatch(session, player, game, character, s"done-$unique", Some(Instant.now()), false, true)
+                // Private: not on anybody's page but the players' own.
+                _ <- addMatch(session, player, game, character, s"hid-$unique", None, pending = true)
+                other <- registrationService.register(rival, rival)
+                theirs <- new CharacterRepo[String](session).create(
+                  Character(CharacterId(0), game.gameId, "rival", "description", "", Some(other.playerId))
+                )
+                _ <- List(running, done).traverse_ { matchId =>
+                    new ParticipantRepo(session).create(
+                      CharacterParticipant(
+                        ParticipantId(0),
+                        game.gameId,
+                        matchId,
+                        other.playerId,
+                        false,
+                        matchId == done,
+                        None,
+                        theirs.characterId,
+                        game.roles.head.gameRoleId
+                      ),
+                      EloRating.initial
+                    )
+                }
+                // The rival's character changes hands afterwards: the matches were still played by `other`.
+                newOwner <- registrationService.register(buyer, buyer)
+                _ <- new CharacterRepo[String](session).update(theirs.copy(playerId = Some(newOwner.playerId)))
+            } yield (player, game, character, theirs, other, running, done)
+        })
+        val mine = CharacterName(character.characterId, game.gameId, "character")
+        val against =
+            Opponent(PublicPlayer(other.playerId, rival), Some(CharacterName(theirs.characterId, game.gameId, "rival")))
+
+        val active = run(matchService.characterActive(buyer, game.gameId, character.characterId))
+        assertEquals(active.map(_.matchId), List(running))
+        assertEquals(active.map(_.opponents), List(Seq(against)))
+        assertEquals(active.map(_.character), List(Some(mine)))
+
+        val over = run(matchService.characterCompleted(buyer, game.gameId, character.characterId, CompletedQuery()))
+        assertEquals(over.matches.map(_.matchId), List(done))
+        assertEquals(over.matches.map(_.opponents), List(Seq(against)))
+
+        // From the rival's side the same match, with this player's character as the opponent.
+        val seen = run(matchService.characterActive(buyer, game.gameId, theirs.characterId))
+        assertEquals(seen.flatMap(_.opponents), List(Opponent(PublicPlayer(player.playerId, unique), Some(mine))))
+
+        // And the page's heading names the owner it has now.
+        val profile = run(characterService.profile(game.gameId, theirs.characterId, buyer))
+        assertEquals(profile.owner.map(_.nickname), Some(buyer))
+        assertEquals(profile.description, "description")
+        intercept[NotFoundError](
+          run(characterService.profile(GameId(game.gameId.value + 1), theirs.characterId, buyer))
+        )
     }
 
     /* Another player's page: the two lists a stranger is shown, which are the same two lists the

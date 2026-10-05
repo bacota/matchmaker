@@ -93,6 +93,7 @@ object Json {
     given ReadWriter[InvitedCharacter] = macroRW
     given ReadWriter[CharacterInvite] = macroRW
     given ReadWriter[CharacterName] = macroRW
+    given ReadWriter[CharacterProfile] = macroRW
     given ReadWriter[ChallengeInvitation] = macroRW
     given ReadWriter[ChallengeSummary] = macroRW
 
@@ -107,6 +108,7 @@ object Json {
 
     /** By its code: 'WON', 'LOST' or 'DREW'. */
     given ReadWriter[MatchOutcome] = readwriter[String].bimap(_.code, MatchOutcome.fromCode)
+    given ReadWriter[Opponent] = macroRW
     given ReadWriter[MatchSummary] = macroRW
     given ReadWriter[CompletedFrame] =
         readwriter[String].bimap(_.code, code => CompletedFrame.fromCode(code).getOrElse(CompletedFrame.Day))

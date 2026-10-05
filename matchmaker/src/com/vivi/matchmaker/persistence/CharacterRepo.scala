@@ -6,7 +6,18 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.{Character, CharacterId, CharacterName, Game, GameId, GameType, Player, PlayerId}
+import com.vivi.matchmaker.model.{
+    Character,
+    CharacterId,
+    CharacterName,
+    CharacterProfile,
+    Game,
+    GameId,
+    GameType,
+    Player,
+    PlayerId,
+    PublicPlayer
+}
 
 /** A character together with its owning player and the game it belongs to. */
 case class CharacterWithOwnerAndGame[T](character: Character[T], owner: Player, game: Game)
@@ -81,6 +92,30 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         session
             .execute(selectCharacterNamesForPlayerAndGame)((playerId, gameId))
             .map(_.map((id, name) => CharacterName(id, gameId, name)))
+
+    /* Everything its page shows, in one read. The owner over a LEFT JOIN, since a character may have
+     * none -- unlike `readWithOwnerAndGame`, which wants one and finds nothing without. */
+    private val selectProfile: Query[(GameId, CharacterId), (String, String, String, Option[Long], Option[String])] =
+        sql"""SELECT c.name, g.display_name, c.description, p.player_id, p.nickname
+          FROM character c
+          JOIN game g ON g.game_id = c.game_id
+          LEFT JOIN player p ON p.player_id = c.player_id
+          WHERE c.game_id = $gameId AND c.character_id = $characterId""".query(
+          text *: text *: text *: int8.opt *: text.opt
+        )
+
+    /** A character as anybody may see it, if `id` is a character of `game`: see [[CharacterProfile]]. */
+    def readProfile(game: GameId, id: CharacterId): IO[Option[CharacterProfile]] =
+        session
+            .option(selectProfile)((game, id))
+            .map(_.map { (name, gameName, description, ownerId, nickname) =>
+                CharacterProfile(
+                  CharacterName(id, game, name),
+                  gameName,
+                  description,
+                  ownerId.zip(nickname).map((owner, nick) => PublicPlayer(PlayerId(owner), nick))
+                )
+            })
 
     private val withOwnerAndGameRow: Codec[
       (

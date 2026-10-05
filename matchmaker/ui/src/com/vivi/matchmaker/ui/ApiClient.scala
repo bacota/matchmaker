@@ -80,6 +80,21 @@ object ApiClient {
     def publicCompletedMatches(playerId: PlayerId, query: CompletedQuery): Future[CompletedPage] =
         get[CompletedPage](s"/players/${playerId.value}/matches/completed" + completedQueryString(query))
 
+    /** A character as its page shows it: name, game, description and present owner. */
+    def characterProfile(character: CharacterName): Future[CharacterProfile] =
+        get[CharacterProfile](characterPath(character))
+
+    /** A character's public matches still being played, whoever owned it for each. */
+    def characterMatches(character: CharacterName): Future[Seq[MatchSummary]] =
+        get[Seq[MatchSummary]](characterPath(character) + "/matches")
+
+    /** One window of the public matches a character has finished. */
+    def characterCompletedMatches(character: CharacterName, query: CompletedQuery): Future[CompletedPage] =
+        get[CompletedPage](characterPath(character) + "/matches/completed" + completedQueryString(query))
+
+    private def characterPath(character: CharacterName): String =
+        s"/games/${character.gameId.value}/characters/${character.characterId.value}"
+
     /* The window as the server reads it, each part only when it says something. `asOf` encoded: an
      * instant carries a `:` and may carry a `+`. */
     private def completedQueryString(query: CompletedQuery): String = {

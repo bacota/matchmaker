@@ -5,6 +5,7 @@ import cats.syntax.all._
 import java.time.{Duration, Instant}
 import skunk.Session
 import com.vivi.matchmaker.model.{
+    CharacterId,
     CompletedPage,
     CompletedQuery,
     EloRating,
@@ -15,6 +16,7 @@ import com.vivi.matchmaker.model.{
     MatchOutcome,
     MatchParameter,
     MatchSummary,
+    Opponent,
     ParticipantResult,
     PlayerClock,
     PlayerId,
@@ -104,6 +106,28 @@ class MatchService(
             completedPage(repo, query)(
               span => repo.listPublicCompletedForPlayer(playerId, span),
               from => repo.hasPublicCompletedBefore(playerId, query.gameId, from)
+            )
+        }.flatMap(viewedPage)
+
+    /** The public matches a character is in that are still running, whoever owned it for each: a character's page, as
+      * [[publicActive]] is a player's, and under the same rule -- only matches marked public.
+      */
+    def characterActive(callerExternalId: String, gameId: GameId, characterId: CharacterId): IO[List[MatchSummary]] =
+        forRegistered(callerExternalId)(repo =>
+            repo.listPublicActiveForCharacter(gameId, characterId).flatMap(summarised(repo, _))
+        ).flatMap(viewed)
+
+    /** One window of the public matches a character has finished, as [[publicCompleted]] is of a player's. */
+    def characterCompleted(
+        callerExternalId: String,
+        gameId: GameId,
+        characterId: CharacterId,
+        query: CompletedQuery
+    ): IO[CompletedPage] =
+        forRegistered(callerExternalId) { repo =>
+            completedPage(repo, query.copy(gameId = Some(gameId)))(
+              span => repo.listPublicCompletedForCharacter(gameId, characterId, span),
+              from => repo.hasPublicCompletedBeforeForCharacter(gameId, characterId, from)
             )
         }.flatMap(viewedPage)
 
@@ -230,12 +254,14 @@ class MatchService(
                   archivedAt = first.archivedAt,
                   archiveExpired = first.archiveExpired,
                   resultSummary = first.resultSummary,
-                  opponents = others.map(seat => PublicPlayer(seat.seatPlayerId, seat.seatNickname)),
+                  opponents = others
+                      .map(seat => Opponent(PublicPlayer(seat.seatPlayerId, seat.seatNickname), seat.seatCharacter)),
                   // Not for a match called off, whose results -- if any -- are not how it ended.
                   outcome =
                       if (first.cancelled) None
                       else MatchOutcome.of(own.headOption.flatMap(_.seatRank), seats.flatMap(_.seatRank)),
-                  eloDelta = if (first.cancelled) None else own.headOption.flatMap(_.seatEloDelta)
+                  eloDelta = if (first.cancelled) None else own.headOption.flatMap(_.seatEloDelta),
+                  character = own.headOption.flatMap(_.seatCharacter)
                 )
             }
 

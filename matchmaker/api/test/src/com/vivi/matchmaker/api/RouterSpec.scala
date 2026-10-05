@@ -269,6 +269,9 @@ class RouterSpec extends FunSuite {
       ("GET", "/games/1/challenges", "{}"),
       ("GET", "/games/1/characters", "{}"),
       ("GET", "/games/1/players/2/characters", "{}"),
+      ("GET", "/games/1/characters/2", "{}"),
+      ("GET", "/games/1/characters/2/matches", "{}"),
+      ("GET", "/games/1/characters/2/matches/completed", "{}"),
       ("POST", "/characters", """{"name":"n","description":"d","ownerExternalId":"sub-1","state":"{}"}"""),
       // The engine's edits of a character, on behalf of its owner.
       ("PUT", "/characters/1", """{"name":"n","description":"d","ownerExternalId":"sub-1"}"""),
@@ -328,7 +331,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 57)
+        assertEquals(routed.size, 60)
         assertEquals(routed.distinct.size, routed.size)
     }
 

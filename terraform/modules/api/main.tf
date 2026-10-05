@@ -351,6 +351,10 @@ locals {
     "GET /games/{gameId}/characters",
     # Another player's characters by name, for inviting one (V25). No state.
     "GET /games/{gameId}/players/{playerId}/characters",
+    # A character's page: the character, and its public matches running and finished.
+    "GET /games/{gameId}/characters/{characterId}",
+    "GET /games/{gameId}/characters/{characterId}/matches",
+    "GET /games/{gameId}/characters/{characterId}/matches/completed",
     # No route that creates a character: a character is made in its game engine, which tells
     # matchmaker about it with "POST /characters", among the engine's routes below.
 

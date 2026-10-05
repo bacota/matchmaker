@@ -303,7 +303,8 @@ class MatchRepo(session: Session[IO]) {
     private val seatRow =
         gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: float8.opt *: timeLimitKind *:
             timeLimitUnit *: bool *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt *:
-            text.opt *: bool *: instant.opt *: bool *: settings *: text.opt *: int8 *: int4.opt *: int4.opt *: int8
+            text.opt *: bool *: instant.opt *: bool *: settings *: text.opt *: int8 *: int4.opt *: int4.opt *: int8 *:
+            int8.opt *: text.opt
 
     private def toSeatRow(
         row: (
@@ -336,7 +337,9 @@ class MatchRepo(session: Session[IO]) {
             Long,
             Option[Int],
             Option[Int],
-            Long
+            Long,
+            Option[Long],
+            Option[String]
         )
     ): MatchSeatRow = {
         val (
@@ -369,7 +372,9 @@ class MatchRepo(session: Session[IO]) {
           seatParticipantId,
           seatRank,
           seatEloDelta,
-          seatPlayerId
+          seatPlayerId,
+          seatCharacterId,
+          seatCharacterName
         ) = row
         MatchSeatRow(
           gameId,
@@ -401,7 +406,8 @@ class MatchRepo(session: Session[IO]) {
           ParticipantId(seatParticipantId),
           seatRank,
           seatEloDelta,
-          PlayerId(seatPlayerId)
+          PlayerId(seatPlayerId),
+          seatCharacterId.zip(seatCharacterName).map((id, name) => CharacterName(CharacterId(id), gameId, name))
         )
     }
 
@@ -420,7 +426,8 @@ class MatchRepo(session: Session[IO]) {
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
                  m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
-                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
+                 seat_cp.character_id, seat_char.name
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -437,6 +444,12 @@ class MatchRepo(session: Session[IO]) {
           -- caller's own seat beside the others -- whether the caller won, lost or drew. A LEFT JOIN,
           -- since a running match has no results, and one row at most per seat, on result's key.
           LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
+          -- And the character in the seat, in a character game, by its present name: who played whom
+          -- is the characters, and each seat's player is the owner who played it.
+          LEFT JOIN character_participant seat_cp
+                 ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
+          LEFT JOIN character seat_char
+                 ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
           WHERE p.player_id = $playerId AND m.completed IS NULL AND NOT m.cancelled
           -- Ordered by the caller's own deadline, most urgent first, with NULLS LAST so matches
           -- with no deadline do not crowd out ones that have one; then by seat, so a match's
@@ -464,7 +477,8 @@ class MatchRepo(session: Session[IO]) {
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
                  m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
-                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
+                 seat_cp.character_id, seat_char.name
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -473,6 +487,10 @@ class MatchRepo(session: Session[IO]) {
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
           LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
+          LEFT JOIN character_participant seat_cp
+                 ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
+          LEFT JOIN character seat_char
+                 ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
           WHERE p.player_id = $playerId AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
             AND p.completed_at >= $instant AND p.completed_at < $instant
             AND NOT m.cancelled
@@ -507,7 +525,8 @@ class MatchRepo(session: Session[IO]) {
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
                  m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
-                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
+                 seat_cp.character_id, seat_char.name
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -516,6 +535,10 @@ class MatchRepo(session: Session[IO]) {
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
           LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
+          LEFT JOIN character_participant seat_cp
+                 ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
+          LEFT JOIN character seat_char
+                 ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
           -- The seat, and only the seat: `p` is the player being asked about, and `p.completed` is
           -- whether *their* part is over. A player who is out of a match that is still running has
           -- finished with it, and it belongs among what they have played rather than among what they
@@ -544,7 +567,8 @@ class MatchRepo(session: Session[IO]) {
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
                  m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
-                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
+                 seat_cp.character_id, seat_char.name
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -553,6 +577,10 @@ class MatchRepo(session: Session[IO]) {
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
           LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
+          LEFT JOIN character_participant seat_cp
+                 ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
+          LEFT JOIN character seat_char
+                 ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
           -- The other half of that: their seat is done, whatever the match is doing -- in one window
           -- of time, as the caller's own list above, and never a match called off.
           WHERE p.player_id = $playerId AND m.public AND p.game_id = COALESCE(${gameId.opt}, p.game_id)
@@ -572,7 +600,8 @@ class MatchRepo(session: Session[IO]) {
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
                  m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
-                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
+                 seat_cp.character_id, seat_char.name
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -581,6 +610,10 @@ class MatchRepo(session: Session[IO]) {
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
           LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
+          LEFT JOIN character_participant seat_cp
+                 ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
+          LEFT JOIN character seat_char
+                 ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
           WHERE p.player_id = $playerId AND p.pending = true AND m.completed IS NULL AND m.cancelled = false
           ORDER BY p.due ASC NULLS LAST, m.start DESC, m.match_id, seat.participant_id"""
             .query(seatRow)
@@ -639,6 +672,96 @@ class MatchRepo(session: Session[IO]) {
     /** The same, for the public list on the player's page. */
     def hasPublicCompletedBefore(playerId: PlayerId, gameId: Option[GameId], before: Instant): IO[Boolean] =
         session.unique(selectPublicCompletedBefore)((playerId, gameId, before))
+
+    private val characterIdOf = SkunkIdCodecs.characterId
+
+    /* The same two public lists, for a character rather than a player: the seats the character has
+     * held, whoever owned it at the time, in the matches marked public -- the same rule as a player's
+     * page, for the same reason, and written out for the same reason too. `p` is the character's
+     * seat, so everything caller-relative is relative to it.
+     *
+     * From `character_participant`, by its index on (game_id, character_id). */
+    private val selectPublicActiveForCharacter =
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed, m.cancelled,
+                 ch.challenger = p.player_id, m.start,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
+                 p.participant_id, cp.character_id, p.pending, p.due,
+                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
+                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
+                 seat_cp.character_id, seat_char.name
+          FROM character_participant cp
+          JOIN participant p ON p.game_id = cp.game_id AND p.participant_id = cp.participant_id
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN game g ON g.game_id = m.game_id
+          JOIN challenge ch ON ch.game_id = m.game_id AND ch.challenge_id = m.challenge_id
+          JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
+          JOIN player seat_player ON seat_player.player_id = seat.player_id
+          LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
+          LEFT JOIN character_participant seat_cp
+                 ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
+          LEFT JOIN character seat_char
+                 ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
+          WHERE cp.game_id = $gameId AND cp.character_id = $characterIdOf
+            AND m.public AND p.completed_at IS NULL
+          ORDER BY m.start DESC, m.match_id, seat.participant_id"""
+            .query(seatRow)
+
+    private val selectPublicOverForCharacter =
+        sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed, m.cancelled,
+                 ch.challenger = p.player_id, m.start,
+                 EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
+                 p.participant_id, cp.character_id, p.pending, p.due,
+                 seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
+                 m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id,
+                 seat_cp.character_id, seat_char.name
+          FROM character_participant cp
+          JOIN participant p ON p.game_id = cp.game_id AND p.participant_id = cp.participant_id
+          JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN game g ON g.game_id = m.game_id
+          JOIN challenge ch ON ch.game_id = m.game_id AND ch.challenge_id = m.challenge_id
+          JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
+          JOIN player seat_player ON seat_player.player_id = seat.player_id
+          LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
+          LEFT JOIN character_participant seat_cp
+                 ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
+          LEFT JOIN character seat_char
+                 ON seat_char.game_id = seat_cp.game_id AND seat_char.character_id = seat_cp.character_id
+          WHERE cp.game_id = $gameId AND cp.character_id = $characterIdOf AND m.public
+            AND p.completed_at >= $instant AND p.completed_at < $instant
+            AND NOT m.cancelled
+          ORDER BY p.completed_at DESC, m.start DESC, m.match_id, seat.participant_id"""
+            .query(seatRow)
+
+    private val selectPublicCompletedBeforeForCharacter: Query[(GameId, CharacterId, Instant), Boolean] =
+        sql"""SELECT EXISTS (
+            SELECT 1 FROM character_participant cp
+            JOIN participant p ON p.game_id = cp.game_id AND p.participant_id = cp.participant_id
+            JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+            WHERE cp.game_id = $gameId AND cp.character_id = $characterIdOf AND m.public
+              AND p.completed_at < $instant AND NOT m.cancelled
+          )""".query(bool)
+
+    /** The public matches a character is in that are still running, one row per seat. */
+    def listPublicActiveForCharacter(game: GameId, character: CharacterId): IO[List[MatchSeatRow]] =
+        session.execute(selectPublicActiveForCharacter)((game, character)).map(_.map(toSeatRow))
+
+    /** One window of the public matches a character has finished, most recent first, one row per seat. Always in the
+      * character's own game, whatever `span.gameId` says.
+      */
+    def listPublicCompletedForCharacter(
+        game: GameId,
+        character: CharacterId,
+        span: CompletedSpan
+    ): IO[List[MatchSeatRow]] =
+        session
+            .execute(selectPublicOverForCharacter)((game, character, span.from, span.until))
+            .map(_.map(toSeatRow))
+
+    /** Whether the character finished anything public before `before`. */
+    def hasPublicCompletedBeforeForCharacter(game: GameId, character: CharacterId, before: Instant): IO[Boolean] =
+        session.unique(selectPublicCompletedBeforeForCharacter)((game, character, before))
 
     /** The database's clock, which a first window is measured back from, so that the windows and the completion times
       * they hold are read off one clock.
@@ -819,7 +942,9 @@ object MatchRepo {
         // What the match did to that seat's Elo rating (V43): `None` until it has a result, and on a friendly match's.
         seatEloDelta: Option[Int] = None,
         // Whose seat it is, so a list can link to the player.
-        seatPlayerId: PlayerId = PlayerId.unassigned
+        seatPlayerId: PlayerId = PlayerId.unassigned,
+        // The character in that seat, in a character game.
+        seatCharacter: Option[CharacterName] = None
     )
 
     /** One of a game's parameters, with every value it may take: what a match's settings are resolved against. */

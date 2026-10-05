@@ -349,6 +349,7 @@ object Views {
                 case Store.Page.NewGame           => newGamePage
                 case Store.Page.FindPlayers       => findPlayersPage
                 case Store.Page.OnePlayer(player) => playerPage(player)
+                case Store.Page.OneCharacter(c)   => characterPage(c)
             },
             inContext(screen => Store.page.signal.changes --> (_ => focusNewScreen(screen.ref)))
           )
@@ -1323,6 +1324,15 @@ object Views {
           onClick --> (_ => Store.show(Store.Page.OnePlayer(player)))
         )
 
+    /** A character's name as the way to its page, as [[playerLink]] is a player's. */
+    private def characterLink(character: CharacterName): HtmlElement =
+        button(
+          tpe := "button",
+          cls := "link",
+          character.name,
+          onClick --> (_ => Store.show(Store.Page.OneCharacter(character)))
+        )
+
     /* One flag for the whole of a player's page, because one button reloads all of it: both lists
      * come of the one action, and dimming half a screen that is being replaced whole would be a lie
      * to anything reading it. */
@@ -1389,6 +1399,72 @@ object Views {
             h2("Games"),
             listing(Store.games.signal, Store.loading(Store.Fetch.Games))(p(cls := "empty", "No games yet."))(games =>
                 ul(games.map(publicGameRow(player, _)))
+            )
+          )
+        )
+
+    /** A character's page: what its owner says about it, and its matches -- the public ones, as on a player's page, and
+      * for the same reason. Each is listed against the opposing character, with the player who owned that character for
+      * the match, since a character can change hands and its old matches are still its own.
+      */
+    private def characterPage(character: CharacterName): HtmlElement =
+        div(
+          h2(character.name),
+          child <-- Store.characterProfile.signal.combineWith(Store.publicMatchesLoading.signal).map {
+              // Only the answer about this character: another one's, still held, is not it.
+              case (Some(profile), _) if profile.character.characterId == character.characterId =>
+                  div(
+                    cls := "character-profile",
+                    p(
+                      cls := "detail",
+                      s"A character in ${profile.gameName}, ",
+                      profile.owner.fold[Modifier[HtmlElement]]("owned by nobody now")(owner =>
+                          span("owned by ", playerLink(owner))
+                      )
+                    ),
+                    if (profile.description.trim.isEmpty) emptyNode
+                    else p(cls := "character-description", profile.description)
+                  )
+              case (_, true) => p(cls := "detail", "Loading…")
+              case _         => emptyNode
+          },
+          refreshableSection(
+            "Current Matches",
+            refreshingPublicMatches,
+            () => Store.reloadCharacterMatches(character),
+            subsection = false
+          )(
+            listing(Store.publicActive.signal, Store.publicMatchesLoading.signal)(
+              p(cls := "empty", "None being played in public.")
+            )(
+              matchTable(
+                _,
+                showGame = false,
+                showParameters = true,
+                outcome = waitingFor,
+                view = watchControl,
+                dateHeading = "Started",
+                dated = summary => Some(summary.start),
+                showResult = false,
+                aboutCharacter = true
+              )
+            )
+          ),
+          refreshableSection(
+            "Recently Completed",
+            refreshingPublicMatches,
+            () => Store.reloadCharacterMatches(character),
+            subsection = false
+          )(
+            completedWindow(Store.CompletedList.OfCharacter(character), "None finished in public.")(
+              matchTable(
+                _,
+                showGame = false,
+                showParameters = true,
+                outcome = publicOutcome,
+                view = watchControl,
+                aboutCharacter = true
+              )
             )
           )
         )
@@ -1679,6 +1755,11 @@ object Views {
       *
       * The parameter columns are the parameters the matches shown were played under, in the order the first of them
       * lists them, so a game with none has no such column.
+      *
+      * Where any match shown is a character game's, the opponent is the character played against, and two columns join
+      * it: first, the character the list's own seat played -- unless the list is a character's own page
+      * (`aboutCharacter`), where every row would name the same one -- and after it the player who owned each opposing
+      * character for that match.
       */
     private def matchTable(
         matches: Seq[MatchSummary],
@@ -1691,20 +1772,27 @@ object Views {
         dateHeading: String = "Completed",
         dated: MatchSummary => Option[java.time.Instant] = _.completedAt,
         // A column for won, lost or drawn: only where the matches are finished and there is one to say.
-        showResult: Boolean = true
+        showResult: Boolean = true,
+        // Whether the list is one character's matches, which leaves out the column naming it.
+        aboutCharacter: Boolean = false
     ): HtmlElement = {
         val parameters =
             if (showParameters) matches.flatMap(_.parameters.map(_.displayName)).distinct else Seq.empty
-        val columns = (if (showGame) 1 else 0) + (if (showResult) 1 else 0) + 4 + parameters.size
+        val showOwner = matches.exists(_.character.isDefined)
+        val showCharacter = showOwner && !aboutCharacter
+        val columns = Seq(showGame, showResult, showCharacter, showOwner).count(identity) + 4 + parameters.size
 
         def matchRow(summary: MatchSummary): Seq[HtmlElement] = {
-            // Everyone else in it, each a way to their page; a match played alone has nobody to name.
+            // Everyone else in it, each a way to their page -- the character's, where they played one; a match
+            // played alone has nobody to name.
+            def listed(links: Seq[HtmlElement]): Seq[HtmlElement] =
+                links.zipWithIndex.map((link, i) => span(if (i > 0) ", " else emptyNode, link))
             val against: Modifier[HtmlElement] =
                 if (summary.opponents.isEmpty) "nobody"
-                else
-                    summary.opponents.zipWithIndex.map { (opponent, i) =>
-                        span(if (i > 0) ", " else emptyNode, playerLink(opponent))
-                    }
+                else listed(summary.opponents.map(o => o.character.fold(playerLink(o.player))(characterLink)))
+            // Who owned each opposing character for the match; nothing for a plain game's row, whose opponent is
+            // already the player.
+            val owners = summary.opponents.filter(_.character.isDefined).map(o => playerLink(o.player))
             val ended: Modifier[HtmlElement] =
                 dated(summary) match {
                     case Some(when) =>
@@ -1720,9 +1808,26 @@ object Views {
               tr(
                 cls := "match",
                 role := "row",
-                if (showGame) td(role := "cell", cls := "game", summary.gameName) else emptyNode,
+                // Labelled in the cell, as the parameters are, for the narrow layout's card.
+                if (showCharacter)
+                    td(
+                      role := "cell",
+                      cls := "character",
+                      summary.character.map(_ => dataAttr("label") := "Character"),
+                      summary.character.map(characterLink)
+                    )
+                else emptyNode,
                 // Who it was against heads its row, for a screen reader.
                 th(scopeAttr := "row", role := "rowheader", span(cls := "opponent", against)),
+                if (showOwner)
+                    td(
+                      role := "cell",
+                      cls := "owner",
+                      Option.when(owners.nonEmpty)(dataAttr("label") := "Owner"),
+                      listed(owners)
+                    )
+                else emptyNode,
+                if (showGame) td(role := "cell", cls := "game", summary.gameName) else emptyNode,
                 if (showResult)
                     td(role := "cell", cls := "result", summary.outcome.map(outcomeMark).getOrElse(emptyNode))
                 else emptyNode,
@@ -1778,8 +1883,10 @@ object Views {
               role := "rowgroup",
               tr(
                 role := "row",
-                if (showGame) heading("Game") else emptyNode,
+                if (showCharacter) heading("Character") else emptyNode,
                 heading("Opponent"),
+                if (showOwner) heading("Owner") else emptyNode,
+                if (showGame) heading("Game") else emptyNode,
                 if (showResult) heading(cls := "result", "Result") else emptyNode,
                 heading(dateHeading),
                 if (showResult) heading(cls := "elo", "Elo") else heading(cls := "friendly", friendlyHeading()),

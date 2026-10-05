@@ -228,6 +228,27 @@ object Router {
                     withPlayerId(playerId)(player => ok(services.characters.namesFor(gid, player, caller)))
                 }
 
+            // A character's page: the character as anybody may see it, and its public matches -- the
+            // same two lists as a player's page, and the same rule for which matches are on them.
+            case ("GET", "games" :: gameId :: "characters" :: characterId :: Nil) =>
+                withGameId(gameId)(gid =>
+                    withCharacterId(characterId)(id => ok(services.characters.profile(gid, id, caller)))
+                )
+
+            case ("GET", "games" :: gameId :: "characters" :: characterId :: "matches" :: Nil) =>
+                withGameId(gameId) { gid =>
+                    withCharacterId(characterId)(id => ok(services.matches.characterActive(caller, gid, id)))
+                }
+
+            case ("GET", "games" :: gameId :: "characters" :: characterId :: "matches" :: "completed" :: Nil) =>
+                withGameId(gameId) { gid =>
+                    withCharacterId(characterId)(id =>
+                        withCompletedQuery(request)(query =>
+                            ok(services.matches.characterCompleted(caller, gid, id, query))
+                        )
+                    )
+                }
+
             // A character a game engine has made, reported so it can be challenged with and seated.
             // The engine's, not a player's: characters are made in their engine, and the game they are
             // in is the one the caller's identity names. Deployed, this is one of

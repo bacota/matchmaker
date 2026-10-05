@@ -54,6 +54,24 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             } yield names
         }
 
+    /** One character as its page shows it: name, game, description and present owner, never its state. Any registered
+      * player may ask, as for [[namesFor]]. Not found where `characterId` is not a character of `gameId`.
+      */
+    def profile(gameId: GameId, characterId: CharacterId, callerExternalId: String): IO[CharacterProfile] =
+        sessionPool.use { session =>
+            for {
+                _ <- new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
+                    case Some(p) => IO.pure(p)
+                    case None    => IO.raiseError(UnauthorizedError(s"no player for caller '$callerExternalId'"))
+                }
+                found <- new CharacterRepo[T](session).readProfile(gameId, characterId)
+                profile <- found match {
+                    case Some(p) => IO.pure(p)
+                    case None    => IO.raiseError(NotFoundError(s"no character $characterId in game $gameId"))
+                }
+            } yield profile
+        }
+
     /** A character a game engine has made, recorded for `ownerExternalId` with the state the engine gave it.
       *
       * The caller is the engine — its API key deployed, `X-External-Id` locally — and the game is the one whose
