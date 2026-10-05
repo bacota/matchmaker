@@ -243,11 +243,36 @@ class EngineSpec extends FunSuite with QuietTests {
 
         engine.plan("m-1", bob, Allocation(0, 5, 0))
         val resolved = engine.stateOf(bout(store), None)
-        assertEquals(
-          resolved.rounds.map(r => (r.red, r.blue)),
-          List(Protocol.PlanRequest(5, 0, 0) -> Protocol.PlanRequest(0, 5, 0))
-        )
         assertEquals(resolved.round, 2)
+    }
+
+    test("once a round resolves, its totals are everyone's but each corner sees only its own tactics") {
+        val (engine, _, store, _, _) = fixture(createRequest(blue = Some(Fighter(8, 4, 3, 5, 5)), isPublic = true))
+        // All three rounds, so what is checked is a finished bout: finishing it gives nothing more away.
+        (1 to 3).foreach { _ =>
+            engine.plan("m-1", alice, Allocation(5, 0, 0))
+            engine.plan("m-1", bob, Allocation(0, 2, 3))
+        }
+
+        val m = bout(store)
+        assert(m.isOver)
+        val views = List(m.cornerOf(Side.Red), m.cornerOf(Side.Blue), None).map(engine.stateOf(m, _))
+        // Alice is five across the board; Bob's speed 4, agility 3 and strength 8 are doubled onto his plan.
+        views.foreach(v =>
+            assertEquals(
+              v.rounds.map(r => (r.redNumbers, r.blueNumbers)),
+              List.fill(3)(Protocol.Numbers(15, 10, 10) -> Protocol.Numbers(8, 8, 19))
+            )
+        )
+        val List(asAlice, asBob, asPublic) = views: @unchecked
+        assertEquals(
+          asAlice.rounds.map(r => (r.red, r.blue)),
+          List.fill(3)(Some(Protocol.PlanRequest(5, 0, 0)) -> None)
+        )
+        assertEquals(asBob.rounds.map(r => (r.red, r.blue)), List.fill(3)(None -> Some(Protocol.PlanRequest(0, 2, 3))))
+        assertEquals(asPublic.rounds.map(r => (r.red, r.blue)), List.fill(3)(None -> None))
+        // Bob's plan is nowhere in what Alice is sent.
+        assert(!upickle.default.write(asAlice)(using Protocol.given_ReadWriter_StateResponse).contains("\"power\":3"))
     }
 
     // ---------------------------------------------------------------------------
@@ -298,12 +323,6 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(asBob.corners.map(_.impression), List(Nil, Nil))
         assert(asPublic.corners.forall(_.fighter.isEmpty))
         assertEquals(asPublic.corners.map(_.impression), List(Nil, List("powerful", "short")))
-
-        // A round's numbers are its plan plus the characteristics, and the plans are public: so only
-        // the viewer's own are given.
-        assertEquals(asAlice.rounds.map(r => (r.redNumbers.isDefined, r.blueNumbers.isDefined)), List(true -> false))
-        assertEquals(asBob.rounds.map(r => (r.redNumbers.isDefined, r.blueNumbers.isDefined)), List(false -> true))
-        assertEquals(asPublic.rounds.map(r => (r.redNumbers.isDefined, r.blueNumbers.isDefined)), List(false -> false))
     }
 
     test("a bout that goes the distance is won on points, and matchmaker is sent the results") {

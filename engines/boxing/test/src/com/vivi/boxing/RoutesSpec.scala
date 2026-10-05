@@ -119,7 +119,7 @@ class RoutesSpec extends FunSuite {
         assertEquals(store.get("m-9").get.plans, Nil)
     }
 
-    test("the second plan resolves the round over the wire, and both plans are then told") {
+    test("the second plan resolves the round over the wire, and tells both totals but only the mover's own plan") {
         val (routes, _, _, _) = fixture()
         planning(routes, "sub-alice", 5, 0, 0)
 
@@ -127,7 +127,11 @@ class RoutesSpec extends FunSuite {
         assertEquals(state.round, 2)
         assertEquals(state.yourPlan, None)
         val round = state.rounds.head
-        assertEquals((round.red, round.blue), (Protocol.PlanRequest(5, 0, 0), Protocol.PlanRequest(0, 5, 0)))
+        assertEquals((round.red, round.blue), (None, Some(Protocol.PlanRequest(0, 5, 0))))
+        assertEquals(
+          (round.redNumbers, round.blueNumbers),
+          (Protocol.Numbers(15, 10, 10), Protocol.Numbers(10, 15, 10))
+        )
         assertEquals((round.redPoints, round.bluePoints), (Some(10), Some(9)))
         assertEquals(round.decision, "outworked")
     }

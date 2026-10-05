@@ -32,8 +32,9 @@ Only strength, speed, agility and workrate are compared: chin is left out, so it
 nor stops another characteristic getting one. When two tie at an end, both are described; when
 three or more do, nothing is said for that end.
 
-A round's offense, defense, power and effective chin give the characteristics away once its plans are public,
-so each corner is sent only its own (`redNumbers` / `blueNumbers`), and the public board neither.
+Once a round resolves, both corners' total offense, defense and power (`redNumbers` / `blueNumbers`)
+are sent to everyone. A corner's totals less its plan are its characteristics, so each corner is sent
+only its own plans (`red` / `blue`), and the public board neither. Effective chin is never sent.
 
 Each test below is only looked at if nothing above it decided the round. "Both landed" is settled
 by higher offense, then higher defense. If that still ties, the round drops to the next test down.
@@ -116,8 +117,8 @@ the plan, so two can reach matchmaker in the opposite order to the plans. Matchm
 to ignore the late one's effect on whose turn it is (V26), and status answers carry the same number.
 
 Nobody sees a plan for the current round except the corner that made it (`yourPlan`). Everyone else
-sees only `planned: true`. Once the round resolves, both plans are in `rounds` for everyone. This is
-enforced in `Engine.stateOf`, not in the page.
+sees only `planned: true`. That holds after the round resolves too: `rounds` carries each viewer's own
+plans and nobody else's. This is enforced in `Engine.stateOf`, not in the page.
 
 ## Playing locally
 

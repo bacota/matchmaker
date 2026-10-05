@@ -135,6 +135,8 @@ ${rulesDialogCss}
   th, td { padding: .375rem .25rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
   td.num, th.num { text-align: right; }
   td .plans { display: block; opacity: .7; font-size: .75rem; }
+  td .tactics { opacity: 1; font-weight: 600; }
+  td .pair { white-space: nowrap; }
   tfoot td, tfoot th { font-weight: 700; border-bottom: 0; }
 ${SignIn.css}
 ${PlayLive.css}
@@ -345,14 +347,22 @@ ${Finale.script(victory, defeat)}
     const section = document.getElementById("card-section");
     section.hidden = !state || state.rounds.length === 0;
     if (section.hidden) return;
-    const plans = p => p.offense + "/" + p.defense + "/" + p.power;
+    // Spelled out rather than "14/12/16", which a screen reader reads as dates or fractions.
+    // Each word kept with its number, so a narrow screen never leaves a number alone on a line.
+    const spent = n => [["offense", n.offense], ["defense", n.defense], ["power", n.power]]
+      .map(([k, v]) => '<span class="pair">' + k + " " + v + "</span>").join(", ");
     const rows = state.rounds.map(r => {
       const how = r.winner ? r.winner + " — " + r.decision : r.decision;
       const score = v => v === null || v === undefined ? "—" : v;
+      // Everyone's totals; the viewer's own plan only, which the engine sends nobody else.
+      const mine = state.you === "Red" ? r.red : state.you === "Blue" ? r.blue : null;
       return '<tr><th scope="row">' + r.number + "</th>" +
         '<td class="num">' + score(r.redPoints) + '</td><td class="num">' + score(r.bluePoints) + "</td>" +
         "<td>" + escapeHtml(how) +
-        '<span class="plans">Red ' + plans(r.red) + " · Blue " + plans(r.blue) + " (offense/defense/power)</span></td></tr>";
+        '<span class="plans">Red: ' + spent(r.redNumbers) + "</span>" +
+        '<span class="plans">Blue: ' + spent(r.blueNumbers) + "</span>" +
+        (mine ? '<span class="plans tactics">Your tactics: ' + spent(mine) + "</span>" : "") +
+        "</td></tr>";
     }).join("");
     const total = side => state.corners.find(c => c.side === side).points;
     document.getElementById("card").innerHTML =
@@ -567,8 +577,8 @@ ${Finale.script(victory, defeat)}
       </tbody>
     </table>
   </div>
-  <p>Once a round is scored, both plans are shown to both players, but each of you sees only your own fighter's
-  offense, defense and power for it.</p>
+  <p>Once a round is scored, everyone is shown both fighters' total offense, defense and power for it. Your tactics
+  for each round — how you spent your workrate — are shown to you alone, and you never see your opponent's.</p>
 """
     }
 

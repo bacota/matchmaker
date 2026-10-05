@@ -58,8 +58,8 @@ object Protocol {
     /** The state the play page renders, and what a scripted client polls.
       *
       * `you` is the viewer's corner, absent on the public board. `yourPlan` is the viewer's own plan for the round
-      * being fought, which they may see; the other corner's plan for that round is in nobody's answer until the round
-      * resolves, and then it is in `rounds` for everyone.
+      * being fought, which they may see; the other corner's plan is in nobody's answer, then or after the round
+      * resolves, when `rounds` carries only the viewer's own.
       *
       * `waitingFor` is who has yet to plan the current round, by corner — plural, and empty once the bout is over.
       *
@@ -103,19 +103,23 @@ object Protocol {
         fighterName: Option[String] = None
     )
 
-    case class Numbers(offense: Int, defense: Int, power: Int, effectiveChin: Int)
+    /** A corner's totals for a round: what it spent plus what its characteristics add. Not effective chin, which would
+      * give the opponent's chin away.
+      */
+    case class Numbers(offense: Int, defense: Int, power: Int)
 
-    /** A resolved round: both plans, the viewer's own numbers, and how it was scored.
+    /** A resolved round: both corners' totals, the viewer's own plan, and how it was scored.
       *
-      * A corner's numbers are its plan plus its characteristics, and the plans are public once the round resolves — so
-      * the other corner's numbers would give its characteristics away, and are absent. The public board has neither.
+      * The totals are what happened in the ring, and everyone is shown them. A plan is not: a corner's totals less its
+      * plan are its characteristics, so each corner sees only the plan it made (`red` / `blue`), the other corner never
+      * sees it, and the public board sees neither.
       */
     case class RoundView(
         number: Int,
-        red: PlanRequest,
-        blue: PlanRequest,
-        redNumbers: Option[Numbers],
-        blueNumbers: Option[Numbers],
+        red: Option[PlanRequest],
+        blue: Option[PlanRequest],
+        redNumbers: Numbers,
+        blueNumbers: Numbers,
         decision: String,
         winner: Option[String],
         redPoints: Option[Int],

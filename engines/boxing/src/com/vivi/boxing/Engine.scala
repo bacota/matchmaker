@@ -161,15 +161,16 @@ class Engine(
     /** The state a play page renders. `corner` is the viewer's own, absent on the public board.
       *
       * A fighter's characteristics are its own corner's to see, and nobody else's: the other corner gets an impression
-      * of it instead, and the round's numbers, which are built from them, are withheld with them.
+      * of it instead. Each resolved round's totals are everyone's, but a corner's plans are its own, before the round
+      * resolves and after: its totals less its plan would be its characteristics.
       *
-      * The other corner's plan for the round being fought is in nobody's answer: a viewer learns only that it has been
-      * made. Once the round resolves both plans are in `rounds`, for everyone.
+      * So the other corner's plan for the round being fought is in nobody's answer: a viewer learns only that it has
+      * been made.
       */
     def stateOf(m: Bout, corner: Option[Corner]): StateResponse = {
         val over = m.isOver
         def planView(a: Allocation) = PlanRequest(a.offense, a.defense, a.power)
-        def numbers(e: Effective) = Numbers(e.offense, e.defense, e.power, e.effectiveChin)
+        def numbers(e: Effective) = Numbers(e.offense, e.defense, e.power)
         // The viewer's own corner, whose characteristics they may see; nobody's on the public board.
         def yoursIs(side: Side) = corner.exists(_.side == side)
         def yours(c: Corner) = yoursIs(c.side)
@@ -203,10 +204,12 @@ class Engine(
           rounds = m.rounds.map(r =>
               RoundView(
                 number = r.number,
-                red = planView(r.red.allocation),
-                blue = planView(r.blue.allocation),
-                redNumbers = Option.when(yoursIs(Side.Red))(numbers(r.redEffective)),
-                blueNumbers = Option.when(yoursIs(Side.Blue))(numbers(r.blueEffective)),
+                // Only the viewer's own plan: the totals are everyone's, and a plan beside them would give
+                // that corner's characteristics away.
+                red = Option.when(yoursIs(Side.Red))(planView(r.red.allocation)),
+                blue = Option.when(yoursIs(Side.Blue))(planView(r.blue.allocation)),
+                redNumbers = numbers(r.redEffective),
+                blueNumbers = numbers(r.blueEffective),
                 decision = r.outcome.decision.label,
                 winner = r.outcome.winner.map(_.toString),
                 redPoints = r.outcome.score.map(_.red),
