@@ -58,6 +58,40 @@ class EloRatingRepo(session: Session[IO]) {
           WHERE r.game_id = $gameId AND r.rank BETWEEN $int4 AND $int4 AND (r.matches > 0 OR r.set_by IS NOT NULL)
           ORDER BY r.rank, p.nickname""".query(playerId *: text *: int4 *: int4 *: int4.opt *: int4.opt *: int4.opt)
 
+    /* The game's rated players whose nickname begins with a prefix, compared as the player search
+     * compares (PlayerRepo.nicknamePrefixPattern), in nickname order: who "Find a Player" under the
+     * rankings shows. */
+    private val selectByPrefix
+        : Query[(GameId, String, Int), (PlayerId, String, Int, Int, Option[Int], Option[Int], Option[Int])] =
+        sql"""SELECT p.player_id, p.nickname, r.rating, r.matches, r.rank, r.ranked_rating, r.ranked_matches
+          FROM elo_rating r JOIN player p ON p.player_id = r.player_id
+          WHERE r.game_id = $gameId AND (r.matches > 0 OR r.set_by IS NOT NULL)
+            AND #${PlayerRepo.nicknameKey("p")} LIKE $text
+          ORDER BY p.nickname
+          LIMIT $int4""".query(playerId *: text *: int4 *: int4 *: int4.opt *: int4.opt *: int4.opt)
+
+    /** Up to `limit` of the game's rated players whose nickname begins with `prefix`, with whether there were more — or
+      * nothing, if there is no such game. One more than `limit` is asked for, which is how it knows.
+      */
+    def findByNicknamePrefix(game: GameId, prefix: String, limit: Int): IO[Option[Leaderboard]] =
+        session.unique(gameExists)(game).flatMap {
+            case false => IO.pure(None)
+            case true =>
+                session
+                    .execute(selectByPrefix)((game, PlayerRepo.nicknamePrefixPattern(prefix), limit + 1))
+                    .map(rows =>
+                        Some(
+                          Leaderboard(
+                            rows.take(limit)
+                                .map((id, nickname, rating, matches, rank, ranked, behind) =>
+                                    EloRating(PublicPlayer(id, nickname), rating, matches, rank, ranked, behind)
+                                ),
+                            more = rows.sizeIs > limit
+                          )
+                        )
+                    )
+        }
+
     private val selectPlacedAfter: Query[(GameId, Int), Boolean] =
         sql"""SELECT EXISTS (SELECT 1 FROM elo_rating WHERE game_id = $gameId AND rank > $int4)""".query(bool)
 

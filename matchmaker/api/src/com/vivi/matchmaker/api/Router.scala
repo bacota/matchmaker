@@ -189,9 +189,11 @@ object Router {
              * what is sent is the rating, not a change to it. */
             case ("GET", "games" :: gameId :: "ratings" :: Nil) =>
                 withGameId(gameId)(id =>
-                    request.query.get("page") match {
-                        case None => ok(services.ratings.leaderboard(id, 0, caller))
-                        case Some(raw) =>
+                    // `?prefix=` finds the game's rated players by the start of a nickname instead.
+                    (request.query.get("prefix"), request.query.get("page")) match {
+                        case (Some(prefix), _) => ok(services.ratings.findInRankings(id, prefix, caller))
+                        case (None, None)      => ok(services.ratings.leaderboard(id, 0, caller))
+                        case (None, Some(raw)) =>
                             raw.toIntOption.filter(_ >= 0) match {
                                 case Some(page) => ok(services.ratings.leaderboard(id, page, caller))
                                 case None       => IO.pure(Errors.badRequest(s"'$raw' is not a valid page"))

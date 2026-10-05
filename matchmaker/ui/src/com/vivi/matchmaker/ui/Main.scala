@@ -2804,9 +2804,9 @@ object Views {
         // must not drop an answer still on its way. A save of the player's own row moves this on, as the
         // save is newer than anything asked before it.
         var mineRequest = 0
-        // The last Find a Player answer: a player's standing, shown as a line of its own at the foot of the
-        // table, or what to say instead.
-        val found = Var(Option.empty[Either[String, EloRating]])
+        // The last Find a Player answer: the game's rated players whose nickname starts with what was typed,
+        // each shown as a line of its own at the foot of the table -- or why there is no answer.
+        val found = Var(Option.empty[Either[String, Leaderboard]])
 
         /* Dropped if a newer request, mount or save has overtaken it, or it belongs to another sign-in --
          * its failure as well as its answer: the section is the next session's by then. Asks for the
@@ -2881,20 +2881,25 @@ object Views {
         val administers = Store.administers(game.gameId, player)
         val rows = board.signal.map(_.fold(List.empty[EloRating])(_.ratings))
 
-        /* Mounted whatever the page, and marked unavailable rather than removed or disabled when there is
-         * nowhere to go: either of those would take the keyboard's focus away from somebody paging through. */
-        def step(caption: String, label: String, possible: Signal[Boolean], to: Int => Int) = {
-            val blocked = possible.combineWith(busy.signal).map((can, waiting) => !can || waiting)
-            button(
+        // The line that says which places the page covers, for the focus to go to when a step it was on goes.
+        var placesLine: Option[dom.html.Element] = None
+
+        /* There only when there is somewhere to go: no Previous on the first page, no Next on the last.
+         * Built once and mounted or not, so that it is the same element whenever it is there. A step that
+         * goes while it has the focus -- Next, pressed onto the last page -- hands the focus to the line
+         * saying which places are now shown, rather than letting it fall to the top of the page. While a
+         * page is on its way it stays, marked busy, and a press is ignored. */
+        def step(caption: String, label: String, side: String, possible: Signal[Boolean], to: Int => Int) = {
+            val control = button(
               tpe := "button",
-              cls := "link",
+              cls := s"link $side",
               aria.label := label,
-              aria.disabled <-- blocked,
+              aria.disabled <-- busy.signal,
               caption,
-              onClick.compose(_.withCurrentValueOf(blocked)) --> { (_, isBlocked) =>
-                  if (!isBlocked) fetch(to(page.now()))
-              }
+              onClick --> (_ => if (!busy.now()) fetch(to(page.now()))),
+              onUnmountCallback(node => if (dom.document.activeElement == node.ref) placesLine.foreach(_.focus()))
             )
+            child <-- possible.distinct.map(if (_) control else emptyNode)
         }
 
         div(
@@ -2921,6 +2926,10 @@ object Views {
             p(
               cls := "detail",
               aria.live := "polite",
+              // Focusable from script only: where the focus goes when the step it was on goes.
+              tabIndex := -1,
+              onMountCallback(context => placesLine = Some(context.thisNode.ref)),
+              onUnmountCallback(_ => placesLine = None),
               child.text <-- board.signal.combineWith(loadError.signal).map {
                   // A failure is said in the region above; this only stops promising a page.
                   case (None, Some(_)) => ""
@@ -2937,7 +2946,10 @@ object Views {
             // player's own standing, or one they searched for -- whoever is on the page.
             child <-- rows
                 .map(_.nonEmpty)
-                .combineWith(mine.signal.map(_.exists(_.isRight)), found.signal.map(_.exists(_.isRight)))
+                .combineWith(
+                  mine.signal.map(_.exists(_.isRight)),
+                  found.signal.map(_.exists(_.exists(_.ratings.nonEmpty)))
+                )
                 .map(_ || _ || _)
                 .distinct
                 .map {
@@ -2973,9 +2985,10 @@ object Views {
                                   case (Some(Right(you)), admin) => footRow(you, "mine", "you, now", admin)
                                   case _                         => emptyNode
                               },
-                              child <-- found.signal.combineWith(administers).map {
-                                  case (Some(Right(them)), admin) => footRow(them, "found", "found, now", admin)
-                                  case _                          => emptyNode
+                              children <-- found.signal.combineWith(administers).map {
+                                  case (Some(Right(them)), admin) =>
+                                      them.ratings.map(footRow(_, "found", "found, now", admin))
+                                  case _ => Nil
                               }
                             )
                           )
@@ -2993,8 +3006,8 @@ object Views {
             ),
             div(
               cls := "completed-steps",
-              step("Previous", "Previous 20 ranks", page.signal.map(_ > 0), _ - 1),
-              step("Next", "Next 20 ranks", board.signal.map(_.exists(_.more)), _ + 1)
+              step("Previous", "Previous 20 ranks", "backward", page.signal.map(_ > 0), _ - 1),
+              step("Next", "Next 20 ranks", "forward", board.signal.map(_.exists(_.more)), _ + 1)
             ),
             findPlayer(game, found),
             child <-- administers.map(if (_) rateNewPlayer(game, savedNew, said) else emptyNode)
@@ -3017,55 +3030,54 @@ object Views {
           if (administers) td() else emptyNode
         )
 
-    /** Any player's standing in the game, by nickname: the one typed in full, as [[rateNewPlayer]] finds one. What is
-      * found goes into `found`, which the leaderboard shows as a line at its foot.
+    /** The game's rated players by the start of a nickname, as "Find Players" finds players: what is found goes into
+      * `found`, which the leaderboard shows as lines at its foot. One row of a form, under the table, since it is a way
+      * into the table rather than a section of its own.
       */
-    private def findPlayer(game: Game, found: Var[Option[Either[String, EloRating]]]): HtmlElement = {
-        val nickname = Var("")
+    private def findPlayer(game: Game, found: Var[Option[Either[String, Leaderboard]]]): HtmlElement = {
+        val prefix = Var("")
         val busy = Var(false)
-
-        def look(name: String): Future[Either[String, EloRating]] =
-            ApiClient.searchPlayers(name).flatMap { result =>
-                result.players.find(_.nickname == name) match {
-                    case None => Future.successful(Left(s"There is no player called $name."))
-                    case Some(player) =>
-                        ApiClient
-                            .standing(game.gameId, player.playerId)
-                            .map(Right(_))
-                            .recover { case ApiError(404, _) => Left(s"$name has no rating in this game.") }
-                }
-            }
+        val id = s"find-in-rankings-${game.gameId.value}"
 
         form(
-          cls := "card",
+          cls := "search find-in-rankings",
+          // Enter in the field submits, as on "Find Players".
           onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
-              val name = nickname.now().trim
-              if (name.nonEmpty) Store.runSignedIn(look(name), busy)(answer => found.set(Some(answer)))
+              val typed = prefix.now().trim
+              if (typed.nonEmpty)
+                  Store.runSignedIn(ApiClient.findInRankings(game.gameId, typed), busy)(answer =>
+                      found.set(Some(Right(answer)))
+                  )
           },
-          h3("Find a Player in Rankings"),
-          field(
-            "Nickname",
+          label(forId := id, "Find a Player"),
+          div(
+            cls := "compound",
             input(
-              tpe := "text",
-              required := true,
+              idAttr := id,
+              tpe := "search",
+              placeholder := "Nickname begins with",
               autoComplete := "off",
-              controlled(value <-- nickname.signal, onInput.mapToValue --> nickname)
-            )
+              controlled(value <-- prefix.signal, onInput.mapToValue --> prefix)
+            ),
+            // Not disabled while searching: a disabled button drops the keyboard's focus.
+            button(tpe := "submit", aria.busy <-- busy.signal, "Find")
           ),
-          // Not disabled while searching: a disabled button drops the keyboard's focus.
-          button(tpe := "submit", aria.busy <-- busy.signal, "Find"),
-          // Mounted before it has anything to say, so that what arrives in it is announced.
+          // Mounted before it has anything to say, so that what arrives in it is announced. The lines
+          // themselves are in the table, which is not announced; this says how many and where.
           div(
             aria.live := "polite",
-            // The line itself is in the table, which is not announced; this says where it went.
             child <-- found.signal.map {
                 case None            => emptyNode
                 case Some(Left(why)) => p(cls := "empty", why)
-                case Some(Right(them)) =>
-                    val place = them.rank.fold("not ranked yet")(rank => s"ranked $rank")
+                case Some(Right(none)) if none.ratings.isEmpty =>
+                    p(cls := "empty", "No rated player's nickname starts with that.")
+                case Some(Right(some)) =>
+                    val count = some.ratings.size
+                    val who = if (count == 1) "1 player" else s"$count players"
                     p(
                       cls := "detail",
-                      s"${them.player.nickname} is $place, rated ${them.rating} now; shown at the foot of the rankings."
+                      s"$who found, shown at the foot of the rankings." +
+                          (if (some.more) " Type more of the nickname to narrow it." else "")
                     )
             }
           )

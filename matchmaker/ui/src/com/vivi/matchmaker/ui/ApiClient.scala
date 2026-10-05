@@ -187,6 +187,12 @@ object ApiClient {
     def leaderboard(gameId: GameId, page: Int): Future[Leaderboard] =
         get[Leaderboard](s"/games/${gameId.value}/ratings?page=$page")
 
+    /** A game's rated players whose nickname begins with `prefix`, with their places: at most the player search's
+      * limit, and `more` when there were others.
+      */
+    def findInRankings(gameId: GameId, prefix: String): Future[Leaderboard] =
+        get[Leaderboard](s"/games/${gameId.value}/ratings?prefix=${js.URIUtils.encodeURIComponent(prefix)}")
+
     /** One player's standing in a game (V45): their place, the rating it was worked out from, and their rating now. A
       * 404 if they have no rating in it.
       */

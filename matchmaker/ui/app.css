@@ -471,6 +471,33 @@ ul {
   margin-top: 0.25rem;
 }
 
+/* "Find a Player" under the rankings: a caption, a box and a button on one row, with what it found
+   said under them -- a way into the table rather than a form of its own. */
+.find-in-rankings {
+  margin-top: 0.75rem;
+}
+
+.find-in-rankings label {
+  display: block;
+  font-weight: 600;
+}
+
+.find-in-rankings .compound {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.find-in-rankings .compound input {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+}
+
+.find-in-rankings button {
+  margin-top: 0;
+  min-height: 44px;
+}
+
 /* Previous and Next under a completed list, each named by the window it goes to ("Previous week"):
    earlier at the left, later at the right, as the leaderboard's are. Either may be absent -- Next
    on the most recent window, Previous once the oldest match is shown -- and the other keeps its
@@ -560,8 +587,10 @@ ul {
   flex-wrap: nowrap;
 }
 
-/* Next, toward now, keeps the right edge when Previous is not there. */
-.completed-steps > .newer {
+/* Next keeps the right edge when Previous is not there: toward now under a completed list, further
+   down under the rankings. */
+.completed-steps > .newer,
+.completed-steps > .forward {
   margin-left: auto;
 }
 

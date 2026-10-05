@@ -291,6 +291,34 @@ class EloRatingServiceSpec extends PropertySuite {
         assert(noGame.isInstanceOf[NotFoundError], noGame)
     }
 
+    test("finding players in the rankings by the start of a nickname finds the rated ones, whatever the case") {
+        val result = for {
+            f <- fixture()
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.first)
+            _ <- services.ending.settle(f.game.gameId, matchId)
+            // Upper case, and only the start of the name.
+            first <- services.ratings.findInRankings(
+              f.game.gameId,
+              f.first.nickname.toUpperCase.dropRight(4),
+              f.host.externalId
+            )
+            // The host has played nothing here, so has no rating to be found by.
+            host <- services.ratings.findInRankings(f.game.gameId, f.host.nickname, f.first.externalId)
+            blank <- refusal(services.ratings.findInRankings(f.game.gameId, "  ", f.first.externalId))
+            noGame <- refusal(services.ratings.findInRankings(GameId(-1), f.first.nickname, f.first.externalId))
+        } yield (f, first, host, blank, noGame)
+        val (f, first, host, blank, noGame) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(
+          first.ratings.map(r => (r.player.playerId, r.rank, r.rating)),
+          List((f.first.playerId, Some(1), 1516))
+        )
+        assert(!first.more)
+        assertEquals(host, Leaderboard(Nil, more = false))
+        assert(blank.isInstanceOf[ValidationError], blank)
+        assert(noGame.isInstanceOf[NotFoundError], noGame)
+    }
+
     test("the delta is worked out from the ratings the match began at, and added to the rating as it is now") {
         val result = for {
             f <- fixture()

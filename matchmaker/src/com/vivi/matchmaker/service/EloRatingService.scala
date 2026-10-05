@@ -44,6 +44,25 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
             } yield board
         }
 
+    /** The game's rated players whose nickname begins with `prefix`, compared as the player search compares — case and
+      * spacing aside — with their places and ratings: at most [[PlayerService.searchLimit]] of them, and `more` when
+      * there were others. For any registered player, as the leaderboard is.
+      */
+    def findInRankings(gameId: GameId, prefix: String, callerExternalId: String): IO[Leaderboard] =
+        IO.raiseWhen(prefix.trim.isEmpty)(ValidationError("search prefix must not be blank")) *>
+            sessionPool.use { session =>
+                for {
+                    _ <- requireCaller(new PlayerRepo(session).readByExternalId(callerExternalId), callerExternalId)
+                    // Read plainly: nothing is written.
+                    found <- new EloRatingRepo(session)
+                        .findByNicknamePrefix(gameId, prefix.trim, PlayerService.searchLimit)
+                        .flatMap {
+                            case Some(found) => IO.pure(found)
+                            case None        => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+                        }
+                } yield found
+            }
+
     /** One player's rating in the game — their place, the rating it was worked out from, and the rating as it stands —
       * for any registered player, as the leaderboard is. Not found if there is no such game, or the player has no
       * rating in it.
