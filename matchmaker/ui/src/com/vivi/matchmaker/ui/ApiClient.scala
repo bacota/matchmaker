@@ -183,9 +183,15 @@ object ApiClient {
           Some(write(Json.FriendlyRequest(friendly)))
         )
 
-    /** A game's Elo ratings (V42), highest first: anybody may see them. */
-    def ratings(gameId: GameId): Future[Seq[EloRating]] =
-        get[Seq[EloRating]](s"/games/${gameId.value}/ratings")
+    /** A page of a game's leaderboard (V45), from page 0, best first: anybody may see it. */
+    def leaderboard(gameId: GameId, page: Int): Future[Leaderboard] =
+        get[Leaderboard](s"/games/${gameId.value}/ratings?page=$page")
+
+    /** One player's standing in a game (V45): their place, the rating it was worked out from, and their rating now. A
+      * 404 if they have no rating in it.
+      */
+    def standing(gameId: GameId, playerId: PlayerId): Future[EloRating] =
+        get[EloRating](s"/games/${gameId.value}/ratings/${playerId.value}")
 
     /** Sets a player's Elo rating in a game outright — a game's admin's to do (V42). */
     def setRating(gameId: GameId, playerId: PlayerId, rating: Int): Future[EloRating] =

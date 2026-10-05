@@ -2,7 +2,8 @@ package com.vivi.matchmaker.service
 
 import cats.effect.IO
 import cats.syntax.all._
-import com.vivi.matchmaker.model.{EloRating, GameId, MatchId, ParticipantId, Player, PlayerId}
+import com.vivi.matchmaker.ending.MatchEndings
+import com.vivi.matchmaker.model.{EloRating, GameId, Leaderboard, MatchId, ParticipantId, Player, PlayerId}
 import com.vivi.matchmaker.persistence.{
     EloRatingRepo,
     GameAdminRepo,
@@ -13,23 +14,55 @@ import com.vivi.matchmaker.persistence.{
     TextCodec
 }
 
-/** Players' Elo ratings in each game (V42): the list anybody may read, and the setting of one that a game's admin may
-  * do. What moves them is a match that is not friendly completing, which is [[EloRatingService.rate]], called from
-  * inside the transaction that completes it.
+/** Players' Elo ratings in each game (V42): the leaderboard anybody may read, and the setting of one that a game's
+  * admin may do. What moves them is a match that is not friendly completing, which is [[EloRatingService.rate]], called
+  * from inside the transaction that completes it.
   */
-class EloRatingService[T](sessionPool: SessionPool)(using TextCodec[T]) {
+class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = MatchEndings.disabled)(using
+    TextCodec[T]
+) {
 
-    /** The game's rated players, highest first, for any registered player: a rating is there to be compared. */
-    def list(gameId: GameId, callerExternalId: String): IO[List[EloRating]] =
+    /** A page of the game's leaderboard (V45), from `page` 0, best first, for any registered player: a rating is there
+      * to be compared. A page is a range of places — page 0 everybody placed 1 to 20, page 1 21 to 40 — so a tie is
+      * never split between two pages, and a page can hold more than 20 players, or none at all after a long one.
+      */
+    def leaderboard(gameId: GameId, page: Int, callerExternalId: String): IO[Leaderboard] =
+        sessionPool.use { session =>
+            for {
+                // Capped so that the last place a page covers is still a number.
+                _ <- IO.raiseWhen(page < 0 || page >= Int.MaxValue / Leaderboard.pageSize)(
+                  ValidationError(s"there is no page $page of the leaderboard")
+                )
+                _ <- requireCaller(new PlayerRepo(session).readByExternalId(callerExternalId), callerExternalId)
+                // Read plainly: nothing is written.
+                board <- new EloRatingRepo(session)
+                    .leaderboard(gameId, page * Leaderboard.pageSize + 1, (page + 1) * Leaderboard.pageSize)
+                    .flatMap {
+                        case Some(board) => IO.pure(board)
+                        case None        => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+                    }
+            } yield board
+        }
+
+    /** One player's rating in the game — their place, the rating it was worked out from, and the rating as it stands —
+      * for any registered player, as the leaderboard is. Not found if there is no such game, or the player has no
+      * rating in it.
+      */
+    def standing(gameId: GameId, playerId: PlayerId, callerExternalId: String): IO[EloRating] =
         sessionPool.use { session =>
             for {
                 _ <- requireCaller(new PlayerRepo(session).readByExternalId(callerExternalId), callerExternalId)
-                // Read plainly, and the game's existence in the same query: nothing is written.
-                ratings <- new EloRatingRepo(session).listForGame(gameId).flatMap {
-                    case Some(ratings) => IO.pure(ratings)
-                    case None          => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+                // Read plainly: nothing is written.
+                _ <- new GameRepo[T](session).read(gameId).flatMap {
+                    case Some(_) => IO.unit
+                    case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
                 }
-            } yield ratings
+                rating <- new EloRatingRepo(session).readRated(gameId, playerId).flatMap {
+                    case Some(rating) => IO.pure(rating)
+                    case None =>
+                        IO.raiseError(NotFoundError(s"player ${playerId.value} has no rating in game ${gameId.value}"))
+                }
+            } yield rating
         }
 
     /** Sets `playerId`'s rating in the game outright, if the caller is an overall admin or an admin of that game — for
@@ -40,36 +73,39 @@ class EloRatingService[T](sessionPool: SessionPool)(using TextCodec[T]) {
       * the game and the player exist, which are held FOR SHARE until it lands, as in `GameAdminService.grant`.
       */
     def set(gameId: GameId, playerId: PlayerId, rating: Int, callerExternalId: String): IO[EloRating] =
-        sessionPool.use { session =>
-            val playerRepo = new PlayerRepo(session)
-            val ratingRepo = new EloRatingRepo(session)
-            session.transaction.use { _ =>
-                for {
-                    _ <- IO.raiseUnless(rating >= EloRating.minimum && rating <= EloRating.maximum)(
-                      ValidationError(
-                        s"an Elo rating is between ${EloRating.minimum} and ${EloRating.maximum}, not $rating"
-                      )
-                    )
-                    caller <- requireCaller(playerRepo.readByExternalIdForShare(callerExternalId), callerExternalId)
-                    _ <- new GameRepo[T](session).lockForShare(gameId).flatMap {
-                        case Some(_) => IO.unit
-                        case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
-                    }
-                    allowed <-
-                        if (caller.isAdmin) IO.pure(true)
-                        else new GameAdminRepo(session).isAdminForShare(caller.playerId, gameId)
-                    _ <- IO.raiseUnless(allowed)(
-                      UnauthorizedError("only an admin of this game may set a player's Elo rating in it")
-                    )
-                    _ <- playerRepo.readForShare(playerId).flatMap {
-                        case Some(_) => IO.unit
-                        case None    => IO.raiseError(NotFoundError(s"no player with id ${playerId.value}"))
-                    }
-                    _ <- ratingRepo.set(gameId, playerId, rating, caller.playerId)
-                    saved <- ratingRepo.read(gameId, playerId).map(_.get)
-                } yield saved
+        sessionPool
+            .use { session =>
+                val playerRepo = new PlayerRepo(session)
+                val ratingRepo = new EloRatingRepo(session)
+                session.transaction.use { _ =>
+                    for {
+                        _ <- IO.raiseUnless(rating >= EloRating.minimum && rating <= EloRating.maximum)(
+                          ValidationError(
+                            s"an Elo rating is between ${EloRating.minimum} and ${EloRating.maximum}, not $rating"
+                          )
+                        )
+                        caller <- requireCaller(playerRepo.readByExternalIdForShare(callerExternalId), callerExternalId)
+                        _ <- new GameRepo[T](session).lockForShare(gameId).flatMap {
+                            case Some(_) => IO.unit
+                            case None    => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))
+                        }
+                        allowed <-
+                            if (caller.isAdmin) IO.pure(true)
+                            else new GameAdminRepo(session).isAdminForShare(caller.playerId, gameId)
+                        _ <- IO.raiseUnless(allowed)(
+                          UnauthorizedError("only an admin of this game may set a player's Elo rating in it")
+                        )
+                        _ <- playerRepo.readForShare(playerId).flatMap {
+                            case Some(_) => IO.unit
+                            case None    => IO.raiseError(NotFoundError(s"no player with id ${playerId.value}"))
+                        }
+                        _ <- ratingRepo.set(gameId, playerId, rating, caller.playerId)
+                        saved <- ratingRepo.read(gameId, playerId).map(_.get)
+                    } yield saved
+                }
             }
-        }
+            // Placed by the listener, as a match's players are, once this has committed and released its session.
+            .flatTap(_ => endings.ratingsChanged(gameId))
 
     private def requireCaller(read: IO[Option[Player]], callerExternalId: String): IO[Player] =
         read.flatMap {

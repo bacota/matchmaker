@@ -2751,8 +2751,9 @@ object Views {
         )
     }
 
-    /** The game's Elo ratings (V42), highest first, for anybody signed in; and for its admins, a box on each row that
-      * sets that player's rating, and a form that rates a player who has none yet.
+    /** The game's leaderboard (V45), [[Leaderboard.pageSize]] places at a time, best first, for anybody signed in; and
+      * for its admins, a box on each row that sets that player's rating, and a form that rates a player who has none
+      * yet.
       *
       * Held in the section rather than the store, as [[adminMatchList]] holds its matches and for the same reason: an
       * answer written into the store would rebuild the page this sits in, remount it, and ask again.
@@ -2761,103 +2762,278 @@ object Views {
         div(child <-- currentPlayer.map(_.fold(emptyNode)(player => ratingsList(game, player))))
 
     private def ratingsList(game: Game, player: Player): HtmlElement = {
-        // `None` until the list has come back.
-        val ratings = Var(Option.empty[Seq[EloRating]])
+        // `None` until a page has come back.
+        val board = Var(Option.empty[Leaderboard])
+        // The page on screen: moved only when the page asked for arrives, so that what the section says
+        // about the rows, and where Previous, Next and a refresh go from, are about the rows it shows.
+        val page = Var(0)
         val refreshing = Var(false)
+        val busy = Var(false)
         // What the last save came to. Said aloud as well as shown: the box that was changed does not
         // say by itself that the change took.
         val said = Var("")
-        // Why the last request for the list failed, if it did: so that the section says so rather than
-        // "Loading…" for ever. Apart from `said`, and cleared by the next answer, so that a list that
+        // Why the last request for a page failed, if it did: so that the section says so rather than
+        // "Loading…" for ever. Apart from `said`, and cleared by the next answer, so that a page that
         // loads on a retry is not shown beside the failure before it -- and a save's confirmation does
-        // not overwrite why the list is missing.
+        // not overwrite why the page is missing.
         val loadError = Var(Option.empty[String])
-        // Requests for the list, so that only the newest may write it. Moved on by an unmount too,
-        // so that an answer to an earlier mount is not written into a later one, and by a row's save,
-        // so that a list asked for before the save cannot answer after it with the rating it changed.
+        // Requests for a page, so that only the newest may write it. Moved on by an unmount too, so
+        // that an answer to an earlier mount is not written into a later one, and by a row's save, so
+        // that a page asked for before the save cannot answer after it with the rating it changed.
         var request = 0
+        // The signed-in player's own standing, under the table: `None` until it has come back, and then
+        // either it or what to say instead -- that they have no rating here, or that it could not be had.
+        val mine = Var(Option.empty[Either[String, EloRating]])
+        // Requests for it, apart from the page's: a save of somebody else's row says nothing about it, and
+        // must not drop an answer still on its way. A save of the player's own row moves this on, as the
+        // save is newer than anything asked before it.
+        var mineRequest = 0
 
         /* Dropped if a newer request, mount or save has overtaken it, or it belongs to another sign-in --
-         * its failure as well as its answer: the section is the next session's by then. */
-        def fetch(): Future[Unit] = {
+         * its failure as well as its answer: the section is the next session's by then. Asks for the
+         * player's own standing alongside the page, so that a refresh refreshes both. */
+        def fetch(at: Int = page.now()): Future[Unit] = {
             request += 1
             val asked = request
             val signIn = Store.currentSignIn
             def current = asked == request && Store.stillSignedInAs(signIn)
+            mineRequest += 1
+            val askedMine = mineRequest
+            busy.set(true)
             ApiClient
-                .ratings(game.gameId)
+                .standing(game.gameId, player.playerId)
+                .map(Right(_))
+                .recover {
+                    case ApiError(404, _) => Left("You have no rating in this game yet.")
+                    case error            => Left(s"Your standing could not be loaded: ${error.getMessage}")
+                }
+                .foreach(answer =>
+                    if (askedMine == mineRequest && Store.stillSignedInAs(signIn)) mine.set(Some(answer))
+                )
+            ApiClient
+                .leaderboard(game.gameId, at)
                 .map { found =>
                     if (current) {
                         loadError.set(None)
-                        ratings.set(Some(found))
+                        // The page first: what is said about the rows is worked out as the rows arrive.
+                        page.set(at)
+                        board.set(Some(found))
                     }
                 }
                 .recover { case error =>
                     if (current) {
-                        // "Refreshed" when an older list is still on screen: it is still there, and
+                        // "Refreshed" when an older page is still on screen: it is still there, and
                         // still what it was.
-                        val what = if (ratings.now().isDefined) "refreshed" else "loaded"
-                        loadError.set(Some(s"The ratings could not be $what: ${error.getMessage}"))
+                        val what = if (board.now().isDefined) "refreshed" else "loaded"
+                        loadError.set(Some(s"The leaderboard could not be $what: ${error.getMessage}"))
                     }
                 }
+                .andThen(_ => if (asked == request) busy.set(false))
         }
 
-        /* A row's save is put in the row's place rather than re-sorted into the list: moving the row
-         * the keyboard is in would take the focus with it. The next refresh puts it in order. */
+        /* A row's save is put in the row's place rather than re-sorted into the page: moving the row
+         * the keyboard is in would take the focus with it, and its place is the listener's to work out
+         * a moment later. The next refresh shows where it went. */
         def savedRow(saved: EloRating): Unit = {
             request += 1
+            busy.set(false)
             said.set(s"${saved.player.nickname} is now rated ${saved.rating}.")
-            ratings.update(_.map(_.map(r => if (r.player.playerId == saved.player.playerId) saved else r)))
+            // The rating as saved, and the place with everything it was worked out from as they were, so
+            // that the row's place, ranked rating and matches still agree with each other and with the
+            // page: the listener places the player again, and the next refresh shows where.
+            def updated(r: EloRating) =
+                if (r.player.playerId != saved.player.playerId) r
+                else saved.copy(rank = r.rank, rankedRating = r.rankedRating, rankedMatches = r.rankedMatches)
+            board.update(_.map(b => b.copy(ratings = b.ratings.map(updated))))
+            // The player's own standing is the save's answer whole: it was read as the save committed, so
+            // it is newer than any standing asked for before it, which is dropped.
+            if (saved.player.playerId == player.playerId) {
+                mineRequest += 1
+                mine.set(Some(Right(saved)))
+            }
         }
 
-        /* A new player's save brings a row that is not on screen yet, so the list is asked again. */
+        /* A new player's save brings a row that may not be on screen, so the page is asked again. */
         def savedNew(saved: EloRating): Unit = {
             said.set(s"${saved.player.nickname} is now rated ${saved.rating}.")
             fetch()
         }
 
         val administers = Store.administers(game.gameId, player)
+        val rows = board.signal.map(_.fold(List.empty[EloRating])(_.ratings))
+
+        /* Mounted whatever the page, and marked unavailable rather than removed or disabled when there is
+         * nowhere to go: either of those would take the keyboard's focus away from somebody paging through. */
+        def step(caption: String, label: String, possible: Signal[Boolean], to: Int => Int) = {
+            val blocked = possible.combineWith(busy.signal).map((can, waiting) => !can || waiting)
+            button(
+              tpe := "button",
+              cls := "link",
+              aria.label := label,
+              aria.disabled <-- blocked,
+              caption,
+              onClick.compose(_.withCurrentValueOf(blocked)) --> { (_, isBlocked) =>
+                  if (!isBlocked) fetch(to(page.now()))
+              }
+            )
+        }
 
         div(
-          onMountCallback(_ => fetch()),
+          onMountCallback(_ => fetch(0)),
           onUnmountCallback(_ => request += 1),
           refreshableSection(
-            "Elo Ratings",
+            "Player Rankings",
             refreshing,
             () => fetch(),
             subsection = false,
             tip = Some(
               s"ratings-tip-${game.gameId.value}" ->
-                  (s"Every match of this game that is not friendly moves its players' ratings. " +
+                  (s"Players are ranked by Elo rating, and by rated matches between equal ratings. " +
+                      s"Every match of this game that is not friendly moves its players' ratings. " +
                       s"A player's first rated match starts them at ${EloRating.initial}.")
             )
           )(
             // Two regions, mounted with the section so that what arrives in them is announced: how
-            // loading the list went, and what the last save came to.
+            // loading the page went, and what the last save came to.
             div(aria.live := "polite", cls := "empty", child.text <-- loadError.signal.map(_.getOrElse(""))),
             div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
-            child <-- ratings.signal.combineWith(loadError.signal).map {
-                // A failure is said in the region above; this only stops promising a list.
-                case (None, Some(_))                   => emptyNode
-                case (None, None)                      => p(cls := "empty", "Loading…")
-                case (Some(found), _) if found.isEmpty => p(cls := "empty", "Nobody is rated yet.")
-                case (Some(_), _)                      => emptyNode
-            },
-            // Split by player, so that a row keeps its element -- and whatever is typed in its box --
-            // when the list around it is answered again.
-            ul(
-              children <-- ratings.signal
-                  .map(_.getOrElse(Seq.empty))
-                  .split(_.player.playerId)((_, first, rating) =>
-                      ratingRow(game, first.player, rating, administers, savedRow)
-                  )
+            // Which places the page covers: said when Previous or Next brings a new one. A page is a range of
+            // places rather than of players, so a long tie can leave one with nobody on it.
+            p(
+              cls := "detail",
+              aria.live := "polite",
+              child.text <-- board.signal.combineWith(loadError.signal).map {
+                  // A failure is said in the region above; this only stops promising a page.
+                  case (None, Some(_)) => ""
+                  case (None, None)    => "Loading…"
+                  case (Some(b), _) =>
+                      val first = page.now() * Leaderboard.pageSize + 1
+                      val last = first + Leaderboard.pageSize - 1
+                      if (b.ratings.nonEmpty) s"Ranks $first to $last"
+                      else if (page.now() == 0) "Nobody is ranked yet."
+                      else s"Nobody is ranked $first to $last."
+              }
             ),
+            child <-- rows.map(_.nonEmpty).distinct.map {
+                case false => emptyNode
+                case true  =>
+                    // Its own scroll, so that a phone scrolls the table sideways rather than the page.
+                    div(
+                      cls := "table-scroll",
+                      table(
+                        cls := "leaderboard",
+                        caption(cls := "sr-only", s"Player rankings in ${game.name}"),
+                        thead(
+                          tr(
+                            th(scopeAttr := "col", "Rank"),
+                            th(scopeAttr := "col", "Player"),
+                            th(scopeAttr := "col", "Ranked rating"),
+                            th(scopeAttr := "col", "Matches"),
+                            child <-- administers.map(if (_) th(scopeAttr := "col", "Set rating") else emptyNode)
+                          )
+                        ),
+                        // Split by player, so that a row keeps its element -- and whatever is typed in its
+                        // box -- when the page around it is answered again.
+                        tbody(
+                          children <-- rows.split(_.player.playerId)((_, first, rating) =>
+                              ratingRow(game, first.player, rating, administers, savedRow)
+                          )
+                        )
+                      )
+                    )
+            },
+            div(
+              cls := "completed-steps",
+              step("Previous", "Previous 20 ranks", page.signal.map(_ > 0), _ - 1),
+              step("Next", "Next 20 ranks", board.signal.map(_.exists(_.more)), _ + 1)
+            ),
+            div(
+              cls := "card",
+              h3("Your Standing"),
+              div(
+                aria.live := "polite",
+                child <-- mine.signal.map {
+                    case None               => p(cls := "empty", "Loading…")
+                    case Some(Left(why))    => p(cls := "empty", why)
+                    case Some(Right(found)) => standingDetails(found)
+                }
+              )
+            ),
+            findPlayer(game),
             child <-- administers.map(if (_) rateNewPlayer(game, savedNew, said) else emptyNode)
           )
         )
     }
 
-    /** One player's rating; for an admin of the game, with the box that sets it. */
+    /** A player's standing in a game: their place, the rating it was worked out from — what the leaderboard shows — and
+      * their rating as it stands, which a match that has just finished may have moved since.
+      */
+    private def standingDetails(rating: EloRating): HtmlElement = {
+        val notYet = "Not ranked yet"
+        dl(
+          cls := "standing",
+          dt("Rank"),
+          dd(rating.rank.fold(notYet)(_.toString)),
+          dt("Ranked rating"),
+          dd(rating.rankedRating.fold(notYet)(_.toString)),
+          dt("Latest rating"),
+          dd(rating.rating.toString)
+        )
+    }
+
+    /** Any player's standing in the game, by nickname: the one typed in full, as [[rateNewPlayer]] finds one. */
+    private def findPlayer(game: Game): HtmlElement = {
+        val nickname = Var("")
+        val busy = Var(false)
+        // The last answer: a player's standing, or what to say instead.
+        val found = Var(Option.empty[Either[String, EloRating]])
+
+        def look(name: String): Future[Either[String, EloRating]] =
+            ApiClient.searchPlayers(name).flatMap { result =>
+                result.players.find(_.nickname == name) match {
+                    case None => Future.successful(Left(s"There is no player called $name."))
+                    case Some(player) =>
+                        ApiClient
+                            .standing(game.gameId, player.playerId)
+                            .map(Right(_))
+                            .recover { case ApiError(404, _) => Left(s"$name has no rating in this game.") }
+                }
+            }
+
+        form(
+          cls := "card",
+          onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
+              val name = nickname.now().trim
+              if (name.nonEmpty) Store.runSignedIn(look(name), busy)(answer => found.set(Some(answer)))
+          },
+          h3("Find a Player"),
+          field(
+            "Nickname",
+            input(
+              tpe := "text",
+              required := true,
+              autoComplete := "off",
+              controlled(value <-- nickname.signal, onInput.mapToValue --> nickname)
+            )
+          ),
+          // Not disabled while searching: a disabled button drops the keyboard's focus.
+          button(tpe := "submit", aria.busy <-- busy.signal, "Find"),
+          // Mounted before it has anything to say, so that what arrives in it is announced.
+          div(
+            aria.live := "polite",
+            child <-- found.signal.map {
+                case None              => emptyNode
+                case Some(Left(why))   => p(cls := "empty", why)
+                case Some(Right(them)) => div(h4(them.player.nickname), standingDetails(them))
+            }
+          )
+        )
+    }
+
+    /** Which cells a table header names: its column, or its row. Not among Laminar's attributes. */
+    private val scopeAttr = htmlAttr("scope", com.raquo.laminar.codecs.StringAsIsCodec)
+
+    /** One player's row of the leaderboard; for an admin of the game, with the box that sets their rating. */
     private def ratingRow(
         game: Game,
         rated: PublicPlayer,
@@ -2865,36 +3041,43 @@ object Views {
         administers: Signal[Boolean],
         onSaved: EloRating => Unit
     ): HtmlElement =
-        li(
-          cls := "row",
-          div(cls := "title", rated.nickname),
-          div(
-            cls := "detail",
-            child.text <-- rating.map(r =>
-                s"${r.rating}, after ${r.matches} rated ${if (r.matches == 1) "match" else "matches"}"
-            )
+        tr(
+          td(
+            child <-- rating.map(_.rank match {
+                case Some(rank) => span(rank.toString)
+                // Rated a moment ago, and placed a moment from now.
+                case None => span(aria.label := "not ranked yet", "—")
+            })
           ),
+          th(scopeAttr := "row", rated.nickname),
+          // The rating and matches the place was worked out from, so that the columns read in order with the
+          // places -- matches telling equal ratings apart; the rating as it stands now is under the table, for
+          // the player and for anybody searched for.
+          td(child.text <-- rating.map(r => r.rankedRating.getOrElse(r.rating).toString)),
+          td(child.text <-- rating.map(r => r.rankedMatches.getOrElse(r.matches).toString)),
           child <-- administers.map {
               case false => emptyNode
               case true =>
                   val typed = Var("")
                   val busy = Var(false)
                   val id = s"rating-${game.gameId.value}-${rated.playerId.value}"
-                  form(
-                    cls := "compound",
-                    onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
-                        typed.now().trim.toIntOption.foreach { n =>
-                            Store.run(ApiClient.setRating(game.gameId, rated.playerId, n), busy) { saved =>
-                                typed.set("")
-                                onSaved(saved)
-                            }
-                        }
-                    },
-                    label(cls := "sr-only", forId := id, s"New rating for ${rated.nickname}"),
-                    ratingInput(id, typed, placeholder := "New rating"),
-                    // Not disabled while saving: a disabled button drops the keyboard's focus. A press
-                    // made meanwhile is ignored by the filter above instead.
-                    button(tpe := "submit", aria.busy <-- busy.signal, "Set")
+                  td(
+                    form(
+                      cls := "compound",
+                      onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
+                          typed.now().trim.toIntOption.foreach { n =>
+                              Store.run(ApiClient.setRating(game.gameId, rated.playerId, n), busy) { saved =>
+                                  typed.set("")
+                                  onSaved(saved)
+                              }
+                          }
+                      },
+                      label(cls := "sr-only", forId := id, s"New rating for ${rated.nickname}"),
+                      ratingInput(id, typed, placeholder := "New rating"),
+                      // Not disabled while saving: a disabled button drops the keyboard's focus. A press
+                      // made meanwhile is ignored by the filter above instead.
+                      button(tpe := "submit", aria.busy <-- busy.signal, "Set")
+                    )
                   )
           }
         )

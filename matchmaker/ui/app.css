@@ -481,6 +481,64 @@ ul {
   margin-top: 0.6rem;
 }
 
+/* A game's leaderboard. Scrolled sideways inside its own box on a narrow screen -- the admin's
+   column of rating boxes makes it wider than a phone -- rather than pushing the page wider. */
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.leaderboard {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.leaderboard th,
+.leaderboard td {
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+/* The player's name is the row's header, for a screen reader; it reads as an ordinary cell. */
+.leaderboard tbody th {
+  font-weight: 600;
+}
+
+/* Numbers line up by their last digit. */
+.leaderboard td:nth-child(1),
+.leaderboard td:nth-child(3),
+.leaderboard td:nth-child(4),
+.leaderboard thead th:nth-child(1),
+.leaderboard thead th:nth-child(3),
+.leaderboard thead th:nth-child(4) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A player's standing: three labelled numbers, label and number side by side. */
+.standing {
+  display: grid;
+  grid-template-columns: max-content auto;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0 0;
+}
+
+.standing dt {
+  color: var(--muted);
+}
+
+.standing dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.leaderboard .compound {
+  margin: 0;
+  flex-wrap: nowrap;
+}
+
 .completed-steps > .older {
   margin-left: auto;
 }

@@ -9,7 +9,8 @@ import com.amazonaws.services.lambda.runtime.{Context, RequestStreamHandler}
 import com.vivi.matchmaker.model.{GameId, MatchId}
 import com.vivi.matchmaker.service.{Services, Settlement}
 
-/** Settles the ends of matches: sees them archived, and tells engines of cancels — see `EndingService`.
+/** Settles the ends of matches: sees them archived, tells engines of cancels, and puts leaderboards in order — see
+  * `EndingService`. And puts a leaderboard in order when its game's ratings have moved with no match ending.
   *
   * Handler string: `com.vivi.matchmaker.ending.Handler::handleRequest`, with an SQS event source mapping in front of it
   * draining the queue `MatchEndings` puts each ending on. A further function built from the API's jar, inside the VPC
@@ -40,20 +41,31 @@ class Handler extends RequestStreamHandler {
                 log(s"no time left for $messageId; it will be delivered again")
                 Some(messageId)
 
-            case Handler.Record.Understood(messageId, ended) =>
-                val matchId = s"match ${ended.matchId} of game ${ended.gameId}"
+            case Handler.Record.Understood(messageId, message) =>
+                val (what, settling) = message match {
+                    case ended: MatchEnded =>
+                        (
+                          s"match ${ended.matchId} of game ${ended.gameId}",
+                          Handler.services.ending.settle(GameId(ended.gameId), MatchId(ended.matchId))
+                        )
+                    case changed: RatingsChanged =>
+                        (
+                          s"the leaderboard of game ${changed.gameId}",
+                          Handler.services.ending.rank(GameId(changed.gameId))
+                        )
+                }
                 try {
-                    Handler.services.ending.settle(GameId(ended.gameId), MatchId(ended.matchId)).unsafeRunSync() match {
+                    settling.unsafeRunSync() match {
                         case Settlement.Settled =>
-                            log(s"settled $matchId")
+                            log(s"settled $what")
                             None
                         case Settlement.Owed(why) =>
-                            log(s"$matchId is still owed something ($why); it will be delivered again")
+                            log(s"$what is still owed something ($why); it will be delivered again")
                             Some(messageId)
                     }
                 } catch {
                     case NonFatal(error) =>
-                        log(s"settling $matchId failed: $error")
+                        log(s"settling $what failed: $error")
                         Some(messageId)
                 }
         }
@@ -73,7 +85,7 @@ object Handler {
 
     /** One queue message, read or not. */
     enum Record {
-        case Understood(id: String, ended: MatchEnded)
+        case Understood(id: String, message: MatchEnded | RatingsChanged)
         case Unreadable(id: String, why: String)
     }
 
