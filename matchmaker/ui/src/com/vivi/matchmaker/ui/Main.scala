@@ -1793,17 +1793,16 @@ object Views {
         )
     }
 
-    /** A finished match's Elo cell: the change it made to the player's rating, signed, or "Friendly" -- with what that
-      * means a tap away -- for a match that changed nobody's. Empty for one with no change recorded: called off, or
-      * finished before ratings were kept. Labelled for the narrow layout, which has no heading row to show.
+    /** A finished match's Elo cell: the change it made to the player's rating, signed, or "friendly" -- the word itself
+      * showing what that means -- for a match that changed nobody's. Empty for one with no change recorded: called off,
+      * or finished before ratings were kept. Labelled for the narrow layout, which has no heading row to show.
       */
     private def eloCell(summary: MatchSummary): HtmlElement =
         if (summary.friendly)
             td(
               role := "cell",
               cls := "elo",
-              withTip(freshTipId("friendly-tip"), "friendly", friendlyMeaning)(span("Friendly"))
-                  .amend(cls := "inline-tip")
+              tipWord(freshTipId("friendly-tip"), "friendly", friendlyMeaning)
             )
         else
             td(
@@ -4358,12 +4357,32 @@ object Views {
           friendlyMeaning
         )(div(cls := "detail", "friendly")).amend(cls := "inline-tip")
 
-    /** The "Friendly" column's heading, with what a friendly match is a tap away. */
+    /** The "Friendly" column's heading: the word itself showing what a friendly match is, as the Elo column's
+      * "friendly" does. And the word again as plain text, for the narrow layout: there the heading row is hidden from
+      * sight but kept for a screen reader, and its buttons are taken out so that nothing unseen takes the focus --
+      * which, the word being the button, would leave the column with no name.
+      */
     private def friendlyHeading(): HtmlElement =
-        withTip(freshTipId("friendly-tip"), "friendly matches", friendlyMeaning)(span("Friendly"))
-            .amend(cls := "inline-tip")
+        span(
+          span(cls := "narrow-heading", "Friendly"),
+          tipWord(freshTipId("friendly-tip"), "Friendly", friendlyMeaning)
+        )
 
-    private def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement = {
+    private def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
+        tipped(id, text, control)(cls := "tip-toggle", aria.label := s"About $subject", "?")
+
+    /** A word that is its own tip: hovered, focused or tapped, it shows what it means, as a "?" beside it would. For a
+      * cell too narrow to hold both a word and a "?" -- "friendly", in a completed match's Elo column, and the heading
+      * of a running match's Friendly column. A button, so that a keyboard and a finger can reach the tip as well as a
+      * mouse can, but set as the word with a dotted line under it.
+      */
+    private def tipWord(id: String, word: String, text: String): HtmlElement =
+        tipped(id, text, emptyNode)(cls := "tip-toggle tip-word", word).amend(cls := "inline-tip")
+
+    /* The tip, and the button that shows it after `control`: the "?" of `withTip`, or `tipWord`'s word. */
+    private def tipped(id: String, text: String, control: Modifier[HtmlElement])(
+        toggle: Modifier[HtmlElement]*
+    ): HtmlElement = {
         val open = Var(false)
         // Escape hides a tip that hover or keyboard focus is showing, which `open` knows nothing about: this holds it
         // hidden, with focus left where it was, until the pointer or focus arrives afresh.
@@ -4391,14 +4410,12 @@ object Views {
           control,
           button(
             tpe := "button",
-            cls := "tip-toggle",
-            aria.label := s"About $subject",
-            // So that the tip is read out as the "?" is reached, rather than only shown: a screen reader is not
+            toggle,
+            // So that the tip is read out as the button is reached, rather than only shown: a screen reader is not
             // told what appeared when it opened.
             aria.describedBy := id,
             aria.expanded <-- open.signal,
             aria.controls := id,
-            "?",
             onClick --> { event =>
                 place(event.currentTarget.asInstanceOf[dom.Element])
                 dismissed.set(false)

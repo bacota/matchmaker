@@ -725,6 +725,20 @@ label.field > .hint {
   outline-offset: -6px;
   border-radius: 50%;
 }
+/* A word that is its own tip (`tipWord`): set as the word, in the text's own weight, with a dotted
+   line under it to say there is more to it. Its height on a phone is the 44px every button gets, taken
+   from the lines around it as the "?" takes it. */
+.tip-toggle.tip-word {
+  min-width: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+.tip-toggle.tip-word:focus-visible {
+  outline-offset: 2px;
+  border-radius: 3px;
+}
 .tip {
   display: none;
   /* Its own type, whatever it is beside: a tip on a column heading would otherwise be set bold and
@@ -1302,6 +1316,11 @@ button.toggle {
   text-align: center;
 }
 
+/* The plain copy of a heading that is its own tip, for the narrow layout below. */
+.match-table .narrow-heading {
+  display: none;
+}
+
 .match-table th.friendly .with-tip {
   justify-content: center;
 }
@@ -1383,8 +1402,10 @@ button.toggle {
    line under it with the board's button at the end, and the outcome is the tinted foot.
 
    The headings are still there for a screen reader, which is told it is a table by the roles
-   Main gives each part. Their "?" goes, since a button that cannot be seen should not take the
-   focus; what a parameter is called moves into its cell, and the check mark says "friendly". */
+   Main gives each part. Their tip buttons go, since a button that cannot be seen should not take
+   the focus -- a "?", or a word that is its own tip, whose plain copy (`.narrow-heading`) is shown in
+   its place so the column keeps its name. What a parameter is called moves into its cell, and the
+   check mark says "friendly". */
 @media (max-width: 40rem) {
   .match-table,
   .match-table tbody,
@@ -1406,6 +1427,10 @@ button.toggle {
   .match-table thead .tip-toggle,
   .match-table thead .tip {
     display: none;
+  }
+
+  .match-table thead .narrow-heading {
+    display: inline;
   }
 
   .match-table tbody {
