@@ -41,21 +41,21 @@ class EloRatingRepo(session: Session[IO]) {
     private val gameExists: Query[GameId, Boolean] =
         sql"""SELECT EXISTS (SELECT 1 FROM game WHERE game_id = $gameId)""".query(bool)
 
-    /* By place, then -- for a player rated a moment ago and not placed yet -- by rating after them, and
-     * by nickname among equals so that the order does not shuffle between two reads. A page at a time,
-     * by offset: the (game_id, rank) index walks a game's leaderboard in this order, and it is read a
-     * page or two deep, not a thousand.
+    /* A range of places, by the (game_id, rank) index: everybody placed from `first` to `last`
+     * inclusive, however many share them, and by nickname among equals so that the order does not
+     * shuffle between two reads. A player not placed yet -- rated a moment ago, and waiting for the
+     * listener -- is on no page until they are.
      *
      * Only players who have a rating to show: one a rated match has moved, or an admin has set. A
-     * match's start makes a row at the starting rating for each of its players who has none, so that
-     * it has a row to lock (see `EloRatingService.startingRatings`), and a player who has only ever
-     * begun a match has not been rated by it. */
-    private val selectPage: Query[(GameId, Int, Int), (PlayerId, String, Int, Int, Option[Int], Option[Int])] =
+     * player taken off the leaderboard keeps their place until the listener takes it away. */
+    private val selectPlaces: Query[(GameId, Int, Int), (PlayerId, String, Int, Int, Option[Int], Option[Int])] =
         sql"""SELECT p.player_id, p.nickname, r.rating, r.matches, r.rank, r.ranked_rating
           FROM elo_rating r JOIN player p ON p.player_id = r.player_id
-          WHERE r.game_id = $gameId AND (r.matches > 0 OR r.set_by IS NOT NULL)
-          ORDER BY r.rank NULLS LAST, r.rating DESC, p.nickname
-          OFFSET $int4 LIMIT $int4""".query(playerId *: text *: int4 *: int4 *: int4.opt *: int4.opt)
+          WHERE r.game_id = $gameId AND r.rank BETWEEN $int4 AND $int4 AND (r.matches > 0 OR r.set_by IS NOT NULL)
+          ORDER BY r.rank, p.nickname""".query(playerId *: text *: int4 *: int4 *: int4.opt *: int4.opt)
+
+    private val selectPlacedAfter: Query[(GameId, Int), Boolean] =
+        sql"""SELECT EXISTS (SELECT 1 FROM elo_rating WHERE game_id = $gameId AND rank > $int4)""".query(bool)
 
     /** Gives each player a rating in the game at [[EloRating.initial]] if they have none yet: for a rated match about
       * to move them all, and for a match about to begin, which needs a row to lock for each of its players.
@@ -119,23 +119,21 @@ class EloRatingRepo(session: Session[IO]) {
       */
     def readRated(game: GameId, player: PlayerId): IO[Option[EloRating]] = readWhere(game, player)(identity)
 
-    /** A page of the game's leaderboard, `size` players from `offset`, best first — or nothing, if there is no such
-      * game. One more than `size` is asked for, so the page can say whether there is another after it.
+    /** The game's leaderboard from place `first` to place `last`, and whether anybody is placed after it — or nothing,
+      * if there is no such game.
       */
-    def leaderboard(game: GameId, offset: Int, size: Int): IO[Option[Leaderboard]] =
+    def leaderboard(game: GameId, first: Int, last: Int): IO[Option[Leaderboard]] =
         session.unique(gameExists)(game).flatMap {
             case false => IO.pure(None)
             case true =>
-                session
-                    .execute(selectPage)((game, offset, size + 1))
-                    .map(rows =>
+                (session.execute(selectPlaces)((game, first, last)), session.unique(selectPlacedAfter)((game, last)))
+                    .mapN((rows, more) =>
                         Some(
                           Leaderboard(
-                            rows.take(size)
-                                .map((id, nickname, rating, matches, rank, ranked) =>
-                                    EloRating(PublicPlayer(id, nickname), rating, matches, rank, ranked)
-                                ),
-                            more = rows.size > size
+                            rows.map((id, nickname, rating, matches, rank, ranked) =>
+                                EloRating(PublicPlayer(id, nickname), rating, matches, rank, ranked)
+                            ),
+                            more
                           )
                         )
                     )

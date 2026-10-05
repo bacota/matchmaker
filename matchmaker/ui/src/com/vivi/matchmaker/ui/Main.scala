@@ -2751,9 +2751,9 @@ object Views {
         )
     }
 
-    /** The game's leaderboard (V45), a page of [[Leaderboard.pageSize]] players at a time, best first, for anybody
-      * signed in; and for its admins, a box on each row that sets that player's rating, and a form that rates a player
-      * who has none yet.
+    /** The game's leaderboard (V45), [[Leaderboard.pageSize]] places at a time, best first, for anybody signed in; and
+      * for its admins, a box on each row that sets that player's rating, and a form that rates a player who has none
+      * yet.
       *
       * Held in the section rather than the store, as [[adminMatchList]] holds its matches and for the same reason: an
       * answer written into the store would rebuild the page this sits in, remount it, and ask again.
@@ -2880,19 +2880,21 @@ object Views {
             // loading the page went, and what the last save came to.
             div(aria.live := "polite", cls := "empty", child.text <-- loadError.signal.map(_.getOrElse(""))),
             div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
-            // Which players the page is: said when Previous or Next brings a new one.
+            // Which places the page covers: said when Previous or Next brings a new one. A page is a range of
+            // places rather than of players, so a long tie can leave one with nobody on it.
             p(
               cls := "detail",
               aria.live := "polite",
               child.text <-- board.signal.combineWith(loadError.signal).map {
                   // A failure is said in the region above; this only stops promising a page.
-                  case (None, Some(_))                                      => ""
-                  case (None, None)                                         => "Loading…"
-                  case (Some(b), _) if b.ratings.isEmpty && page.now() == 0 => "Nobody is rated yet."
-                  case (Some(b), _) if b.ratings.isEmpty                    => "Nobody is this far down."
+                  case (None, Some(_)) => ""
+                  case (None, None)    => "Loading…"
                   case (Some(b), _) =>
                       val first = page.now() * Leaderboard.pageSize + 1
-                      s"Players $first to ${first + b.ratings.size - 1}"
+                      val last = first + Leaderboard.pageSize - 1
+                      if (b.ratings.nonEmpty) s"Ranks $first to $last"
+                      else if (page.now() == 0) "Nobody is ranked yet."
+                      else s"Nobody is ranked $first to $last."
               }
             ),
             child <-- rows.map(_.nonEmpty).distinct.map {
@@ -2925,8 +2927,8 @@ object Views {
             },
             div(
               cls := "completed-steps",
-              step("Previous", "Previous 20 players", page.signal.map(_ > 0), _ - 1),
-              step("Next", "Next 20 players", board.signal.map(_.exists(_.more)), _ + 1)
+              step("Previous", "Previous 20 ranks", page.signal.map(_ > 0), _ - 1),
+              step("Next", "Next 20 ranks", board.signal.map(_.exists(_.more)), _ + 1)
             ),
             div(
               cls := "card",

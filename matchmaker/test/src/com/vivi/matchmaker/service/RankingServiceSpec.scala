@@ -196,20 +196,26 @@ class RankingServiceSpec extends PropertySuite {
         assertEquals(placed, wanted)
     }
 
-    test("the leaderboard is paged twenty at a time, and says whether there is more") {
+    test("the leaderboard is paged twenty places at a time, a tie is never split, and it says whether there is more") {
         val result = for {
             game <- makeGame()
-            people <- players(25)
-            _ <- write(game, people.zipWithIndex.map((p, i) => p -> Rating(2000 - i, true)).toMap)
+            people <- players(26)
+            // 1 to 18 apart, then four sharing 19, then 23 to 26 -- so the first page holds 22 players.
+            _ <- write(
+              game,
+              people.zipWithIndex
+                  .map((p, i) => p -> Rating(if (i < 18) 2000 - i else if (i < 22) 1000 else 900 - i, true))
+                  .toMap
+            )
             _ <- ranking.rank(game.gameId)
             first <- services.ratings.leaderboard(game.gameId, 0, people.head.externalId)
             second <- services.ratings.leaderboard(game.gameId, 1, people.head.externalId)
             third <- services.ratings.leaderboard(game.gameId, 2, people.head.externalId)
         } yield (first, second, third)
         val (first, second, third) = result.timeout(caseTimeout).unsafeRunSync()
-        assertEquals(first.ratings.flatMap(_.rank), (1 to 20).toList)
+        assertEquals(first.ratings.flatMap(_.rank), (1 to 18).toList ++ List.fill(4)(19))
         assert(first.more)
-        assertEquals(second.ratings.flatMap(_.rank), (21 to 25).toList)
+        assertEquals(second.ratings.flatMap(_.rank), (23 to 26).toList)
         assert(!second.more)
         assertEquals(third, Leaderboard(Nil, more = false))
     }

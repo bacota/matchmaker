@@ -13,12 +13,14 @@ case class EloRating(
     rankedRating: Option[Int] = None
 )
 
-/** One page of a game's leaderboard, best first, and whether there is a page after it. */
+/** One page of a game's leaderboard — everybody placed in its range of places, best first — and whether anybody is
+  * placed after it.
+  */
 case class Leaderboard(ratings: List[EloRating], more: Boolean)
 
 object Leaderboard {
 
-    /** How many players a page of it holds. */
+    /** How many places a page of it covers: more players than this when some of them share a place. */
     val pageSize: Int = 20
 }
 

@@ -23,16 +23,20 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
 ) {
 
     /** A page of the game's leaderboard (V45), from `page` 0, best first, for any registered player: a rating is there
-      * to be compared.
+      * to be compared. A page is a range of places — page 0 everybody placed 1 to 20, page 1 21 to 40 — so a tie is
+      * never split between two pages, and a page can hold more than 20 players, or none at all after a long one.
       */
     def leaderboard(gameId: GameId, page: Int, callerExternalId: String): IO[Leaderboard] =
         sessionPool.use { session =>
             for {
-                _ <- IO.raiseWhen(page < 0)(ValidationError(s"a page of the leaderboard is 0 or more, not $page"))
+                // Capped so that the last place a page covers is still a number.
+                _ <- IO.raiseWhen(page < 0 || page >= Int.MaxValue / Leaderboard.pageSize)(
+                  ValidationError(s"there is no page $page of the leaderboard")
+                )
                 _ <- requireCaller(new PlayerRepo(session).readByExternalId(callerExternalId), callerExternalId)
                 // Read plainly: nothing is written.
                 board <- new EloRatingRepo(session)
-                    .leaderboard(gameId, page * Leaderboard.pageSize, Leaderboard.pageSize)
+                    .leaderboard(gameId, page * Leaderboard.pageSize + 1, (page + 1) * Leaderboard.pageSize)
                     .flatMap {
                         case Some(board) => IO.pure(board)
                         case None        => IO.raiseError(NotFoundError(s"no game with id ${gameId.value}"))

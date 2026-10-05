@@ -169,10 +169,18 @@ class EloRatingServiceSpec extends PropertySuite {
             _ <- through.engine.recordResults(f.game.gameId, matchId, results, f.game.externalId)
         } yield ()
 
+    /** The two players' ratings as anybody may see them: a player no rated match has moved and no admin has set has
+      * none. Not by the leaderboard, which shows a player only once the listener has placed them.
+      */
     private def ratings(f: Fixture): IO[Map[PlayerId, (Int, Int)]] =
-        services.ratings
-            .leaderboard(f.game.gameId, 0, f.first.externalId)
-            .map(_.ratings.map(r => r.player.playerId -> (r.rating, r.matches)).toMap)
+        TestSession.resource.use { session =>
+            val repo = new EloRatingRepo(session)
+            List(f.first, f.second)
+                .traverse(p =>
+                    repo.readRated(f.game.gameId, p.playerId).map(_.map(r => p.playerId -> (r.rating, r.matches)))
+                )
+                .map(_.flatten.toMap)
+        }
 
     /** The two players' rating rows as stored, listed or not: the list leaves out a player no rated match has moved and
       * no admin has set, and the row is still there for the match that began it.
