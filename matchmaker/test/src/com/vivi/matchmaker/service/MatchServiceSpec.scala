@@ -335,7 +335,7 @@ class MatchServiceSpec extends PropertySuite {
         assert(!page.hasOlder)
     }
 
-    test("a finished match names whom each player played, and says which of them won") {
+    test("a finished match names whom each player played, says which of them won, and what it did to each rating") {
         val now = Instant.now()
         val unique = genUniqueString.sample.get
         val rival = s"r-$unique"
@@ -369,7 +369,14 @@ class MatchServiceSpec extends PropertySuite {
                     val won = seat.playerId == player.playerId
                     results.create(
                       com.vivi.matchmaker.model
-                          .Result(game.gameId, seat.participantId, rank = if (won) 1 else 2, Map.empty, isWinner = won)
+                          .Result(
+                            game.gameId,
+                            seat.participantId,
+                            rank = if (won) 1 else 2,
+                            Map.empty,
+                            isWinner = won,
+                            eloDelta = Some(if (won) 16 else -16)
+                          )
                     )
                 }
             } yield (game, matchId)
@@ -378,10 +385,10 @@ class MatchServiceSpec extends PropertySuite {
         def summary(externalId: String) =
             run(matchService.completed(externalId, CompletedQuery(gameId = Some(game.gameId)))).matches
                 .find(_.matchId == matchId)
-                .map(s => (s.opponents.map(_.nickname), s.outcome))
+                .map(s => (s.opponents.map(_.nickname), s.outcome, s.eloDelta))
 
-        assertEquals(summary(unique), Some((Seq(rival), Some(MatchOutcome.Won))))
-        assertEquals(summary(rival), Some((Seq(unique), Some(MatchOutcome.Lost))))
+        assertEquals(summary(unique), Some((Seq(rival), Some(MatchOutcome.Won), Some(16))))
+        assertEquals(summary(rival), Some((Seq(unique), Some(MatchOutcome.Lost), Some(-16))))
     }
 
     /* Another player's page: the two lists a stranger is shown, which are the same two lists the

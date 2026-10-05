@@ -303,7 +303,7 @@ class MatchRepo(session: Session[IO]) {
     private val seatRow =
         gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: float8.opt *: timeLimitKind *:
             timeLimitUnit *: bool *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt *:
-            text.opt *: bool *: instant.opt *: bool *: settings *: text.opt *: int8 *: int4.opt *: int8
+            text.opt *: bool *: instant.opt *: bool *: settings *: text.opt *: int8 *: int4.opt *: int4.opt *: int8
 
     private def toSeatRow(
         row: (
@@ -334,6 +334,7 @@ class MatchRepo(session: Session[IO]) {
             String,
             Option[String],
             Long,
+            Option[Int],
             Option[Int],
             Long
         )
@@ -367,6 +368,7 @@ class MatchRepo(session: Session[IO]) {
           resultSummary,
           seatParticipantId,
           seatRank,
+          seatEloDelta,
           seatPlayerId
         ) = row
         MatchSeatRow(
@@ -398,6 +400,7 @@ class MatchRepo(session: Session[IO]) {
           resultSummary,
           ParticipantId(seatParticipantId),
           seatRank,
+          seatEloDelta,
           PlayerId(seatPlayerId)
         )
     }
@@ -417,7 +420,7 @@ class MatchRepo(session: Session[IO]) {
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
                  m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
-                 m.result_summary, seat.participant_id, r.rank, seat.player_id
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -461,7 +464,7 @@ class MatchRepo(session: Session[IO]) {
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
                  m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
-                 m.result_summary, seat.participant_id, r.rank, seat.player_id
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -504,7 +507,7 @@ class MatchRepo(session: Session[IO]) {
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
                  m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
-                 m.result_summary, seat.participant_id, r.rank, seat.player_id
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -541,7 +544,7 @@ class MatchRepo(session: Session[IO]) {
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
                  m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
-                 m.result_summary, seat.participant_id, r.rank, seat.player_id
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -569,7 +572,7 @@ class MatchRepo(session: Session[IO]) {
                  -- needs. The same column on every list, because who may watch does not depend on
                  -- which list the match is being read for.
                  m.public_url, m.friendly, m.archived_at, #${ArchiveRepo.expired("m")}, m.settings,
-                 m.result_summary, seat.participant_id, r.rank, seat.player_id
+                 m.result_summary, seat.participant_id, r.rank, r.elo_delta, seat.player_id
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN game g ON g.game_id = m.game_id
@@ -813,6 +816,8 @@ object MatchRepo {
         // finished: `None` until the engine reports a result for it.
         seatParticipantId: ParticipantId = ParticipantId(0L),
         seatRank: Option[Int] = None,
+        // What the match did to that seat's Elo rating (V43): `None` until it has a result, and on a friendly match's.
+        seatEloDelta: Option[Int] = None,
         // Whose seat it is, so a list can link to the player.
         seatPlayerId: PlayerId = PlayerId.unassigned
     )

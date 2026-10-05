@@ -1629,10 +1629,10 @@ object Views {
         summary.resultSummary.map(resultSummary).getOrElse(emptyNode)
 
     /** Matches as a table: a row per match — its game (where the list mixes games), who it was played against, when it
-      * ended (or, for matches still being played, started), whether it was friendly, one column per game parameter (on
-      * a page about one game, where every match has the same ones), and the way to look at its board — and under each,
-      * a row of its own across the table: how a finished match came out, marked won, lost or drawn, or whom a running
-      * one is waiting for.
+      * ended (or, for matches still being played, started), what it did to their Elo rating -- or, for matches still
+      * being played, whether it is friendly -- one column per game parameter (on a page about one game, where every
+      * match has the same ones), and the way to look at its board — and under each, a row of its own across the table:
+      * how a finished match came out, marked won, lost or drawn, or whom a running one is waiting for.
       *
       * The parameter columns are the parameters the matches shown were played under, in the order the first of them
       * lists them, so a game with none has no such column.
@@ -1684,13 +1684,17 @@ object Views {
                     td(role := "cell", cls := "result", summary.outcome.map(outcomeMark).getOrElse(emptyNode))
                 else emptyNode,
                 td(role := "cell", ended),
-                // A mark for a friendly match and nothing for a rated one, with a word for a screen reader either way.
-                td(
-                  role := "cell",
-                  cls := "friendly",
-                  if (summary.friendly) span(cls := "mark", aria.hidden := true, "✓") else emptyNode,
-                  span(cls := "sr-only", if (summary.friendly) "friendly" else "rated")
-                ),
+                // Where the matches are finished, what each did to the player's rating -- or, for a friendly match,
+                // which moved nobody, that it was one. Otherwise a mark for a friendly match and nothing for a rated
+                // one, with a word for a screen reader either way.
+                if (showResult) eloCell(summary)
+                else
+                    td(
+                      role := "cell",
+                      cls := "friendly",
+                      if (summary.friendly) span(cls := "mark", aria.hidden := true, "✓") else emptyNode,
+                      span(cls := "sr-only", if (summary.friendly) "friendly" else "rated")
+                    ),
                 // Named in the cell as well as the heading, for the narrow layout that has no heading row to show.
                 parameters.map(parameter =>
                     td(
@@ -1735,7 +1739,7 @@ object Views {
                 heading("Opponent"),
                 if (showResult) heading(cls := "result", "Result") else emptyNode,
                 heading(dateHeading),
-                heading(cls := "friendly", friendlyHeading()),
+                if (showResult) heading(cls := "elo", "Elo") else heading(cls := "friendly", friendlyHeading()),
                 parameters.map(parameter => heading(parameter)),
                 heading(span(cls := "sr-only", "Board"))
               )
@@ -1745,6 +1749,30 @@ object Views {
           )
         )
     }
+
+    /** A finished match's Elo cell: the change it made to the player's rating, signed, or "Friendly" -- with what that
+      * means a tap away -- for a match that changed nobody's. Empty for one with no change recorded: called off, or
+      * finished before ratings were kept. Labelled for the narrow layout, which has no heading row to show.
+      */
+    private def eloCell(summary: MatchSummary): HtmlElement =
+        if (summary.friendly)
+            td(
+              role := "cell",
+              cls := "elo",
+              withTip(freshTipId("friendly-tip"), "friendly", friendlyMeaning)(span("Friendly"))
+                  .amend(cls := "inline-tip")
+            )
+        else
+            td(
+              role := "cell",
+              cls := "elo",
+              summary.eloDelta.map(_ => dataAttr("label") := "Elo"),
+              summary.eloDelta.map {
+                  case delta if delta > 0 => s"+$delta"
+                  case delta if delta < 0 => s"−${-delta}"
+                  case _                  => "±0"
+              }
+            )
 
     /** A finished match's Result cell: won, lost or drawn, for whoever the list is about. The mark is drawn for the
       * eye, and the word is what a screen reader hears.

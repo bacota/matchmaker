@@ -1296,6 +1296,17 @@ button.toggle {
   padding-bottom: 0.5rem;
 }
 
+/* What a finished match did to the player's rating: a signed number, never broken from its sign. */
+.match-table .elo {
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.match-table td.elo .with-tip {
+  justify-content: center;
+}
+
 /* Won, lost or drawn, in its own column: a small coloured disc. */
 .match-table .result {
   text-align: center;

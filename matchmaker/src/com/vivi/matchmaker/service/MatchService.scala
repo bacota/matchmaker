@@ -234,7 +234,8 @@ class MatchService(
                   // Not for a match called off, whose results -- if any -- are not how it ended.
                   outcome =
                       if (first.cancelled) None
-                      else MatchOutcome.of(own.headOption.flatMap(_.seatRank), seats.flatMap(_.seatRank))
+                      else MatchOutcome.of(own.headOption.flatMap(_.seatRank), seats.flatMap(_.seatRank)),
+                  eloDelta = if (first.cancelled) None else own.headOption.flatMap(_.seatEloDelta)
                 )
             }
 

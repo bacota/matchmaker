@@ -90,7 +90,10 @@ case class MatchSummary(
     opponents: Seq[PublicPlayer] = Nil,
     // How the match came out for that same player, once there is a result to say so; `None` for a
     // match still being played, one called off, and one the engine reported no result for.
-    outcome: Option[MatchOutcome] = None
+    outcome: Option[MatchOutcome] = None,
+    // What the match did to that same player's Elo rating; `None` where `outcome` is, and for a friendly match, which
+    // moves nobody.
+    eloDelta: Option[Int] = None
 ) {
 
     /** Whether the match was played to an end. */
