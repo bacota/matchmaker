@@ -13,9 +13,18 @@ class FinaleSpec extends FunSuite {
     private val lose = Finale.Art("""<svg aria-label="lost"></svg>""", "Not this time.")
 
     /** What the box looked like after each step: whether it is hidden, its class, its picture and caption, and how many
-      * times the picture has been drawn in all.
+      * times the picture has been drawn in all — and how many times the page's status line has been given the focus,
+      * and the `tabindex` it carried.
       */
-    private case class Seen(hidden: Boolean, cls: String, art: String, caption: String, draws: Int)
+    private case class Seen(
+        hidden: Boolean,
+        cls: String,
+        art: String,
+        caption: String,
+        draws: Int,
+        statusFocused: Int = 0,
+        statusTabindex: Option[String] = None
+    )
 
     /** Runs `steps` — JavaScript calling `show(...)` and `close()` — and reports the box after each one. */
     private def run(steps: String*): Seq[Seen] = {
@@ -25,13 +34,16 @@ class FinaleSpec extends FunSuite {
 const els = { "finale": el(), "finale-caption": el(), "finale-close": el() };
 let draws = 0, art = "";
 els["finale-art"] = { set innerHTML(v) { draws++; art = v; }, get innerHTML() { return art; } };
+els["status"] = { attrs: {}, focused: 0, hasAttribute(n) { return n in this.attrs; },
+  setAttribute(n, v) { this.attrs[n] = v; }, focus() { this.focused++; } };
 globalThis.document = { getElementById: id => els[id] };
 ${Finale.script(win, lose)}
 const show = finale();
 const close = () => els["finale-close"].listeners.click();
 const seen = [];
 const look = () => seen.push({ hidden: els.finale.hidden, cls: els.finale.className, art,
-  caption: els["finale-caption"].textContent, draws });
+  caption: els["finale-caption"].textContent, draws, statusFocused: els.status.focused,
+  statusTabindex: els.status.attrs.tabindex === undefined ? null : els.status.attrs.tabindex });
 ${steps.map(step => s"$step; look();").mkString("\n")}
 console.log(JSON.stringify(seen));
 """
@@ -50,7 +62,17 @@ console.log(JSON.stringify(seen));
                 .read(output)
                 .arr
                 .toSeq
-                .map(s => Seen(s("hidden").bool, s("cls").str, s("art").str, s("caption").str, s("draws").num.toInt))
+                .map(s =>
+                    Seen(
+                      s("hidden").bool,
+                      s("cls").str,
+                      s("art").str,
+                      s("caption").str,
+                      s("draws").num.toInt,
+                      s("statusFocused").num.toInt,
+                      s("statusTabindex").strOpt
+                    )
+                )
         } finally Files.deleteIfExists(file)
     }
 
@@ -72,6 +94,12 @@ console.log(JSON.stringify(seen));
         val seen = run("""show("win")""", "close()", """show("win")""", "show(null)", """show("lose")""")
         assert(!seen(0).hidden)
         assert(seen.drop(1).forall(_.hidden))
+    }
+
+    test("closing hands the focus to the status line, which is made focusable to take it, rather than dropping it") {
+        val seen = run("""show("win")""", "close()")
+        assertEquals((seen(0).statusFocused, seen(0).statusTabindex), (0, None))
+        assertEquals((seen(1).statusFocused, seen(1).statusTabindex), (1, Some("-1")))
     }
 
     test("a picture cannot close the script it is carried in") {
