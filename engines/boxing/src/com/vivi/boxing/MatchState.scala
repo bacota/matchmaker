@@ -65,7 +65,11 @@ case class Bout(
     /** A live bout's turn clock, which every round is fought against; `None` for every other bout, and defaulted so
       * that a bout stored before live matches existed reads back as the bout it was.
       */
-    clock: Option[TurnClock] = None
+    clock: Option[TurnClock] = None,
+    // What the match's pages are titled by (`MatchTitle`). Defaulted, so a match stored before they
+    // were kept reads back as it was, and is titled by the game alone.
+    override val gameDisplayName: Option[String] = None,
+    override val description: Option[String] = None
 ) extends MatchLike {
 
     def cornerOf(side: Side): Option[Corner] = corners.find(_.side == side)
@@ -301,7 +305,9 @@ object Bout extends Game[Bout, Corner, Plan] {
           completed = false,
           createdAt = now,
           moveCallbackUrl = request.moveCallbackUrl,
-          resultsCallbackUrl = request.resultsCallbackUrl
+          resultsCallbackUrl = request.resultsCallbackUrl,
+          gameDisplayName = request.gameDisplayName,
+          description = request.description
         )
 
     // Stored as JSON, as rock-paper-scissors stores its matches: the whole bout is one attribute.

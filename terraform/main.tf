@@ -201,6 +201,24 @@ module "ui" {
   cognito_region      = var.region
 }
 
+
+/* Each engine's friendly url (modules/engine/domain.tf): its subdomain under the ui's name --
+ * simple-boxing.matchmaker-dev.vivi.com beside matchmaker-dev.vivi.com -- in the same hosted zone.
+ * An engine whose subdomain is "", or any engine in an environment with no ui domain, gets none, and
+ * stays on its execute-api host. */
+locals {
+  engine_subdomains = {
+    tictactoe = var.tictactoe_subdomain
+    rps       = var.rps_subdomain
+    boxing    = var.boxing_subdomain
+    stratego  = var.stratego_subdomain
+  }
+  engine_domains = {
+    for name, subdomain in local.engine_subdomains :
+    name => (subdomain != "" && var.ui_domain_name != "" ? "${subdomain}.${var.ui_domain_name}" : "")
+  }
+}
+
 /* A game engine to develop and test the engine interaction against: two-player tic-tac-toe.
  *
  * Off by default, and never something a production environment needs — it exists so that all four
@@ -220,6 +238,8 @@ module "tictactoe" {
   handler = "com.vivi.tictactoe.Handler::handleRequest"
 
   environment     = var.environment
+  domain_name     = local.engine_domains["tictactoe"]
+  hosted_zone_id  = var.hosted_zone_id
   lambda_jar_path = var.tictactoe_jar_path
 
   # The same secret the api module above is given, which is what makes the pair a pair.
@@ -264,6 +284,8 @@ module "rps" {
   handler = "com.vivi.rps.Handler::handleRequest"
 
   environment     = var.environment
+  domain_name     = local.engine_domains["rps"]
+  hosted_zone_id  = var.hosted_zone_id
   lambda_jar_path = var.rps_jar_path
 
   matchmaker_api_key = random_password.rps_api_key[0].result
@@ -301,13 +323,16 @@ module "boxing" {
   handler = "com.vivi.boxing.Handler::handleRequest"
 
   environment     = var.environment
+  domain_name     = local.engine_domains["boxing"]
+  hosted_zone_id  = var.hosted_zone_id
   lambda_jar_path = var.boxing_jar_path
 
   matchmaker_api_key = random_password.boxing_api_key[0].result
 
   # The fighters page, which signs the player in itself, and what it does with their token: list
   # their fighters, build one, edit one, give one away. Each is passed on to matchmaker's own API.
-  extra_open_routes = ["GET /fighters"]
+  # And the rules, which are anybody's to read.
+  extra_open_routes = ["GET /fighters", "GET /rules"]
   extra_player_routes = [
     "GET /fighters/mine",
     "POST /fighters",
@@ -344,6 +369,8 @@ module "stratego" {
   handler = "com.vivi.stratego.Handler::handleRequest"
 
   environment     = var.environment
+  domain_name     = local.engine_domains["stratego"]
+  hosted_zone_id  = var.hosted_zone_id
   lambda_jar_path = var.stratego_jar_path
 
   matchmaker_api_key = random_password.stratego_api_key[0].result

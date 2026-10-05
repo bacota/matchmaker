@@ -14,6 +14,9 @@ class MatchRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val matchId = SkunkIdCodecs.matchId
     private val challengeId = SkunkIdCodecs.challengeId
+    // Declared here rather than beside the queries that use it further down, as `playerId` is: a val
+    // is initialised in order, and the game's match list above comes first.
+    private val playerIdOf = SkunkIdCodecs.playerId
     private val instant = SkunkCodecs.instant
     private val settings: Codec[String] = SkunkCodecs.jsonb
     private val timeLimitKind = SkunkCodecs.timeLimitKind
@@ -688,9 +691,13 @@ class MatchRepo(session: Session[IO]) {
     /* A game's matches for its admins: the ones still being played first, then the rest, most
      * recently started first within each. Who is playing comes as one array per match, so a match
      * is one row however many seats it has; a match with no seats yet (one whose engine is still
-     * being asked to create it) has an empty one. */
-    private val selectForGame
-        : Query[(GameId, Int), (MatchId, String, Instant, Option[Instant], Boolean, Boolean, Arr[String])] =
+     * being asked to create it) has an empty one. Given a player, only the matches they have a seat
+     * in -- asked of the database rather than picked from a page of the game's, which would miss the
+     * player's older ones. */
+    private val selectForGame: Query[
+      (GameId, Option[PlayerId], Option[PlayerId], Int),
+      (MatchId, String, Instant, Option[Instant], Boolean, Boolean, Arr[String])
+    ] =
         sql"""SELECT m.match_id, m.description, m.start, m.completed, m.cancelled, m.friendly,
                  coalesce(array_agg(pl.nickname ORDER BY p.participant_id) FILTER (WHERE pl.nickname IS NOT NULL),
                           '{}')
@@ -698,14 +705,20 @@ class MatchRepo(session: Session[IO]) {
           LEFT JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
           LEFT JOIN player pl ON pl.player_id = p.player_id
           WHERE m.game_id = $gameId
+            AND (${playerIdOf.opt}::bigint IS NULL OR EXISTS (
+              SELECT 1 FROM participant s
+              WHERE s.game_id = m.game_id AND s.match_id = m.match_id AND s.player_id = ${playerIdOf.opt}
+            ))
           GROUP BY m.game_id, m.match_id
           ORDER BY (m.completed IS NULL AND NOT m.cancelled) DESC, m.start DESC, m.match_id
           LIMIT $int4""".query(matchId *: text *: instant *: instant.opt *: bool *: bool *: _text)
 
-    /** At most `limit` of the game's matches, running ones first, each with its players' nicknames. */
-    def listForGame(gameId: GameId, limit: Int): IO[List[GameMatch]] =
+    /** At most `limit` of the game's matches, running ones first, each with its players' nicknames: every one, or only
+      * those `player` has a seat in.
+      */
+    def listForGame(gameId: GameId, limit: Int, player: Option[PlayerId] = None): IO[List[GameMatch]] =
         session
-            .execute(selectForGame)((gameId, limit))
+            .execute(selectForGame)((gameId, player, player, limit))
             .map(
               _.map((id, description, start, completedAt, cancelled, friendly, players) =>
                   GameMatch(id, description, start, completedAt, cancelled, friendly, players.flattenTo(List))

@@ -157,14 +157,28 @@ class EloRatingServiceSpec extends PropertySuite {
         } yield matchId
 
     /** The engine reporting `winner` first and the other player second. */
-    private def finish(f: Fixture, matchId: MatchId, winner: Player, through: Services[String] = services): IO[Unit] =
+    /* `forfeitOnLoser` flags a forfeit on the loser's result alone, as an engine may: the match is a forfeit all the
+     * same. */
+    private def finish(
+        f: Fixture,
+        matchId: MatchId,
+        winner: Player,
+        through: Services[String] = services,
+        forfeitOnLoser: Boolean = false
+    ): IO[Unit] =
         for {
             seats <- TestSession.resource.use(session =>
                 new ParticipantRepo(session).listForMatch(f.game.gameId, matchId)
             )
             results = seats.map { (p, _, _) =>
                 val won = p.playerId == winner.playerId
-                ReportedResult(p.participantId, rank = if (won) 1 else 2, scores = Map.empty, isWinner = won)
+                ReportedResult(
+                  p.participantId,
+                  rank = if (won) 1 else 2,
+                  scores = Map.empty,
+                  isWinner = won,
+                  forfeit = forfeitOnLoser && !won
+                )
             }
             _ <- through.engine.recordResults(f.game.gameId, matchId, results, f.game.externalId)
         } yield ()
@@ -272,7 +286,7 @@ class EloRatingServiceSpec extends PropertySuite {
             // A rating moved since the player was placed: the place, and what it was worked out from, trail it until
             // the listener places them again.
             _ <- TestSession.resource.use(session =>
-                new EloRatingRepo(session).played(f.game.gameId, f.second.playerId, 40)
+                new EloRatingRepo(session).played(f.game.gameId, f.second.playerId, 40, MatchRecord())
             )
             moved <- services.ratings.standing(f.game.gameId, f.second.playerId, f.first.externalId)
             board <- services.ratings.leaderboard(f.game.gameId, 0, f.first.externalId)
@@ -289,6 +303,93 @@ class EloRatingServiceSpec extends PropertySuite {
         )
         assert(unrated.isInstanceOf[NotFoundError], unrated)
         assert(noGame.isInstanceOf[NotFoundError], noGame)
+    }
+
+    test("finding players in the rankings by the start of a nickname finds the rated ones, whatever the case") {
+        val result = for {
+            f <- fixture()
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.first)
+            _ <- services.ending.settle(f.game.gameId, matchId)
+            // Upper case, and only the start of the name.
+            first <- services.ratings.findInRankings(
+              f.game.gameId,
+              f.first.nickname.toUpperCase.dropRight(4),
+              f.host.externalId
+            )
+            // The host has played nothing here, so has no rating to be found by.
+            host <- services.ratings.findInRankings(f.game.gameId, f.host.nickname, f.first.externalId)
+            blank <- refusal(services.ratings.findInRankings(f.game.gameId, "  ", f.first.externalId))
+            noGame <- refusal(services.ratings.findInRankings(GameId(-1), f.first.nickname, f.first.externalId))
+        } yield (f, first, host, blank, noGame)
+        val (f, first, host, blank, noGame) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(
+          first.ratings.map(r => (r.player.playerId, r.rank, r.rating)),
+          List((f.first.playerId, Some(1), 1516))
+        )
+        assert(!first.more)
+        assertEquals(host, Leaderboard(Nil, more = false))
+        assert(blank.isInstanceOf[ValidationError], blank)
+        assert(noGame.isInstanceOf[NotFoundError], noGame)
+    }
+
+    test("a rated match's result goes on both players' records, and a friendly one on neither") {
+        val result = for {
+            f <- fixture()
+            rated <- started(f, friendly = false)
+            _ <- finish(f, rated, f.first)
+            friendly <- started(f, friendly = true)
+            _ <- finish(f, friendly, f.first)
+            stored <- TestSession.resource.use { session =>
+                val repo = new EloRatingRepo(session)
+                (repo.read(f.game.gameId, f.first.playerId), repo.read(f.game.gameId, f.second.playerId)).tupled
+            }
+        } yield stored
+        val (first, second) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(first.map(_.record), Some(MatchRecord(wins = 1)))
+        assertEquals(second.map(_.record), Some(MatchRecord(losses = 1)))
+    }
+
+    test(
+      "a forfeit flagged on one result alone is a forfeit to both records, and made friendly and back, is still one"
+    ) {
+        def records(f: Fixture) =
+            TestSession.resource.use { session =>
+                val repo = new EloRatingRepo(session)
+                (repo.read(f.game.gameId, f.first.playerId), repo.read(f.game.gameId, f.second.playerId)).tupled
+                    .map((a, b) => (a.map(_.record), b.map(_.record)))
+            }
+        val result = for {
+            f <- fixture()
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.first, forfeitOnLoser = true)
+            rated <- records(f)
+            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = true, f.host.externalId)
+            friendly <- records(f)
+            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = false, f.host.externalId)
+            again <- records(f)
+        } yield (rated, friendly, again)
+        val (rated, friendly, again) = result.timeout(caseTimeout).unsafeRunSync()
+        val forfeited = (Some(MatchRecord(wins = 1, forfeitWins = 1)), Some(MatchRecord(losses = 1, forfeitLosses = 1)))
+        assertEquals(rated, forfeited)
+        assertEquals(friendly, (Some(MatchRecord()), Some(MatchRecord())))
+        assertEquals(again, forfeited)
+    }
+
+    test("a match made friendly after it finished takes its result off both players' records") {
+        val result = for {
+            f <- fixture()
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.second)
+            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = true, f.host.externalId)
+            stored <- TestSession.resource.use { session =>
+                val repo = new EloRatingRepo(session)
+                (repo.read(f.game.gameId, f.first.playerId), repo.read(f.game.gameId, f.second.playerId)).tupled
+            }
+        } yield stored
+        val (first, second) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(first.map(_.record), Some(MatchRecord()))
+        assertEquals(second.map(_.record), Some(MatchRecord()))
     }
 
     test("the delta is worked out from the ratings the match began at, and added to the rating as it is now") {
@@ -344,8 +445,17 @@ class EloRatingServiceSpec extends PropertySuite {
             refreshed <- services.engine.refresh(f.game.gameId, matchId, f.second.externalId)
             now <- ratings(f)
             recorded <- eloSeats(f, matchId)
-        } yield (f, refreshed, now, recorded)
-        val (f, refreshed, now, recorded) = result.timeout(caseTimeout).unsafeRunSync()
+            records <- TestSession.resource.use { session =>
+                val repo = new EloRatingRepo(session)
+                (repo.read(f.game.gameId, f.first.playerId), repo.read(f.game.gameId, f.second.playerId)).tupled
+            }
+        } yield (f, refreshed, now, recorded, records)
+        val (f, refreshed, now, recorded, records) = result.timeout(caseTimeout).unsafeRunSync()
+        // A loss and a win, each one by forfeit.
+        assertEquals(
+          (records._1.map(_.record), records._2.map(_.record)),
+          (Some(MatchRecord(losses = 1, forfeitLosses = 1)), Some(MatchRecord(wins = 1, forfeitWins = 1)))
+        )
         assert(refreshed.completed, refreshed)
         assertEquals(now, Map(f.first.playerId -> (1484, 1), f.second.playerId -> (1516, 1)))
         assertEquals(

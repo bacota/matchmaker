@@ -3,11 +3,16 @@ output "create_game_url" {
     What to record as the game's `url` in matchmaker: the endpoint matchmaker POSTs a
     CreateGameRequest to in step 1.
   EOT
-  value       = "${aws_apigatewayv2_stage.default.invoke_url}games"
+  value       = "${local.base_url}/games"
 }
 
 output "api_endpoint" {
-  description = "Base url of the engine's HTTP API."
+  description = "Base url of the engine's HTTP API: its friendly url when it has one."
+  value       = "${local.base_url}/"
+}
+
+output "execute_api_endpoint" {
+  description = "The engine's API Gateway host, which goes on answering whether or not it has a friendly url."
   value       = aws_apigatewayv2_stage.default.invoke_url
 }
 

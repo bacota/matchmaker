@@ -841,6 +841,19 @@ class MatchServiceSpec extends PropertySuite {
         assert(refused.left.exists(_.isInstanceOf[UnauthorizedError]), refused)
     }
 
+    test("narrowed to a player, a game's admin lists only the matches that player has a seat in") {
+        val result = for {
+            f <- friendlyFixture()
+            (creator, game, matchId, gameAdmin) = f
+            theirs <- matchService.listForGame(game.gameId, gameAdmin.externalId, Some(creator.playerId))
+            // The admin has no seat in it: narrowed to them, there is nothing.
+            nobodys <- matchService.listForGame(game.gameId, gameAdmin.externalId, Some(gameAdmin.playerId))
+        } yield (theirs, nobodys, matchId)
+        val (theirs, nobodys, matchId) = result.timeout(30.seconds).unsafeRunSync()
+        assertEquals(theirs.map(_.matchId), List(matchId))
+        assertEquals(nobodys, Nil)
+    }
+
     test("the match's own creator may not, nor an admin of a different game, and a missing match is not found") {
         val result = for {
             f <- friendlyFixture()

@@ -474,7 +474,7 @@ class ChallengeService[T](
                 else new GameAdminRepo(session).isAdminForShare(player.playerId, game.gameId)
             _ <- IO.raiseUnless(allowed)(
               UnauthorizedError(
-                s"only an admin of ${game.displayName} may offer a match they will not play in, or one that is not friendly"
+                s"only an admin of ${game.displayName} may offer a match they will not play in, or a rated one"
               )
             )
         } yield ()

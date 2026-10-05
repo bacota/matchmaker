@@ -273,7 +273,7 @@ class GameEngineService[T](
                     // match with a player in it twice.
                     _ <- IO.raiseUnless(challenge.friendly || EloRating.playersOnce(roster.map(_.acceptance.playerId)))(
                       ValidationError(
-                        s"challenge ${challengeId.value} is not friendly, and a player holds more than one of its " +
+                        s"challenge ${challengeId.value} is rated, and a player holds more than one of its " +
                             "seats; one of them must withdraw before it can start"
                       )
                     )
@@ -779,7 +779,9 @@ class GameEngineService[T](
                                               session,
                                               gameId,
                                               matchId,
-                                              results.map(r => r.participantId -> r.rank).toMap
+                                              results.map(r => r.participantId -> r.rank).toMap,
+                                              // An engine's own forfeit: a live match it ended on a clock.
+                                              forfeit = results.exists(_.forfeit)
                                             )
                                     _ <- results.traverse(r =>
                                         resultRepo.create(
@@ -1063,7 +1065,7 @@ class GameEngineService[T](
                                 // before the results that carry what it did to each rating.
                                 deltas <-
                                     if (locked.friendly) IO.pure(Map.empty[ParticipantId, Int])
-                                    else EloRatingService.rate(session, gameId, matchId, ranks)
+                                    else EloRatingService.rate(session, gameId, matchId, ranks, forfeit = true)
                                 _ <- participants.traverse { (p, _, _) =>
                                     val lost = overdue.contains(p.participantId)
                                     resultRepo.create(
@@ -1123,6 +1125,8 @@ class GameEngineService[T](
           live = challenge.timeLimit
               .filter(_ => challenge.live)
               .map(limit => LiveTerms(limit.getSeconds, challenge.timeLimitKind.code)),
+          gameDisplayName = Some(game.displayName),
+          description = Some(challenge.message.trim).filter(_.nonEmpty),
           moveCallbackUrl =
               callbackBaseUrl.map(base => s"$base/games/${game.gameId.value}/matches/${matchId.value}/moves"),
           resultsCallbackUrl =

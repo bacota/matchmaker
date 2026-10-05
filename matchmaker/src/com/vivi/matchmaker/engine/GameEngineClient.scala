@@ -44,7 +44,12 @@ case class CreateGameRequest(
     /** Present for a live match, and only then: what tells the engine the match is live, and the clock it is played
       * against. Absent otherwise — so an engine that predates live matches is sent exactly what it always was.
       */
-    live: Option[LiveTerms] = None
+    live: Option[LiveTerms] = None,
+    /** What players call the game, and the match's own message, for the engine to title its pages with — never the
+      * match id, which means nothing to anybody. Absent from an engine's view of a matchmaker that predates them.
+      */
+    gameDisplayName: Option[String] = None,
+    description: Option[String] = None
 )
 
 /** What makes a match live, as the engine is told it: the engine runs the turns and their clock, sends no move

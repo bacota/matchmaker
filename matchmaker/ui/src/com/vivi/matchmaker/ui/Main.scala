@@ -1399,11 +1399,12 @@ object Views {
                                 )
                             },
                             value <-- picked.signal.map(_.map(_.value.toString).getOrElse("")),
-                            mine.map(summary =>
+                            // An unnamed challenge is numbered by where it is in the list, never by its id.
+                            mine.zipWithIndex.map((summary, i) =>
                                 option(
                                   value := summary.challenge.challengeId.value.toString,
                                   if (summary.challenge.message.trim.nonEmpty) summary.challenge.message
-                                  else s"challenge ${summary.challenge.challengeId.value}"
+                                  else s"unnamed challenge ${i + 1}"
                                 )
                             )
                           )
@@ -1479,7 +1480,8 @@ object Views {
                     h3("Current Matches"),
                     publicMatches(running, "None being played in public."),
                     h3("Completed Matches"),
-                    div(completedWindow(completedList, "None finished in public.")(publicMatchRow))
+                    div(completedWindow(completedList, "None finished in public.")(publicMatchRow)),
+                    adminMatchesSection(game, player)
                   )
               else emptyNode
           }
@@ -1558,12 +1560,13 @@ object Views {
         li(
           cls := "row",
           // The game's name is the row this sits under, so what names the match here is what its
-          // creator called it — and an unnamed match is said by its id rather than by a blank line.
+          // creator called it -- and an unnamed match is said to be one, never named by its id.
           div(
             cls := "title",
-            if (summary.description.trim.nonEmpty) summary.description else s"match ${summary.matchId.value}"
+            if (summary.description.trim.nonEmpty) summary.description else "an unnamed match"
           ),
           div(cls := "detail", s"started ${Format.date(summary.start)}"),
+          if (summary.friendly) friendlyLabel() else emptyNode,
           matchParameters(summary),
           if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
           summary.completedAt
@@ -1640,6 +1643,7 @@ object Views {
           cls := "row",
           div(cls := "title", summary.gameName),
           div(cls := "detail", summary.description),
+          if (summary.friendly) friendlyLabel() else emptyNode,
           matchParameters(summary),
           if (showDue) summary.due.map(countdown).getOrElse(emptyNode)
           else emptyNode,
@@ -1984,7 +1988,6 @@ object Views {
                         pendingAcceptances(Some(game)),
                         gameChallenges(game),
                         ratingsSection(game),
-                        adminMatchesSection(game),
                         gameHistory(game)
                       )
               },
@@ -2654,20 +2657,30 @@ object Views {
         )
     }
 
-    /** The game's matches, for its admins: where they say whether each is friendly (V36). Nothing at all for anybody
-      * else — not a heading, not a request beyond the one that finds out.
+    /** `player`'s matches in the game, for an admin of it looking at that player's page: where they say whether each is
+      * friendly (V36). Every match the player has a seat in, public or not — an admin manages them all — and nothing at
+      * all for a reader who is not an admin of the game: not a heading, not a request beyond the one that finds out.
       *
-      * A section of its own rather than a box on the rows of the player's own lists, because an admin need not be
-      * playing a match to manage it, and a match they host but do not play in is in none of their lists.
+      * On the player's page rather than the game's, so that an admin deals with one player's matches at a time, from
+      * the page that is about that player.
       */
-    private def adminMatchesSection(game: Game): HtmlElement =
-        div(child <-- currentPlayer.map(_.fold(emptyNode)(player => adminMatches(game, player))))
+    private def adminMatchesSection(game: Game, player: PublicPlayer): HtmlElement =
+        div(child <-- currentPlayer.map(_.fold(emptyNode)(reader => adminMatches(game, player, reader))))
 
-    private def adminMatches(game: Game, player: Player): HtmlElement =
-        div(child <-- Store.administers(game.gameId, player).map(if (_) adminMatchList(game) else emptyNode))
+    /* Not on the admin's own page: it is another player an admin is there to manage -- their rating in
+     * the game, and whether each of their matches is friendly. */
+    private def adminMatches(game: Game, player: PublicPlayer, reader: Player): HtmlElement =
+        if (reader.playerId == player.playerId) div()
+        else
+            div(
+              child <-- Store.administers(game.gameId, reader).map {
+                  case true  => div(ratePlayer(game, player), adminMatchList(game, player))
+                  case false => emptyNode
+              }
+            )
 
     /** The list itself, asked for when it is shown — which is only to an admin of the game. */
-    private def adminMatchList(game: Game): HtmlElement = {
+    private def adminMatchList(game: Game, player: PublicPlayer): HtmlElement = {
         // `None` until the list has come back.
         val matches = Var(Option.empty[Seq[GameMatch]])
         val refreshing = Var(false)
@@ -2679,7 +2692,7 @@ object Views {
          * again. Dropped if it belongs to another mount or another sign-in. */
         def fetch(asked: Int): Future[Unit] = {
             val signIn = Store.currentSignIn
-            ApiClient.gameMatches(game.gameId).map { found =>
+            ApiClient.gameMatches(game.gameId, Some(player.playerId)).map { found =>
                 if (asked == mount && Store.stillSignedInAs(signIn)) matches.set(Some(found))
             }
         }
@@ -2693,12 +2706,18 @@ object Views {
           child <-- matches.signal.map {
               case None => emptyNode
               case Some(found) =>
-                  refreshableSection("Matches in this game", refreshing, () => fetch(mount), subsection = false)(
-                    p(
-                      cls := "detail",
-                      "As an admin of this game, you say whether each match is friendly — even once it is over, " +
-                          "until one of its players has played another match of this game since."
-                    ),
+                  refreshableSection(
+                    "Friendly or Rated",
+                    refreshing,
+                    () => fetch(mount),
+                    subsection = true,
+                    tip = Some(
+                      s"friendly-admin-tip-${game.gameId.value}" ->
+                          (s"Every match ${player.nickname} has played or is playing in this game, public or not. As " +
+                              "an admin of this game, you say whether each is friendly — even once it is over, until " +
+                              "one of its players has played another match of this game since.")
+                    )
+                  )(
                     if (found.isEmpty) p(cls := "empty", "None yet.")
                     else ul(found.map(adminMatchRow(game, _)))
                   )
@@ -2706,7 +2725,7 @@ object Views {
         )
     }
 
-    /** One match in [[adminMatches]], with the box that says whether it is friendly.
+    /** One match in [[adminMatchList]], with the box that says whether it is friendly.
       *
       * The box's state is the row's own, set as it is clicked and put back if the server refuses: changing it does not
       * rebuild the list, which would take the keyboard's focus with it.
@@ -2716,7 +2735,7 @@ object Views {
         val busy = Var(false)
         li(
           cls := "row",
-          div(cls := "title", if (m.description.trim.nonEmpty) m.description else s"match ${m.matchId.value}"),
+          div(cls := "title", if (m.description.trim.nonEmpty) m.description else "an unnamed match"),
           div(cls := "detail", if (m.players.isEmpty) "nobody seated yet" else m.players.mkString(", ")),
           div(
             cls := "detail",
@@ -2789,9 +2808,9 @@ object Views {
         // must not drop an answer still on its way. A save of the player's own row moves this on, as the
         // save is newer than anything asked before it.
         var mineRequest = 0
-        // The last Find a Player answer: a player's standing, shown as a line of its own at the foot of the
-        // table, or what to say instead.
-        val found = Var(Option.empty[Either[String, EloRating]])
+        // The last Find a Player answer: the game's rated players whose nickname starts with what was typed,
+        // each shown as a line of its own at the foot of the table -- or why there is no answer.
+        val found = Var(Option.empty[Either[String, Leaderboard]])
 
         /* Dropped if a newer request, mount or save has overtaken it, or it belongs to another sign-in --
          * its failure as well as its answer: the section is the next session's by then. Asks for the
@@ -2857,29 +2876,28 @@ object Views {
             }
         }
 
-        /* A new player's save brings a row that may not be on screen, so the page is asked again. */
-        def savedNew(saved: EloRating): Unit = {
-            said.set(s"${saved.player.nickname} is now rated ${saved.rating}.")
-            fetch()
-        }
-
         val administers = Store.administers(game.gameId, player)
         val rows = board.signal.map(_.fold(List.empty[EloRating])(_.ratings))
 
-        /* Mounted whatever the page, and marked unavailable rather than removed or disabled when there is
-         * nowhere to go: either of those would take the keyboard's focus away from somebody paging through. */
-        def step(caption: String, label: String, possible: Signal[Boolean], to: Int => Int) = {
-            val blocked = possible.combineWith(busy.signal).map((can, waiting) => !can || waiting)
-            button(
+        // The line that says which places the page covers, for the focus to go to when a step it was on goes.
+        var placesLine: Option[dom.html.Element] = None
+
+        /* There only when there is somewhere to go: no Previous on the first page, no Next on the last.
+         * Built once and mounted or not, so that it is the same element whenever it is there. A step that
+         * goes while it has the focus -- Next, pressed onto the last page -- hands the focus to the line
+         * saying which places are now shown, rather than letting it fall to the top of the page. While a
+         * page is on its way it stays, marked busy, and a press is ignored. */
+        def step(caption: String, label: String, side: String, possible: Signal[Boolean], to: Int => Int) = {
+            val control = button(
               tpe := "button",
-              cls := "link",
+              cls := s"link $side",
               aria.label := label,
-              aria.disabled <-- blocked,
+              aria.disabled <-- busy.signal,
               caption,
-              onClick.compose(_.withCurrentValueOf(blocked)) --> { (_, isBlocked) =>
-                  if (!isBlocked) fetch(to(page.now()))
-              }
+              onClick --> (_ => if (!busy.now()) fetch(to(page.now()))),
+              onUnmountCallback(node => if (dom.document.activeElement == node.ref) placesLine.foreach(_.focus()))
             )
+            child <-- possible.distinct.map(if (_) control else emptyNode)
         }
 
         div(
@@ -2893,7 +2911,7 @@ object Views {
             tip = Some(
               s"ratings-tip-${game.gameId.value}" ->
                   (s"Players are ranked by Elo rating, and by rated matches between equal ratings. " +
-                      s"Every match of this game that is not friendly moves its players' ratings. " +
+                      s"Every rated match of this game moves its players' ratings; a friendly one does not. " +
                       s"A player's first rated match starts them at ${EloRating.initial}.")
             )
           )(
@@ -2906,6 +2924,10 @@ object Views {
             p(
               cls := "detail",
               aria.live := "polite",
+              // Focusable from script only: where the focus goes when the step it was on goes.
+              tabIndex := -1,
+              onMountCallback(context => placesLine = Some(context.thisNode.ref)),
+              onUnmountCallback(_ => placesLine = None),
               child.text <-- board.signal.combineWith(loadError.signal).map {
                   // A failure is said in the region above; this only stops promising a page.
                   case (None, Some(_)) => ""
@@ -2922,7 +2944,10 @@ object Views {
             // player's own standing, or one they searched for -- whoever is on the page.
             child <-- rows
                 .map(_.nonEmpty)
-                .combineWith(mine.signal.map(_.exists(_.isRight)), found.signal.map(_.exists(_.isRight)))
+                .combineWith(
+                  mine.signal.map(_.exists(_.isRight)),
+                  found.signal.map(_.exists(_.exists(_.ratings.nonEmpty)))
+                )
                 .map(_ || _ || _)
                 .distinct
                 .map {
@@ -2940,6 +2965,7 @@ object Views {
                                 th(scopeAttr := "col", "Player"),
                                 th(scopeAttr := "col", "Ranked rating"),
                                 th(scopeAttr := "col", "Matches"),
+                                th(scopeAttr := "col", "Record"),
                                 child <-- administers.map(if (_) th(scopeAttr := "col", "Set rating") else emptyNode)
                               )
                             ),
@@ -2958,9 +2984,10 @@ object Views {
                                   case (Some(Right(you)), admin) => footRow(you, "mine", "you, now", admin)
                                   case _                         => emptyNode
                               },
-                              child <-- found.signal.combineWith(administers).map {
-                                  case (Some(Right(them)), admin) => footRow(them, "found", "found, now", admin)
-                                  case _                          => emptyNode
+                              children <-- found.signal.combineWith(administers).map {
+                                  case (Some(Right(them)), admin) =>
+                                      them.ratings.map(footRow(_, "found", "found, now", admin))
+                                  case _ => Nil
                               }
                             )
                           )
@@ -2978,11 +3005,10 @@ object Views {
             ),
             div(
               cls := "completed-steps",
-              step("Previous", "Previous 20 ranks", page.signal.map(_ > 0), _ - 1),
-              step("Next", "Next 20 ranks", board.signal.map(_.exists(_.more)), _ + 1)
+              step("Previous", "Previous 20 ranks", "backward", page.signal.map(_ > 0), _ - 1),
+              step("Next", "Next 20 ranks", "forward", board.signal.map(_.exists(_.more)), _ + 1)
             ),
-            findPlayer(game, found),
-            child <-- administers.map(if (_) rateNewPlayer(game, savedNew, said) else emptyNode)
+            findPlayer(game, found)
           )
         )
     }
@@ -2998,64 +3024,84 @@ object Views {
           th(scopeAttr := "row", playerLink(standing.player), span(cls := "foot-note", s" ($note)")),
           td(standing.rating.toString),
           td(standing.matches.toString),
+          recordCell(standing.record),
           // Nothing to set here: an admin sets a rating from the player's row in the page, if it is on it.
           if (administers) td() else emptyNode
         )
 
-    /** Any player's standing in the game, by nickname: the one typed in full, as [[rateNewPlayer]] finds one. What is
-      * found goes into `found`, which the leaderboard shows as a line at its foot.
+    /** The game's rated players by the start of a nickname, as "Find Players" finds players: what is found goes into
+      * `found`, which the leaderboard shows as lines at its foot. One row of a form, under the table, since it is a way
+      * into the table rather than a section of its own.
       */
-    private def findPlayer(game: Game, found: Var[Option[Either[String, EloRating]]]): HtmlElement = {
-        val nickname = Var("")
+    private def findPlayer(game: Game, found: Var[Option[Either[String, Leaderboard]]]): HtmlElement = {
+        val prefix = Var("")
         val busy = Var(false)
-
-        def look(name: String): Future[Either[String, EloRating]] =
-            ApiClient.searchPlayers(name).flatMap { result =>
-                result.players.find(_.nickname == name) match {
-                    case None => Future.successful(Left(s"There is no player called $name."))
-                    case Some(player) =>
-                        ApiClient
-                            .standing(game.gameId, player.playerId)
-                            .map(Right(_))
-                            .recover { case ApiError(404, _) => Left(s"$name has no rating in this game.") }
-                }
-            }
+        val id = s"find-in-rankings-${game.gameId.value}"
 
         form(
-          cls := "card",
+          cls := "search inline-form",
+          // Enter in the field submits, as on "Find Players".
           onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
-              val name = nickname.now().trim
-              if (name.nonEmpty) Store.runSignedIn(look(name), busy)(answer => found.set(Some(answer)))
+              val typed = prefix.now().trim
+              if (typed.nonEmpty)
+                  Store.runSignedIn(ApiClient.findInRankings(game.gameId, typed), busy)(answer =>
+                      found.set(Some(Right(answer)))
+                  )
           },
-          h3("Find a Player in Rankings"),
-          field(
-            "Nickname",
+          label(forId := id, "Find a Player"),
+          div(
+            cls := "compound",
             input(
-              tpe := "text",
-              required := true,
+              idAttr := id,
+              tpe := "search",
+              placeholder := "Nickname begins with",
               autoComplete := "off",
-              controlled(value <-- nickname.signal, onInput.mapToValue --> nickname)
-            )
+              controlled(value <-- prefix.signal, onInput.mapToValue --> prefix)
+            ),
+            // Not disabled while searching: a disabled button drops the keyboard's focus.
+            button(tpe := "submit", aria.busy <-- busy.signal, "Find")
           ),
-          // Not disabled while searching: a disabled button drops the keyboard's focus.
-          button(tpe := "submit", aria.busy <-- busy.signal, "Find"),
-          // Mounted before it has anything to say, so that what arrives in it is announced.
+          // Mounted before it has anything to say, so that what arrives in it is announced. The lines
+          // themselves are in the table, which is not announced; this says how many and where.
           div(
             aria.live := "polite",
-            // The line itself is in the table, which is not announced; this says where it went.
             child <-- found.signal.map {
                 case None            => emptyNode
                 case Some(Left(why)) => p(cls := "empty", why)
-                case Some(Right(them)) =>
-                    val place = them.rank.fold("not ranked yet")(rank => s"ranked $rank")
+                case Some(Right(none)) if none.ratings.isEmpty =>
+                    p(cls := "empty", "No rated player's nickname starts with that.")
+                case Some(Right(some)) =>
+                    val count = some.ratings.size
+                    val who = if (count == 1) "1 player" else s"$count players"
                     p(
                       cls := "detail",
-                      s"${them.player.nickname} is $place, rated ${them.rating} now; shown at the foot of the rankings."
+                      s"$who found, shown at the foot of the rankings." +
+                          (if (some.more) " Type more of the nickname to narrow it." else "")
                     )
             }
           )
         )
     }
+
+    /** A player's win–loss–draw record (V46), as the rankings show it: "12 (2)–5 (1)–3", the numbers in parentheses the
+      * wins and losses that came by forfeit, and left out when there are none. Said in words to a screen reader, which
+      * would otherwise read the dashes and parentheses as punctuation.
+      */
+    private def recordText(r: MatchRecord): HtmlElement = {
+        def byForfeit(n: Int) = if (n > 0) s" ($n)" else ""
+        def count(n: Int, one: String, many: String) = s"$n ${if (n == 1) one else many}"
+        def spoken(said: String, forfeits: Int) = said + (if (forfeits > 0) s", $forfeits by forfeit" else "")
+        span(
+          aria.label := List(
+            spoken(count(r.wins, "win", "wins"), r.forfeitWins),
+            spoken(count(r.losses, "loss", "losses"), r.forfeitLosses),
+            count(r.draws, "draw", "draws")
+          ).mkString("; "),
+          s"${r.wins}${byForfeit(r.forfeitWins)}–${r.losses}${byForfeit(r.forfeitLosses)}–${r.draws}"
+        )
+    }
+
+    private def recordCell(r: MatchRecord): HtmlElement = td(recordText(r))
 
     /** Which cells a table header names: its column, or its row. Not among Laminar's attributes. */
     private val scopeAttr = htmlAttr("scope", com.raquo.laminar.codecs.StringAsIsCodec)
@@ -3083,6 +3129,7 @@ object Views {
           // the player and for anybody searched for.
           td(child.text <-- rating.map(r => r.rankedRating.getOrElse(r.rating).toString)),
           td(child.text <-- rating.map(r => r.rankedMatches.getOrElse(r.matches).toString)),
+          td(child <-- rating.map(r => recordText(r.record))),
           child <-- administers.map {
               case false => emptyNode
               case true =>
@@ -3110,50 +3157,35 @@ object Views {
           }
         )
 
-    /** For an admin of the game: rating a player who has no rating yet, by nickname. Setting the rating of one who has
-      * is what each row's box is for, but this will do that too.
+    /** For an admin of the game, on a player's page: setting that player's rating in it, whether they have one yet or
+      * not. On the page a "Find Players" search opens, where the player is already chosen, so there is no nickname to
+      * type.
       */
-    private def rateNewPlayer(game: Game, onSaved: EloRating => Unit, said: Var[String]): HtmlElement = {
-        val nickname = Var("")
+    private def ratePlayer(game: Game, player: PublicPlayer): HtmlElement = {
         val typed = Var("")
         val busy = Var(false)
-
-        /* By the player search, which matches a prefix: the nickname typed in full is the one meant,
-         * and nothing else that merely starts with it. */
-        def rate(name: String, rating: Int): Future[Option[EloRating]] =
-            ApiClient.searchPlayers(name).flatMap { found =>
-                found.players.find(_.nickname == name) match {
-                    case Some(player) => ApiClient.setRating(game.gameId, player.playerId, rating).map(Some(_))
-                    case None         => Future.successful(None)
-                }
-            }
+        // What the last save came to: said aloud, since the box being emptied does not say it took.
+        val said = Var("")
+        val id = s"rate-${game.gameId.value}-${player.playerId.value}"
 
         form(
-          cls := "card",
+          cls := "search inline-form",
           onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
-              val name = nickname.now().trim
-              typed.now().trim.toIntOption.filter(_ => name.nonEmpty).foreach { n =>
-                  Store.run(rate(name, n), busy) {
-                      case Some(saved) =>
-                          nickname.set("")
-                          typed.set("")
-                          onSaved(saved)
-                      case None => said.set(s"There is no player called $name.")
+              typed.now().trim.toIntOption.foreach { n =>
+                  Store.run(ApiClient.setRating(game.gameId, player.playerId, n), busy) { saved =>
+                      typed.set("")
+                      said.set(s"${saved.player.nickname} is now rated ${saved.rating} in ${game.displayName}.")
                   }
               }
           },
-          h3("Rate a Player"),
-          field(
-            "Nickname",
-            input(
-              tpe := "text",
-              required := true,
-              autoComplete := "off",
-              controlled(value <-- nickname.signal, onInput.mapToValue --> nickname)
-            )
+          label(forId := id, s"Rate ${player.nickname}"),
+          div(
+            cls := "compound",
+            ratingInput(id, typed, placeholder := "New rating"),
+            // Not disabled while saving: a disabled button drops the keyboard's focus.
+            button(tpe := "submit", aria.busy <-- busy.signal, "Set rating")
           ),
-          field("Rating", ratingInput(s"rate-new-${game.gameId.value}", typed)),
-          button(tpe := "submit", aria.busy <-- busy.signal, "Set rating")
+          div(aria.live := "polite", cls := "detail", child.text <-- said.signal)
         )
     }
 
@@ -3427,7 +3459,7 @@ object Views {
           timeLimitDetail(challenge),
           parameterDetail(game, challenge),
           if (challenge.isPublic) div(cls := "detail", "public") else emptyNode,
-          if (challenge.friendly) emptyNode else div(cls := "detail", "not friendly"),
+          if (challenge.friendly) friendlyLabel() else emptyNode,
           // A game's admin offering a match for others to play: said, because nothing else on the row
           // tells it from one they are seated in.
           if (challenge.gameRoleId.isEmpty) div(cls := "detail", "you are not playing in it") else emptyNode,
@@ -3987,7 +4019,7 @@ object Views {
           div(cls := "detail", s"${summary.acceptances} of ${game.roles.size} roles taken"),
           timeLimitDetail(challenge),
           parameterDetail(game, challenge),
-          if (challenge.friendly) emptyNode else div(cls := "detail", "not friendly"),
+          if (challenge.friendly) friendlyLabel() else emptyNode,
           // A seat held for this player is said rather than offered: a picker with one entry asks a
           // question whose answer is already settled, and what they need to know is which seat they
           // were asked for.
@@ -4111,6 +4143,26 @@ object Views {
       * A button rather than a `title`: a title never appears on a touch screen and is not reliably read out. Outside
       * the label, because a tap on anything inside a label toggles its checkbox.
       */
+    /* Tips are found by id, and one match can be on a page twice -- "Your Turn" and "Current Matches"
+     * both list it -- so a tip under a row is numbered as it is made rather than named after the row. */
+    private var tipsMade = 0
+
+    private def freshTipId(prefix: String): String = {
+        tipsMade += 1
+        s"$prefix-$tipsMade"
+    }
+
+    /** "friendly" under a match or a challenge that is one, with what that means a tap away. Said only when it is: a
+      * rated match is the ordinary kind, and needs no saying.
+      */
+    private def friendlyLabel(): HtmlElement =
+        withTip(
+          freshTipId("friendly-tip"),
+          "friendly",
+          "A friendly match is played for fun: it does not change either player's Elo rating or place in the " +
+              "rankings. Every other match is rated."
+        )(div(cls := "detail", "friendly")).amend(cls := "inline-tip")
+
     private def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement = {
         val open = Var(false)
         // Escape hides a tip that hover or keyboard focus is showing, which `open` knows nothing about: this holds it
@@ -4410,8 +4462,8 @@ object Views {
                     withTip(
                       "friendly-tip",
                       "Friendly",
-                      "Untick to make the match one that is not friendly. As an admin of this game you can change " +
-                          "it later, until the match is completed."
+                      "A friendly match does not move its players' ratings; untick for a rated one. As an admin of " +
+                          "this game you can change it later, until the match is completed."
                     )(
                       label(
                         input(

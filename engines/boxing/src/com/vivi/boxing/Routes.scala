@@ -19,13 +19,16 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], 
 
     protected def stateOf(m: Bout, corner: Option[Corner]): Protocol.StateResponse = engine.stateOf(m, corner)
 
+    protected def gameTitle: String = "boxing"
+
     protected def page(
         matchId: String,
+        title: String,
         state: Option[Protocol.StateResponse],
         login: Option[LoginConfig],
         liveUrl: Option[String],
         publicView: Boolean
-    ): String = Html.board(matchId, state, login, liveUrl, publicView)
+    ): String = Html.board(matchId, title, state, login, liveUrl, publicView)
 
     protected def move(request: EngineRequest, matchId: String): EngineResponse =
         parse[Protocol.PlanRequest](request.body) match {
@@ -37,6 +40,10 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], 
         }
 
     override protected def extra: PartialFunction[(String, List[String]), EngineRequest => EngineResponse] = {
+        // How the game is played, for anybody: nothing in it is anybody's.
+        case ("GET", "rules" :: Nil) =>
+            _ => EngineResponse(200, Html.rulesPage, "text/html; charset=utf-8")
+
         // The fighters page, served to anyone for the reason the play page is: a browser navigation
         // carries no token, so the page is the shell that signs the player in and then fetches and
         // posts with one. It shows nothing that is anybody's.

@@ -6,7 +6,7 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import com.vivi.matchmaker.model.{EloRating, GameId, Leaderboard, PlayerId, PublicPlayer}
+import com.vivi.matchmaker.model.{EloRating, GameId, Leaderboard, MatchRecord, PlayerId, PublicPlayer}
 import EloRatingRepo.{placed, standing, Placed, Placing, RankingLockSpace, Standing}
 import scala.math.Ordering.Implicits._
 
@@ -25,20 +25,60 @@ class EloRatingRepo(session: Session[IO]) {
         sql"""SELECT rating FROM elo_rating WHERE game_id = $gameId AND player_id = $playerId FOR SHARE"""
             .query(int4)
 
-    private val updatePlayed: Command[(Int, GameId, PlayerId)] =
-        sql"""UPDATE elo_rating SET rating = rating + $int4, matches = matches + 1
+    /* What one match adds to a row, or takes back: its rating, its match, and its record, each an
+     * addition in the update itself. */
+    private val updateMoved: Command[(Int, Int, MatchRecord, GameId, PlayerId)] =
+        sql"""UPDATE elo_rating
+          SET rating = rating + $int4, matches = matches + $int4,
+              wins = wins + $int4, losses = losses + $int4, draws = draws + $int4,
+              forfeit_wins = forfeit_wins + $int4, forfeit_losses = forfeit_losses + $int4
           WHERE game_id = $gameId AND player_id = $playerId""".command
+            .contramap { case (delta, matches, r, game, player) =>
+                (delta, matches, r.wins, r.losses, r.draws, r.forfeitWins, r.forfeitLosses, game, player)
+            }
 
     private val upsertSet: Command[(GameId, PlayerId, Int, PlayerId)] =
         sql"""INSERT INTO elo_rating (game_id, player_id, rating, set_by) VALUES ($gameId, $playerId, $int4, $playerId)
           ON CONFLICT (game_id, player_id) DO UPDATE SET rating = EXCLUDED.rating, set_by = EXCLUDED.set_by""".command
 
-    private val select: Query[(GameId, PlayerId), (String, Int, Int, Option[Int], Option[Int], Option[Int], Boolean)] =
-        sql"""SELECT p.nickname, r.rating, r.matches, r.rank, r.ranked_rating, r.ranked_matches,
-            r.matches > 0 OR r.set_by IS NOT NULL
+    /* A rating as it is shown, from `elo_rating r JOIN player p`: what every query that answers with
+     * one selects, and how it is read. */
+    private val ratingColumns =
+        """p.player_id, p.nickname, r.rating, r.matches, r.rank, r.ranked_rating, r.ranked_matches,
+           r.wins, r.losses, r.draws, r.forfeit_wins, r.forfeit_losses"""
+
+    private val ratingRow: Decoder[EloRating] =
+        (playerId *: text *: int4 *: int4 *: int4.opt *: int4.opt *: int4.opt *:
+            int4 *: int4 *: int4 *: int4 *: int4).map {
+            case (
+                  id,
+                  nickname,
+                  rating,
+                  matches,
+                  rank,
+                  ranked,
+                  behind,
+                  wins,
+                  losses,
+                  draws,
+                  forfeitWins,
+                  forfeitLosses
+                ) =>
+                EloRating(
+                  PublicPlayer(id, nickname),
+                  rating,
+                  matches,
+                  rank,
+                  ranked,
+                  behind,
+                  MatchRecord(wins, losses, draws, forfeitWins, forfeitLosses)
+                )
+        }
+
+    private val select: Query[(GameId, PlayerId), (EloRating, Boolean)] =
+        sql"""SELECT #$ratingColumns, r.matches > 0 OR r.set_by IS NOT NULL
           FROM elo_rating r JOIN player p ON p.player_id = r.player_id
-          WHERE r.game_id = $gameId AND r.player_id = $playerId"""
-            .query(text *: int4 *: int4 *: int4.opt *: int4.opt *: int4.opt *: bool)
+          WHERE r.game_id = $gameId AND r.player_id = $playerId""".query(ratingRow *: bool)
 
     private val gameExists: Query[GameId, Boolean] =
         sql"""SELECT EXISTS (SELECT 1 FROM game WHERE game_id = $gameId)""".query(bool)
@@ -51,12 +91,38 @@ class EloRatingRepo(session: Session[IO]) {
      *
      * Only players who have a rating to show: one a rated match has moved, or an admin has set. A
      * player taken off the leaderboard keeps their place until the listener takes it away. */
-    private val selectPlaces
-        : Query[(GameId, Int, Int), (PlayerId, String, Int, Int, Option[Int], Option[Int], Option[Int])] =
-        sql"""SELECT p.player_id, p.nickname, r.rating, r.matches, r.rank, r.ranked_rating, r.ranked_matches
+    private val selectPlaces: Query[(GameId, Int, Int), EloRating] =
+        sql"""SELECT #$ratingColumns
           FROM elo_rating r JOIN player p ON p.player_id = r.player_id
           WHERE r.game_id = $gameId AND r.rank BETWEEN $int4 AND $int4 AND (r.matches > 0 OR r.set_by IS NOT NULL)
-          ORDER BY r.rank, p.nickname""".query(playerId *: text *: int4 *: int4 *: int4.opt *: int4.opt *: int4.opt)
+          ORDER BY r.rank, p.nickname""".query(ratingRow)
+
+    /* The game's rated players whose nickname begins with a prefix, compared as the player search
+     * compares (PlayerRepo.nicknamePrefixPattern), in nickname order: who "Find a Player" under the
+     * rankings shows. */
+    private val selectByPrefix: Query[(GameId, String, Int), EloRating] =
+        sql"""SELECT #$ratingColumns
+          FROM elo_rating r JOIN player p ON p.player_id = r.player_id
+          WHERE r.game_id = $gameId AND (r.matches > 0 OR r.set_by IS NOT NULL)
+            AND #${PlayerRepo.nicknameKey("p")} LIKE $text
+          ORDER BY p.nickname
+          LIMIT $int4""".query(ratingRow)
+
+    /** Up to `limit` of the game's rated players whose nickname begins with `prefix`, with whether there were more — or
+      * nothing, if there is no such game. One more than `limit` is asked for, which is how it knows.
+      */
+    def findByNicknamePrefix(game: GameId, prefix: String, limit: Int): IO[Option[Leaderboard]] =
+        session.unique(gameExists)(game).flatMap {
+            case false => IO.pure(None)
+            case true =>
+                session
+                    .execute(selectByPrefix)((game, PlayerRepo.nicknamePrefixPattern(prefix), limit + 1))
+                    .map(rows =>
+                        Some(
+                          Leaderboard(rows.take(limit), more = rows.sizeIs > limit)
+                        )
+                    )
+        }
 
     private val selectPlacedAfter: Query[(GameId, Int), Boolean] =
         sql"""SELECT EXISTS (SELECT 1 FROM elo_rating WHERE game_id = $gameId AND rank > $int4)""".query(bool)
@@ -85,22 +151,19 @@ class EloRatingRepo(session: Session[IO]) {
             .traverse(player => session.unique(selectForShare)((game, player)).map(player -> _))
             .map(_.toMap)
 
-    /** Records a rated match's effect on one player: their rating moved by `delta`, and one more match behind it. An
-      * addition in the update itself rather than a value worked out from a read, so it needs no read to be locked: two
-      * matches finishing at once each add their own.
+    /** Records a rated match's effect on one player: their rating moved by `delta`, one more match behind it, and
+      * `record` — what the match was to them (V46) — added to their record. An addition in the update itself rather
+      * than a value worked out from a read, so it needs no read to be locked: two matches finishing at once each add
+      * their own.
       */
-    def played(game: GameId, player: PlayerId, delta: Int): IO[Unit] =
-        session.execute(updatePlayed)((delta, game, player)).void
-
-    private val updateUnplayed: Command[(Int, GameId, PlayerId)] =
-        sql"""UPDATE elo_rating SET rating = rating - $int4, matches = matches - 1
-          WHERE game_id = $gameId AND player_id = $playerId""".command
+    def played(game: GameId, player: PlayerId, delta: Int, record: MatchRecord): IO[Unit] =
+        session.execute(updateMoved)((delta, 1, record, game, player)).void
 
     /** Takes back a rated match's effect on one player, [[played]] in reverse: for a completed match a game's admin has
       * since said was friendly.
       */
-    def unplayed(game: GameId, player: PlayerId, delta: Int): IO[Unit] =
-        session.execute(updateUnplayed)((delta, game, player)).void
+    def unplayed(game: GameId, player: PlayerId, delta: Int, record: MatchRecord): IO[Unit] =
+        session.execute(updateMoved)((-delta, -1, -record, game, player)).void
 
     /** Sets the player's rating outright, on `setBy`'s say, making the row if there is none. How many matches stand
       * behind it is left as it was.
@@ -111,10 +174,7 @@ class EloRatingRepo(session: Session[IO]) {
     private def readWhere(game: GameId, player: PlayerId)(keep: Boolean => Boolean): IO[Option[EloRating]] =
         session
             .option(select)((game, player))
-            .map(_.filter((_, _, _, _, _, _, rated) => keep(rated)).map {
-                (nickname, rating, matches, rank, ranked, behind, _) =>
-                    EloRating(PublicPlayer(player, nickname), rating, matches, rank, ranked, behind)
-            })
+            .map(_.collect { case (rating, rated) if keep(rated) => rating })
 
     /** The player's row in the game, rated or not: nothing only if there is no row at all. */
     def read(game: GameId, player: PlayerId): IO[Option[EloRating]] = readWhere(game, player)(_ => true)
@@ -134,12 +194,7 @@ class EloRatingRepo(session: Session[IO]) {
                 (session.execute(selectPlaces)((game, first, last)), session.unique(selectPlacedAfter)((game, last)))
                     .mapN((rows, more) =>
                         Some(
-                          Leaderboard(
-                            rows.map((id, nickname, rating, matches, rank, ranked, behind) =>
-                                EloRating(PublicPlayer(id, nickname), rating, matches, rank, ranked, behind)
-                            ),
-                            more
-                          )
+                          Leaderboard(rows, more)
                         )
                     )
         }

@@ -48,7 +48,11 @@ object Protocol {
         players: List[EnginePlayer],
         moveCallbackUrl: Option[String],
         resultsCallbackUrl: Option[String],
-        live: Option[LiveTerms] = None
+        live: Option[LiveTerms] = None,
+        // What players call the game, and the match's own message: what the engine titles its pages
+        // with. Absent from a matchmaker that predates them.
+        gameDisplayName: Option[String] = None,
+        description: Option[String] = None
     )
 
     /** The terms of a live match, which the engine keeps rather than matchmaker.

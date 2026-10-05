@@ -471,6 +471,34 @@ ul {
   margin-top: 0.25rem;
 }
 
+/* A small form of one field: a caption, a box and a button on one row, with what came of it said
+   under them -- "Find a Player" under the rankings, and an admin's "Rate <player>" on a player's
+   page. */
+.inline-form {
+  margin-top: 0.75rem;
+}
+
+.inline-form label {
+  display: block;
+  font-weight: 600;
+}
+
+.inline-form .compound {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.inline-form .compound input {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+}
+
+.inline-form button {
+  margin-top: 0;
+  min-height: 44px;
+}
+
 /* Previous and Next under a completed list, each named by the window it goes to ("Previous week"):
    earlier at the left, later at the right, as the leaderboard's are. Either may be absent -- Next
    on the most recent window, Previous once the oldest match is shown -- and the other keeps its
@@ -511,11 +539,14 @@ ul {
 .leaderboard td:nth-child(1),
 .leaderboard td:nth-child(3),
 .leaderboard td:nth-child(4),
+.leaderboard td:nth-child(5),
 .leaderboard thead th:nth-child(1),
 .leaderboard thead th:nth-child(3),
-.leaderboard thead th:nth-child(4) {
+.leaderboard thead th:nth-child(4),
+.leaderboard thead th:nth-child(5) {
   text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* The player's own line, at the foot: set apart by colour and a rule above it, since it is their
@@ -560,8 +591,10 @@ ul {
   flex-wrap: nowrap;
 }
 
-/* Next, toward now, keeps the right edge when Previous is not there. */
-.completed-steps > .newer {
+/* Next keeps the right edge when Previous is not there: toward now under a completed list, further
+   down under the rankings. */
+.completed-steps > .newer,
+.completed-steps > .forward {
   margin-left: auto;
 }
 
@@ -699,6 +732,17 @@ label.field > .hint {
 }
 
 /* A captioned field with a tip beside it takes the row's width, leaving the "?" only what it needs. */
+/* A tip on a line of a row ("friendly"): the line keeps the row's own spacing. The "?" is still
+   44px to tap, but takes none of that height from the layout -- it overlaps the lines above and
+   below instead of pushing them apart. */
+.with-tip.inline-tip {
+  margin-bottom: 0;
+}
+
+.with-tip.inline-tip > .tip-toggle {
+  margin: -12px 0;
+}
+
 .with-tip > label.field {
   flex: 1;
   margin-bottom: 0;

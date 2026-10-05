@@ -137,3 +137,28 @@ variable "point_in_time_recovery" {
   type        = bool
   default     = false
 }
+
+variable "domain_name" {
+  description = <<-EOT
+    A friendly url of the engine's own, e.g. "boxing.matchmaker-dev.vivi.com": the host its play
+    pages, its public board and matchmaker's calls are reached at, in place of API Gateway's
+    generated execute-api host. Empty for none, which leaves the engine on that host.
+
+    The certificate is made here and validated through `hosted_zone_id`, so the name must be in
+    that zone. The execute-api host goes on answering too, so a match whose urls were handed out
+    before the name was set still opens.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.domain_name == "" || can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", var.domain_name))
+    error_message = "domain_name must be a lower-case host name such as boxing.example.com, or empty."
+  }
+}
+
+variable "hosted_zone_id" {
+  description = "Route 53 public hosted zone `domain_name` is in: where its certificate is validated and its alias records are written. Required when domain_name is set."
+  type        = string
+  default     = ""
+}

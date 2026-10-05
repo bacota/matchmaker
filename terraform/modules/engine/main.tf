@@ -16,13 +16,15 @@ terraform {
 locals {
   name = "${var.name}-${var.environment}"
 
-  # The engine's own base url, built from the api id rather than taken from the stage.
+  # The engine's own base url: its friendly name when it has one (domain.tf), and otherwise built
+  # from the api id rather than taken from the stage.
   #
   # The stage depends on the integration, which depends on the function, so a function whose
   # environment referenced the stage's invoke_url would close a cycle. The api's id is settled
   # before any of that, and a $default stage adds no path, so this is the same string the stage
-  # would report.
-  base_url = "https://${aws_apigatewayv2_api.engine.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
+  # would report. The friendly name is a variable, and closes nothing.
+  execute_api_url = "https://${aws_apigatewayv2_api.engine.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
+  base_url        = var.domain_name != "" ? "https://${var.domain_name}" : local.execute_api_url
 
   # Play Live's WebSocket API, on a named stage — a WebSocket API has no $default stage to hide
   # behind. Built from the api's id for the same reason as the base url above: the function's

@@ -220,6 +220,32 @@ not, tells the engine of a cancel, and places the match's players on the game's 
 the queue's visibility timeout, and after the last try lands in the `-dlq` queue beside it; see
 `EndingService` and `terraform/modules/api/ending.tf`.
 
+## Engine urls
+
+Each bundled engine is reached at a name of its own when the environment has a ui domain:
+`<subdomain>.<ui_domain_name>`, in the same `hosted_zone_id`. The subdomains are variables, one per
+engine:
+
+| variable | default | in dev |
+|---|---|---|
+| `tictactoe_subdomain` | `tictactoe` | `tictactoe.matchmaker-dev.vivi.com` |
+| `rps_subdomain` | `rps` | `rps.matchmaker-dev.vivi.com` |
+| `boxing_subdomain` | `simple-boxing` | `simple-boxing.matchmaker-dev.vivi.com` |
+| `stratego_subdomain` | `capture-the-flag` | `capture-the-flag.matchmaker-dev.vivi.com` |
+
+An empty subdomain gives that engine no friendly url, and with no ui domain none of them has one:
+they stay on their generated execute-api hosts.
+
+The module makes the rest (`modules/engine/domain.tf`): a regional ACM certificate validated
+through the zone, an API Gateway custom domain mapped to the engine's API, and A/AAAA alias
+records. The first apply waits a minute or two for the certificate. The engine's `BASE_URL` is the
+friendly name, so the play, board and create-game urls it hands out, and its sign-in callback, use
+it.
+
+The execute-api host is left answering, so matches whose urls were handed out before still open.
+A `game` row in matchmaker that names the old create-game url keeps working, but should be edited
+to the `<engine>_create_game_url` output, which `deploy-all.sh` prints.
+
 ## The hosted login domain
 
 Cognito serves sign-in from `https://<prefix>.auth.<region>.amazoncognito.com`, and that prefix has

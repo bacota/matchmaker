@@ -68,7 +68,11 @@ case class StrategoMatch(
     moveCallbackUrl: Option[String],
     resultsCallbackUrl: Option[String],
     maxMoves: Int,
-    clock: Option[TurnClock] = None
+    clock: Option[TurnClock] = None,
+    // What the match's pages are titled by (`MatchTitle`). Defaulted, so a match stored before they
+    // were kept reads back as it was, and is titled by the game alone.
+    override val gameDisplayName: Option[String] = None,
+    override val description: Option[String] = None
 ) extends MatchLike {
 
     def seatOf(side: Side): Option[Seat] = seats.find(_.side == side)
@@ -310,7 +314,9 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
           createdAt = now,
           moveCallbackUrl = request.moveCallbackUrl,
           resultsCallbackUrl = request.resultsCallbackUrl,
-          maxMoves = maxMoves
+          maxMoves = maxMoves,
+          gameDisplayName = request.gameDisplayName,
+          description = request.description
         )
 
     /** A piece as it is stored: on its square, since a board is mostly empty and storing 100 cells would mostly store

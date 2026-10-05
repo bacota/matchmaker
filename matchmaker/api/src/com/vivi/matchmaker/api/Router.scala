@@ -189,9 +189,11 @@ object Router {
              * what is sent is the rating, not a change to it. */
             case ("GET", "games" :: gameId :: "ratings" :: Nil) =>
                 withGameId(gameId)(id =>
-                    request.query.get("page") match {
-                        case None => ok(services.ratings.leaderboard(id, 0, caller))
-                        case Some(raw) =>
+                    // `?prefix=` finds the game's rated players by the start of a nickname instead.
+                    (request.query.get("prefix"), request.query.get("page")) match {
+                        case (Some(prefix), _) => ok(services.ratings.findInRankings(id, prefix, caller))
+                        case (None, None)      => ok(services.ratings.leaderboard(id, 0, caller))
+                        case (None, Some(raw)) =>
                             raw.toIntOption.filter(_ >= 0) match {
                                 case Some(page) => ok(services.ratings.leaderboard(id, page, caller))
                                 case None       => IO.pure(Errors.badRequest(s"'$raw' is not a valid page"))
@@ -431,8 +433,18 @@ object Router {
                 withGameId(gameId)(gid => ok(services.matches.cancel(gid, MatchId(matchId), caller)))
 
             // A game's matches, for its admins to manage them from -- whether each is friendly, above all.
+            // `?playerId=` narrows it to one player's, as an admin sees them on that player's page.
             case ("GET", "games" :: gameId :: "matches" :: Nil) =>
-                withGameId(gameId)(gid => ok(services.matches.listForGame(gid, caller)))
+                withGameId(gameId)(gid =>
+                    request.query.get("playerId") match {
+                        case None => ok(services.matches.listForGame(gid, caller))
+                        case Some(raw) =>
+                            raw.toLongOption match {
+                                case Some(id) => ok(services.matches.listForGame(gid, caller, Some(PlayerId(id))))
+                                case None     => IO.pure(Errors.badRequest(s"'$raw' is not a player id"))
+                            }
+                    }
+                )
 
             // Whether the match is friendly (V36), which a game's admin says.
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "friendly" :: Nil) =>
