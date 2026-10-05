@@ -1563,7 +1563,6 @@ object Views {
             if (summary.description.trim.nonEmpty) summary.description else s"match ${summary.matchId.value}"
           ),
           div(cls := "detail", s"started ${Format.date(summary.start)}"),
-          if (summary.friendly) emptyNode else div(cls := "detail", "not friendly"),
           matchParameters(summary),
           if (summary.cancelled) div(cls := "detail", "cancelled by its creator") else emptyNode,
           summary.completedAt
@@ -1640,7 +1639,6 @@ object Views {
           cls := "row",
           div(cls := "title", summary.gameName),
           div(cls := "detail", summary.description),
-          if (summary.friendly) emptyNode else div(cls := "detail", "not friendly"),
           matchParameters(summary),
           if (showDue) summary.due.map(countdown).getOrElse(emptyNode)
           else emptyNode,
