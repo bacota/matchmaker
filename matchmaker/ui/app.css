@@ -1349,7 +1349,12 @@ button.toggle {
     padding: 0.5rem 0.75rem 0.25rem;
   }
 
+  /* Free to shrink and to break anywhere: a flex item is otherwise as wide as its longest word,
+     and an unbroken name or value -- which these are, typed by players and admins -- would push
+     the card wider than the phone. */
   .completed tr.match > * {
+    min-width: 0;
+    overflow-wrap: anywhere;
     padding: 0;
     color: var(--muted);
     font-size: 0.9rem;
