@@ -2871,7 +2871,7 @@ object Views {
             subsection = false,
             tip = Some(
               s"ratings-tip-${game.gameId.value}" ->
-                  (s"Players are ranked by Elo rating. " +
+                  (s"Players are ranked by Elo rating, and by rated matches between equal ratings. " +
                       s"Every match of this game that is not friendly moves its players' ratings. " +
                       s"A player's first rated match starts them at ${EloRating.initial}.")
             )
@@ -3033,10 +3033,11 @@ object Views {
             })
           ),
           th(scopeAttr := "row", rated.nickname),
-          // The rating the place was worked out from, so that the column reads in order with the places; the
-          // rating as it stands now is under the table, for the player and for anybody searched for.
+          // The rating and matches the place was worked out from, so that the columns read in order with the
+          // places -- matches telling equal ratings apart; the rating as it stands now is under the table, for
+          // the player and for anybody searched for.
           td(child.text <-- rating.map(r => r.rankedRating.getOrElse(r.rating).toString)),
-          td(child.text <-- rating.map(_.matches.toString)),
+          td(child.text <-- rating.map(r => r.rankedMatches.getOrElse(r.matches).toString)),
           child <-- administers.map {
               case false => emptyNode
               case true =>

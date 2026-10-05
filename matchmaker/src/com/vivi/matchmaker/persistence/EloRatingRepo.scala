@@ -7,7 +7,8 @@ import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model.{EloRating, GameId, Leaderboard, PlayerId, PublicPlayer}
-import EloRatingRepo.{Placed, Placing, RankingLockSpace}
+import EloRatingRepo.{placed, standing, Placed, Placing, RankingLockSpace, Standing}
+import scala.math.Ordering.Implicits._
 
 /** Each player's Elo rating in each game (V42). How it moves, and who may set it, is
   * [[com.vivi.matchmaker.service.EloRatingService]]'s and [[EloRating]]'s business, not this one's.
@@ -32,27 +33,30 @@ class EloRatingRepo(session: Session[IO]) {
         sql"""INSERT INTO elo_rating (game_id, player_id, rating, set_by) VALUES ($gameId, $playerId, $int4, $playerId)
           ON CONFLICT (game_id, player_id) DO UPDATE SET rating = EXCLUDED.rating, set_by = EXCLUDED.set_by""".command
 
-    private val select: Query[(GameId, PlayerId), (String, Int, Int, Option[Int], Option[Int], Boolean)] =
-        sql"""SELECT p.nickname, r.rating, r.matches, r.rank, r.ranked_rating, r.matches > 0 OR r.set_by IS NOT NULL
+    private val select: Query[(GameId, PlayerId), (String, Int, Int, Option[Int], Option[Int], Option[Int], Boolean)] =
+        sql"""SELECT p.nickname, r.rating, r.matches, r.rank, r.ranked_rating, r.ranked_matches,
+            r.matches > 0 OR r.set_by IS NOT NULL
           FROM elo_rating r JOIN player p ON p.player_id = r.player_id
           WHERE r.game_id = $gameId AND r.player_id = $playerId"""
-            .query(text *: int4 *: int4 *: int4.opt *: int4.opt *: bool)
+            .query(text *: int4 *: int4 *: int4.opt *: int4.opt *: int4.opt *: bool)
 
     private val gameExists: Query[GameId, Boolean] =
         sql"""SELECT EXISTS (SELECT 1 FROM game WHERE game_id = $gameId)""".query(bool)
 
     /* A range of places, by the (game_id, rank) index: everybody placed from `first` to `last`
-     * inclusive, however many share them, and by nickname among equals so that the order does not
+     * inclusive, however many share them -- equal in rating and matches both -- and by nickname
+     * among those so that the order does not
      * shuffle between two reads. A player not placed yet -- rated a moment ago, and waiting for the
      * listener -- is on no page until they are.
      *
      * Only players who have a rating to show: one a rated match has moved, or an admin has set. A
      * player taken off the leaderboard keeps their place until the listener takes it away. */
-    private val selectPlaces: Query[(GameId, Int, Int), (PlayerId, String, Int, Int, Option[Int], Option[Int])] =
-        sql"""SELECT p.player_id, p.nickname, r.rating, r.matches, r.rank, r.ranked_rating
+    private val selectPlaces
+        : Query[(GameId, Int, Int), (PlayerId, String, Int, Int, Option[Int], Option[Int], Option[Int])] =
+        sql"""SELECT p.player_id, p.nickname, r.rating, r.matches, r.rank, r.ranked_rating, r.ranked_matches
           FROM elo_rating r JOIN player p ON p.player_id = r.player_id
           WHERE r.game_id = $gameId AND r.rank BETWEEN $int4 AND $int4 AND (r.matches > 0 OR r.set_by IS NOT NULL)
-          ORDER BY r.rank, p.nickname""".query(playerId *: text *: int4 *: int4 *: int4.opt *: int4.opt)
+          ORDER BY r.rank, p.nickname""".query(playerId *: text *: int4 *: int4 *: int4.opt *: int4.opt *: int4.opt)
 
     private val selectPlacedAfter: Query[(GameId, Int), Boolean] =
         sql"""SELECT EXISTS (SELECT 1 FROM elo_rating WHERE game_id = $gameId AND rank > $int4)""".query(bool)
@@ -107,8 +111,9 @@ class EloRatingRepo(session: Session[IO]) {
     private def readWhere(game: GameId, player: PlayerId)(keep: Boolean => Boolean): IO[Option[EloRating]] =
         session
             .option(select)((game, player))
-            .map(_.filter((_, _, _, _, _, rated) => keep(rated)).map { (nickname, rating, matches, rank, ranked, _) =>
-                EloRating(PublicPlayer(player, nickname), rating, matches, rank, ranked)
+            .map(_.filter((_, _, _, _, _, _, rated) => keep(rated)).map {
+                (nickname, rating, matches, rank, ranked, behind, _) =>
+                    EloRating(PublicPlayer(player, nickname), rating, matches, rank, ranked, behind)
             })
 
     /** The player's row in the game, rated or not: nothing only if there is no row at all. */
@@ -130,8 +135,8 @@ class EloRatingRepo(session: Session[IO]) {
                     .mapN((rows, more) =>
                         Some(
                           Leaderboard(
-                            rows.map((id, nickname, rating, matches, rank, ranked) =>
-                                EloRating(PublicPlayer(id, nickname), rating, matches, rank, ranked)
+                            rows.map((id, nickname, rating, matches, rank, ranked, behind) =>
+                                EloRating(PublicPlayer(id, nickname), rating, matches, rank, ranked, behind)
                             ),
                             more
                           )
@@ -158,46 +163,52 @@ class EloRatingRepo(session: Session[IO]) {
     def tryLockRanking(game: GameId): IO[Boolean] = session.unique(tryLock)(game)
 
     private val unplacedWhere =
-        """((matches > 0 OR set_by IS NOT NULL) AND (rank IS NULL OR ranked_rating IS DISTINCT FROM rating))
+        """((matches > 0 OR set_by IS NOT NULL)
+            AND (rank IS NULL OR ranked_rating IS DISTINCT FROM rating OR ranked_matches IS DISTINCT FROM matches))
           OR (NOT (matches > 0 OR set_by IS NOT NULL) AND rank IS NOT NULL)"""
 
-    // The predicate is V45's `elo_rating_unplaced` word for word, so that the index serves it.
+    // The predicate is V46's `elo_rating_unplaced` word for word, so that the index serves it.
     private val selectUnplaced: Query[(GameId, Int), PlayerId] =
         sql"""SELECT player_id FROM elo_rating WHERE game_id = $gameId AND (#$unplacedWhere)
           ORDER BY player_id LIMIT $int4""".query(playerId)
 
     /** Up to `limit` of the game's players waiting to be placed, or taken off: rated and not placed, placed on a rating
-      * that has moved since, or placed and no longer rated.
+      * or a number of matches that has moved since, or placed and no longer rated.
       */
     def unplaced(game: GameId, limit: Int): IO[List[PlayerId]] = session.execute(selectUnplaced)((game, limit))
 
     private val selectForPlacing: Query[(GameId, PlayerId), Placing] =
-        sql"""SELECT rating, matches > 0 OR set_by IS NOT NULL, rank, ranked_rating
+        sql"""SELECT rating, matches, matches > 0 OR set_by IS NOT NULL, rank, ranked_rating, ranked_matches
           FROM elo_rating WHERE game_id = $gameId AND player_id = $playerId
-          FOR NO KEY UPDATE NOWAIT""".query(int4 *: bool *: int4.opt *: int4.opt).map {
-            (rating, rated, rank, rankedRating) =>
-                Placing(rating, rated, rank.zip(rankedRating).map(Placed.apply))
+          FOR NO KEY UPDATE NOWAIT""".query(int4 *: int4 *: bool *: int4.opt *: int4.opt *: int4.opt).map {
+            (rating, matches, rated, rank, rankedRating, rankedMatches) =>
+                val placed = for {
+                    r <- rank
+                    by <- rankedRating
+                    behind <- rankedMatches
+                } yield Placed(r, Standing(by, behind))
+                Placing(Standing(rating, matches), rated, placed)
         }
 
-    /** The player's row, locked NOWAIT — the rating it holds is the one they are placed by, and play cannot move it
-      * until the transaction ends — or nothing if they have none.
+    /** The player's row, locked NOWAIT — the rating and matches it holds are what they are placed by, and play cannot
+      * move them until the transaction ends — or nothing if they have none.
       */
     def lockForPlacing(game: GameId, player: PlayerId): IO[Option[Placing]] =
         session.option(selectForPlacing)((game, player))
 
     /* The probes placing walks the leaderboard with: each one row, found by the (game_id, rank)
      * index, and never `except`, the player being placed. Read plainly: only placings change a
-     * place, and the ranking lock keeps every other placing out. Everybody in one place is rated
-     * alike, so any one of them says what the place was placed by. */
+     * place, and the ranking lock keeps every other placing out. Everybody in one place was placed by
+     * the same rating and matches, so any one of them says what the place was placed by. */
     private val selectAbove: Query[(GameId, Int, PlayerId), Placed] =
-        sql"""SELECT rank, ranked_rating FROM elo_rating
+        sql"""SELECT rank, ranked_rating, ranked_matches FROM elo_rating
           WHERE game_id = $gameId AND rank < $int4 AND player_id <> $playerId
-          ORDER BY rank DESC LIMIT 1""".query(int4 *: int4).to[Placed]
+          ORDER BY rank DESC LIMIT 1""".query(placed)
 
     private val selectFrom: Query[(GameId, Int, PlayerId), Placed] =
-        sql"""SELECT rank, ranked_rating FROM elo_rating
+        sql"""SELECT rank, ranked_rating, ranked_matches FROM elo_rating
           WHERE game_id = $gameId AND rank >= $int4 AND player_id <> $playerId
-          ORDER BY rank LIMIT 1""".query(int4 *: int4).to[Placed]
+          ORDER BY rank LIMIT 1""".query(placed)
 
     /** The place just above `rank`, or nothing at the top. */
     def placeAbove(game: GameId, rank: Int, except: PlayerId): IO[Option[Placed]] =
@@ -222,37 +233,52 @@ class EloRatingRepo(session: Session[IO]) {
             .option(selectLast)((game, except, game, except))
             .map(_.fold(1)((rank, sharing) => rank + sharing.toInt))
 
-    private val lockRun: Query[(GameId, Int, Int, Int, Int, PlayerId), PlayerId] =
-        sql"""SELECT player_id FROM elo_rating
-          WHERE game_id = $gameId AND rank BETWEEN $int4 AND $int4
-            AND ranked_rating >= $int4 AND ranked_rating < $int4 AND player_id <> $playerId
-          FOR NO KEY UPDATE NOWAIT""".query(playerId)
+    /* A run of places, by the index, and of what they were placed by: rating and matches compared
+     * together, rating first, as row values compare. */
+    private val runWhere: Fragment[(GameId, Int, Int, Standing, Standing, PlayerId)] =
+        sql"""game_id = $gameId AND rank BETWEEN $int4 AND $int4
+            AND (ranked_rating, ranked_matches) >= ($standing) AND (ranked_rating, ranked_matches) < ($standing)
+            AND player_id <> $playerId"""
 
-    private val updateRun: Command[(Int, GameId, Int, Int, Int, Int, PlayerId)] =
-        sql"""UPDATE elo_rating SET rank = rank + $int4
-          WHERE game_id = $gameId AND rank BETWEEN $int4 AND $int4
-            AND ranked_rating >= $int4 AND ranked_rating < $int4 AND player_id <> $playerId""".command
+    private val lockRun: Query[(GameId, Int, Int, Standing, Standing, PlayerId), PlayerId] =
+        sql"""SELECT player_id FROM elo_rating WHERE $runWhere FOR NO KEY UPDATE NOWAIT""".query(playerId)
 
-    /** Moves `by` places everybody but `except` who was placed by a rating from `atLeast` up to but not including
+    private val updateRun: Command[(Int, (GameId, Int, Int, Standing, Standing, PlayerId))] =
+        sql"""UPDATE elo_rating SET rank = rank + $int4 WHERE $runWhere""".command
+
+    /** Moves `by` places everybody but `except` who was placed by a standing from `atLeast` up to but not including
       * `below`: down one when a player arrives above them, up one when a player leaves from above them. `from` and `to`
       * are the places those players are between, inclusive — what keeps the update to the index's range, and not the
       * game's whole leaderboard. Locked NOWAIT first, so that the update has nothing to wait for.
       */
-    def shift(game: GameId, from: Int, to: Int, atLeast: Int, below: Int, by: Int, except: PlayerId): IO[Unit] =
+    def shift(
+        game: GameId,
+        from: Int,
+        to: Int,
+        atLeast: Standing,
+        below: Standing,
+        by: Int,
+        except: PlayerId
+    ): IO[Unit] = {
+        val run = (game, from, to, atLeast, below, except)
         IO.whenA(from <= to && atLeast < below)(
-          session.execute(lockRun)((game, from, to, atLeast, below, except)) *>
-              session.execute(updateRun)((by, game, from, to, atLeast, below, except)).void
+          session.execute(lockRun)(run) *> session.execute(updateRun)((by, run)).void
         )
+    }
 
-    private val updatePlace: Command[(Option[Int], Option[Int], GameId, PlayerId)] =
-        sql"""UPDATE elo_rating SET rank = ${int4.opt}, ranked_rating = ${int4.opt}
+    private val updatePlace: Command[(Option[Int], Option[Int], Option[Int], GameId, PlayerId)] =
+        sql"""UPDATE elo_rating SET rank = ${int4.opt}, ranked_rating = ${int4.opt}, ranked_matches = ${int4.opt}
           WHERE game_id = $gameId AND player_id = $playerId""".command
 
     /** Puts the player at `place`, placed by what it holds: or takes them off the leaderboard, given nothing. The row
       * is the one [[lockForPlacing]] locked.
       */
     def place(game: GameId, player: PlayerId, place: Option[Placed]): IO[Unit] =
-        session.execute(updatePlace)((place.map(_.rank), place.map(_.rating), game, player)).void
+        session
+            .execute(updatePlace)(
+              (place.map(_.rank), place.map(_.by.rating), place.map(_.by.matches), game, player)
+            )
+            .void
 }
 
 object EloRatingRepo {
@@ -260,10 +286,27 @@ object EloRatingRepo {
     /** The first key of the ranking lock's advisory locks: anything, so long as nothing else takes locks under it. */
     val RankingLockSpace: Int = 0x52414e4b // "RANK"
 
-    /** Where a player is on the leaderboard, and the rating they were placed by. */
-    case class Placed(rank: Int, rating: Int)
-
-    /** A player's row as placing them reads it: their rating, whether it is one the leaderboard shows, and their place.
+    /** What a player is placed by: their rating, and of two rated the same, the one more rated matches stand behind is
+      * the higher.
       */
-    case class Placing(rating: Int, rated: Boolean, placed: Option[Placed])
+    case class Standing(rating: Int, matches: Int)
+
+    object Standing {
+        given Ordering[Standing] = Ordering.by(s => (s.rating, s.matches))
+
+        /** Below and above every standing there is. */
+        val lowest: Standing = Standing(Int.MinValue, Int.MinValue)
+        val highest: Standing = Standing(Int.MaxValue, Int.MaxValue)
+    }
+
+    /** Where a player is on the leaderboard, and the standing they were placed by. */
+    case class Placed(rank: Int, by: Standing)
+
+    /** A player's row as placing them reads it: their standing, whether it is one the leaderboard shows, and their
+      * place.
+      */
+    case class Placing(standing: Standing, rated: Boolean, placed: Option[Placed])
+
+    private val standing: Codec[Standing] = (int4 *: int4).to[Standing]
+    private val placed: Decoder[Placed] = (int4 *: standing).to[Placed]
 }

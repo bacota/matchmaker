@@ -51,50 +51,59 @@ class RankingServiceSpec extends PropertySuite {
         List.fill(n)(()).traverse(_ => services.registration.register(unique("rank"), unique("rank-sub")))
 
     /** A player's rating as play or an admin leaves it: `rated` is whether the leaderboard shows it — a match has moved
-      * it — or not, as for a row a match's start made.
+      * it — or not, as for a row a match's start made; and how many rated matches stand behind it, which tell equal
+      * ratings apart.
       */
-    private case class Rating(rating: Int, rated: Boolean)
+    private case class Rating(rating: Int, rated: Boolean, matches: Int = 1)
 
     private val upsert: Command[(Int, Long, Int, Int)] =
         sql"""INSERT INTO elo_rating (game_id, player_id, rating, matches) VALUES ($int4, $int8, $int4, $int4)
           ON CONFLICT (game_id, player_id) DO UPDATE SET rating = EXCLUDED.rating, matches = EXCLUDED.matches""".command
 
-    /** Moves the ratings the way a completion does: the rating, and nothing about places. */
+    /** Moves the ratings the way a completion does: the rating and the matches, and nothing about places. */
     private def write(game: Game, ratings: Map[Player, Rating]): IO[Unit] =
         TestSession.resource.use { session =>
             ratings.toList.traverse_((player, r) =>
-                session.execute(upsert)((game.gameId.value, player.playerId.value, r.rating, if (r.rated) 1 else 0))
+                session.execute(upsert)(
+                  (game.gameId.value, player.playerId.value, r.rating, if (r.rated) r.matches else 0)
+                )
             )
         }
 
-    private val selectPlaces: Query[Int, (Long, Option[Int], Option[Int], Int)] =
-        sql"""SELECT player_id, rank, ranked_rating, rating FROM elo_rating WHERE game_id = $int4"""
-            .query(int8 *: int4.opt *: int4.opt *: int4)
+    private val selectPlaces: Query[Int, (Long, Option[Int], Option[(Int, Int)], (Int, Int))] =
+        sql"""SELECT player_id, rank, ranked_rating, ranked_matches, rating, matches FROM elo_rating
+          WHERE game_id = $int4"""
+            .query(int8 *: int4.opt *: (int4 *: int4).opt *: int4 *: int4)
+            .map((player, rank, rankedBy, rating, matches) => (player, rank, rankedBy, (rating, matches)))
 
     private def places(game: Game): IO[Map[Long, Option[Int]]] =
         TestSession.resource.use(session =>
             session.execute(selectPlaces)(game.gameId.value).map { rows =>
-                rows.foreach((player, rank, rankedRating, rating) =>
-                    assert(rank.isEmpty || rankedRating.contains(rating), s"$player is placed by a stale rating")
+                rows.foreach((player, rank, rankedBy, standing) =>
+                    assert(rank.isEmpty || rankedBy.contains(standing), s"$player is placed by a stale standing")
                 )
                 rows.map((player, rank, _, _) => player -> rank).toMap
             }
         )
 
-    /** Where everybody belongs: one more than how many rated players are rated higher, for the rated; none for the
-      * rest.
+    /** Where everybody belongs: one more than how many rated players stand higher — by rating, then by matches — for
+      * the rated; none for the rest.
       */
     private def expected(ratings: Map[Player, Rating]): Map[Long, Option[Int]] = {
-        val rated = ratings.values.filter(_.rated).map(_.rating).toList
-        ratings.map((player, r) => player.playerId.value -> Option.when(r.rated)(rated.count(_ > r.rating) + 1))
+        import scala.math.Ordering.Implicits._
+        def standing(r: Rating) = (r.rating, r.matches)
+        val rated = ratings.values.filter(_.rated).map(standing).toList
+        ratings.map((player, r) => player.playerId.value -> Option.when(r.rated)(rated.count(_ > standing(r)) + 1))
     }
 
-    // Close together, so that ties are common, and some unrated, so that players come and go.
+    // Close together, so that equal ratings are common and so are ties in matches between them, and some unrated, so
+    // that players come and go.
     private val genRating: Gen[Rating] =
         for {
-            rating <- Gen.choose(1490, 1500)
+            rating <- Gen.choose(1494, 1500)
             rated <- Gen.frequency(5 -> true, 1 -> false)
-        } yield Rating(rating, rated)
+            matches <- Gen.choose(1, 3)
+        } yield Rating(rating, rated, matches)
 
     /** Rounds of moves: in each, some of the players' ratings move, and then the leaderboard is put in order. */
     private val genRounds: Gen[(Int, List[Map[Int, Rating]])] =
@@ -151,6 +160,24 @@ class RankingServiceSpec extends PropertySuite {
         val (List(a, b, c, d), before, after) = result.timeout(caseTimeout).unsafeRunSync(): @unchecked
         assertEquals(before, Map(a -> Some(1), b -> Some(2), c -> Some(3)))
         assertEquals(after, Map(a -> Some(1), d -> Some(1), c -> Some(3), b -> Some(4)))
+    }
+
+    test("of two players rated the same, the one with more matches is placed higher, and a match moves them") {
+        val result = for {
+            game <- makeGame()
+            people <- players(3)
+            List(a, b, c) = people: @unchecked
+            _ <- write(game, Map(a -> Rating(1500, true, 3), b -> Rating(1500, true, 5), c -> Rating(1500, true, 3)))
+            _ <- ranking.rank(game.gameId)
+            before <- places(game)
+            // A match that moves a's rating by nothing still adds one: a passes c, and draws level with nobody.
+            _ <- write(game, Map(a -> Rating(1500, true, 4)))
+            _ <- ranking.rank(game.gameId)
+            after <- places(game)
+        } yield (people.map(_.playerId.value), before, after)
+        val (List(a, b, c), before, after) = result.timeout(caseTimeout).unsafeRunSync(): @unchecked
+        assertEquals(before, Map(b -> Some(1), a -> Some(2), c -> Some(2)))
+        assertEquals(after, Map(b -> Some(1), a -> Some(2), c -> Some(3)))
     }
 
     test("a placing that cannot have a row's lock gives up rather than waiting, and is placed once it can".tag(Quiet)) {

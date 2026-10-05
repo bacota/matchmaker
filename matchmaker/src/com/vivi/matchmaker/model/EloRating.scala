@@ -10,7 +10,8 @@ case class EloRating(
     rating: Int,
     matches: Int,
     rank: Option[Int] = None,
-    rankedRating: Option[Int] = None
+    rankedRating: Option[Int] = None,
+    rankedMatches: Option[Int] = None
 )
 
 /** One page of a game's leaderboard — everybody placed in its range of places, best first — and whether anybody is
