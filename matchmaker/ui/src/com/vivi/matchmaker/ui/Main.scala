@@ -1418,7 +1418,12 @@ object Views {
       */
     private def characterPage(character: CharacterName): HtmlElement =
         div(
-          h2(character.name),
+          // By the name the profile gives, which is the character's name now; the link's until it has come.
+          h2(
+            child.text <-- Store.characterProfile.signal.map(
+              _.filter(_.character.characterId == character.characterId).fold(character.name)(_.character.name)
+            )
+          ),
           child <-- Store.characterProfile.signal.combineWith(Store.publicMatchesLoading.signal).map {
               // Only the answer about this character: another one's, still held, is not it.
               case (Some(profile), _) if profile.character.characterId == character.characterId =>

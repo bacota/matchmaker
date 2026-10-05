@@ -108,7 +108,21 @@ object Json {
 
     /** By its code: 'WON', 'LOST' or 'DREW'. */
     given ReadWriter[MatchOutcome] = readwriter[String].bimap(_.code, MatchOutcome.fromCode)
-    given ReadWriter[Opponent] = macroRW
+    /* Flat: the player's own fields, as `opponents` carried them when it was a list of players, and the character
+     * beside them where there is one. A client that reads an opponent as a `PublicPlayer` -- a page loaded before the
+     * character was added -- goes on reading it, since an unknown key is skipped. */
+    given ReadWriter[Opponent] = readwriter[ujson.Value].bimap(
+      opponent => {
+          val fields = upickle.default.writeJs(opponent.player).obj
+          opponent.character.foreach(c => fields("character") = upickle.default.writeJs(c))
+          fields
+      },
+      json =>
+          Opponent(
+            upickle.default.read[PublicPlayer](json),
+            json.obj.get("character").map(upickle.default.read[CharacterName](_))
+          )
+    )
     given ReadWriter[MatchSummary] = macroRW
     given ReadWriter[CompletedFrame] =
         readwriter[String].bimap(_.code, code => CompletedFrame.fromCode(code).getOrElse(CompletedFrame.Day))
