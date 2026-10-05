@@ -431,8 +431,18 @@ object Router {
                 withGameId(gameId)(gid => ok(services.matches.cancel(gid, MatchId(matchId), caller)))
 
             // A game's matches, for its admins to manage them from -- whether each is friendly, above all.
+            // `?playerId=` narrows it to one player's, as an admin sees them on that player's page.
             case ("GET", "games" :: gameId :: "matches" :: Nil) =>
-                withGameId(gameId)(gid => ok(services.matches.listForGame(gid, caller)))
+                withGameId(gameId)(gid =>
+                    request.query.get("playerId") match {
+                        case None => ok(services.matches.listForGame(gid, caller))
+                        case Some(raw) =>
+                            raw.toLongOption match {
+                                case Some(id) => ok(services.matches.listForGame(gid, caller, Some(PlayerId(id))))
+                                case None     => IO.pure(Errors.badRequest(s"'$raw' is not a player id"))
+                            }
+                    }
+                )
 
             // Whether the match is friendly (V36), which a game's admin says.
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "friendly" :: Nil) =>

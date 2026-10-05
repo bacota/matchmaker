@@ -172,8 +172,8 @@ object ApiClient {
         get[Seq[GameAdmin]](s"/games/${gameId.value}/admins")
 
     /** A game's matches, running ones first, for its admins to manage them from; refused for anybody else. */
-    def gameMatches(gameId: GameId): Future[Seq[GameMatch]] =
-        get[Seq[GameMatch]](s"/games/${gameId.value}/matches")
+    def gameMatches(gameId: GameId, player: Option[PlayerId] = None): Future[Seq[GameMatch]] =
+        get[Seq[GameMatch]](s"/games/${gameId.value}/matches${player.fold("")(p => s"?playerId=${p.value}")}")
 
     /** Says whether a match is friendly — a game's admin's to say (V36). */
     def setFriendly(gameId: GameId, matchId: MatchId, friendly: Boolean): Future[Match] =

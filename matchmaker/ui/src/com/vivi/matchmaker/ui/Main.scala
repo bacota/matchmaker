@@ -1479,7 +1479,8 @@ object Views {
                     h3("Current Matches"),
                     publicMatches(running, "None being played in public."),
                     h3("Completed Matches"),
-                    div(completedWindow(completedList, "None finished in public.")(publicMatchRow))
+                    div(completedWindow(completedList, "None finished in public.")(publicMatchRow)),
+                    adminMatchesSection(game, player)
                   )
               else emptyNode
           }
@@ -1987,7 +1988,6 @@ object Views {
                         pendingAcceptances(Some(game)),
                         gameChallenges(game),
                         ratingsSection(game),
-                        adminMatchesSection(game),
                         gameHistory(game)
                       )
               },
@@ -2657,20 +2657,26 @@ object Views {
         )
     }
 
-    /** The game's matches, for its admins: where they say whether each is friendly (V36). Nothing at all for anybody
-      * else — not a heading, not a request beyond the one that finds out.
+    /** `player`'s matches in the game, for an admin of it looking at that player's page: where they say whether each is
+      * friendly (V36). Every match the player has a seat in, public or not — an admin manages them all — and nothing at
+      * all for a reader who is not an admin of the game: not a heading, not a request beyond the one that finds out.
       *
-      * A section of its own rather than a box on the rows of the player's own lists, because an admin need not be
-      * playing a match to manage it, and a match they host but do not play in is in none of their lists.
+      * On the player's page rather than the game's, so that an admin deals with one player's matches at a time, from
+      * the page that is about that player.
       */
-    private def adminMatchesSection(game: Game): HtmlElement =
-        div(child <-- currentPlayer.map(_.fold(emptyNode)(player => adminMatches(game, player))))
+    private def adminMatchesSection(game: Game, player: PublicPlayer): HtmlElement =
+        div(child <-- currentPlayer.map(_.fold(emptyNode)(reader => adminMatches(game, player, reader))))
 
-    private def adminMatches(game: Game, player: Player): HtmlElement =
-        div(child <-- Store.administers(game.gameId, player).map(if (_) adminMatchList(game) else emptyNode))
+    /* Not on the admin's own page: it is another player's matches an admin is there to manage. */
+    private def adminMatches(game: Game, player: PublicPlayer, reader: Player): HtmlElement =
+        if (reader.playerId == player.playerId) div()
+        else
+            div(
+              child <-- Store.administers(game.gameId, reader).map(if (_) adminMatchList(game, player) else emptyNode)
+            )
 
     /** The list itself, asked for when it is shown — which is only to an admin of the game. */
-    private def adminMatchList(game: Game): HtmlElement = {
+    private def adminMatchList(game: Game, player: PublicPlayer): HtmlElement = {
         // `None` until the list has come back.
         val matches = Var(Option.empty[Seq[GameMatch]])
         val refreshing = Var(false)
@@ -2682,7 +2688,7 @@ object Views {
          * again. Dropped if it belongs to another mount or another sign-in. */
         def fetch(asked: Int): Future[Unit] = {
             val signIn = Store.currentSignIn
-            ApiClient.gameMatches(game.gameId).map { found =>
+            ApiClient.gameMatches(game.gameId, Some(player.playerId)).map { found =>
                 if (asked == mount && Store.stillSignedInAs(signIn)) matches.set(Some(found))
             }
         }
@@ -2696,12 +2702,18 @@ object Views {
           child <-- matches.signal.map {
               case None => emptyNode
               case Some(found) =>
-                  refreshableSection("Matches in this game", refreshing, () => fetch(mount), subsection = false)(
-                    p(
-                      cls := "detail",
-                      "As an admin of this game, you say whether each match is friendly — even once it is over, " +
-                          "until one of its players has played another match of this game since."
-                    ),
+                  refreshableSection(
+                    "Friendly or Rated",
+                    refreshing,
+                    () => fetch(mount),
+                    subsection = true,
+                    tip = Some(
+                      s"friendly-admin-tip-${game.gameId.value}" ->
+                          (s"Every match ${player.nickname} has played or is playing in this game, public or not. As " +
+                              "an admin of this game, you say whether each is friendly — even once it is over, until " +
+                              "one of its players has played another match of this game since.")
+                    )
+                  )(
                     if (found.isEmpty) p(cls := "empty", "None yet.")
                     else ul(found.map(adminMatchRow(game, _)))
                   )
@@ -2709,7 +2721,7 @@ object Views {
         )
     }
 
-    /** One match in [[adminMatches]], with the box that says whether it is friendly.
+    /** One match in [[adminMatchList]], with the box that says whether it is friendly.
       *
       * The box's state is the row's own, set as it is clicked and put back if the server refuses: changing it does not
       * rebuild the list, which would take the keyboard's focus with it.

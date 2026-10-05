@@ -372,9 +372,10 @@ class MatchService(
     /** The game's matches, for its admins to manage them from: an overall admin's or the game's own admins' to read,
       * since these are matches they may have no seat in. The running ones first, and at most
       * [[MatchService.gameMatchLimit]] of them altogether, so that a game with a long history answers with what is
-      * being played and what was played lately rather than with everything.
+      * being played and what was played lately rather than with everything. Given a player, only the matches they have
+      * a seat in: what an admin manages from that player's page.
       */
-    def listForGame(gameId: GameId, callerExternalId: String): IO[List[GameMatch]] =
+    def listForGame(gameId: GameId, callerExternalId: String, player: Option[PlayerId] = None): IO[List[GameMatch]] =
         sessionPool.use { session =>
             for {
                 caller <- resolveCaller(session, callerExternalId)
@@ -383,7 +384,7 @@ class MatchService(
                     if (caller.isAdmin) IO.pure(true)
                     else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
                 _ <- IO.raiseUnless(allowed)(UnauthorizedError("only an admin of this game may list its matches"))
-                matches <- new MatchRepo(session).listForGame(gameId, MatchService.gameMatchLimit)
+                matches <- new MatchRepo(session).listForGame(gameId, MatchService.gameMatchLimit, player)
             } yield matches
         }
 
