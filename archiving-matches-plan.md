@@ -239,7 +239,8 @@ No bucket column: the bucket follows from `friendly`, which is fixed by then, an
 configuration.
 
 `V39__match_swept.sql` adds `swept_at`, when the sweep last asked about a match it found owed
-something; see [Sweep](#sweep).
+something; see [Sweep](#sweep). `V47__drop_match_swept.sql` drops it again, with the sweep: match
+endings now go through an SQS queue, whose redelivery and dead-letter queue do its retrying.
 
 ### Code
 
@@ -314,8 +315,8 @@ something; see [Sweep](#sweep).
 - **Cancels the engine never acknowledged** are sent again.
 
 Nothing it catches is urgent: a match that is not archived yet is still served from its live copy.
-Each match is asked about at most once a run (`swept_at`, V39, with a retry interval a little under
-a day), and the ones asked about longest ago go last, so one that can never be settled, because its
+Each match is asked about at most once a run (`swept_at`, V39 -- dropped in V47 with the sweep, which
+the SQS ending queue replaced -- with a retry interval a little under a day), and the ones asked about longest ago go last, so one that can never be settled, because its
 engine lost it or has gone, does not hold the front of the queue. A run takes on every match owed,
 with no batch limit, and runs for up to Lambda's 15 minutes: it stops starting on matches half a
 minute before then, and the next day's run carries on. Re-sent cancels go first, so that a long
