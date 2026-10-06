@@ -34,15 +34,15 @@ class ParticipantRepo(session: Session[IO]) {
      * The player and the game are each named twice -- once as the seat's own column, once to resolve
      * the chain -- so each value is bound twice. */
     private val insertParticipant: Query[
-      (GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Int),
+      (GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Int, Option[Int]),
       ParticipantId
     ] =
         // `completed_at` (V41) is the database's now() for a seat created already finished, as
         // `updateParticipant` stamps one below; Scala says only whether it is.
         sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed_at, due, game_role_id,
-              elo_start, notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended)
+              elo_start, elo_role_start, notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended)
           SELECT $gameId, $matchId, $gameType, $playerId, $bool, CASE WHEN $bool THEN now() END, ${instant.opt},
-                 $gameRoleId, $int4,
+                 $gameRoleId, $int4, ${int4.opt},
                  COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
                  COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
                  COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
@@ -52,7 +52,7 @@ class ParticipantRepo(session: Session[IO]) {
           WHERE pl.player_id = $playerId
           RETURNING participant_id"""
             .query(participantId)
-            .contramap { case t @ (game, _, _, player, _, _, _, _, _) => t ++ (game, player) }
+            .contramap { case t @ (game, _, _, player, _, _, _, _, _, _) => t ++ (game, player) }
 
     private val insertCharacterParticipant: Command[(GameId, ParticipantId, CharacterId)] =
         sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id)
@@ -155,15 +155,17 @@ class ParticipantRepo(session: Session[IO]) {
         }
     }
 
-    /** Seats `p`, whose player was rated `eloStart` in the game as the match began (V43). */
-    def create(p: Participant, eloStart: Int): IO[Participant] = {
+    /** Seats `p`, whose player was rated `eloStart` in the game as the match began (V43), and `eloRoleStart` in the
+      * seat's role (V49) — none for a game whose roles are unimportant.
+      */
+    def create(p: Participant, eloStart: Int, eloRoleStart: Option[Int] = None): IO[Participant] = {
         val gt = p match {
             case _: CharacterParticipant => GameType.Character
             case _: PlainParticipant     => GameType.Plain
         }
         for {
             id <- session.unique(insertParticipant)(
-              (p.gameId, p.matchId, gt, p.playerId, p.pending, p.completed, p.due, p.gameRoleId, eloStart)
+              (p.gameId, p.matchId, gt, p.playerId, p.pending, p.completed, p.due, p.gameRoleId, eloStart, eloRoleStart)
             )
             _ <- p match {
                 case cp: CharacterParticipant =>
@@ -251,16 +253,18 @@ class ParticipantRepo(session: Session[IO]) {
                     (participant, externalId, roleName)
             })
 
-    private val selectEloSeats: Query[(GameId, MatchId), (ParticipantId, PlayerId, Int)] =
-        sql"""SELECT participant_id, player_id, elo_start FROM participant
+    private val selectEloSeats: Query[(GameId, MatchId), ParticipantRepo.EloSeatRow] =
+        sql"""SELECT participant_id, player_id, elo_start, game_role_id, elo_role_start FROM participant
           WHERE game_id = $gameId AND match_id = $matchId
-          ORDER BY participant_id""".query(participantId *: playerId *: int4)
+          ORDER BY participant_id"""
+            .query(participantId *: playerId *: int4 *: gameRoleId *: int4.opt)
+            .to[ParticipantRepo.EloSeatRow]
 
-    /** Every seat in a match as rating sees it: whose it is, and what they were rated as it began (V43). */
+    /** Every seat in a match as rating sees it: whose it is, its role, and what they were rated as it began, overall
+      * (V43) and in the role (V49).
+      */
     def eloSeatsForMatch(gameId: GameId, matchId: MatchId): IO[List[ParticipantRepo.EloSeatRow]] =
-        session
-            .execute(selectEloSeats)((gameId, matchId))
-            .map(_.map((id, player, start) => ParticipantRepo.EloSeatRow(id, player, start)))
+        session.execute(selectEloSeats)((gameId, matchId))
 
     private val updateEloStartBy: Command[(Int, GameId, ParticipantId)] =
         sql"""UPDATE participant SET elo_start = elo_start + $int4
@@ -273,14 +277,22 @@ class ParticipantRepo(session: Session[IO]) {
     def adjustEloStart(gameId: GameId, id: ParticipantId, change: Int): IO[Unit] =
         session.execute(updateEloStartBy)((change, gameId, id)).void
 
+    private val updateEloRoleStartBy: Command[(Int, GameId, ParticipantId)] =
+        sql"""UPDATE participant SET elo_role_start = elo_role_start + $int4
+          WHERE game_id = $gameId AND participant_id = $participantId""".command
+
+    /** As [[adjustEloStart]], for the seat's starting rating in its role (V49). A seat with none keeps none. */
+    def adjustEloRoleStart(gameId: GameId, id: ParticipantId, change: Int): IO[Unit] =
+        session.execute(updateEloRoleStartBy)((change, gameId, id)).void
+
     /* `t` is the match being reclassified. Seats of its players in the same game's matches that
      * began after it and are still being played, locked in seat order -- every caller takes them in
      * the same order. Built per call, since the players are a list of their own length. */
     private def selectLaterSeats(
         players: Int,
         noWait: Boolean
-    ): Query[(GameId, MatchId, GameId, MatchId, List[PlayerId]), (ParticipantId, PlayerId, Boolean)] =
-        sql"""SELECT p.participant_id, p.player_id, p.create_date > t.completed
+    ): Query[(GameId, MatchId, GameId, MatchId, List[PlayerId]), ParticipantRepo.LaterSeatRow] =
+        sql"""SELECT p.participant_id, p.player_id, p.game_role_id, p.create_date > t.completed
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN match t ON t.game_id = $gameId AND t.match_id = $matchId
@@ -289,7 +301,9 @@ class ParticipantRepo(session: Session[IO]) {
             AND m.completed IS NULL AND NOT m.cancelled
             AND m.create_date > t.create_date
           ORDER BY p.participant_id
-          FOR UPDATE OF p #${if (noWait) "NOWAIT" else ""}""".query(participantId *: playerId *: bool)
+          FOR UPDATE OF p #${if (noWait) "NOWAIT" else ""}"""
+            .query(participantId *: playerId *: gameRoleId *: bool)
+            .to[ParticipantRepo.LaterSeatRow]
 
     /** The seats `players` hold in matches of the game that began after match `matchId` and are not over yet, each
       * locked FOR UPDATE, with whether it was made after that match completed — and so with a starting rating that took
@@ -308,7 +322,6 @@ class ParticipantRepo(session: Session[IO]) {
         else
             session
                 .execute(selectLaterSeats(players.size, noWait))((gameId, matchId, gameId, matchId, players))
-                .map(_.map((id, player, after) => ParticipantRepo.LaterSeatRow(id, player, after)))
 
     private def selectLaterCompleted(players: Int): Query[(GameId, MatchId, GameId, MatchId, List[PlayerId]), Boolean] =
         sql"""SELECT EXISTS (
@@ -330,11 +343,24 @@ class ParticipantRepo(session: Session[IO]) {
 
 object ParticipantRepo {
 
-    /** A seat's player, and what they were rated as the match began (V43). */
-    case class EloSeatRow(participantId: ParticipantId, playerId: PlayerId, eloStart: Int)
+    /** A seat's player and role, and what they were rated as the match began: overall (V43), and in the role (V49) —
+      * none for a seat of a game whose roles are unimportant, or from before ratings were kept by role.
+      */
+    case class EloSeatRow(
+        participantId: ParticipantId,
+        playerId: PlayerId,
+        eloStart: Int,
+        gameRoleId: GameRoleId = GameRoleId.unassigned,
+        eloRoleStart: Option[Int] = None
+    )
 
     /** A seat in a match still being played, which began after another of its player's matches: whether it began after
       * that match had finished, and so took in its rating's change.
       */
-    case class LaterSeatRow(participantId: ParticipantId, playerId: PlayerId, afterCompletion: Boolean)
+    case class LaterSeatRow(
+        participantId: ParticipantId,
+        playerId: PlayerId,
+        gameRoleId: GameRoleId,
+        afterCompletion: Boolean
+    )
 }

@@ -146,6 +146,12 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request("GET", "/me/matches/completed?asOf=2999-01-01T00:00:00Z")).statusCode, 400)
     }
 
+    // `?role=` (V49) names a role's ratings rather than the overall ones, by its id.
+    test("a ratings role that is not a role id is a bad request") {
+        assertEquals(dispatch(request("GET", "/games/1/ratings?role=first")).statusCode, 400)
+        assertEquals(dispatch(request("GET", "/games/1/ratings/2?role=first")).statusCode, 400)
+    }
+
     test("a non-numeric game id is a bad request") {
         assertEquals(dispatch(request("GET", "/games/abc/challenges")).statusCode, 400)
     }

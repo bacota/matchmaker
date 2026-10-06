@@ -7,11 +7,12 @@ import cats.syntax.all._
 import skunk.exception.PostgresErrorException
 import com.vivi.matchmaker.model.{GameId, PlayerId}
 import com.vivi.matchmaker.persistence.EloRatingRepo
-import com.vivi.matchmaker.persistence.EloRatingRepo.{Placed, Standing}
+import com.vivi.matchmaker.persistence.EloRatingRepo.{Board, Placed, RatingKey, Standing}
 import scala.math.Ordering.Implicits._
 
-/** Keeps each game's leaderboard (V45) in order: run by the listener that settles the ends of matches, after a match's
-  * completion has moved its players' ratings, and after an admin has set one.
+/** Keeps each game's leaderboards (V45) in order — its overall one, and each role's (V49) — run by the listener that
+  * settles the ends of matches, after a match's completion has moved its players' ratings, and after an admin has set
+  * one. Each board is ranked on its own, by the rules below; one run places whoever is waiting on any of them.
   *
   * Players are ranked by rating, and of two rated the same, the one more rated matches stand behind is ranked higher —
   * together, their standing. A place is one more than how many stand higher, so only players equal in both share one,
@@ -31,48 +32,49 @@ class RankingService(
     pause: Int => IO[Unit] = RankingService.randomPause
 ) {
 
-    /** Places everybody in the game who is waiting to be placed: Settled once there is nobody, Owed if somebody's
-      * placing could not get its locks — and the run that settles the next message for the game places them.
+    /** Places everybody in the game who is waiting to be placed, on any of its boards: Settled once there is nobody,
+      * Owed if somebody's placing could not get its locks — and the run that settles the next message for the game
+      * places them.
       */
     def rank(gameId: GameId): IO[Settlement] = {
         def pass: IO[Settlement] =
             sessionPool.use(session => new EloRatingRepo(session).unplaced(gameId, RankingService.batch)).flatMap {
                 players =>
-                    players.traverse(player => placeRetrying(gameId, player).attempt.map(player -> _)).flatMap {
-                        results =>
-                            results.collect { case (player, Left(e)) => player -> e } match {
-                                case Nil if players.size == RankingService.batch => pass
-                                case Nil                                         => IO.pure(Settlement.Settled)
-                                case failed =>
-                                    IO.blocking(
-                                      failed.foreach((player, e) =>
-                                          System.err.println(
-                                            s"placing player ${player.value} in game ${gameId.value} failed: $e"
-                                          )
+                    players.traverse(key => placeRetrying(gameId, key).attempt.map(key -> _)).flatMap { results =>
+                        results.collect { case (player, Left(e)) => player -> e } match {
+                            case Nil if players.size == RankingService.batch => pass
+                            case Nil                                         => IO.pure(Settlement.Settled)
+                            case failed =>
+                                IO.blocking(
+                                  failed.foreach((key, e) =>
+                                      System.err.println(
+                                        s"placing player ${key.player.value} in game ${gameId.value}" +
+                                            key.role.fold("")(role => s", role ${role.value},") + s" failed: $e"
                                       )
-                                    ).as(Settlement.Owed(s"${failed.size} of the game's players could not be placed"))
-                            }
+                                  )
+                                ).as(Settlement.Owed(s"${failed.size} of the game's players could not be placed"))
+                        }
                     }
             }
         pass
     }
 
-    private def placeRetrying(gameId: GameId, player: PlayerId): IO[Unit] = {
+    private def placeRetrying(gameId: GameId, key: RatingKey): IO[Unit] = {
         def attempt(n: Int): IO[Unit] =
-            placeOnce(gameId, player).handleErrorWith {
+            placeOnce(gameId, key).handleErrorWith {
                 case e if RankingService.lockFailure(e) && n < attempts => pause(n) *> attempt(n + 1)
                 case e                                                  => IO.raiseError(e)
             }
         attempt(1)
     }
 
-    private def placeOnce(gameId: GameId, player: PlayerId): IO[Unit] =
+    private def placeOnce(gameId: GameId, key: RatingKey): IO[Unit] =
         sessionPool.use { session =>
             val repo = new EloRatingRepo(session)
             session.transaction.use { _ =>
                 repo.tryLockRanking(gameId).flatMap {
                     case false => IO.raiseError(RankingService.Busy)
-                    case true  => RankingService.place(repo, gameId, player)
+                    case true  => RankingService.place(repo, Board(gameId, key.role), key.player)
                 }
             }
         }
@@ -102,10 +104,11 @@ object RankingService {
             .flatMap(_.betweenInt(10, math.min(2000, 50 << math.min(n, 6)) + 1))
             .flatMap(ms => IO.sleep(ms.millis))
 
-    /** Places one player, in the caller's transaction, which holds the game's ranking lock. A player's place is one
-      * more than how many stand above them — by rating, and then by rated matches — so only players equal in both share
-      * a place, and the places after them are skipped (1, 2, 2, 4). Everybody else is in order by what they were placed
-      * by, and this player is the one out of place.
+    /** Places one player on one of the game's boards, in the caller's transaction, which holds the game's ranking lock.
+      * Everything here reads and moves places on that board alone. A player's place is one more than how many stand
+      * above them — by rating, and then by rated matches — so only players equal in both share a place, and the places
+      * after them are skipped (1, 2, 2, 4). Everybody else is in order by what they were placed by, and this player is
+      * the one out of place.
       *
       * However the player moves, the players whose place changes are exactly those standing between where they were and
       * where they are now — one more of them above, or one fewer — and they move by one in a single update:
@@ -117,7 +120,7 @@ object RankingService {
       *   - Placed, on a standing that has moved: compared with the place above (or below), and past it if they now
       *     belong there, until they do not — a bubble sort of one — and the places passed move by one.
       */
-    def place(repo: EloRatingRepo, game: GameId, player: PlayerId): IO[Unit] =
+    def place(repo: EloRatingRepo, game: Board, player: PlayerId): IO[Unit] =
         repo.lockForPlacing(game, player).flatMap {
             case None                    => IO.unit
             case Some(row) if !row.rated => row.placed.traverse_(takeOff(repo, game, player, _))
@@ -132,11 +135,11 @@ object RankingService {
 
     private val bottom = Int.MaxValue
 
-    private def takeOff(repo: EloRatingRepo, game: GameId, player: PlayerId, from: Placed): IO[Unit] =
+    private def takeOff(repo: EloRatingRepo, game: Board, player: PlayerId, from: Placed): IO[Unit] =
         repo.shift(game, from.rank + 1, bottom, Standing.lowest, from.by, -1, player) *>
             repo.place(game, player, None)
 
-    private def placeNew(repo: EloRatingRepo, game: GameId, player: PlayerId, standing: Standing): IO[Unit] = {
+    private def placeNew(repo: EloRatingRepo, game: Board, player: PlayerId, standing: Standing): IO[Unit] = {
         // The first place at or after `low` standing no higher than this player: theirs, since everybody above it
         // stands higher. Past the end, there is none, and theirs is the place after the last.
         def search(low: Int, high: Int): IO[Int] =
@@ -161,7 +164,7 @@ object RankingService {
      * to the new one, the player's old place-mates among them, have one more above them. */
     private def climb(
         repo: EloRatingRepo,
-        game: GameId,
+        game: Board,
         player: PlayerId,
         from: Placed,
         standing: Standing
@@ -183,7 +186,7 @@ object RankingService {
      * after the last. */
     private def sink(
         repo: EloRatingRepo,
-        game: GameId,
+        game: Board,
         player: PlayerId,
         from: Placed,
         standing: Standing

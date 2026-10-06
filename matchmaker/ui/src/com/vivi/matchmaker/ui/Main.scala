@@ -2758,6 +2758,8 @@ object Views {
         val url = Var(existing.map(_.url).getOrElse(""))
         val engineIdentity = Var(existing.map(_.externalId).getOrElse(""))
         val disabled = Var(existing.exists(!_.active))
+        // No role has an advantage in winning: ratings are then kept overall only (V49).
+        val unimportantRoles = Var(existing.exists(_.unimportantRoles))
         // What this form's tip ids start with: a game's edit form and the new-game form are different forms.
         val formKey = existing.fold("new-game")(game => s"game-${game.gameId.value}")
         // Write-only: starts empty whether or not a key is stored, because the stored one is never sent here.
@@ -2889,6 +2891,24 @@ object Views {
               )
           },
           roleEditor(formKey, roles),
+          // Beside the roles it is about. Unticked, ratings are kept by role as well as overall (V49).
+          {
+              val tipId = s"$formKey-unimportant-roles-tip"
+              withTip(
+                tipId,
+                "Unimportant Roles",
+                "Check this if no role has any advantage in winning the game."
+              )(
+                label(
+                  input(
+                    tpe := "checkbox",
+                    aria.describedBy := tipId,
+                    controlled(checked <-- unimportantRoles.signal, onClick.mapToChecked --> unimportantRoles)
+                  ),
+                  "Unimportant Roles"
+                )
+              )
+          },
           parameterEditor(formKey, parameters),
           busyButton(
             if (existing.isDefined) "Save Changes" else "Create Game",
@@ -2929,6 +2949,7 @@ object Views {
                         // from it is matched against.
                         externalId = engineIdentity.now().trim,
                         timeoutAction = timeoutAction.now(),
+                        unimportantRoles = unimportantRoles.now(),
                         characterUrl = Option
                             .when(gameType.now() == GameType.Character)(characterUrl.now().trim)
                             .filter(_.nonEmpty)
@@ -2950,6 +2971,7 @@ object Views {
                               url.set("")
                               engineIdentity.set("")
                               characterUrl.set("")
+                              unimportantRoles.set(false)
                               roles.set(List(emptyRole))
                               parameters.set(Nil)
                           } else {
@@ -3095,9 +3117,47 @@ object Views {
       * answer written into the store would rebuild the page this sits in, remount it, and ask again.
       */
     private def ratingsSection(game: Game): HtmlElement =
-        div(child <-- currentPlayer.map(_.fold(emptyNode)(player => ratingsList(game, player))))
+        div(
+          child <-- currentPlayer.map(
+            _.fold(emptyNode)(player => div(ratingsList(game, player, None), roleRankings(game, player)))
+          )
+        )
 
-    private def ratingsList(game: Game, player: Player): HtmlElement = {
+    /** Under the overall rankings of a game whose roles matter (V49), a dropdown that shows one role's rankings — asked
+      * for, rather than shown, since most visitors want the overall ones. Not there for a game whose admin says no role
+      * has an advantage, which keeps no ratings by role, nor for a game of one role, whose only role's rankings would
+      * be the overall ones again.
+      */
+    private def roleRankings(game: Game, player: Player): Node =
+        if (game.unimportantRoles || game.roles.sizeIs < 2) emptyNode
+        else {
+            val chosen = Var(Option.empty[GameRole])
+            val id = s"role-rankings-${game.gameId.value}"
+            div(
+              cls := "role-rankings",
+              label(
+                cls := "field",
+                forId := id,
+                "Rankings by role",
+                select(
+                  idAttr := id,
+                  onChange.mapToValue --> (v => chosen.set(game.roles.find(_.gameRoleId.value.toString == v))),
+                  option(value := "", "Choose a role"),
+                  game.roles.map(r => option(value := r.gameRoleId.value.toString, r.displayName))
+                )
+              ),
+              // A section of its own once a role is chosen, which announces itself as the overall one does.
+              child <-- chosen.signal.distinct.map(_.fold(emptyNode)(role => ratingsList(game, player, Some(role))))
+            )
+        }
+
+    /** The leaderboard — the game's overall one, or `role`'s (V49). A role's has no rating to set: an admin sets the
+      * overall rating, and a role's is moved only by play.
+      */
+    private def ratingsList(game: Game, player: Player, role: Option[GameRole]): HtmlElement = {
+        val roleId = role.map(_.gameRoleId)
+        // What tells this board's ids apart from the overall one's, on the same page.
+        val idSuffix = role.fold("")(r => s"-role-${r.gameRoleId.value}")
         // `None` until a page has come back.
         val board = Var(Option.empty[Leaderboard])
         // The page on screen: moved only when the page asked for arrives, so that what the section says
@@ -3140,17 +3200,22 @@ object Views {
             val askedMine = mineRequest
             busy.set(true)
             ApiClient
-                .standing(game.gameId, player.playerId)
+                .standing(game.gameId, player.playerId, roleId)
                 .map(Right(_))
                 .recover {
-                    case ApiError(404, _) => Left("You have no rating in this game yet.")
-                    case error            => Left(s"Your standing could not be loaded: ${error.getMessage}")
+                    case ApiError(404, _) =>
+                        Left(
+                          role.fold("You have no rating in this game yet.")(r =>
+                              s"You have no rating as ${r.displayName} yet."
+                          )
+                        )
+                    case error => Left(s"Your standing could not be loaded: ${error.getMessage}")
                 }
                 .foreach(answer =>
                     if (askedMine == mineRequest && Store.stillSignedInAs(signIn)) mine.set(Some(answer))
                 )
             ApiClient
-                .leaderboard(game.gameId, at)
+                .leaderboard(game.gameId, at, roleId)
                 .map { found =>
                     if (current) {
                         loadError.set(None)
@@ -3192,7 +3257,7 @@ object Views {
             }
         }
 
-        val administers = Store.administers(game.gameId, player)
+        val administers: Signal[Boolean] = if (role.isDefined) Val(false) else Store.administers(game.gameId, player)
         val rows = board.signal.map(_.fold(List.empty[EloRating])(_.ratings))
 
         // The line that says which places the page covers, for the focus to go to when a step it was on goes.
@@ -3220,15 +3285,21 @@ object Views {
           onMountCallback(_ => fetch(0)),
           onUnmountCallback(_ => request += 1),
           refreshableSection(
-            "Player Rankings",
+            role.fold("Player Rankings")(r => s"${r.displayName} Rankings"),
             refreshing,
             () => fetch(),
-            subsection = false,
+            subsection = role.isDefined,
             tip = Some(
-              s"ratings-tip-${game.gameId.value}" ->
-                  (s"Players are ranked by Elo rating, and by rated matches between equal ratings. " +
-                      s"Every rated match of this game moves its players' ratings; a friendly one does not. " +
-                      s"A player's first rated match starts them at ${EloRating.initial}.")
+              s"ratings-tip-${game.gameId.value}$idSuffix" -> role.fold(
+                s"Players are ranked by Elo rating, and by rated matches between equal ratings. " +
+                    s"Every rated match of this game moves its players' ratings; a friendly one does not. " +
+                    s"A player's first rated match starts them at ${EloRating.initial}."
+              )(r =>
+                  s"Players are ranked by their Elo rating as ${r.displayName}, which a rated match moves against " +
+                      s"the other players' ratings in the roles they played. So a role that wins more than its " +
+                      s"players' ratings say it should is rated higher than the others. A player's first rated " +
+                      s"match as ${r.displayName} starts them at ${EloRating.initial}."
+              )
             )
           )(
             // Two regions, mounted with the section so that what arrives in them is announced: how
@@ -3274,7 +3345,10 @@ object Views {
                           cls := "table-scroll",
                           table(
                             cls := "leaderboard",
-                            caption(cls := "sr-only", s"Player rankings in ${game.name}"),
+                            caption(
+                              cls := "sr-only",
+                              s"Player rankings in ${game.name}" + role.fold("")(r => s" as ${r.displayName}")
+                            ),
                             thead(
                               tr(
                                 th(scopeAttr := "col", "Rank"),
@@ -3321,10 +3395,23 @@ object Views {
             ),
             div(
               cls := "completed-steps",
-              step("Previous", "Previous 20 ranks", "backward", page.signal.map(_ > 0), _ - 1),
-              step("Next", "Next 20 ranks", "forward", board.signal.map(_.exists(_.more)), _ + 1)
+              // Named for their board, since a role's sits on the page beside the overall one.
+              step(
+                "Previous",
+                "Previous 20 ranks" + role.fold("")(r => s" as ${r.displayName}"),
+                "backward",
+                page.signal.map(_ > 0),
+                _ - 1
+              ),
+              step(
+                "Next",
+                "Next 20 ranks" + role.fold("")(r => s" as ${r.displayName}"),
+                "forward",
+                board.signal.map(_.exists(_.more)),
+                _ + 1
+              )
             ),
-            findPlayer(game, found)
+            findPlayer(game, found, role)
           )
         )
     }
@@ -3349,10 +3436,14 @@ object Views {
       * `found`, which the leaderboard shows as lines at its foot. One row of a form, under the table, since it is a way
       * into the table rather than a section of its own.
       */
-    private def findPlayer(game: Game, found: Var[Option[Either[String, Leaderboard]]]): HtmlElement = {
+    private def findPlayer(
+        game: Game,
+        found: Var[Option[Either[String, Leaderboard]]],
+        role: Option[GameRole]
+    ): HtmlElement = {
         val prefix = Var("")
         val busy = Var(false)
-        val id = s"find-in-rankings-${game.gameId.value}"
+        val id = s"find-in-rankings-${game.gameId.value}" + role.fold("")(r => s"-role-${r.gameRoleId.value}")
 
         form(
           cls := "search inline-form",
@@ -3360,8 +3451,8 @@ object Views {
           onSubmit.preventDefault.filter(_ => !busy.now()) --> { _ =>
               val typed = prefix.now().trim
               if (typed.nonEmpty)
-                  Store.runSignedIn(ApiClient.findInRankings(game.gameId, typed), busy)(answer =>
-                      found.set(Some(Right(answer)))
+                  Store.runSignedIn(ApiClient.findInRankings(game.gameId, typed, role.map(_.gameRoleId)), busy)(
+                    answer => found.set(Some(Right(answer)))
                   )
           },
           label(forId := id, "Find a Player"),

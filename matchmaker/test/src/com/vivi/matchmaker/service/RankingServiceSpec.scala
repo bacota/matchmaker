@@ -223,6 +223,36 @@ class RankingServiceSpec extends PropertySuite {
         assertEquals(placed, wanted)
     }
 
+    test("a role's leaderboard is placed apart from the overall one, by the role's ratings alone") {
+        val inRole: Command[(Int, Int, Long, Int)] =
+            sql"""INSERT INTO elo_role_rating (game_id, game_role_id, player_id, rating, matches)
+              VALUES ($int4, $int4, $int8, $int4, 1)""".command
+        val selectRolePlaces: Query[(Int, Int), (Long, Option[Int])] =
+            sql"""SELECT player_id, rank FROM elo_role_rating WHERE game_id = $int4 AND game_role_id = $int4"""
+                .query(int8 *: int4.opt)
+        val result = for {
+            game <- makeGame()
+            role = game.roles.head.gameRoleId.value
+            people <- players(3)
+            List(a, b, c) = people: @unchecked
+            // Overall a leads; in the role c does, and a has not played it.
+            _ <- write(game, Map(a -> Rating(1600, true), b -> Rating(1550, true), c -> Rating(1500, true)))
+            _ <- TestSession.resource.use(session =>
+                session.execute(inRole)((game.gameId.value, role, b.playerId.value, 1490)) *>
+                    session.execute(inRole)((game.gameId.value, role, c.playerId.value, 1530))
+            )
+            settled <- ranking.rank(game.gameId)
+            overall <- places(game)
+            rolePlaces <- TestSession.resource.use(session =>
+                session.execute(selectRolePlaces)((game.gameId.value, role)).map(_.toMap)
+            )
+        } yield (people.map(_.playerId.value), settled, overall, rolePlaces)
+        val (List(a, b, c), settled, overall, rolePlaces) = result.timeout(caseTimeout).unsafeRunSync(): @unchecked
+        assertEquals(settled, Settlement.Settled)
+        assertEquals(rolePlaces, Map(c -> Some(1), b -> Some(2)))
+        assertEquals(overall, Map(a -> Some(1), b -> Some(2), c -> Some(3)))
+    }
+
     test("the leaderboard is paged twenty places at a time, a tie is never split, and it says whether there is more") {
         val result = for {
             game <- makeGame()

@@ -299,13 +299,23 @@ class GameEngineService[T](
                     saved <- matchRepo.create(newMatch)
                     // Under the lock taken above, so the next start of this challenge sees the claim.
                     _ <- challengeRepo.claimForStart(gameId, challengeId, matchId)
-                    // What each player is rated as they sit down, written on their seat and what the
+                    // What each player is rated as they sit down, overall and -- for a game whose roles
+                    // matter (V49) -- in the role they sit down in, written on their seat and what the
                     // match is rated from when it ends -- see `EloRatingService.startingRatings`.
-                    starting <- EloRatingService.startingRatings(session, gameId, roster.map(_.acceptance.playerId))
-                    seats <- roster.traverse(entry =>
-                        participantRepo
-                            .create(toParticipant(matchId, entry.acceptance), starting(entry.acceptance.playerId))
+                    starting <- EloRatingService.startingRatings(
+                      session,
+                      gameId,
+                      roster.map(entry => (entry.acceptance.playerId, entry.acceptance.gameRoleId)),
+                      byRole = !game.unimportantRoles
                     )
+                    seats <- roster.traverse { entry =>
+                        val a = entry.acceptance
+                        participantRepo.create(
+                          toParticipant(matchId, a),
+                          starting.overall(a.playerId),
+                          starting.inRole(a.playerId, a.gameRoleId)
+                        )
+                    }
                     participants <- seats.zip(roster).traverse((p, entry) => enginePlayer(characterRepo)(p, entry))
                     // The key the engine is called with. Read plainly, like the game itself: it decides
                     // nothing written here, and is only handed to the engine below.
@@ -773,7 +783,7 @@ class GameEngineService[T](
                                     // recorded, does not move them again. A friendly match does not move them.
                                     // Before the results, which carry what the match did to each rating.
                                     deltas <-
-                                        if (existing.friendly) IO.pure(Map.empty[ParticipantId, Int])
+                                        if (existing.friendly) IO.pure(EloRatingService.EloDeltas.none)
                                         else
                                             EloRatingService.rate(
                                               session,
@@ -792,7 +802,8 @@ class GameEngineService[T](
                                             r.scores,
                                             r.isWinner,
                                             r.forfeit,
-                                            deltas.get(r.participantId)
+                                            deltas.overall.get(r.participantId),
+                                            deltas.inRole.get(r.participantId)
                                           )
                                         )
                                     )
@@ -1064,7 +1075,7 @@ class GameEngineService[T](
                                 // of time lost. Rated as the engine's results are, in this transaction, and
                                 // before the results that carry what it did to each rating.
                                 deltas <-
-                                    if (locked.friendly) IO.pure(Map.empty[ParticipantId, Int])
+                                    if (locked.friendly) IO.pure(EloRatingService.EloDeltas.none)
                                     else EloRatingService.rate(session, gameId, matchId, ranks, forfeit = true)
                                 _ <- participants.traverse { (p, _, _) =>
                                     val lost = overdue.contains(p.participantId)
@@ -1076,7 +1087,8 @@ class GameEngineService[T](
                                         scores = Map.empty,
                                         isWinner = !lost,
                                         forfeit = true,
-                                        eloDelta = deltas.get(p.participantId)
+                                        eloDelta = deltas.overall.get(p.participantId),
+                                        eloRoleDelta = deltas.inRole.get(p.participantId)
                                       )
                                     )
                                 }

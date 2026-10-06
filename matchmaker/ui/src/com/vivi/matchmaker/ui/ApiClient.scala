@@ -198,21 +198,27 @@ object ApiClient {
           Some(write(Json.FriendlyRequest(friendly)))
         )
 
-    /** A page of a game's leaderboard (V45), from page 0, best first: anybody may see it. */
-    def leaderboard(gameId: GameId, page: Int): Future[Leaderboard] =
-        get[Leaderboard](s"/games/${gameId.value}/ratings?page=$page")
+    /* `role=` for one role's ratings (V49), after whatever else the query asks; nothing for the overall ones. */
+    private def roleQuery(role: Option[GameRoleId], first: Boolean): String =
+        role.fold("")(r => s"${if (first) "?" else "&"}role=${r.value}")
 
-    /** A game's rated players whose nickname begins with `prefix`, with their places: at most the player search's
-      * limit, and `more` when there were others.
-      */
-    def findInRankings(gameId: GameId, prefix: String): Future[Leaderboard] =
-        get[Leaderboard](s"/games/${gameId.value}/ratings?prefix=${js.URIUtils.encodeURIComponent(prefix)}")
+    /** A page of a game's leaderboard (V45), or of one role's (V49), from page 0, best first: anybody may see it. */
+    def leaderboard(gameId: GameId, page: Int, role: Option[GameRoleId] = None): Future[Leaderboard] =
+        get[Leaderboard](s"/games/${gameId.value}/ratings?page=$page${roleQuery(role, first = false)}")
 
-    /** One player's standing in a game (V45): their place, the rating it was worked out from, and their rating now. A
-      * 404 if they have no rating in it.
+    /** A game's rated players, overall or in a role, whose nickname begins with `prefix`, with their places: at most
+      * the player search's limit, and `more` when there were others.
       */
-    def standing(gameId: GameId, playerId: PlayerId): Future[EloRating] =
-        get[EloRating](s"/games/${gameId.value}/ratings/${playerId.value}")
+    def findInRankings(gameId: GameId, prefix: String, role: Option[GameRoleId] = None): Future[Leaderboard] =
+        get[Leaderboard](
+          s"/games/${gameId.value}/ratings?prefix=${js.URIUtils.encodeURIComponent(prefix)}${roleQuery(role, first = false)}"
+        )
+
+    /** One player's standing in a game (V45), overall or in a role: their place, the rating it was worked out from, and
+      * their rating now. A 404 if they have no rating in it.
+      */
+    def standing(gameId: GameId, playerId: PlayerId, role: Option[GameRoleId] = None): Future[EloRating] =
+        get[EloRating](s"/games/${gameId.value}/ratings/${playerId.value}${roleQuery(role, first = true)}")
 
     /** Sets a player's Elo rating in a game outright — a game's admin's to do (V42). */
     def setRating(gameId: GameId, playerId: PlayerId, rating: Int): Future[EloRating] =

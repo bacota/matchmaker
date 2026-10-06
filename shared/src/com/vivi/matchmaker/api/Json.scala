@@ -151,7 +151,10 @@ object Json {
         // Where a player makes a character, for a character game whose engine has a page for it (V28).
         characterUrl: Option[String] = None,
         // Whether a key is stored, for the admin form; never the key. Ignored on a save.
-        hasApiKey: Boolean = false
+        hasApiKey: Boolean = false,
+        // No role of the game has any advantage in winning it (V49). Defaulted so that a client
+        // written before it existed still parses, and keeps ratings by role.
+        unimportantRoles: Boolean = false
     )
 
     private given ReadWriter[GameDto] = macroRW
@@ -171,7 +174,8 @@ object Json {
             game.externalId,
             game.timeoutAction,
             game.characterUrl,
-            game.hasApiKey
+            game.hasApiKey,
+            game.unimportantRoles
           ),
       dto =>
           Game(
@@ -187,7 +191,8 @@ object Json {
             dto.externalId,
             dto.timeoutAction,
             dto.characterUrl,
-            dto.hasApiKey
+            dto.hasApiKey,
+            dto.unimportantRoles
           )
     )
 

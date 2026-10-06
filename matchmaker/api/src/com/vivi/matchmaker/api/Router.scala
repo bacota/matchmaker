@@ -186,24 +186,29 @@ object Router {
 
             /* Players' Elo ratings in a game (V42): anybody registered may see its leaderboard (V45), a page
              * at a time from `page` 0, and any one player's standing on it; an admin, or an admin of this game, may set one. A PUT, because
-             * what is sent is the rating, not a change to it. */
+             * what is sent is the rating, not a change to it. `?role=` asks about one role's ratings (V49)
+             * instead of the overall ones. */
             case ("GET", "games" :: gameId :: "ratings" :: Nil) =>
                 withGameId(gameId)(id =>
-                    // `?prefix=` finds the game's rated players by the start of a nickname instead.
-                    (request.query.get("prefix"), request.query.get("page")) match {
-                        case (Some(prefix), _) => ok(services.ratings.findInRankings(id, prefix, caller))
-                        case (None, None)      => ok(services.ratings.leaderboard(id, 0, caller))
-                        case (None, Some(raw)) =>
-                            raw.toIntOption.filter(_ >= 0) match {
-                                case Some(page) => ok(services.ratings.leaderboard(id, page, caller))
-                                case None       => IO.pure(Errors.badRequest(s"'$raw' is not a valid page"))
-                            }
-                    }
+                    withRoleQuery(request)(role =>
+                        // `?prefix=` finds the game's rated players by the start of a nickname instead.
+                        (request.query.get("prefix"), request.query.get("page")) match {
+                            case (Some(prefix), _) => ok(services.ratings.findInRankings(id, prefix, caller, role))
+                            case (None, None)      => ok(services.ratings.leaderboard(id, 0, caller, role))
+                            case (None, Some(raw)) =>
+                                raw.toIntOption.filter(_ >= 0) match {
+                                    case Some(page) => ok(services.ratings.leaderboard(id, page, caller, role))
+                                    case None       => IO.pure(Errors.badRequest(s"'$raw' is not a valid page"))
+                                }
+                        }
+                    )
                 )
 
             case ("GET", "games" :: gameId :: "ratings" :: playerId :: Nil) =>
                 withGameId(gameId)(gid =>
-                    withPlayerId(playerId)(pid => ok(services.ratings.standing(gid, pid, caller)))
+                    withPlayerId(playerId)(pid =>
+                        withRoleQuery(request)(role => ok(services.ratings.standing(gid, pid, caller, role)))
+                    )
                 )
 
             case ("PUT", "games" :: gameId :: "ratings" :: playerId :: Nil) =>
@@ -628,6 +633,16 @@ object Router {
     }
 
     private val MaxCompletedPage = 10000
+
+    /* `?role=`, when there is one: which role's ratings are asked about, rather than the overall ones. */
+    private def withRoleQuery(request: Request)(f: Option[GameRoleId] => IO[Response]): IO[Response] =
+        request.query.get("role") match {
+            case None => f(None)
+            case Some(raw) =>
+                raw.toIntOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a role id")))(id =>
+                    f(Some(GameRoleId(id)))
+                )
+        }
 
     private def withPlayerId(raw: String)(f: PlayerId => IO[Response]): IO[Response] =
         raw.toLongOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a player id")))(id => f(PlayerId(id)))
