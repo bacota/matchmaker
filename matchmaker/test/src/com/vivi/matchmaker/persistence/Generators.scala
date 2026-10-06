@@ -44,6 +44,7 @@ object Generators {
             active <- Gen.oneOf(true, false)
             externalId <- genUniqueString
             characterUrl <- Gen.option(genString)
+            unimportantRoles <- Gen.oneOf(true, false)
             // Two roles, always: since V4 every acceptance names one, so a game with no roles is a
             // game nothing can be offered or accepted for. Two rather than one because two players in
             // the same challenge may not share a role.
@@ -61,7 +62,8 @@ object Generators {
           ),
           Seq.empty,
           externalId,
-          characterUrl = characterUrl
+          characterUrl = characterUrl,
+          unimportantRoles = unimportantRoles
         )
 
     def genGameWithRole: Gen[Game] =

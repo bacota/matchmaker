@@ -21,7 +21,7 @@ import com.vivi.matchmaker.persistence.{
 }
 
 /** Players' Elo ratings in a game (V42): moved by a match that is not friendly as it completes, left alone by one that
-  * is, and set outright by an admin of the game.
+  * is, and set outright by an admin of the game. And in each role (V49), for a game whose roles matter.
   */
 class EloRatingServiceSpec extends PropertySuite {
     TestMigration.ensure()
@@ -49,7 +49,7 @@ class EloRatingServiceSpec extends PropertySuite {
 
     private def register(): IO[Player] = services.registration.register(unique("elo"), unique("elo-sub"))
 
-    private def makeGame(): IO[Game] =
+    private def makeGame(unimportantRoles: Boolean = false): IO[Game] =
         TestSession.resource.use { session =>
             new GameRepo[String](session).create(
               Game(
@@ -65,7 +65,8 @@ class EloRatingServiceSpec extends PropertySuite {
                   GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false, displayName = "Second")
                 ),
                 Seq.empty,
-                unique("duel")
+                unique("duel"),
+                unimportantRoles = unimportantRoles
               )
             )
         }
@@ -73,9 +74,9 @@ class EloRatingServiceSpec extends PropertySuite {
     /** A plain game of two required roles, an overall admin, an admin of the game, and two players. */
     private case class Fixture(game: Game, overall: Player, host: Player, first: Player, second: Player)
 
-    private def fixture(): IO[Fixture] =
+    private def fixture(unimportantRoles: Boolean = false): IO[Fixture] =
         for {
-            game <- makeGame()
+            game <- makeGame(unimportantRoles)
             overall <- register()
             _ <- TestSession.resource.use(session => new PlayerRepo(session).update(overall.copy(isAdmin = true)))
             host <- register()
@@ -230,6 +231,37 @@ class EloRatingServiceSpec extends PropertySuite {
         services.matches
             .results(player.externalId)
             .map(_.filter(_.matchId == matchId).map(r => r.nickname -> (r.eloStart, r.eloDelta)).toMap)
+
+    /** Each player's rating in the role they play in [[started]] — `first` the game's first role, `second` its second —
+      * with how many rated matches stand behind it: none for a player with no rating there.
+      */
+    private def roleRatings(f: Fixture): IO[Map[PlayerId, (Int, Int)]] =
+        TestSession.resource.use { session =>
+            val repo = new EloRatingRepo(session)
+            List(f.first -> f.game.roles(0), f.second -> f.game.roles(1))
+                .traverse((p, role) =>
+                    repo
+                        .readRated(f.game.gameId, p.playerId, Some(role.gameRoleId))
+                        .map(_.map(r => p.playerId -> (r.rating, r.matches)))
+                )
+                .map(_.flatten.toMap)
+        }
+
+    /** What V49 holds for each seat, by its player: what they began the match rated in the seat's role, and what the
+      * match did to that.
+      */
+    private def roleSeats(f: Fixture, matchId: MatchId): IO[Map[PlayerId, (Option[Int], Option[Int])]] =
+        TestSession.resource.use { session =>
+            val results = new ResultRepo(session)
+            new ParticipantRepo(session)
+                .eloSeatsForMatch(f.game.gameId, matchId)
+                .flatMap(_.traverse { row =>
+                    results
+                        .read(f.game.gameId, row.participantId)
+                        .map(result => row.playerId -> (row.eloRoleStart, result.flatMap(_.eloRoleDelta)))
+                })
+                .map(_.toMap)
+        }
 
     private def refusal[A](io: IO[A]): IO[Throwable] =
         io.attempt.map(_.swap.getOrElse(fail("expected a refusal, but it was allowed")))
@@ -681,6 +713,131 @@ class EloRatingServiceSpec extends PropertySuite {
         assert(noPlayer.isInstanceOf[NotFoundError], noPlayer)
         assert(noGame.isInstanceOf[NotFoundError], noGame)
         assertEquals(now, Map.empty[PlayerId, (Int, Int)])
+    }
+
+    test("a rated match moves each player's rating in their role against the other's in theirs, apart from overall") {
+        val result = for {
+            f <- fixture()
+            // Favoured overall, and new to the role: the two pools move by different amounts.
+            _ <- services.ratings.set(f.game.gameId, f.first.playerId, 1700, f.host.externalId)
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.first)
+            overall <- ratings(f)
+            inRole <- roleRatings(f)
+            seats <- roleSeats(f, matchId)
+            record <- TestSession.resource.use(session =>
+                new EloRatingRepo(session)
+                    .readRated(f.game.gameId, f.second.playerId, Some(f.game.roles(1).gameRoleId))
+                    .map(_.map(_.record))
+            )
+        } yield (f, overall, inRole, seats, record)
+        val (f, overall, inRole, seats, record) = result.timeout(caseTimeout).unsafeRunSync()
+        // Expected 0.76 for the favourite overall: 32 * 0.24 is 7.7, rounded to 8. Even in the roles: 16.
+        assertEquals(overall, Map(f.first.playerId -> (1708, 1), f.second.playerId -> (1492, 1)))
+        assertEquals(inRole, Map(f.first.playerId -> (1516, 1), f.second.playerId -> (1484, 1)))
+        assertEquals(
+          seats,
+          Map(f.first.playerId -> (Some(1500), Some(16)), f.second.playerId -> (Some(1500), Some(-16)))
+        )
+        assertEquals(record, Some(MatchRecord(losses = 1)))
+    }
+
+    test("a game whose roles are unimportant keeps no ratings by role") {
+        val result = for {
+            f <- fixture(unimportantRoles = true)
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.first)
+            overall <- ratings(f)
+            inRole <- roleRatings(f)
+            seats <- roleSeats(f, matchId)
+        } yield (f, overall, inRole, seats)
+        val (f, overall, inRole, seats) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(overall, Map(f.first.playerId -> (1516, 1), f.second.playerId -> (1484, 1)))
+        assertEquals(inRole, Map.empty[PlayerId, (Int, Int)])
+        assertEquals(seats, Map(f.first.playerId -> (None, None), f.second.playerId -> (None, None)))
+    }
+
+    test("a completed match made friendly takes back what it did to the role ratings, and gives it again if not") {
+        val result = for {
+            f <- fixture()
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.second)
+            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = true, f.host.externalId)
+            taken <- roleRatings(f)
+            takenSeats <- roleSeats(f, matchId)
+            _ <- services.matches.setFriendly(f.game.gameId, matchId, friendly = false, f.host.externalId)
+            again <- roleRatings(f)
+            againSeats <- roleSeats(f, matchId)
+        } yield (f, taken, takenSeats, again, againSeats)
+        val (f, taken, takenSeats, again, againSeats) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(taken, Map.empty[PlayerId, (Int, Int)])
+        assertEquals(takenSeats, Map(f.first.playerId -> (Some(1500), None), f.second.playerId -> (Some(1500), None)))
+        assertEquals(again, Map(f.first.playerId -> (1484, 1), f.second.playerId -> (1516, 1)))
+        assertEquals(
+          againSeats,
+          Map(f.first.playerId -> (Some(1500), Some(-16)), f.second.playerId -> (Some(1500), Some(16)))
+        )
+    }
+
+    test("a match still being played in the same role has its role starting rating moved with a changed match") {
+        val result = for {
+            f <- fixture()
+            first <- started(f, friendly = false)
+            _ <- finish(f, first, f.first)
+            // Begun after the first finished, in the same roles: it began at the ratings the first left.
+            later <- started(f, friendly = false)
+            before <- roleSeats(f, later)
+            _ <- services.matches.setFriendly(f.game.gameId, first, friendly = true, f.host.externalId)
+            after <- roleSeats(f, later)
+        } yield (f, before, after)
+        val (f, before, after) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(before, Map(f.first.playerId -> (Some(1516), None), f.second.playerId -> (Some(1484), None)))
+        assertEquals(after, Map(f.first.playerId -> (Some(1500), None), f.second.playerId -> (Some(1500), None)))
+    }
+
+    test("each role has a leaderboard and standings of its own, and a role of no such game is not found") {
+        val result = for {
+            f <- fixture()
+            other <- makeGame()
+            matchId <- started(f, friendly = false)
+            _ <- finish(f, matchId, f.second)
+            _ <- services.ending.settle(f.game.gameId, matchId)
+            firstRole = Some(f.game.roles(0).gameRoleId)
+            secondRole = Some(f.game.roles(1).gameRoleId)
+            overall <- services.ratings.leaderboard(f.game.gameId, 0, f.host.externalId)
+            asFirst <- services.ratings.leaderboard(f.game.gameId, 0, f.host.externalId, firstRole)
+            asSecond <- services.ratings.leaderboard(f.game.gameId, 0, f.host.externalId, secondRole)
+            standing <- services.ratings.standing(f.game.gameId, f.first.playerId, f.host.externalId, firstRole)
+            notPlayed <- refusal(
+              services.ratings.standing(f.game.gameId, f.first.playerId, f.host.externalId, secondRole)
+            )
+            found <- services.ratings.findInRankings(f.game.gameId, f.second.nickname, f.host.externalId, secondRole)
+            elsewhere = Some(other.roles(0).gameRoleId)
+            noRole <- refusal(services.ratings.leaderboard(f.game.gameId, 0, f.host.externalId, elsewhere))
+            noRoleStanding <- refusal(
+              services.ratings.standing(f.game.gameId, f.first.playerId, f.host.externalId, elsewhere)
+            )
+        } yield (f, overall, asFirst, asSecond, standing, notPlayed, found, noRole, noRoleStanding)
+        val (f, overall, asFirst, asSecond, standing, notPlayed, found, noRole, noRoleStanding) =
+            result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(
+          overall.ratings.map(r => (r.player.playerId, r.rank)),
+          List(f.second.playerId -> Some(1), f.first.playerId -> Some(2))
+        )
+        // Each role's leaderboard has only who has played it, placed among themselves.
+        assertEquals(
+          asFirst.ratings.map(r => (r.player.playerId, r.rank, r.rating)),
+          List((f.first.playerId, Some(1), 1484))
+        )
+        assertEquals(
+          asSecond.ratings.map(r => (r.player.playerId, r.rank, r.rating)),
+          List((f.second.playerId, Some(1), 1516))
+        )
+        assertEquals((standing.rank, standing.rating), (Some(1), 1484))
+        assert(notPlayed.isInstanceOf[NotFoundError], notPlayed)
+        assertEquals(found.ratings.map(_.player.playerId), List(f.second.playerId))
+        assert(noRole.isInstanceOf[NotFoundError], noRole)
+        assert(noRoleStanding.isInstanceOf[NotFoundError], noRoleStanding)
     }
 
     test("the leaderboard of a game that does not exist is not found") {

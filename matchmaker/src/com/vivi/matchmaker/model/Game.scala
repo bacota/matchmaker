@@ -98,5 +98,9 @@ case class Game(
     /* Whether the game has an engine API key stored (V34) — never the key itself, which no read of a
      * game carries. What the admin form shows in its place, so that an admin can tell a game whose
      * engine will refuse every call from one that is ready. Read-only: a save sets the key, not this. */
-    hasApiKey: Boolean = false
+    hasApiKey: Boolean = false,
+    /* The admin saying that no role of the game has any advantage in winning it (V49). Unticked, a
+     * rated match moves its players' ratings in the roles they played as well as overall, and each
+     * role has a leaderboard of its own. */
+    unimportantRoles: Boolean = false
 )

@@ -45,6 +45,14 @@ class JsonSpec extends FunSuite {
         assertEquals(decoded.parameters.head.displayName, "Parameter")
     }
 
+    // Unimportant roles (V49) travel with the game, and a game written before they existed keeps ratings by role.
+    test("a game says whether its roles are unimportant, and one that does not say has important ones") {
+        val game = Game(GameId(1), GameType.Plain, "n", "n", "d", "u", true, Seq.empty, Seq.empty, "boxing")
+        assert(read[Game](write(game.copy(unimportantRoles = true))).unimportantRoles)
+        val older = ujson.write(ujson.Obj.from(ujson.read(write(game)).obj.toSeq.filterNot(_._1 == "unimportantRoles")))
+        assert(!read[Game](older).unimportantRoles)
+    }
+
     // The key rides in the save request beside the game's fields and is read apart from them, and a
     // game written out never has one to write: there is no field for it.
     test("a game save carries its API key beside the game, and a game never writes one") {

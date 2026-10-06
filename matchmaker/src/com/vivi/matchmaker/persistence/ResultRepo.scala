@@ -17,21 +17,29 @@ class ResultRepo(session: Session[IO]) {
     // result.scores is jsonb holding an object; SkunkCodecs.jsonObject presents it as a Map.
     private val scores: Codec[Map[String, Any]] = SkunkCodecs.jsonObject
 
-    private val insertResult: Command[(GameId, ParticipantId, Int, Map[String, Any], Boolean, Boolean, Option[Int])] =
-        sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, forfeit, elo_delta)
-          VALUES ($gameId, $participantId, $int4, $scores, $bool, $bool, ${int4.opt})""".command
+    private val insertResult: Command[
+      (GameId, ParticipantId, Int, Map[String, Any], Boolean, Boolean, Option[Int], Option[Int])
+    ] =
+        sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, forfeit, elo_delta, elo_role_delta)
+          VALUES ($gameId, $participantId, $int4, $scores, $bool, $bool, ${int4.opt}, ${int4.opt})""".command
 
     // result's primary key is the composite (game_id, participant_id) — participant_id alone is
     // not declared unique (unlike character_id, which has its own explicit UNIQUE constraint), so
     // both columns are required in the WHERE clause here, not participant_id alone.
-    private val selectResult: Query[(GameId, ParticipantId), (Int, Map[String, Any], Boolean, Boolean, Option[Int])] =
-        sql"""SELECT rank, scores, is_winner, forfeit, elo_delta FROM result
+    private val selectResult: Query[
+      (GameId, ParticipantId),
+      (Int, Map[String, Any], Boolean, Boolean, Option[Int], Option[Int])
+    ] =
+        sql"""SELECT rank, scores, is_winner, forfeit, elo_delta, elo_role_delta FROM result
           WHERE game_id = $gameId AND participant_id = $participantId""".query(
-          int4 *: scores *: bool *: bool *: int4.opt
+          int4 *: scores *: bool *: bool *: int4.opt *: int4.opt
         )
 
-    private val updateResult: Command[(Int, Map[String, Any], Boolean, Boolean, Option[Int], GameId, ParticipantId)] =
-        sql"""UPDATE result SET rank = $int4, scores = $scores, is_winner = $bool, forfeit = $bool, elo_delta = ${int4.opt}
+    private val updateResult: Command[
+      (Int, Map[String, Any], Boolean, Boolean, Option[Int], Option[Int], GameId, ParticipantId)
+    ] =
+        sql"""UPDATE result SET rank = $int4, scores = $scores, is_winner = $bool, forfeit = $bool,
+          elo_delta = ${int4.opt}, elo_role_delta = ${int4.opt}
           WHERE game_id = $gameId AND participant_id = $participantId""".command
 
     // Every seat of every finished match this player is in, with its outcome.
@@ -142,29 +150,29 @@ class ResultRepo(session: Session[IO]) {
     def existsForMatch(gameId: GameId, matchId: MatchId): IO[Boolean] =
         session.unique(selectExistsForMatch)((gameId, matchId))
 
-    private val selectForMatch: Query[(GameId, MatchId), (ParticipantId, Int, Option[Int], Boolean)] =
-        sql"""SELECT r.participant_id, r.rank, r.elo_delta, r.forfeit FROM result r
+    private val selectForMatch: Query[(GameId, MatchId), ResultRepo.RatedResultRow] =
+        sql"""SELECT r.participant_id, r.rank, r.elo_delta, r.forfeit, r.elo_role_delta FROM result r
           JOIN participant p ON p.game_id = r.game_id AND p.participant_id = r.participant_id
           WHERE p.game_id = $gameId AND p.match_id = ${SkunkIdCodecs.matchId}
-          ORDER BY r.participant_id""".query(participantId *: int4 *: int4.opt *: bool)
+          ORDER BY r.participant_id"""
+            .query(participantId *: int4 *: int4.opt *: bool *: int4.opt)
+            .to[ResultRepo.RatedResultRow]
 
-    /** Every result of the match, as rating sees it: the seat, where it finished, what it did to the rating, and
-      * whether a turn running out decided it.
+    /** Every result of the match, as rating sees it: the seat, where it finished, what it did to the rating overall and
+      * in the seat's role, and whether a turn running out decided it.
       */
     def forMatch(gameId: GameId, matchId: MatchId): IO[List[ResultRepo.RatedResultRow]] =
-        session
-            .execute(selectForMatch)((gameId, matchId))
-            .map(_.map((id, rank, delta, forfeit) => ResultRepo.RatedResultRow(id, rank, delta, forfeit)))
+        session.execute(selectForMatch)((gameId, matchId))
 
-    private val updateEloDelta: Command[(Option[Int], GameId, ParticipantId)] =
-        sql"""UPDATE result SET elo_delta = ${int4.opt}
+    private val updateEloDelta: Command[(Option[Int], Option[Int], GameId, ParticipantId)] =
+        sql"""UPDATE result SET elo_delta = ${int4.opt}, elo_role_delta = ${int4.opt}
           WHERE game_id = $gameId AND participant_id = $participantId""".command
 
-    /** Says what the match did to the seat's player's rating: for a completed match reclassified as friendly (none) or
-      * not (the delta worked out now).
+    /** Says what the match did to the seat's player's rating, overall and in the seat's role (V49): for a completed
+      * match reclassified as friendly (none) or not (the deltas worked out now).
       */
-    def setEloDelta(gameId: GameId, id: ParticipantId, delta: Option[Int]): IO[Unit] =
-        session.execute(updateEloDelta)((delta, gameId, id)).void
+    def setEloDelta(gameId: GameId, id: ParticipantId, delta: Option[Int], roleDelta: Option[Int] = None): IO[Unit] =
+        session.execute(updateEloDelta)((delta, roleDelta, gameId, id)).void
 
     def create(result: Result): IO[Result] =
         session
@@ -176,7 +184,8 @@ class ResultRepo(session: Session[IO]) {
                 result.scores,
                 result.isWinner,
                 result.forfeit,
-                result.eloDelta
+                result.eloDelta,
+                result.eloRoleDelta
               )
             )
             .as(result)
@@ -184,8 +193,8 @@ class ResultRepo(session: Session[IO]) {
     def read(gameId: GameId, id: ParticipantId): IO[Option[Result]] =
         session
             .option(selectResult)((gameId, id))
-            .map(_.map { case (rank, scores, isWinner, forfeit, eloDelta) =>
-                Result(gameId, id, rank, scores, isWinner, forfeit, eloDelta)
+            .map(_.map { case (rank, scores, isWinner, forfeit, eloDelta, eloRoleDelta) =>
+                Result(gameId, id, rank, scores, isWinner, forfeit, eloDelta, eloRoleDelta)
             })
 
     def update(result: Result): IO[Unit] =
@@ -197,6 +206,7 @@ class ResultRepo(session: Session[IO]) {
                 result.isWinner,
                 result.forfeit,
                 result.eloDelta,
+                result.eloRoleDelta,
                 result.gameId,
                 result.participantId
               )
@@ -227,8 +237,16 @@ object ResultRepo {
         eloDelta: Option[Int]
     )
 
-    /** A result as rating sees it: where the seat finished, and what the match did to its player's rating. */
-    case class RatedResultRow(participantId: ParticipantId, rank: Int, eloDelta: Option[Int], forfeit: Boolean = false)
+    /** A result as rating sees it: where the seat finished, and what the match did to its player's rating, overall and
+      * in the seat's role (V49).
+      */
+    case class RatedResultRow(
+        participantId: ParticipantId,
+        rank: Int,
+        eloDelta: Option[Int],
+        forfeit: Boolean = false,
+        eloRoleDelta: Option[Int] = None
+    )
 
     /** What one seat spent over its turns, all told. */
     case class TimeTakenRow(gameId: GameId, participantId: ParticipantId, timeTaken: Duration)
