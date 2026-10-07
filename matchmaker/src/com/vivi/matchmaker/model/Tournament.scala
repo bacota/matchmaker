@@ -175,3 +175,32 @@ case class MatchFixture(tournamentId: TournamentId, fixtureId: FixtureId, matchN
 
 /** A tournament seat: the slot it was filled from, and the seed its player held as they sat down. */
 case class TournamentSeat(tournamentId: TournamentId, fixtureId: FixtureId, slotId: SlotId, seed: Int)
+
+/** An entrant as the tournament page shows it: who entered, the character entered in a character game, and — once the
+  * tournament has started — its seeded place in the field.
+  */
+case class TournamentEntrant(
+    entryId: EntryId,
+    player: PublicPlayer,
+    character: Option[CharacterName] = None,
+    participant: Option[TournamentParticipant] = None
+)
+
+/** A pool and its slots. */
+case class TournamentPool(fixture: Fixture, slots: List[FixtureSlot])
+
+/** Everything the tournament page shows: the tournament and its owner, the field, the rounds and their pools, and — for
+  * its owner — who has been invited.
+  */
+case class TournamentDetail(
+    tournament: Tournament,
+    owner: PublicPlayer,
+    entrants: List[TournamentEntrant],
+    rounds: List[TournamentRound] = Nil,
+    pools: List[TournamentPool] = Nil,
+    invitedPlayers: List[PublicPlayer] = Nil,
+    invitedCharacters: List[CharacterName] = Nil
+)
+
+/** A tournament in a player's own list, with what it is to them. */
+case class TournamentSummary(tournament: Tournament, owned: Boolean, entered: Boolean, invited: Boolean)

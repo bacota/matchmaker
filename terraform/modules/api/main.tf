@@ -361,6 +361,21 @@ locals {
     # No route that changes a character either: every edit — name, description, owner, state — is
     # made in the character's game engine, and is among the engine's routes below.
 
+    # Tournaments (V53): a game's, the caller's own, creating and editing one, handing it on, its
+    # invitations, entering and withdrawing, and starting it.
+    "GET /me/tournaments",
+    "GET /games/{gameId}/tournaments",
+    "POST /tournaments",
+    "GET /tournaments/{gameId}/{tournamentId}",
+    "PUT /tournaments/{gameId}/{tournamentId}",
+    "PUT /tournaments/{gameId}/{tournamentId}/owner",
+    "POST /tournaments/{gameId}/{tournamentId}/invitations",
+    "DELETE /tournaments/{gameId}/{tournamentId}/invitations/{playerId}",
+    "DELETE /tournaments/{gameId}/{tournamentId}/character-invitations/{characterId}",
+    "POST /tournaments/{gameId}/{tournamentId}/entries",
+    "DELETE /tournaments/{gameId}/{tournamentId}/entries/{entryId}",
+    "POST /tournaments/{gameId}/{tournamentId}/start",
+
     "POST /challenges",
     "DELETE /challenges/{gameId}/{challengeId}",
     "POST /challenges/{gameId}/{challengeId}/acceptances",

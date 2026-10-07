@@ -235,6 +235,20 @@ class RouterSpec extends FunSuite {
     /** Every route in `Router`. Keep in step with it: a route missing from here is a route no test would notice
       * breaking.
       */
+    /** A tournament as `POST /tournaments` and `PUT /tournaments/{g}/{t}` take it: what upickle writes for one. */
+    private val tournamentBody: String = upickle.default.write(
+      Tournament(
+        GameId(1),
+        TournamentId(0),
+        TournamentClass.Elimination,
+        "The Open",
+        PlayerId(0),
+        invitational = false,
+        roundDuration = java.time.Duration.ofDays(1),
+        elimination = Some(EliminationSettings(TournamentType.SingleElim, 2))
+      )
+    )(using Json.given_ReadWriter_Tournament)
+
     private val routed = List(
       ("POST", "/register", """{"nickname":"tester"}"""),
       ("GET", "/me", "{}"),
@@ -320,7 +334,21 @@ class RouterSpec extends FunSuite {
       ("POST", "/matches/m1/archive", """{"size":10,"sha256":"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="}"""),
       ("POST", "/matches/m1/archive/confirm", "{}"),
       ("POST", "/matches/m1/archive/read", "{}"),
-      ("POST", "/matches/m1/archive/expired", "{}")
+      ("POST", "/matches/m1/archive/expired", "{}"),
+      // Tournaments (V53). The body of a create or an edit is the tournament, its owner ignored.
+      ("GET", "/me/tournaments", "{}"),
+      ("GET", "/games/1/tournaments", "{}"),
+      ("POST", "/tournaments", tournamentBody),
+      ("GET", "/tournaments/1/2", "{}"),
+      ("PUT", "/tournaments/1/2", tournamentBody),
+      ("PUT", "/tournaments/1/2/owner", """{"playerId":3}"""),
+      // A plain game's invitation names a player; a character game's, a character.
+      ("POST", "/tournaments/1/2/invitations", """{"playerId":3}"""),
+      ("DELETE", "/tournaments/1/2/invitations/3", "{}"),
+      ("DELETE", "/tournaments/1/2/character-invitations/4", "{}"),
+      ("POST", "/tournaments/1/2/entries", "{}"),
+      ("DELETE", "/tournaments/1/2/entries/5", "{}"),
+      ("POST", "/tournaments/1/2/start", "{}")
     )
 
     test("every routed endpoint reaches a service rather than falling through to 404") {
@@ -337,7 +365,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 60)
+        assertEquals(routed.size, 72)
         assertEquals(routed.distinct.size, routed.size)
     }
 

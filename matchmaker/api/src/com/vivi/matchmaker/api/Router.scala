@@ -130,6 +130,70 @@ object Router {
             case ("GET", "me" :: "matches" :: Nil) =>
                 ok(services.matches.active(caller))
 
+            // Tournaments (V53). The caller's own -- owned, entered, invited to -- for the home page.
+            case ("GET", "me" :: "tournaments" :: Nil) =>
+                ok(services.tournaments.mine(caller))
+
+            case ("GET", "games" :: gameId :: "tournaments" :: Nil) =>
+                withGameId(gameId)(id => ok(services.tournaments.listForGame(id, caller)))
+
+            case ("POST", "tournaments" :: Nil) =>
+                body[Tournament](request).flatMap(t => created(services.tournaments.create(t, caller)))
+
+            case ("GET", "tournaments" :: gameId :: tournamentId :: Nil) =>
+                withTournament(gameId, tournamentId)((g, t) => ok(services.tournaments.detail(g, t, caller)))
+
+            case ("PUT", "tournaments" :: gameId :: tournamentId :: Nil) =>
+                withTournament(gameId, tournamentId)((g, t) =>
+                    body[Tournament](request).flatMap(edit => ok(services.tournaments.update(g, t, edit, caller)))
+                )
+
+            // Handing a tournament to a new owner, which a game's admin does.
+            case ("PUT", "tournaments" :: gameId :: tournamentId :: "owner" :: Nil) =>
+                withTournament(gameId, tournamentId)((g, t) =>
+                    body[Json.OwnerRequest](request).flatMap(r =>
+                        noContent(services.tournaments.setOwner(g, t, r.playerId, caller))
+                    )
+                )
+
+            case ("POST", "tournaments" :: gameId :: tournamentId :: "invitations" :: Nil) =>
+                withTournament(gameId, tournamentId)((g, t) =>
+                    body[Json.TournamentInviteRequest](request).flatMap(r =>
+                        noContent(services.tournaments.invite(g, t, r.playerId, r.characterId, caller))
+                    )
+                )
+
+            // The owner withdrawing an invitation, or the invitee declining it.
+            case ("DELETE", "tournaments" :: gameId :: tournamentId :: "invitations" :: playerId :: Nil) =>
+                withTournament(gameId, tournamentId)((g, t) =>
+                    withPlayerId(playerId)(p => noContent(services.tournaments.uninvite(g, t, p, caller)))
+                )
+
+            case ("DELETE", "tournaments" :: gameId :: tournamentId :: "character-invitations" :: characterId :: Nil) =>
+                withTournament(gameId, tournamentId)((g, t) =>
+                    withCharacterId(characterId)(c =>
+                        noContent(services.tournaments.uninviteCharacter(g, t, c, caller))
+                    )
+                )
+
+            case ("POST", "tournaments" :: gameId :: tournamentId :: "entries" :: Nil) =>
+                withTournament(gameId, tournamentId)((g, t) =>
+                    body[Json.EnterRequest](request).flatMap(r =>
+                        created(services.tournaments.enter(g, t, r.characterId, caller))
+                    )
+                )
+
+            // Withdrawing: the entrant, or the owner, at any time.
+            case ("DELETE", "tournaments" :: gameId :: tournamentId :: "entries" :: entryId :: Nil) =>
+                withTournament(gameId, tournamentId)((g, t) =>
+                    entryId.toLongOption.fold(IO.pure(Errors.badRequest(s"'$entryId' is not an entry id")))(e =>
+                        noContent(services.tournaments.withdraw(g, t, EntryId(e), caller))
+                    )
+                )
+
+            case ("POST", "tournaments" :: gameId :: tournamentId :: "start" :: Nil) =>
+                withTournament(gameId, tournamentId)((g, t) => ok(services.tournaments.start(g, t, caller)))
+
             case ("GET", "me" :: "matches" :: "due" :: Nil) =>
                 ok(services.matches.due(caller))
 
@@ -603,6 +667,15 @@ object Router {
 
     private def withGameId(raw: String)(f: GameId => IO[Response]): IO[Response] =
         raw.toIntOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a game id")))(id => f(GameId(id)))
+
+    private def withTournament(rawGame: String, rawTournament: String)(
+        f: (GameId, TournamentId) => IO[Response]
+    ): IO[Response] =
+        withGameId(rawGame)(game =>
+            rawTournament.toLongOption.fold(IO.pure(Errors.badRequest(s"'$rawTournament' is not a tournament id")))(t =>
+                f(game, TournamentId(t))
+            )
+        )
 
     private def withCharacterId(raw: String)(f: CharacterId => IO[Response]): IO[Response] =
         raw.toLongOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a character id")))(id => f(CharacterId(id)))

@@ -138,6 +138,37 @@ object Json {
         readwriter[String].bimap(_.code, code => CompletedFrame.fromCode(code).getOrElse(CompletedFrame.Day))
     given ReadWriter[CompletedPage] = macroRW
     given ReadWriter[MatchFixture] = macroRW
+
+    // Tournaments (V53).
+    given ReadWriter[EliminationSettings] = macroRW
+    given ReadWriter[Tournament] = macroRW
+    given ReadWriter[TournamentEntry] = macroRW
+    given ReadWriter[TournamentParticipant] = macroRW
+    given ReadWriter[TournamentRound] = macroRW
+    given ReadWriter[Fixture] = macroRW
+
+    /** A slot's source as the columns hold it: `{"bye":true}`, `{"seed":3}`, or `{"prevFixtureId":7,"rank":1}`. */
+    given ReadWriter[SlotSource] = readwriter[ujson.Value].bimap(
+      {
+          case SlotSource.Bye                => ujson.Obj("bye" -> true)
+          case SlotSource.Seed(seed)         => ujson.Obj("seed" -> seed)
+          case SlotSource.Winner(pool, rank) => ujson.Obj("prevFixtureId" -> pool.value.toDouble, "rank" -> rank)
+      },
+      json =>
+          json.obj.get("seed") match {
+              case Some(seed) => SlotSource.Seed(seed.num.toInt)
+              case None =>
+                  json.obj.get("prevFixtureId") match {
+                      case Some(pool) => SlotSource.Winner(FixtureId(pool.num.toLong), json("rank").num.toInt)
+                      case None       => SlotSource.Bye
+                  }
+          }
+    )
+    given ReadWriter[FixtureSlot] = macroRW
+    given ReadWriter[TournamentEntrant] = macroRW
+    given ReadWriter[TournamentPool] = macroRW
+    given ReadWriter[TournamentDetail] = macroRW
+    given ReadWriter[TournamentSummary] = macroRW
     given ReadWriter[Match] = macroRW
 
     /** Structural twin of `Game` with the existential in `parameters` pinned to `String`.
@@ -233,6 +264,15 @@ object Json {
       * answered — only to record it. See `PlayerService.updateEmail`.
       */
     case class EmailRequest(email: String)
+
+    /** A tournament's new owner: `PUT /tournaments/{gameId}/{tournamentId}/owner`. */
+    case class OwnerRequest(playerId: PlayerId)
+
+    /** An invitation to a tournament: a player in a plain game, a character in a character game. */
+    case class TournamentInviteRequest(playerId: Option[PlayerId] = None, characterId: Option[CharacterId] = None)
+
+    /** Entering a tournament: as a character, in a character game; as oneself otherwise. */
+    case class EnterRequest(characterId: Option[CharacterId] = None)
 
     /** Whether a match is friendly, as a game's admin says it is: `PUT /games/{gameId}/matches/{matchId}/friendly`. The
       * value rather than a toggle, so that sending it twice means the same as sending it once.
@@ -457,6 +497,9 @@ object Json {
     given ReadWriter[ArchiveDownload] = macroRW
 
     given ReadWriter[RegisterRequest] = macroRW
+    given ReadWriter[OwnerRequest] = macroRW
+    given ReadWriter[TournamentInviteRequest] = macroRW
+    given ReadWriter[EnterRequest] = macroRW
     given ReadWriter[NicknameRequest] = macroRW
     given ReadWriter[FriendlyRequest] = macroRW
     given ReadWriter[RatingRequest] = macroRW

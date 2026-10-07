@@ -115,6 +115,10 @@ class TournamentRepo(session: Session[IO]) {
     private val selectOneForUpdate: Query[(GameId, TournamentId), Row] =
         sql"SELECT $columns WHERE t.game_id = $gameId AND t.tournament_id = $tournamentId FOR UPDATE OF t".query(row)
 
+    // Held against a start, which takes FOR UPDATE, by an entry that relies on the tournament not having started.
+    private val selectOneForShare: Query[(GameId, TournamentId), Row] =
+        sql"SELECT $columns WHERE t.game_id = $gameId AND t.tournament_id = $tournamentId FOR SHARE OF t".query(row)
+
     private val selectForGame: Query[GameId, Row] =
         sql"SELECT $columns WHERE t.game_id = $gameId ORDER BY t.create_date DESC, t.tournament_id DESC".query(row)
 
@@ -134,6 +138,28 @@ class TournamentRepo(session: Session[IO]) {
                          WHERE ci.game_id = t.game_id AND ci.tournament_id = t.tournament_id
                            AND c.player_id = $playerId)
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(row)
+
+    // The tournaments a player has an entry in, and those they are invited to, by name or by a character they own.
+    // Decoded as raw ids and wrapped: a trailing opaque-typed codec defeats skunk's twiddles outside Ids.scala.
+    private val selectEntered: Query[PlayerId, (GameId, TournamentId)] =
+        sql"""SELECT DISTINCT game_id, tournament_id FROM tournament_entry WHERE player_id = $playerId"""
+            .query(int4 *: int8)
+            .map((g, t) => (GameId(g), TournamentId(t)))
+
+    private val selectInvitedTo: Query[(PlayerId, PlayerId), (GameId, TournamentId)] =
+        sql"""SELECT game_id, tournament_id FROM tournament_invitation WHERE player_id = $playerId
+          UNION
+          SELECT ci.game_id, ci.tournament_id FROM character_tournament_invitation ci
+          JOIN character c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
+          WHERE c.player_id = $playerId""".query(int4 *: int8).map((g, t) => (GameId(g), TournamentId(t)))
+
+    /** The tournaments `player` has entered. */
+    def enteredBy(player: PlayerId): IO[Set[(GameId, TournamentId)]] =
+        session.execute(selectEntered)(player).map(_.toSet)
+
+    /** The tournaments `player` is invited to, by name or through a character they own. */
+    def invitationsOf(player: PlayerId): IO[Set[(GameId, TournamentId)]] =
+        session.execute(selectInvitedTo)((player, player)).map(_.toSet)
 
     private def toTournament(r: Row): Tournament = {
         val (
@@ -215,6 +241,10 @@ class TournamentRepo(session: Session[IO]) {
     /** As [[read]], locking the tournament for the rest of the transaction. */
     def readForUpdate(game: GameId, id: TournamentId): IO[Option[Tournament]] =
         session.option(selectOneForUpdate)((game, id)).map(_.map(toTournament))
+
+    /** As [[read]], holding the tournament against a start or an edit until the transaction ends. */
+    def readForShare(game: GameId, id: TournamentId): IO[Option[Tournament]] =
+        session.option(selectOneForShare)((game, id)).map(_.map(toTournament))
 
     /** Every tournament of a game, newest first. */
     def listForGame(game: GameId): IO[List[Tournament]] = session.execute(selectForGame)(game).map(_.map(toTournament))

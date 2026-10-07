@@ -26,7 +26,8 @@ case class Services[T](
     archives: ArchiveService,
     ending: EndingService,
     notifications: NotificationService,
-    suppression: SuppressionService
+    suppression: SuppressionService,
+    tournaments: TournamentService[T]
 )
 
 object Services {
@@ -115,7 +116,8 @@ object Services {
           archives = archives,
           ending = ending,
           notifications = new NotificationService(pool),
-          suppression = new SuppressionService(pool)
+          suppression = new SuppressionService(pool),
+          tournaments = new TournamentService[T](pool)
         )
     }
 }
