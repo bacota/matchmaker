@@ -56,6 +56,10 @@ enum Ending(val label: String) {
   * `maxMoves` is how many piece moves, by both sides together, end the match as a draw. It has no default, so it is
   * always stored: a match keeps the cap it was created with, whatever the default becomes later. `clock` is a live
   * match's turn clock, and `None` for every other match.
+  *
+  * `noTie` is a match matchmaker asked to end with somebody ahead: the cap does not apply to it, and it runs until a
+  * flag is taken, a side cannot move, a side concedes, or a clock runs out. Defaulted, so a match stored before it was
+  * kept reads back capped, as it was played.
   */
 case class StrategoMatch(
     matchId: String,
@@ -72,7 +76,8 @@ case class StrategoMatch(
     // What the match's pages are titled by (`MatchTitle`). Defaulted, so a match stored before they
     // were kept reads back as it was, and is titled by the game alone.
     override val gameDisplayName: Option[String] = None,
-    override val description: Option[String] = None
+    override val description: Option[String] = None,
+    noTie: Boolean = false
 ) extends MatchLike {
 
     def seatOf(side: Side): Option[Seat] = seats.find(_.side == side)
@@ -107,7 +112,10 @@ case class StrategoMatch(
     /** Why the match is over, or `None` while it is not.
       *
       * In order: the clock, which overrides the position; a concession, which may come at any point, setup included; a
-      * flag taken; the side to move having nothing it may move; and the move cap.
+      * flag taken; the side to move having nothing it may move; and the move cap, unless the match is `noTie`.
+      *
+      * Neither side being able to move stays a draw even in a `noTie` match: nothing in the position says who should
+      * win it, and it is rare enough to leave to whatever asked for the match.
       */
     def ending: Option[Ending] =
         if (ranOut) Some(Ending.Forfeit)
@@ -115,7 +123,7 @@ case class StrategoMatch(
         else if (!inPlay) None
         else if (Side.values.exists(s => !board.hasFlag(s))) Some(Ending.FlagTaken)
         else if (stuck(toMove)) Some(Ending.NoMoves)
-        else if (moves.sizeIs >= maxMoves) Some(Ending.MoveCap)
+        else if (!noTie && moves.sizeIs >= maxMoves) Some(Ending.MoveCap)
         else None
 
     def isOver: Boolean = ending.isDefined
@@ -316,7 +324,8 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
           resultsCallbackUrl = request.resultsCallbackUrl,
           maxMoves = maxMoves,
           gameDisplayName = request.gameDisplayName,
-          description = request.description
+          description = request.description,
+          noTie = request.tieForbidden
         )
 
     /** A piece as it is stored: on its square, since a board is mostly empty and storing 100 cells would mostly store

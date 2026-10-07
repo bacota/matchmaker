@@ -49,7 +49,11 @@ case class CreateGameRequest(
       * match id, which means nothing to anybody. Absent from an engine's view of a matchmaker that predates them.
       */
     gameDisplayName: Option[String] = None,
-    description: Option[String] = None
+    description: Option[String] = None,
+    /** Present, and true, for a match that is to end with somebody ahead (V51): a tournament's tie-break, or a
+      * challenge offered with No tie. What an engine does about it is its game's business. Absent otherwise.
+      */
+    noTie: Option[Boolean] = None
 )
 
 /** What makes a match live, as the engine is told it: the engine runs the turns and their clock, sends no move

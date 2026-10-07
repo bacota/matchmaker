@@ -161,7 +161,8 @@ class GameEngineServiceSpec extends PropertySuite {
         timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
         start: Option[Instant] = None,
         settings: String = "{}",
-        live: Boolean = false
+        live: Boolean = false,
+        noTie: Boolean = false
     ): Challenge =
         CharacterChallenge(
           ChallengeId(0),
@@ -176,7 +177,8 @@ class GameEngineServiceSpec extends PropertySuite {
           gameRoleId = Some(fixture.game.roles.head.gameRoleId),
           timeLimitKind = timeLimitKind,
           timeLimitUnit = timeLimitUnit,
-          live = live
+          live = live,
+          noTie = noTie
         )
 
     private def participantsOf(m: Match): IO[List[Participant]] =
@@ -2169,6 +2171,27 @@ class GameEngineServiceSpec extends PropertySuite {
             }
             result.timeout(15.seconds).unsafeRunSync()
         }
+    }
+
+    test("a no-tie challenge starts a no-tie match, and the engine is told; an ordinary one tells it nothing") {
+        val engine = StubEngine()
+        val services = TestServices.servicesWith(engine)
+        val result = for {
+            fixture <- makeFixture(genUniqueString.sample.get, genUniqueString.sample.get, genUniqueString.sample.get)
+            externalId = fixture.owner.externalId
+            untied <- services.challenges.create(challengeFor(fixture, noTie = true), externalId)
+            startedUntied <- services.engine.start(fixture.game.gameId, untied.challengeId, externalId)
+            untiedRequest = engine.lastRequest
+            reread <- matchOf(fixture.game.gameId, startedUntied.matchId)
+            ordinary <- services.challenges.create(challengeFor(fixture, message = "again"), externalId)
+            startedOrdinary <- services.engine.start(fixture.game.gameId, ordinary.challengeId, externalId)
+        } yield (untied, startedUntied, untiedRequest, reread, startedOrdinary, engine.lastRequest)
+        val (untied, startedUntied, untiedRequest, reread, startedOrdinary, ordinaryRequest) =
+            result.timeout(15.seconds).unsafeRunSync()
+        assert(untied.noTie && startedUntied.noTie && reread.exists(_.noTie))
+        assertEquals(untiedRequest.flatMap(_.noTie), Some(true))
+        assert(!startedOrdinary.noTie)
+        assertEquals(ordinaryRequest.flatMap(_.noTie), None)
     }
 
     property("a match that is not live does not tell the engine it is") {

@@ -37,6 +37,10 @@ object Protocol {
 
     /** `live` makes the match a live one: see [[LiveTerms]]. Absent from a matchmaker that predates live matches, and
       * for every match that is not one.
+      *
+      * `noTie` asks for a match that ends with somebody ahead: a tournament's tie-break. Every engine decodes it, and
+      * what it does about it is the game's business — one with no way to break a level position may play on as usual.
+      * Absent from a matchmaker that predates it, and for an ordinary match.
       */
     case class CreateGameRequest(
         matchId: String,
@@ -52,8 +56,13 @@ object Protocol {
         // What players call the game, and the match's own message: what the engine titles its pages
         // with. Absent from a matchmaker that predates them.
         gameDisplayName: Option[String] = None,
-        description: Option[String] = None
-    )
+        description: Option[String] = None,
+        noTie: Option[Boolean] = None
+    ) {
+
+        /** Whether the match is asked to end with somebody ahead. */
+        def tieForbidden: Boolean = noTie.contains(true)
+    }
 
     /** The terms of a live match, which the engine keeps rather than matchmaker.
       *

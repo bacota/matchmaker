@@ -216,7 +216,8 @@ class Engine(
                 bluePoints = r.outcome.score.map(_.blue)
               )
           ),
-          clock = core.clockView(m)
+          clock = core.clockView(m),
+          noTie = m.noTie
         )
     }
 }

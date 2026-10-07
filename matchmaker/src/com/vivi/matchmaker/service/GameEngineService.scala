@@ -295,7 +295,8 @@ class GameEngineService[T](
                       settings = challenge.settings,
                       isPublic = challenge.isPublic,
                       live = challenge.live,
-                      friendly = challenge.friendly
+                      friendly = challenge.friendly,
+                      noTie = challenge.noTie
                     )
                     saved <- matchRepo.create(newMatch)
                     // Under the lock taken above, so the next start of this challenge sees the claim.
@@ -1140,6 +1141,8 @@ class GameEngineService[T](
               .map(limit => LiveTerms(limit.getSeconds, challenge.timeLimitKind.code)),
           gameDisplayName = Some(game.displayName),
           description = Some(challenge.message.trim).filter(_.nonEmpty),
+          // Absent rather than false for an ordinary match, so an engine is sent what it always was.
+          noTie = Option.when(challenge.noTie)(true),
           moveCallbackUrl =
               callbackBaseUrl.map(base => s"$base/games/${game.gameId.value}/matches/${matchId.value}/moves"),
           resultsCallbackUrl =

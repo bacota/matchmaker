@@ -3881,6 +3881,7 @@ object Views {
           parameterDetail(game, challenge),
           if (challenge.isPublic) div(cls := "detail", "public") else emptyNode,
           if (challenge.friendly) friendlyLabel() else emptyNode,
+          if (challenge.noTie) div(cls := "detail", "no tie") else emptyNode,
           // A game's admin offering a match for others to play: said, because nothing else on the row
           // tells it from one they are seated in.
           if (challenge.gameRoleId.isEmpty) div(cls := "detail", "you are not playing in it") else emptyNode,
@@ -4441,6 +4442,7 @@ object Views {
           timeLimitDetail(challenge),
           parameterDetail(game, challenge),
           if (challenge.friendly) friendlyLabel() else emptyNode,
+          if (challenge.noTie) div(cls := "detail", "no tie") else emptyNode,
           // A seat held for this player is said rather than offered: a picker with one entry asks a
           // question whose answer is already settled, and what they need to know is which seat they
           // were asked for.
@@ -4840,6 +4842,9 @@ object Views {
         // default -- it asks the players to be there together -- and when on, the limit is required,
         // since it is the clock the game plays against.
         val live = Var(false)
+        // Whether the match must end with somebody ahead (V51). Off by default: a draw is a fair end to
+        // most matches, and what the game does instead -- extra rounds, no move limit -- is its own.
+        val noTie = Var(false)
         // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
         // has been claimed yet, so every role of the game is on offer and the first stands selected.
         val role = Var(game.roles.headOption.map(_.gameRoleId))
@@ -5077,6 +5082,22 @@ object Views {
               "Live"
             )
           ),
+          withTip(
+            "no-tie-tip",
+            "No tie",
+            "The match must end with a winner. Each game decides how: boxing goes to extra rounds while the " +
+                "fighters are level, and Stratego drops its move limit, so the clock decides a game nobody can " +
+                "win. A game with no way to break a tie plays as usual."
+          )(
+            label(
+              input(
+                tpe := "checkbox",
+                aria.describedBy := "no-tie-tip",
+                controlled(checked <-- noTie.signal, onClick.mapToChecked --> noTie)
+              ),
+              "No tie"
+            )
+          ),
           // Public means anyone may watch the match, which the game engine implements by issuing a
           // url that needs no sign-in. It is decided here because it is a property of the game being
           // offered, not of any one player's part in it.
@@ -5179,7 +5200,8 @@ object Views {
                             autoStart = autoStart.now() || !seatedNow,
                             isOpen = isOpen,
                             live = live.now(),
-                            friendly = isFriendly
+                            friendly = isFriendly,
+                            noTie = noTie.now()
                           )
                       else
                           PlainChallenge(
@@ -5197,7 +5219,8 @@ object Views {
                             autoStart = autoStart.now() || !seatedNow,
                             isOpen = isOpen,
                             live = live.now(),
-                            friendly = isFriendly
+                            friendly = isFriendly,
+                            noTie = noTie.now()
                           )
 
                   // One request rather than a create and then an invite: the server validates the
@@ -5229,6 +5252,7 @@ object Views {
                       timeLimitKind.set(TimeLimitKind.PerTurn)
                       autoStart.set(true)
                       live.set(false)
+                      noTie.set(false)
                       plays.set(true)
                       friendly.set(true)
                       if (Store.stillSignedInAs(signIn) && Store.page.now() == Store.Page.OneGame(game.gameId)) {

@@ -186,7 +186,8 @@ class Engine(
               )
           ),
           clock = core.clockView(m),
-          replay = replayOf(m, viewer)
+          replay = replayOf(m, viewer),
+          noTie = m.noTie
         )
     }
 

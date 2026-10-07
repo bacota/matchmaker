@@ -252,7 +252,9 @@ ${Finale.script(victory, defeat)}
     showFinale(result());
     document.getElementById("round").textContent = state
       ? (state.completed ? "Scheduled for " + state.scheduledRounds + " rounds"
-                         : "Round " + state.round + " of " + state.scheduledRounds)
+         : state.round > state.scheduledRounds ? "Extra round " + (state.round - state.scheduledRounds) +
+             ": level on points, and this bout must have a winner"
+         : "Round " + state.round + " of " + state.scheduledRounds)
       : "";
 
     const plan = document.getElementById("plan");

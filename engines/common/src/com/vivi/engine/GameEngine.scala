@@ -399,8 +399,8 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         try call
         catch { case NonFatal(e) => Log.failure(e, what) }
 
-    /** The finished match as matchmaker records it: rank 1 for the winner and 2 for the loser, or rank 1 for both in a
-      * draw, which is what a rank means when nobody placed above anyone else.
+    /** The finished match as matchmaker records it: each seat ranked by its [[Game.placing]] — for a game of two sides,
+      * rank 1 for the winner and 2 for the loser, or rank 1 for both in a draw.
       *
       * Every seat's scores carry its `outcome` (win/loss/draw), and whatever else the game keeps about it. A match
       * ended by its clock is a forfeit on every seat, as matchmaker records its own.
@@ -412,7 +412,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
               val outcome = game.outcome(m, seat)
               ResultEntry(
                 participantId = seat.participantId,
-                rank = if (outcome == Outcome.Loss) 2 else 1,
+                rank = game.placing(m, seat),
                 scores = Map("outcome" -> ujson.Str(outcome.label)) ++ game.scores(m, seat),
                 isWinner = outcome == Outcome.Win,
                 forfeit = forfeit

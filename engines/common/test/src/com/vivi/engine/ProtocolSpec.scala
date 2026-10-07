@@ -183,6 +183,28 @@ class ProtocolSpec extends FunSuite {
         )
     }
 
+    test("matchmaker's create request asking for no tie reads as the engine's; one that does not, as none") {
+        val fromMatchmaker = MmCreateGameRequest(
+          matchId = "m-3",
+          gameName = "stratego",
+          isPublic = false,
+          parameters = Map.empty,
+          settings = "{}",
+          timeLimitSeconds = None,
+          players = Nil,
+          moveCallbackUrl = None,
+          resultsCallbackUrl = None,
+          noTie = Some(true)
+        )
+        val asEngine = read[Protocol.CreateGameRequest](write(fromMatchmaker))
+        assertEquals(asEngine.noTie, Some(true))
+        assert(asEngine.tieForbidden)
+        // And a matchmaker that predates it sends nothing, which reads as an ordinary match.
+        val plain = read[Protocol.CreateGameRequest](write(fromMatchmaker.copy(noTie = None)))
+        assert(!plain.tieForbidden)
+        assert(!write(fromMatchmaker.copy(noTie = None)).contains("noTie"))
+    }
+
     test("results ending a live match by forfeit read as matchmaker's, forfeit and all") {
         val results = Protocol.MatchResults(
           List(

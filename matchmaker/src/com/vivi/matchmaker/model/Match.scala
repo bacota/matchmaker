@@ -58,7 +58,11 @@ case class Match(
     /** Whether a friendly match's archive has expired (V38). There is nothing left to view, so a player is not offered
       * the urls; they are cleared where they are handed out.
       */
-    archiveExpired: Boolean = false
+    archiveExpired: Boolean = false,
+    /** Whether the match was asked to end with somebody ahead (V51) — see `Challenge.noTie`, which it is copied from,
+      * and a tournament's tie-break, which sets it.
+      */
+    noTie: Boolean = false
 ) {
 
     /** Whether the match was played to an end. */

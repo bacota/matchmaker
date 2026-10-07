@@ -45,15 +45,16 @@ class MatchRepo(session: Session[IO]) {
           TimeLimitKind,
           TimeLimitUnit,
           Boolean,
+          Boolean,
           Boolean
       )
     ] =
         sql"""INSERT INTO match (game_id, match_id, challenge_id, creator, description, completed, cancelled, start,
                              time_limit, settings, public, status_url, play_url, public_url, time_limit_kind,
-                             time_limit_unit, live, friendly)
-          VALUES ($gameId, $matchId, ${challengeId.opt}, $playerIdOf, $text, ${instant.opt}, $bool, $instant, ${float8.opt} * INTERVAL '1 second',
-                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt}, $timeLimitKind, $timeLimitUnit, $bool,
-                  $bool)""".command
+                             time_limit_unit, live, friendly, no_tie)
+          VALUES ($gameId, $matchId, ${challengeId.opt}, $playerIdOf, $text, ${instant.opt}, $bool, $instant,
+                  ${float8.opt} * INTERVAL '1 second', $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt},
+                  $timeLimitKind, $timeLimitUnit, $bool, $bool, $bool)""".command
 
     private type MatchRow =
         (
@@ -74,19 +75,22 @@ class MatchRepo(session: Session[IO]) {
             Boolean,
             Boolean,
             Option[Instant],
+            Boolean,
             Boolean
         )
 
-    // The last two are the archive's (V38), read here and never written: `ArchiveRepo` owns them.
+    // archived_at and the expiry are the archive's (V38), read here and never written: `ArchiveRepo` owns them.
+    // no_tie, last, is fixed when the match is created, like its time limit.
     private val matchRow: Codec[MatchRow] =
-        challengeId.opt *: playerIdOf *: text *: instant.opt *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *:
-            text.opt *: timeLimitKind *: timeLimitUnit *: bool *: bool *: instant.opt *: bool
+        challengeId.opt *: playerIdOf *: text *: instant.opt *: bool *: instant *: float8.opt *: settings *: bool *:
+            text.opt *: text.opt *: text.opt *: timeLimitKind *: timeLimitUnit *: bool *: bool *: instant.opt *: bool *:
+            bool
 
     private val selectMatch: Query[(GameId, MatchId), MatchRow] =
         sql"""SELECT challenge_id, creator, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
-                 archived_at, #${ArchiveRepo.expired("match")}
+                 archived_at, #${ArchiveRepo.expired("match")}, no_tie
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId"""
             .query(matchRow)
@@ -98,7 +102,7 @@ class MatchRepo(session: Session[IO]) {
         sql"""SELECT challenge_id, creator, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
-                 archived_at, #${ArchiveRepo.expired("match")}
+                 archived_at, #${ArchiveRepo.expired("match")}, no_tie
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
             .query(matchRow)
@@ -151,7 +155,8 @@ class MatchRepo(session: Session[IO]) {
                 m.timeLimitKind,
                 m.timeLimitUnit,
                 m.live,
-                m.friendly
+                m.friendly,
+                m.noTie
               )
             )
             .as(m)
@@ -175,7 +180,8 @@ class MatchRepo(session: Session[IO]) {
           live,
           friendly,
           archivedAt,
-          archiveExpired
+          archiveExpired,
+          noTie
         ) = row
         Match(
           gameId,
@@ -197,7 +203,8 @@ class MatchRepo(session: Session[IO]) {
           live,
           friendly,
           archivedAt,
-          archiveExpired
+          archiveExpired,
+          noTie
         )
     }
 
