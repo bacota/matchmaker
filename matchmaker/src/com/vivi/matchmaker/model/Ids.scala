@@ -62,3 +62,36 @@ object ChallengeId {
     def apply(value: Long): ChallengeId = value
     extension (id: ChallengeId) def value: Long = id
 }
+
+opaque type TournamentId = Long
+object TournamentId {
+    def apply(value: Long): TournamentId = value
+    extension (id: TournamentId) def value: Long = id
+
+    /** Sentinel for a tournament that hasn't been persisted yet (its id is DB-generated on create). */
+    val unassigned: TournamentId = TournamentId(0)
+}
+
+opaque type EntryId = Long
+object EntryId {
+    def apply(value: Long): EntryId = value
+    extension (id: EntryId) def value: Long = id
+}
+
+opaque type TournamentParticipantId = Long
+object TournamentParticipantId {
+    def apply(value: Long): TournamentParticipantId = value
+    extension (id: TournamentParticipantId) def value: Long = id
+}
+
+opaque type FixtureId = Long
+object FixtureId {
+    def apply(value: Long): FixtureId = value
+    extension (id: FixtureId) def value: Long = id
+}
+
+opaque type SlotId = Long
+object SlotId {
+    def apply(value: Long): SlotId = value
+    extension (id: SlotId) def value: Long = id
+}
