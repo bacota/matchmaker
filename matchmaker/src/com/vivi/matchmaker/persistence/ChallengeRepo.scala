@@ -315,19 +315,6 @@ class ChallengeRepo(session: Session[IO]) {
     def startedMatch(gameId: GameId, id: ChallengeId): IO[Option[MatchId]] =
         session.option(selectStartedMatch)((gameId, id)).map(_.flatten)
 
-    private val selectChallenger: Query[(GameId, ChallengeId), PlayerId] =
-        sql"""SELECT challenger FROM challenge
-          WHERE game_id = $gameId AND challenge_id = $challengeId""".query(playerId)
-
-    /** Just the challenger of a challenge.
-      *
-      * Separate from [[read]] because that one joins the challenger's acceptance to read the role they are playing, and
-      * the callers of this are asking a different question: a match's creator is its challenge's challenger, and that
-      * is true whatever became of the acceptances.
-      */
-    def challengerOf(gameId: GameId, id: ChallengeId): IO[Option[PlayerId]] =
-        session.option(selectChallenger)((gameId, id))
-
     private val claimChallengeForStart: Command[(MatchId, GameId, ChallengeId)] =
         sql"""UPDATE challenge SET started_match_id = $matchId
           WHERE game_id = $gameId AND challenge_id = $challengeId""".command

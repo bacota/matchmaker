@@ -83,7 +83,8 @@ object Generators {
             state <- genString
         } yield Character(CharacterId(0), gameId, name, description, state, playerId)
 
-    def genMatch(gameId: GameId, matchId: MatchId, challengeId: ChallengeId): Gen[Match] =
+    /** A match whose creator is `creator`, started from `challengeId` where there is one. */
+    def genMatch(gameId: GameId, matchId: MatchId, challengeId: Option[ChallengeId], creator: PlayerId): Gen[Match] =
         for {
             description <- genString
             completedAt <- Gen.option(genInstant)
@@ -103,6 +104,7 @@ object Generators {
           gameId,
           matchId,
           challengeId,
+          creator,
           description,
           completedAt,
           start,
@@ -214,6 +216,12 @@ object Generators {
             game <- new GameRepo[String](session).create(genGame().sample.get)
             challengeId <- challengeIn(session, game)
         } yield (game, challengeId)
+
+    /** A generated match started from an existing challenge, created by its challenger as a started one would be. */
+    def matchFrom(session: Session[IO], gameId: GameId, matchId: MatchId, challengeId: ChallengeId): IO[Match] =
+        new ChallengeRepo(session).read(gameId, challengeId).map { found =>
+            genMatch(gameId, matchId, Some(challengeId), found.get.challenger).sample.get
+        }
 
     /** A challenge in an existing game, with the player and character it needs. */
     def challengeIn(session: Session[IO], game: Game): IO[ChallengeId] = {
