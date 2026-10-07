@@ -508,8 +508,18 @@ class TournamentPlayService[T](
             held <- new TournamentParticipantRepo(session).listForUpdate(t.gameId, t.tournamentId)
             slots <- fixtures.listSlots(t.gameId, t.tournamentId, round.round)
             rounds <- fixtures.listRounds(t.gameId, t.tournamentId)
-            standings <- previous.traverse(r => poolsOf(session, t, settings, game, r))
-            finishers = standings.toList.flatten.map(p => p.fixture.fixtureId -> p.standings).toMap
+            // The previous round's pools, and any earlier one a slot names: a double elimination's losers' bracket is
+            // filled from rounds before the last.
+            pools <- fixtures.listFixtures(t.gameId, t.tournamentId)
+            named = slots.flatMap(_.source match {
+                case SlotSource.Winner(f, _) => pools.find(_.fixtureId == f).map(_.round)
+                case _                       => None
+            })
+            sources = rounds.filter(r =>
+                (previous.exists(_.round == r.round) || named.contains(r.round)) && r.round < round.round
+            )
+            standings <- sources.flatTraverse(r => poolsOf(session, t, settings, game, r))
+            finishers = standings.map(p => p.fixture.fixtureId -> p.standings).toMap
             advance = previous.fold(settings.minPoolAdvance)(advanceOf(settings, _, rounds))
             participants <-
                 if (round.reseed) reseed(session, t, settings, game, round, held, slots, finishers, advance)
@@ -519,7 +529,8 @@ class TournamentPlayService[T](
               finishers,
               advance,
               participants.map(p => p.seed -> p.tournamentParticipantId).toMap,
-              participants.filter(_.withdrawn).map(_.tournamentParticipantId).toSet
+              participants.filter(_.withdrawn).map(_.tournamentParticipantId).toSet,
+              fillOpen = !doubleElimination(settings)
             )
             _ <- slots.traverse_(s =>
                 resolved.get(s.slotId).traverse_(fixtures.fill(t.gameId, t.tournamentId, s.fixtureId, s.slotId, _))
@@ -651,9 +662,16 @@ class TournamentPlayService[T](
         settings.tournamentType == TournamentType.Playoff &&
             rounds.exists(r => r.cycle == round.cycle && r.round < round.round)
 
-    /** How many of each of a round's pools go through: the round's own say, or the tournament's — one, from a pair. */
+    private def doubleElimination(settings: EliminationSettings): Boolean =
+        settings.tournamentType == TournamentType.DoubleElim
+
+    /** How many of each of a round's pools go through: the round's own say, or the tournament's — one, from a pair. In
+      * a double elimination, the first two of every pool go somewhere: the winner on, the second to the losers'
+      * bracket.
+      */
     private def advanceOf(settings: EliminationSettings, round: TournamentRound, rounds: List[TournamentRound]): Int =
-        round.minPoolAdvance.getOrElse(if (pairs(settings, round, rounds)) 1 else settings.minPoolAdvance)
+        if (doubleElimination(settings)) 2
+        else round.minPoolAdvance.getOrElse(if (pairs(settings, round, rounds)) 1 else settings.minPoolAdvance)
 
     /** Stamps a round complete, and hands each pool's seeds out again in its finishing order. */
     private def complete(session: Session[IO], t: Tournament, round: Int, pools: List[Pool]): IO[Unit] = {
@@ -773,6 +791,10 @@ class TournamentPlayService[T](
             _ <- IO.raiseWhen(settings.tournamentType == TournamentType.Playoff && settings.poolSize <= 2)(
               ValidationError("a playoff's pools hold more than two")
             )
+            _ <- IO.raiseWhen(
+              settings.tournamentType == TournamentType.DoubleElim && settings.poolSize != 2 &&
+                  settings.minPoolAdvance != 1
+            )(ValidationError("a double elimination needs pools of two, or one going through"))
             advance = math.min(settings.minPoolAdvance, settings.poolSize - 1)
             entrants <- new TournamentParticipantRepo(session).list(t.gameId, t.tournamentId)
             _ <- new FixtureRepo(session).deleteLayout(t.gameId, t.tournamentId)

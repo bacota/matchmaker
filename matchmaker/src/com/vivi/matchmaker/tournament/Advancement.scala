@@ -12,7 +12,8 @@ import com.vivi.matchmaker.model.{FixtureId, FixtureSlot, SlotId, SlotSource, To
   *     differential, then lowest seed.
   *
   * Nobody is placed twice, and nobody withdrawn is placed at all. A slot nobody can fill is left empty, and plays as a
-  * bye.
+  * bye. With `fillOpen` false — a double elimination, where everybody not named is out or busy elsewhere — the fill
+  * rule takes nobody, and every slot not filled exactly is left empty.
   */
 object Advancement {
 
@@ -23,7 +24,8 @@ object Advancement {
         previous: Map[FixtureId, List[Standing[Member]]],
         advance: Int,
         seedHolders: Map[Int, Member],
-        withdrawn: Set[Member]
+        withdrawn: Set[Member],
+        fillOpen: Boolean = true
     ): Map[SlotId, Member] = {
         def available(m: Member) = !withdrawn.contains(m)
 
@@ -41,7 +43,8 @@ object Advancement {
             if (acc.exists(_._2 == next._2)) acc else acc :+ next
         }
         val placedMembers = placed.map(_._2).toSet
-        val candidates = fillOrder(previous).filter(m => available(m) && !placedMembers.contains(m))
+        val candidates =
+            if (fillOpen) fillOrder(previous).filter(m => available(m) && !placedMembers.contains(m)) else Nil
         val open = slots.filter(s => s.source != SlotSource.Bye && !placed.exists(_._1 == s.slotId)).map(_.slotId)
         (placed ++ open.zip(candidates)).toMap
     }

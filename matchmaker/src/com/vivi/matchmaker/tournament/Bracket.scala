@@ -85,6 +85,107 @@ object Bracket {
         }
     }
 
+    /** A double elimination of `entrants` in pools of `poolSize`, one going through from each: nobody is out until they
+      * have lost twice.
+      *
+      *   - **The winners' bracket** is single elimination of the pools' winners alone, without a consolation pool. Its
+      *     pools are not filled from second places, which go to the losers' bracket instead; a short pool has byes.
+      *   - **The losers' bracket** is fed by every winners' pool's second place (`Winner(…, rank = 2)`); anybody placed
+      *     lower in a pool of more than two is out. Each winners' round's losers join the survivors of the losers'
+      *     bracket so far, and play them, one going through from each pool; when there are more survivors than new
+      *     losers, the survivors first play among themselves until there are not. With pools of two this is the usual
+      *     losers' bracket, alternating rounds among survivors with rounds against the newly dropped.
+      *   - **The grand final** is the winners' champion against the losers' champion. Nobody plays it twice.
+      *
+      * A pool is played in the round after the last of the pools it is filled from, so the losers' bracket runs on past
+      * the winners' final, and rounds there hold losers' pools alone. In a round, the winners' pools come first.
+      */
+    def doubleElimination(entrants: Int, poolSize: Int): Bracket = {
+        require(entrants >= 1, "a tournament needs at least one entrant")
+        require(poolSize >= 2, "an elimination round needs pools of at least two")
+
+        val first = firstRound(entrants, poolSize).map(pool => Expected(pool, seedsOf(pool)))
+        @annotation.tailrec
+        def upper(rounds: List[List[Expected]]): List[List[Expected]] =
+            if (rounds.last.sizeIs <= 1) rounds
+            else upper(rounds :+ winnersRound(rounds.size + 1, rounds.last, poolSize))
+        val winners = upper(List(first))
+        if (winners.flatten.forall(_.seeds.sizeIs < 2)) Bracket(winners.map(_.map(_.pool)))
+        else {
+            // A source in the losers' bracket: a winners' pool's finisher, or a losers' pool's winner (by its index).
+            enum Ref {
+                case Upper(source: PlannedSource.Winner)
+                case Lower(pool: Int)
+            }
+            case class Lower(refs: List[(Ref, Int)])
+
+            var lower = Vector.empty[Lower]
+            def stage(survivors: List[(Ref, Int)]): List[(Ref, Int)] = {
+                val pools = math.ceil(survivors.size.toDouble / poolSize).toInt
+                snake(survivors.sortBy(_._2), pools).map { members =>
+                    lower = lower :+ Lower(members)
+                    (Ref.Lower(lower.size - 1), members.map(_._2).min)
+                }
+            }
+            val afterRounds = winners.zipWithIndex.foldLeft(List.empty[(Ref, Int)]) { case (survivors, (pools, i)) =>
+                val dropped = pools.filter(_.seeds.sizeIs >= 2).map { e =>
+                    (Ref.Upper(PlannedSource.Winner(i + 1, e.pool.position, 2)), e.seeds(1))
+                }
+                @annotation.tailrec
+                def thin(s: List[(Ref, Int)]): List[(Ref, Int)] =
+                    if (s.sizeIs > math.max(1, dropped.size)) thin(stage(s)) else s
+                val merged = thin(survivors) ++ dropped
+                if (merged.sizeIs > 1) stage(merged) else merged
+            }
+            @annotation.tailrec
+            def down(s: List[(Ref, Int)]): List[(Ref, Int)] = if (s.sizeIs > 1) down(stage(s)) else s
+            val champion = down(afterRounds)
+
+            // Each losers' pool is played in the round after the latest of its sources.
+            val roundOf = lower.indices.foldLeft(Map.empty[Int, Int]) { (acc, i) =>
+                val after = lower(i).refs.map {
+                    case (Ref.Upper(w), _) => w.round
+                    case (Ref.Lower(j), _) => acc(j)
+                }.max
+                acc + (i -> (after + 1))
+            }
+            val positionOf: Map[Int, Int] = lower.indices
+                .groupBy(roundOf)
+                .toList
+                .flatMap { (round, ids) =>
+                    val upper = winners.lift(round - 1).fold(0)(_.size)
+                    ids.sorted.zipWithIndex.map((id, k) => id -> (upper + k + 1))
+                }
+                .toMap
+            def source(ref: Ref): PlannedSource = ref match {
+                case Ref.Upper(w) => w
+                case Ref.Lower(j) => PlannedSource.Winner(roundOf(j), positionOf(j), 1)
+            }
+            val lowerPools = lower.indices.toList.map(i =>
+                PlannedPool(roundOf(i), positionOf(i), lower(i).refs.map((ref, _) => source(ref)))
+            )
+            val finalRound = (roundOf.values.toList :+ winners.size).max + 1
+            val grand = champion.headOption.map { (ref, _) =>
+                PlannedPool(finalRound, 1, List(PlannedSource.Winner(winners.size, 1, 1), source(ref)))
+            }
+            val all = winners.flatten.map(_.pool) ++ lowerPools ++ grand.toList
+            Bracket((1 to all.map(_.round).max).toList.map(r => all.filter(_.round == r).sortBy(_.position)))
+        }
+    }
+
+    /** The next round of a winners' bracket: each pool's winner, drawn by expected seed into as few pools as hold them
+      * — with pools of two, a power of two of them — and byes in the seats left over.
+      */
+    private def winnersRound(round: Int, last: List[Expected], poolSize: Int): List[Expected] = {
+        val advancing = last.filter(_.seeds.nonEmpty).flatMap(e => finishersOf(e).take(1)).sortBy(_.seed)
+        val wanted = math.max(1, math.ceil(advancing.size.toDouble / poolSize).toInt)
+        val pools = if (poolSize == 2) powerOfTwo(wanted) else wanted
+        snake(advancing, pools).zipWithIndex.map { (slots, i) =>
+            val sources = slots.map(_.source) ++ List.fill(poolSize - slots.size)(PlannedSource.Bye)
+            Expected(PlannedPool(round, i + 1, sources), slots.map(_.seed).sorted)
+        }
+    }
+
     /** `start`'s rounds, then elimination rounds after them until one pool is left; and the consolation pool beside the
       * final, made from the round before it, if that round is at index `consolationFrom` or later.
       */

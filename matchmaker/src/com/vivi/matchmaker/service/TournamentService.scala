@@ -41,7 +41,7 @@ class TournamentService[T](
       * them.
       */
     private val startable: Set[TournamentType] =
-        Set(TournamentType.SingleElim, TournamentType.RoundRobin, TournamentType.Playoff)
+        Set(TournamentType.SingleElim, TournamentType.RoundRobin, TournamentType.Playoff, TournamentType.DoubleElim)
 
     // ---- reading ----------------------------------------------------------------------------------
 
@@ -563,6 +563,11 @@ class TournamentService[T](
                           Set(TournamentType.DoubleElim).contains(e.tournamentType) &&
                               e.poolSize != 2 && e.minPoolAdvance != 1
                         )("a double elimination needs pools of two, or one going through")
+                      )
+                      .orElse(
+                        Option.when(e.tournamentType == TournamentType.DoubleElim && mandatory > 2)(
+                          "a double elimination's grand final is two players, too few for this game"
+                        )
                       )
                       .orElse(
                         Option.when(

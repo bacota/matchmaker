@@ -225,6 +225,26 @@ class TournamentEndToEndSpec extends FunSuite with QuietTests {
         assertEquals(f.bySeed.map(p => finalRanks(d)(p.playerId)), List(1, 2, 3, 4, 5, 5, 5).map(Some(_)))
     }
 
+    test("double elimination: nobody is out until they lose twice, and the losers' champion meets the winners'") {
+        val w = world()
+        val (f, d) = run(for {
+            g <- game()
+            f <- started(w, g, 8, TournamentType.DoubleElim)
+            // Seed 2 beats seed 1 in the winners' final, round 3's first pool; the better seed wins everything else.
+            d <- playOut(w, g, f)(p =>
+                if (p.m.description.contains("round 3, pool 1,"))
+                    p.seats.map((_, player) => player -> (if (player == f.bySeed(1).playerId) 1 else 2)).toMap
+                else bySeed(f)(p)
+            )
+        } yield (f, d))
+        assert(d.tournament.ended)
+        // Six rounds: three of the winners' bracket, the losers' bracket two past it, and the grand final.
+        assertEquals(d.rounds.size, 6)
+        // Seed 1 dropped to the losers' bracket, won it, and beat seed 2 in the grand final. Then by the round each
+        // went out in: 3 lost the losers' final, 4 the round before, 5 and 6 the one before that, 7 and 8 the first.
+        assertEquals(f.bySeed.map(p => finalRanks(d)(p.playerId)), List(1, 2, 3, 4, 5, 5, 7, 7).map(Some(_)))
+    }
+
     test("five players: three byes in the first round, and everybody still finishes ranked") {
         val w = world()
         val d = run(for {

@@ -161,6 +161,67 @@ class BracketSpec extends ScalaCheckSuite {
         assertEquals(bracket.rounds(1).head.slots, List(PlannedSource.Seed(1), PlannedSource.Seed(2)))
     }
 
+    private val doubles: Gen[Shape] =
+        for {
+            poolSize <- Gen.frequency(3 -> Gen.const(2), 1 -> Gen.choose(3, 5))
+            entrants <- Gen.choose(2, 64)
+        } yield Shape(entrants, poolSize, 1)
+
+    property(
+      "double elimination: every pool's second place drops once, every losers' winner goes on once, to a final"
+    ) {
+        forAll(doubles) { s =>
+            val bracket = Bracket.doubleElimination(s.entrants, s.poolSize)
+            val rounds = bracket.rounds
+            val pools = bracket.pools
+            // How many players each pool is planned for: the slots that are not byes.
+            val size = pools.map(p => (p.round, p.position) -> p.slots.count(_ != PlannedSource.Bye)).toMap
+            val named = pools.flatMap(_.slots).collect { case w: PlannedSource.Winner => w }
+            val grand = rounds.last
+            val earlier = pools.filterNot(_.round == rounds.size)
+            grand.size == 1 && grand.head.slots.size == 2 &&
+            rounds.forall(_.nonEmpty) &&
+            pools.forall(_.slots.size <= s.poolSize) &&
+            // Every source is an earlier round's pool, and a place that pool has.
+            named.forall(w => w.round < pools.find(_.slots.contains(w)).get.round) &&
+            named.forall(w => size.get((w.round, w.position)).exists(w.rank <= _)) &&
+            named.distinct.size == named.size &&
+            // Every earlier pool's winner goes on, and so does its second place, if it has one, in the winners' bracket.
+            earlier.forall(p => named.contains(PlannedSource.Winner(p.round, p.position, 1))) &&
+            named.forall(_.rank <= 2)
+        }
+    }
+
+    test(
+      "double elimination of eight in pairs: the losers' bracket alternates, and runs two rounds past the winners'"
+    ) {
+        val bracket = Bracket.doubleElimination(8, 2)
+        assertEquals(bracket.rounds.map(_.size), List(4, 4, 3, 1, 1, 1))
+        // Round 2: the winners' semi-finals, then the first round's losers paired, the better seed first.
+        assertEquals(
+          bracket.rounds(1).drop(2).map(_.slots),
+          List(
+            List(PlannedSource.Winner(1, 4, 2), PlannedSource.Winner(1, 1, 2)),
+            List(PlannedSource.Winner(1, 3, 2), PlannedSource.Winner(1, 2, 2))
+          )
+        )
+        assertEquals(
+          bracket.rounds.last.head.slots,
+          List(PlannedSource.Winner(3, 1, 1), PlannedSource.Winner(5, 1, 1))
+        )
+    }
+
+    test("double elimination of two: the loser of the first meeting gets a second") {
+        val bracket = Bracket.doubleElimination(2, 2)
+        assertEquals(
+          bracket.rounds.map(_.map(_.slots)),
+          List(
+            List(List(PlannedSource.Seed(1), PlannedSource.Seed(2))),
+            List(List(PlannedSource.Winner(1, 1, 1), PlannedSource.Winner(1, 1, 2)))
+          )
+        )
+    }
+
     test("a round robin is one pool of everybody") {
         assertEquals(Bracket.roundRobin(5).pools.map(seeds), List(List(1, 2, 3, 4, 5)))
     }

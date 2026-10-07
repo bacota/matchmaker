@@ -100,7 +100,9 @@ object Tournaments {
             "Single elimination: pools play off, and the best of each go through to the next round until one pool " +
                 "is left for the final, with a consolation pool beside it. Round robin: everybody plays everybody once. " +
                 "Playoff: pools of three or more each play round robin, then the best of them, seeded again by how " +
-                "they did, play off in pairs. Ladder: everybody starts at rank 0 and plays somebody near their rank " +
+                "they did, play off in pairs. Double elimination: a pool's winner goes on, its second place drops to a " +
+                "losers' bracket, and nobody is out until they have lost twice; the losers' champion meets the " +
+                "winners' in the grand final. Ladder: everybody starts at rank 0 and plays somebody near their rank " +
                 "each round, going up one for a win and down one for a loss; players may join at any time, and it " +
                 "never ends."
           )(
@@ -120,6 +122,7 @@ object Tournaments {
                 option(value := TournamentType.SingleElim.code, TournamentType.SingleElim.label),
                 option(value := TournamentType.RoundRobin.code, TournamentType.RoundRobin.label),
                 option(value := TournamentType.Playoff.code, TournamentType.Playoff.label),
+                option(value := TournamentType.DoubleElim.code, TournamentType.DoubleElim.label),
                 option(value := ladderCode, TournamentClass.Ladder.label)
               )
             )
@@ -127,7 +130,7 @@ object Tournaments {
           child.maybe <-- kind.signal
               .combineWith(ladder.signal)
               .map((k, l) =>
-                  Option.when(!l && (k == TournamentType.SingleElim || k == TournamentType.Playoff))(
+                  Option.when(!l && k != TournamentType.RoundRobin)(
                     div(
                       tipField(
                         s"$key-pool-tip",

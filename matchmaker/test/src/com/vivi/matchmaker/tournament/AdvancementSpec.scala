@@ -53,6 +53,18 @@ class AdvancementSpec extends ScalaCheckSuite {
         assertEquals(resolved, Map(SlotId(1) -> member(2), SlotId(2) -> member(3)))
     }
 
+    test("without the fill rule, a withdrawn finisher's slot is left empty rather than given to somebody else") {
+        val resolved = Advancement.resolve(
+          List(slot(1, SlotSource.Winner(FixtureId(0), 2)), slot(2, SlotSource.Winner(FixtureId(1), 2))),
+          finished(2, 2),
+          advance = 2,
+          seedHolders = Map.empty,
+          withdrawn = Set(member(2)),
+          fillOpen = false
+        )
+        assertEquals(resolved, Map(SlotId(2) -> member(4)))
+    }
+
     test("fill slots are taken by highest finish, then differential, then seed") {
         val resolved = Advancement.resolve(
           List(
