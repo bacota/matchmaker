@@ -77,6 +77,13 @@ class StoredMatchSpec extends FunSuite {
         assertEquals(read[Bout](stored), played())
     }
 
+    test("a no-tie bout stores the flag and reads it back; one stored without it is an ordinary bout") {
+        val untied = played().copy(noTie = true)
+        assert(write(untied).endsWith(""","noTie":true}"""))
+        assertEquals(read[Bout](write(untied)), untied)
+        assert(!read[Bout](stored).noTie)
+    }
+
     test("a bout stored with the matchmaker url fighters were once saved through reads back the same") {
         assertEquals(read[Bout](storedWithMatchmakerUrl), played())
     }

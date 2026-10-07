@@ -78,6 +78,12 @@ sealed trait Challenge {
       * Every challenge is, unless a game's admin offers one that is not — see `Match.friendly`.
       */
     def friendly: Boolean
+
+    /** Whether the match this becomes is asked to end with somebody ahead (V51): no draw. Sent to the engine, which
+      * decides what that means for its game — playing on past a move limit, or into extra rounds — and may do nothing
+      * about it. Copied to the match like the rest of its terms.
+      */
+    def noTie: Boolean
 }
 
 case class PlainChallenge(
@@ -95,7 +101,8 @@ case class PlainChallenge(
     autoStart: Boolean = false,
     isOpen: Boolean = true,
     live: Boolean = false,
-    friendly: Boolean = true
+    friendly: Boolean = true,
+    noTie: Boolean = false
 ) extends Challenge
 
 case class CharacterChallenge(
@@ -117,7 +124,8 @@ case class CharacterChallenge(
     autoStart: Boolean = false,
     isOpen: Boolean = true,
     live: Boolean = false,
-    friendly: Boolean = true
+    friendly: Boolean = true,
+    noTie: Boolean = false
 ) extends Challenge
 
 /** An open challenge together with how many players have accepted it so far.

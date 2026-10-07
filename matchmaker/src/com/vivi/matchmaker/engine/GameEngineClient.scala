@@ -49,8 +49,22 @@ case class CreateGameRequest(
       * match id, which means nothing to anybody. Absent from an engine's view of a matchmaker that predates them.
       */
     gameDisplayName: Option[String] = None,
-    description: Option[String] = None
+    description: Option[String] = None,
+    /** Present, and true, for a match that is to end with somebody ahead (V51): a tournament's tie-break, or a
+      * challenge offered with No tie. What an engine does about it is its game's business. Absent otherwise.
+      */
+    noTie: Option[Boolean] = None,
+    /** Roles still to be chosen, by the players, in the engine (V52): the seats it names are sent with no `role`. See
+      * [[RoleChoice]]. Absent for a match whose roles are all settled.
+      */
+    roleChoice: Option[RoleChoice] = None
 )
+
+/** Roles for the players to choose in the engine, before the game begins: `order` is the seats still to choose, in the
+  * order they choose, and `roles` every role of the game by name, with what players call each. The engine reports each
+  * seat's role as it is chosen.
+  */
+case class RoleChoice(order: List[Long], roles: List[String], displayNames: Map[String, String] = Map.empty)
 
 /** What makes a match live, as the engine is told it: the engine runs the turns and their clock, sends no move
   * callbacks, and ends a match whose clock has run out by forfeit — reporting that, as any other ending, through the
@@ -58,8 +72,12 @@ case class CreateGameRequest(
   *
   * `timeLimitSeconds` is the match's time limit, and `kind` the `TimeLimitKind` code saying what it limits: each turn
   * (`PER_TURN`), or each player's whole match like a chess clock (`TOTAL`).
+  *
+  * `startOnOpen = false` starts a player's clock when their turn does, rather than when they first open the board: what
+  * a tournament sends, so that a player who never turns up runs out of time. Absent means the engine's default, which
+  * waits for them.
   */
-case class LiveTerms(timeLimitSeconds: Long, kind: String)
+case class LiveTerms(timeLimitSeconds: Long, kind: String, startOnOpen: Option[Boolean] = None)
 
 /** The response of step 1: where matchmaker checks status, where a player plays, and — only for a public game — where
   * anyone can watch.
@@ -84,7 +102,9 @@ case class EngineParticipantStatus(
     participantId: Long,
     pending: Boolean,
     completed: Boolean,
-    prevMoveAt: Option[Instant]
+    prevMoveAt: Option[Instant],
+    /** The seat's role, by name, in a match whose roles are chosen in the engine (V52), once it has one. */
+    role: Option[String] = None
 )
 
 /** One turn the engine reports as having been taken, in answer to a status call.
@@ -117,6 +137,7 @@ object EngineJson {
     given ReadWriter[Instant] = upickle.default.readwriter[String].bimap(_.toString, Instant.parse)
     given ReadWriter[EnginePlayer] = macroRW
     given ReadWriter[LiveTerms] = macroRW
+    given ReadWriter[RoleChoice] = macroRW
     given ReadWriter[CreateGameRequest] = macroRW
     given ReadWriter[CreateGameResponse] = macroRW
     given ReadWriter[EngineParticipantStatus] = macroRW

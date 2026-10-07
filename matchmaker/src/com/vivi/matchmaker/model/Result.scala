@@ -41,8 +41,9 @@ case class ParticipantResult(
     matchId: MatchId,
     participantId: ParticipantId,
     nickname: String,
-    // The role's display name: this is for the results table, not the engine.
-    roleName: String,
+    // The role's display name: this is for the results table, not the engine. None for a seat whose role was still
+    // being chosen when the match ended (V52).
+    roleName: Option[String],
     rank: Option[Int],
     scores: Map[String, Any],
     isWinner: Boolean,

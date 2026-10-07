@@ -170,7 +170,7 @@ class MatchServiceSpec extends PropertySuite {
                 seatCompleted.getOrElse(completedAt.isDefined),
                 Some(Instant.ofEpochSecond(2000)),
                 character.characterId,
-                game.roles.head.gameRoleId
+                Some(game.roles.head.gameRoleId)
               ),
               EloRating.initial
             )
@@ -367,7 +367,7 @@ class MatchServiceSpec extends PropertySuite {
                     true,
                     None,
                     theirs.characterId,
-                    game.roles.head.gameRoleId
+                    Some(game.roles.head.gameRoleId)
                   ),
                   EloRating.initial
                 )
@@ -427,7 +427,7 @@ class MatchServiceSpec extends PropertySuite {
                         matchId == done,
                         None,
                         theirs.characterId,
-                        game.roles.head.gameRoleId
+                        Some(game.roles.head.gameRoleId)
                       ),
                       EloRating.initial
                     )
@@ -1112,7 +1112,7 @@ class MatchServiceSpec extends PropertySuite {
                 results <- matchService.results(externalId)
                 mine = results.filter(_.matchId == matchId)
             } yield mine.map(r => (r.nickname, r.roleName, r.rank, r.isWinner)) ==
-                List((nickname, "only", Some(1), true)) &&
+                List((nickname, Some("only"), Some(1), true)) &&
                 mine.head.scores == Map("moves" -> 5.0)
             result.timeout(10.seconds).unsafeRunSync()
         }

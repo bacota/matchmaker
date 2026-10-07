@@ -74,6 +74,33 @@ class GameRepoSpec extends PropertySuite {
         )
     }
 
+    test("whether players choose roles, and which roles are preferred, are kept, read and listed in role order") {
+        val (read, listed, updated) = TestSession.resource
+            .use { session =>
+                val repo = new GameRepo[String](session)
+                val game = gameWithFanOut.copy(
+                  choosesRoles = true,
+                  roles = gameWithFanOut.roles.map(r => r.copy(preferred = r.name == "first"))
+                )
+                for {
+                    created <- repo.create(game)
+                    read <- repo.read(created.gameId)
+                    listed <- repo.list(activeOnly = false)
+                    _ <- repo.update(
+                      created
+                          .copy(choosesRoles = false, roles = created.roles.map(r => r.copy(preferred = !r.preferred)))
+                    )
+                    updated <- repo.read(created.gameId)
+                } yield (read.get, listed.find(_.gameId == created.gameId).get, updated.get)
+            }
+            .unsafeRunSync()
+        assert(read.choosesRoles && listed.choosesRoles)
+        assertEquals(read.roles.map(r => r.name -> r.preferred), Seq("first" -> true, "second" -> false))
+        assertEquals(listed.roles.map(r => r.name -> r.preferred), Seq("first" -> true, "second" -> false))
+        assert(!updated.choosesRoles)
+        assertEquals(updated.roles.map(r => r.name -> r.preferred), Seq("first" -> false, "second" -> true))
+    }
+
     test("list returns games sorted by display name, with game id breaking ties") {
         // Names are suffixed with a shared unique token so this run's games can be picked out of a
         // database these tests never clean up, while still sorting among themselves.

@@ -79,6 +79,11 @@ trait Game[M <: MatchLike, S <: SeatLike, T <: TurnLike] {
     /** What a player's place in the match is called, in what they are told when they have none: a seat, a corner. */
     def seatName: String = "seat"
 
+    /** Whether a player may give the match up. Read by the choosing of roles before the game ([[RoleChoosing]]), which
+      * lets a player concede there only in a game that would let them concede in play.
+      */
+    def concedes: Boolean = false
+
     def seats(m: M): List[S]
 
     def isOver(m: M): Boolean
@@ -110,6 +115,15 @@ trait Game[M <: MatchLike, S <: SeatLike, T <: TurnLike] {
       * [[TurnClock.outcomeOf]].
       */
     def outcome(m: M, seat: S): Outcome
+
+    /** Where a seat finished: 1 for first, with tied seats sharing a place. Only meaningful once the match is over.
+      *
+      * What matchmaker records as the seat's rank, and what a tournament's points are worked out from. The default
+      * reads it off [[outcome]] — 1 for a win or a draw, 2 for a loss — which is all a game of two sides can say. A
+      * game with more than two seats overrides it to give each its place, 1, 2, 3 and so on; [[outcome]] still says who
+      * won for the page and the `outcome` score.
+      */
+    def placing(m: M, seat: S): Int = if (outcome(m, seat) == Outcome.Loss) 2 else 1
 
     /** What the game records about a seat beside its outcome. Matchmaker stores the map without reading it. */
     def scores(m: M, seat: S): Map[String, ujson.Value]

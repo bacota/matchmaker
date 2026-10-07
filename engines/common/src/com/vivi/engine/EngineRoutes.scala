@@ -5,6 +5,7 @@ import java.security.MessageDigest
 import scala.util.control.NonFatal
 import upickle.default.{read, write, Reader, Writer}
 import Protocol.given
+import ChoosingView.given
 
 /** An engine's HTTP surface, as a function from request to response.
   *
@@ -142,7 +143,106 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             settled.state
         }
 
+    /* A match still choosing its roles has no game yet, and is answered from its choosing instead: the shared choosing
+     * page, its state, the status matchmaker asks for, and the choices themselves. Every other route of a match finds
+     * nothing until the game begins. */
     private def route(request: EngineRequest): EngineResponse =
+        (request.method.toUpperCase, request.segments) match {
+            case (method, "matches" :: matchId :: rest) if choosingRoutes.isDefinedAt((method, rest)) =>
+                engine.choosing(matchId) match {
+                    case Some(c) => choosingRoutes((method, rest))(request, c)
+                    case None    => gameRoute(request)
+                }
+            case _ => gameRoute(request)
+        }
+
+    private def choosingTitle(c: RoleChoosing): String = {
+        val name = c.request.gameDisplayName.map(_.trim).filter(_.nonEmpty).getOrElse(gameTitle)
+        c.request.description.map(_.trim).filter(_.nonEmpty).fold(name)(message => s"$name — $message")
+    }
+
+    private val choosingRoutes
+        : PartialFunction[(String, List[String]), (EngineRequest, RoleChoosing) => EngineResponse] = {
+        case ("GET", "status" :: Nil) =>
+            (request, c) =>
+                if (!fromMatchmaker(request)) unauthenticated
+                else
+                    parseSince(request) match {
+                        case Left(why)    => error(400, why)
+                        case Right(since) => EngineResponse(200, write(engine.choosingStatus(c, since)))
+                    }
+
+        case ("GET", "play" :: Nil) =>
+            (request, c) =>
+                val seat = playAuth.callerOf(request).toOption.flatMap(engine.choosingSeatOf(c, _).toOption)
+                val seen = seat.map(id => openedChoosing(c, id)).getOrElse(c)
+                html(
+                  RoleChoicePage.page(
+                    c.matchId,
+                    choosingTitle(c),
+                    seat.map(id => engine.choosingView(seen, Some(id))),
+                    playAuth.login,
+                    signIn,
+                    live.map(_.url),
+                    publicView = false
+                  )
+                )
+
+        case ("GET", "state" :: Nil) =>
+            (request, c) =>
+                playAuth.callerOf(request).flatMap(engine.choosingSeatOf(c, _)) match {
+                    case Left(refusal) => error(refusal)
+                    case Right(id) => revalidated(request, write(engine.choosingView(openedChoosing(c, id), Some(id))))
+                }
+
+        case ("GET", "board" :: Nil) =>
+            (_, c) =>
+                if (!c.request.isPublic) error(403, s"match '${c.matchId}' is not public")
+                else
+                    html(
+                      RoleChoicePage.page(
+                        c.matchId,
+                        choosingTitle(c),
+                        Some(engine.choosingView(c, None)),
+                        None,
+                        signIn,
+                        live.map(_.url),
+                        publicView = true
+                      )
+                    )
+
+        case ("GET", "board" :: "state" :: Nil) =>
+            (request, c) =>
+                if (!c.request.isPublic) error(403, s"match '${c.matchId}' is not public")
+                else revalidated(request, write(engine.choosingView(c, None)))
+
+        case ("POST", "moves" :: Nil) =>
+            (_, c) =>
+                if (c.ended) error(409, "this match is already over")
+                else error(409, "the players are still choosing their roles")
+
+        case ("POST", "role" :: Nil) =>
+            (request, c) =>
+                asPlayer(request) { caller =>
+                    for {
+                        body <- parse[ChooseRequest](request.body).left.map(Refusal.Invalid.apply)
+                        id <- engine.choosingSeatOf(c, caller)
+                        next <- engine.choose(c.matchId, caller, body)
+                    } yield EngineResponse(200, write(engine.choosingView(next, Some(id))))
+                }
+    }
+
+    /** The choosing match once `participantId` has been seen to open its board, with every watcher told if this is the
+      * first time — as [[openedBy]], before the game.
+      */
+    private def openedChoosing(c: RoleChoosing, participantId: Long): RoleChoosing =
+        if (!engine.openedChoosing(c.matchId, participantId)) c
+        else {
+            live.foreach(_.changed(c.matchId))
+            engine.choosing(c.matchId).getOrElse(c)
+        }
+
+    private def gameRoute(request: EngineRequest): EngineResponse =
         (request.method.toUpperCase, request.segments) match {
 
             // Step 1. Matchmaker creating a game; the only route that makes a match exist.
@@ -227,6 +327,13 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
 
             case ("POST", "matches" :: matchId :: "moves" :: Nil) => move(request, matchId)
 
+            // A choice of role, once the roles are settled — or for a match that never chose any.
+            case ("POST", "matches" :: matchId :: "role" :: Nil) =>
+                currentMatch(matchId) match {
+                    case Left(refusal) => error(refusal)
+                    case Right(_)      => error(409, "the roles have been chosen")
+                }
+
             /* Where the hosted login sends the player back to.
              *
              * One fixed path rather than the match's own url, because Cognito matches callback urls
@@ -300,11 +407,24 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                             .get("match")
                             .filter(_.nonEmpty)
                             .toRight(Refusal.Invalid("say which match to watch with ?match="))
-                        m <- currentMatch(matchId)
-                        _ <-
-                            if (request.query.get("board").contains("1"))
-                                Either.cond(m.isPublic, (), Refusal.NotYours(s"match '$matchId' is not public"))
-                            else l.auth.callerOf(withToken).flatMap(engine.seatOf(m, _))
+                        board = request.query.get("board").contains("1")
+                        _ <- engine.choosing(matchId) match {
+                            // Before the game, on the same terms as after it: a seat, or a public match's board.
+                            case Some(c) =>
+                                if (board)
+                                    Either.cond(
+                                      c.request.isPublic,
+                                      (),
+                                      Refusal.NotYours(s"match '$matchId' is not public")
+                                    )
+                                else l.auth.callerOf(withToken).flatMap(engine.choosingSeatOf(c, _)).map(_ => ())
+                            case None =>
+                                currentMatch(matchId).flatMap { m =>
+                                    if (board)
+                                        Either.cond(m.isPublic, (), Refusal.NotYours(s"match '$matchId' is not public"))
+                                    else l.auth.callerOf(withToken).flatMap(engine.seatOf(m, _)).map(_ => ())
+                                }
+                        }
                     } yield l.subscribe(Subscription(connectionId, matchId))
 
                 admitted match {

@@ -67,6 +67,13 @@ class StoredMatchSpec extends FunSuite {
         assertEquals(write(stratego), stored)
     }
 
+    test("a no-tie match stores the flag and reads back; a match stored without one reads as capped") {
+        val untied = stratego.copy(noTie = true)
+        assert(write(untied).endsWith(""","noTie":true}"""))
+        assertEquals(read[StrategoMatch](write(untied)), untied)
+        assert(!read[StrategoMatch](stored).noTie)
+    }
+
     test("a concession is stored on its turn, and reads back; a turn that is not one stores nothing new") {
         val conceded =
             stratego.copy(turns = stratego.turns :+ MoveRecord(22L, Side.Blue, at(9), at(9), concession = true))

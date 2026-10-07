@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
+import cats.syntax.all._
 import skunk._
 import skunk.implicits._
 import skunk.codec.all._
@@ -14,6 +15,8 @@ class MatchRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val matchId = SkunkIdCodecs.matchId
     private val challengeId = SkunkIdCodecs.challengeId
+    private val tournamentId = SkunkIdCodecs.tournamentId
+    private val fixtureId = SkunkIdCodecs.fixtureId
     // Declared here rather than beside the queries that use it further down, as `playerId` is: a val
     // is initialised in order, and the game's match list above comes first.
     private val playerIdOf = SkunkIdCodecs.playerId
@@ -45,15 +48,20 @@ class MatchRepo(session: Session[IO]) {
           TimeLimitKind,
           TimeLimitUnit,
           Boolean,
-          Boolean
+          Boolean,
+          Boolean,
+          Option[TournamentId],
+          Option[FixtureId],
+          Option[Int]
       )
     ] =
         sql"""INSERT INTO match (game_id, match_id, challenge_id, creator, description, completed, cancelled, start,
                              time_limit, settings, public, status_url, play_url, public_url, time_limit_kind,
-                             time_limit_unit, live, friendly)
-          VALUES ($gameId, $matchId, ${challengeId.opt}, $playerIdOf, $text, ${instant.opt}, $bool, $instant, ${float8.opt} * INTERVAL '1 second',
-                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt}, $timeLimitKind, $timeLimitUnit, $bool,
-                  $bool)""".command
+                             time_limit_unit, live, friendly, no_tie, tournament_id, fixture_id, match_no)
+          VALUES ($gameId, $matchId, ${challengeId.opt}, $playerIdOf, $text, ${instant.opt}, $bool, $instant,
+                  ${float8.opt} * INTERVAL '1 second', $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt},
+                  $timeLimitKind, $timeLimitUnit, $bool, $bool, $bool, ${tournamentId.opt}, ${fixtureId.opt},
+                  ${int4.opt})""".command
 
     private type MatchRow =
         (
@@ -74,19 +82,25 @@ class MatchRepo(session: Session[IO]) {
             Boolean,
             Boolean,
             Option[Instant],
-            Boolean
+            Boolean,
+            Boolean,
+            Option[Long],
+            Option[Long],
+            Option[Int]
         )
 
-    // The last two are the archive's (V38), read here and never written: `ArchiveRepo` owns them.
+    // archived_at and the expiry are the archive's (V38), read here and never written: `ArchiveRepo` owns them.
+    // no_tie, last, is fixed when the match is created, like its time limit.
     private val matchRow: Codec[MatchRow] =
-        challengeId.opt *: playerIdOf *: text *: instant.opt *: bool *: instant *: float8.opt *: settings *: bool *: text.opt *: text.opt *:
-            text.opt *: timeLimitKind *: timeLimitUnit *: bool *: bool *: instant.opt *: bool
+        challengeId.opt *: playerIdOf *: text *: instant.opt *: bool *: instant *: float8.opt *: settings *: bool *:
+            text.opt *: text.opt *: text.opt *: timeLimitKind *: timeLimitUnit *: bool *: bool *: instant.opt *: bool *:
+            bool *: int8.opt *: int8.opt *: int4.opt
 
     private val selectMatch: Query[(GameId, MatchId), MatchRow] =
         sql"""SELECT challenge_id, creator, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
-                 archived_at, #${ArchiveRepo.expired("match")}
+                 archived_at, #${ArchiveRepo.expired("match")}, no_tie, tournament_id, fixture_id, match_no
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId"""
             .query(matchRow)
@@ -98,7 +112,7 @@ class MatchRepo(session: Session[IO]) {
         sql"""SELECT challenge_id, creator, description, completed, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
-                 archived_at, #${ArchiveRepo.expired("match")}
+                 archived_at, #${ArchiveRepo.expired("match")}, no_tie, tournament_id, fixture_id, match_no
           FROM match
           WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
             .query(matchRow)
@@ -151,7 +165,11 @@ class MatchRepo(session: Session[IO]) {
                 m.timeLimitKind,
                 m.timeLimitUnit,
                 m.live,
-                m.friendly
+                m.friendly,
+                m.noTie,
+                m.fixture.map(_.tournamentId),
+                m.fixture.map(_.fixtureId),
+                m.fixture.map(_.matchNo)
               )
             )
             .as(m)
@@ -175,7 +193,11 @@ class MatchRepo(session: Session[IO]) {
           live,
           friendly,
           archivedAt,
-          archiveExpired
+          archiveExpired,
+          noTie,
+          tournament,
+          fixture,
+          matchNo
         ) = row
         Match(
           gameId,
@@ -197,7 +219,9 @@ class MatchRepo(session: Session[IO]) {
           live,
           friendly,
           archivedAt,
-          archiveExpired
+          archiveExpired,
+          noTie,
+          (tournament, fixture, matchNo).mapN((t, f, n) => MatchFixture(TournamentId(t), FixtureId(f), n))
         )
     }
 

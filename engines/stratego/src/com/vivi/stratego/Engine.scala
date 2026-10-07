@@ -1,7 +1,16 @@
 package com.vivi.stratego
 
 import java.time.Instant
-import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
+import com.vivi.engine.{
+    GameEngine,
+    MatchStore,
+    Matchmaker,
+    MoveApplied,
+    Refusal,
+    TurnClock,
+    InMemoryMatchStore,
+    RoleChoosing
+}
 import Protocol._
 
 /** Stratego: the four exchanges of `interaction-design.txt`, which [[GameEngine]] makes for any game, and the things
@@ -16,11 +25,13 @@ class Engine(
     matchmaker: Matchmaker,
     baseUrl: String,
     now: () => Instant = () => Instant.now(),
-    announce: StrategoMatch => Unit = _ => ()
+    announce: StrategoMatch => Unit = _ => (),
+    // Where matches choosing their roles are kept: see `GameEngine`.
+    roles: MatchStore[RoleChoosing] = InMemoryMatchStore[RoleChoosing]()
 ) {
 
     /** The calls every engine makes, which this one exports, and which the shared routes are served from. */
-    val core = GameEngine(StrategoMatch, store, matchmaker, baseUrl, now, announce)
+    val core = GameEngine(StrategoMatch, store, matchmaker, baseUrl, now, announce, roles)
 
     export core.{createGame, playUrl, read, resultsOf, seatOf, status}
 
@@ -186,7 +197,8 @@ class Engine(
               )
           ),
           clock = core.clockView(m),
-          replay = replayOf(m, viewer)
+          replay = replayOf(m, viewer),
+          noTie = m.noTie
         )
     }
 

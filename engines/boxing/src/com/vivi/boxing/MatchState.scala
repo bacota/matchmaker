@@ -69,7 +69,12 @@ case class Bout(
     // What the match's pages are titled by (`MatchTitle`). Defaulted, so a match stored before they
     // were kept reads back as it was, and is titled by the game alone.
     override val gameDisplayName: Option[String] = None,
-    override val description: Option[String] = None
+    override val description: Option[String] = None,
+    /** A bout matchmaker asked to end with somebody ahead: one level on points after its scheduled rounds goes on, a
+      * round at a time, until a corner is ahead, scores a knockout, or — live — runs out of time. Defaulted, so a bout
+      * stored before it was kept reads back as the bout it was.
+      */
+    noTie: Boolean = false
 ) extends MatchLike {
 
     def cornerOf(side: Side): Option[Corner] = corners.find(_.side == side)
@@ -86,7 +91,7 @@ case class Bout(
             blue <- cornerOf(Side.Blue).toList
             redFighter <- red.fighter.toList
             blueFighter <- blue.fighter.toList
-            number <- 1 to scheduledRounds
+            number <- 1 to lastRound
             redPlan <- planOf(red, number).toList
             bluePlan <- planOf(blue, number).toList
         } yield {
@@ -95,12 +100,22 @@ case class Bout(
             Round(number, redPlan, bluePlan, redEffective, blueEffective, Rules.resolve(redEffective, blueEffective))
         }).sortBy(_.number)
 
+    /** The last round there can be a plan for: the scheduled ones, and in a `noTie` bout any extra round already begun.
+      */
+    private def lastRound: Int =
+        if (noTie) plans.map(_.round).maxOption.fold(scheduledRounds)(math.max(_, scheduledRounds))
+        else scheduledRounds
+
     def knockout: Option[Round] = rounds.find(_.outcome.decision == Decision.Knockout)
 
-    /** Over on a knockout, or once every scheduled round has been fought — or, in a live bout, once a corner has let a
-      * round's clock run out.
+    /** Whether the cards are level, which a `noTie` bout fights on from. */
+    def level: Boolean = points(Side.Red) == points(Side.Blue)
+
+    /** Over on a knockout, or once every scheduled round has been fought — unless the bout is `noTie` and the cards are
+      * level, when it goes on to another round — or, in a live bout, once a corner has let a round's clock run out.
       */
-    def isOver: Boolean = ranOut || knockout.isDefined || rounds.size >= scheduledRounds
+    def isOver: Boolean =
+        ranOut || knockout.isDefined || (rounds.size >= scheduledRounds && !(noTie && level))
 
     /** Whether a live bout's clock ended this one. */
     def ranOut: Boolean = clock.exists(_.ranOut)
@@ -260,9 +275,24 @@ object Bout extends Game[Bout, Corner, Plan] {
 
     def withClock(m: Bout, clock: TurnClock): Bout = m.copy(clock = Some(clock))
 
-    /** What a record of a fight would carry: how it ended and when, and each corner's points and knockdowns. */
+    /** A corner's `score`: 2 for a win by knockout, 1 for a win on points, and 0 for anything else — a loss, a draw, or
+      * a win by forfeit, which nobody boxed for. The number a tournament breaks a tie on.
+      */
+    def score(m: Bout, corner: Corner): Int =
+        if (m.outcomeFor(corner) != Outcome.Win) 0
+        else
+            m.method match {
+                case Some("knockout") => 2
+                case Some("points")   => 1
+                case _                => 0
+            }
+
+    /** What a record of a fight would carry: how it ended and when, each corner's points and knockdowns, and its
+      * [[score]]. `points` is the card total, as it always was; `score` is new beside it.
+      */
     def scores(m: Bout, corner: Corner): Map[String, ujson.Value] =
         Map(
+          "score" -> ujson.Num(score(m, corner)),
           "method" -> m.method.map(ujson.Str(_)).getOrElse(ujson.Null),
           "rounds" -> ujson.Num(m.rounds.size),
           "points" -> ujson.Num(m.points(corner.side)),
@@ -309,7 +339,8 @@ object Bout extends Game[Bout, Corner, Plan] {
           moveCallbackUrl = request.moveCallbackUrl,
           resultsCallbackUrl = request.resultsCallbackUrl,
           gameDisplayName = request.gameDisplayName,
-          description = request.description
+          description = request.description,
+          noTie = request.tieForbidden
         )
 
     // Stored as JSON, as rock-paper-scissors stores its matches: the whole bout is one attribute.
