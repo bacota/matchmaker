@@ -1,0 +1,122 @@
+package com.vivi.matchmaker.tournament
+
+import munit.ScalaCheckSuite
+import org.scalacheck.Gen
+import org.scalacheck.Prop._
+
+/** The pools of every round of an elimination tournament, planned at its start. */
+class BracketSpec extends ScalaCheckSuite {
+
+    private case class Shape(entrants: Int, poolSize: Int, advance: Int)
+
+    private val pairs: Gen[Shape] = Gen.choose(1, 70).map(Shape(_, 2, 1))
+
+    private val shapes: Gen[Shape] =
+        for {
+            poolSize <- Gen.choose(2, 6)
+            advance <- Gen.choose(1, poolSize - 1)
+            entrants <- Gen.choose(1, 60)
+        } yield Shape(entrants, poolSize, advance)
+
+    private def plan(s: Shape): Bracket = Bracket.singleElimination(s.entrants, s.poolSize, s.advance)
+
+    private def seeds(pool: PlannedPool): List[Int] = pool.slots.collect { case PlannedSource.Seed(n) => n }
+
+    private def byes(pool: PlannedPool): Int = pool.slots.count(_ == PlannedSource.Bye)
+
+    property("with pools of two, the first round has a power of two of pools, and the byes go to the top seeds") {
+        forAll(pairs) { s =>
+            val first = plan(s).rounds.head
+            val withBye = first.filter(byes(_) == 1).flatMap(seeds).sorted
+            Integer.bitCount(first.size) == 1 &&
+            withBye == (1 to withBye.size).toList &&
+            first.forall(byes(_) < 2)
+        }
+    }
+
+    property("every seed is drawn into the first round exactly once, and no pool is all byes") {
+        forAll(shapes) { s =>
+            val first = plan(s).rounds.head
+            first.flatMap(seeds).sorted == (1 to s.entrants).toList &&
+            first.forall(p => seeds(p).nonEmpty && p.slots.size == s.poolSize)
+        }
+    }
+
+    // A snake draft is the yardstick the plan names: the first round is drawn no worse than one.
+    property("the first round's seed sums spread no wider than a snake draft's") {
+        forAll(shapes) { s =>
+            val first = plan(s).rounds.head
+            val sums = first.map(seeds(_).sum)
+            val pools = first.size
+            val snakeSums = Bracket.snake((1 to s.entrants).toList, pools).map(_.sum)
+            sums.max - sums.min <= snakeSums.max - snakeSums.min
+        }
+    }
+
+    test("pools of two are drawn 1 against the last, 2 against the one before, and meet as a bracket") {
+        val bracket = Bracket.singleElimination(8, 2, 1, consolation = false)
+        assertEquals(bracket.rounds.head.map(seeds), List(List(1, 8), List(2, 7), List(3, 6), List(4, 5)))
+        assertEquals(
+          bracket.rounds(1).map(_.slots),
+          List(
+            List(PlannedSource.Winner(1, 1, 1), PlannedSource.Winner(1, 4, 1)),
+            List(PlannedSource.Winner(1, 2, 1), PlannedSource.Winner(1, 3, 1))
+          )
+        )
+        assertEquals(bracket.rounds.size, 3)
+    }
+
+    property("every bracket reaches a final of one pool, each round smaller than the one before") {
+        forAll(shapes) { s =>
+            val rounds = plan(s).rounds
+            // The players each round is planned for: its slots that are not byes, the consolation pool aside.
+            val players = rounds.zipWithIndex.map { (round, i) =>
+                val main = if (i == rounds.size - 1) round.filter(_.position == 1) else round
+                main.flatMap(_.slots).count(_ != PlannedSource.Bye)
+            }
+            rounds.last.count(_.position == 1) == 1 &&
+            rounds.last.sizeIs <= 2 &&
+            rounds.init.forall(_.sizeIs >= 2) &&
+            players.zip(players.drop(1)).forall((before, after) => after < before)
+        }
+    }
+
+    property("a later round's slots name pools of the round before, each finisher once, never deeper than the pool") {
+        forAll(shapes) { s =>
+            val rounds = plan(s).rounds
+            rounds.zipWithIndex.drop(1).forall { (round, i) =>
+                val before = rounds(i - 1).map(p => p.position -> p.slots.count(_ != PlannedSource.Bye)).toMap
+                val named = round.flatMap(_.slots).collect { case w: PlannedSource.Winner => w }
+                named.forall(w => w.round == i && before.get(w.position).exists(w.rank <= _)) &&
+                named.distinct.size == named.size
+            }
+        }
+    }
+
+    property("a single-elimination final has a consolation pool beside it when there were two semi-final pools") {
+        forAll(Gen.choose(4, 64)) { n =>
+            val rounds = Bracket.singleElimination(n, 2, 1).rounds
+            rounds.last.map(_.position) == List(1, 2) &&
+            rounds.last(1).slots.forall {
+                case PlannedSource.Winner(round, _, rank) => round == rounds.size - 1 && rank == 2
+                case _                                    => false
+            }
+        }
+    }
+
+    test("three entrants have only one loser in the semi-finals, and so no consolation pool") {
+        assertEquals(Bracket.singleElimination(3, 2, 1).rounds.last.map(_.position), List(1))
+    }
+
+    test("two entrants play one final, and one plays nobody") {
+        assertEquals(Bracket.singleElimination(2, 2, 1).rounds.map(_.size), List(1))
+        assertEquals(
+          Bracket.singleElimination(1, 2, 1).rounds.head.head.slots,
+          List(PlannedSource.Seed(1), PlannedSource.Bye)
+        )
+    }
+
+    test("a round robin is one pool of everybody") {
+        assertEquals(Bracket.roundRobin(5).pools.map(seeds), List(List(1, 2, 3, 4, 5)))
+    }
+}
