@@ -102,7 +102,8 @@ object Tournaments {
                 "Playoff: pools of three or more each play round robin, then the best of them, seeded again by how " +
                 "they did, play off in pairs. Double elimination: a pool's winner goes on, its second place drops to a " +
                 "losers' bracket, and nobody is out until they have lost twice; the losers' champion meets the " +
-                "winners' in the grand final. Ladder: everybody starts at rank 0 and plays somebody near their rank " +
+                "winners' in the grand final. Repechage: single elimination in pairs, and then everybody beaten by " +
+                "either finalist plays on in a chain, the two chains' winners meeting for third. Ladder: everybody starts at rank 0 and plays somebody near their rank " +
                 "each round, going up one for a win and down one for a loss; players may join at any time, and it " +
                 "never ends."
           )(
@@ -116,6 +117,8 @@ object Tournaments {
                         val chosen = TournamentType.fromCode(code)
                         // A playoff's pools hold more than two.
                         if (chosen == TournamentType.Playoff && number(poolSize.now()).forall(_ < 3)) poolSize.set("4")
+                        // A repechage is played in pairs.
+                        if (chosen == TournamentType.Repechage) poolSize.set("2")
                         kind.set(chosen)
                     }
                 },
@@ -123,6 +126,7 @@ object Tournaments {
                 option(value := TournamentType.RoundRobin.code, TournamentType.RoundRobin.label),
                 option(value := TournamentType.Playoff.code, TournamentType.Playoff.label),
                 option(value := TournamentType.DoubleElim.code, TournamentType.DoubleElim.label),
+                option(value := TournamentType.Repechage.code, TournamentType.Repechage.label),
                 option(value := ladderCode, TournamentClass.Ladder.label)
               )
             )

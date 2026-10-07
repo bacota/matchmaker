@@ -41,7 +41,13 @@ class TournamentService[T](
       * them.
       */
     private val startable: Set[TournamentType] =
-        Set(TournamentType.SingleElim, TournamentType.RoundRobin, TournamentType.Playoff, TournamentType.DoubleElim)
+        Set(
+          TournamentType.SingleElim,
+          TournamentType.RoundRobin,
+          TournamentType.Playoff,
+          TournamentType.DoubleElim,
+          TournamentType.Repechage
+        )
 
     // ---- reading ----------------------------------------------------------------------------------
 

@@ -30,6 +30,7 @@ import com.vivi.matchmaker.tournament.{
     FinalRanks,
     LadderPairing,
     LadderRanks,
+    Repechage,
     PlannedMatch,
     PlayedMatch,
     PoolSchedule,
@@ -340,7 +341,7 @@ class TournamentPlayService[T](
                             case Some(r) if r.started && !r.completed =>
                                 poolsOf(session, t, settings, game, r).flatMap { pools =>
                                     val owed = pools.flatMap(p => p.owed.map(m => due(t, p.fixture, m.matchNo)))
-                                    if (pools.forall(_.over)) complete(session, t, round, pools).as((true, Nil))
+                                    if (pools.forall(_.over)) complete(session, t, game, round, pools).as((true, Nil))
                                     else IO.pure((false, owed.filter(d => pools.exists(_.rematchNumbers(d)))))
                                 }
                             case _ => IO.pure((false, Nil))
@@ -541,7 +542,7 @@ class TournamentPlayService[T](
               advance,
               participants.map(p => p.seed -> p.tournamentParticipantId).toMap,
               participants.filter(_.withdrawn).map(_.tournamentParticipantId).toSet,
-              fillOpen = !doubleElimination(settings)
+              fillOpen = !secondsGoOn(settings)
             )
             _ <- slots.traverse_(s =>
                 resolved.get(s.slotId).traverse_(fixtures.fill(t.gameId, t.tournamentId, s.fixtureId, s.slotId, _))
@@ -673,19 +674,22 @@ class TournamentPlayService[T](
         settings.tournamentType == TournamentType.Playoff &&
             rounds.exists(r => r.cycle == round.cycle && r.round < round.round)
 
-    private def doubleElimination(settings: EliminationSettings): Boolean =
-        settings.tournamentType == TournamentType.DoubleElim
+    /** A double elimination and a repechage, where a pool's second place has somewhere to go besides out: the losers'
+      * bracket, or a chain of the finalists' victims. Their slots name exactly whom they mean, and the fill rule
+      * borrows nobody.
+      */
+    private def secondsGoOn(settings: EliminationSettings): Boolean =
+        settings.tournamentType == TournamentType.DoubleElim || settings.tournamentType == TournamentType.Repechage
 
     /** How many of each of a round's pools go through: the round's own say, or the tournament's — one, from a pair. In
-      * a double elimination, the first two of every pool go somewhere: the winner on, the second to the losers'
-      * bracket.
+      * a double elimination or a repechage, the first two of every pool may go somewhere.
       */
     private def advanceOf(settings: EliminationSettings, round: TournamentRound, rounds: List[TournamentRound]): Int =
-        if (doubleElimination(settings)) 2
+        if (secondsGoOn(settings)) 2
         else round.minPoolAdvance.getOrElse(if (pairs(settings, round, rounds)) 1 else settings.minPoolAdvance)
 
     /** Stamps a round complete, and hands each pool's seeds out again in its finishing order. */
-    private def complete(session: Session[IO], t: Tournament, round: Int, pools: List[Pool]): IO[Unit] = {
+    private def complete(session: Session[IO], t: Tournament, game: Game, round: Int, pools: List[Pool]): IO[Unit] = {
         val participants = new TournamentParticipantRepo(session)
         for {
             _ <- participants.listForUpdate(t.gameId, t.tournamentId)
@@ -700,8 +704,84 @@ class TournamentPlayService[T](
             // A ladder's latest round is always its last so far, and it has no last. A cyclic tournament's is the last
             // of its current cycle: the next is laid out only as this one finishes.
             _ <- IO.whenA(!ladder(t) && rounds.map(_.round).maxOption.contains(round))(
-              finish(session, t, pools, rounds, rounds.find(_.round == round).fold(1)(_.cycle))
+              finish(session, t, game, pools, rounds, rounds.find(_.round == round).fold(1)(_.cycle))
             )
+            // The semi-finals are over, so the final pair is known, and with it whom each beat on the way.
+            _ <- IO.whenA(
+              t.elimination.exists(_.tournamentType == TournamentType.Repechage) &&
+                  rounds.map(_.round).maxOption.contains(round + 1)
+            )(layOutRepechage(session, t, rounds.find(_.round == round + 1).get, pools))
+        } yield ()
+    }
+
+    /** Lays out a repechage beside a final whose players `semis` — the semi-final round's pools — have just decided
+      * (see [[Repechage]]): each finalist's victims are the second places of the pools they played in, the semi-final
+      * last, and each slot names its pool's second place or an earlier repechage pool's winner. Rounds after the
+      * final's are written as the chains need them, in the final's cycle.
+      *
+      * Nothing, if the cycle has its repechage already: the round before the last is the semi-finals only until the
+      * repechage adds rounds after the final, and then a round of the repechage can be the one before the last too.
+      */
+    private def layOutRepechage(
+        session: Session[IO],
+        t: Tournament,
+        finalRound: TournamentRound,
+        semis: List[Pool]
+    ): IO[Unit] = {
+        val repo = new FixtureRepo(session)
+        for {
+            fixtures <- repo.listFixtures(t.gameId, t.tournamentId)
+            slots <- repo.listSlots(t.gameId, t.tournamentId)
+            roundOf = fixtures.map(f => f.fixtureId -> f.round).toMap
+            rounds <- repo.listRounds(t.gameId, t.tournamentId)
+            inCycle = rounds.filter(_.cycle == finalRound.cycle).map(_.round).toSet
+            // Only a repechage's slots name a second place: a repechage's bracket has no consolation pool.
+            laidOut = slots.exists(s =>
+                inCycle.contains(roundOf(s.fixtureId)) && (s.source match {
+                    case SlotSource.Winner(_, rank) => rank == 2
+                    case _                          => false
+                })
+            )
+            finalPool = fixtures.find(f => !laidOut && f.round == finalRound.round && f.position == 1)
+            // The final's slots, in order, name the semi-final each finalist won.
+            finalists = finalPool.toList
+                .flatMap(f =>
+                    slots
+                        .filter(_.fixtureId == f.fixtureId)
+                        .flatMap(_.source match {
+                            case SlotSource.Winner(semi, _) => semis.find(_.fixture.fixtureId == semi).map(_.standings)
+                            case _                          => None
+                        })
+                )
+                .map(_.headOption.map(_.member))
+            chains = finalists.map {
+                case None => Nil
+                case Some(finalist) =>
+                    slots
+                        .filter(s => s.occupant.contains(finalist) && roundOf(s.fixtureId) < finalRound.round)
+                        .map(_.fixtureId)
+                        .filter(f => slots.count(s => s.fixtureId == f && s.occupant.isDefined) >= 2)
+                        .sortBy(roundOf)
+            }
+            planned = Repechage.plan(chains, finalRound.round)
+            later = planned.map(_.round).filter(_ > finalRound.round).distinct.sorted
+            _ <- later.traverse_(r => repo.createRound(TournamentRound(t.gameId, t.tournamentId, r, finalRound.cycle)))
+            _ <- planned.foldLeft(IO.pure(Vector.empty[FixtureId])) { (done, pool) =>
+                done.flatMap { ids =>
+                    for {
+                        f <- repo.createFixture(
+                          Fixture(t.gameId, t.tournamentId, FixtureId(0), pool.round, pool.position)
+                        )
+                        _ <- pool.sources.traverse_ { source =>
+                            val slot = source match {
+                                case Repechage.Source.Beaten(fixture) => SlotSource.Winner(fixture, 2)
+                                case Repechage.Source.WinnerOf(i)     => SlotSource.Winner(ids(i), 1)
+                            }
+                            repo.createSlot(FixtureSlot(t.gameId, t.tournamentId, f.fixtureId, SlotId(0), slot))
+                        }
+                    } yield ids :+ f.fixtureId
+                }
+            }
         } yield ()
     }
 
@@ -710,12 +790,14 @@ class TournamentPlayService[T](
       *
       * A round robin ranks by its one pool's standings. Single elimination ranks the final's players first, then the
       * consolation pool's, then everybody else by the round they reached, sharing a rank with the rest who went out in
-      * the same round — see [[com.vivi.matchmaker.tournament.FinalRanks]]. A cyclic tournament's final ranks are its
-      * latest cycle's, and are written again as each cycle ends.
+      * the same round — see [[com.vivi.matchmaker.tournament.FinalRanks]]. A repechage's final is earlier than its last
+      * round, which is the match for third, standing where a consolation pool would. A cyclic tournament's final ranks
+      * are its latest cycle's, and are written again as each cycle ends.
       */
     private def finish(
         session: Session[IO],
         t: Tournament,
+        game: Game,
         lastPools: List[Pool],
         rounds: List[TournamentRound],
         cycle: Int
@@ -731,13 +813,28 @@ class TournamentPlayService[T](
                 .filter(s => inCycle.contains(roundOf(s.fixtureId)))
                 .flatMap(s => s.occupant.map(_ -> roundOf(s.fixtureId)))
                 .groupMapReduce(_._1)(_._2)(math.max)
+            // A repechage's final is in the first round with a pool of second places in it: its first chain link, or
+            // its match for third. With neither, the final is in the last round, as anybody's.
+            repechageFinal = Option
+                .when(t.elimination.exists(_.tournamentType == TournamentType.Repechage))(
+                  slots
+                      .filter(s => inCycle.contains(roundOf(s.fixtureId)))
+                      .collect { case s @ FixtureSlot(_, _, _, _, SlotSource.Winner(_, 2), _) => roundOf(s.fixtureId) }
+                      .minOption
+                )
+                .flatten
+                .filter(r => !lastPools.exists(_.fixture.round == r))
+            finalPools <- repechageFinal.fold(IO.pure(lastPools))(r =>
+                rounds.find(_.round == r).toList.flatTraverse(poolsOf(session, t, t.elimination.get, game, _))
+            )
+            third = if (repechageFinal.isDefined) lastPools else lastPools.filter(_.fixture.position == 2)
             ranks =
                 if (t.elimination.exists(_.tournamentType == TournamentType.RoundRobin))
                     FinalRanks.roundRobin(lastPools.flatMap(_.standings))
                 else
                     FinalRanks.singleElimination(
-                      lastPools.find(_.fixture.position == 1).toList.flatMap(_.standings),
-                      lastPools.find(_.fixture.position == 2).toList.flatMap(_.standings),
+                      finalPools.find(_.fixture.position == 1).toList.flatMap(_.standings),
+                      third.flatMap(_.standings),
                       // Everybody seeded is somewhere: one who never filled a slot went out before the first round.
                       field.map(p => p.tournamentParticipantId -> reached.getOrElse(p.tournamentParticipantId, 0)).toMap
                     )

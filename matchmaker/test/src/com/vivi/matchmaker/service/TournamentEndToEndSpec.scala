@@ -270,6 +270,43 @@ class TournamentEndToEndSpec extends FunSuite with QuietTests {
         assertEquals(finalRanks(d)(f.bySeed(1).playerId), Some(1))
     }
 
+    test("a repechage: the finalists' victims play up a chain each, and the chains' winners play for third") {
+        val w = world()
+        val (f, d) = run(for {
+            g <- game()
+            f <- started(w, g, 8, TournamentType.Repechage)
+            // Seed 8 beats everybody but seed 2, who beats it in the final; the better seed wins everything else.
+            d <- playOut(w, g, f)(p =>
+                val eight = f.bySeed(7).playerId
+                if (p.seats.exists(_._2 == eight) && !p.seats.exists(_._2 == f.bySeed(1).playerId))
+                    p.seats.map((_, player) => player -> (if (player == eight) 1 else 2)).toMap
+                else bySeed(f)(p)
+            )
+        } yield (f, d))
+        assert(d.tournament.ended)
+        // The final in round 3, beside the chains' first links; the match for third in round 4.
+        assertEquals(d.rounds.size, 4)
+        assertEquals(d.pools.filter(_.fixture.round == 3).size, 3)
+        // Seed 8 beat seeds 1 and 4 on its way to the final, and seed 2 beat 7 and 3: seed 1 won its chain and then
+        // the match for third against seed 3. Seeds 4 and 7 lost their chains' links, in round 3; 5 and 6 went out in
+        // the first round, and had no second chance.
+        assertEquals(f.bySeed.map(p => finalRanks(d)(p.playerId)), List(3, 1, 4, 5, 7, 7, 5, 2).map(Some(_)))
+    }
+
+    test("a repechage with byes in it still ends, with everybody ranked and the seeds' winner first") {
+        List(3, 5, 6).foreach { n =>
+            val w = world()
+            val (f, d) = run(for {
+                g <- game()
+                f <- started(w, g, n, TournamentType.Repechage)
+                d <- playOut(w, g, f)(bySeed(f))
+            } yield (f, d))
+            assert(d.tournament.ended, n)
+            assert(finalRanks(d).values.forall(_.isDefined), (n, finalRanks(d)))
+            assertEquals(finalRanks(d)(f.bySeed.head.playerId), Some(1), n)
+        }
+    }
+
     test("five players: three byes in the first round, and everybody still finishes ranked") {
         val w = world()
         val d = run(for {
