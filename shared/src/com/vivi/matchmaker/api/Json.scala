@@ -167,6 +167,11 @@ object Json {
     given ReadWriter[FixtureSlot] = macroRW
     given ReadWriter[TournamentEntrant] = macroRW
     given ReadWriter[TournamentPool] = macroRW
+    given ReadWriter[TournamentSeatView] = macroRW
+    given ReadWriter[TournamentMatchView] = macroRW
+    given ReadWriter[StandingLine] = macroRW
+    given ReadWriter[PoolStandings] = macroRW
+    given ReadWriter[TournamentProgress] = macroRW
     given ReadWriter[TournamentDetail] = macroRW
     given ReadWriter[TournamentSummary] = macroRW
     given ReadWriter[RoundOverrides] = macroRW

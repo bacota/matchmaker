@@ -173,6 +173,41 @@ class TournamentPlayService[T](
             }
             .flatMap(queue)
 
+    /** How every started round stands, for the tournament page: the matches made, and each pool's standings. */
+    def progress(gameId: GameId, tournamentId: TournamentId): IO[TournamentProgress] =
+        sessionPool.use { session =>
+            new TournamentRepo(session).read(gameId, tournamentId).flatMap {
+                case Some(t) if t.elimination.isDefined =>
+                    for {
+                        game <- requireGame(session, gameId)
+                        rounds <- new FixtureRepo(session).listRounds(gameId, tournamentId)
+                        pools <- rounds
+                            .filter(_.started)
+                            .flatTraverse(r => poolsOf(session, t, t.elimination.get, game, r))
+                    } yield TournamentProgress(
+                      pools.flatMap(p =>
+                          p.made.toList.sortBy(_._1).map { (no, seats) =>
+                              TournamentMatchView(
+                                p.fixture.fixtureId,
+                                no,
+                                seats.head.matchId,
+                                seats.head.completed,
+                                seats.head.cancelled,
+                                seats.map(s => TournamentSeatView(s.participantId, s.occupant, s.rank, s.manual))
+                              )
+                          }
+                      ),
+                      pools.map(p =>
+                          PoolStandings(
+                            p.fixture.fixtureId,
+                            p.standings.map(s => StandingLine(s.member, s.points, s.differential))
+                          )
+                      )
+                    )
+                case _ => IO.pure(TournamentProgress())
+            }
+        }
+
     // ---- the listener's work ---------------------------------------------------------------------------
 
     /** Makes one match of a running round, unless it has been made already or is not to be (D4, D5).

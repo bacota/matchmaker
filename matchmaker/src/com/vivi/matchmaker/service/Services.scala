@@ -126,7 +126,7 @@ object Services {
           ending = ending,
           notifications = new NotificationService(pool),
           suppression = new SuppressionService(pool),
-          tournaments = new TournamentService[T](pool, notifications, play.fieldChanged(_, _)),
+          tournaments = new TournamentService[T](pool, notifications, play.fieldChanged(_, _), play.progress(_, _)),
           tournamentPlay = play
         )
     }

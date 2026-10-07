@@ -1499,3 +1499,32 @@ button.toggle {
 .character-record {
   margin: 0;
 }
+
+/* A tournament's rounds (Phase 6): one stacked list of pools per round on a narrow screen, and the
+   rounds side by side as a bracket only where there is room for them. */
+.bracket-round {
+  margin-bottom: 1rem;
+}
+
+.pool table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.4rem 0;
+}
+
+.pool th,
+.pool td {
+  text-align: left;
+  padding: 0.2rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+
+@media (min-width: 64rem) {
+  .bracket {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(16rem, 1fr);
+    gap: 1rem;
+    align-items: start;
+  }
+}

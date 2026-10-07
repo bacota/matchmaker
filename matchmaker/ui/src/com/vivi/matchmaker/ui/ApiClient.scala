@@ -374,6 +374,79 @@ object ApiClient {
           None
         )
 
+    // ---- tournaments ----------------------------------------------------------------------------
+
+    def gameTournaments(gameId: GameId): Future[Seq[Tournament]] =
+        get[Seq[Tournament]](s"/games/${gameId.value}/tournaments")
+
+    def myTournaments(): Future[Seq[TournamentSummary]] = get[Seq[TournamentSummary]]("/me/tournaments")
+
+    def tournament(gameId: GameId, id: TournamentId): Future[TournamentDetail] =
+        get[TournamentDetail](tournamentPath(gameId, id))
+
+    def createTournament(t: Tournament): Future[Tournament] =
+        send[Tournament](HttpMethod.POST, "/tournaments", Some(write(t)))
+
+    def updateTournament(t: Tournament): Future[Tournament] =
+        send[Tournament](HttpMethod.PUT, tournamentPath(t.gameId, t.tournamentId), Some(write(t)))
+
+    def setTournamentOwner(gameId: GameId, id: TournamentId, owner: PlayerId): Future[Unit] =
+        sendUnit(HttpMethod.PUT, tournamentPath(gameId, id) + "/owner", Some(write(Json.OwnerRequest(owner))))
+
+    def inviteToTournament(
+        gameId: GameId,
+        id: TournamentId,
+        player: Option[PlayerId],
+        character: Option[CharacterId]
+    ): Future[Unit] =
+        sendUnit(
+          HttpMethod.POST,
+          tournamentPath(gameId, id) + "/invitations",
+          Some(write(Json.TournamentInviteRequest(player, character)))
+        )
+
+    def declineTournament(gameId: GameId, id: TournamentId, player: PlayerId): Future[Unit] =
+        sendUnit(HttpMethod.DELETE, tournamentPath(gameId, id) + s"/invitations/${player.value}", None)
+
+    def enterTournament(gameId: GameId, id: TournamentId, character: Option[CharacterId]): Future[TournamentEntry] =
+        send[TournamentEntry](
+          HttpMethod.POST,
+          tournamentPath(gameId, id) + "/entries",
+          Some(write(Json.EnterRequest(character)))
+        )
+
+    def withdrawFromTournament(gameId: GameId, id: TournamentId, entry: EntryId): Future[Unit] =
+        sendUnit(HttpMethod.DELETE, tournamentPath(gameId, id) + s"/entries/${entry.value}", None)
+
+    def startTournament(gameId: GameId, id: TournamentId): Future[TournamentDetail] =
+        send[TournamentDetail](HttpMethod.POST, tournamentPath(gameId, id) + "/start", None)
+
+    def startRound(gameId: GameId, id: TournamentId, round: Int, overrides: RoundOverrides): Future[RoundWork] =
+        send[RoundWork](HttpMethod.POST, tournamentPath(gameId, id) + s"/rounds/$round/start", Some(write(overrides)))
+
+    def checkRound(gameId: GameId, id: TournamentId, round: Int): Future[RoundWork] =
+        send[RoundWork](HttpMethod.POST, tournamentPath(gameId, id) + s"/rounds/$round/check", None)
+
+    def resumeRound(gameId: GameId, id: TournamentId, round: Int): Future[RoundWork] =
+        send[RoundWork](HttpMethod.POST, tournamentPath(gameId, id) + s"/rounds/$round/resume", None)
+
+    /** Cancels a tournament's match, ranking its seats when `ranks` says how (D12). */
+    def cancelRanked(gameId: GameId, matchId: MatchId, ranks: Option[Map[ParticipantId, Int]]): Future[Match] =
+        send[Match](
+          HttpMethod.POST,
+          s"/games/${gameId.value}/matches/${matchId.value}/cancel",
+          Some(write(Json.CancelRequest(ranks.map(_.toList.map((p, r) => Json.SeatRank(p, r))))))
+        )
+
+    def setRanks(gameId: GameId, matchId: MatchId, ranks: Map[ParticipantId, Int]): Future[Unit] =
+        sendUnit(
+          HttpMethod.PUT,
+          s"/games/${gameId.value}/matches/${matchId.value}/ranks",
+          Some(write(Json.RanksRequest(ranks.toList.map((p, r) => Json.SeatRank(p, r)))))
+        )
+
+    private def tournamentPath(gameId: GameId, id: TournamentId): String = s"/tournaments/${gameId.value}/${id.value}"
+
     private def get[A: ReadWriter](path: String): Future[A] = send[A](HttpMethod.GET, path, None)
 
     private def send[A: ReadWriter](method: HttpMethod, path: String, body: Option[String]): Future[A] =

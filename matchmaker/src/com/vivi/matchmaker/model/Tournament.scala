@@ -199,7 +199,8 @@ case class TournamentDetail(
     rounds: List[TournamentRound] = Nil,
     pools: List[TournamentPool] = Nil,
     invitedPlayers: List[PublicPlayer] = Nil,
-    invitedCharacters: List[CharacterName] = Nil
+    invitedCharacters: List[CharacterName] = Nil,
+    progress: TournamentProgress = TournamentProgress()
 )
 
 /** A tournament in a player's own list, with what it is to them. */
@@ -218,3 +219,32 @@ case class RoundOverrides(
 
 /** What starting, checking or resuming a round set going: how many matches were queued to be made or checked. */
 case class RoundWork(queued: Int)
+
+/** A seat of a tournament match as the tournament page shows it: whose it is, and how it finished — `manual` when the
+  * tournament's owner set the rank on cancelling the match (D12).
+  */
+case class TournamentSeatView(
+    participantId: ParticipantId,
+    entrant: Option[TournamentParticipantId],
+    rank: Option[Int] = None,
+    manual: Boolean = false
+)
+
+/** A match made for a pool: its number there, and how it stands. */
+case class TournamentMatchView(
+    fixtureId: FixtureId,
+    matchNo: Int,
+    matchId: MatchId,
+    completed: Boolean,
+    cancelled: Boolean,
+    seats: List[TournamentSeatView]
+)
+
+/** One entrant's line in a pool's standings: points from every match's ranks, and the score differential. */
+case class StandingLine(entrant: TournamentParticipantId, points: Int, differential: Double)
+
+/** A pool's standings, best first. */
+case class PoolStandings(fixtureId: FixtureId, lines: List[StandingLine])
+
+/** How a tournament's started rounds stand: every match made for them, and every pool's standings. */
+case class TournamentProgress(matches: List[TournamentMatchView] = Nil, standings: List[PoolStandings] = Nil)

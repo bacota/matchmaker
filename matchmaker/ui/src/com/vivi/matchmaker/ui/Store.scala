@@ -97,6 +97,9 @@ object Store {
         completedFailed.set(None)
         completedFrame.set(CompletedFrame.Day)
         games.set(Seq.empty)
+        gameTournaments.set(Map.empty)
+        tournament.set(None)
+        myTournaments.set(Seq.empty)
         unlistedGames.set(Map.empty)
         lookingForGames.set(Set.empty)
         challengesByGame.set(Map.empty)
@@ -159,6 +162,9 @@ object Store {
         case PublicMatches
         case PlayerSearch
         case NotificationSettings
+        case GameTournaments(gameId: GameId)
+        case OneTournament
+        case MyTournaments
     }
 
     /* How each list's *latest* answer went: absent until one has come, `true` for an answer that
@@ -597,6 +603,9 @@ object Store {
           * carries the player: whatever linked here already knew them, and the page is headed with the name.
           */
         case OneCharacter(character: CharacterName)
+
+        /** A tournament's page, by its game and id, with its name to head the page while it loads. */
+        case OneTournament(gameId: GameId, tournamentId: TournamentId, name: String)
     }
 
     val page: Var[Page] = Var(Page.Home)
@@ -630,6 +639,7 @@ object Store {
         completedFor(next).foreach(showCompleted(_))
         next match {
             case Page.OneGame(gameId) =>
+                reloadGameTournaments(gameId)
                 refreshChallenges(gameId)
                 refreshCharacters(gameId)
                 refreshGameAdmins(gameId)
@@ -646,7 +656,14 @@ object Store {
                 characterProfile.set(None)
                 publicActive.set(Seq.empty)
                 reloadCharacterMatches(character)
-            case _ => ()
+            // Emptied first, for the reason a player's page is: the page is about to be headed with another name.
+            case Page.OneTournament(gameId, tournamentId, _) =>
+                tournament.set(None)
+                reloadTournament(gameId, tournamentId)
+                // What the caller could enter as, in a character game.
+                refreshCharacters(gameId)
+            case Page.Home => reloadMyTournaments()
+            case _         => ()
         }
     }
 
@@ -991,6 +1008,8 @@ object Store {
         load(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
         load(ApiClient.invitations(), Fetch.Invitations)(invitations.set)
         load(ApiClient.results(), Fetch.Results)(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
+        // The caller's tournaments and their invitations to them, for the home screen.
+        load(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
     }
 
     /** The same as `run`, but handing back a `Future` that says when the request has settled.
@@ -1036,6 +1055,33 @@ object Store {
       * other case: the user asking a single section whether it is still true, which should not cost four requests or
       * blank out the rest of the page.
       */
+    // ---- tournaments ----------------------------------------------------------------------------
+
+    /** Each game's tournaments, as its screen lists them. */
+    val gameTournaments: Var[Map[GameId, Seq[Tournament]]] = Var(Map.empty)
+
+    /** The tournament whose page is open, once it has come. */
+    val tournament: Var[Option[TournamentDetail]] = Var(None)
+
+    /** The caller's own tournaments, and those they are invited to, for the home screen. */
+    val myTournaments: Var[Seq[TournamentSummary]] = Var(Seq.empty)
+
+    def reloadGameTournaments(gameId: GameId): Future[Unit] =
+        reload(ApiClient.gameTournaments(gameId), Fetch.GameTournaments(gameId))(ts =>
+            gameTournaments.update(_ + (gameId -> ts))
+        )
+
+    /* Committed only while the page is still this tournament's: an answer for the one left behind is not the open one. */
+    def reloadTournament(gameId: GameId, id: TournamentId): Future[Unit] =
+        reload(ApiClient.tournament(gameId, id), Fetch.OneTournament)(detail =>
+            page.now() match {
+                case Page.OneTournament(g, t, _) if g == gameId && t == id => tournament.set(Some(detail))
+                case _                                                     => ()
+            }
+        )
+
+    def reloadMyTournaments(): Future[Unit] = reload(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
+
     def reloadDue(): Future[Unit] = reload(ApiClient.dueMatches(), Fetch.Due)(due.set)
 
     def reloadActive(): Future[Unit] = reload(ApiClient.activeMatches(), Fetch.Active)(active.set)

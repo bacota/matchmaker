@@ -67,7 +67,7 @@ object Views {
       * busy button refuses is refused by the handler instead. `disabledWhen` is a real `disabled` -- a button that
       * cannot be used yet is one to skip over.
       */
-    private def busyButton(
+    private[ui] def busyButton(
         label: String,
         classes: Option[String] = None,
         disabledWhen: Signal[Boolean] = Val(false)
@@ -92,7 +92,7 @@ object Views {
       * once. A placeholder is not a label — it is a hint that disappears at the first keystroke, and leaves a screen
       * reader with an unnamed box — so every field that had only a placeholder gets one of these instead.
       */
-    private def field(caption: String, control: HtmlElement): HtmlElement =
+    private[ui] def field(caption: String, control: HtmlElement): HtmlElement =
         label(cls := "field", caption, control)
 
     /** The body of a list: its rows, or a line saying why there are none.
@@ -105,7 +105,7 @@ object Views {
       * and throwing away what is on screen to say "Loading…" would lose the rows in order to repeat what the dimming
       * has already said.
       */
-    private def listing[A](items: Signal[Seq[A]], fetching: Signal[Boolean])(
+    private[ui] def listing[A](items: Signal[Seq[A]], fetching: Signal[Boolean])(
         empty: => HtmlElement
     )(rows: Seq[A] => HtmlElement): Modifier[HtmlElement] =
         child <-- items.combineWith(fetching).map {
@@ -124,7 +124,7 @@ object Views {
       * acted on. A fast request would flash too briefly to register, so the dimming is held for a moment; a slow one
       * holds it until the answer arrives.
       */
-    private def refreshableSection(
+    private[ui] def refreshableSection(
         heading: String,
         reload: () => Future[Unit],
         subsection: Boolean
@@ -140,7 +140,7 @@ object Views {
       * created inside it is thrown away along with the element, and the dimming ends the moment the response lands
       * rather than being seen.
       */
-    private def refreshableSection(
+    private[ui] def refreshableSection(
         heading: String,
         refreshing: Var[Boolean],
         reload: () => Future[Unit],
@@ -258,7 +258,7 @@ object Views {
     /** `Store.error` as a banner: in the header, and again inside each dialog that reports through it, since a modal
       * dialog makes the header inert and covers it -- a refusal shown only there is neither seen nor read out.
       */
-    private def errorBanner: Modifier[HtmlElement] =
+    private[ui] def errorBanner: Modifier[HtmlElement] =
         child <-- Store.error.signal.map {
             case Some(message) =>
                 div(
@@ -344,12 +344,13 @@ object Views {
             // Focusable from script only: where the focus goes on a new screen that has no heading yet.
             tabIndex := -1,
             child <-- Store.page.signal.map {
-                case Store.Page.Home              => mainPage
-                case Store.Page.OneGame(gameId)   => gamePage(gameId)
-                case Store.Page.NewGame           => newGamePage
-                case Store.Page.FindPlayers       => findPlayersPage
-                case Store.Page.OnePlayer(player) => playerPage(player)
-                case Store.Page.OneCharacter(c)   => characterPage(c)
+                case Store.Page.Home                      => mainPage
+                case Store.Page.OneGame(gameId)           => gamePage(gameId)
+                case Store.Page.NewGame                   => newGamePage
+                case Store.Page.FindPlayers               => findPlayersPage
+                case Store.Page.OnePlayer(player)         => playerPage(player)
+                case Store.Page.OneCharacter(c)           => characterPage(c)
+                case Store.Page.OneTournament(g, t, name) => Tournaments.page(g, t, name)
             },
             inContext(screen => Store.page.signal.changes --> (_ => focusNewScreen(screen.ref)))
           )
@@ -461,6 +462,7 @@ object Views {
           dueSection(),
           myMatchesSection(),
           pendingAcceptances(),
+          Tournaments.homeSection,
           recentlyCompletedSection
         )
 
@@ -1996,7 +1998,7 @@ object Views {
       * Opened at once when the hand-off is ready at once, which keeps it inside the click a browser requires a popup to
       * come from; only a session that has to be refreshed first waits for that.
       */
-    private def openSignedIn(url: String): Unit = {
+    private[ui] def openSignedIn(url: String): Unit = {
         def open(target: String): Unit = { dom.window.open(target, "_blank", "noopener,noreferrer"); () }
         val handed = Auth.handOff(url)
         handed.value match {
@@ -2308,6 +2310,7 @@ object Views {
                         myMatchesSection(Some(game)),
                         pendingAcceptances(Some(game)),
                         gameChallenges(game),
+                        Tournaments.gameSection(game),
                         ratingsSection(game),
                         gameHistory(game)
                       )
@@ -4611,7 +4614,7 @@ object Views {
     /** A captioned text field whose explanation is a tip beside it rather than a line under it: [[withTip]] around a
       * `label.field`, with the input pointed at the tip so that it is read out with the field.
       */
-    private def tipField(id: String, caption: String, text: String)(control: HtmlElement): HtmlElement =
+    private[ui] def tipField(id: String, caption: String, text: String)(control: HtmlElement): HtmlElement =
         withTip(id, caption, text)(label(cls := "field", caption, control.amend(aria.describedBy := id)))
 
     /** A control with a tip beside it: a "?" button that shows `text` on hover, on keyboard focus, and on a tap, which
@@ -4625,7 +4628,7 @@ object Views {
      * both list it -- so a tip under a row is numbered as it is made rather than named after the row. */
     private var tipsMade = 0
 
-    private def freshTipId(prefix: String): String = {
+    private[ui] def freshTipId(prefix: String): String = {
         tipsMade += 1
         s"$prefix-$tipsMade"
     }
@@ -4655,7 +4658,7 @@ object Views {
           tipWord(freshTipId("friendly-tip"), "Friendly", friendlyMeaning)
         )
 
-    private def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
+    private[ui] def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
         tipped(id, text, control)(cls := "tip-toggle", aria.label := s"About $subject", "?")
 
     /** A word that is its own tip: hovered, focused or tapped, it shows what it means, as a "?" beside it would. For a

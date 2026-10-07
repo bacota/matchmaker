@@ -32,7 +32,9 @@ class TournamentService[T](
     sessionPool: SessionPool,
     notifications: Notifications = Notifications.disabled,
     /* A running round's completion, looked at again when the field changes: a withdrawal can leave it nothing to play. */
-    fieldChanged: (GameId, TournamentId) => IO[Unit] = (_, _) => IO.unit
+    fieldChanged: (GameId, TournamentId) => IO[Unit] = (_, _) => IO.unit,
+    /* How the started rounds stand, for the tournament page: `TournamentPlayService.progress`. */
+    progress: (GameId, TournamentId) => IO[TournamentProgress] = (_, _) => IO.pure(TournamentProgress())
 )(using codec: TextCodec[T]) {
 
     /** Kinds of tournament that can be started so far. The rest can be created, and wait for the phases that build
@@ -105,6 +107,7 @@ class TournamentService[T](
                             .characterInvitations(gameId, tournamentId)
                             .flatMap(_.flatTraverse(id => characters.read(id).map(_.toList)))
                             .map(_.map(c => CharacterName(c.characterId, c.gameId, c.name)))
+                standing <- if (t.started) progress(gameId, tournamentId) else IO.pure(TournamentProgress())
             } yield TournamentDetail(
               t,
               owner.getOrElse(PublicPlayer(t.owner, "")),
@@ -113,7 +116,8 @@ class TournamentService[T](
               rounds,
               pools.map(f => TournamentPool(f, slots.filter(_.fixtureId == f.fixtureId))),
               invitedPlayers,
-              invitedCharacters
+              invitedCharacters,
+              standing
             )
         }
 

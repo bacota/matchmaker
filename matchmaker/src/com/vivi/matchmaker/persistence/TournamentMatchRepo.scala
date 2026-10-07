@@ -23,7 +23,7 @@ class TournamentMatchRepo(session: Session[IO]) {
     private val selectSeats: Query[(GameId, TournamentId, Int), SeatRow] =
         sql"""SELECT m.fixture_id, m.match_no, m.match_id, m.completed IS NOT NULL, m.cancelled, m.live,
                  p.participant_id, s.tournament_participant_id, r.rank, r.scores,
-                 p.pending AND p.completed_at IS NULL AND p.due < now()
+                 p.pending AND p.completed_at IS NULL AND p.due < now(), COALESCE(r.manual, false)
           FROM match m
           JOIN fixture f ON f.game_id = m.game_id AND f.tournament_id = m.tournament_id AND f.fixture_id = m.fixture_id
           JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
@@ -33,22 +33,38 @@ class TournamentMatchRepo(session: Session[IO]) {
           WHERE m.game_id = $gameId AND m.tournament_id = $tournamentId AND f.round = $int4
           ORDER BY m.fixture_id, m.match_no, p.participant_id"""
             .query(
-              int8 *: int4 *: matchId *: bool *: bool *: bool *: int8 *: int8.opt *: int4.opt *: scores.opt *: bool
+              int8 *: int4 *: matchId *: bool *: bool *: bool *: int8 *: int8.opt *: int4.opt *: scores.opt *: bool *:
+                  bool
             )
-            .map { case (fixture, no, id, completed, cancelled, live, participant, occupant, rank, scored, overdue) =>
-                SeatRow(
-                  FixtureId(fixture),
-                  no,
-                  id,
-                  completed,
-                  cancelled,
-                  live,
-                  ParticipantId(participant),
-                  occupant.map(TournamentParticipantId(_)),
-                  rank,
-                  scored.getOrElse(Map.empty),
-                  overdue
-                )
+            .map {
+                case (
+                      fixture,
+                      no,
+                      id,
+                      completed,
+                      cancelled,
+                      live,
+                      participant,
+                      occupant,
+                      rank,
+                      scored,
+                      overdue,
+                      manual
+                    ) =>
+                    SeatRow(
+                      FixtureId(fixture),
+                      no,
+                      id,
+                      completed,
+                      cancelled,
+                      live,
+                      ParticipantId(participant),
+                      occupant.map(TournamentParticipantId(_)),
+                      rank,
+                      scored.getOrElse(Map.empty),
+                      overdue,
+                      manual
+                    )
             }
 
     /** Every seat of every match made for a round's pools, by pool, match and seat. */
@@ -88,6 +104,7 @@ object TournamentMatchRepo {
         occupant: Option[TournamentParticipantId],
         rank: Option[Int],
         scores: Map[String, Any],
-        overdue: Boolean
+        overdue: Boolean,
+        manual: Boolean = false
     )
 }
