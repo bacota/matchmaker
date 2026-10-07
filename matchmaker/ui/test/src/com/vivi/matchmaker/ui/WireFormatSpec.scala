@@ -57,6 +57,10 @@ class WireFormatSpec extends FunSuite {
         assert(json.obj.get("challengeId").forall(_.isNull), json)
         assertEquals(json("creator").num.toLong, 4L)
         assertEquals(read[Match](write(created)), created)
+        // And a tournament's, with the pool it was made for (V53).
+        val pooled = created.copy(fixture = Some(MatchFixture(TournamentId(9), FixtureId(10), 2)))
+        assertEquals(read[Match](write(pooled)), pooled)
+        assertEquals(ujson.read(write(pooled))("fixture")("matchNo").num.toInt, 2)
     }
 
     test("a game round-trips, including the existential parameters field") {
@@ -370,7 +374,7 @@ class FormatSpec extends FunSuite {
           MatchId("m"),
           ParticipantId(2),
           "alice",
-          "First",
+          Some("First"),
           Some(1),
           Map.empty,
           isWinner = true,
@@ -380,6 +384,9 @@ class FormatSpec extends FunSuite {
         assertEquals(read[Json.ParticipantResultView](write(rated)), rated)
         val friendly = rated.copy(eloDelta = None)
         assertEquals(read[Json.ParticipantResultView](write(friendly)), friendly)
+        // A seat whose role was still being chosen when the match ended (V52) has none.
+        val roleless = rated.copy(roleName = None)
+        assertEquals(read[Json.ParticipantResultView](write(roleless)), roleless)
     }
 
     test("numeric parameter values are offered low to high, not in text order") {
@@ -393,5 +400,65 @@ class FormatSpec extends FunSuite {
     test("parameter values that are not all numbers are offered in text order") {
         assertEquals(Format.parameterValues(Seq("5x5", "3x3", "4x4")), Seq("3x3", "4x4", "5x5"))
         assertEquals(Format.parameterValues(Seq("10", "fast", "3")), Seq("10", "3", "fast"))
+    }
+
+    // The tournament page's whole answer, as the browser reads it (Phase 6): slots of every source among it.
+    test("a tournament's detail round-trips, slot sources and progress included") {
+        val t = Tournament(
+          GameId(1),
+          TournamentId(2),
+          TournamentClass.Elimination,
+          "The Open",
+          PlayerId(3),
+          invitational = false,
+          roundDuration = Duration.ofHours(48),
+          elimination = Some(EliminationSettings(TournamentType.SingleElim, 2)),
+          startedAt = Some(Instant.parse("2030-01-01T00:00:00Z"))
+        )
+        val pool = Fixture(GameId(1), TournamentId(2), FixtureId(5), 1, 1)
+        val detail = TournamentDetail(
+          t,
+          PublicPlayer(PlayerId(3), "owner"),
+          List(
+            TournamentEntrant(
+              EntryId(7),
+              PublicPlayer(PlayerId(8), "alice"),
+              None,
+              Some(TournamentParticipant(GameId(1), TournamentId(2), TournamentParticipantId(9), EntryId(7), 1, 1))
+            )
+          ),
+          List(TournamentRound(GameId(1), TournamentId(2), 1, live = true)),
+          List(
+            TournamentPool(
+              pool,
+              List(
+                FixtureSlot(
+                  GameId(1),
+                  TournamentId(2),
+                  FixtureId(5),
+                  SlotId(10),
+                  SlotSource.Seed(1),
+                  Some(TournamentParticipantId(9))
+                ),
+                FixtureSlot(GameId(1), TournamentId(2), FixtureId(5), SlotId(11), SlotSource.Bye),
+                FixtureSlot(GameId(1), TournamentId(2), FixtureId(6), SlotId(12), SlotSource.Winner(FixtureId(5), 1))
+              )
+            )
+          ),
+          progress = TournamentProgress(
+            List(
+              TournamentMatchView(
+                FixtureId(5),
+                1,
+                MatchId("m"),
+                completed = false,
+                cancelled = true,
+                List(TournamentSeatView(ParticipantId(20), Some(TournamentParticipantId(9)), Some(1), manual = true))
+              )
+            ),
+            List(PoolStandings(FixtureId(5), List(StandingLine(TournamentParticipantId(9), 3, 1.5))))
+          )
+        )
+        assertEquals(read[TournamentDetail](write(detail)), detail)
     }
 }

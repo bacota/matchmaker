@@ -22,7 +22,10 @@ case class SeatClock(participantId: ParticipantId, since: Instant)
   * seat that is to move now — a seat left out is not pending. Stated whole rather than as a change, so that a callback
   * which turns out to be older than one already applied can be ignored whole: see [[GameEngineService.recordMove]].
   */
-case class MoveState(sequence: Long, pending: List[SeatClock])
+case class MoveState(sequence: Long, pending: List[SeatClock], roles: List[ReportedRole] = Nil)
+
+/** A seat's role as an engine reports it, by name, once the seat has chosen it (V52). */
+case class ReportedRole(participantId: ParticipantId, role: String)
 
 /** One participant's outcome as the game engine reports it at the end of a match. `forfeit` is a live match the engine
   * ended because a turn ran out — the engine's own forfeit, recorded as matchmaker records its own.
@@ -32,7 +35,9 @@ case class ReportedResult(
     rank: Int,
     scores: Map[String, Any],
     isWinner: Boolean,
-    forfeit: Boolean = false
+    forfeit: Boolean = false,
+    // The seat's role, in a match whose roles were chosen in the engine (V52).
+    role: Option[String] = None
 )
 
 /** The four exchanges between matchmaker and a game engine, as described in `interaction-design.txt`:
@@ -295,7 +300,8 @@ class GameEngineService[T](
                       settings = challenge.settings,
                       isPublic = challenge.isPublic,
                       live = challenge.live,
-                      friendly = challenge.friendly
+                      friendly = challenge.friendly,
+                      noTie = challenge.noTie
                     )
                     saved <- matchRepo.create(newMatch)
                     // Under the lock taken above, so the next start of this challenge sees the claim.
@@ -395,99 +401,130 @@ class GameEngineService[T](
         // The key on the session already held, rather than one borrowed for the purpose.
         (turnRepo.latestTakenAt(gameId, matchId), new GameApiKeyRepo(session).forGame(gameId)).tupled
             .flatMap { (_, apiKey) =>
-                engine.status(statusUrl, apiKey, None).flatMap { status =>
-                    session.transaction.use { _ =>
-                        for {
-                            current <- requireMatchForUpdate(matchRepo, gameId, matchId)
-                            // Re-read under the lock, and checked here rather than only by the callers:
-                            // their check was made before the status call, and a cancel committing while
-                            // the engine was answering must not be undone by the answer. Writing what the
-                            // engine said would restamp the seats this match's cancel had finished and
-                            // could complete a match its creator had called off.
-                            outcome <-
-                                if (current.cancelled) IO.pure((current, false))
-                                else
-                                    for {
-                                        participants <- participantRepo.listForMatch(gameId, matchId)
-                                        byId = participants.map((p, _, _) => p.participantId -> p).toMap
-                                        // Before the deadlines below, which for a total limit are computed from what each seat
-                                        // has spent — and what they have spent is these rows.
-                                        _ <- recordTurns(
-                                          session,
-                                          current,
-                                          status.turns.filter(t => byId.contains(ParticipantId(t.participantId))),
-                                          since = None
-                                        )
-                                        used <- timeUsedIn(session, current)
-                                        /* Whether the answer still describes this match, now that it is locked.
-                                         *
-                                         * Every caller asks only about a match it found not yet completed, so one
-                                         * that is completed here was completed while the engine was answering --
-                                         * by the results callback, or by a forfeit the engine knows nothing about.
-                                         * An answer from before that may still say the match is running, and it
-                                         * must not undo the ending. Likewise a numbered answer older than a move
-                                         * already applied describes seats that move has since changed.
-                                         *
-                                         * Either way the answer's turns are recorded above, since they were really
-                                         * taken, and nothing else of it is written. */
-                                        applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
-                                        // And a live match's turns are never written at all: they are the
-                                        // engine's to run, nothing tells matchmaker when they change, and a
-                                        // seat marked pending here would stay pending -- and due -- long after
-                                        // the engine had moved on. Only its ending is news; see `liveEnded`.
-                                        seatsCurrent = !current.completed && !current.live &&
-                                            status.sequence.forall(seq => applied.forall(_ <= seq))
-                                        // A live match the engine says is over, and matchmaker had not heard
-                                        // was: its results callback went astray. Every seat is retired here,
-                                        // as `recordResults` would have retired them, or the finished match
-                                        // stays in everybody's active lists -- and no later refresh asks
-                                        // again, since the match itself is now complete.
-                                        liveEnded = current.live && status.completed && current.completedAt.isEmpty
-                                        _ <- participants.filter(_ => liveEnded).traverse_ { (p, _, _) =>
-                                            participantRepo
-                                                .update(withTurn(p, pending = false, due = None, completed = true))
-                                        }
-                                        _ <- status.sequence.filter(_ => seatsCurrent).traverse_ { seq =>
-                                            matchRepo.advanceMoveSequence(gameId, matchId, seq)
-                                        }
-                                        _ <- status.participants.filter(_ => seatsCurrent).traverse { reported =>
-                                            byId.get(ParticipantId(reported.participantId)) match {
-                                                case Some(p) =>
-                                                    participantRepo.update(
-                                                      withTurn(
-                                                        p,
-                                                        reported.pending,
-                                                        dueFor(current, used)(p.participantId, reported.prevMoveAt),
-                                                        reported.completed
-                                                      )
-                                                    )
-                                                // The engine reporting a seat matchmaker does not have is the engine's
-                                                // problem to explain, not a reason to abandon the seats it does have.
-                                                case None => IO.unit
-                                            }
-                                        }
-                                        // Set once by the database's clock and kept: a match that is already finished keeps
-                                        // the time it finished, rather than being restamped by every later status the engine
-                                        // answers with. Nothing else about the match changes here, so completion is the only
-                                        // reason to write at all.
-                                        //
-                                        // Only ever towards completed. An answer saying a completed match is still running
-                                        // is one from before it ended (see `seatsCurrent`), and reopening it would undo a
-                                        // result or a forfeit that has already been recorded and mailed.
-                                        completedAt <-
-                                            if (status.completed && current.completedAt.isEmpty)
-                                                matchRepo.complete(gameId, matchId).map(Some(_))
-                                            else IO.pure(current.completedAt)
-                                        updated = current.copy(completedAt = completedAt)
-                                        // The first of those four cases, which is the one where this call is what ended
-                                        // the match: the engine says it is over and matchmaker had not heard. It happens
-                                        // when the results callback went astray and somebody pressed Refresh, and it is
-                                        // the only way a player would ever learn their match had finished.
-                                        endedHere = status.completed && current.completedAt.isEmpty
-                                    } yield (updated, endedHere)
-                        } yield outcome
-                    }
-                }
+                engine.status(statusUrl, apiKey, None).flatMap(writeStatus(session, gameId, matchId, _))
+            }
+    }
+
+    /** As [[applyEngineStatus]], holding no connection while the engine answers: one is borrowed for the key, given
+      * back, and another borrowed to write the answer. For the listener, whose pool is small and whose calls run many
+      * at once — see `TournamentPlayService`.
+      */
+    private[service] def applyEngineStatusPooled(gameId: GameId, matchId: MatchId, statusUrl: String): IO[Match] =
+        for {
+            apiKey <- sessionPool.use(session => new GameApiKeyRepo(session).forGame(gameId))
+            status <- engine.status(statusUrl, apiKey, None)
+            updated <- sessionPool.use(writeStatus(_, gameId, matchId, status))
+        } yield updated
+
+    /* What [[applyEngineStatus]] does with the engine's answer, once it has one: in a transaction of its own, under the
+     * match's lock, and then whatever an ending owes. */
+    private def writeStatus(
+        session: skunk.Session[IO],
+        gameId: GameId,
+        matchId: MatchId,
+        status: GameStatusResponse
+    ): IO[Match] = {
+        val matchRepo = new MatchRepo(session)
+        val participantRepo = new ParticipantRepo(session)
+        session.transaction
+            .use { _ =>
+                for {
+                    current <- requireMatchForUpdate(matchRepo, gameId, matchId)
+                    // Re-read under the lock, and checked here rather than only by the callers:
+                    // their check was made before the status call, and a cancel committing while
+                    // the engine was answering must not be undone by the answer. Writing what the
+                    // engine said would restamp the seats this match's cancel had finished and
+                    // could complete a match its creator had called off.
+                    outcome <-
+                        if (current.cancelled) IO.pure((current, false))
+                        else
+                            for {
+                                // Roles chosen in the engine (V52), whatever else of this answer is stale:
+                                // they were really chosen. Before the seats are read, which are written back.
+                                _ <- recordRoles(
+                                  session,
+                                  current,
+                                  status.participants
+                                      .flatMap(p => p.role.map(ReportedRole(ParticipantId(p.participantId), _)))
+                                )
+                                participants <- participantRepo.listForMatch(gameId, matchId)
+                                byId = participants.map((p, _, _) => p.participantId -> p).toMap
+                                // Before the deadlines below, which for a total limit are computed from what each seat
+                                // has spent — and what they have spent is these rows.
+                                _ <- recordTurns(
+                                  session,
+                                  current,
+                                  status.turns.filter(t => byId.contains(ParticipantId(t.participantId))),
+                                  since = None
+                                )
+                                used <- timeUsedIn(session, current)
+                                /* Whether the answer still describes this match, now that it is locked.
+                                 *
+                                 * Every caller asks only about a match it found not yet completed, so one
+                                 * that is completed here was completed while the engine was answering --
+                                 * by the results callback, or by a forfeit the engine knows nothing about.
+                                 * An answer from before that may still say the match is running, and it
+                                 * must not undo the ending. Likewise a numbered answer older than a move
+                                 * already applied describes seats that move has since changed.
+                                 *
+                                 * Either way the answer's turns are recorded above, since they were really
+                                 * taken, and nothing else of it is written. */
+                                applied <- matchRepo.moveSequenceForUpdate(gameId, matchId)
+                                // And a live match's turns are never written at all: they are the
+                                // engine's to run, nothing tells matchmaker when they change, and a
+                                // seat marked pending here would stay pending -- and due -- long after
+                                // the engine had moved on. Only its ending is news; see `liveEnded`.
+                                seatsCurrent = !current.completed && !current.live &&
+                                    status.sequence.forall(seq => applied.forall(_ <= seq))
+                                // A live match the engine says is over, and matchmaker had not heard
+                                // was: its results callback went astray. Every seat is retired here,
+                                // as `recordResults` would have retired them, or the finished match
+                                // stays in everybody's active lists -- and no later refresh asks
+                                // again, since the match itself is now complete.
+                                liveEnded = current.live && status.completed && current.completedAt.isEmpty
+                                _ <- participants.filter(_ => liveEnded).traverse_ { (p, _, _) =>
+                                    participantRepo
+                                        .update(withTurn(p, pending = false, due = None, completed = true))
+                                }
+                                _ <- status.sequence.filter(_ => seatsCurrent).traverse_ { seq =>
+                                    matchRepo.advanceMoveSequence(gameId, matchId, seq)
+                                }
+                                _ <- status.participants.filter(_ => seatsCurrent).traverse { reported =>
+                                    byId.get(ParticipantId(reported.participantId)) match {
+                                        case Some(p) =>
+                                            participantRepo.update(
+                                              withTurn(
+                                                p,
+                                                reported.pending,
+                                                dueFor(current, used)(p.participantId, reported.prevMoveAt),
+                                                reported.completed
+                                              )
+                                            )
+                                        // The engine reporting a seat matchmaker does not have is the engine's
+                                        // problem to explain, not a reason to abandon the seats it does have.
+                                        case None => IO.unit
+                                    }
+                                }
+                                // Set once by the database's clock and kept: a match that is already finished keeps
+                                // the time it finished, rather than being restamped by every later status the engine
+                                // answers with. Nothing else about the match changes here, so completion is the only
+                                // reason to write at all.
+                                //
+                                // Only ever towards completed. An answer saying a completed match is still running
+                                // is one from before it ended (see `seatsCurrent`), and reopening it would undo a
+                                // result or a forfeit that has already been recorded and mailed.
+                                completedAt <-
+                                    if (status.completed && current.completedAt.isEmpty)
+                                        matchRepo.complete(gameId, matchId).map(Some(_))
+                                    else IO.pure(current.completedAt)
+                                updated = current.copy(completedAt = completedAt)
+                                // The first of those four cases, which is the one where this call is what ended
+                                // the match: the engine says it is over and matchmaker had not heard. It happens
+                                // when the results callback went astray and somebody pressed Refresh, and it is
+                                // the only way a player would ever learn their match had finished.
+                                endedHere = status.completed && current.completedAt.isEmpty
+                            } yield (updated, endedHere)
+                } yield outcome
             }
             .flatMap { (updated, endedHere) =>
                 /* Only on that transition, so a status call that merely confirms a finished match writes
@@ -532,6 +569,60 @@ class GameEngineService[T](
             }
             .void
     }
+
+    /* Writes the roles an engine reports for seats whose players chose them in it (V52): each seat with no role yet is
+     * given the one named, with its player's starting rating in that role, as a start would have written it.
+     *
+     * For the caller's transaction, under the match's lock, which every writer of these seats holds. A seat that has a
+     * role keeps it -- a report naming another is the engine contradicting itself, and is logged rather than applied,
+     * like a role the game does not have.
+     *
+     * The game and its roles are read plainly: the reference-table exception, as at `requireGame`. */
+    private def recordRoles(session: skunk.Session[IO], m: Match, reported: List[ReportedRole]): IO[Unit] =
+        if (reported.isEmpty) IO.unit
+        else {
+            val participantRepo = new ParticipantRepo(session)
+            for {
+                game <- requireGame(new GameRepo[T](session), m.gameId)
+                seats <- participantRepo.listForMatch(m.gameId, m.matchId)
+                byId = seats.map((p, _, _) => p.participantId -> p).toMap
+                _ <- reported.distinct.traverse_ { r =>
+                    (byId.get(r.participantId), game.roles.find(_.name == r.role)) match {
+                        case (None, _) =>
+                            IO(System.err.println(s"match ${m.matchId.value}: a role for a seat it does not have"))
+                        case (_, None) =>
+                            IO(System.err.println(s"match ${m.matchId.value}: '${r.role}' is no role of the game"))
+                        case (Some(seat), Some(role)) =>
+                            seat.gameRoleId match {
+                                case Some(held) if held == role.gameRoleId => IO.unit
+                                case Some(_) =>
+                                    IO(
+                                      System.err.println(
+                                        s"match ${m.matchId.value}: seat ${seat.participantId.value} already has a " +
+                                            s"role; '${r.role}' is refused"
+                                      )
+                                    )
+                                case None =>
+                                    EloRatingService
+                                        .startingRatings(
+                                          session,
+                                          m.gameId,
+                                          List(seat.playerId -> role.gameRoleId),
+                                          byRole = !game.unimportantRoles
+                                        )
+                                        .flatMap(starting =>
+                                            participantRepo.setRole(
+                                              m.gameId,
+                                              seat.participantId,
+                                              role.gameRoleId,
+                                              starting.inRole(seat.playerId, role.gameRoleId)
+                                            )
+                                        )
+                            }
+                    }
+                }
+            } yield ()
+        }
 
     /* What each seat has spent on the turns it has finished — needed only by a total limit, and
      * not asked for otherwise: a per-turn deadline does not depend on the turns before it, and a
@@ -637,6 +728,8 @@ class GameEngineService[T](
                         // The move itself, recorded as a turn: when it was made and when the mover's clock
                         // started for it, both as the engine reported them.
                         _ <- turnRepo.create(Turn(gameId, matchId, moved, takenAt, startedAt))
+                        // Any role this move chose (V52), late callback or not: a role is never taken back.
+                        _ <- recordRoles(session, existing, state.toList.flatMap(_.roles))
                         // After the turn above is recorded, since under a total limit the next player's
                         // deadline is what is left of their budget — and the mover's turn has just spent some
                         // of theirs.
@@ -756,6 +849,13 @@ class GameEngineService[T](
                          * recorded, and the match rated, as if it had arrived first; only the completion
                          * itself, and the news of it, are already done. Under the match's lock, so two
                          * deliveries of it cannot both find nothing recorded. */
+                        // Before rating, which rates each seat in its role: a role chosen by the last choice
+                        // may have reached matchmaker only here.
+                        _ <- recordRoles(
+                          session,
+                          existing,
+                          results.flatMap(r => r.role.map(ReportedRole(r.participantId, _)))
+                        )
                         recorded <-
                             if (existing.completed) resultRepo.existsForMatch(gameId, matchId) else IO.pure(false)
                         // Whether this call is what ended the match, rather than a late or repeated
@@ -1107,6 +1207,137 @@ class GameEngineService[T](
             }
     }
 
+    // ---- tournament matches (tournament-plan D4, D5, D7) ----------------------------------------------
+
+    /** The second half of starting a tournament's match, once `TournamentPlayService` has written it and its seats in a
+      * transaction of its own: the engine asked to make its game, and its answer recorded.
+      *
+      * The same steps as a challenge's start, but holding no connection while the engine answers — one is borrowed for
+      * each step either side — because this runs in the ending listener, many at once, on a pool of two. If the engine
+      * fails, the match is deleted again, so that the queue's retry starts clean; past the engine's answer the only way
+      * is forward, as for a challenge's start, and an urlless match is what `refresh` repairs.
+      */
+    private[service] def createFixtureMatch(
+        saved: Match,
+        game: Game,
+        players: List[EnginePlayer],
+        roleChoice: Option[RoleChoice],
+        apiKey: Option[String]
+    ): IO[Match] =
+        for {
+            response <- engine
+                .createGame(game.url, apiKey, fixtureRequest(saved, game, players, roleChoice))
+                .onError(_ => sessionPool.use(undoFixture(_, saved.gameId, saved.matchId)))
+            withUrls = saved.copy(
+              statusUrl = Some(response.statusUrl),
+              playUrl = Some(response.playUrl),
+              publicUrl = response.publicUrl
+            )
+            _ <- retrying(sessionPool.use(finish(_, withUrls, response.cancelUrl)))
+            // Who is to move — or choose — first, as for a challenge's start: without it, a chooser who never turns
+            // up would have no deadline for Check round to find.
+            _ <- applyEngineStatusPooled(saved.gameId, saved.matchId, response.statusUrl).attempt
+            _ <- sessionPool.use(notifications.matchStarted(_, withUrls, None, None))
+        } yield withUrls
+
+    /* Undoes a tournament match whose engine would not make its game: its turns, seats and row, in one transaction.
+     * Swallowed for the reason `undo` gives. */
+    private def undoFixture(session: skunk.Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] =
+        session.transaction
+            .use(_ =>
+                new TurnRepo(session).deleteForMatch(gameId, matchId) *>
+                    new ParticipantRepo(session).deleteForMatch(gameId, matchId) *>
+                    new MatchRepo(session).delete(gameId, matchId)
+            )
+            .handleError(_ => ())
+
+    /** One seat as the engine is told it, for a tournament match: `role` is `None` for a seat still to choose. */
+    private[service] def fixturePlayer(
+        session: skunk.Session[IO],
+        participant: Participant,
+        externalId: String,
+        nickname: String,
+        role: Option[String]
+    ): IO[EnginePlayer] = {
+        val character = participant match {
+            case cp: CharacterParticipant => new CharacterRepo[T](session).read(cp.characterId)
+            case _: PlainParticipant      => IO.pure(None)
+        }
+        character.map(c =>
+            EnginePlayer(
+              cognitoId = externalId,
+              participantId = participant.participantId.value,
+              role = role,
+              characterId = c.map(_.characterId.value),
+              characterState = c.map(ch => codec.encode(ch.state)),
+              nickname = Some(nickname),
+              characterName = c.map(_.name)
+            )
+        )
+    }
+
+    /* A tournament match's create request: the game's default parameters, the match's own clock, and — for a live one
+     * — a clock that starts when each turn does, so that a player who never turns up runs out (D7). */
+    private def fixtureRequest(
+        m: Match,
+        game: Game,
+        players: List[EnginePlayer],
+        roleChoice: Option[RoleChoice]
+    ): CreateGameRequest =
+        CreateGameRequest(
+          matchId = m.matchId.value,
+          gameName = game.name,
+          isPublic = m.isPublic,
+          parameters = ChallengeSettings.resolve(
+            defaults = game.parameters
+                .map(p => p.name -> p.defaultValue.map(v => codec.encode(v.asInstanceOf[T])).getOrElse(""))
+                .toMap,
+            allowed =
+                game.parameters.map(p => p.name -> p.values.map(v => codec.encode(v.value.asInstanceOf[T]))).toMap,
+            settings = m.settings
+          ),
+          settings = m.settings,
+          timeLimitSeconds = m.timeLimit.map(_.getSeconds),
+          players = players,
+          live = m.timeLimit
+              .filter(_ => m.live)
+              .map(limit => LiveTerms(limit.getSeconds, m.timeLimitKind.code, startOnOpen = Some(false))),
+          gameDisplayName = Some(game.displayName),
+          description = Some(m.description.trim).filter(_.nonEmpty),
+          noTie = Option.when(m.noTie)(true),
+          roleChoice = roleChoice,
+          moveCallbackUrl =
+              callbackBaseUrl.map(base => s"$base/games/${game.gameId.value}/matches/${m.matchId.value}/moves"),
+          resultsCallbackUrl =
+              callbackBaseUrl.map(base => s"$base/games/${game.gameId.value}/matches/${m.matchId.value}/results")
+        )
+
+    /** Checks one match against its clock, for Check round (D7): a live match by asking its engine, whose own clock
+      * then notices a turn that has run out; any other by the timeout enforcement a read of the match runs — but only
+      * if a seat looks overdue, and holding no connection while the engine answers.
+      *
+      * A check that cannot reach the engine enforces nothing, which is the enforcement's own rule; it is not retried.
+      */
+    def enforce(gameId: GameId, matchId: MatchId): IO[Unit] =
+        sessionPool.use(session => new MatchRepo(session).read(gameId, matchId)).flatMap {
+            case Some(m) if !m.completed && !m.cancelled =>
+                m.statusUrl match {
+                    case None                => IO.unit
+                    case Some(url) if m.live => applyEngineStatusPooled(gameId, matchId, url).void
+                    case Some(url) =>
+                        sessionPool.use(overdueIn(_, gameId, matchId)).flatMap {
+                            case Nil => IO.unit
+                            case _ =>
+                                applyEngineStatusPooled(gameId, matchId, url).flatMap(checked =>
+                                    sessionPool
+                                        .use(enforceTimeouts(_, gameId, matchId, checked, recheck = false))
+                                        .void
+                                )
+                        }
+                }
+            case _ => IO.unit
+        }
+
     private def createRequest(
         matchId: MatchId,
         game: Game,
@@ -1140,6 +1371,8 @@ class GameEngineService[T](
               .map(limit => LiveTerms(limit.getSeconds, challenge.timeLimitKind.code)),
           gameDisplayName = Some(game.displayName),
           description = Some(challenge.message.trim).filter(_.nonEmpty),
+          // Absent rather than false for an ordinary match, so an engine is sent what it always was.
+          noTie = Option.when(challenge.noTie)(true),
           moveCallbackUrl =
               callbackBaseUrl.map(base => s"$base/games/${game.gameId.value}/matches/${matchId.value}/moves"),
           resultsCallbackUrl =
@@ -1181,7 +1414,7 @@ class GameEngineService[T](
                   completed = false,
                   due = None,
                   characterId = ca.characterId,
-                  gameRoleId = ca.gameRoleId
+                  gameRoleId = Some(ca.gameRoleId)
                 )
             case pa: PlainAcceptance =>
                 PlainParticipant(
@@ -1192,7 +1425,7 @@ class GameEngineService[T](
                   pending = false,
                   completed = false,
                   due = None,
-                  gameRoleId = pa.gameRoleId
+                  gameRoleId = Some(pa.gameRoleId)
                 )
         }
 

@@ -18,7 +18,7 @@ import HtmlText.{escape, escapeJs}
   *   what the tokens are kept under in the browser — the game's own name, as it always has been, so that a player
   *   signed in before a deploy is still signed in after it.
   */
-class SignIn(storagePrefix: String) {
+class SignIn(val storagePrefix: String) {
 
     /** The page Cognito redirects back to: it redeems the code and returns the player to the board they started from.
       *

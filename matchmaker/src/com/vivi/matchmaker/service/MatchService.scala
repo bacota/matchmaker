@@ -12,11 +12,13 @@ import com.vivi.matchmaker.model.{
     GameId,
     GameMatch,
     Match,
+    MatchFixture,
     MatchId,
     MatchOutcome,
     MatchParameter,
     MatchSummary,
     Opponent,
+    ParticipantId,
     ParticipantResult,
     PlayerClock,
     PlayerId,
@@ -26,7 +28,15 @@ import com.vivi.matchmaker.model.{
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.util.ChallengeSettings
-import com.vivi.matchmaker.persistence.{GameAdminRepo, MatchRepo, ParticipantRepo, PlayerRepo, ResultRepo}
+import com.vivi.matchmaker.persistence.{
+    FixtureRepo,
+    GameAdminRepo,
+    MatchRepo,
+    ParticipantRepo,
+    PlayerRepo,
+    ResultRepo,
+    TournamentRepo
+}
 
 /** Lists a player's matches, and lets the creator of one call it off.
   *
@@ -322,7 +332,12 @@ class MatchService(
       * Under the match's row lock, so that a cancel racing a result callback resolves one way or the other rather than
       * both writing.
       */
-    def cancel(gameId: GameId, matchId: MatchId, callerExternalId: String): IO[Match] =
+    def cancel(
+        gameId: GameId,
+        matchId: MatchId,
+        callerExternalId: String,
+        ranks: Option[Map[ParticipantId, Int]] = None
+    ): IO[Match] =
         sessionPool
             .use { session =>
                 val matchRepo = new MatchRepo(session)
@@ -339,10 +354,21 @@ class MatchService(
                                       NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
                                     )
                             }
-                            _ <- IO.raiseUnless(existing.creator == caller.playerId)(
+                            // A tournament's match is its tournament's current owner's to cancel, read now: the
+                            // creator is whoever owned it when the match was made (D12). Any other is its creator's.
+                            mayCancel <- existing.fixture match {
+                                case Some(f) => tournamentOwner(session, gameId, f).map(_.contains(caller.playerId))
+                                case None    => IO.pure(existing.creator == caller.playerId)
+                            }
+                            _ <- IO.raiseUnless(mayCancel)(
                               UnauthorizedError(
                                 s"caller '$callerExternalId' did not create match ${matchId.value} and may not cancel it"
                               )
+                            )
+                            // Ranks only for a tournament's match: a challenge's creator may call theirs off, but can
+                            // never set how it came out.
+                            _ <- IO.raiseWhen(ranks.isDefined && existing.fixture.isEmpty)(
+                              ValidationError("only a tournament's match may be ranked when it is cancelled")
                             )
                             _ <- IO.raiseWhen(existing.completed)(
                               ConflictError(s"match ${matchId.value} is completed and can no longer be cancelled")
@@ -352,6 +378,7 @@ class MatchService(
                             )
                             cancelled = existing.copy(cancelled = true)
                             _ <- matchRepo.update(cancelled)
+                            _ <- ranks.traverse_(r => writeRanks(session, gameId, matchId, r))
                             // And the seats, in the same lock: a cancelled match is over, so nobody's turn
                             // is pending in it and no clock is still running. Completion says this seat by
                             // seat as it records what each player scored; a cancellation has nothing to
@@ -502,6 +529,65 @@ class MatchService(
                     found <- new MatchRepo(session).read(gameId, matchId)
                 } yield allowed && found.exists(m => m.completed && m.friendly)
         }
+
+    /** The owner of a tournament correcting the ranks of one of its matches that has been cancelled (D12), until its
+      * round is over: the round's standings and seeds are worked out from them then. A match that has not been
+      * cancelled cannot be ranked by hand, and a challenge's match never can.
+      *
+      * Its end is said again after the commit, so that what follows from the ranks — a ladder's moves — follows now
+      * rather than at the next match's end.
+      */
+    def setRanks(gameId: GameId, matchId: MatchId, ranks: Map[ParticipantId, Int], callerExternalId: String): IO[Unit] =
+        sessionPool.use { session =>
+            session.transaction.use { _ =>
+                for {
+                    caller <- resolveCaller(session, callerExternalId)
+                    existing <- new MatchRepo(session).readForUpdate(gameId, matchId).flatMap {
+                        case Some(m) => IO.pure(m)
+                        case None =>
+                            IO.raiseError(NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}"))
+                    }
+                    f <- IO.fromOption(existing.fixture)(
+                      ValidationError("only a tournament's match may be ranked by hand")
+                    )
+                    owner <- tournamentOwner(session, gameId, f)
+                    _ <- IO.raiseUnless(owner.contains(caller.playerId))(
+                      UnauthorizedError("only the tournament's owner may rank its matches")
+                    )
+                    _ <- IO.raiseUnless(existing.cancelled)(
+                      ConflictError("a match has to be cancelled before it can be ranked by hand")
+                    )
+                    round <- new FixtureRepo(session)
+                        .listFixtures(gameId, f.tournamentId)
+                        .map(_.find(_.fixtureId == f.fixtureId).map(_.round))
+                    rounds <- new FixtureRepo(session).listRounds(gameId, f.tournamentId)
+                    _ <- IO.raiseWhen(rounds.exists(r => round.contains(r.round) && r.completed))(
+                      ConflictError("the match's round is over, and its ranks are fixed")
+                    )
+                    _ <- writeRanks(session, gameId, matchId, ranks)
+                } yield ()
+            }
+        } *> endings.ended(gameId, matchId)
+
+    /* Ranks for every seat of the match, each at least 1, ties allowed; written as manual results. */
+    private def writeRanks(
+        session: Session[IO],
+        gameId: GameId,
+        matchId: MatchId,
+        ranks: Map[ParticipantId, Int]
+    ): IO[Unit] =
+        for {
+            seats <- new ParticipantRepo(session).listForMatch(gameId, matchId).map(_.map(_._1.participantId).toSet)
+            _ <- IO.raiseUnless(ranks.keySet == seats)(
+              ValidationError("give a rank to every seat of the match, and to no other")
+            )
+            _ <- IO.raiseUnless(ranks.values.forall(_ >= 1))(ValidationError("a rank is 1 or more"))
+            _ <- new ResultRepo(session).replaceManual(gameId, matchId, ranks)
+        } yield ()
+
+    /** The tournament's owner now, held against a hand-over until the transaction ends. */
+    private def tournamentOwner(session: Session[IO], gameId: GameId, f: MatchFixture): IO[Option[PlayerId]] =
+        new TournamentRepo(session).readForShare(gameId, f.tournamentId).map(_.map(_.owner))
 
     private def resolveCaller(session: Session[IO], callerExternalId: String) =
         new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {

@@ -56,7 +56,9 @@ object Protocol {
         maxMoves: Int,
         players: List[SeatView],
         clock: Option[ClockView] = None,
-        replay: Option[ReplayView] = None
+        replay: Option[ReplayView] = None,
+        // A match with no move cap (`StrategoMatch.noTie`): the page shows no limit for it.
+        noTie: Boolean = false
     )
 
     /** The position both armies were deployed in, and every piece move since, oldest first: what the page replays.

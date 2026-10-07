@@ -349,6 +349,8 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals((red.rank, red.isWinner), (1, true))
         assertEquals((blue.rank, blue.isWinner), (2, false))
         assertEquals(red.scores("method").str, "points")
+        // A win on points is worth 1; a loss nothing.
+        assertEquals((red.scores("score").num, blue.scores("score").num), (1.0, 0.0))
         assertEquals(red.scores("points").num, 30.0)
         assertEquals(blue.scores("points").num, 27.0)
         // The scheduled length is the game's `rounds` parameter, which matchmaker lists under the
@@ -385,6 +387,8 @@ class EngineSpec extends FunSuite with QuietTests {
         val results = recorder.results.head._2.results
         assertEquals(results.find(_.isWinner).map(_.participantId), Some(11L))
         assert(results.forall(_.scores("method").str == "knockout"))
+        // A knockout win is worth 2, and losing to one nothing.
+        assertEquals(results.map(r => r.participantId -> r.scores("score").num).toMap, Map(11L -> 2.0, 22L -> 0.0))
         assertEquals(
           recorder.results.head._2.summary,
           Some("<strong>Iron Mike</strong> knocked out <strong>Sugar Ray</strong> in round 1.")
@@ -405,10 +409,52 @@ class EngineSpec extends FunSuite with QuietTests {
         val results = recorder.results.head._2.results
         assertEquals(results.map(_.rank), List(1, 1))
         assert(results.forall(r => !r.isWinner && r.scores("outcome").str == "draw"))
+        assert(results.forall(_.scores("score").num == 0.0))
         assertEquals(
           recorder.results.head._2.summary,
           Some("<strong>Iron Mike</strong> and <strong>Sugar Ray</strong> fought to a draw, 30–30 after 3 rounds.")
         )
+    }
+
+    // A tournament's tie-break: level after the scheduled rounds is not the end.
+    test("a no-tie bout level after the last round goes to extra rounds until a corner is ahead") {
+        val (engine, recorder, store, _, _) = fixture(createRequest().copy(noTie = Some(true)))
+        (1 to 3).foreach { _ =>
+            engine.plan("m-1", alice, Allocation(2, 2, 1))
+            engine.plan("m-1", bob, Allocation(2, 2, 1))
+        }
+        assert(!bout(store).isOver)
+        assert(recorder.results.isEmpty)
+        assertEquals(engine.stateOf(bout(store), None).round, 4)
+        assert(engine.stateOf(bout(store), None).noTie)
+        assertEquals(bout(store).pending.size, 2)
+
+        // A fourth, level again, and a fifth that Red takes on activity.
+        engine.plan("m-1", alice, Allocation(2, 2, 1))
+        engine.plan("m-1", bob, Allocation(2, 2, 1))
+        assert(!bout(store).isOver)
+        engine.plan("m-1", alice, Allocation(5, 0, 0))
+        engine.plan("m-1", bob, Allocation(0, 5, 0))
+
+        val m = bout(store)
+        assert(m.isOver)
+        assertEquals(m.rounds.size, 5)
+        assertEquals((m.points(Side.Red), m.points(Side.Blue)), (50, 49))
+        assertEquals(m.winner.map(_.side), Some(Side.Red))
+        val results = recorder.results.head._2.results
+        assertEquals(results.map(r => r.participantId -> r.rank).toMap, Map(11L -> 1, 22L -> 2))
+        assertEquals(results.find(_.participantId == 11L).get.scores("score").num, 1.0)
+    }
+
+    test("a no-tie bout ahead on points after the last round ends as scheduled") {
+        val (engine, recorder, store, _, _) = fixture(createRequest().copy(noTie = Some(true)))
+        (1 to 3).foreach { _ =>
+            engine.plan("m-1", alice, Allocation(5, 0, 0))
+            engine.plan("m-1", bob, Allocation(0, 5, 0))
+        }
+        assert(bout(store).isOver)
+        assertEquals(bout(store).rounds.size, 3)
+        assertEquals(recorder.results.size, 1)
     }
 
     test("a bout stored before fighters' names were kept is summed up by the players' nicknames") {

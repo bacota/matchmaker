@@ -196,10 +196,20 @@ object EloRatingService {
         gameId: GameId,
         seats: Seq[(PlayerId, GameRoleId)],
         byRole: Boolean
+    ): IO[StartingRatings] = startingRatingsOf(session, gameId, seats.map((p, r) => (p, Some(r))), byRole)
+
+    /** As [[startingRatings]], for seats some of which have no role yet — a tournament seat whose player chooses it in
+      * the engine (V52). A seat with none has a rating in no role until it chooses.
+      */
+    def startingRatingsOf(
+        session: skunk.Session[IO],
+        gameId: GameId,
+        seats: Seq[(PlayerId, Option[GameRoleId])],
+        byRole: Boolean
     ): IO[StartingRatings] = {
         val repo = new EloRatingRepo(session)
-        val keys = seats.map((player, _) => RatingKey(None, player)) ++
-            (if (byRole) seats.map((player, role) => RatingKey(Some(role), player)) else Nil)
+        val keys = (seats.map((player, _) => RatingKey(None, player)) ++
+            (if (byRole) seats.flatMap((player, role) => role.map(r => RatingKey(Some(r), player))) else Nil)).distinct
         (repo.ensureRatedIn(gameId, keys) *> repo.readForShare(gameId, keys)).map(StartingRatings(_))
     }
 
@@ -290,9 +300,13 @@ object EloRatingService {
                     .flatMap { row =>
                         val record = MatchRecord.of(ranks(row.participantId), ranks.values.toSeq, forfeit)
                         deltas.get(row.participantId).map(d => (RatingKey(None, row.playerId), d, record)).toList ++
+                            // A seat that never got a role (V52) has no role rating to move; and then no
+                            // seat has a delta in its role, since one of them began with no rating there.
                             inRole
                                 .get(row.participantId)
-                                .map(d => (RatingKey(Some(row.gameRoleId), row.playerId), d, record))
+                                .flatMap(d =>
+                                    row.gameRoleId.map(role => (RatingKey(Some(role), row.playerId), d, record))
+                                )
                     }
                     .sortBy(_._1)
                 for {
@@ -378,9 +392,10 @@ object EloRatingService {
                     deltas.getOrElse(r.participantId, 0) - r.eloDelta.getOrElse(0)
                 )(_ + _)
             roleChange = results
-                .groupMapReduce(r =>
-                    RatingKey(Some(bySeat(r.participantId).gameRoleId), bySeat(r.participantId).playerId)
-                )(r => inRole.getOrElse(r.participantId, 0) - r.eloRoleDelta.getOrElse(0))(_ + _)
+                .filter(r => bySeat(r.participantId).gameRoleId.isDefined)
+                .groupMapReduce(r => RatingKey(bySeat(r.participantId).gameRoleId, bySeat(r.participantId).playerId))(
+                  r => inRole.getOrElse(r.participantId, 0) - r.eloRoleDelta.getOrElse(0)
+                )(_ + _)
             // Whether a turn running out ended it, for the whole match, as `rate` decided when it completed: one
             // row's flag is enough. Read row by row instead, a match an engine flagged on the loser's row alone
             // would give its winner a forfeit win and never take it back.
@@ -392,15 +407,10 @@ object EloRatingService {
                 .flatMap { r =>
                     val seat = bySeat(r.participantId)
                     val record = MatchRecord.of(r.rank, results.map(_.rank), forfeit)
-                    List(
-                      (RatingKey(None, seat.playerId), r.eloDelta, deltas.get(r.participantId), record),
-                      (
-                        RatingKey(Some(seat.gameRoleId), seat.playerId),
-                        r.eloRoleDelta,
-                        inRole.get(r.participantId),
-                        record
-                      )
-                    )
+                    (RatingKey(None, seat.playerId), r.eloDelta, deltas.get(r.participantId), record) ::
+                        seat.gameRoleId.toList.map(role =>
+                            (RatingKey(Some(role), seat.playerId), r.eloRoleDelta, inRole.get(r.participantId), record)
+                        )
                 }
                 .filter((_, was, now, _) => was.isDefined || now.isDefined)
                 .sortBy(_._1)
@@ -431,8 +441,8 @@ object EloRatingService {
                     .traverse_(participantRepo.adjustEloStart(gameId, seat.participantId, _)) *>
                     // A later seat in the same role began at a role rating this changes; one in another role, or
                     // with no role rating, did not.
-                    roleChange
-                        .get(RatingKey(Some(seat.gameRoleId), seat.playerId))
+                    seat.gameRoleId
+                        .flatMap(role => roleChange.get(RatingKey(Some(role), seat.playerId)))
                         .filter(_ != 0)
                         .traverse_(participantRepo.adjustEloRoleStart(gameId, seat.participantId, _))
             }

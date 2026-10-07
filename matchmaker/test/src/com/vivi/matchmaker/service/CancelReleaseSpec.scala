@@ -93,7 +93,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                     pending = true,
                     completed = false,
                     None,
-                    game.roles.head.gameRoleId
+                    Some(game.roles.head.gameRoleId)
                   ),
                   EloRating.initial
                 )
@@ -122,6 +122,8 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
           matchEndings = Some(new MatchEndings {
               def ended(gameId: GameId, matchId: MatchId): IO[Unit] = IO { Queueing.this.ended :+= matchId }
               def ratingsChanged(gameId: GameId): IO[Unit] = IO.unit
+              def due(message: com.vivi.matchmaker.ending.MatchDue): IO[Unit] = IO.unit
+              def check(gameId: GameId, matchId: MatchId): IO[Unit] = IO.unit
           })
         )
     }

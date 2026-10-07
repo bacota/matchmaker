@@ -22,6 +22,16 @@ object Json {
     given ReadWriter[GameParameterId] = readwriter[Int].bimap(_.value, GameParameterId.apply)
     given ReadWriter[ParticipantId] = readwriter[Long].bimap(_.value, ParticipantId.apply)
     given ReadWriter[ChallengeId] = readwriter[Long].bimap(_.value, ChallengeId.apply)
+    given ReadWriter[TournamentId] = readwriter[Long].bimap(_.value, TournamentId.apply)
+    given ReadWriter[EntryId] = readwriter[Long].bimap(_.value, EntryId.apply)
+    given ReadWriter[TournamentParticipantId] = readwriter[Long].bimap(_.value, TournamentParticipantId.apply)
+    given ReadWriter[FixtureId] = readwriter[Long].bimap(_.value, FixtureId.apply)
+    given ReadWriter[SlotId] = readwriter[Long].bimap(_.value, SlotId.apply)
+
+    /** By their stored codes, as the columns hold them. */
+    given ReadWriter[TournamentClass] = readwriter[String].bimap(_.code, TournamentClass.fromCode)
+    given ReadWriter[TournamentType] = readwriter[String].bimap(_.code, TournamentType.fromCode)
+    given ReadWriter[Tiebreaker] = readwriter[String].bimap(_.code, Tiebreaker.fromCode)
 
     given ReadWriter[GameType] = readwriter[String].bimap(
       _.code.toString,
@@ -127,6 +137,45 @@ object Json {
     given ReadWriter[CompletedFrame] =
         readwriter[String].bimap(_.code, code => CompletedFrame.fromCode(code).getOrElse(CompletedFrame.Day))
     given ReadWriter[CompletedPage] = macroRW
+    given ReadWriter[MatchFixture] = macroRW
+
+    // Tournaments (V53).
+    given ReadWriter[EliminationSettings] = macroRW
+    given ReadWriter[Tournament] = macroRW
+    given ReadWriter[TournamentEntry] = macroRW
+    given ReadWriter[TournamentParticipant] = macroRW
+    given ReadWriter[TournamentRound] = macroRW
+    given ReadWriter[Fixture] = macroRW
+
+    /** A slot's source as the columns hold it: `{"bye":true}`, `{"seed":3}`, or `{"prevFixtureId":7,"rank":1}`. */
+    given ReadWriter[SlotSource] = readwriter[ujson.Value].bimap(
+      {
+          case SlotSource.Bye                => ujson.Obj("bye" -> true)
+          case SlotSource.Seed(seed)         => ujson.Obj("seed" -> seed)
+          case SlotSource.Winner(pool, rank) => ujson.Obj("prevFixtureId" -> pool.value.toDouble, "rank" -> rank)
+      },
+      json =>
+          json.obj.get("seed") match {
+              case Some(seed) => SlotSource.Seed(seed.num.toInt)
+              case None =>
+                  json.obj.get("prevFixtureId") match {
+                      case Some(pool) => SlotSource.Winner(FixtureId(pool.num.toLong), json("rank").num.toInt)
+                      case None       => SlotSource.Bye
+                  }
+          }
+    )
+    given ReadWriter[FixtureSlot] = macroRW
+    given ReadWriter[TournamentEntrant] = macroRW
+    given ReadWriter[TournamentPool] = macroRW
+    given ReadWriter[TournamentSeatView] = macroRW
+    given ReadWriter[TournamentMatchView] = macroRW
+    given ReadWriter[StandingLine] = macroRW
+    given ReadWriter[PoolStandings] = macroRW
+    given ReadWriter[TournamentProgress] = macroRW
+    given ReadWriter[TournamentDetail] = macroRW
+    given ReadWriter[TournamentSummary] = macroRW
+    given ReadWriter[RoundOverrides] = macroRW
+    given ReadWriter[RoundWork] = macroRW
     given ReadWriter[Match] = macroRW
 
     /** Structural twin of `Game` with the existential in `parameters` pinned to `String`.
@@ -222,6 +271,26 @@ object Json {
       * answered — only to record it. See `PlayerService.updateEmail`.
       */
     case class EmailRequest(email: String)
+
+    /** A tournament's new owner: `PUT /tournaments/{gameId}/{tournamentId}/owner`. */
+    case class OwnerRequest(playerId: PlayerId)
+
+    /** An invitation to a tournament: a player in a plain game, a character in a character game. */
+    case class TournamentInviteRequest(playerId: Option[PlayerId] = None, characterId: Option[CharacterId] = None)
+
+    /** One seat's rank, as a tournament's owner sets it by hand (D12). */
+    case class SeatRank(participantId: ParticipantId, rank: Int)
+
+    /** Cancelling a match, with — for a tournament's — every seat's rank, when its owner sets them. */
+    case class CancelRequest(ranks: Option[List[SeatRank]] = None)
+
+    /** Correcting a cancelled tournament match's ranks. */
+    case class RanksRequest(ranks: List[SeatRank])
+
+    def rankMap(ranks: List[SeatRank]): Map[ParticipantId, Int] = ranks.map(r => r.participantId -> r.rank).toMap
+
+    /** Entering a tournament: as a character, in a character game; as oneself otherwise. */
+    case class EnterRequest(characterId: Option[CharacterId] = None)
 
     /** Whether a match is friendly, as a game's admin says it is: `PUT /games/{gameId}/matches/{matchId}/friendly`. The
       * value rather than a toggle, so that sending it twice means the same as sending it once.
@@ -321,10 +390,16 @@ object Json {
       * than two optional fields, as the note above asks of fields that only mean something together: a number is how a
       * late callback is recognised, and the whole pending list is what makes a late one safe to ignore. A change
       * ("clear the mover, make `next` pending") cannot be skipped without losing the half of it nothing later repeats.
+      *
+      * `roles` is every seat's role so far, in a match whose roles are being chosen in the engine (V52); empty
+      * otherwise, and from an engine that predates it.
       */
-    case class MoveState(sequence: Long, pending: List[PendingSeat])
+    case class MoveState(sequence: Long, pending: List[PendingSeat], roles: List[SeatRole] = Nil)
 
     case class PendingSeat(participantId: ParticipantId, since: Instant)
+
+    /** A seat's role, by its name, as an engine reports it once the seat has chosen one. */
+    case class SeatRole(participantId: ParticipantId, role: String)
 
     /** A player saving one level of their notification settings, and how far down they want it to reach.
       *
@@ -358,7 +433,9 @@ object Json {
         rank: Int,
         scores: Map[String, ujson.Value],
         isWinner: Boolean,
-        forfeit: Boolean = false
+        forfeit: Boolean = false,
+        // The seat's role, in a match whose roles were chosen in the engine (V52); absent otherwise.
+        role: Option[String] = None
     )
 
     /** `turns` is every turn the match had, from an engine that sends them: what lets matchmaker complete the match and
@@ -390,7 +467,8 @@ object Json {
         matchId: MatchId,
         participantId: ParticipantId,
         nickname: String,
-        roleName: String,
+        // None for a seat whose role was still being chosen when the match ended (V52).
+        roleName: Option[String],
         rank: Option[Int],
         scores: Map[String, ujson.Value],
         isWinner: Boolean,
@@ -437,6 +515,12 @@ object Json {
     given ReadWriter[ArchiveDownload] = macroRW
 
     given ReadWriter[RegisterRequest] = macroRW
+    given ReadWriter[OwnerRequest] = macroRW
+    given ReadWriter[TournamentInviteRequest] = macroRW
+    given ReadWriter[EnterRequest] = macroRW
+    given ReadWriter[SeatRank] = macroRW
+    given ReadWriter[CancelRequest] = macroRW
+    given ReadWriter[RanksRequest] = macroRW
     given ReadWriter[NicknameRequest] = macroRW
     given ReadWriter[FriendlyRequest] = macroRW
     given ReadWriter[RatingRequest] = macroRW
@@ -449,6 +533,7 @@ object Json {
     given ReadWriter[CreateChallenge] = macroRW
     given ReadWriter[PreferencesRequest] = macroRW
     given ReadWriter[PendingSeat] = macroRW
+    given ReadWriter[SeatRole] = macroRW
     given ReadWriter[MoveState] = macroRW
     given ReadWriter[MoveNotification] = macroRW
     given ReadWriter[ResultEntry] = macroRW

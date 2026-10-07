@@ -30,7 +30,11 @@ case class GameRole(
     gameId: GameId,
     name: String,
     optional: Boolean,
-    displayName: String
+    displayName: String,
+    /** A role a higher seed is simply given when roles are chosen in a tournament (V52) — White in chess. See
+      * `Game.choosesRoles`.
+      */
+    preferred: Boolean = false
 )
 
 /** Whether a game's challenges/acceptances/participants require an attached character. Mirrors the `game_type`
@@ -102,5 +106,12 @@ case class Game(
     /* The admin saying that no role of the game has any advantage in winning it (V49). Unticked, a
      * rated match moves its players' ratings in the roles they played as well as overall, and each
      * role has a leaderboard of its own. */
-    unimportantRoles: Boolean = false
+    unimportantRoles: Boolean = false,
+    /* Whether the game's engine lets players choose their roles in the match itself (V52): deployed with the
+     * engines' common role choice, so a match may be created with seats still to choose. Without it, a
+     * tournament assigns the roles left after the preferred ones by seed. */
+    choosesRoles: Boolean = false,
+    /* The key in a result's scores holding the game's numeric score (V53): what a tournament's SCORE tiebreaker adds
+     * up. None, and ranks stand in for scores. `score` for boxing. */
+    scoreKey: Option[String] = None
 )

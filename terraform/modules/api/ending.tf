@@ -22,7 +22,7 @@
 locals {
   ending_name = "${local.name}-ending"
 
-  # Lambda's maximum. A batch is settled one match after another, each perhaps waiting on an
+  # Lambda's maximum. A batch is worked on eight messages at a time, each perhaps waiting on an
   # engine, and the function stops starting on them half a minute before this (ending.Handler).
   ending_timeout_s = 900
 }
@@ -68,6 +68,9 @@ data "aws_iam_policy_document" "match_ended" {
       "sqs:ReceiveMessage",
       "sqs:DeleteMessage",
       "sqs:GetQueueAttributes",
+      # A tournament match that could not be made is tried again in half an hour rather than the
+      # visibility timeout's hour and a half: ending.Handler moves its visibility.
+      "sqs:ChangeMessageVisibility",
     ]
     resources = [aws_sqs_queue.match_ended.arn]
   }
@@ -137,10 +140,13 @@ resource "aws_lambda_function" "ending" {
 
       ARCHIVE_BUCKET          = aws_s3_bucket.archive["permanent"].bucket
       FRIENDLY_ARCHIVE_BUCKET = aws_s3_bucket.archive["friendly"].bucket
+
+      # Its own queue: a tournament's Check round can end a match here by forfeit, and a round that
+      # completes may queue its tie-breaks; and a match that could not be made has its retry moved
+      # sooner, by its receipt on this queue.
+      MATCH_ENDED_QUEUE_URL = aws_sqs_queue.match_ended.url
     }
   }
-
-  # No MATCH_ENDED_QUEUE_URL: nothing here ends a match, so nothing here says one ended.
 
   depends_on = [
     aws_iam_role_policy_attachment.basic_execution,
@@ -173,8 +179,10 @@ resource "aws_lambda_event_source_mapping" "match_ended" {
   function_response_types = ["ReportBatchItemFailures"]
 
   /* A ceiling on how many run at once, which is about the database, as the bounce consumer's is:
-   * ending_max_concurrency * 2 connections at worst, beside the api function's. A burst of endings
-   * waits in the queue rather than taking connections players' requests need. */
+   * ending_max_concurrency * 2 connections at worst -- 20 at the default of 10 -- beside the api
+   * function's. A burst of endings, or a tournament round's matches, waits in the queue rather than
+   * taking connections players' requests need. Each copy holds a connection only while it writes:
+   * matches are made and checked with none held across the engine call (tournament-plan D5). */
   scaling_config {
     maximum_concurrency = var.ending_max_concurrency
   }

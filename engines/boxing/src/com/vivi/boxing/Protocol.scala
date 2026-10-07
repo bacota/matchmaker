@@ -79,7 +79,9 @@ object Protocol {
         method: Option[String],
         corners: List[CornerView],
         rounds: List[RoundView],
-        clock: Option[ClockView] = None
+        clock: Option[ClockView] = None,
+        // A bout that goes to extra rounds while the cards are level (`Bout.noTie`).
+        noTie: Boolean = false
     )
 
     /** One corner as a viewer may see it. `fighter` is the fighter's characteristics, and only in the viewer's own

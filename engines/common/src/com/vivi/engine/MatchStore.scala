@@ -105,9 +105,16 @@ class InMemoryMatchStore[M <: HasMatchId] extends MatchStore[M] {
   * Nothing here queries by anything but the match id, so modelling a game's state as attributes would buy nothing and
   * would tie the table's shape to the game's. The `version` attribute is what makes [[modify]] safe: the conditional
   * write fails rather than overwriting a move made between this container's read and its write.
+  *
+  * `keyPrefix` keeps a second kind of record in the same table under keys of its own: a match choosing its roles is
+  * kept as `roles#<matchId>` ([[EngineConfig.roleStore]]), beside the game's match under its plain id.
   */
-class DynamoDbMatchStore[M <: HasMatchId: ReadWriter](http: SignedHttp, table: String, region: String)
-    extends MatchStore[M] {
+class DynamoDbMatchStore[M <: HasMatchId: ReadWriter](
+    http: SignedHttp,
+    table: String,
+    region: String,
+    keyPrefix: String = ""
+) extends MatchStore[M] {
 
     private val dynamoDb = DynamoDb(http, region)
 
@@ -118,7 +125,7 @@ class DynamoDbMatchStore[M <: HasMatchId: ReadWriter](http: SignedHttp, table: S
           "GetItem",
           ujson.Obj(
             "TableName" -> table,
-            "Key" -> ujson.Obj("matchId" -> ujson.Obj("S" -> matchId)),
+            "Key" -> ujson.Obj("matchId" -> ujson.Obj("S" -> (keyPrefix + matchId))),
             // A move must not be decided against a stale replica, and a strongly consistent read of
             // one small item is what this costs.
             "ConsistentRead" -> true
@@ -142,7 +149,7 @@ class DynamoDbMatchStore[M <: HasMatchId: ReadWriter](http: SignedHttp, table: S
         val payload = ujson.Obj(
           "TableName" -> table,
           "Item" -> ujson.Obj(
-            "matchId" -> ujson.Obj("S" -> m.matchId),
+            "matchId" -> ujson.Obj("S" -> (keyPrefix + m.matchId)),
             "version" -> ujson.Obj("N" -> next.toString),
             "state" -> ujson.Obj("S" -> write(m))
           )
@@ -166,7 +173,7 @@ class DynamoDbMatchStore[M <: HasMatchId: ReadWriter](http: SignedHttp, table: S
     def delete(matchId: String): Unit =
         call(
           "DeleteItem",
-          ujson.Obj("TableName" -> table, "Key" -> ujson.Obj("matchId" -> ujson.Obj("S" -> matchId)))
+          ujson.Obj("TableName" -> table, "Key" -> ujson.Obj("matchId" -> ujson.Obj("S" -> (keyPrefix + matchId))))
         )
 
     def modify[A](matchId: String)(f: M => (Option[M], A)): Option[A] = {

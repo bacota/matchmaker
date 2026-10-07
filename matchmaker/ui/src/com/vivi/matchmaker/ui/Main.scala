@@ -67,7 +67,7 @@ object Views {
       * busy button refuses is refused by the handler instead. `disabledWhen` is a real `disabled` -- a button that
       * cannot be used yet is one to skip over.
       */
-    private def busyButton(
+    private[ui] def busyButton(
         label: String,
         classes: Option[String] = None,
         disabledWhen: Signal[Boolean] = Val(false)
@@ -92,7 +92,7 @@ object Views {
       * once. A placeholder is not a label — it is a hint that disappears at the first keystroke, and leaves a screen
       * reader with an unnamed box — so every field that had only a placeholder gets one of these instead.
       */
-    private def field(caption: String, control: HtmlElement): HtmlElement =
+    private[ui] def field(caption: String, control: HtmlElement): HtmlElement =
         label(cls := "field", caption, control)
 
     /** The body of a list: its rows, or a line saying why there are none.
@@ -105,7 +105,7 @@ object Views {
       * and throwing away what is on screen to say "Loading…" would lose the rows in order to repeat what the dimming
       * has already said.
       */
-    private def listing[A](items: Signal[Seq[A]], fetching: Signal[Boolean])(
+    private[ui] def listing[A](items: Signal[Seq[A]], fetching: Signal[Boolean])(
         empty: => HtmlElement
     )(rows: Seq[A] => HtmlElement): Modifier[HtmlElement] =
         child <-- items.combineWith(fetching).map {
@@ -124,7 +124,7 @@ object Views {
       * acted on. A fast request would flash too briefly to register, so the dimming is held for a moment; a slow one
       * holds it until the answer arrives.
       */
-    private def refreshableSection(
+    private[ui] def refreshableSection(
         heading: String,
         reload: () => Future[Unit],
         subsection: Boolean
@@ -140,7 +140,7 @@ object Views {
       * created inside it is thrown away along with the element, and the dimming ends the moment the response lands
       * rather than being seen.
       */
-    private def refreshableSection(
+    private[ui] def refreshableSection(
         heading: String,
         refreshing: Var[Boolean],
         reload: () => Future[Unit],
@@ -258,7 +258,7 @@ object Views {
     /** `Store.error` as a banner: in the header, and again inside each dialog that reports through it, since a modal
       * dialog makes the header inert and covers it -- a refusal shown only there is neither seen nor read out.
       */
-    private def errorBanner: Modifier[HtmlElement] =
+    private[ui] def errorBanner: Modifier[HtmlElement] =
         child <-- Store.error.signal.map {
             case Some(message) =>
                 div(
@@ -344,12 +344,13 @@ object Views {
             // Focusable from script only: where the focus goes on a new screen that has no heading yet.
             tabIndex := -1,
             child <-- Store.page.signal.map {
-                case Store.Page.Home              => mainPage
-                case Store.Page.OneGame(gameId)   => gamePage(gameId)
-                case Store.Page.NewGame           => newGamePage
-                case Store.Page.FindPlayers       => findPlayersPage
-                case Store.Page.OnePlayer(player) => playerPage(player)
-                case Store.Page.OneCharacter(c)   => characterPage(c)
+                case Store.Page.Home                      => mainPage
+                case Store.Page.OneGame(gameId)           => gamePage(gameId)
+                case Store.Page.NewGame                   => newGamePage
+                case Store.Page.FindPlayers               => findPlayersPage
+                case Store.Page.OnePlayer(player)         => playerPage(player)
+                case Store.Page.OneCharacter(c)           => characterPage(c)
+                case Store.Page.OneTournament(g, t, name) => Tournaments.page(g, t, name)
             },
             inContext(screen => Store.page.signal.changes --> (_ => focusNewScreen(screen.ref)))
           )
@@ -461,6 +462,7 @@ object Views {
           dueSection(),
           myMatchesSection(),
           pendingAcceptances(),
+          Tournaments.homeSection,
           recentlyCompletedSection
         )
 
@@ -1996,7 +1998,7 @@ object Views {
       * Opened at once when the hand-off is ready at once, which keeps it inside the click a browser requires a popup to
       * come from; only a session that has to be refreshed first waits for that.
       */
-    private def openSignedIn(url: String): Unit = {
+    private[ui] def openSignedIn(url: String): Unit = {
         def open(target: String): Unit = { dom.window.open(target, "_blank", "noopener,noreferrer"); () }
         val handed = Auth.handOff(url)
         handed.value match {
@@ -2210,7 +2212,7 @@ object Views {
                         // a statement of it. The text says it; the emoji is decoration over the top.
                         if (row.isWinner) span(cls := "winner", aria.hidden := true, "🏆 ") else emptyNode,
                         if (row.isWinner) span(cls := "sr-only", "winner: ") else emptyNode,
-                        span(cls := "who", s"${row.nickname} (${row.roleName})"),
+                        span(cls := "who", s"${row.nickname} (${row.roleName.getOrElse("choosing role")})"),
                         // Their Elo rating as the match began, in a friendly match as in any other, and
                         // what the match did to it if it was rated.
                         span(cls := "detail", s" — ${Format.elo(row.eloStart, row.eloDelta)}"),
@@ -2308,6 +2310,7 @@ object Views {
                         myMatchesSection(Some(game)),
                         pendingAcceptances(Some(game)),
                         gameChallenges(game),
+                        Tournaments.gameSection(game),
                         ratingsSection(game),
                         gameHistory(game)
                       )
@@ -2535,7 +2538,8 @@ object Views {
         gameRoleId: GameRoleId,
         name: Var[String],
         displayName: Var[String],
-        optional: Var[Boolean]
+        optional: Var[Boolean],
+        preferred: Var[Boolean]
     )
     private case class ParameterDraft(
         name: Var[String],
@@ -2544,11 +2548,11 @@ object Views {
         default: Var[String]
     )
 
-    private def emptyRole: RoleDraft = RoleDraft(GameRoleId.unassigned, Var(""), Var(""), Var(false))
+    private def emptyRole: RoleDraft = RoleDraft(GameRoleId.unassigned, Var(""), Var(""), Var(false), Var(false))
     private def emptyParameter: ParameterDraft = ParameterDraft(Var(""), Var(""), Var(""), Var(""))
 
     private def draftOf(role: GameRole): RoleDraft =
-        RoleDraft(role.gameRoleId, Var(role.name), Var(role.displayName), Var(role.optional))
+        RoleDraft(role.gameRoleId, Var(role.name), Var(role.displayName), Var(role.optional), Var(role.preferred))
 
     private def draftOf(parameter: GameParameter[String]): ParameterDraft =
         ParameterDraft(
@@ -2616,7 +2620,24 @@ object Views {
                     controlled(checked <-- draft.optional.signal, onClick.mapToChecked --> draft.optional)
                   ),
                   "optional"
-                ),
+                ), {
+                    val preferredTip = s"$formKey-role-$i-preferred-tip"
+                    withTip(
+                      preferredTip,
+                      "Preferred role",
+                      "When players choose their roles in a tournament, the highest seed is given a preferred " +
+                          "role, if one is free, without choosing — White in chess."
+                    )(
+                      label(
+                        input(
+                          tpe := "checkbox",
+                          aria.describedBy := preferredTip,
+                          controlled(checked <-- draft.preferred.signal, onClick.mapToChecked --> draft.preferred)
+                        ),
+                        "preferred"
+                      )
+                    )
+                },
                 // A role that exists cannot be removed: acceptances and played matches name it. The
                 // server refuses it too — this is why the button is not there to press.
                 if (draft.gameRoleId == GameRoleId.unassigned)
@@ -2686,7 +2707,7 @@ object Views {
             val name = d.name.now().trim
             // Left blank, a role is shown by its name -- the server does the same.
             val displayName = Option(d.displayName.now().trim).filter(_.nonEmpty).getOrElse(name)
-            (d.gameRoleId, name, d.optional.now(), displayName)
+            (d.gameRoleId, name, d.optional.now(), displayName, d.preferred.now())
         }
         // A blank new row is one the admin added and did not fill in, and is dropped. A blank
         // existing row is a role whose name has been cleared -- dropping that would ask the server to
@@ -2699,8 +2720,8 @@ object Views {
         else if (named.map(_._4).distinct.sizeIs != named.size) Left("Two roles cannot be shown under the same name.")
         else
             Right(
-              named.map((id, name, optional, displayName) =>
-                  GameRole(id, GameId.unassigned, name, optional, displayName)
+              named.map((id, name, optional, displayName, preferred) =>
+                  GameRole(id, GameId.unassigned, name, optional, displayName, preferred)
               )
             )
     }
@@ -2760,6 +2781,10 @@ object Views {
         val disabled = Var(existing.exists(!_.active))
         // No role has an advantage in winning: ratings are then kept overall only (V49).
         val unimportantRoles = Var(existing.exists(_.unimportantRoles))
+        // The engine lets players choose their roles in the match itself (V52).
+        val choosesRoles = Var(existing.exists(_.choosesRoles))
+        // The score a tournament's SCORE tiebreaker adds up (V53): a key in the engine's results.
+        val scoreKey = Var(existing.flatMap(_.scoreKey).getOrElse(""))
         // What this form's tip ids start with: a game's edit form and the new-game form are different forms.
         val formKey = existing.fold("new-game")(game => s"game-${game.gameId.value}")
         // Write-only: starts empty whether or not a key is stored, because the stored one is never sent here.
@@ -2908,7 +2933,36 @@ object Views {
                   "Unimportant Roles"
                 )
               )
+          }, {
+              val tipId = s"$formKey-chooses-roles-tip"
+              withTip(
+                tipId,
+                "Players choose roles",
+                "Check this if the game engine lets players choose their roles at the start of a match. " +
+                    "Tournaments then let players choose in seed order; without it, roles are given by seed."
+              )(
+                label(
+                  input(
+                    tpe := "checkbox",
+                    aria.describedBy := tipId,
+                    controlled(checked <-- choosesRoles.signal, onClick.mapToChecked --> choosesRoles)
+                  ),
+                  "Players choose roles"
+                )
+              )
           },
+          tipField(
+            s"$formKey-score-key-tip",
+            "Score key",
+            "The score in the game engine's results that a tournament's Score tiebreaker adds up, such as " +
+                "\"score\" for boxing. Left blank, players level on points are separated by their finishing places."
+          )(
+            input(
+              autoComplete := "off",
+              spellCheck := false,
+              controlled(value <-- scoreKey.signal, onInput.mapToValue --> scoreKey)
+            )
+          ),
           parameterEditor(formKey, parameters),
           busyButton(
             if (existing.isDefined) "Save Changes" else "Create Game",
@@ -2950,6 +3004,8 @@ object Views {
                         externalId = engineIdentity.now().trim,
                         timeoutAction = timeoutAction.now(),
                         unimportantRoles = unimportantRoles.now(),
+                        choosesRoles = choosesRoles.now(),
+                        scoreKey = Option(scoreKey.now().trim).filter(_.nonEmpty),
                         characterUrl = Option
                             .when(gameType.now() == GameType.Character)(characterUrl.now().trim)
                             .filter(_.nonEmpty)
@@ -2972,6 +3028,8 @@ object Views {
                               engineIdentity.set("")
                               characterUrl.set("")
                               unimportantRoles.set(false)
+                              choosesRoles.set(false)
+                              scoreKey.set("")
                               roles.set(List(emptyRole))
                               parameters.set(Nil)
                           } else {
@@ -3881,6 +3939,7 @@ object Views {
           parameterDetail(game, challenge),
           if (challenge.isPublic) div(cls := "detail", "public") else emptyNode,
           if (challenge.friendly) friendlyLabel() else emptyNode,
+          if (challenge.noTie) div(cls := "detail", "no tie") else emptyNode,
           // A game's admin offering a match for others to play: said, because nothing else on the row
           // tells it from one they are seated in.
           if (challenge.gameRoleId.isEmpty) div(cls := "detail", "you are not playing in it") else emptyNode,
@@ -4441,6 +4500,7 @@ object Views {
           timeLimitDetail(challenge),
           parameterDetail(game, challenge),
           if (challenge.friendly) friendlyLabel() else emptyNode,
+          if (challenge.noTie) div(cls := "detail", "no tie") else emptyNode,
           // A seat held for this player is said rather than offered: a picker with one entry asks a
           // question whose answer is already settled, and what they need to know is which seat they
           // were asked for.
@@ -4554,7 +4614,7 @@ object Views {
     /** A captioned text field whose explanation is a tip beside it rather than a line under it: [[withTip]] around a
       * `label.field`, with the input pointed at the tip so that it is read out with the field.
       */
-    private def tipField(id: String, caption: String, text: String)(control: HtmlElement): HtmlElement =
+    private[ui] def tipField(id: String, caption: String, text: String)(control: HtmlElement): HtmlElement =
         withTip(id, caption, text)(label(cls := "field", caption, control.amend(aria.describedBy := id)))
 
     /** A control with a tip beside it: a "?" button that shows `text` on hover, on keyboard focus, and on a tap, which
@@ -4568,7 +4628,7 @@ object Views {
      * both list it -- so a tip under a row is numbered as it is made rather than named after the row. */
     private var tipsMade = 0
 
-    private def freshTipId(prefix: String): String = {
+    private[ui] def freshTipId(prefix: String): String = {
         tipsMade += 1
         s"$prefix-$tipsMade"
     }
@@ -4598,7 +4658,7 @@ object Views {
           tipWord(freshTipId("friendly-tip"), "Friendly", friendlyMeaning)
         )
 
-    private def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
+    private[ui] def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
         tipped(id, text, control)(cls := "tip-toggle", aria.label := s"About $subject", "?")
 
     /** A word that is its own tip: hovered, focused or tapped, it shows what it means, as a "?" beside it would. For a
@@ -4840,6 +4900,9 @@ object Views {
         // default -- it asks the players to be there together -- and when on, the limit is required,
         // since it is the clock the game plays against.
         val live = Var(false)
+        // Whether the match must end with somebody ahead (V51). Off by default: a draw is a fair end to
+        // most matches, and what the game does instead -- extra rounds, no move limit -- is its own.
+        val noTie = Var(false)
         // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
         // has been claimed yet, so every role of the game is on offer and the first stands selected.
         val role = Var(game.roles.headOption.map(_.gameRoleId))
@@ -5077,6 +5140,22 @@ object Views {
               "Live"
             )
           ),
+          withTip(
+            "no-tie-tip",
+            "No tie",
+            "The match must end with a winner. Each game decides how: boxing goes to extra rounds while the " +
+                "fighters are level, and Stratego drops its move limit, so the clock decides a game nobody can " +
+                "win. A game with no way to break a tie plays as usual."
+          )(
+            label(
+              input(
+                tpe := "checkbox",
+                aria.describedBy := "no-tie-tip",
+                controlled(checked <-- noTie.signal, onClick.mapToChecked --> noTie)
+              ),
+              "No tie"
+            )
+          ),
           // Public means anyone may watch the match, which the game engine implements by issuing a
           // url that needs no sign-in. It is decided here because it is a property of the game being
           // offered, not of any one player's part in it.
@@ -5179,7 +5258,8 @@ object Views {
                             autoStart = autoStart.now() || !seatedNow,
                             isOpen = isOpen,
                             live = live.now(),
-                            friendly = isFriendly
+                            friendly = isFriendly,
+                            noTie = noTie.now()
                           )
                       else
                           PlainChallenge(
@@ -5197,7 +5277,8 @@ object Views {
                             autoStart = autoStart.now() || !seatedNow,
                             isOpen = isOpen,
                             live = live.now(),
-                            friendly = isFriendly
+                            friendly = isFriendly,
+                            noTie = noTie.now()
                           )
 
                   // One request rather than a create and then an invite: the server validates the
@@ -5229,6 +5310,7 @@ object Views {
                       timeLimitKind.set(TimeLimitKind.PerTurn)
                       autoStart.set(true)
                       live.set(false)
+                      noTie.set(false)
                       plays.set(true)
                       friendly.set(true)
                       if (Store.stillSignedInAs(signIn) && Store.page.now() == Store.Page.OneGame(game.gameId)) {

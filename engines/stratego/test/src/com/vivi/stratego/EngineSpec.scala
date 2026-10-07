@@ -384,6 +384,25 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(f.recorder.results.head._2.results.head.scores("ending").str, "cap")
     }
 
+    // A match asked to end with somebody ahead (a tournament's tie-break) runs past its cap: the clock or the flag
+    // decides it.
+    test("a no-tie match runs on past the move cap, and its page says it has no limit") {
+        val f = deployed(request = createRequest(parameters = Map("maxMoves" -> "2")).copy(noTie = Some(true)))
+        f.engine.move("m-1", alice, 30, 40)
+        f.engine.move("m-1", bob, 69, 59)
+        f.engine.move("m-1", alice, 40, 50)
+        assert(!f.m.isOver)
+        assert(f.recorder.results.isEmpty)
+        assert(f.state(Some(alice)).noTie)
+        assert(!Fixture().state(Some(alice)).noTie)
+    }
+
+    test("noTie absent or false leaves the cap where it was") {
+        assert(!Fixture(createRequest().copy(noTie = Some(false))).m.noTie)
+        assert(!Fixture().m.noTie)
+        assert(Fixture(createRequest().copy(noTie = Some(true))).m.noTie)
+    }
+
     test("status counts every turn, setups included, and says whose turn it is") {
         val f = deployed()
         f.engine.move("m-1", alice, 30, 40)

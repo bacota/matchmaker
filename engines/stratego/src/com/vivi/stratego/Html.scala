@@ -1034,7 +1034,8 @@ $replayScript
       l.ranks.forEach(r => { counts[rankName(r)] = (counts[rankName(r)] || 0) + 1; });
       const text = Object.keys(counts).map(r => r + (counts[r] > 1 ? " ×" + counts[r] : "")).join(", ") || "nothing";
       return "<p>" + l.side + " has lost: " + escapeHtml(text) + "</p>";
-    }).join("") + "<p>" + (replaying() ? view : state.moveCount) + " of " + state.maxMoves + " moves</p>";
+    }).join("") + "<p>" + (replaying() ? view : state.moveCount) +
+      (state.noTie ? " moves</p>" : " of " + state.maxMoves + " moves</p>");
   }
 
   /* The sides whose clock ran out in a live match, which is how it ended if there are any. */
@@ -1174,6 +1175,9 @@ $replayScript
   const rules = document.getElementById("rules"), rulesButton = document.getElementById("rules-button");
   rulesButton.addEventListener("click", () => {
     document.getElementById("rules-cap").textContent = state ? String(state.maxMoves) : "a set number of";
+    /* A match that must end with a winner has no move limit, and the rule would say otherwise. */
+    document.getElementById("rules-cap-rule").hidden = !!(state && state.noTie);
+    document.getElementById("rules-no-cap-rule").hidden = !(state && state.noTie);
     if (typeof rules.showModal === "function") rules.showModal();
     else { rules.setAttribute("open", ""); rules.querySelector(".close").focus(); }
   });
@@ -1292,7 +1296,9 @@ $replayScript
       <li>Take the enemy's Flag and you win.</li>
       <li>A player with no move they may make when it is their turn loses — or the match is drawn, if neither side can
         move.</li>
-      <li>After <span id="rules-cap">a set number of</span> moves, counting both sides', the match is drawn.</li>
+      <li id="rules-cap-rule">After <span id="rules-cap">a set number of</span> moves, counting both sides', the match is
+        drawn.</li>
+      <li id="rules-no-cap-rule" hidden>This match has no move limit: it goes on until somebody wins.</li>
       <li>A player may concede at any time, and the other side wins.</li>
       <li>In a timed match, a player whose time runs out loses.</li>
     </ul>

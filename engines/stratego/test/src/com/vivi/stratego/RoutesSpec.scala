@@ -106,4 +106,35 @@ class RoutesSpec extends FunSuite {
         assertEquals(board.pieces.size, 80)
         assert(board.pieces.forall(_.rank.isEmpty))
     }
+
+    // Stratego may be conceded at any time, and so may the choosing of its sides before the game.
+    test("a side may concede while the sides are still being chosen, and the other player wins") {
+        val recorder = RecordingMatchmaker()
+        val engine = Engine(InMemoryMatchStore[StrategoMatch](), recorder, "http://engine.test")
+        val routes = Routes(engine, PlayAuth.Trusted, None)
+        val create = Protocol.CreateGameRequest(
+          matchId = "m-c",
+          gameName = "stratego",
+          isPublic = false,
+          parameters = Map.empty,
+          settings = "{}",
+          timeLimitSeconds = None,
+          players = List(
+            Protocol.EnginePlayer("sub-alice", 1L, None, None, None),
+            Protocol.EnginePlayer("sub-bob", 2L, None, None, None)
+          ),
+          moveCallbackUrl = None,
+          resultsCallbackUrl = Some("http://matchmaker.test/results"),
+          roleChoice = Some(Protocol.RoleChoice(List(1L, 2L), List("Red", "Blue")))
+        )
+        assertEquals(routes(EngineRequest("POST", "/games", Map.empty, write(create))).status, 201)
+        val conceded =
+            routes(EngineRequest("POST", "/matches/m-c/role", Map("as" -> "sub-bob"), """{"concede":true}"""))
+        assertEquals(conceded.status, 200)
+        val results = recorder.results.last._2.results
+        assertEquals(results.find(_.isWinner).map(_.participantId), Some(1L))
+        assertEquals(results.find(_.participantId == 2L).map(_.rank), Some(2))
+        assertEquals(engine.core.status("m-c").isLeft, true)
+        assert(engine.core.choosing("m-c").exists(_.ended))
+    }
 }

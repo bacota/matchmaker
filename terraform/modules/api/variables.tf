@@ -407,9 +407,19 @@ variable "ending_max_concurrency" {
     The most copies of the ending function Lambda may run at once, each holding up to two database
     connections: a bound on its demand on the database, as bounce_max_concurrency is for the bounce
     consumer, and for the same reason. AWS requires at least 2.
+
+    Ten by default, so that a tournament round's matches -- one queue message each -- are made
+    many at once (tournament-plan D5). That is at most ending_max_concurrency * 2 = 20 connections,
+    beside the API function's. The database is not created in this module, so its max_connections
+    cannot be read here: check it before raising this.
   EOT
   type        = number
-  default     = 2
+  default     = 10
+
+  validation {
+    condition     = var.ending_max_concurrency >= 2 && var.ending_max_concurrency <= 1000
+    error_message = "ending_max_concurrency must be between 2 and 1000, as AWS requires."
+  }
 }
 
 variable "ending_max_receive_count" {
