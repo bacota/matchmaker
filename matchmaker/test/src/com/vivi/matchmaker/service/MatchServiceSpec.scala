@@ -94,8 +94,8 @@ class MatchServiceSpec extends PropertySuite {
         } yield (player, game, character)
 
     /** One more match for a player who already has a game and a character, so that a test about the order of a list can
-      * put two of them in it. Every match needs a challenge of its own — it is the match's creator, by reference — so
-      * one is made here rather than shared.
+      * put two of them in it. The player is its creator, and by default it is started from a challenge of its own, as
+      * every match was until tournaments.
       */
     private def addMatch(
         session: skunk.Session[IO],
@@ -117,32 +117,40 @@ class MatchServiceSpec extends PropertySuite {
          * their page split on the seat. */
         seatCompleted: Option[Boolean] = None,
         /* The challenger's parameter choices, carried by the challenge and the match alike. */
-        settings: String = "{}"
+        settings: String = "{}",
+        /* Whether the match is started from a challenge. One that is not -- a tournament's -- has only
+         * its creator to say whose it is. */
+        fromChallenge: Boolean = true,
+        /* Who created the match, when it is not the player seated in it. */
+        creator: Option[PlayerId] = None
     ): IO[MatchId] =
         for {
-            // The match's creator is its challenge's challenger, and a match cannot exist without a
-            // challenge to point at — so the whole chain is built here even though most of these
-            // tests only care about the lists.
-            challenge <- new ChallengeRepo(session).create(
-              CharacterChallenge(
-                ChallengeId(0),
-                player.playerId,
-                "challenge",
-                None,
-                None,
-                settings,
-                game.gameId,
-                Some(character.characterId),
-                isPublic = false,
-                Some(game.roles.head.gameRoleId)
-              )
-            )
+            challenge <-
+                if (!fromChallenge) IO.pure(None)
+                else
+                    new ChallengeRepo(session)
+                        .create(
+                          CharacterChallenge(
+                            ChallengeId(0),
+                            creator.getOrElse(player.playerId),
+                            "challenge",
+                            None,
+                            None,
+                            settings,
+                            game.gameId,
+                            Some(character.characterId),
+                            isPublic = false,
+                            Some(game.roles.head.gameRoleId)
+                          )
+                        )
+                        .map(Some(_))
             matchId = MatchId(matchIdStr)
             _ <- new MatchRepo(session).create(
               Match(
                 game.gameId,
                 matchId,
-                challenge.challengeId,
+                challenge.map(_.challengeId),
+                creator.getOrElse(player.playerId),
                 "description",
                 completedAt,
                 Instant.ofEpochSecond(1000),
@@ -828,6 +836,59 @@ class MatchServiceSpec extends PropertySuite {
                 due.isEmpty && active.isEmpty && over.isEmpty
             result.timeout(10.seconds).unsafeRunSync()
         }
+    }
+
+    // A match need not come from a challenge (V50): a tournament's is created by the tournament, for its
+    // owner. Its creator alone says whose it is, on the lists and to the cancel.
+    test("a match with no challenge is its creator's to cancel, and listed as theirs and nobody else's") {
+        val result = TestSession.resource.use { session =>
+            for {
+                prepared <- setup(session, genUniqueString.sample.get, genUniqueString.sample.get)
+                (owner, game, ownerCharacter) = prepared
+                ownerMatch <- addMatch(
+                  session,
+                  owner,
+                  game,
+                  ownerCharacter,
+                  genUniqueString.sample.get,
+                  None,
+                  pending = true,
+                  fromChallenge = false
+                )
+                otherExternalId = genUniqueString.sample.get
+                other <- registrationService.register(genUniqueString.sample.get, otherExternalId)
+                otherCharacter <- new CharacterRepo[String](session).create(
+                  Character(CharacterId(0), game.gameId, "other", "description", "", Some(other.playerId))
+                )
+                // Seated, but in a match the owner created for them.
+                seatedMatch <- addMatch(
+                  session,
+                  other,
+                  game,
+                  otherCharacter,
+                  genUniqueString.sample.get,
+                  None,
+                  pending = true,
+                  fromChallenge = false,
+                  creator = Some(owner.playerId)
+                )
+            } yield (owner, game, ownerMatch, otherExternalId, seatedMatch)
+        }
+        val (owner, game, ownerMatch, otherExternalId, seatedMatch) = result.unsafeRunSync()
+        val outcome = for {
+            ownersList <- matchService.active(owner.externalId)
+            othersList <- matchService.active(otherExternalId)
+            refused <- matchService.cancel(game.gameId, seatedMatch, otherExternalId).attempt
+            cancelled <- matchService.cancel(game.gameId, ownerMatch, owner.externalId)
+            cancelledSeated <- matchService.cancel(game.gameId, seatedMatch, owner.externalId)
+        } yield {
+            assertEquals(ownersList.map(s => (s.matchId, s.isCreator)), List((ownerMatch, true)))
+            assertEquals(othersList.map(s => (s.matchId, s.isCreator)), List((seatedMatch, false)))
+            assert(refused.left.exists(_.isInstanceOf[UnauthorizedError]), refused)
+            assert(cancelled.cancelled && cancelled.challengeId.isEmpty)
+            assert(cancelledSeated.cancelled)
+        }
+        outcome.timeout(30.seconds).unsafeRunSync()
     }
 
     // The seats, not just the match. A cancelled match is over, so nothing in it is anybody's turn and
