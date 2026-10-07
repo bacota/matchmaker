@@ -103,7 +103,9 @@ object Tournaments {
                 "they did, play off in pairs. Double elimination: a pool's winner goes on, its second place drops to a " +
                 "losers' bracket, and nobody is out until they have lost twice; the losers' champion meets the " +
                 "winners' in the grand final. Repechage: single elimination in pairs, and then everybody beaten by " +
-                "either finalist plays on in a chain, the two chains' winners meeting for third. Ladder: everybody starts at rank 0 and plays somebody near their rank " +
+                "either finalist plays on in a chain, the two chains' winners meeting for third. Zero elimination: " +
+                "nobody is out; everybody plays every round in pairs, winners against winners and losers against " +
+                "losers, and finishes in the order of their results. Ladder: everybody starts at rank 0 and plays somebody near their rank " +
                 "each round, going up one for a win and down one for a loss; players may join at any time, and it " +
                 "never ends."
           )(
@@ -118,7 +120,7 @@ object Tournaments {
                         // A playoff's pools hold more than two.
                         if (chosen == TournamentType.Playoff && number(poolSize.now()).forall(_ < 3)) poolSize.set("4")
                         // A repechage is played in pairs.
-                        if (chosen == TournamentType.Repechage) poolSize.set("2")
+                        if (chosen == TournamentType.Repechage || chosen == TournamentType.ZeroElim) poolSize.set("2")
                         kind.set(chosen)
                     }
                 },
@@ -127,6 +129,7 @@ object Tournaments {
                 option(value := TournamentType.Playoff.code, TournamentType.Playoff.label),
                 option(value := TournamentType.DoubleElim.code, TournamentType.DoubleElim.label),
                 option(value := TournamentType.Repechage.code, TournamentType.Repechage.label),
+                option(value := TournamentType.ZeroElim.code, TournamentType.ZeroElim.label),
                 option(value := ladderCode, TournamentClass.Ladder.label)
               )
             )
@@ -134,7 +137,8 @@ object Tournaments {
           child.maybe <-- kind.signal
               .combineWith(ladder.signal)
               .map((k, l) =>
-                  Option.when(!l && k != TournamentType.RoundRobin)(
+                  // A zero elimination's pools are pairs, everybody going on: nothing to set.
+                  Option.when(!l && k != TournamentType.RoundRobin && k != TournamentType.ZeroElim)(
                     div(
                       tipField(
                         s"$key-pool-tip",

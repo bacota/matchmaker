@@ -46,7 +46,8 @@ class TournamentService[T](
           TournamentType.RoundRobin,
           TournamentType.Playoff,
           TournamentType.DoubleElim,
-          TournamentType.Repechage
+          TournamentType.Repechage,
+          TournamentType.ZeroElim
         )
 
     // ---- reading ----------------------------------------------------------------------------------

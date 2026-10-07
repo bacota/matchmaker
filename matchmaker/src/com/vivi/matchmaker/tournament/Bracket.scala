@@ -173,6 +173,55 @@ object Bracket {
         }
     }
 
+    /** A zero elimination of `entrants` in pairs: nobody is ever out, and everybody plays every round.
+      *
+      * Each pair splits its players into a winner and a loser, and the next round pairs the winners of a group among
+      * themselves and its losers among themselves — so in each round, players with the same results so far meet, and
+      * after the last, nobody's results are the same as anybody else's. Within a group, pairs are drawn by the seed
+      * each player is expected to hold, best against worst. In a round, the groups go in order of their results, wins
+      * first, so pool 1 is always the unbeaten.
+      *
+      * Round 1 is drawn as any elimination's, with byes for the top seeds; a bye's pair has no loser to send on, and
+      * its place in the losers' group is left empty — the player drawn against it there has a bye in turn.
+      */
+    def zeroElimination(entrants: Int): Bracket = {
+        require(entrants >= 1, "a tournament needs at least one entrant")
+        val first = firstRound(entrants, 2).map(pool => Expected(pool, seedsOf(pool)))
+        // An empty place, expected to be nobody: after every real seed.
+        val nobody = Int.MaxValue
+
+        /* The next round from this one's groups, each a list of pools; the groups come back winners' first. */
+        @annotation.tailrec
+        def plan(rounds: List[List[Expected]], groups: List[List[Expected]]): List[List[Expected]] =
+            if (groups.head.sizeIs <= 1) rounds
+            else {
+                val round = rounds.size + 1
+                val split = groups.flatMap { group =>
+                    val winners = group.map(e =>
+                        (PlannedSource.Winner(e.pool.round, e.pool.position, 1), e.seeds.headOption.getOrElse(nobody))
+                    )
+                    val losers = group.map(e =>
+                        (PlannedSource.Winner(e.pool.round, e.pool.position, 2), e.seeds.lift(1).getOrElse(nobody))
+                    )
+                    List(winners, losers)
+                }
+                val paired = split.map { group =>
+                    val sorted = group.sortBy(_._2)
+                    fold(sorted.size).map(_.map(i => sorted(i - 1)))
+                }
+                val numbered = paired.flatten.zipWithIndex.map { (pair, i) =>
+                    Expected(PlannedPool(round, i + 1, pair.map(_._1)), pair.map(_._2).filter(_ != nobody).sorted)
+                }
+                val regrouped = paired.map(_.size).scanLeft(0)(_ + _).sliding(2).toList.map {
+                    case List(from, until) => numbered.slice(from, until)
+                    case _                 => Nil
+                }
+                plan(rounds :+ numbered, regrouped)
+            }
+
+        Bracket(plan(List(first), List(first)).map(_.map(_.pool)))
+    }
+
     /** The next round of a winners' bracket: each pool's winner, drawn by expected seed into as few pools as hold them
       * — with pools of two, a power of two of them — and byes in the seats left over.
       */

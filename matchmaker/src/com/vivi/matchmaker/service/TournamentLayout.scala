@@ -16,6 +16,7 @@ object TournamentLayout {
             case TournamentType.RoundRobin => Bracket.roundRobin(entrants)
             case TournamentType.Playoff    => Bracket.playoff(entrants, settings.poolSize, settings.minPoolAdvance)
             case TournamentType.DoubleElim => Bracket.doubleElimination(entrants, settings.poolSize)
+            case TournamentType.ZeroElim   => Bracket.zeroElimination(entrants)
             // Its repechage is laid out once the final pair is known; until then it is single elimination.
             case TournamentType.Repechage =>
                 Bracket.singleElimination(entrants, settings.poolSize, settings.minPoolAdvance, consolation = false)

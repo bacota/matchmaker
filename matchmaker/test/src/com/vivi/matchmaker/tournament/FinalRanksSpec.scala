@@ -22,4 +22,12 @@ class FinalRanksSpec extends FunSuite {
         )
         assertEquals(ranks, Map("a" -> 1, "b" -> 2, "d" -> 3, "c" -> 4, "e" -> 5, "f" -> 5, "g" -> 7, "h" -> 7))
     }
+
+    test("zero elimination: results read as binary, a win 0, place everybody; the same results go by seed") {
+        val ranks = FinalRanks.zeroElimination(
+          Map("a" -> List(1, 0), "b" -> List(0, 0), "c" -> List(0, 1), "d" -> List(1, 1), "e" -> List(1, 1)),
+          Map("a" -> 1, "b" -> 2, "c" -> 3, "d" -> 5, "e" -> 4)
+        )
+        assertEquals(ranks, Map("b" -> 1, "c" -> 2, "a" -> 3, "e" -> 4, "d" -> 5))
+    }
 }

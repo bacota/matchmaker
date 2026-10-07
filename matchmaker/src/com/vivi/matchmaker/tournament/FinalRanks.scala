@@ -28,4 +28,18 @@ object FinalRanks {
             }
             ._2
     }
+
+    /** Zero elimination: by each player's results read as a binary number, round 1 its highest digit — a win 0 and a
+      * loss 1 — so the unbeaten are first and everybody's string is their place. A round a player has no result in
+      * counts as a loss. Players with the same results, which only a withdrawal makes, go by seed.
+      *
+      * @param results
+      *   each player's results, round by round: 0 for a win, 1 for a loss
+      */
+    def zeroElimination[K](results: Map[K, List[Int]], seeds: Map[K, Int]): Map[K, Int] =
+        results.toList
+            .sortBy((k, bits) => (bits.mkString, seeds.getOrElse(k, Int.MaxValue)))
+            .zipWithIndex
+            .map((entry, i) => entry._1 -> (i + 1))
+            .toMap
 }

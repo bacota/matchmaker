@@ -674,12 +674,13 @@ class TournamentPlayService[T](
         settings.tournamentType == TournamentType.Playoff &&
             rounds.exists(r => r.cycle == round.cycle && r.round < round.round)
 
-    /** A double elimination and a repechage, where a pool's second place has somewhere to go besides out: the losers'
-      * bracket, or a chain of the finalists' victims. Their slots name exactly whom they mean, and the fill rule
-      * borrows nobody.
+    /** A double elimination, a repechage and a zero elimination, where a pool's second place has somewhere to go
+      * besides out: the losers' bracket, a chain of the finalists' victims, or the next round's losers. Their slots
+      * name exactly whom they mean, and the fill rule borrows nobody.
       */
     private def secondsGoOn(settings: EliminationSettings): Boolean =
-        settings.tournamentType == TournamentType.DoubleElim || settings.tournamentType == TournamentType.Repechage
+        Set(TournamentType.DoubleElim, TournamentType.Repechage, TournamentType.ZeroElim)
+            .contains(settings.tournamentType)
 
     /** How many of each of a round's pools go through: the round's own say, or the tournament's — one, from a pair. In
       * a double elimination or a repechage, the first two of every pool may go somewhere.
@@ -828,9 +829,28 @@ class TournamentPlayService[T](
                 rounds.find(_.round == r).toList.flatTraverse(poolsOf(session, t, t.elimination.get, game, _))
             )
             third = if (repechageFinal.isDefined) lastPools else lastPools.filter(_.fixture.position == 2)
+            // A zero elimination's places come from everybody's result in every round of the cycle.
+            everyRound <-
+                if (!t.elimination.exists(_.tournamentType == TournamentType.ZeroElim)) IO.pure(Nil)
+                else
+                    rounds
+                        .filter(_.cycle == cycle)
+                        .sortBy(_.round)
+                        .traverse(r => poolsOf(session, t, t.elimination.get, game, r))
             ranks =
                 if (t.elimination.exists(_.tournamentType == TournamentType.RoundRobin))
                     FinalRanks.roundRobin(lastPools.flatMap(_.standings))
+                else if (everyRound.nonEmpty)
+                    FinalRanks.zeroElimination(
+                      field.map { p =>
+                          val id = p.tournamentParticipantId
+                          p.tournamentParticipantId -> everyRound.map(pools =>
+                              // A pool's first is its winner; its second, or anybody absent, lost.
+                              if (pools.exists(_.standings.headOption.exists(_.member == id))) 0 else 1
+                          )
+                      }.toMap,
+                      field.map(p => p.tournamentParticipantId -> p.seed).toMap
+                    )
                 else
                     FinalRanks.singleElimination(
                       finalPools.find(_.fixture.position == 1).toList.flatMap(_.standings),

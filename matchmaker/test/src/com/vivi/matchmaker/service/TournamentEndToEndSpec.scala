@@ -307,6 +307,27 @@ class TournamentEndToEndSpec extends FunSuite with QuietTests {
         }
     }
 
+    test("zero elimination: everybody plays every round, and their results, read in binary, are their place") {
+        val w = world()
+        val (f, d) = run(for {
+            g <- game()
+            f <- started(w, g, 8, TournamentType.ZeroElim)
+            // Seed 8 beats seed 1 in the first round; the better seed wins everything else.
+            d <- playOut(w, g, f)(p =>
+                val (one, eight) = (f.bySeed(0).playerId, f.bySeed(7).playerId)
+                if (p.m.description.contains("round 1,") && p.seats.exists(_._2 == one))
+                    p.seats.map((_, player) => player -> (if (player == eight) 1 else 2)).toMap
+                else bySeed(f)(p)
+            )
+        } yield (f, d))
+        assert(d.tournament.ended)
+        assertEquals(d.rounds.size, 3)
+        assert(d.pools.forall(_.slots.count(_.occupant.isDefined) == 2))
+        // Seed 2 won all three (000); seed 4 lost only the last (001); seed 3 and seed 8 went 010 and 011; seed 1, after
+        // its upset, won both after it (100), and so on down to seed 7, who lost every one (111).
+        assertEquals(f.bySeed.map(p => finalRanks(d)(p.playerId)), List(5, 1, 3, 2, 7, 6, 8, 4).map(Some(_)))
+    }
+
     test("five players: three byes in the first round, and everybody still finishes ranked") {
         val w = world()
         val d = run(for {

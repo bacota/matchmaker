@@ -222,6 +222,50 @@ class BracketSpec extends ScalaCheckSuite {
         )
     }
 
+    property("zero elimination: everybody plays every round, a pool's winner and loser each going on once") {
+        forAll(Gen.choose(1, 64)) { n =>
+            val rounds = Bracket.doubleElimination(n, 2).rounds.head :: Nil // round 1 is drawn as any elimination's
+            val zero = Bracket.zeroElimination(n).rounds
+            val pools = zero.head.size
+            val named = zero.flatten.flatMap(_.slots).collect { case w: PlannedSource.Winner => w }
+            zero.head == rounds.head &&
+            zero.size == Integer.numberOfTrailingZeros(pools) + 1 &&
+            zero.forall(_.size == pools) &&
+            zero.flatten.forall(_.slots.size == 2) &&
+            named.distinct.size == named.size &&
+            // Every pool but the last round's sends both its winner and its loser on, to the round after it.
+            zero.init.flatten.forall(p =>
+                List(1, 2).forall(rank => named.contains(PlannedSource.Winner(p.round, p.position, rank)))
+            ) &&
+            named.forall(w => zero.flatten.find(_.slots.contains(w)).exists(_.round == w.round + 1))
+        }
+    }
+
+    test("zero elimination of eight: winners meet winners and losers losers, the unbeaten always in pool 1") {
+        val rounds = Bracket.zeroElimination(8).rounds
+        assertEquals(rounds.size, 3)
+        assertEquals(
+          rounds(1).map(_.slots),
+          List(
+            List(PlannedSource.Winner(1, 1, 1), PlannedSource.Winner(1, 4, 1)),
+            List(PlannedSource.Winner(1, 2, 1), PlannedSource.Winner(1, 3, 1)),
+            List(PlannedSource.Winner(1, 4, 2), PlannedSource.Winner(1, 1, 2)),
+            List(PlannedSource.Winner(1, 3, 2), PlannedSource.Winner(1, 2, 2))
+          )
+        )
+        // Round 3: the twice-unbeaten, then a win and a loss, a loss and a win, and two losses — each pair drawn by the
+        // seed expected there, so the loser expected the better seed comes first.
+        assertEquals(
+          rounds(2).map(_.slots),
+          List(
+            List(PlannedSource.Winner(2, 1, 1), PlannedSource.Winner(2, 2, 1)),
+            List(PlannedSource.Winner(2, 2, 2), PlannedSource.Winner(2, 1, 2)),
+            List(PlannedSource.Winner(2, 3, 1), PlannedSource.Winner(2, 4, 1)),
+            List(PlannedSource.Winner(2, 4, 2), PlannedSource.Winner(2, 3, 2))
+          )
+        )
+    }
+
     test("a round robin is one pool of everybody") {
         assertEquals(Bracket.roundRobin(5).pools.map(seeds), List(List(1, 2, 3, 4, 5)))
     }
