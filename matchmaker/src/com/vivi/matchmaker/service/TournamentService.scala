@@ -448,7 +448,8 @@ class TournamentService[T](
                         _ <- IO.raiseWhen(t.started)(ConflictError("the tournament has already started"))
                         settings <- (t.tournamentClass, t.elimination) match {
                             case (TournamentClass.Ladder, _) => IO.pure(None)
-                            case (TournamentClass.Elimination, Some(e)) if startable.contains(e.tournamentType) =>
+                            case (TournamentClass.Elimination | TournamentClass.Cyclic, Some(e))
+                                if startable.contains(e.tournamentType) =>
                                 IO.pure(Some(e))
                             case _ =>
                                 IO.raiseError(ValidationError("this kind of tournament cannot be started yet"))
@@ -484,6 +485,39 @@ class TournamentService[T](
                             )
                         )
                         _ <- repo.start(gameId, tournamentId)
+                    } yield ()
+                }
+            }
+            .flatMap(_ => detail(gameId, tournamentId, callerExternalId))
+
+    /** The owner ending a cyclic tournament (Phase 9), which otherwise begins another cycle whenever one ends. Only
+      * between rounds: a round under way is played out first. Its final ranks are those of the last cycle finished.
+      */
+    def end(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[TournamentDetail] =
+        sessionPool
+            .use { session =>
+                session.transaction.use { _ =>
+                    val repo = new TournamentRepo(session)
+                    for {
+                        caller <- requireCaller(session, callerExternalId)
+                        t <- requireTournament(repo.readForUpdate(gameId, tournamentId), gameId, tournamentId)
+                        _ <- requireOwner(t, caller)
+                        _ <- IO.raiseUnless(t.tournamentClass == TournamentClass.Cyclic)(
+                          ValidationError("only a cyclic tournament is ended by hand; any other ends with its final")
+                        )
+                        _ <- IO.raiseUnless(t.started)(ConflictError("the tournament has not started"))
+                        _ <- IO.raiseWhen(t.ended)(ConflictError("the tournament is already over"))
+                        rounds <- new FixtureRepo(session).listRounds(gameId, tournamentId)
+                        // Locked, so that no round starts between the look and the end.
+                        running <- rounds.traverseFilter(r =>
+                            new FixtureRepo(session)
+                                .readRoundForUpdate(gameId, tournamentId, r.round)
+                                .map(_.filter(r => r.started && !r.completed))
+                        )
+                        _ <- IO.raiseWhen(running.nonEmpty)(
+                          ConflictError(s"round ${running.head.round} is under way; end the tournament once it is over")
+                        )
+                        _ <- repo.end(gameId, tournamentId)
                     } yield ()
                 }
             }

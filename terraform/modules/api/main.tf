@@ -362,7 +362,7 @@ locals {
     # made in the character's game engine, and is among the engine's routes below.
 
     # Tournaments (V53): a game's, the caller's own, creating and editing one, handing it on, its
-    # invitations, entering and withdrawing, and starting it.
+    # invitations, entering and withdrawing, starting it, and ending a cyclic one.
     "GET /me/tournaments",
     "GET /games/{gameId}/tournaments",
     "POST /tournaments",
@@ -375,6 +375,7 @@ locals {
     "POST /tournaments/{gameId}/{tournamentId}/entries",
     "DELETE /tournaments/{gameId}/{tournamentId}/entries/{entryId}",
     "POST /tournaments/{gameId}/{tournamentId}/start",
+    "POST /tournaments/{gameId}/{tournamentId}/end",
     # A round's buttons: start it, check its matches against their clocks, queue again what of it
     # has not been made.
     "POST /tournaments/{gameId}/{tournamentId}/rounds/{round}/start",

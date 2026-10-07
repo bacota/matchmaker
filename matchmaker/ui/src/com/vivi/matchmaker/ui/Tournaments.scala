@@ -69,6 +69,8 @@ object Tournaments {
         val kind = Var[TournamentType](TournamentType.SingleElim)
         // A ladder is a class of its own rather than a kind of elimination, but it is offered as one more kind.
         val ladder = Var(false)
+        // Only a character game's tournament may repeat: a character can be handed on to a new player between cycles.
+        val cyclic = Var(false)
         val ladderCode = "Ladder"
         val poolSize = Var(math.max(2, game.roles.count(!_.optional)).toString)
         val advance = Var("1")
@@ -183,6 +185,17 @@ object Tournaments {
             )
           ),
           child.maybe <-- ladder.signal.map(l =>
+              Option.when(!l && game.gameType == GameType.Character)(
+                checkbox(
+                  s"$key-cyclic-tip",
+                  "Repeat in cycles",
+                  cyclic,
+                  "When the final is over, the tournament begins again with the same first-round pools and seeds, " +
+                      "and goes on like that until you end it."
+                )
+              )
+          ),
+          child.maybe <-- ladder.signal.map(l =>
               Option.when(!l)(
                 withTip(
                   s"$key-tiebreaker-tip",
@@ -254,7 +267,10 @@ object Tournaments {
                 val draft = Tournament(
                   gameId = game.gameId,
                   tournamentId = TournamentId.unassigned,
-                  tournamentClass = if (ladder.now()) TournamentClass.Ladder else TournamentClass.Elimination,
+                  tournamentClass =
+                      if (ladder.now()) TournamentClass.Ladder
+                      else if (cyclic.now() && game.gameType == GameType.Character) TournamentClass.Cyclic
+                      else TournamentClass.Elimination,
                   name = name.now().trim,
                   owner = player.playerId,
                   invitational = invitational.now(),
@@ -505,6 +521,22 @@ object Tournaments {
               .orElse(Option.when(isLadder(t))(TournamentRound(t.gameId, t.tournamentId, nextLadderRound(d))))
               .filter(_ => t.started && !t.ended)
               .fold(emptyNode)(r => roundControls(d, r)),
+          if (t.started && !t.ended && t.tournamentClass == TournamentClass.Cyclic && current.forall(!_.started))
+              withTip(
+                s"end-tip-${t.tournamentId.value}",
+                "End the tournament",
+                "Stops it beginning another cycle. Everybody keeps the final rank of the last cycle finished."
+              )(
+                busyButton("End the tournament", classes = Some("link")) { busy =>
+                    if (dom.window.confirm("End the tournament? No more rounds or cycles will be played."))
+                        Store.run(ApiClient.endTournament(t.gameId, t.tournamentId), busy) { detail =>
+                            Store.tournament.set(Some(detail))
+                            said.set("The tournament is over.")
+                        }
+                    else busy.set(false)
+                }
+              )
+          else emptyNode,
           if (!t.ended) inviteControl(d) else emptyNode
         )
     }
@@ -626,7 +658,12 @@ object Tournaments {
                 d.rounds.map { r =>
                     div(
                       cls := "bracket-round",
-                      h4(s"Round ${r.round}" + (if (r.completed) " (over)" else if (r.started) " (under way)" else "")),
+                      h4(
+                        s"Round ${r.round}" +
+                            (if (d.tournament.tournamentClass == TournamentClass.Cyclic) s", cycle ${r.cycle}"
+                             else "") +
+                            (if (r.completed) " (over)" else if (r.started) " (under way)" else "")
+                      ),
                       d.pools
                           .filter(_.fixture.round == r.round)
                           .sortBy(_.fixture.position)

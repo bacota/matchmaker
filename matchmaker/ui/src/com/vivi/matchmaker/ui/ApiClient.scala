@@ -421,6 +421,9 @@ object ApiClient {
     def startTournament(gameId: GameId, id: TournamentId): Future[TournamentDetail] =
         send[TournamentDetail](HttpMethod.POST, tournamentPath(gameId, id) + "/start", None)
 
+    def endTournament(gameId: GameId, id: TournamentId): Future[TournamentDetail] =
+        send[TournamentDetail](HttpMethod.POST, tournamentPath(gameId, id) + "/end", None)
+
     def startRound(gameId: GameId, id: TournamentId, round: Int, overrides: RoundOverrides): Future[RoundWork] =
         send[RoundWork](HttpMethod.POST, tournamentPath(gameId, id) + s"/rounds/$round/start", Some(write(overrides)))
 

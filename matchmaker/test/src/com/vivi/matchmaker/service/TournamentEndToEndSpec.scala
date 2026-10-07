@@ -10,7 +10,7 @@ import com.vivi.matchmaker.{QuietTests, TestMigration}
 import com.vivi.matchmaker.ending.{MatchDue, MatchEndings}
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{GameRepo, MatchRepo, ParticipantRepo, TestSession}
+import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, MatchRepo, ParticipantRepo, TestSession}
 
 /** Whole tournaments, from creation to final ranks (Phase 5), against a fake engine and a queue the test delivers. */
 class TournamentEndToEndSpec extends FunSuite with QuietTests {
@@ -61,12 +61,12 @@ class TournamentEndToEndSpec extends FunSuite with QuietTests {
 
     private def run[A](io: IO[A]): A = io.timeout(caseTimeout).unsafeRunSync()
 
-    private def game(roles: Int = 2): IO[Game] =
+    private def game(roles: Int = 2, gameType: GameType = GameType.Plain): IO[Game] =
         TestSession.resource.use(session =>
             new GameRepo[String](session).create(
               Game(
                 GameId.unassigned,
-                GameType.Plain,
+                gameType,
                 "tictactoe",
                 "Tic-tac-toe",
                 "description",
@@ -379,6 +379,89 @@ class TournamentEndToEndSpec extends FunSuite with QuietTests {
         assertEquals(rankOf(rejoined, s4), Some(-1))
         assertEquals(rejoined.entrants.size, 5)
         assert(!rejoined.entrants.exists(_.participant.exists(_.withdrawn)))
+    }
+
+    test("a cyclic tournament begins again from the first seeds after each final, until its owner ends it") {
+        val w = world()
+        def detail(g: Game, f: Field) = w.services.tournaments.detail(g.gameId, f.t.tournamentId, f.owner.externalId)
+        def play(g: Game, f: Field, n: Int)(decide: Played => Map[PlayerId, Int]): IO[Unit] =
+            for {
+                _ <- w.services.tournamentPlay
+                    .startRound(g.gameId, f.t.tournamentId, n, RoundOverrides(), f.owner.externalId)
+                _ <- { val ds = w.queue.dues; w.queue.dues = Nil; ds.traverse(w.services.tournamentPlay.createMatch) }
+                open <- unfinished(g, f.t)
+                _ <- open.traverse_(p => report(w, g, p, decide(p)))
+            } yield ()
+        def occupants(d: TournamentDetail, round: Int) =
+            d.pools
+                .filter(_.fixture.round == round)
+                .sortBy(_.fixture.position)
+                .map(_.slots.flatMap(_.occupant).toSet)
+
+        val (f, afterOne, refused, afterTwo, ended) = run(for {
+            g <- game(gameType = GameType.Character)
+            owner <- w.services.registration.register(unique("owner"), unique("owner-sub"))
+            players <- List.fill(4)(w.services.registration.register(unique("p"), unique("p-sub"))).sequence
+            characters <- players.traverse(p =>
+                TestSession.resource.use(session =>
+                    new CharacterRepo[String](session)
+                        .create(Character(CharacterId(0), g.gameId, unique("c"), "d", "", Some(p.playerId)))
+                )
+            )
+            t <- w.services.tournaments.create(
+              Tournament(
+                g.gameId,
+                TournamentId.unassigned,
+                TournamentClass.Cyclic,
+                "The Circuit",
+                PlayerId.unassigned,
+                invitational = false,
+                roundDuration = Duration.ofHours(2),
+                elimination = Some(EliminationSettings(TournamentType.SingleElim, 2))
+              ),
+              owner.externalId
+            )
+            _ <- players
+                .zip(characters)
+                .traverse((p, c) =>
+                    w.services.tournaments.enter(g.gameId, t.tournamentId, Some(c.characterId), p.externalId)
+                )
+            started <- w.services.tournaments.start(g.gameId, t.tournamentId, owner.externalId)
+            order = started.entrants
+                .sortBy(_.participant.map(_.seed))
+                .map(e => players.find(_.playerId == e.player.playerId).get)
+            f = Field(owner, started.tournament, order)
+            // Cycle 1, with an upset: seed 4 beats everybody, and so takes seed 1 as it goes.
+            upset = (p: Played) =>
+                if (p.seats.exists(_._2 == order(3).playerId))
+                    p.seats.map((_, player) => player -> (if (player == order(3).playerId) 1 else 2)).toMap
+                else bySeed(f)(p)
+            _ <- play(g, f, 1)(upset)
+            _ <- play(g, f, 2)(upset)
+            afterOne <- detail(g, f)
+            // Cycle 2's first round is under way, and the tournament cannot be ended until it is over.
+            _ <- play(g, f, 3)(bySeed(f))
+            _ <- w.services.tournamentPlay.startRound(g.gameId, t.tournamentId, 4, RoundOverrides(), owner.externalId)
+            refused <- w.services.tournaments.end(g.gameId, t.tournamentId, owner.externalId).attempt
+            _ <- { val ds = w.queue.dues; w.queue.dues = Nil; ds.traverse(w.services.tournamentPlay.createMatch) }
+            _ <- unfinished(g, f.t).flatMap(_.traverse_(p => report(w, g, p, bySeed(f)(p))))
+            afterTwo <- detail(g, f)
+            ended <- w.services.tournaments.end(g.gameId, t.tournamentId, owner.externalId)
+        } yield (f, afterOne, refused, afterTwo, ended))
+
+        val seedOf = afterOne.entrants.flatMap(e => e.participant.map(p => e.player.playerId -> p)).toMap
+        // After cycle 1: seed 4 won it, nobody has ended it, and cycle 2 is laid out from everybody's first seeds.
+        assertEquals(finalRanks(afterOne)(f.bySeed(3).playerId), Some(1))
+        assert(!afterOne.tournament.ended)
+        assertEquals(afterOne.rounds.map(r => (r.round, r.cycle)), List(1 -> 1, 2 -> 1, 3 -> 2, 4 -> 2))
+        assert(f.bySeed.forall(p => seedOf(p.playerId).seed == seedOf(p.playerId).initialSeed))
+        // Its first round is drawn as the first cycle's was.
+        assertEquals(occupants(afterTwo, 3), occupants(afterTwo, 1))
+        assert(refused.left.exists(_.isInstanceOf[ConflictError]), refused)
+        // Cycle 2 went by seed; its ranks are the ones kept, and a third cycle waits until the owner ends it.
+        assertEquals(f.bySeed.map(p => finalRanks(afterTwo)(p.playerId)), List(1, 2, 3, 4).map(Some(_)))
+        assertEquals(afterTwo.rounds.map(_.cycle).distinct, List(1, 2, 3))
+        assert(ended.tournament.ended)
     }
 
     test("a player whose turn runs out is forfeited by Check round, and the round goes on") {

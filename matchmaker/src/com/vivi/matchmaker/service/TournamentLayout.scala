@@ -18,15 +18,27 @@ object TournamentLayout {
             case _ => Bracket.singleElimination(entrants, settings.poolSize, settings.minPoolAdvance)
         }
 
-    /** Writes every round of `bracket`, its pools, and their slots, naming each earlier pool by the id it was given. */
-    def layOut(session: Session[IO], gameId: GameId, tournamentId: TournamentId, bracket: Bracket): IO[Unit] = {
+    /** Writes every round of `bracket`, its pools, and their slots, naming each earlier pool by the id it was given.
+      *
+      * A cyclic tournament's later cycles are laid out after the rounds already there: `after` is the last of them, so
+      * the bracket's round 1 is written as round `after + 1`, in `cycle`.
+      */
+    def layOut(
+        session: Session[IO],
+        gameId: GameId,
+        tournamentId: TournamentId,
+        bracket: Bracket,
+        after: Int = 0,
+        cycle: Int = 1
+    ): IO[Unit] = {
         val fixtures = new FixtureRepo(session)
         bracket.rounds.zipWithIndex
             .foldLeft(IO.pure(Map.empty[(Int, Int), FixtureId])) { case (done, (pools, i)) =>
                 done.flatMap { ids =>
-                    val round = i + 1
+                    val planned = i + 1
+                    val round = after + planned
                     fixtures.createRound(
-                      TournamentRound(gameId, tournamentId, round, reseed = bracket.reseed.contains(round))
+                      TournamentRound(gameId, tournamentId, round, cycle, reseed = bracket.reseed.contains(planned))
                     ) *>
                         pools
                             .traverse { pool =>
@@ -45,7 +57,7 @@ object TournamentLayout {
                                           FixtureSlot(gameId, tournamentId, f.fixtureId, SlotId(0), slotSource)
                                         )
                                     }
-                                } yield (round, pool.position) -> f.fixtureId
+                                } yield (planned, pool.position) -> f.fixtureId
                             }
                             .map(ids ++ _)
                 }

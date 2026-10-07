@@ -112,7 +112,8 @@ class TournamentPlayService[T](
                         _ <- IO.raiseWhen(previous.exists(!_.completed))(
                           ConflictError(s"round ${round - 1} is not over yet")
                         )
-                        _ <- validate(overrides, settings, round)
+                        rounds <- fixtures.listRounds(gameId, tournamentId)
+                        _ <- validate(overrides, settings, pairs(settings, existing, rounds))
                         configured = existing.copy(
                           duration = overrides.duration.orElse(existing.duration),
                           rotations = overrides.rotations.orElse(existing.rotations),
@@ -120,7 +121,8 @@ class TournamentPlayService[T](
                           tiebreaker = overrides.tiebreaker.orElse(existing.tiebreaker)
                         )
                         _ <- fixtures.setRoundSettings(configured)
-                        _ <- fill(session, t, settings, game, configured, previous)
+                        // A cycle's first round is drawn from the seeds alone, not from the last cycle's final.
+                        _ <- fill(session, t, settings, game, configured, previous.filter(_.cycle == existing.cycle))
                         _ <- fixtures.startRound(gameId, tournamentId, round, t.live)
                         started <- fixtures.readRoundForUpdate(gameId, tournamentId, round).map(_.get)
                         pools <- poolsOf(session, t, settings, game, started)
@@ -438,7 +440,7 @@ class TournamentPlayService[T](
                 .toList
             val rotations =
                 round.rotations.getOrElse(
-                  if (pairs(settings, round.round)) settings.eliminationRotations else t.rotations
+                  if (pairs(settings, round, rounds)) settings.eliminationRotations else t.rotations
                 )
             val mode =
                 if (rotations > 0) RoleMode.Rotate(rotations)
@@ -447,7 +449,7 @@ class TournamentPlayService[T](
                 else RoleMode.BySeed
             val tiebreaker = round.tiebreaker.getOrElse(settings.tiebreaker)
             val last = rounds.map(_.round).maxOption.forall(_ == round.round)
-            val advance = advanceOf(settings, round)
+            val advance = advanceOf(settings, round, rounds)
             pools.map { fixture =>
                 val members = slots
                     .filter(_.fixtureId == fixture.fixtureId)
@@ -505,9 +507,10 @@ class TournamentPlayService[T](
         for {
             held <- new TournamentParticipantRepo(session).listForUpdate(t.gameId, t.tournamentId)
             slots <- fixtures.listSlots(t.gameId, t.tournamentId, round.round)
+            rounds <- fixtures.listRounds(t.gameId, t.tournamentId)
             standings <- previous.traverse(r => poolsOf(session, t, settings, game, r))
             finishers = standings.toList.flatten.map(p => p.fixture.fixtureId -> p.standings).toMap
-            advance = previous.fold(settings.minPoolAdvance)(advanceOf(settings, _))
+            advance = previous.fold(settings.minPoolAdvance)(advanceOf(settings, _, rounds))
             participants <-
                 if (round.reseed) reseed(session, t, settings, game, round, held, slots, finishers, advance)
                 else IO.pure(held)
@@ -524,10 +527,10 @@ class TournamentPlayService[T](
         } yield ()
     }
 
-    /** Gives everybody a new seed as a `reseed` round starts, from their record in every round before it (D8): the
-      * players who went through in the previous round take seeds 1 to however many of the round's slots name a seed, in
-      * the order of their records, and everybody else follows in the order of theirs. The round's slots name seeds, so
-      * the ones who went through are the ones placed, drawn by how well they have played.
+    /** Gives everybody a new seed as a `reseed` round starts, from their record in every round of its cycle before it
+      * (D8): the players who went through in the previous round take seeds 1 to however many of the round's slots name
+      * a seed, in the order of their records, and everybody else follows in the order of theirs. The round's slots name
+      * seeds, so the ones who went through are the ones placed, drawn by how well they have played.
       *
       * Answers the field with its new seeds.
       */
@@ -551,7 +554,7 @@ class TournamentPlayService[T](
         for {
             rounds <- new FixtureRepo(session).listRounds(t.gameId, t.tournamentId)
             earlier <- rounds
-                .filter(r => r.round < round.round && r.started)
+                .filter(r => r.cycle == round.cycle && r.round < round.round && r.started)
                 .flatTraverse(r => poolsOf(session, t, settings, game, r))
             entries <- new EntryRepo(session).listForTournament(t.gameId, t.tournamentId)
             ratings <- field.traverse { p =>
@@ -643,13 +646,14 @@ class TournamentPlayService[T](
         } yield ()
     }
 
-    /** A playoff's rounds after its first are pairs, single elimination with its own rotations. */
-    private def pairs(settings: EliminationSettings, round: Int): Boolean =
-        settings.tournamentType == TournamentType.Playoff && round > 1
+    /** A playoff's rounds after the first of their cycle are pairs, single elimination with its own rotations. */
+    private def pairs(settings: EliminationSettings, round: TournamentRound, rounds: List[TournamentRound]): Boolean =
+        settings.tournamentType == TournamentType.Playoff &&
+            rounds.exists(r => r.cycle == round.cycle && r.round < round.round)
 
     /** How many of each of a round's pools go through: the round's own say, or the tournament's — one, from a pair. */
-    private def advanceOf(settings: EliminationSettings, round: TournamentRound): Int =
-        round.minPoolAdvance.getOrElse(if (pairs(settings, round.round)) 1 else settings.minPoolAdvance)
+    private def advanceOf(settings: EliminationSettings, round: TournamentRound, rounds: List[TournamentRound]): Int =
+        round.minPoolAdvance.getOrElse(if (pairs(settings, round, rounds)) 1 else settings.minPoolAdvance)
 
     /** Stamps a round complete, and hands each pool's seeds out again in its finishing order. */
     private def complete(session: Session[IO], t: Tournament, round: Int, pools: List[Pool]): IO[Unit] = {
@@ -664,25 +668,38 @@ class TournamentPlayService[T](
                 .traverse_((member, seed) => participants.setSeed(t.gameId, t.tournamentId, member, seed))
             _ <- new FixtureRepo(session).completeRound(t.gameId, t.tournamentId, round)
             rounds <- new FixtureRepo(session).listRounds(t.gameId, t.tournamentId)
-            // A ladder's latest round is always its last so far, and it has no last.
-            _ <- IO.whenA(!ladder(t) && rounds.map(_.round).maxOption.contains(round))(finish(session, t, pools))
+            // A ladder's latest round is always its last so far, and it has no last. A cyclic tournament's is the last
+            // of its current cycle: the next is laid out only as this one finishes.
+            _ <- IO.whenA(!ladder(t) && rounds.map(_.round).maxOption.contains(round))(
+              finish(session, t, pools, rounds, rounds.find(_.round == round).fold(1)(_.cycle))
+            )
         } yield ()
     }
 
-    /** The last round is over (Phase 5): everybody's final rank, and the tournament ended.
+    /** The last round is over (Phase 5): everybody's final rank, and the tournament ended — or, for a cyclic tournament
+      * (Phase 9), the next cycle laid out.
       *
       * A round robin ranks by its one pool's standings. Single elimination ranks the final's players first, then the
       * consolation pool's, then everybody else by the round they reached, sharing a rank with the rest who went out in
-      * the same round — see [[com.vivi.matchmaker.tournament.FinalRanks]].
+      * the same round — see [[com.vivi.matchmaker.tournament.FinalRanks]]. A cyclic tournament's final ranks are its
+      * latest cycle's, and are written again as each cycle ends.
       */
-    private def finish(session: Session[IO], t: Tournament, lastPools: List[Pool]): IO[Unit] = {
+    private def finish(
+        session: Session[IO],
+        t: Tournament,
+        lastPools: List[Pool],
+        rounds: List[TournamentRound],
+        cycle: Int
+    ): IO[Unit] = {
         val participants = new TournamentParticipantRepo(session)
+        val inCycle = rounds.filter(_.cycle == cycle).map(_.round).toSet
         for {
             field <- participants.list(t.gameId, t.tournamentId)
             slots <- new FixtureRepo(session).listSlots(t.gameId, t.tournamentId)
             fixtures <- new FixtureRepo(session).listFixtures(t.gameId, t.tournamentId)
             roundOf = fixtures.map(f => f.fixtureId -> f.round).toMap
             reached = slots
+                .filter(s => inCycle.contains(roundOf(s.fixtureId)))
                 .flatMap(s => s.occupant.map(_ -> roundOf(s.fixtureId)))
                 .groupMapReduce(_._1)(_._2)(math.max)
             ranks =
@@ -703,7 +720,47 @@ class TournamentPlayService[T](
                   ranks.get(p.tournamentParticipantId)
                 )
             )
-            _ <- new TournamentRepo(session).end(t.gameId, t.tournamentId)
+            _ <-
+                if (t.tournamentClass == TournamentClass.Cyclic)
+                    nextCycle(session, t, field, slots, fixtures, rounds, cycle)
+                else new TournamentRepo(session).end(t.gameId, t.tournamentId).void
+        } yield ()
+    }
+
+    /** Lays out a cyclic tournament's next cycle after its last (Phase 9): the first cycle's bracket again, drawn from
+      * the seeds everybody started the tournament with. Seeds are overwritten as a cycle goes (D2), so each is put back
+      * to its `initial_seed` first; the first round's pools are then the first cycle's, refilled from the same order.
+      *
+      * The first cycle's pools are measured rather than read from the settings, so a first round laid out with pools of
+      * another size is repeated as it was played.
+      */
+    private def nextCycle(
+        session: Session[IO],
+        t: Tournament,
+        field: List[TournamentParticipant],
+        slots: List[FixtureSlot],
+        fixtures: List[Fixture],
+        rounds: List[TournamentRound],
+        cycle: Int
+    ): IO[Unit] = {
+        val repo = new TournamentParticipantRepo(session)
+        val settings = t.elimination.get
+        val firstPool = fixtures.filter(_.round == 1).minByOption(_.position)
+        val poolSize = firstPool.fold(settings.poolSize)(f => slots.count(_.fixtureId == f.fixtureId))
+        val played =
+            settings.copy(poolSize = poolSize, minPoolAdvance = math.min(settings.minPoolAdvance, poolSize - 1))
+        for {
+            _ <- repo.listForUpdate(t.gameId, t.tournamentId)
+            // In place: the unique constraint on a seed waits for the commit (V53).
+            _ <- field.traverse_(p => repo.setSeed(t.gameId, t.tournamentId, p.tournamentParticipantId, p.initialSeed))
+            _ <- TournamentLayout.layOut(
+              session,
+              t.gameId,
+              t.tournamentId,
+              TournamentLayout.bracket(played, field.size),
+              after = rounds.map(_.round).maxOption.getOrElse(0),
+              cycle = cycle + 1
+            )
         } yield ()
     }
 
@@ -909,8 +966,8 @@ class TournamentPlayService[T](
 
     // ---- rules -------------------------------------------------------------------------------------------
 
-    private def validate(o: RoundOverrides, settings: EliminationSettings, round: Int): IO[Unit] = {
-        val poolSize = if (pairs(settings, round)) 2 else o.poolSize.getOrElse(settings.poolSize)
+    private def validate(o: RoundOverrides, settings: EliminationSettings, pairs: Boolean): IO[Unit] = {
+        val poolSize = if (pairs) 2 else o.poolSize.getOrElse(settings.poolSize)
         val problems = List(
           Option.when(o.duration.exists(_.getSeconds < 2))("a round must last at least two seconds"),
           Option.when(o.rotations.exists(_ < 0))("rotations cannot be negative"),

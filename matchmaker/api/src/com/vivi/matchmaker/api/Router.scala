@@ -194,6 +194,9 @@ object Router {
             case ("POST", "tournaments" :: gameId :: tournamentId :: "start" :: Nil) =>
                 withTournament(gameId, tournamentId)((g, t) => ok(services.tournaments.start(g, t, caller)))
 
+            case ("POST", "tournaments" :: gameId :: tournamentId :: "end" :: Nil) =>
+                withTournament(gameId, tournamentId)((g, t) => ok(services.tournaments.end(g, t, caller)))
+
             // A round's buttons (Phase 4): starting it, with what is set for it; checking its matches against their
             // clocks; and queueing again what of it has not been made.
             case ("POST", "tournaments" :: gameId :: tournamentId :: "rounds" :: round :: "start" :: Nil) =>
