@@ -21,6 +21,12 @@ import upickle.default.{ReadWriter, macroRW}
   * asked to move. The cost is that a player who never turns up holds the match up indefinitely. Under a chess clock the
   * same rule decides what a turn cost: the time from when the player's clock started for it, not before.
   *
+  * Unless `startOnOpen` is false ([[Protocol.LiveTerms.startOnOpen]]): then a seat's clock starts when its turn does,
+  * opened or not, and a player who never turns up runs out of time like anybody else. A tournament asks for that.
+  *
+  * `carried` is time each seat had already spent before the game began, choosing its role ([[RoleChoosing]]): part of
+  * its budget under a chess clock, though none of the game's own turns.
+  *
   * `timedOut` is who ran out, and is empty until somebody does. It is stored rather than worked out again from the
   * time, so that a match ended by its clock stays ended the same way however late it is next read — the same reason a
   * match's completion is stored.
@@ -33,7 +39,9 @@ case class TurnClock(
     limitSeconds: Long,
     kind: ClockKind = ClockKind.PerTurn,
     timedOut: List[Long] = Nil,
-    opened: List[Opened] = Nil
+    opened: List[Opened] = Nil,
+    startOnOpen: Boolean = true,
+    carried: List[Carried] = Nil
 ) {
 
     def limit: Duration = Duration.ofSeconds(limitSeconds)
@@ -50,7 +58,8 @@ case class TurnClock(
       * board if that was later. `None` while they have not opened it, which is a clock that has not started.
       */
     def startedFor(participantId: Long, turnStartedAt: Instant): Option[Instant] =
-        openedAt(participantId).map(at => later(at, turnStartedAt))
+        if (!startOnOpen) Some(turnStartedAt)
+        else openedAt(participantId).map(at => later(at, turnStartedAt))
 
     /** What a seat has spent of its budget on the turns it has finished. Only a chess clock keeps a budget, so under a
       * per-turn clock this is nothing.
@@ -64,11 +73,17 @@ case class TurnClock(
             turns
                 .filter(_.participantId == participantId)
                 .map { t =>
-                    val from = openedAt(participantId).fold(t.startedAt)(later(_, t.startedAt))
+                    val from =
+                        if (!startOnOpen) t.startedAt
+                        else openedAt(participantId).fold(t.startedAt)(later(_, t.startedAt))
                     val cost = Duration.between(from, t.takenAt)
                     if (cost.isNegative) Duration.ZERO else cost
                 }
-                .foldLeft(Duration.ZERO)(_.plus(_))
+                .foldLeft(carriedBy(participantId))(_.plus(_))
+
+    /** What a seat spent before the game began. */
+    private def carriedBy(participantId: Long): Duration =
+        Duration.ofMillis(carried.filter(_.participantId == participantId).map(_.millis).sum)
 
     /** What a seat has left before the turn in front of it: the whole limit under a per-turn clock, and whatever the
       * turns behind it have not spent under a chess clock.
@@ -137,16 +152,20 @@ object TurnClock {
                       (),
                       s"a live match needs a time limit of at least a second; ${terms.timeLimitSeconds} was sent"
                     )
-                } yield Some(TurnClock(terms.timeLimitSeconds, kind))
+                } yield Some(TurnClock(terms.timeLimitSeconds, kind, startOnOpen = terms.waitsForOpening))
         }
 
     import Protocol.given
     given ReadWriter[Opened] = macroRW
+    given ReadWriter[Carried] = macroRW
     given ReadWriter[TurnClock] = macroRW
 }
 
 /** When a seat's player first opened the board of a live match. */
 case class Opened(participantId: Long, at: Instant)
+
+/** Time a seat spent before the game began, which its chess clock still counts. */
+case class Carried(participantId: Long, millis: Long)
 
 /** The clock as a play page is shown it, in a game's state answer.
   *

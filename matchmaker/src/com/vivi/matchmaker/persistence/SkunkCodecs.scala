@@ -10,7 +10,10 @@ import com.vivi.matchmaker.model.{
     SeatNotifications,
     TimeLimitKind,
     TimeLimitUnit,
-    TimeoutAction
+    TimeoutAction,
+    Tiebreaker,
+    TournamentClass,
+    TournamentType
 }
 import com.vivi.matchmaker.util.JsonValues
 
@@ -34,6 +37,11 @@ object SkunkCodecs {
       * match. Text under a check constraint, as `timeoutAction` is.
       */
     val timeLimitKind: Codec[TimeLimitKind] = text.imap(TimeLimitKind.fromCode)(_.code)
+
+    /** A tournament's codes (V53), text under check constraints like the two above. */
+    val tournamentClass: Codec[TournamentClass] = text.imap(TournamentClass.fromCode)(_.code)
+    val tournamentType: Codec[TournamentType] = text.imap(TournamentType.fromCode)(_.code)
+    val tiebreaker: Codec[Tiebreaker] = text.imap(Tiebreaker.fromCode)(_.code)
 
     /** `time_limit_unit`: the unit a limit was offered in, and so the unit it is read back in. */
     val timeLimitUnit: Codec[TimeLimitUnit] = text.imap(TimeLimitUnit.fromCode)(_.code)

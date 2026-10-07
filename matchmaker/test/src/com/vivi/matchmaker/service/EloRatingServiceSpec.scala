@@ -289,6 +289,81 @@ class EloRatingServiceSpec extends PropertySuite {
         )
     }
 
+    // An engine of more than two seats reports each seat's place, 1, 2, 3 (Game.placing in engines/common), and every
+    // pair of seats is rated by them: the middle seat beat one and lost to one.
+    test("a rated match of three seats placed 1, 2 and 3 records those ranks and rates every pair by them") {
+        val result = for {
+            game <- TestSession.resource.use { session =>
+                new GameRepo[String](session).create(
+                  Game(
+                    GameId.unassigned,
+                    GameType.Plain,
+                    "Race",
+                    "Race",
+                    "description",
+                    "https://engine.example.com/games",
+                    active = true,
+                    List("first", "second", "third").map(name =>
+                        GameRole(GameRoleId(0), GameId.unassigned, name, optional = false, displayName = name)
+                    ),
+                    Seq.empty,
+                    unique("race"),
+                    unimportantRoles = true
+                  )
+                )
+            }
+            overall <- register()
+            _ <- TestSession.resource.use(session => new PlayerRepo(session).update(overall.copy(isAdmin = true)))
+            host <- register()
+            _ <- services.gameAdmins.grant(game.gameId, host.playerId, overall.externalId)
+            runners <- List.fill(3)(register()).sequence
+            created <- services.challenges.create(
+              PlainChallenge(
+                ChallengeId(0),
+                host.playerId,
+                "a race",
+                start = None,
+                timeLimit = None,
+                settings = "{}",
+                gameId = game.gameId,
+                gameRoleId = None,
+                isOpen = false,
+                friendly = false,
+                autoStart = true
+              ),
+              host.externalId,
+              runners.zip(game.roles).map((p, role) => Invite(p.playerId, Some(role.gameRoleId)))
+            )
+            _ <- runners.zip(game.roles).traverse_ { (p, role) =>
+                services.challenges.accept(game.gameId, created.challengeId, None, role.gameRoleId, p.externalId)
+            }
+            matchId <- TestSession.resource.use(session =>
+                new ChallengeRepo(session).startedMatch(game.gameId, created.challengeId).map(_.get)
+            )
+            seats <- TestSession.resource.use(session =>
+                new ParticipantRepo(session).listForMatch(game.gameId, matchId)
+            )
+            place = runners.map(_.playerId).zipWithIndex.toMap.view.mapValues(_ + 1).toMap
+            reported = seats.map { (p, _, _) =>
+                ReportedResult(p.participantId, place(p.playerId), Map.empty, isWinner = place(p.playerId) == 1)
+            }
+            _ <- services.engine.recordResults(game.gameId, matchId, reported, game.externalId)
+            ranks <- TestSession.resource.use { session =>
+                seats.traverse((p, _, _) =>
+                    new ResultRepo(session).read(game.gameId, p.participantId).map(r => p.playerId -> r.map(_.rank))
+                )
+            }
+            rated <- TestSession.resource.use { session =>
+                runners.traverse(p =>
+                    new EloRatingRepo(session).read(game.gameId, p.playerId).map(r => p.playerId -> r.map(_.rating))
+                )
+            }
+        } yield (runners.map(_.playerId), ranks.toMap, rated.toMap)
+        val (runners, ranks, rated) = result.timeout(caseTimeout).unsafeRunSync()
+        assertEquals(runners.map(ranks), List(Some(1), Some(2), Some(3)))
+        assertEquals(runners.map(rated), List(Some(1516), Some(1500), Some(1484)))
+    }
+
     test("settling a rated match's ending places its players on the leaderboard") {
         val result = for {
             f <- fixture()

@@ -2,7 +2,18 @@ package com.vivi.boxing
 
 import java.time.Instant
 import scala.util.control.NonFatal
-import com.vivi.engine.{GameEngine, Log, MatchStore, MatchmakerRefusal, Matchmaker, MoveApplied, Refusal, TurnClock}
+import com.vivi.engine.{
+    GameEngine,
+    Log,
+    MatchStore,
+    MatchmakerRefusal,
+    Matchmaker,
+    MoveApplied,
+    Refusal,
+    TurnClock,
+    InMemoryMatchStore,
+    RoleChoosing
+}
 import Protocol._
 
 /** Boxing: the four exchanges of `interaction-design.txt`, which [[GameEngine]] makes for any game, and what is this
@@ -21,11 +32,13 @@ class Engine(
     baseUrl: String,
     now: () => Instant = () => Instant.now(),
     announce: Bout => Unit = _ => (),
-    matchmakerUrl: Option[String] = None
+    matchmakerUrl: Option[String] = None,
+    // Where matches choosing their roles are kept: see `GameEngine`.
+    roles: MatchStore[RoleChoosing] = InMemoryMatchStore[RoleChoosing]()
 ) {
 
     /** The calls every engine makes, which this one exports, and which the shared routes are served from. */
-    val core = GameEngine(Bout, store, matchmaker, baseUrl, now, announce)
+    val core = GameEngine(Bout, store, matchmaker, baseUrl, now, announce, roles)
 
     export core.{createGame, playUrl, read, resultsOf, seatOf, status}
 
@@ -216,7 +229,8 @@ class Engine(
                 bluePoints = r.outcome.score.map(_.blue)
               )
           ),
-          clock = core.clockView(m)
+          clock = core.clockView(m),
+          noTie = m.noTie
         )
     }
 }

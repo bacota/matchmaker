@@ -26,5 +26,11 @@ object Config {
     }
 
     def engine(env: String => Option[String], baseUrl: String, announce: StrategoMatch => Unit = _ => ()): Engine =
-        Engine(EngineConfig.matchStore[StrategoMatch](env), EngineConfig.matchmaker(env), baseUrl, announce = announce)
+        Engine(
+          EngineConfig.matchStore[StrategoMatch](env),
+          EngineConfig.matchmaker(env),
+          baseUrl,
+          announce = announce,
+          roles = EngineConfig.roleStore(env)
+        )
 }

@@ -22,7 +22,10 @@ case class SeatClock(participantId: ParticipantId, since: Instant)
   * seat that is to move now — a seat left out is not pending. Stated whole rather than as a change, so that a callback
   * which turns out to be older than one already applied can be ignored whole: see [[GameEngineService.recordMove]].
   */
-case class MoveState(sequence: Long, pending: List[SeatClock])
+case class MoveState(sequence: Long, pending: List[SeatClock], roles: List[ReportedRole] = Nil)
+
+/** A seat's role as an engine reports it, by name, once the seat has chosen it (V52). */
+case class ReportedRole(participantId: ParticipantId, role: String)
 
 /** One participant's outcome as the game engine reports it at the end of a match. `forfeit` is a live match the engine
   * ended because a turn ran out — the engine's own forfeit, recorded as matchmaker records its own.
@@ -32,7 +35,9 @@ case class ReportedResult(
     rank: Int,
     scores: Map[String, Any],
     isWinner: Boolean,
-    forfeit: Boolean = false
+    forfeit: Boolean = false,
+    // The seat's role, in a match whose roles were chosen in the engine (V52).
+    role: Option[String] = None
 )
 
 /** The four exchanges between matchmaker and a game engine, as described in `interaction-design.txt`:
@@ -295,7 +300,8 @@ class GameEngineService[T](
                       settings = challenge.settings,
                       isPublic = challenge.isPublic,
                       live = challenge.live,
-                      friendly = challenge.friendly
+                      friendly = challenge.friendly,
+                      noTie = challenge.noTie
                     )
                     saved <- matchRepo.create(newMatch)
                     // Under the lock taken above, so the next start of this challenge sees the claim.
@@ -408,6 +414,14 @@ class GameEngineService[T](
                                 if (current.cancelled) IO.pure((current, false))
                                 else
                                     for {
+                                        // Roles chosen in the engine (V52), whatever else of this answer is stale:
+                                        // they were really chosen. Before the seats are read, which are written back.
+                                        _ <- recordRoles(
+                                          session,
+                                          current,
+                                          status.participants
+                                              .flatMap(p => p.role.map(ReportedRole(ParticipantId(p.participantId), _)))
+                                        )
                                         participants <- participantRepo.listForMatch(gameId, matchId)
                                         byId = participants.map((p, _, _) => p.participantId -> p).toMap
                                         // Before the deadlines below, which for a total limit are computed from what each seat
@@ -533,6 +547,60 @@ class GameEngineService[T](
             .void
     }
 
+    /* Writes the roles an engine reports for seats whose players chose them in it (V52): each seat with no role yet is
+     * given the one named, with its player's starting rating in that role, as a start would have written it.
+     *
+     * For the caller's transaction, under the match's lock, which every writer of these seats holds. A seat that has a
+     * role keeps it -- a report naming another is the engine contradicting itself, and is logged rather than applied,
+     * like a role the game does not have.
+     *
+     * The game and its roles are read plainly: the reference-table exception, as at `requireGame`. */
+    private def recordRoles(session: skunk.Session[IO], m: Match, reported: List[ReportedRole]): IO[Unit] =
+        if (reported.isEmpty) IO.unit
+        else {
+            val participantRepo = new ParticipantRepo(session)
+            for {
+                game <- requireGame(new GameRepo[T](session), m.gameId)
+                seats <- participantRepo.listForMatch(m.gameId, m.matchId)
+                byId = seats.map((p, _, _) => p.participantId -> p).toMap
+                _ <- reported.distinct.traverse_ { r =>
+                    (byId.get(r.participantId), game.roles.find(_.name == r.role)) match {
+                        case (None, _) =>
+                            IO(System.err.println(s"match ${m.matchId.value}: a role for a seat it does not have"))
+                        case (_, None) =>
+                            IO(System.err.println(s"match ${m.matchId.value}: '${r.role}' is no role of the game"))
+                        case (Some(seat), Some(role)) =>
+                            seat.gameRoleId match {
+                                case Some(held) if held == role.gameRoleId => IO.unit
+                                case Some(_) =>
+                                    IO(
+                                      System.err.println(
+                                        s"match ${m.matchId.value}: seat ${seat.participantId.value} already has a " +
+                                            s"role; '${r.role}' is refused"
+                                      )
+                                    )
+                                case None =>
+                                    EloRatingService
+                                        .startingRatings(
+                                          session,
+                                          m.gameId,
+                                          List(seat.playerId -> role.gameRoleId),
+                                          byRole = !game.unimportantRoles
+                                        )
+                                        .flatMap(starting =>
+                                            participantRepo.setRole(
+                                              m.gameId,
+                                              seat.participantId,
+                                              role.gameRoleId,
+                                              starting.inRole(seat.playerId, role.gameRoleId)
+                                            )
+                                        )
+                            }
+                    }
+                }
+            } yield ()
+        }
+
     /* What each seat has spent on the turns it has finished — needed only by a total limit, and
      * not asked for otherwise: a per-turn deadline does not depend on the turns before it, and a
      * match with no limit at all has no deadline to compute. */
@@ -637,6 +705,8 @@ class GameEngineService[T](
                         // The move itself, recorded as a turn: when it was made and when the mover's clock
                         // started for it, both as the engine reported them.
                         _ <- turnRepo.create(Turn(gameId, matchId, moved, takenAt, startedAt))
+                        // Any role this move chose (V52), late callback or not: a role is never taken back.
+                        _ <- recordRoles(session, existing, state.toList.flatMap(_.roles))
                         // After the turn above is recorded, since under a total limit the next player's
                         // deadline is what is left of their budget — and the mover's turn has just spent some
                         // of theirs.
@@ -756,6 +826,13 @@ class GameEngineService[T](
                          * recorded, and the match rated, as if it had arrived first; only the completion
                          * itself, and the news of it, are already done. Under the match's lock, so two
                          * deliveries of it cannot both find nothing recorded. */
+                        // Before rating, which rates each seat in its role: a role chosen by the last choice
+                        // may have reached matchmaker only here.
+                        _ <- recordRoles(
+                          session,
+                          existing,
+                          results.flatMap(r => r.role.map(ReportedRole(r.participantId, _)))
+                        )
                         recorded <-
                             if (existing.completed) resultRepo.existsForMatch(gameId, matchId) else IO.pure(false)
                         // Whether this call is what ended the match, rather than a late or repeated
@@ -1140,6 +1217,8 @@ class GameEngineService[T](
               .map(limit => LiveTerms(limit.getSeconds, challenge.timeLimitKind.code)),
           gameDisplayName = Some(game.displayName),
           description = Some(challenge.message.trim).filter(_.nonEmpty),
+          // Absent rather than false for an ordinary match, so an engine is sent what it always was.
+          noTie = Option.when(challenge.noTie)(true),
           moveCallbackUrl =
               callbackBaseUrl.map(base => s"$base/games/${game.gameId.value}/matches/${matchId.value}/moves"),
           resultsCallbackUrl =
@@ -1181,7 +1260,7 @@ class GameEngineService[T](
                   completed = false,
                   due = None,
                   characterId = ca.characterId,
-                  gameRoleId = ca.gameRoleId
+                  gameRoleId = Some(ca.gameRoleId)
                 )
             case pa: PlainAcceptance =>
                 PlainParticipant(
@@ -1192,7 +1271,7 @@ class GameEngineService[T](
                   pending = false,
                   completed = false,
                   due = None,
-                  gameRoleId = pa.gameRoleId
+                  gameRoleId = Some(pa.gameRoleId)
                 )
         }
 

@@ -57,6 +57,10 @@ class WireFormatSpec extends FunSuite {
         assert(json.obj.get("challengeId").forall(_.isNull), json)
         assertEquals(json("creator").num.toLong, 4L)
         assertEquals(read[Match](write(created)), created)
+        // And a tournament's, with the pool it was made for (V53).
+        val pooled = created.copy(fixture = Some(MatchFixture(TournamentId(9), FixtureId(10), 2)))
+        assertEquals(read[Match](write(pooled)), pooled)
+        assertEquals(ujson.read(write(pooled))("fixture")("matchNo").num.toInt, 2)
     }
 
     test("a game round-trips, including the existential parameters field") {
@@ -370,7 +374,7 @@ class FormatSpec extends FunSuite {
           MatchId("m"),
           ParticipantId(2),
           "alice",
-          "First",
+          Some("First"),
           Some(1),
           Map.empty,
           isWinner = true,
@@ -380,6 +384,9 @@ class FormatSpec extends FunSuite {
         assertEquals(read[Json.ParticipantResultView](write(rated)), rated)
         val friendly = rated.copy(eloDelta = None)
         assertEquals(read[Json.ParticipantResultView](write(friendly)), friendly)
+        // A seat whose role was still being chosen when the match ended (V52) has none.
+        val roleless = rated.copy(roleName = None)
+        assertEquals(read[Json.ParticipantResultView](write(roleless)), roleless)
     }
 
     test("numeric parameter values are offered low to high, not in text order") {

@@ -26,5 +26,11 @@ object Config {
     }
 
     def engine(env: String => Option[String], baseUrl: String, announce: RpsMatch => Unit = _ => ()): Engine =
-        Engine(EngineConfig.matchStore[RpsMatch](env), EngineConfig.matchmaker(env), baseUrl, announce = announce)
+        Engine(
+          EngineConfig.matchStore[RpsMatch](env),
+          EngineConfig.matchmaker(env),
+          baseUrl,
+          announce = announce,
+          roles = EngineConfig.roleStore(env)
+        )
 }

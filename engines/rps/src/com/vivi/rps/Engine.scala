@@ -1,7 +1,16 @@
 package com.vivi.rps
 
 import java.time.Instant
-import com.vivi.engine.{GameEngine, MatchStore, Matchmaker, MoveApplied, Refusal, TurnClock}
+import com.vivi.engine.{
+    GameEngine,
+    MatchStore,
+    Matchmaker,
+    MoveApplied,
+    Refusal,
+    TurnClock,
+    InMemoryMatchStore,
+    RoleChoosing
+}
 import Protocol._
 
 /** Rock-paper-scissors: the four exchanges of `interaction-design.txt`, which [[GameEngine]] makes for any game, and
@@ -22,11 +31,13 @@ class Engine(
     matchmaker: Matchmaker,
     baseUrl: String,
     now: () => Instant = () => Instant.now(),
-    announce: RpsMatch => Unit = _ => ()
+    announce: RpsMatch => Unit = _ => (),
+    // Where matches choosing their roles are kept: see `GameEngine`.
+    roles: MatchStore[RoleChoosing] = InMemoryMatchStore[RoleChoosing]()
 ) {
 
     /** The calls every engine makes, which this one exports, and which the shared routes are served from. */
-    val core = GameEngine(RpsMatch, store, matchmaker, baseUrl, now, announce)
+    val core = GameEngine(RpsMatch, store, matchmaker, baseUrl, now, announce, roles)
 
     export core.{createGame, playUrl, read, resultsOf, seatOf, status}
 

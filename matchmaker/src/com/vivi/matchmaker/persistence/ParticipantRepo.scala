@@ -34,15 +34,33 @@ class ParticipantRepo(session: Session[IO]) {
      * The player and the game are each named twice -- once as the seat's own column, once to resolve
      * the chain -- so each value is bound twice. */
     private val insertParticipant: Query[
-      (GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Int, Option[Int]),
+      (
+          GameId,
+          MatchId,
+          GameType,
+          PlayerId,
+          Boolean,
+          Boolean,
+          Option[Instant],
+          Option[GameRoleId],
+          Int,
+          Option[Int],
+          Option[TournamentId],
+          Option[FixtureId],
+          Option[SlotId],
+          Option[Int]
+      ),
       ParticipantId
     ] =
         // `completed_at` (V41) is the database's now() for a seat created already finished, as
         // `updateParticipant` stamps one below; Scala says only whether it is.
         sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed_at, due, game_role_id,
-              elo_start, elo_role_start, notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended)
+              elo_start, elo_role_start, tournament_id, fixture_id, slot_id, seed,
+              notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended)
           SELECT $gameId, $matchId, $gameType, $playerId, $bool, CASE WHEN $bool THEN now() END, ${instant.opt},
-                 $gameRoleId, $int4, ${int4.opt},
+                 ${gameRoleId.opt}, $int4, ${int4.opt},
+                 ${SkunkIdCodecs.tournamentId.opt}, ${SkunkIdCodecs.fixtureId.opt}, ${SkunkIdCodecs.slotId.opt},
+                 ${int4.opt},
                  COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
                  COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
                  COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
@@ -52,7 +70,7 @@ class ParticipantRepo(session: Session[IO]) {
           WHERE pl.player_id = $playerId
           RETURNING participant_id"""
             .query(participantId)
-            .contramap { case t @ (game, _, _, player, _, _, _, _, _, _) => t ++ (game, player) }
+            .contramap { case t @ (game, _, _, player, _, _, _, _, _, _, _, _, _, _) => t ++ (game, player) }
 
     private val insertCharacterParticipant: Command[(GameId, ParticipantId, CharacterId)] =
         sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id)
@@ -62,12 +80,12 @@ class ParticipantRepo(session: Session[IO]) {
     // (game_id, participant_id), with no separate UNIQUE(participant_id) the way character has —
     // so both columns are required in the WHERE clause here, not participant_id alone.
     private val participantRow
-        : Codec[(GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])] =
-        gameType *: matchId *: playerId *: bool *: bool *: instant.opt *: gameRoleId *: int8.opt
+        : Codec[(GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId], Option[Long])] =
+        gameType *: matchId *: playerId *: bool *: bool *: instant.opt *: gameRoleId.opt *: int8.opt
 
     private val selectParticipant: Query[
       (GameId, ParticipantId),
-      (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])
+      (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId], Option[Long])
     ] =
         sql"""SELECT p.game_type, p.match_id, p.player_id, p.pending, p.completed_at IS NOT NULL, p.due, p.game_role_id,
                  cp.character_id
@@ -80,18 +98,31 @@ class ParticipantRepo(session: Session[IO]) {
     // knows a player by — it authenticates them itself and never sees matchmaker's player ids.
     private val selectParticipantsForMatch: Query[
       (GameId, MatchId),
-      (ParticipantId, GameType, PlayerId, String, Boolean, Boolean, Option[Instant], GameRoleId, String, Option[Long])
+      (
+          ParticipantId,
+          GameType,
+          PlayerId,
+          String,
+          Boolean,
+          Boolean,
+          Option[Instant],
+          Option[GameRoleId],
+          Option[String],
+          Option[Long]
+      )
     ] =
         sql"""SELECT p.participant_id, p.game_type, p.player_id, pl.external_id, p.pending,
                  p.completed_at IS NOT NULL, p.due, p.game_role_id, r.name, cp.character_id
           FROM participant p
           JOIN player pl ON pl.player_id = p.player_id
-          JOIN game_role r ON r.game_id = p.game_id AND r.game_role_id = p.game_role_id
+          -- LEFT: a seat whose role is still being chosen in its engine (V52) has none yet.
+          LEFT JOIN game_role r ON r.game_id = p.game_id AND r.game_role_id = p.game_role_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           WHERE p.game_id = $gameId AND p.match_id = $matchId
           ORDER BY p.participant_id"""
             .query(
-              participantId *: gameType *: playerId *: text *: bool *: bool *: instant.opt *: gameRoleId *: text *: int8.opt
+              participantId *: gameType *: playerId *: text *: bool *: bool *: instant.opt *: gameRoleId.opt *: text.opt *:
+                  int8.opt
             )
 
     /* Whose clock has run out, decided by the database's own now().
@@ -106,7 +137,7 @@ class ParticipantRepo(session: Session[IO]) {
      * turn. */
     private val selectOverdueForMatch: Query[
       (GameId, MatchId),
-      (ParticipantId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])
+      (ParticipantId, GameType, PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId], Option[Long])
     ] =
         sql"""SELECT p.participant_id, p.game_type, p.player_id, p.pending, p.completed_at IS NOT NULL,
                  p.due, p.game_role_id, cp.character_id
@@ -115,7 +146,7 @@ class ParticipantRepo(session: Session[IO]) {
           WHERE p.game_id = $gameId AND p.match_id = $matchId
             AND p.pending AND p.completed_at IS NULL AND p.due < now()
           ORDER BY p.participant_id"""
-            .query(participantId *: gameType *: playerId *: bool *: bool *: instant.opt *: gameRoleId *: int8.opt)
+            .query(participantId *: gameType *: playerId *: bool *: bool *: instant.opt *: gameRoleId.opt *: int8.opt)
 
     /** The participants of a match whose turn it is and whose deadline has passed, as of the database's clock.
       */
@@ -127,19 +158,21 @@ class ParticipantRepo(session: Session[IO]) {
             })
 
     private val updateParticipant
-        : Command[(PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, GameId, ParticipantId)] =
+        : Command[(PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId], GameId, ParticipantId)] =
         // A seat finished keeps the time it was first finished at (V41): completing is sticky, and a
         // later write to a finished seat -- a re-stamp of its settings, a repeated callback -- is not
         // a second ending. One not finished has none.
+        //
+        // A role is never taken off a seat: one chosen in the engine (V52) may have been written since `p` was read.
         sql"""UPDATE participant SET player_id = $playerId, pending = $bool,
           completed_at = CASE WHEN $bool THEN COALESCE(completed_at, now()) END,
-          due = ${instant.opt}, game_role_id = $gameRoleId
+          due = ${instant.opt}, game_role_id = COALESCE(${gameRoleId.opt}, game_role_id)
           WHERE game_id = $gameId AND participant_id = $participantId""".command
 
     private def toParticipant(
         id: ParticipantId,
         gameId: GameId,
-        row: (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Option[Long])
+        row: (GameType, MatchId, PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId], Option[Long])
     ): Participant = {
         val (gameType, matchId, playerId, pending, completed, due, roleId, characterIdValue) = row
         gameType match {
@@ -156,16 +189,37 @@ class ParticipantRepo(session: Session[IO]) {
     }
 
     /** Seats `p`, whose player was rated `eloStart` in the game as the match began (V43), and `eloRoleStart` in the
-      * seat's role (V49) — none for a game whose roles are unimportant.
+      * seat's role (V49) — none for a game whose roles are unimportant, or a seat with no role yet. `seat` is the
+      * tournament slot it is filled from, for a tournament match's seat (V53).
       */
-    def create(p: Participant, eloStart: Int, eloRoleStart: Option[Int] = None): IO[Participant] = {
+    def create(
+        p: Participant,
+        eloStart: Int,
+        eloRoleStart: Option[Int] = None,
+        seat: Option[TournamentSeat] = None
+    ): IO[Participant] = {
         val gt = p match {
             case _: CharacterParticipant => GameType.Character
             case _: PlainParticipant     => GameType.Plain
         }
         for {
             id <- session.unique(insertParticipant)(
-              (p.gameId, p.matchId, gt, p.playerId, p.pending, p.completed, p.due, p.gameRoleId, eloStart, eloRoleStart)
+              (
+                p.gameId,
+                p.matchId,
+                gt,
+                p.playerId,
+                p.pending,
+                p.completed,
+                p.due,
+                p.gameRoleId,
+                eloStart,
+                eloRoleStart,
+                seat.map(_.tournamentId),
+                seat.map(_.fixtureId),
+                seat.map(_.slotId),
+                seat.map(_.seed)
+              )
             )
             _ <- p match {
                 case cp: CharacterParticipant =>
@@ -187,6 +241,17 @@ class ParticipantRepo(session: Session[IO]) {
               (p.playerId, p.pending, p.completed, p.due, p.gameRoleId, p.gameId, p.participantId)
             )
             .void
+
+    /* Only a seat with no role yet: a role, once a seat has one, is the seat's for good. */
+    private val updateRole: Command[(GameRoleId, Option[Int], GameId, ParticipantId)] =
+        sql"""UPDATE participant SET game_role_id = $gameRoleId, elo_role_start = ${int4.opt}
+          WHERE game_id = $gameId AND participant_id = $participantId AND game_role_id IS NULL""".command
+
+    /** Gives a seat that has no role yet the role its player chose in the engine (V52), with what they were rated in it
+      * as they chose it. A seat that already has a role keeps it.
+      */
+    def setRole(gameId: GameId, id: ParticipantId, role: GameRoleId, eloRoleStart: Option[Int]): IO[Unit] =
+        session.execute(updateRole)((role, eloRoleStart, gameId, id)).void
 
     /* Every seat in a match, retired at once.
      *
@@ -237,10 +302,10 @@ class ParticipantRepo(session: Session[IO]) {
     /** Everyone playing one match, together with the player's external id and role name.
       *
       * The two extra columns are there for the game-engine calls: the engine is told which Cognito identity plays which
-      * role, and knows nothing of matchmaker's own player or role ids. Both are inner joins -- a participant always has
-      * a player and, since V4, always has a role.
+      * role, and knows nothing of matchmaker's own player or role ids. A participant always has a player; its role is
+      * `None` while the engine is still having it chosen (V52).
       */
-    def listForMatch(gameId: GameId, matchId: MatchId): IO[List[(Participant, String, String)]] =
+    def listForMatch(gameId: GameId, matchId: MatchId): IO[List[(Participant, String, Option[String])]] =
         session
             .execute(selectParticipantsForMatch)((gameId, matchId))
             .map(_.map {
@@ -257,7 +322,7 @@ class ParticipantRepo(session: Session[IO]) {
         sql"""SELECT participant_id, player_id, elo_start, game_role_id, elo_role_start FROM participant
           WHERE game_id = $gameId AND match_id = $matchId
           ORDER BY participant_id"""
-            .query(participantId *: playerId *: int4 *: gameRoleId *: int4.opt)
+            .query(participantId *: playerId *: int4 *: gameRoleId.opt *: int4.opt)
             .to[ParticipantRepo.EloSeatRow]
 
     /** Every seat in a match as rating sees it: whose it is, its role, and what they were rated as it began, overall
@@ -302,7 +367,7 @@ class ParticipantRepo(session: Session[IO]) {
             AND m.create_date > t.create_date
           ORDER BY p.participant_id
           FOR UPDATE OF p #${if (noWait) "NOWAIT" else ""}"""
-            .query(participantId *: playerId *: gameRoleId *: bool)
+            .query(participantId *: playerId *: gameRoleId.opt *: bool)
             .to[ParticipantRepo.LaterSeatRow]
 
     /** The seats `players` hold in matches of the game that began after match `matchId` and are not over yet, each
@@ -350,7 +415,8 @@ object ParticipantRepo {
         participantId: ParticipantId,
         playerId: PlayerId,
         eloStart: Int,
-        gameRoleId: GameRoleId = GameRoleId.unassigned,
+        // None for a seat that never got a role: a match forfeited while roles were still being chosen (V52).
+        gameRoleId: Option[GameRoleId] = None,
         eloRoleStart: Option[Int] = None
     )
 
@@ -360,7 +426,7 @@ object ParticipantRepo {
     case class LaterSeatRow(
         participantId: ParticipantId,
         playerId: PlayerId,
-        gameRoleId: GameRoleId,
+        gameRoleId: Option[GameRoleId],
         afterCompletion: Boolean
     )
 }
