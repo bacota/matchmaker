@@ -183,7 +183,7 @@ class HostedChallengeSpec extends PropertySuite {
             started <- flaky.engine.start(f.game.gameId, created.challengeId, f.host.externalId)
         } yield (
           listed.exists(_.challenge.challengeId == created.challengeId),
-          started.challengeId == created.challengeId
+          started.challengeId.contains(created.challengeId)
         )
         assertEquals(result.timeout(caseTimeout).unsafeRunSync(), (true, true))
     }

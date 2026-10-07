@@ -26,14 +26,7 @@ import com.vivi.matchmaker.model.{
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.util.ChallengeSettings
-import com.vivi.matchmaker.persistence.{
-    GameAdminRepo,
-    MatchRepo,
-    ChallengeRepo,
-    ParticipantRepo,
-    PlayerRepo,
-    ResultRepo
-}
+import com.vivi.matchmaker.persistence.{GameAdminRepo, MatchRepo, ParticipantRepo, PlayerRepo, ResultRepo}
 
 /** Lists a player's matches, and lets the creator of one call it off.
   *
@@ -333,7 +326,6 @@ class MatchService(
         sessionPool
             .use { session =>
                 val matchRepo = new MatchRepo(session)
-                val challengeRepo = new ChallengeRepo(session)
                 val participantRepo = new ParticipantRepo(session)
 
                 session.transaction
@@ -347,18 +339,7 @@ class MatchService(
                                       NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
                                     )
                             }
-                            creator <- challengeRepo.challengerOf(gameId, existing.challengeId).flatMap {
-                                case Some(playerId) => IO.pure(playerId)
-                                // The foreign key makes this unreachable; it is a NotFoundError rather than a crash
-                                // because a match whose challenge has gone is a broken row, not a bad request.
-                                case None =>
-                                    IO.raiseError(
-                                      NotFoundError(
-                                        s"match ${matchId.value} has no challenge ${existing.challengeId.value}"
-                                      )
-                                    )
-                            }
-                            _ <- IO.raiseUnless(creator == caller.playerId)(
+                            _ <- IO.raiseUnless(existing.creator == caller.playerId)(
                               UnauthorizedError(
                                 s"caller '$callerExternalId' did not create match ${matchId.value} and may not cancel it"
                               )

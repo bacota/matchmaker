@@ -10,10 +10,10 @@ import java.time.{Duration, Instant}
   * empty until the engine has answered, which is the state a match is in for the moment between being written and the
   * create call returning.
   *
-  * `challengeId` is the challenge this match was started from, which is never deleted and is therefore where the
-  * match's creator comes from: the challenge's challenger. Holding the challenge rather than copying its challenger
-  * into a column of its own means the two cannot drift apart, and it keeps the settings, message and time limit the
-  * match was made under readable beside the match itself.
+  * `creator` is the player whose match this is: the one who may cancel it. For a match started from a challenge
+  * (`challengeId`) that is the challenger, copied onto the match when it is started (V50). A match need not come from a
+  * challenge at all — a tournament's are created by the tournament — and holding the creator on the match itself is
+  * what lets every listing and the cancel say whose a match is without joining a challenge that may not exist.
   *
   * `completedAt` and `cancelled` are separate rather than one status, because they answer different questions. A
   * completed match was played to an end the engine reported; a cancelled one was called off by its creator and has no
@@ -26,7 +26,8 @@ import java.time.{Duration, Instant}
 case class Match(
     gameId: GameId,
     matchId: MatchId,
-    challengeId: ChallengeId,
+    challengeId: Option[ChallengeId],
+    creator: PlayerId,
     description: String,
     completedAt: Option[Instant],
     start: Instant,
