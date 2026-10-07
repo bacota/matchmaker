@@ -512,7 +512,11 @@ object Router {
                             r.startedAt,
                             caller,
                             r.state.map(st =>
-                                MoveState(st.sequence, st.pending.map(p => SeatClock(p.participantId, p.since)))
+                                MoveState(
+                                  st.sequence,
+                                  st.pending.map(p => SeatClock(p.participantId, p.since)),
+                                  st.roles.map(seat => ReportedRole(seat.participantId, seat.role))
+                                )
                             )
                           )
                         )
@@ -528,7 +532,8 @@ object Router {
                               entry.rank,
                               entry.scores.view.mapValues(JsonValues.toScala).toMap,
                               entry.isWinner,
-                              entry.forfeit
+                              entry.forfeit,
+                              entry.role
                             )
                         )
                         val turns = r.turns.map(

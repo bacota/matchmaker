@@ -314,4 +314,67 @@ class ProtocolSpec extends FunSuite {
           Protocol.ArchiveDownload("https://s3/b/k", at)
         )
     }
+
+    // ---- roles chosen in the engine (V52) ---------------------------------------------------
+
+    test("matchmaker's create request with roles to choose, and a clock that does not wait, reads as the engine's") {
+        val fromMatchmaker = MmCreateGameRequest(
+          matchId = "m-4",
+          gameName = "tic-tac-toe",
+          isPublic = false,
+          parameters = Map.empty,
+          settings = "{}",
+          timeLimitSeconds = Some(600L),
+          players = List(com.vivi.matchmaker.engine.EnginePlayer("sub-a", 1L, None, None, None)),
+          moveCallbackUrl = None,
+          resultsCallbackUrl = None,
+          live = Some(com.vivi.matchmaker.engine.LiveTerms(600L, "TOTAL", startOnOpen = Some(false))),
+          roleChoice = Some(com.vivi.matchmaker.engine.RoleChoice(List(1L), List("X", "O"), Map("X" -> "Crosses")))
+        )
+        val asEngine = read[Protocol.CreateGameRequest](write(fromMatchmaker))
+        assertEquals(asEngine.roleChoice, Some(Protocol.RoleChoice(List(1L), List("X", "O"), Map("X" -> "Crosses"))))
+        assertEquals(asEngine.live.map(_.waitsForOpening), Some(false))
+        // And absent, as from a matchmaker that predates them.
+        val plain = read[Protocol.CreateGameRequest](write(fromMatchmaker.copy(roleChoice = None, live = None)))
+        assertEquals(plain.roleChoice, None)
+        assert(Protocol.LiveTerms(60L).waitsForOpening)
+    }
+
+    test("the roles an engine reports read as matchmaker's: on a move, in a status answer, and with the results") {
+        val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
+        val move = Protocol.MoveNotification(
+          11L,
+          Nil,
+          at,
+          at,
+          Some(Protocol.MoveState(1L, Nil, List(Protocol.SeatRole(11L, "O"), Protocol.SeatRole(22L, "X"))))
+        )
+        val asMove = read[Json.MoveNotification](write(move))(using Json.given_ReadWriter_MoveNotification)
+        assertEquals(
+          asMove.state.toList.flatMap(_.roles).map(r => r.participantId -> r.role),
+          List(ParticipantId(11L) -> "O", ParticipantId(22L) -> "X")
+        )
+
+        val status = Protocol.GameStatusResponse(
+          completed = false,
+          participants = List(Protocol.EngineParticipantStatus(11L, false, false, Some(at), role = Some("O")))
+        )
+        assertEquals(read[MmGameStatusResponse](write(status)).participants.map(_.role), List(Some("O")))
+
+        val results = Protocol.MatchResults(
+          List(Protocol.ResultEntry(11L, 1, Map.empty, isWinner = true, role = Some("O")))
+        )
+        val asResults = read[Json.MatchResults](write(results))(using Json.given_ReadWriter_MatchResults)
+        assertEquals(asResults.results.map(_.role), List(Some("O")))
+    }
+
+    test("an engine that reports no roles is read as reporting none") {
+        val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
+        val status = Protocol.GameStatusResponse(
+          completed = false,
+          participants = List(Protocol.EngineParticipantStatus(11L, true, false, Some(at)))
+        )
+        assert(!write(status).contains("role"))
+        assertEquals(read[MmGameStatusResponse](write(status)).participants.map(_.role), List(None))
+    }
 }

@@ -31,6 +31,7 @@ object Config {
           EngineConfig.matchmaker(env),
           baseUrl,
           announce = announce,
-          matchmakerUrl = EngineConfig.matchmakerUrl(env)
+          matchmakerUrl = EngineConfig.matchmakerUrl(env),
+          roles = EngineConfig.roleStore(env)
         )
 }

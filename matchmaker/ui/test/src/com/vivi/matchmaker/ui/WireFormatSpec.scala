@@ -370,7 +370,7 @@ class FormatSpec extends FunSuite {
           MatchId("m"),
           ParticipantId(2),
           "alice",
-          "First",
+          Some("First"),
           Some(1),
           Map.empty,
           isWinner = true,
@@ -380,6 +380,9 @@ class FormatSpec extends FunSuite {
         assertEquals(read[Json.ParticipantResultView](write(rated)), rated)
         val friendly = rated.copy(eloDelta = None)
         assertEquals(read[Json.ParticipantResultView](write(friendly)), friendly)
+        // A seat whose role was still being chosen when the match ended (V52) has none.
+        val roleless = rated.copy(roleName = None)
+        assertEquals(read[Json.ParticipantResultView](write(roleless)), roleless)
     }
 
     test("numeric parameter values are offered low to high, not in text order") {

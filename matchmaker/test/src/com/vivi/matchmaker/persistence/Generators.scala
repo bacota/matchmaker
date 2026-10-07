@@ -140,7 +140,7 @@ object Generators {
           completed,
           due,
           characterId,
-          gameRoleId
+          Some(gameRoleId)
         )
 
     /** As `genParticipant`, for a game that has no characters. */
@@ -154,7 +154,7 @@ object Generators {
             pending <- Gen.oneOf(true, false)
             completed <- Gen.oneOf(true, false)
             due <- Gen.option(genInstant)
-        } yield PlainParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, gameRoleId)
+        } yield PlainParticipant(ParticipantId(0), gameId, matchId, playerId, pending, completed, due, Some(gameRoleId))
 
     def genResult(gameId: GameId, participantId: ParticipantId): Gen[Result] =
         for {

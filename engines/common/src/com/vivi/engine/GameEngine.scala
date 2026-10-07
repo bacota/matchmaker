@@ -36,6 +36,15 @@ case class Settled[M](state: M, changed: Boolean)
   * so a turn that has run out is noticed by the first request to look at the match: a read of any kind, matchmaker's
   * status call, or the late move itself. The play page counts down and asks again the moment its clock reaches nothing,
   * which is what makes "the first request" arrive on time while anybody is watching.
+  *
+  * A match created with roles still to choose ([[Protocol.RoleChoice]]) begins as a [[RoleChoosing]], kept in `roles`
+  * rather than `store`, and becomes the game's match once every seat has a role. The choices are the match's first
+  * turns: every sequence, turn list and role reported for the game's match afterwards includes them, which is why its
+  * record is consulted beside the match. A match created with its roles settled has no such record, and is played
+  * exactly as before.
+  *
+  * @param roles
+  *   where matches choosing their roles are kept — see [[RoleChoosing]]
   */
 class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
     game: Game[M, S, T],
@@ -43,7 +52,8 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
     matchmaker: Matchmaker,
     baseUrl: String,
     now: () => Instant = () => Instant.now(),
-    announce: M => Unit = (_: M) => ()
+    announce: M => Unit = (_: M) => (),
+    roles: MatchStore[RoleChoosing] = InMemoryMatchStore[RoleChoosing]()
 ) {
 
     private val base = baseUrl.stripSuffix("/")
@@ -57,23 +67,48 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
       * other player cannot.
       */
     def createGame(request: CreateGameRequest): Either[Refusal, CreateGameResponse] =
+        if (request.roleChoice.isDefined) createChoosing(request)
+        else
+            (for {
+                clock <- TurnClock.of(request)
+                made <- game.create(request, now())
+            } yield clock.fold(made)(game.withClock(made, _))) match {
+                case Left(why) => Left(Refusal.Invalid(why))
+                case Right(made) =>
+                    store.create(made)
+                    announce(made)
+                    Right(created(made.matchId, made.isPublic))
+            }
+
+    private def created(matchId: String, isPublic: Boolean): CreateGameResponse =
+        CreateGameResponse(
+          statusUrl = s"$base/matches/$matchId/status",
+          playUrl = s"$base/matches/$matchId/play",
+          publicUrl = Option.when(isPublic)(s"$base/matches/$matchId/board"),
+          cancelUrl = Some(s"$base/matches/$matchId/cancel")
+        )
+
+    /** Step 1 for a match whose roles are still to be chosen: kept as a [[RoleChoosing]] until they are.
+      *
+      * The game is asked to create the match it would make with the choosers given free roles in order, and the answer
+      * thrown away: what it would refuse — a fighter not built, too many players — is refused now, rather than once
+      * everybody has chosen.
+      */
+    private def createChoosing(request: CreateGameRequest): Either[Refusal, CreateGameResponse] = {
+        val at = now()
         (for {
             clock <- TurnClock.of(request)
-            made <- game.create(request, now())
-        } yield clock.fold(made)(game.withClock(made, _))) match {
+            choosing <- RoleChoosing.start(request, at, clock)
+            _ <- game.create(RoleChoosing.provisional(request), at)
+        } yield choosing) match {
             case Left(why) => Left(Refusal.Invalid(why))
-            case Right(created) =>
-                store.create(created)
-                announce(created)
-                Right(
-                  CreateGameResponse(
-                    statusUrl = s"$base/matches/${created.matchId}/status",
-                    playUrl = playUrl(created),
-                    publicUrl = Option.when(created.isPublic)(s"$base/matches/${created.matchId}/board"),
-                    cancelUrl = Some(s"$base/matches/${created.matchId}/cancel")
-                  )
-                )
+            case Right(choosing) =>
+                roles.create(choosing)
+                // Nothing to choose between, as when the one chooser has one role left: the game begins at once.
+                if (choosing.settled) begin(choosing.matchId)
+                Right(created(choosing.matchId, request.isPublic))
         }
+    }
 
     def playUrl(m: M): String = s"$base/matches/${m.matchId}/play"
 
@@ -81,7 +116,289 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
       * whether or not there was anything to drop, so that matchmaker retrying a cancel it did not hear answered is
       * harmless.
       */
-    def cancel(matchId: String): Unit = store.delete(matchId)
+    def cancel(matchId: String): Unit = {
+        store.delete(matchId)
+        roles.delete(matchId)
+    }
+
+    // ---- choosing roles ---------------------------------------------------------------------
+
+    /** The match, while it is choosing its roles or if it ended doing so; `None` for a match whose game has begun, and
+      * for every match that never chose.
+      *
+      * A live chooser whose clock has run out is recorded here, as [[current]] records a turn that has, and the result
+      * reported. And a match whose roles are all chosen but whose game was never created — the engine stopped between
+      * the two — has it created now.
+      */
+    def choosing(matchId: String): Option[RoleChoosing] =
+        roles.get(matchId).flatMap { stored =>
+            if (stored.finished) Option.when(stored.ended)(stored)
+            else if (stored.settled) { begin(matchId); None }
+            else Some(settleChoosing(stored))
+        }
+
+    /** The choosing match with a run-out chooser recorded, if the clock says one has run out. */
+    private def settleChoosing(stored: RoleChoosing): RoleChoosing = {
+        lazy val at = now()
+        if (stored.clock.isEmpty || choosingTimedOut(stored, at).isEmpty) stored
+        else
+            roles
+                .modify(stored.matchId) { latest =>
+                    choosingTimedOut(latest, at) match {
+                        case Some(ended) => (Some(ended), Some(ended))
+                        case None        => (None, None)
+                    }
+                }
+                .flatten
+                .map { ended =>
+                    reportChoosing(ended)
+                    ended
+                }
+                .getOrElse(roles.get(stored.matchId).getOrElse(stored))
+    }
+
+    /** The choosing match ended by its clock, if the chooser has run out of time at `at`. */
+    private def choosingTimedOut(c: RoleChoosing, at: Instant): Option[RoleChoosing] =
+        for {
+            clock <- c.clock
+            chooser <- c.chooser
+            deadline <- clock.deadlineFor(chooser, c.turnStartedAt, c.choices)
+            if !at.isBefore(deadline)
+        } yield c.copy(clock = Some(clock.copy(timedOut = List(chooser))), finished = true)
+
+    /** A player choosing a role, or conceding, in a match choosing its roles — atomically, as a move is. The choice is
+      * reported to matchmaker as a move, and the one that settles the last role begins the game.
+      */
+    def choose(matchId: String, cognitoId: String, request: ChooseRequest): Either[Refusal, RoleChoosing] = {
+        val at = now()
+
+        def decide(stored: RoleChoosing): Either[Refusal, RoleChoosing] =
+            for {
+                seat <- stored.request.players
+                    .find(_.cognitoId == cognitoId)
+                    .toRight(Refusal.NotYours(s"'$cognitoId' has no ${game.seatName} in match '$matchId'"))
+                id = seat.participantId
+                _ <- Either.cond(!stored.ended, (), Refusal.Invalid("this match is already over"))
+                _ <- Either.cond(!stored.finished, (), Refusal.Invalid("the roles have been chosen"))
+                // Choosing is done from the board, so a chooser not yet seen to open it has now.
+                clock = stored.clock.map(_.opening(id, at))
+                decided <-
+                    if (request.concede)
+                        Either.cond(
+                          game.concedes,
+                          stored.copy(clock = clock, conceded = Some(id), finished = true),
+                          Refusal.Invalid("this game cannot be conceded")
+                        )
+                    else
+                        for {
+                            role <- request.role.toRight(Refusal.Invalid("say which role to choose"))
+                            _ <- Either.cond(
+                              stored.chooser.contains(id),
+                              (),
+                              Refusal.Invalid(
+                                stored.chooser
+                                    .map(c => s"it is ${stored.nameOf(c)}'s turn to choose a role")
+                                    .getOrElse("there is no role to choose")
+                              )
+                            )
+                            _ <- Either.cond(stored.free.contains(role), (), Refusal.Invalid(s"'$role' is not free"))
+                        } yield {
+                            val started = TurnClock.turnStart(clock, id, stored.turnStartedAt)
+                            val next = stored.copy(choices = stored.choices :+ RoleChosen(id, role, at, started))
+                            next.copy(clock = clock, autoAssigned = next.lastRole)
+                        }
+            } yield decided
+
+        val outcome = roles.modify(matchId) { stored =>
+            choosingTimedOut(stored, at) match {
+                case Some(ended) =>
+                    (Some(ended), Left(Refusal.TimedOut("the time to choose ran out; the match is over by forfeit")))
+                case None =>
+                    decide(stored) match {
+                        case Right(next)   => (Some(next), Right(next))
+                        case Left(refusal) => (None, Left(refusal))
+                    }
+            }
+        }
+
+        outcome.toRight(Refusal.NotFound(s"no match '$matchId'")).flatten match {
+            case Right(next) if next.ended =>
+                reportChoosing(next)
+                Right(next)
+            case Right(next) =>
+                val begun = if (next.settled) begin(matchId) else None
+                val latest = roles.get(matchId).getOrElse(next)
+                notifyChoice(latest, latest.choices.last, begun)
+                Right(latest)
+            case Left(refusal: Refusal.TimedOut) =>
+                roles.get(matchId).foreach(reportChoosing)
+                Left(refusal)
+            case Left(refusal) => Left(refusal)
+        }
+    }
+
+    /** The game's match, created from a choosing match whose roles are settled — once, however many callers race to it.
+      *
+      * Created as of the last choice, so the first move's clock starts there. A live match's clock comes with it, with
+      * what each chooser spent carried onto their chess-clock budget. The record is marked finished only after the game
+      * exists, so that an engine stopping between the two leaves it to be done again by [[choosing]].
+      */
+    private def begin(matchId: String): Option[M] =
+        roles.get(matchId).filter(c => c.settled && !c.ended).flatMap { c =>
+            val existing = store.get(matchId)
+            val made = existing.orElse {
+                game.create(c.roled, c.turnStartedAt) match {
+                    case Left(why) =>
+                        Log.failure(
+                          IllegalStateException(why),
+                          s"beginning match '$matchId' once its roles were chosen"
+                        )
+                        None
+                    case Right(m) =>
+                        val carried = c.order.map(id => Carried(id, c.spentBy(id).toMillis)).filter(_.millis > 0)
+                        val clocked = c.clock.fold(m)(clock => game.withClock(m, clock.copy(carried = carried)))
+                        try {
+                            store.create(clocked)
+                            announce(clocked)
+                            Some(clocked)
+                        } catch { case _: ConcurrentModification => store.get(matchId) }
+                }
+            }
+            made.foreach(_ =>
+                roles.modify(matchId)(latest =>
+                    (Some(latest.copy(finished = true, autoAssigned = latest.autoAssigned.orElse(latest.lastRole))), ())
+                )
+            )
+            made
+        }
+
+    /** A seated player has opened the board of a match choosing its roles: in a live match, when their clock may start.
+      * Whether this call recorded it, as [[opened]].
+      */
+    def openedChoosing(matchId: String, participantId: Long): Boolean = {
+        lazy val at = now()
+        def opening(c: RoleChoosing): Option[RoleChoosing] =
+            for {
+                clock <- c.clock
+                if !c.finished && !clock.hasOpened(participantId)
+            } yield c.copy(clock = Some(clock.opening(participantId, at)))
+        roles.get(matchId).flatMap(opening).isDefined &&
+        roles.modify(matchId)(latest => opening(latest).fold((None, false))(seen => (Some(seen), true))).contains(true)
+    }
+
+    /** What the choosing page shows a viewer — `viewer` their seat, absent on the public board. */
+    def choosingView(c: RoleChoosing, viewer: Option[Long]): ChoosingView =
+        ChoosingView(
+          choosing = true,
+          you = viewer,
+          chooser = c.chooser,
+          free = c.free.map(r => RoleOffer(r, c.displayName(r))),
+          seats = c.request.players.map(p =>
+              ChoosingSeat(
+                p.participantId,
+                c.nameOf(p.participantId),
+                c.roles.get(p.participantId).map(c.displayName),
+                c.chooser.contains(p.participantId)
+              )
+          ),
+          done = c.finished && !c.ended,
+          ended = Option.when(c.ended)(choosingSummary(c, html = false)),
+          clock = c.clock.map(clock =>
+              clockViewOf(
+                clock,
+                over = c.ended || c.finished,
+                waiting = c.chooser.toSet,
+                seats = c.request.players.map(_.participantId),
+                turnStartedAt = c.turnStartedAt,
+                turns = c.choices
+              )
+          ),
+          canConcede = game.concedes && viewer.isDefined && !c.ended && !c.finished
+        )
+
+    /** The seat a signed-in player holds in a match choosing its roles. */
+    def choosingSeatOf(c: RoleChoosing, cognitoId: String): Either[Refusal, Long] =
+        c.request.players
+            .find(_.cognitoId == cognitoId)
+            .map(_.participantId)
+            .toRight(Refusal.NotYours(s"'$cognitoId' has no ${game.seatName} in match '${c.matchId}'"))
+
+    /** Matchmaker's status call, for a match choosing its roles: the chooser pending, and the choices as turns. */
+    def choosingStatus(c: RoleChoosing, since: Option[Instant] = None): GameStatusResponse =
+        GameStatusResponse(
+          completed = c.ended,
+          participants = c.request.players.map(p =>
+              EngineParticipantStatus(
+                participantId = p.participantId,
+                pending = c.chooser.contains(p.participantId),
+                completed = c.ended,
+                prevMoveAt = Some(c.turnStartedAt),
+                role = c.roles.get(p.participantId)
+              )
+          ),
+          turns = engineTurns(c.choices.filter(t => since.forall(at => t.takenAt.isAfter(at)))),
+          sequence = Some(c.choices.size.toLong)
+        )
+
+    /** A choice, reported as a move. `begun` is the game it began, if it was the last: who is pending then is the
+      * game's.
+      */
+    private def notifyChoice(c: RoleChoosing, chosen: RoleChosen, begun: Option[M]): Unit =
+        c.request.moveCallbackUrl.filter(_ => c.clock.isEmpty).foreach { url =>
+            val (pending, since) = begun match {
+                case Some(m) => (game.pending(m).map(_.participantId), game.clockStartedAt(m))
+                case None    => (c.chooser.toList, c.turnStartedAt)
+            }
+            bestEffort(s"reporting a role chosen in match '${c.matchId}'")(
+              matchmaker.recordMove(
+                url,
+                MoveNotification(
+                  participantId = chosen.participantId,
+                  next = pending,
+                  takenAt = chosen.takenAt,
+                  startedAt = chosen.startedAt,
+                  state = Some(MoveState(c.choices.size.toLong, pending.map(PendingSeat(_, since)), c.seatRoles))
+                )
+              )
+            )
+        }
+
+    /** The results of a match that ended while its roles were being chosen. */
+    def choosingResults(c: RoleChoosing): MatchResults =
+        MatchResults(
+          c.request.players.map { p =>
+              val outcome = c.outcomeOf(p.participantId).getOrElse(Outcome.Draw)
+              ResultEntry(
+                participantId = p.participantId,
+                rank = if (outcome == Outcome.Loss) 2 else 1,
+                scores = Map("outcome" -> ujson.Str(outcome.label)),
+                isWinner = outcome == Outcome.Win,
+                forfeit = c.ranOut,
+                role = c.roles.get(p.participantId)
+              )
+          },
+          turns = Some(engineTurns(c.choices)),
+          summary = Some(choosingSummary(c, html = true))
+        )
+
+    private def choosingSummary(c: RoleChoosing, html: Boolean): String = {
+        def who(id: Long) = if (html) ResultText.name(Some(c.nameOf(id)), "a player") else c.nameOf(id)
+        (c.clock.toList.flatMap(_.timedOut), c.conceded) match {
+            case (late :: _, _)  => s"${who(late)} ran out of time choosing a role."
+            case (_, Some(gone)) => s"${who(gone)} conceded before the game began."
+            case _               => "The match ended before the game began."
+        }
+    }
+
+    private def reportChoosing(c: RoleChoosing): Unit =
+        c.request.resultsCallbackUrl.foreach(url =>
+            bestEffort(s"reporting the result of match '${c.matchId}'")(
+              matchmaker.recordResults(url, choosingResults(c))
+            )
+        )
+
+    /** The choosing that came before the game's match, if it had one. */
+    private def chosenBefore(m: M): Option[RoleChoosing] = roles.get(m.matchId)
 
     /** The match as it stands now, with any turn that has run out recorded. `archived` is a request's word that the
       * match has been archived, which reads the archive first — see [[MatchStore.getArchived]].
@@ -172,37 +489,52 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
     def clockView(m: M): Option[ClockView] =
         game.clock(m).map { clock =>
             val over = game.isOver(m)
-            val waiting = if (over) Set.empty[Long] else game.pending(m).map(_.participantId).toSet
-            // Every seat under a chess clock, whose budget is worth showing running or not; only the seats being
-            // waited on under a per-turn clock, since everyone else's next turn will get the whole limit anyway.
-            val shown =
-                if (over) Nil
-                else if (clock.kind == ClockKind.Total) game.seats(m)
-                else game.seats(m).filter(s => waiting(s.participantId))
-            lazy val at = now()
-            def millis(d: java.time.Duration) = math.max(0L, d.toMillis)
-            ClockView(
-              limitSeconds = clock.limitSeconds,
-              kind = clock.kind.code,
-              seats = shown.map { seat =>
-                  val id = seat.participantId
-                  val started = Option.when(waiting(id))(clock.startedFor(id, game.clockStartedAt(m))).flatten
-                  val deadline = Option.when(waiting(id))(deadlineOf(m, clock, seat)).flatten
-                  SeatClock(
-                    participantId = id,
-                    waiting = waiting(id),
-                    running = deadline.isDefined,
-                    startedAt = started,
-                    remainingMillis = deadline
-                        .map(d => millis(java.time.Duration.between(at, d)))
-                        .orElse(
-                          Option.when(clock.kind == ClockKind.Total)(millis(clock.allowance(id, game.turns(m))))
-                        )
-                  )
-              },
-              timedOut = clock.timedOut
+            clockViewOf(
+              clock,
+              over,
+              waiting = if (over) Set.empty[Long] else game.pending(m).map(_.participantId).toSet,
+              seats = game.seats(m).map(_.participantId),
+              turnStartedAt = game.clockStartedAt(m),
+              turns = game.turns(m)
             )
         }
+
+    /** A clock as a page shows it: of the game's match, or of a match choosing its roles. */
+    private def clockViewOf(
+        clock: TurnClock,
+        over: Boolean,
+        waiting: Set[Long],
+        seats: List[Long],
+        turnStartedAt: Instant,
+        turns: List[TurnLike]
+    ): ClockView = {
+        // Every seat under a chess clock, whose budget is worth showing running or not; only the seats being
+        // waited on under a per-turn clock, since everyone else's next turn will get the whole limit anyway.
+        val shown =
+            if (over) Nil
+            else if (clock.kind == ClockKind.Total) seats
+            else seats.filter(waiting)
+        lazy val at = now()
+        def millis(d: java.time.Duration) = math.max(0L, d.toMillis)
+        ClockView(
+          limitSeconds = clock.limitSeconds,
+          kind = clock.kind.code,
+          seats = shown.map { id =>
+              val started = Option.when(waiting(id))(clock.startedFor(id, turnStartedAt)).flatten
+              val deadline = Option.when(waiting(id))(clock.deadlineFor(id, turnStartedAt, turns)).flatten
+              SeatClock(
+                participantId = id,
+                waiting = waiting(id),
+                running = deadline.isDefined,
+                startedAt = started,
+                remainingMillis = deadline
+                    .map(d => millis(java.time.Duration.between(at, d)))
+                    .orElse(Option.when(clock.kind == ClockKind.Total)(millis(clock.allowance(id, turns))))
+              )
+          },
+          timedOut = clock.timedOut
+        )
+    }
 
     /** The signed-in player's seat in this match.
       *
@@ -232,6 +564,9 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
     def statusOf(m: M, since: Option[Instant] = None): GameStatusResponse = {
         val over = game.isOver(m)
         val pending = game.pending(m).map(_.participantId).toSet
+        // The roles chosen before the game began, if they were: its first turns, and every seat's role.
+        val before = chosenBefore(m)
+        val turns: List[TurnLike] = before.toList.flatMap(_.choices) ++ game.turns(m)
         GameStatusResponse(
           completed = over,
           participants = game.seats(m).map { seat =>
@@ -239,17 +574,22 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                 participantId = seat.participantId,
                 pending = pending.contains(seat.participantId),
                 completed = over,
-                prevMoveAt = Some(game.clockStartedAt(m))
+                prevMoveAt = Some(game.clockStartedAt(m)),
+                role = before.flatMap(_.roles.get(seat.participantId))
               )
           },
           // Strictly after `since`, so the turn matchmaker already has is not sent again — it
           // would be discarded there anyway, and the point of asking is to send what was missed.
           // No `since` means the whole game, which is what a matchmaker with nothing recorded for
           // this match is asking for.
-          turns = engineTurns(game.turns(m).filter(t => since.forall(at => t.takenAt.isAfter(at)))),
-          sequence = Some(game.sequence(m))
+          turns = engineTurns(turns.filter(t => since.forall(at => t.takenAt.isAfter(at)))),
+          sequence = Some(sequenceOf(m, before))
         )
     }
+
+    /** The match's sequence as matchmaker counts it: the game's moves, after any choices of role before them. */
+    private def sequenceOf(m: M, before: Option[RoleChoosing]): Long =
+        game.sequence(m) + before.map(_.choices.size.toLong).getOrElse(0L)
 
     /** A player's move, decided by `decide` against the stored match — atomically, so that two players moving at once
       * cannot both be told they were first — and then, having committed, reported to matchmaker.
@@ -355,6 +695,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         val clock = game.clockStartedAt(m)
 
         m.moveCallbackUrl.filter(_ => game.clock(m).isEmpty).foreach { url =>
+            val before = chosenBefore(m)
             bestEffort(s"reporting a move in match '${m.matchId}'")(
               matchmaker.recordMove(
                 url,
@@ -365,8 +706,13 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                   startedAt = applied.turn.startedAt,
                   // The whole of who is to move now, numbered: what lets matchmaker ignore this callback
                   // if it lands after a later one. See `Protocol.MoveState`.
-                  state =
-                      Some(MoveState(game.sequence(m), game.pending(m).map(s => PendingSeat(s.participantId, clock))))
+                  state = Some(
+                    MoveState(
+                      sequenceOf(m, before),
+                      game.pending(m).map(s => PendingSeat(s.participantId, clock)),
+                      before.toList.flatMap(_.seatRoles)
+                    )
+                  )
                 )
               )
             )
@@ -385,7 +731,15 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         m.resultsCallbackUrl.foreach(url =>
             bestEffort(s"reporting the result of match '${m.matchId}'")(matchmaker.recordResults(url, resultsOf(m)))
         )
-        ArchivingMatchStore.bestEffort(m.matchId)(store.finished(m.matchId))
+        ArchivingMatchStore.bestEffort(m.matchId)(finish(m.matchId))
+    }
+
+    /** Archives a finished match, and drops the record of its choosing, if it had one: everything matchmaker is owed
+      * about it has been sent with its results.
+      */
+    private def finish(matchId: String): Unit = {
+        store.finished(matchId)
+        roles.delete(matchId)
     }
 
     /** Archives `m` if it is over and still has a live copy here — for a status call, which is how matchmaker prompts
@@ -393,7 +747,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
       * archived.
       */
     def archiveIfFinished(m: M): Unit =
-        if (game.isOver(m)) ArchivingMatchStore.bestEffort(m.matchId)(store.finished(m.matchId))
+        if (game.isOver(m)) ArchivingMatchStore.bestEffort(m.matchId)(finish(m.matchId))
 
     private def bestEffort(what: String)(call: => Unit): Unit =
         try call
@@ -407,6 +761,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
       */
     def resultsOf(m: M): MatchResults = {
         val forfeit = game.clock(m).exists(_.ranOut)
+        val before = chosenBefore(m)
         MatchResults(
           game.seats(m).map { seat =>
               val outcome = game.outcome(m, seat)
@@ -415,16 +770,18 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                 rank = game.placing(m, seat),
                 scores = Map("outcome" -> ujson.Str(outcome.label)) ++ game.scores(m, seat),
                 isWinner = outcome == Outcome.Win,
-                forfeit = forfeit
+                forfeit = forfeit,
+                role = before.flatMap(_.roles.get(seat.participantId))
               )
           },
           // Every turn, so that matchmaker records them with the results rather than relying on each
-          // move callback having arrived. See `Protocol.MatchResults`.
-          turns = Some(engineTurns(game.turns(m))),
+          // move callback having arrived — the choices of role before the game included. See
+          // `Protocol.MatchResults`.
+          turns = Some(engineTurns(before.toList.flatMap(_.choices) ++ game.turns(m))),
           summary = game.summary(m)
         )
     }
 
-    private def engineTurns(turns: List[T]): List[EngineTurn] =
+    private def engineTurns(turns: List[TurnLike]): List[EngineTurn] =
         turns.sortBy(_.takenAt).map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt)))
 }

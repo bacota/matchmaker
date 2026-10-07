@@ -58,7 +58,7 @@ class ResultRepo(session: Session[IO]) {
           MatchId,
           ParticipantId,
           String,
-          String,
+          Option[String],
           Option[Int],
           Option[Map[String, Any]],
           Option[Boolean],
@@ -73,12 +73,13 @@ class ResultRepo(session: Session[IO]) {
           JOIN match m ON m.game_id = mine.game_id AND m.match_id = mine.match_id
           JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
           JOIN player pl ON pl.player_id = p.player_id
-          JOIN game_role gr ON gr.game_id = p.game_id AND gr.game_role_id = p.game_role_id
+          -- LEFT: a seat whose role was still being chosen when the match ended has none (V52).
+          LEFT JOIN game_role gr ON gr.game_id = p.game_id AND gr.game_role_id = p.game_role_id
           LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
           WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND ((m.completed IS NOT NULL) OR m.cancelled)
           ORDER BY p.match_id, r.rank ASC NULLS LAST, p.participant_id"""
             .query(
-              gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text *: int4.opt *: scores.opt *: bool.opt *:
+              gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text.opt *: int4.opt *: scores.opt *: bool.opt *:
                   bool.opt *: int4 *: int4.opt
             )
 
@@ -226,7 +227,7 @@ object ResultRepo {
         matchId: MatchId,
         participantId: ParticipantId,
         nickname: String,
-        roleName: String,
+        roleName: Option[String],
         rank: Option[Int],
         scores: Map[String, Any],
         isWinner: Boolean,

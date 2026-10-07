@@ -14,10 +14,11 @@ sealed trait Participant {
     def completed: Boolean
     def due: Option[Instant]
 
-    /** The role this seat plays, carried over from the acceptance the participant was made from. Mandatory there, and
-      * so mandatory here.
+    /** The role this seat plays: carried over from the acceptance the participant was made from, or — for a match whose
+      * roles are chosen in its engine (V52) — written when the engine reports the choice. `None` until then, and for
+      * good in a match that ended before the seat chose.
       */
-    def gameRoleId: GameRoleId
+    def gameRoleId: Option[GameRoleId]
 }
 
 case class PlainParticipant(
@@ -28,7 +29,7 @@ case class PlainParticipant(
     pending: Boolean,
     completed: Boolean,
     due: Option[Instant],
-    gameRoleId: GameRoleId
+    gameRoleId: Option[GameRoleId]
 ) extends Participant
 
 case class CharacterParticipant(
@@ -40,5 +41,5 @@ case class CharacterParticipant(
     completed: Boolean,
     due: Option[Instant],
     characterId: CharacterId,
-    gameRoleId: GameRoleId
+    gameRoleId: Option[GameRoleId]
 ) extends Participant

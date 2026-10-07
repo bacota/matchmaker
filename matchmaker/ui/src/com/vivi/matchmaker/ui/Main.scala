@@ -2210,7 +2210,7 @@ object Views {
                         // a statement of it. The text says it; the emoji is decoration over the top.
                         if (row.isWinner) span(cls := "winner", aria.hidden := true, "🏆 ") else emptyNode,
                         if (row.isWinner) span(cls := "sr-only", "winner: ") else emptyNode,
-                        span(cls := "who", s"${row.nickname} (${row.roleName})"),
+                        span(cls := "who", s"${row.nickname} (${row.roleName.getOrElse("choosing role")})"),
                         // Their Elo rating as the match began, in a friendly match as in any other, and
                         // what the match did to it if it was rated.
                         span(cls := "detail", s" — ${Format.elo(row.eloStart, row.eloDelta)}"),
@@ -2535,7 +2535,8 @@ object Views {
         gameRoleId: GameRoleId,
         name: Var[String],
         displayName: Var[String],
-        optional: Var[Boolean]
+        optional: Var[Boolean],
+        preferred: Var[Boolean]
     )
     private case class ParameterDraft(
         name: Var[String],
@@ -2544,11 +2545,11 @@ object Views {
         default: Var[String]
     )
 
-    private def emptyRole: RoleDraft = RoleDraft(GameRoleId.unassigned, Var(""), Var(""), Var(false))
+    private def emptyRole: RoleDraft = RoleDraft(GameRoleId.unassigned, Var(""), Var(""), Var(false), Var(false))
     private def emptyParameter: ParameterDraft = ParameterDraft(Var(""), Var(""), Var(""), Var(""))
 
     private def draftOf(role: GameRole): RoleDraft =
-        RoleDraft(role.gameRoleId, Var(role.name), Var(role.displayName), Var(role.optional))
+        RoleDraft(role.gameRoleId, Var(role.name), Var(role.displayName), Var(role.optional), Var(role.preferred))
 
     private def draftOf(parameter: GameParameter[String]): ParameterDraft =
         ParameterDraft(
@@ -2616,7 +2617,24 @@ object Views {
                     controlled(checked <-- draft.optional.signal, onClick.mapToChecked --> draft.optional)
                   ),
                   "optional"
-                ),
+                ), {
+                    val preferredTip = s"$formKey-role-$i-preferred-tip"
+                    withTip(
+                      preferredTip,
+                      "Preferred role",
+                      "When players choose their roles in a tournament, the highest seed is given a preferred " +
+                          "role, if one is free, without choosing — White in chess."
+                    )(
+                      label(
+                        input(
+                          tpe := "checkbox",
+                          aria.describedBy := preferredTip,
+                          controlled(checked <-- draft.preferred.signal, onClick.mapToChecked --> draft.preferred)
+                        ),
+                        "preferred"
+                      )
+                    )
+                },
                 // A role that exists cannot be removed: acceptances and played matches name it. The
                 // server refuses it too — this is why the button is not there to press.
                 if (draft.gameRoleId == GameRoleId.unassigned)
@@ -2686,7 +2704,7 @@ object Views {
             val name = d.name.now().trim
             // Left blank, a role is shown by its name -- the server does the same.
             val displayName = Option(d.displayName.now().trim).filter(_.nonEmpty).getOrElse(name)
-            (d.gameRoleId, name, d.optional.now(), displayName)
+            (d.gameRoleId, name, d.optional.now(), displayName, d.preferred.now())
         }
         // A blank new row is one the admin added and did not fill in, and is dropped. A blank
         // existing row is a role whose name has been cleared -- dropping that would ask the server to
@@ -2699,8 +2717,8 @@ object Views {
         else if (named.map(_._4).distinct.sizeIs != named.size) Left("Two roles cannot be shown under the same name.")
         else
             Right(
-              named.map((id, name, optional, displayName) =>
-                  GameRole(id, GameId.unassigned, name, optional, displayName)
+              named.map((id, name, optional, displayName, preferred) =>
+                  GameRole(id, GameId.unassigned, name, optional, displayName, preferred)
               )
             )
     }
@@ -2760,6 +2778,8 @@ object Views {
         val disabled = Var(existing.exists(!_.active))
         // No role has an advantage in winning: ratings are then kept overall only (V49).
         val unimportantRoles = Var(existing.exists(_.unimportantRoles))
+        // The engine lets players choose their roles in the match itself (V52).
+        val choosesRoles = Var(existing.exists(_.choosesRoles))
         // What this form's tip ids start with: a game's edit form and the new-game form are different forms.
         val formKey = existing.fold("new-game")(game => s"game-${game.gameId.value}")
         // Write-only: starts empty whether or not a key is stored, because the stored one is never sent here.
@@ -2908,6 +2928,23 @@ object Views {
                   "Unimportant Roles"
                 )
               )
+          }, {
+              val tipId = s"$formKey-chooses-roles-tip"
+              withTip(
+                tipId,
+                "Players choose roles",
+                "Check this if the game engine lets players choose their roles at the start of a match. " +
+                    "Tournaments then let players choose in seed order; without it, roles are given by seed."
+              )(
+                label(
+                  input(
+                    tpe := "checkbox",
+                    aria.describedBy := tipId,
+                    controlled(checked <-- choosesRoles.signal, onClick.mapToChecked --> choosesRoles)
+                  ),
+                  "Players choose roles"
+                )
+              )
           },
           parameterEditor(formKey, parameters),
           busyButton(
@@ -2950,6 +2987,7 @@ object Views {
                         externalId = engineIdentity.now().trim,
                         timeoutAction = timeoutAction.now(),
                         unimportantRoles = unimportantRoles.now(),
+                        choosesRoles = choosesRoles.now(),
                         characterUrl = Option
                             .when(gameType.now() == GameType.Character)(characterUrl.now().trim)
                             .filter(_.nonEmpty)
@@ -2972,6 +3010,7 @@ object Views {
                               engineIdentity.set("")
                               characterUrl.set("")
                               unimportantRoles.set(false)
+                              choosesRoles.set(false)
                               roles.set(List(emptyRole))
                               parameters.set(Nil)
                           } else {

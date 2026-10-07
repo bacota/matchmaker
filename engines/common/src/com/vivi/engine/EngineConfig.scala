@@ -57,6 +57,22 @@ object EngineConfig {
         ArchivingMatchStore.around(live, matchmaker(env), matchmakerUrl(env).filterNot(_ => offline(env)))
     }
 
+    /** Where matches choosing their roles are kept ([[RoleChoosing]]): the same table as the matches, under keys of
+      * their own, and memory where there is no table. Never archived — a choosing match has no game to archive, and the
+      * record of one whose game began is dropped when that game is.
+      */
+    def roleStore(env: String => Option[String]): MatchStore[RoleChoosing] =
+        env("MATCH_TABLE") match {
+            case Some(table) =>
+                DynamoDbMatchStore[RoleChoosing](
+                  SignedHttp(AwsCredentials.provider(env), region(env)),
+                  table,
+                  region(env),
+                  keyPrefix = "roles#"
+                )
+            case None => InMemoryMatchStore[RoleChoosing]()
+        }
+
     private def offline(env: String => Option[String]): Boolean = env("MATCHMAKER_OFFLINE").contains("true")
 
     /** Where matchmaker's API is, for the calls an engine makes on its own account rather than about one match's moves:

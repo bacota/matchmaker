@@ -41,6 +41,10 @@ object Protocol {
       * `noTie` asks for a match that ends with somebody ahead: a tournament's tie-break. Every engine decodes it, and
       * what it does about it is the game's business — one with no way to break a level position may play on as usual.
       * Absent from a matchmaker that predates it, and for an ordinary match.
+      *
+      * `roleChoice` starts the match with roles still to be chosen: see [[RoleChoice]]. The seats it names are sent
+      * with no `role`. Absent for every match whose roles are all settled, which is every match of a matchmaker that
+      * predates it.
       */
     case class CreateGameRequest(
         matchId: String,
@@ -57,7 +61,8 @@ object Protocol {
         // with. Absent from a matchmaker that predates them.
         gameDisplayName: Option[String] = None,
         description: Option[String] = None,
-        noTie: Option[Boolean] = None
+        noTie: Option[Boolean] = None,
+        roleChoice: Option[RoleChoice] = None
     ) {
 
         /** Whether the match is asked to end with somebody ahead. */
@@ -74,7 +79,30 @@ object Protocol {
       * matchmaker's own codes: `PER_TURN`, each turn afresh, or `TOTAL`, each player's budget for the whole match, like
       * a chess clock.
       */
-    case class LiveTerms(timeLimitSeconds: Long, kind: String = "PER_TURN")
+    case class LiveTerms(timeLimitSeconds: Long, kind: String = "PER_TURN", startOnOpen: Option[Boolean] = None) {
+
+        /** Whether a player's clock waits for them to open the board, as it always has; `startOnOpen = false` starts it
+          * when their turn does, opened or not, so that a player who never turns up runs out of time. A tournament
+          * sends false: its round cannot wait on a no-show.
+          */
+        def waitsForOpening: Boolean = startOnOpen.getOrElse(true)
+    }
+
+    /** Roles still to be chosen, by the players themselves, before the game begins.
+      *
+      * `order` is the seats still to choose, by participant id, in the order they choose — a tournament's seeds,
+      * highest first. `roles` is every role of the game, by name, and `displayNames` what players call each of them. A
+      * seat sent with a role keeps it, and that role is not on offer.
+      *
+      * The engine offers the free roles to each seat in `order` in turn, and each choice is a turn like any other: the
+      * chooser is pending, the choice is reported as a move, and its time is the chooser's. When one seat is left with
+      * one role, it is given it without choosing. Then the game itself is created, with every seat roled. See
+      * [[RoleChoosing]].
+      */
+    case class RoleChoice(order: List[Long], roles: List[String], displayNames: Map[String, String] = Map.empty)
+
+    /** One seat's role, as an engine reports it once the seat has one. */
+    case class SeatRole(participantId: Long, role: String)
 
     /** `cancelUrl` is where matchmaker says the match has been cancelled, so that the engine can drop it. Absent from
       * an engine that predates it, which is then simply not told.
@@ -86,11 +114,15 @@ object Protocol {
         cancelUrl: Option[String] = None
     )
 
+    /** `role` is the seat's role in a match whose roles were chosen in it ([[RoleChoice]]), once it has one; absent for
+      * every other seat, whose role matchmaker already knows.
+      */
     case class EngineParticipantStatus(
         participantId: Long,
         pending: Boolean,
         completed: Boolean,
-        prevMoveAt: Option[Instant]
+        prevMoveAt: Option[Instant],
+        role: Option[String] = None
     )
 
     /** One move, as reported to a status call. `startedAt` is when that player's clock started for it — this engine
@@ -138,8 +170,10 @@ object Protocol {
       * opposite order to the moves. The number is how matchmaker recognises the late one, and the whole pending list is
       * what lets it ignore the late one safely. With this present, matchmaker ignores `next`, which is still sent for a
       * matchmaker that predates it.
+      *
+      * `roles` is every seat's role so far, in a match whose roles are chosen in it ([[RoleChoice]]); empty otherwise.
       */
-    case class MoveState(sequence: Long, pending: List[PendingSeat])
+    case class MoveState(sequence: Long, pending: List[PendingSeat], roles: List[SeatRole] = Nil)
 
     case class PendingSeat(participantId: Long, since: Instant)
 
@@ -154,7 +188,9 @@ object Protocol {
         rank: Int,
         scores: Map[String, ujson.Value],
         isWinner: Boolean,
-        forfeit: Boolean = false
+        forfeit: Boolean = false,
+        // The seat's role, in a match whose roles were chosen in it, as `EngineParticipantStatus.role`.
+        role: Option[String] = None
     )
 
     /** `turns` is every turn of the match, in the same shape as a status answer's. Matchmaker records them in the
@@ -238,6 +274,8 @@ object Protocol {
 
     given ReadWriter[EnginePlayer] = macroRW
     given ReadWriter[LiveTerms] = macroRW
+    given ReadWriter[RoleChoice] = macroRW
+    given ReadWriter[SeatRole] = macroRW
     given ReadWriter[CreateGameRequest] = macroRW
     given ReadWriter[CreateGameResponse] = macroRW
     given ReadWriter[EngineParticipantStatus] = macroRW

@@ -253,6 +253,9 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
 
     def seats(m: StrategoMatch): List[Seat] = m.seats
 
+    /** A side may concede at any time — setup included, and while roles are still being chosen. */
+    override def concedes: Boolean = true
+
     def isOver(m: StrategoMatch): Boolean = m.isOver
 
     def markCompleted(m: StrategoMatch): StrategoMatch = m.copy(completed = true)

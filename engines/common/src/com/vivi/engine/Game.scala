@@ -79,6 +79,11 @@ trait Game[M <: MatchLike, S <: SeatLike, T <: TurnLike] {
     /** What a player's place in the match is called, in what they are told when they have none: a seat, a corner. */
     def seatName: String = "seat"
 
+    /** Whether a player may give the match up. Read by the choosing of roles before the game ([[RoleChoosing]]), which
+      * lets a player concede there only in a game that would let them concede in play.
+      */
+    def concedes: Boolean = false
+
     def seats(m: M): List[S]
 
     def isOver(m: M): Boolean
