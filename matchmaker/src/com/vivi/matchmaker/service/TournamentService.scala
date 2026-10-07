@@ -28,9 +28,12 @@ import com.vivi.matchmaker.notify.Notifications
   * SHARE`, where the read only has to outlive the write: an entry holds the tournament against a start). The game and
   * its roles are read plainly, under the reference-table exception: see `requireGame`.
   */
-class TournamentService[T](sessionPool: SessionPool, notifications: Notifications = Notifications.disabled)(using
-    codec: TextCodec[T]
-) {
+class TournamentService[T](
+    sessionPool: SessionPool,
+    notifications: Notifications = Notifications.disabled,
+    /* A running round's completion, looked at again when the field changes: a withdrawal can leave it nothing to play. */
+    fieldChanged: (GameId, TournamentId) => IO[Unit] = (_, _) => IO.unit
+)(using codec: TextCodec[T]) {
 
     /** Kinds of tournament that can be started so far. The rest can be created, and wait for the phases that build
       * them.
@@ -352,32 +355,35 @@ class TournamentService[T](sessionPool: SessionPool, notifications: Notification
       * a bye.
       */
     def withdraw(gameId: GameId, tournamentId: TournamentId, entryId: EntryId, callerExternalId: String): IO[Unit] =
-        sessionPool.use { session =>
-            session.transaction.use { _ =>
-                val entries = new EntryRepo(session)
-                val participants = new TournamentParticipantRepo(session)
-                for {
-                    caller <- requireCaller(session, callerExternalId)
-                    t <- requireTournament(
-                      new TournamentRepo(session).readForShare(gameId, tournamentId),
-                      gameId,
-                      tournamentId
-                    )
-                    entry <- entries.read(gameId, tournamentId, entryId).flatMap {
-                        case Some(e) => IO.pure(e)
-                        case None    => IO.raiseError(NotFoundError(s"no entry ${entryId.value} in this tournament"))
-                    }
-                    _ <- IO.raiseUnless(entry.playerId == caller.playerId || t.owner == caller.playerId)(
-                      UnauthorizedError("only the entrant, or the tournament's owner, may withdraw an entry")
-                    )
-                    seeded <- participants.readByEntryForUpdate(gameId, tournamentId, entryId)
-                    _ <- seeded match {
-                        case Some(p) => participants.setWithdrawn(gameId, tournamentId, p.tournamentParticipantId, true)
-                        case None    => entries.delete(gameId, tournamentId, entryId)
-                    }
-                } yield ()
+        sessionPool
+            .use { session =>
+                session.transaction.use { _ =>
+                    val entries = new EntryRepo(session)
+                    val participants = new TournamentParticipantRepo(session)
+                    for {
+                        caller <- requireCaller(session, callerExternalId)
+                        t <- requireTournament(
+                          new TournamentRepo(session).readForShare(gameId, tournamentId),
+                          gameId,
+                          tournamentId
+                        )
+                        entry <- entries.read(gameId, tournamentId, entryId).flatMap {
+                            case Some(e) => IO.pure(e)
+                            case None => IO.raiseError(NotFoundError(s"no entry ${entryId.value} in this tournament"))
+                        }
+                        _ <- IO.raiseUnless(entry.playerId == caller.playerId || t.owner == caller.playerId)(
+                          UnauthorizedError("only the entrant, or the tournament's owner, may withdraw an entry")
+                        )
+                        seeded <- participants.readByEntryForUpdate(gameId, tournamentId, entryId)
+                        _ <- seeded match {
+                            case Some(p) =>
+                                participants.setWithdrawn(gameId, tournamentId, p.tournamentParticipantId, true)
+                            case None => entries.delete(gameId, tournamentId, entryId)
+                        }
+                    } yield seeded.isDefined
+                }
             }
-        }
+            .flatMap(started => IO.whenA(started)(fieldChanged(gameId, tournamentId)))
 
     // ---- starting -------------------------------------------------------------------------------------
 

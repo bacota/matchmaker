@@ -27,6 +27,7 @@ import com.vivi.matchmaker.persistence.TournamentMatchRepo.SeatRow
 import com.vivi.matchmaker.notify.Notifications
 import com.vivi.matchmaker.tournament.{
     Advancement,
+    FinalRanks,
     PlannedMatch,
     PlayedMatch,
     PoolSchedule,
@@ -115,10 +116,13 @@ class TournamentPlayService[T](
                         _ <- fixtures.startRound(gameId, tournamentId, round, t.live)
                         started <- fixtures.readRoundForUpdate(gameId, tournamentId, round).map(_.get)
                         pools <- poolsOf(session, t, settings, game, started)
-                    } yield pools.flatMap(p => p.regular.map(m => due(t, p.fixture, m.matchNo)))
+                    } yield pools.flatMap(p => p.owed.map(m => due(t, p.fixture, m.matchNo)))
                 }
             }
             .flatMap(queue)
+            // A round with nothing to play — every pool a lone player, or every match one a withdrawn player was in —
+            // has no match whose ending would complete it, so it is looked at now.
+            .flatTap(work => IO.whenA(work.queued == 0)(completeIfOver(gameId, tournamentId, round)))
 
     /** The owner asking for every match of a running round that may have run out to be checked against its clock (D7):
       * each one past a deadline, and every live one, whose deadlines matchmaker does not hold. A second press within a
@@ -224,6 +228,14 @@ class TournamentPlayService[T](
                 case None                      => IO.pure(Settlement.Settled)
                 case Some((tournament, round)) => completeIfOver(gameId, tournament, round).as(Settlement.Settled)
             }
+
+    /** A tournament's field has changed — somebody withdrew — so a running round may have nothing left to play. */
+    def fieldChanged(gameId: GameId, tournamentId: TournamentId): IO[Unit] =
+        sessionPool
+            .use(session => new FixtureRepo(session).listRounds(gameId, tournamentId))
+            .flatMap(
+              _.filter(r => r.started && !r.completed).traverse_(r => completeIfOver(gameId, tournamentId, r.round))
+            )
 
     /** Completes a round if every pool has played what it owes; or, under `REMATCH`, queues the tie-breaks a pool still
       * needs. Under the round's lock, and stamped once.
@@ -430,6 +442,46 @@ class TournamentPlayService[T](
                 .flatMap(p => Seeding.withinPool(p.standings).toList)
                 .traverse_((member, seed) => participants.setSeed(t.gameId, t.tournamentId, member, seed))
             _ <- new FixtureRepo(session).completeRound(t.gameId, t.tournamentId, round)
+            rounds <- new FixtureRepo(session).listRounds(t.gameId, t.tournamentId)
+            _ <- IO.whenA(rounds.map(_.round).maxOption.contains(round))(finish(session, t, pools))
+        } yield ()
+    }
+
+    /** The last round is over (Phase 5): everybody's final rank, and the tournament ended.
+      *
+      * A round robin ranks by its one pool's standings. Single elimination ranks the final's players first, then the
+      * consolation pool's, then everybody else by the round they reached, sharing a rank with the rest who went out in
+      * the same round — see [[com.vivi.matchmaker.tournament.FinalRanks]].
+      */
+    private def finish(session: Session[IO], t: Tournament, lastPools: List[Pool]): IO[Unit] = {
+        val participants = new TournamentParticipantRepo(session)
+        for {
+            field <- participants.list(t.gameId, t.tournamentId)
+            slots <- new FixtureRepo(session).listSlots(t.gameId, t.tournamentId)
+            fixtures <- new FixtureRepo(session).listFixtures(t.gameId, t.tournamentId)
+            roundOf = fixtures.map(f => f.fixtureId -> f.round).toMap
+            reached = slots
+                .flatMap(s => s.occupant.map(_ -> roundOf(s.fixtureId)))
+                .groupMapReduce(_._1)(_._2)(math.max)
+            ranks =
+                if (t.elimination.exists(_.tournamentType == TournamentType.RoundRobin))
+                    FinalRanks.roundRobin(lastPools.flatMap(_.standings))
+                else
+                    FinalRanks.singleElimination(
+                      lastPools.find(_.fixture.position == 1).toList.flatMap(_.standings),
+                      lastPools.find(_.fixture.position == 2).toList.flatMap(_.standings),
+                      // Everybody seeded is somewhere: one who never filled a slot went out before the first round.
+                      field.map(p => p.tournamentParticipantId -> reached.getOrElse(p.tournamentParticipantId, 0)).toMap
+                    )
+            _ <- field.traverse_(p =>
+                participants.setFinalRank(
+                  t.gameId,
+                  t.tournamentId,
+                  p.tournamentParticipantId,
+                  ranks.get(p.tournamentParticipantId)
+                )
+            )
+            _ <- new TournamentRepo(session).end(t.gameId, t.tournamentId)
         } yield ()
     }
 
