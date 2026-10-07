@@ -72,6 +72,7 @@ object Tournaments {
         val roundHours = Var("48")
         val tiebreaker = Var[Tiebreaker](Tiebreaker.Score)
         val rotations = Var("0")
+        val eliminationRotations = Var("0")
         val invitational = Var(false)
         val isPublic = Var(false)
         val live = Var(false)
@@ -92,20 +93,28 @@ object Tournaments {
             s"$key-kind-tip",
             "Kind",
             "Single elimination: pools play off, and the best of each go through to the next round until one pool " +
-                "is left for the final, with a consolation pool beside it. Round robin: everybody plays everybody once."
+                "is left for the final, with a consolation pool beside it. Round robin: everybody plays everybody once. " +
+                "Playoff: pools of three or more each play round robin, then the best of them, seeded again by how " +
+                "they did, play off in pairs."
           )(
             field(
               "Kind",
               select(
                 value <-- kind.signal.map(_.code),
-                onChange.mapToValue --> (code => kind.set(TournamentType.fromCode(code))),
+                onChange.mapToValue --> { code =>
+                    val chosen = TournamentType.fromCode(code)
+                    // A playoff's pools hold more than two.
+                    if (chosen == TournamentType.Playoff && number(poolSize.now()).forall(_ < 3)) poolSize.set("4")
+                    kind.set(chosen)
+                },
                 option(value := TournamentType.SingleElim.code, TournamentType.SingleElim.label),
-                option(value := TournamentType.RoundRobin.code, TournamentType.RoundRobin.label)
+                option(value := TournamentType.RoundRobin.code, TournamentType.RoundRobin.label),
+                option(value := TournamentType.Playoff.code, TournamentType.Playoff.label)
               )
             )
           ),
           child.maybe <-- kind.signal.map(k =>
-              Option.when(k == TournamentType.SingleElim)(
+              Option.when(k == TournamentType.SingleElim || k == TournamentType.Playoff)(
                 div(
                   tipField(
                     s"$key-pool-tip",
@@ -115,7 +124,7 @@ object Tournaments {
                   )(
                     input(
                       tpe := "number",
-                      minAttr := "2",
+                      minAttr := (if (k == TournamentType.Playoff) "3" else "2"),
                       controlled(value <-- poolSize.signal, onInput.mapToValue --> poolSize)
                     )
                   ),
@@ -129,6 +138,20 @@ object Tournaments {
                       tpe := "number",
                       minAttr := "1",
                       controlled(value <-- advance.signal, onInput.mapToValue --> advance)
+                    )
+                  ),
+                  Option.when(k == TournamentType.Playoff)(
+                    tipField(
+                      s"$key-elimination-rotations-tip",
+                      "Rotations in the pairs",
+                      "Rotations for the rounds of pairs after the pools: 0, and roles go by seed; more, and both " +
+                          "players play every role that many times."
+                    )(
+                      input(
+                        tpe := "number",
+                        minAttr := "0",
+                        controlled(value <-- eliminationRotations.signal, onInput.mapToValue --> eliminationRotations)
+                      )
                     )
                   )
                 )
@@ -223,6 +246,7 @@ object Tournaments {
                       kind.now(),
                       number(poolSize.now()).getOrElse(2),
                       number(advance.now()).getOrElse(1),
+                      eliminationRotations = number(eliminationRotations.now()).getOrElse(0),
                       tiebreaker = tiebreaker.now()
                     )
                   ),

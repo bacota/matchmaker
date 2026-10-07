@@ -40,7 +40,8 @@ class TournamentService[T](
     /** Kinds of tournament that can be started so far. The rest can be created, and wait for the phases that build
       * them.
       */
-    private val startable: Set[TournamentType] = Set(TournamentType.SingleElim, TournamentType.RoundRobin)
+    private val startable: Set[TournamentType] =
+        Set(TournamentType.SingleElim, TournamentType.RoundRobin, TournamentType.Playoff)
 
     // ---- reading ----------------------------------------------------------------------------------
 
@@ -413,7 +414,7 @@ class TournamentService[T](
                         _ <- IO.raiseWhen(entries.sizeIs < 2)(
                           ValidationError("a tournament needs at least two entrants to start")
                         )
-                        ratings <- entries.traverse(e => ratingOf(session, gameId, e).map(e -> _))
+                        ratings <- entries.traverse(e => TournamentService.ratingOf[T](session, gameId, e).map(e -> _))
                         // Seeded by the tournament's id, so the same field is drawn the same way however often asked.
                         order = Seeding.initial(ratings, Random(tournamentId.value))
                         participants <- order.zipWithIndex.traverse { (e, i) =>
@@ -471,6 +472,11 @@ class TournamentService[T](
                       )
                       .orElse(Option.when(e.eliminationRotations < 0)("rotations cannot be negative"))
                       .orElse(
+                        Option.when(e.tournamentType == TournamentType.Playoff && e.poolSize <= 2)(
+                          "a playoff's pools hold more than two"
+                        )
+                      )
+                      .orElse(
                         Option.when(
                           Set(TournamentType.DoubleElim).contains(e.tournamentType) &&
                               e.poolSize != 2 && e.minPoolAdvance != 1
@@ -502,18 +508,6 @@ class TournamentService[T](
                   )
                 )
             }
-
-    /** What an entry is seeded by: its player's overall rating, or for a character its owner's now; the starting rating
-      * for anybody with none.
-      */
-    private def ratingOf(session: Session[IO], gameId: GameId, entry: TournamentEntry): IO[Int] =
-        for {
-            player <- entry.characterId match {
-                case None    => IO.pure(Some(entry.playerId))
-                case Some(c) => new CharacterRepo[T](session).read(c).map(_.flatMap(_.playerId))
-            }
-            rating <- player.flatTraverse(p => new EloRatingRepo(session).read(gameId, p))
-        } yield rating.map(_.rating).getOrElse(EloRating.initial)
 
     private def requireCaller(session: Session[IO], callerExternalId: String): IO[Player] =
         new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
@@ -547,4 +541,19 @@ class TournamentService[T](
     private def uniqueViolation(message: String): PartialFunction[Throwable, Throwable] = {
         case e: skunk.exception.PostgresErrorException if e.code == "23505" => ConflictError(message)
     }
+}
+
+object TournamentService {
+
+    /** What an entry is seeded by: its player's overall rating, or for a character its owner's now; the starting rating
+      * for anybody with none.
+      */
+    def ratingOf[T](session: Session[IO], gameId: GameId, entry: TournamentEntry)(using TextCodec[T]): IO[Int] =
+        for {
+            player <- entry.characterId match {
+                case None    => IO.pure(Some(entry.playerId))
+                case Some(c) => new CharacterRepo[T](session).read(c).map(_.flatMap(_.playerId))
+            }
+            rating <- player.flatTraverse(p => new EloRatingRepo(session).read(gameId, p))
+        } yield rating.map(_.rating).getOrElse(EloRating.initial)
 }

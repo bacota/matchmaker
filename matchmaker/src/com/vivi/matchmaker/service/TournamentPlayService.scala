@@ -104,7 +104,7 @@ class TournamentPlayService[T](
                         _ <- IO.raiseWhen(previous.exists(!_.completed))(
                           ConflictError(s"round ${round - 1} is not over yet")
                         )
-                        _ <- validate(overrides, settings, game)
+                        _ <- validate(overrides, settings, round)
                         configured = existing.copy(
                           duration = overrides.duration.orElse(existing.duration),
                           rotations = overrides.rotations.orElse(existing.rotations),
@@ -112,7 +112,7 @@ class TournamentPlayService[T](
                           tiebreaker = overrides.tiebreaker.orElse(existing.tiebreaker)
                         )
                         _ <- fixtures.setRoundSettings(configured)
-                        _ <- fill(session, t, settings, game, round, previous)
+                        _ <- fill(session, t, settings, game, configured, previous)
                         _ <- fixtures.startRound(gameId, tournamentId, round, t.live)
                         started <- fixtures.readRoundForUpdate(gameId, tournamentId, round).map(_.get)
                         pools <- poolsOf(session, t, settings, game, started)
@@ -389,7 +389,10 @@ class TournamentPlayService[T](
                 .sortBy(_.gameRoleId.value)
                 .map(r => RoleSpec(r.name, r.preferred))
                 .toList
-            val rotations = round.rotations.getOrElse(t.rotations)
+            val rotations =
+                round.rotations.getOrElse(
+                  if (pairs(settings, round.round)) settings.eliminationRotations else t.rotations
+                )
             val mode =
                 if (rotations > 0) RoleMode.Rotate(rotations)
                 else if (game.unimportantRoles) RoleMode.AtRandom
@@ -397,7 +400,7 @@ class TournamentPlayService[T](
                 else RoleMode.BySeed
             val tiebreaker = round.tiebreaker.getOrElse(settings.tiebreaker)
             val last = rounds.map(_.round).maxOption.forall(_ == round.round)
-            val advance = round.minPoolAdvance.getOrElse(settings.minPoolAdvance)
+            val advance = advanceOf(settings, round)
             pools.map { fixture =>
                 val members = slots
                     .filter(_.fixtureId == fixture.fixtureId)
@@ -440,24 +443,31 @@ class TournamentPlayService[T](
         }
     }
 
-    /** Settles who fills each of `round`'s slots: the previous round's finishers and the fill rule, or the seeds. */
+    /** Settles who fills each of `round`'s slots: the previous round's finishers and the fill rule, or the seeds —
+      * after reseeding everybody, if the round is marked `reseed`.
+      */
     private def fill(
         session: Session[IO],
         t: Tournament,
         settings: EliminationSettings,
         game: Game,
-        round: Int,
+        round: TournamentRound,
         previous: Option[TournamentRound]
     ): IO[Unit] = {
         val fixtures = new FixtureRepo(session)
         for {
-            participants <- new TournamentParticipantRepo(session).listForUpdate(t.gameId, t.tournamentId)
-            slots <- fixtures.listSlots(t.gameId, t.tournamentId, round)
+            held <- new TournamentParticipantRepo(session).listForUpdate(t.gameId, t.tournamentId)
+            slots <- fixtures.listSlots(t.gameId, t.tournamentId, round.round)
             standings <- previous.traverse(r => poolsOf(session, t, settings, game, r))
+            finishers = standings.toList.flatten.map(p => p.fixture.fixtureId -> p.standings).toMap
+            advance = previous.fold(settings.minPoolAdvance)(advanceOf(settings, _))
+            participants <-
+                if (round.reseed) reseed(session, t, settings, game, round, held, slots, finishers, advance)
+                else IO.pure(held)
             resolved = Advancement.resolve(
               slots,
-              standings.toList.flatten.map(p => p.fixture.fixtureId -> p.standings).toMap,
-              previous.flatMap(_.minPoolAdvance).getOrElse(settings.minPoolAdvance),
+              finishers,
+              advance,
               participants.map(p => p.seed -> p.tournamentParticipantId).toMap,
               participants.filter(_.withdrawn).map(_.tournamentParticipantId).toSet
             )
@@ -466,6 +476,67 @@ class TournamentPlayService[T](
             )
         } yield ()
     }
+
+    /** Gives everybody a new seed as a `reseed` round starts, from their record in every round before it (D8): the
+      * players who went through in the previous round take seeds 1 to however many of the round's slots name a seed, in
+      * the order of their records, and everybody else follows in the order of theirs. The round's slots name seeds, so
+      * the ones who went through are the ones placed, drawn by how well they have played.
+      *
+      * Answers the field with its new seeds.
+      */
+    private def reseed(
+        session: Session[IO],
+        t: Tournament,
+        settings: EliminationSettings,
+        game: Game,
+        round: TournamentRound,
+        field: List[TournamentParticipant],
+        slots: List[FixtureSlot],
+        finishers: Map[FixtureId, List[Standing[TournamentParticipantId]]],
+        advance: Int
+    ): IO[List[TournamentParticipant]] = {
+        val repo = new TournamentParticipantRepo(session)
+        val withdrawn = field.filter(_.withdrawn).map(_.tournamentParticipantId).toSet
+        val seats = slots.count(_.source match {
+            case SlotSource.Seed(_) => true
+            case _                  => false
+        })
+        for {
+            rounds <- new FixtureRepo(session).listRounds(t.gameId, t.tournamentId)
+            earlier <- rounds
+                .filter(r => r.round < round.round && r.started)
+                .flatTraverse(r => poolsOf(session, t, settings, game, r))
+            entries <- new EntryRepo(session).listForTournament(t.gameId, t.tournamentId)
+            ratings <- field.traverse { p =>
+                entries
+                    .find(_.entryId == p.entryId)
+                    .traverse(TournamentService.ratingOf[T](session, t.gameId, _))
+                    .map(r => p.tournamentParticipantId -> r.getOrElse(EloRating.initial))
+            }
+            lines = earlier.flatMap(_.standings).groupBy(_.member)
+            ratingOf = ratings.toMap
+            records = field.map { p =>
+                val id = p.tournamentParticipantId
+                val own = lines.getOrElse(id, Nil)
+                Seeding.Record(id, p.seed, own.map(_.points).sum, own.map(_.differential).sum, ratingOf(id))
+            }
+            through = Advancement.through(finishers, advance, seats, withdrawn).toSet
+            (ahead, behind) = records.partition(r => through.contains(r.member))
+            seeds = Seeding.reseed(ahead) ++ Seeding.reseed(behind).view.mapValues(_ + ahead.size)
+            // In place: the unique constraint on a seed waits for the commit (V53).
+            _ <- field.traverse_(p =>
+                repo.setSeed(t.gameId, t.tournamentId, p.tournamentParticipantId, seeds(p.tournamentParticipantId))
+            )
+        } yield field.map(p => p.copy(seed = seeds(p.tournamentParticipantId)))
+    }
+
+    /** A playoff's rounds after its first are pairs, single elimination with its own rotations. */
+    private def pairs(settings: EliminationSettings, round: Int): Boolean =
+        settings.tournamentType == TournamentType.Playoff && round > 1
+
+    /** How many of each of a round's pools go through: the round's own say, or the tournament's — one, from a pair. */
+    private def advanceOf(settings: EliminationSettings, round: TournamentRound): Int =
+        round.minPoolAdvance.getOrElse(if (pairs(settings, round.round)) 1 else settings.minPoolAdvance)
 
     /** Stamps a round complete, and hands each pool's seeds out again in its finishing order. */
     private def complete(session: Session[IO], t: Tournament, round: Int, pools: List[Pool]): IO[Unit] = {
@@ -525,6 +596,9 @@ class TournamentPlayService[T](
         for {
             _ <- IO.raiseWhen(settings.poolSize < 2 || settings.poolSize < game.roles.count(!_.optional))(
               ValidationError("a pool must hold at least two players, and every role the game requires")
+            )
+            _ <- IO.raiseWhen(settings.tournamentType == TournamentType.Playoff && settings.poolSize <= 2)(
+              ValidationError("a playoff's pools hold more than two")
             )
             advance = math.min(settings.minPoolAdvance, settings.poolSize - 1)
             entrants <- new TournamentParticipantRepo(session).list(t.gameId, t.tournamentId)
@@ -719,8 +793,8 @@ class TournamentPlayService[T](
 
     // ---- rules -------------------------------------------------------------------------------------------
 
-    private def validate(o: RoundOverrides, settings: EliminationSettings, game: Game): IO[Unit] = {
-        val poolSize = o.poolSize.getOrElse(settings.poolSize)
+    private def validate(o: RoundOverrides, settings: EliminationSettings, round: Int): IO[Unit] = {
+        val poolSize = if (pairs(settings, round)) 2 else o.poolSize.getOrElse(settings.poolSize)
         val problems = List(
           Option.when(o.duration.exists(_.getSeconds < 2))("a round must last at least two seconds"),
           Option.when(o.rotations.exists(_ < 0))("rotations cannot be negative"),

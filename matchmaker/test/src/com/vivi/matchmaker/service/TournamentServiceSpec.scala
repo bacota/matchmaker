@@ -98,6 +98,15 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         )
     }
 
+    test("a playoff's pools hold more than two") {
+        val (g, owner) = run((game(), register()).tupled)
+        assert(
+          refusal(tournaments.create(draft(g, TournamentType.Playoff), owner.externalId)).isInstanceOf[ValidationError]
+        )
+        val created = run(tournaments.create(draft(g, TournamentType.Playoff, poolSize = 3), owner.externalId))
+        assertEquals(created.elimination.map(_.tournamentType), Some(TournamentType.Playoff))
+    }
+
     test("only a game's admin may create a tournament that is not friendly") {
         val (refused, allowed) = run(for {
             g <- game()

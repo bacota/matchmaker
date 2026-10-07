@@ -116,6 +116,51 @@ class BracketSpec extends ScalaCheckSuite {
         )
     }
 
+    private val playoffs: Gen[Shape] =
+        for {
+            poolSize <- Gen.choose(3, 6)
+            advance <- Gen.choose(1, poolSize - 1)
+            entrants <- Gen.choose(1, 60)
+        } yield Shape(entrants, poolSize, advance)
+
+    property("a playoff: pools of its size first, then a reseeded round of pairs by seed, then pairs to a final") {
+        forAll(playoffs) { s =>
+            val bracket = Bracket.playoff(s.entrants, s.poolSize, s.advance)
+            val rounds = bracket.rounds
+            val first = rounds.head
+            if (first.sizeIs == 1) rounds.size == 1 && bracket.reseed.isEmpty
+            else {
+                // Each pool sends its top `advance` through, but never the whole of it.
+                val through = first.map(p => seeds(p).size).map(n => if (n <= 1) n else math.min(s.advance, n - 1)).sum
+                val pairs = rounds(1)
+                first.flatMap(seeds).sorted == (1 to s.entrants).toList &&
+                first.forall(_.slots.size == s.poolSize) &&
+                bracket.reseed == Set(2) &&
+                Integer.bitCount(pairs.size) == 1 &&
+                pairs.forall(p => p.slots.size == 2 && byes(p) < 2) &&
+                pairs.flatMap(seeds).sorted == (1 to through).toList &&
+                rounds.drop(1).forall(_.forall(_.slots.size == 2)) &&
+                rounds.drop(2).forall(_.forall(_.slots.forall(_.isInstanceOf[PlannedSource.Winner]))) &&
+                rounds.last.count(_.position == 1) == 1
+            }
+        }
+    }
+
+    test("a playoff of eight in pools of four: two through from each, then semi-finals, a final and a consolation") {
+        val bracket = Bracket.playoff(8, 4, 2)
+        assertEquals(bracket.rounds.head.map(seeds), List(List(1, 4, 5, 8), List(2, 3, 6, 7)))
+        assertEquals(bracket.rounds(1).map(seeds), List(List(1, 4), List(2, 3)))
+        assertEquals(bracket.rounds(2).map(_.position), List(1, 2))
+        assertEquals(bracket.reseed, Set(2))
+    }
+
+    test("a playoff that the pools alone decide has no consolation beside a final drawn straight from them") {
+        // Two pools of three, one through from each: the final is the reseeded round itself.
+        val bracket = Bracket.playoff(6, 3, 1)
+        assertEquals(bracket.rounds.map(_.size), List(2, 1))
+        assertEquals(bracket.rounds(1).head.slots, List(PlannedSource.Seed(1), PlannedSource.Seed(2)))
+    }
+
     test("a round robin is one pool of everybody") {
         assertEquals(Bracket.roundRobin(5).pools.map(seeds), List(List(1, 2, 3, 4, 5)))
     }

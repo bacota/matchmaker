@@ -70,6 +70,18 @@ class AdvancementSpec extends ScalaCheckSuite {
         assertEquals(resolved(SlotId(4)), member(2))
     }
 
+    test("going through to a reseed round: each pool's top, never a whole pool, then the fill rule, none withdrawn") {
+        // Pools of three finish 1-2-3, 4-5-6; with two going through from each and member 4 withdrawn, 5 goes, and the
+        // fill rule's best third place — 3, by its differential — takes the seat 4 would have had.
+        val through = Advancement.through(finished(2, 3), advance = 2, seats = 4, withdrawn = Set(member(4)))
+        assertEquals(through, List(member(1), member(2), member(5), member(3)))
+        // A pool of two sends one through, however many may go.
+        assertEquals(
+          Advancement.through(finished(2, 2), advance = 3, seats = 2, withdrawn = Set.empty),
+          List(member(1), member(3))
+        )
+    }
+
     property("every slot that can be filled is, nobody twice, nobody withdrawn, and no advancer displaced") {
         forAll(Gen.choose(1, 6), Gen.choose(2, 4), Gen.choose(0, 3)) { (pools, size, withdrawals) =>
             val previous = finished(pools, size)

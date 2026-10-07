@@ -14,6 +14,7 @@ object TournamentLayout {
     def bracket(settings: EliminationSettings, entrants: Int): Bracket =
         settings.tournamentType match {
             case TournamentType.RoundRobin => Bracket.roundRobin(entrants)
+            case TournamentType.Playoff    => Bracket.playoff(entrants, settings.poolSize, settings.minPoolAdvance)
             case _ => Bracket.singleElimination(entrants, settings.poolSize, settings.minPoolAdvance)
         }
 
@@ -24,7 +25,9 @@ object TournamentLayout {
             .foldLeft(IO.pure(Map.empty[(Int, Int), FixtureId])) { case (done, (pools, i)) =>
                 done.flatMap { ids =>
                     val round = i + 1
-                    fixtures.createRound(TournamentRound(gameId, tournamentId, round)) *>
+                    fixtures.createRound(
+                      TournamentRound(gameId, tournamentId, round, reseed = bracket.reseed.contains(round))
+                    ) *>
                         pools
                             .traverse { pool =>
                                 for {

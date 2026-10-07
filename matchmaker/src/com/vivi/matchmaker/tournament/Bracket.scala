@@ -16,8 +16,10 @@ enum PlannedSource {
 /** A planned pool: its round, its place in the round from 1, and its slots. */
 case class PlannedPool(round: Int, position: Int, slots: List[PlannedSource])
 
-/** Every round of an elimination tournament, planned when it starts: `rounds(0)` is round 1. */
-case class Bracket(rounds: List[List[PlannedPool]]) {
+/** Every round of an elimination tournament, planned when it starts: `rounds(0)` is round 1. `reseed` are the rounds
+  * whose seeds are recomputed from everybody's record as they start, and whose slots name seeds rather than finishers.
+  */
+case class Bracket(rounds: List[List[PlannedPool]], reseed: Set[Int] = Set.empty) {
     def pools: List[PlannedPool] = rounds.flatten
 }
 
@@ -58,28 +60,59 @@ object Bracket {
         require(advance >= 1 && advance < poolSize, "fewer than a whole pool must go through")
 
         val first = firstRound(entrants, poolSize).map(pool => Expected(pool, seedsOf(pool)))
+        Bracket(eliminate(List(first), poolSize, advance, if (consolation) 0 else Int.MaxValue).map(_.map(_.pool)))
+    }
 
+    /** A playoff: a first round of pools of `poolSize`, each played round robin, of which the top `advance` go through;
+      * then single elimination in pairs. The first elimination round reseeds the players who went through by their
+      * record in the pools, and its pairs are drawn by those seeds — the top seeds given byes, so that its pools are a
+      * power of two.
+      */
+    def playoff(entrants: Int, poolSize: Int, advance: Int, consolation: Boolean = true): Bracket = {
+        require(entrants >= 1, "a tournament needs at least one entrant")
+        require(poolSize > 2, "a playoff's pools hold more than two")
+        require(advance >= 1 && advance < poolSize, "fewer than a whole pool must go through")
+
+        val first = firstRound(entrants, poolSize).map(pool => Expected(pool, seedsOf(pool)))
+        val through = first.map(e => if (e.seeds.sizeIs <= 1) e.seeds.size else math.min(advance, e.seeds.size - 1)).sum
+        if (first.sizeIs <= 1 || through <= 1) Bracket(List(first.map(_.pool)))
+        else {
+            val pairs = firstRound(through, 2).map(p => p.copy(round = 2))
+            val elimination = pairs.map(pool => Expected(pool, seedsOf(pool)))
+            // The consolation pool is of pairs' losers, so never beside a final made straight from the pools.
+            val planned = eliminate(List(first, elimination), 2, 1, if (consolation) 1 else Int.MaxValue)
+            Bracket(planned.map(_.map(_.pool)), reseed = Set(2))
+        }
+    }
+
+    /** `start`'s rounds, then elimination rounds after them until one pool is left; and the consolation pool beside the
+      * final, made from the round before it, if that round is at index `consolationFrom` or later.
+      */
+    private def eliminate(
+        start: List[List[Expected]],
+        poolSize: Int,
+        advance: Int,
+        consolationFrom: Int
+    ): List[List[Expected]] = {
         @annotation.tailrec
         def plan(rounds: List[List[Expected]]): List[List[Expected]] =
             if (rounds.last.sizeIs <= 1) rounds
             else plan(rounds :+ nextRound(rounds.size + 1, rounds.last, poolSize, advance))
 
-        val planned = plan(List(first))
+        val planned = plan(start)
         // The consolation pool sits beside the final, made from the round before it.
-        val withConsolation =
-            if (!consolation || planned.sizeIs < 2) planned
+        if (planned.sizeIs < 2 || planned.size - 2 < consolationFrom) planned
+        else {
+            val semis = planned(planned.size - 2)
+            val finalRound = planned.last
+            val used = finalRound.flatMap(_.pool.slots).toSet
+            val unused = semis.flatMap(finishersOf).filterNot(f => used.contains(f.source)).sortBy(_.seed)
+            if (semis.sizeIs < 2 || unused.sizeIs < 2) planned
             else {
-                val semis = planned(planned.size - 2)
-                val finalRound = planned.last
-                val used = finalRound.flatMap(_.pool.slots).toSet
-                val unused = semis.flatMap(finishersOf).filterNot(f => used.contains(f.source)).sortBy(_.seed)
-                if (semis.sizeIs < 2 || unused.sizeIs < 2) planned
-                else {
-                    val pool = PlannedPool(planned.size, 2, unused.take(poolSize).map(_.source))
-                    planned.init :+ (finalRound :+ Expected(pool, unused.take(poolSize).map(_.seed)))
-                }
+                val pool = PlannedPool(planned.size, 2, unused.take(poolSize).map(_.source))
+                planned.init :+ (finalRound :+ Expected(pool, unused.take(poolSize).map(_.seed)))
             }
-        Bracket(withConsolation.map(_.map(_.pool)))
+        }
     }
 
     private def seedsOf(pool: PlannedPool): List[Int] = pool.slots.collect { case PlannedSource.Seed(s) => s }.sorted

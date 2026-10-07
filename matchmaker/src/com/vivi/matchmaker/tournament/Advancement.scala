@@ -46,6 +46,25 @@ object Advancement {
         (placed ++ open.zip(candidates)).toMap
     }
 
+    /** Who goes through from the previous round's pools into `seats` seats, best first by the fill rule's order: the
+      * top `advance` of each pool — never the whole of a pool of more than one — and then the fill rule's choices,
+      * until the seats are full. Nobody withdrawn goes through. For a round whose slots name seeds rather than
+      * finishers.
+      */
+    def through(
+        previous: Map[FixtureId, List[Standing[Member]]],
+        advance: Int,
+        seats: Int,
+        withdrawn: Set[Member]
+    ): List[Member] = {
+        val own = previous.values.toList.flatMap { standings =>
+            val k = if (standings.sizeIs <= 1) standings.size else math.min(advance, standings.size - 1)
+            standings.take(k).map(_.member)
+        }.toSet
+        val order = fillOrder(previous).filterNot(withdrawn.contains)
+        (order.filter(own.contains) ++ order.filterNot(own.contains)).take(seats)
+    }
+
     /** Every player of the previous round's pools, in the order the fill rule takes them. */
     def fillOrder(previous: Map[FixtureId, List[Standing[Member]]]): List[Member] =
         previous.values.toList

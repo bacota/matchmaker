@@ -86,7 +86,8 @@ class TournamentEndToEndSpec extends FunSuite with QuietTests {
         g: Game,
         n: Int,
         kind: TournamentType = TournamentType.SingleElim,
-        poolSize: Int = 2
+        poolSize: Int = 2,
+        advance: Int = 1
     ): IO[Field] =
         for {
             owner <- w.services.registration.register(unique("owner"), unique("owner-sub"))
@@ -100,7 +101,7 @@ class TournamentEndToEndSpec extends FunSuite with QuietTests {
                 PlayerId.unassigned,
                 invitational = false,
                 roundDuration = Duration.ofHours(2),
-                elimination = Some(EliminationSettings(kind, poolSize))
+                elimination = Some(EliminationSettings(kind, poolSize, advance))
               ),
               owner.externalId
             )
@@ -199,6 +200,29 @@ class TournamentEndToEndSpec extends FunSuite with QuietTests {
         val seeds = f.bySeed.map(_.playerId)
         // 1 beat 2 in the final; 3 beat 4 for third; the quarter-finalists share fifth.
         assertEquals(seeds.map(ranks), List(1, 2, 3, 4, 5, 5, 5, 5).map(Some(_)))
+    }
+
+    test("a playoff reseeds the pools' best by their records before the pairs, and plays the pairs to a final") {
+        val w = world()
+        val (f, d) = run(for {
+            g <- game()
+            // Seven in two pools of four: [1, 4, 5] and [2, 3, 6, 7], two going through from each.
+            f <- started(w, g, 7, TournamentType.Playoff, poolSize = 4, advance = 2)
+            d <- playOut(w, g, f)(bySeed(f))
+        } yield (f, d))
+        assert(d.tournament.ended)
+        assertEquals(d.rounds.map(_.reseed), List(false, true, false))
+        val idOf = d.entrants.flatMap(e => e.participant.map(p => e.player.playerId -> p.tournamentParticipantId)).toMap
+        val seeds = f.bySeed.map(p => idOf(p.playerId))
+        // Seed 2 won three in the bigger pool and seed 1 two in the smaller, so seed 2 is reseeded first: the pairs
+        // are 2 against 4 and 1 against 3, where seeds kept from the pools would have paired 1 with 4.
+        val pairs = d.pools
+            .filter(_.fixture.round == 2)
+            .sortBy(_.fixture.position)
+            .map(_.slots.flatMap(_.occupant).toSet)
+        assertEquals(pairs, List(Set(seeds(1), seeds(3)), Set(seeds(0), seeds(2))))
+        // The better seed wins every match: 1 beats 2 in the final, 3 beats 4 for third; the rest went out in the pools.
+        assertEquals(f.bySeed.map(p => finalRanks(d)(p.playerId)), List(1, 2, 3, 4, 5, 5, 5).map(Some(_)))
     }
 
     test("five players: three byes in the first round, and everybody still finishes ranked") {
