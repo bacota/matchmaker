@@ -169,6 +169,8 @@ object Json {
     given ReadWriter[TournamentPool] = macroRW
     given ReadWriter[TournamentDetail] = macroRW
     given ReadWriter[TournamentSummary] = macroRW
+    given ReadWriter[RoundOverrides] = macroRW
+    given ReadWriter[RoundWork] = macroRW
     given ReadWriter[Match] = macroRW
 
     /** Structural twin of `Game` with the existential in `parameters` pinned to `String`.
@@ -270,6 +272,17 @@ object Json {
 
     /** An invitation to a tournament: a player in a plain game, a character in a character game. */
     case class TournamentInviteRequest(playerId: Option[PlayerId] = None, characterId: Option[CharacterId] = None)
+
+    /** One seat's rank, as a tournament's owner sets it by hand (D12). */
+    case class SeatRank(participantId: ParticipantId, rank: Int)
+
+    /** Cancelling a match, with — for a tournament's — every seat's rank, when its owner sets them. */
+    case class CancelRequest(ranks: Option[List[SeatRank]] = None)
+
+    /** Correcting a cancelled tournament match's ranks. */
+    case class RanksRequest(ranks: List[SeatRank])
+
+    def rankMap(ranks: List[SeatRank]): Map[ParticipantId, Int] = ranks.map(r => r.participantId -> r.rank).toMap
 
     /** Entering a tournament: as a character, in a character game; as oneself otherwise. */
     case class EnterRequest(characterId: Option[CharacterId] = None)
@@ -500,6 +513,9 @@ object Json {
     given ReadWriter[OwnerRequest] = macroRW
     given ReadWriter[TournamentInviteRequest] = macroRW
     given ReadWriter[EnterRequest] = macroRW
+    given ReadWriter[SeatRank] = macroRW
+    given ReadWriter[CancelRequest] = macroRW
+    given ReadWriter[RanksRequest] = macroRW
     given ReadWriter[NicknameRequest] = macroRW
     given ReadWriter[FriendlyRequest] = macroRW
     given ReadWriter[RatingRequest] = macroRW

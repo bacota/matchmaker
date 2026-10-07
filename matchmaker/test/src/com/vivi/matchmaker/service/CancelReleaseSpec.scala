@@ -122,6 +122,8 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
           matchEndings = Some(new MatchEndings {
               def ended(gameId: GameId, matchId: MatchId): IO[Unit] = IO { Queueing.this.ended :+= matchId }
               def ratingsChanged(gameId: GameId): IO[Unit] = IO.unit
+              def due(message: com.vivi.matchmaker.ending.MatchDue): IO[Unit] = IO.unit
+              def check(gameId: GameId, matchId: MatchId): IO[Unit] = IO.unit
           })
         )
     }

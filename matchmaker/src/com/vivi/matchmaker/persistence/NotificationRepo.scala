@@ -65,7 +65,8 @@ class NotificationRepo(session: Session[IO]) {
     private val selectPlayerPreferences: Query[PlayerId, NotificationPreferences] =
         sql"""SELECT notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
                  notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
-                 notify_your_turn, notify_match_ended
+                 notify_your_turn, notify_match_ended, notify_tournament_round_complete,
+                 notify_tournament_invitation
           FROM player
           WHERE player_id = $playerId""".query(preferences)
 
@@ -80,7 +81,8 @@ class NotificationRepo(session: Session[IO]) {
     private val selectPlayerPreferencesForUpdate: Query[PlayerId, NotificationPreferences] =
         sql"""SELECT notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
                  notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
-                 notify_your_turn, notify_match_ended
+                 notify_your_turn, notify_match_ended, notify_tournament_round_complete,
+                 notify_tournament_invitation
           FROM player
           WHERE player_id = $playerId
           FOR UPDATE""".query(preferences)
@@ -96,6 +98,7 @@ class NotificationRepo(session: Session[IO]) {
             notify_acceptance_changed = ${bool.opt}, notify_accepted_challenge_ready = ${bool.opt}, notify_invitation_received = ${bool.opt}, notify_invitation_accepted = ${bool.opt}, notify_invitation_rejected = ${bool.opt},
             notify_match_started = ${bool.opt}, notify_turn_taken = ${bool.opt},
             notify_your_turn = ${bool.opt}, notify_match_ended = ${bool.opt},
+            notify_tournament_round_complete = ${bool.opt}, notify_tournament_invitation = ${bool.opt},
             update_date = now()
           WHERE player_id = $playerId""".command
             .contramap { case (p, id) =>
@@ -111,6 +114,8 @@ class NotificationRepo(session: Session[IO]) {
                   p.turnTaken,
                   p.yourTurn,
                   p.matchEnded,
+                  p.tournamentRoundComplete,
+                  p.tournamentInvitation,
                   id
                 )
             }
@@ -119,7 +124,8 @@ class NotificationRepo(session: Session[IO]) {
         sql"""SELECT game_id,
                  notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
                  notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
-                 notify_your_turn, notify_match_ended
+                 notify_your_turn, notify_match_ended, notify_tournament_round_complete,
+                 notify_tournament_invitation
           FROM player_game
           WHERE player_id = $playerId
           ORDER BY game_id""".query(gameId *: preferences)
@@ -127,7 +133,8 @@ class NotificationRepo(session: Session[IO]) {
     private val selectPlayerGame: Query[(PlayerId, GameId), NotificationPreferences] =
         sql"""SELECT notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
                  notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
-                 notify_your_turn, notify_match_ended
+                 notify_your_turn, notify_match_ended, notify_tournament_round_complete,
+                 notify_tournament_invitation
           FROM player_game
           WHERE player_id = $playerId AND game_id = $gameId""".query(preferences)
 
@@ -138,7 +145,8 @@ class NotificationRepo(session: Session[IO]) {
         sql"""INSERT INTO player_game (player_id, game_id,
               notify_challenge_accepted, notify_challenge_ready, notify_acceptance_changed,
               notify_accepted_challenge_ready, notify_invitation_received, notify_invitation_accepted, notify_invitation_rejected, notify_match_started, notify_turn_taken,
-              notify_your_turn, notify_match_ended)
+              notify_your_turn, notify_match_ended, notify_tournament_round_complete,
+                 notify_tournament_invitation)
           VALUES ($playerId, $gameId, $preferences)
           ON CONFLICT (player_id, game_id) DO UPDATE SET
               notify_challenge_accepted = EXCLUDED.notify_challenge_accepted,
@@ -149,6 +157,8 @@ class NotificationRepo(session: Session[IO]) {
               notify_turn_taken = EXCLUDED.notify_turn_taken,
               notify_your_turn = EXCLUDED.notify_your_turn,
               notify_match_ended = EXCLUDED.notify_match_ended,
+              notify_tournament_round_complete = EXCLUDED.notify_tournament_round_complete,
+              notify_tournament_invitation = EXCLUDED.notify_tournament_invitation,
               update_date = now()""".command
 
     /* Every seat in a match with what it says about itself.
@@ -202,10 +212,12 @@ class NotificationRepo(session: Session[IO]) {
         sql"""SELECT pl.player_id, pl.nickname, pl.is_admin, pl.external_id, pl.email, r.display_name,
                  pg.notify_challenge_accepted, pg.notify_challenge_ready, pg.notify_acceptance_changed,
                  pg.notify_accepted_challenge_ready, pg.notify_invitation_received, pg.notify_invitation_accepted, pg.notify_invitation_rejected, pg.notify_match_started, pg.notify_turn_taken,
-                 pg.notify_your_turn, pg.notify_match_ended,
+                 pg.notify_your_turn, pg.notify_match_ended, pg.notify_tournament_round_complete,
+                 pg.notify_tournament_invitation,
                  pl.notify_challenge_accepted, pl.notify_challenge_ready, pl.notify_acceptance_changed,
                  pl.notify_accepted_challenge_ready, pl.notify_invitation_received, pl.notify_invitation_accepted, pl.notify_invitation_rejected, pl.notify_match_started, pl.notify_turn_taken,
-                 pl.notify_your_turn, pl.notify_match_ended
+                 pl.notify_your_turn, pl.notify_match_ended, pl.notify_tournament_round_complete,
+                 pl.notify_tournament_invitation
           FROM (SELECT a.game_id, a.player_id, a.game_role_id
                   FROM acceptance a
                  WHERE a.game_id = $gameId AND a.challenge_id = $challengeId
@@ -275,6 +287,9 @@ class NotificationRepo(session: Session[IO]) {
             notify_turn_taken = CASE WHEN $bool THEN ${bool.opt} ELSE notify_turn_taken END,
             notify_your_turn = CASE WHEN $bool THEN ${bool.opt} ELSE notify_your_turn END,
             notify_match_ended = CASE WHEN $bool THEN ${bool.opt} ELSE notify_match_ended END,
+            notify_tournament_round_complete =
+                CASE WHEN $bool THEN ${bool.opt} ELSE notify_tournament_round_complete END,
+            notify_tournament_invitation = CASE WHEN $bool THEN ${bool.opt} ELSE notify_tournament_invitation END,
             update_date = now()
           WHERE player_id = $playerId""".command
             // A flag and a value per column, interleaved in `NotificationType.values` order: the flag
@@ -303,6 +318,10 @@ class NotificationRepo(session: Session[IO]) {
                   p.yourTurn,
                   changed(NotificationType.MatchEnded),
                   p.matchEnded,
+                  changed(NotificationType.TournamentRoundComplete),
+                  p.tournamentRoundComplete,
+                  changed(NotificationType.TournamentInvitation),
+                  p.tournamentInvitation,
                   id
                 )
             }
@@ -540,12 +559,14 @@ class NotificationRepo(session: Session[IO]) {
                  pg.notify_accepted_challenge_ready,
                  pg.notify_invitation_received, pg.notify_invitation_accepted, pg.notify_invitation_rejected,
                  pg.notify_match_started, pg.notify_turn_taken,
-                 pg.notify_your_turn, pg.notify_match_ended,
+                 pg.notify_your_turn, pg.notify_match_ended, pg.notify_tournament_round_complete,
+                 pg.notify_tournament_invitation,
                  pl.notify_challenge_accepted, pl.notify_challenge_ready, pl.notify_acceptance_changed,
                  pl.notify_accepted_challenge_ready,
                  pl.notify_invitation_received, pl.notify_invitation_accepted, pl.notify_invitation_rejected,
                  pl.notify_match_started, pl.notify_turn_taken,
-                 pl.notify_your_turn, pl.notify_match_ended
+                 pl.notify_your_turn, pl.notify_match_ended, pl.notify_tournament_round_complete,
+                 pl.notify_tournament_invitation
           FROM player pl
           LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = $gameId
           WHERE pl.player_id = $playerId"""

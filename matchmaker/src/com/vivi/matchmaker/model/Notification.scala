@@ -96,6 +96,22 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
     case MatchEnded
         extends NotificationType("MATCH_ENDED", "A match I am in ends", "However it ends, including cancellation.")
 
+    /** (10) Every match of a round of a tournament you run is over, so you can start the next (V54). */
+    case TournamentRoundComplete
+        extends NotificationType(
+          "TOURNAMENT_ROUND_COMPLETE",
+          "A round of my tournament ends",
+          "Every match in it is over, and the next round can start."
+        )
+
+    /** (11) Somebody has invited you, or a character of yours, to a tournament (V54). */
+    case TournamentInvitation
+        extends NotificationType(
+          "TOURNAMENT_INVITATION",
+          "Someone invites me to a tournament",
+          "Also when they invite one of your characters."
+        )
+
     /** The column this kind is stored in, on `player` and `player_game` alike — and on `participant` for the [[onSeat]]
       * kinds, which are the only ones it has a column for. Derived from the code rather than stated twice, so the two
       * cannot drift.
@@ -160,36 +176,42 @@ case class NotificationPreferences(
     matchStarted: Option[Boolean] = None,
     turnTaken: Option[Boolean] = None,
     yourTurn: Option[Boolean] = None,
-    matchEnded: Option[Boolean] = None
+    matchEnded: Option[Boolean] = None,
+    tournamentRoundComplete: Option[Boolean] = None,
+    tournamentInvitation: Option[Boolean] = None
 ) {
 
     def apply(kind: NotificationType): Option[Boolean] = kind match {
-        case NotificationType.ChallengeAccepted      => challengeAccepted
-        case NotificationType.ChallengeReady         => challengeReady
-        case NotificationType.AcceptanceChanged      => acceptanceChanged
-        case NotificationType.AcceptedChallengeReady => acceptedChallengeReady
-        case NotificationType.InvitationReceived     => invitationReceived
-        case NotificationType.InvitationAccepted     => invitationAccepted
-        case NotificationType.InvitationRejected     => invitationRejected
-        case NotificationType.MatchStarted           => matchStarted
-        case NotificationType.TurnTaken              => turnTaken
-        case NotificationType.YourTurn               => yourTurn
-        case NotificationType.MatchEnded             => matchEnded
+        case NotificationType.ChallengeAccepted       => challengeAccepted
+        case NotificationType.ChallengeReady          => challengeReady
+        case NotificationType.AcceptanceChanged       => acceptanceChanged
+        case NotificationType.AcceptedChallengeReady  => acceptedChallengeReady
+        case NotificationType.InvitationReceived      => invitationReceived
+        case NotificationType.InvitationAccepted      => invitationAccepted
+        case NotificationType.InvitationRejected      => invitationRejected
+        case NotificationType.MatchStarted            => matchStarted
+        case NotificationType.TurnTaken               => turnTaken
+        case NotificationType.YourTurn                => yourTurn
+        case NotificationType.MatchEnded              => matchEnded
+        case NotificationType.TournamentRoundComplete => tournamentRoundComplete
+        case NotificationType.TournamentInvitation    => tournamentInvitation
     }
 
     /** This, with one kind answered differently. `None` for `choice` is the "Use Default" the forms offer. */
     def updated(kind: NotificationType, choice: Option[Boolean]): NotificationPreferences = kind match {
-        case NotificationType.ChallengeAccepted      => copy(challengeAccepted = choice)
-        case NotificationType.ChallengeReady         => copy(challengeReady = choice)
-        case NotificationType.AcceptanceChanged      => copy(acceptanceChanged = choice)
-        case NotificationType.AcceptedChallengeReady => copy(acceptedChallengeReady = choice)
-        case NotificationType.InvitationReceived     => copy(invitationReceived = choice)
-        case NotificationType.InvitationAccepted     => copy(invitationAccepted = choice)
-        case NotificationType.InvitationRejected     => copy(invitationRejected = choice)
-        case NotificationType.MatchStarted           => copy(matchStarted = choice)
-        case NotificationType.TurnTaken              => copy(turnTaken = choice)
-        case NotificationType.YourTurn               => copy(yourTurn = choice)
-        case NotificationType.MatchEnded             => copy(matchEnded = choice)
+        case NotificationType.ChallengeAccepted       => copy(challengeAccepted = choice)
+        case NotificationType.ChallengeReady          => copy(challengeReady = choice)
+        case NotificationType.AcceptanceChanged       => copy(acceptanceChanged = choice)
+        case NotificationType.AcceptedChallengeReady  => copy(acceptedChallengeReady = choice)
+        case NotificationType.InvitationReceived      => copy(invitationReceived = choice)
+        case NotificationType.InvitationAccepted      => copy(invitationAccepted = choice)
+        case NotificationType.InvitationRejected      => copy(invitationRejected = choice)
+        case NotificationType.MatchStarted            => copy(matchStarted = choice)
+        case NotificationType.TurnTaken               => copy(turnTaken = choice)
+        case NotificationType.YourTurn                => copy(yourTurn = choice)
+        case NotificationType.MatchEnded              => copy(matchEnded = choice)
+        case NotificationType.TournamentRoundComplete => copy(tournamentRoundComplete = choice)
+        case NotificationType.TournamentInvitation    => copy(tournamentInvitation = choice)
     }
 
     /** The kinds this and `other` answer differently: what a save actually changed.

@@ -110,5 +110,8 @@ case class Game(
     /* Whether the game's engine lets players choose their roles in the match itself (V52): deployed with the
      * engines' common role choice, so a match may be created with seats still to choose. Without it, a
      * tournament assigns the roles left after the preferred ones by seed. */
-    choosesRoles: Boolean = false
+    choosesRoles: Boolean = false,
+    /* The key in a result's scores holding the game's numeric score (V53): what a tournament's SCORE tiebreaker adds
+     * up. None, and ranks stand in for scores. `score` for boxing. */
+    scoreKey: Option[String] = None
 )

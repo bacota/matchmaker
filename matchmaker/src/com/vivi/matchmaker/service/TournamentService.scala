@@ -18,7 +18,8 @@ import com.vivi.matchmaker.persistence.{
     TournamentParticipantRepo,
     TournamentRepo
 }
-import com.vivi.matchmaker.tournament.{Bracket, PlannedSource, Seeding}
+import com.vivi.matchmaker.tournament.Seeding
+import com.vivi.matchmaker.notify.Notifications
 
 /** Tournaments, from creation to the start: creating and editing one, handing it to a new owner, inviting players to
   * it, entering and withdrawing, and starting it — seeding the field and laying out every round's pools.
@@ -27,7 +28,9 @@ import com.vivi.matchmaker.tournament.{Bracket, PlannedSource, Seeding}
   * SHARE`, where the read only has to outlive the write: an entry holds the tournament against a start). The game and
   * its roles are read plainly, under the reference-table exception: see `requireGame`.
   */
-class TournamentService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
+class TournamentService[T](sessionPool: SessionPool, notifications: Notifications = Notifications.disabled)(using
+    codec: TextCodec[T]
+) {
 
     /** Kinds of tournament that can be started so far. The rest can be created, and wait for the phases that build
       * them.
@@ -203,35 +206,42 @@ class TournamentService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) 
         callerExternalId: String
     ): IO[Unit] =
         sessionPool.use { session =>
-            session.transaction.use { _ =>
-                val repo = new TournamentRepo(session)
-                for {
-                    caller <- requireCaller(session, callerExternalId)
-                    t <- requireTournament(repo.readForShare(gameId, tournamentId), gameId, tournamentId)
-                    _ <- requireOwner(t, caller)
-                    game <- requireGame(session, gameId)
-                    _ <- (player, character, game.gameType) match {
-                        case (Some(p), None, GameType.Plain) =>
-                            new PlayerRepo(session).readForShare(p).flatMap {
-                                case Some(_) => repo.invite(gameId, tournamentId, p)
-                                case None    => IO.raiseError(NotFoundError(s"no player with id ${p.value}"))
-                            }
-                        case (None, Some(c), GameType.Character) =>
-                            new CharacterRepo[T](session).readForShare(c).flatMap {
-                                case Some(found) if found.gameId == gameId =>
-                                    repo.inviteCharacter(gameId, tournamentId, c)
-                                case _ =>
-                                    IO.raiseError(NotFoundError(s"no character ${c.value} in game ${gameId.value}"))
-                            }
-                        case (_, _, GameType.Plain) =>
-                            IO.raiseError(ValidationError("invite a player, by id, to a tournament of a plain game"))
-                        case (_, _, GameType.Character) =>
-                            IO.raiseError(
-                              ValidationError("invite a character, by id, to a tournament of a character game")
-                            )
-                    }
-                } yield ()
-            }
+            session.transaction
+                .use { _ =>
+                    val repo = new TournamentRepo(session)
+                    for {
+                        caller <- requireCaller(session, callerExternalId)
+                        t <- requireTournament(repo.readForShare(gameId, tournamentId), gameId, tournamentId)
+                        _ <- requireOwner(t, caller)
+                        game <- requireGame(session, gameId)
+                        invited <- (player, character, game.gameType) match {
+                            case (Some(p), None, GameType.Plain) =>
+                                new PlayerRepo(session).readForShare(p).flatMap {
+                                    case Some(_) => repo.invite(gameId, tournamentId, p).as(Some(p))
+                                    case None    => IO.raiseError(NotFoundError(s"no player with id ${p.value}"))
+                                }
+                            case (None, Some(c), GameType.Character) =>
+                                new CharacterRepo[T](session).readForShare(c).flatMap {
+                                    case Some(found) if found.gameId == gameId =>
+                                        repo.inviteCharacter(gameId, tournamentId, c).as(found.playerId)
+                                    case _ =>
+                                        IO.raiseError(NotFoundError(s"no character ${c.value} in game ${gameId.value}"))
+                                }
+                            case (_, _, GameType.Plain) =>
+                                IO.raiseError(
+                                  ValidationError("invite a player, by id, to a tournament of a plain game")
+                                )
+                            case (_, _, GameType.Character) =>
+                                IO.raiseError(
+                                  ValidationError("invite a character, by id, to a tournament of a character game")
+                                )
+                        }
+                    } yield (t, caller, invited)
+                }
+                .flatMap { (t, caller, invited) =>
+                    // After the commit, and unable to fail the invitation: told to the player, or the character's owner.
+                    invited.traverse_(notifications.tournamentInvited(session, t, _, caller.nickname))
+                }
         }
 
     /** Removes a player's invitation: the owner withdrawing it, or the player declining it. */
@@ -408,50 +418,17 @@ class TournamentService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) 
                               )
                             )
                         }
-                        bracket = settings.tournamentType match {
-                            case TournamentType.RoundRobin => Bracket.roundRobin(participants.size)
-                            case _ =>
-                                Bracket.singleElimination(participants.size, settings.poolSize, settings.minPoolAdvance)
-                        }
-                        _ <- layOut(session, gameId, tournamentId, bracket)
+                        _ <- TournamentLayout.layOut(
+                          session,
+                          gameId,
+                          tournamentId,
+                          TournamentLayout.bracket(settings, participants.size)
+                        )
                         _ <- repo.start(gameId, tournamentId)
                     } yield ()
                 }
             }
             .flatMap(_ => detail(gameId, tournamentId, callerExternalId))
-
-    /** Writes every round of `bracket`, its pools, and their slots, naming each earlier pool by the id it was given. */
-    private def layOut(session: Session[IO], gameId: GameId, tournamentId: TournamentId, bracket: Bracket): IO[Unit] = {
-        val fixtures = new FixtureRepo(session)
-        bracket.rounds.zipWithIndex
-            .foldLeft(IO.pure(Map.empty[(Int, Int), FixtureId])) { case (done, (pools, i)) =>
-                done.flatMap { ids =>
-                    val round = i + 1
-                    fixtures.createRound(TournamentRound(gameId, tournamentId, round)) *>
-                        pools
-                            .traverse { pool =>
-                                for {
-                                    f <- fixtures.createFixture(
-                                      Fixture(gameId, tournamentId, FixtureId(0), round, pool.position)
-                                    )
-                                    _ <- pool.slots.traverse_ { source =>
-                                        val slotSource = source match {
-                                            case PlannedSource.Bye        => SlotSource.Bye
-                                            case PlannedSource.Seed(seed) => SlotSource.Seed(seed)
-                                            case PlannedSource.Winner(r, position, rank) =>
-                                                SlotSource.Winner(ids((r, position)), rank)
-                                        }
-                                        fixtures.createSlot(
-                                          FixtureSlot(gameId, tournamentId, f.fixtureId, SlotId(0), slotSource)
-                                        )
-                                    }
-                                } yield (round, pool.position) -> f.fixtureId
-                            }
-                            .map(ids ++ _)
-                }
-            }
-            .void
-    }
 
     // ---- rules ---------------------------------------------------------------------------------------
 

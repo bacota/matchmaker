@@ -39,18 +39,23 @@ class EndingService(
     engine: GameEngineClient,
     now: () => Instant = () => Instant.now(),
     /** How long after a match completes its engine is left to archive it before being prompted. */
-    grace: Duration = Duration.ofMinutes(5)
+    grace: Duration = Duration.ofMinutes(5),
+    /** A tournament match's round, checked for completion whenever one of its matches is settled (tournament-plan D6).
+      */
+    tournament: (GameId, MatchId) => IO[Settlement] = (_, _) => IO.pure(Settlement.Settled)
 ) {
 
     private val ranking = new RankingService(sessionPool)
 
     def settle(gameId: GameId, matchId: MatchId): IO[Settlement] =
         sessionPool.use(session => new ArchiveRepo(session).ending(gameId, matchId)).flatMap {
-            case Some(row) if row.cancelled => release(row)
+            case Some(row) if row.cancelled =>
+                (release(row), tournament(gameId, matchId)).mapN(EndingService.both)
             // Placed first: it is the database's alone, and a player is waiting to see it, where the archive may be
             // waiting on its engine.
             case Some(row) if row.completedAt.isDefined =>
-                (rank(gameId), archive(row)).mapN(EndingService.both)
+                (rank(gameId), archive(row), tournament(gameId, matchId))
+                    .mapN((a, b, c) => EndingService.both(EndingService.both(a, b), c))
             // Not over, or not there: nothing about its end is owed, and nothing would come of asking again.
             case _ => IO.pure(Settlement.Settled)
         }

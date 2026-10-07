@@ -46,9 +46,9 @@ object SkunkCodecs {
     /** `time_limit_unit`: the unit a limit was offered in, and so the unit it is read back in. */
     val timeLimitUnit: Codec[TimeLimitUnit] = text.imap(TimeLimitUnit.fromCode)(_.code)
 
-    /** The eleven `notify_*` columns of `player` and `player_game`, as one value.
+    /** The thirteen `notify_*` columns of `player` and `player_game`, as one value.
       *
-      * Bound positionally, in `NotificationType.values` order: the eleven fields of
+      * Bound positionally, in `NotificationType.values` order: the thirteen fields of
       * [[com.vivi.matchmaker.model.NotificationPreferences]] are in that order, and so is every column list that uses
       * this codec. A kind added to the enum in the wrong place would compile and silently store answers under the wrong
       * heading, which is why the enum's order is documented as part of it.
@@ -58,7 +58,7 @@ object SkunkCodecs {
       */
     val notificationPreferences: Codec[NotificationPreferences] =
         (bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *:
-            bool.opt *: bool.opt).to[NotificationPreferences]
+            bool.opt *: bool.opt *: bool.opt *: bool.opt).to[NotificationPreferences]
 
     /** The four `notify_*` columns of `participant` (V24), as one value.
       *

@@ -142,6 +142,27 @@ class FixtureRepo(session: Session[IO]) {
     def readRoundForUpdate(game: GameId, tournament: TournamentId, round: Int): IO[Option[TournamentRound]] =
         session.option(selectRoundForUpdate)((game, tournament, round)).map(_.map(toRound))
 
+    // Held against the round's completion, which takes FOR UPDATE, by a match being made for it.
+    private val selectRoundForShare: Query[(GameId, TournamentId, Int), RoundRow] =
+        sql"""SELECT $roundColumns WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4
+          FOR SHARE""".query(roundRow)
+
+    /** A round, held against its completion until the transaction ends. */
+    def readRoundForShare(game: GameId, tournament: TournamentId, round: Int): IO[Option[TournamentRound]] =
+        session.option(selectRoundForShare)((game, tournament, round)).map(_.map(toRound))
+
+    private val deleteSlots: Command[(GameId, TournamentId)] =
+        sql"DELETE FROM fixture_slot WHERE game_id = $gameId AND tournament_id = $tournamentId".command
+    private val deleteFixtures: Command[(GameId, TournamentId)] =
+        sql"DELETE FROM fixture WHERE game_id = $gameId AND tournament_id = $tournamentId".command
+    private val deleteRounds: Command[(GameId, TournamentId)] =
+        sql"DELETE FROM tournament_round WHERE game_id = $gameId AND tournament_id = $tournamentId".command
+
+    /** Removes every round, pool and slot, to lay the tournament out again before its first round starts. */
+    def deleteLayout(game: GameId, tournament: TournamentId): IO[Unit] =
+        session.execute(deleteSlots)((game, tournament)) *> session.execute(deleteFixtures)((game, tournament)) *>
+            session.execute(deleteRounds)((game, tournament)).void
+
     private val updateRoundSettings: Command[
       (Boolean, Option[Double], Option[Int], Option[Int], Option[Int], Option[Tiebreaker], GameId, TournamentId, Int)
     ] =

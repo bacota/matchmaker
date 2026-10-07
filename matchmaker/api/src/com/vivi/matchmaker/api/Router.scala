@@ -194,6 +194,22 @@ object Router {
             case ("POST", "tournaments" :: gameId :: tournamentId :: "start" :: Nil) =>
                 withTournament(gameId, tournamentId)((g, t) => ok(services.tournaments.start(g, t, caller)))
 
+            // A round's buttons (Phase 4): starting it, with what is set for it; checking its matches against their
+            // clocks; and queueing again what of it has not been made.
+            case ("POST", "tournaments" :: gameId :: tournamentId :: "rounds" :: round :: "start" :: Nil) =>
+                withRound(gameId, tournamentId, round)((g, t, n) =>
+                    (if (request.body.trim.isEmpty) IO.pure(RoundOverrides()) else body[RoundOverrides](request))
+                        .flatMap(o => ok(services.tournamentPlay.startRound(g, t, n, o, caller)))
+                )
+
+            case ("POST", "tournaments" :: gameId :: tournamentId :: "rounds" :: round :: "check" :: Nil) =>
+                withRound(gameId, tournamentId, round)((g, t, n) =>
+                    ok(services.tournamentPlay.checkRound(g, t, n, caller))
+                )
+
+            case ("POST", "tournaments" :: gameId :: tournamentId :: "rounds" :: round :: "resume" :: Nil) =>
+                withRound(gameId, tournamentId, round)((g, t, n) => ok(services.tournamentPlay.resume(g, t, n, caller)))
+
             case ("GET", "me" :: "matches" :: "due" :: Nil) =>
                 ok(services.matches.due(caller))
 
@@ -519,8 +535,22 @@ object Router {
 
             // Calls a match off. Only its creator may — the challenger of the challenge it was started
             // from — which is why the challenge outlives the start.
+            // The body is optional: a tournament's match may be ranked by its owner as it is cancelled (D12).
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "cancel" :: Nil) =>
-                withGameId(gameId)(gid => ok(services.matches.cancel(gid, MatchId(matchId), caller)))
+                withGameId(gameId) { gid =>
+                    val ranked =
+                        if (request.body.trim.isEmpty) IO.pure(None)
+                        else body[Json.CancelRequest](request).map(_.ranks.map(Json.rankMap))
+                    ranked.flatMap(r => ok(services.matches.cancel(gid, MatchId(matchId), caller, r)))
+                }
+
+            // Correcting the ranks of a cancelled tournament match, until its round is over (D12).
+            case ("PUT", "games" :: gameId :: "matches" :: matchId :: "ranks" :: Nil) =>
+                withGameId(gameId)(gid =>
+                    body[Json.RanksRequest](request).flatMap(r =>
+                        noContent(services.matches.setRanks(gid, MatchId(matchId), Json.rankMap(r.ranks), caller))
+                    )
+                )
 
             // A game's matches, for its admins to manage them from -- whether each is friendly, above all.
             // `?playerId=` narrows it to one player's, as an admin sees them on that player's page.
@@ -675,6 +705,13 @@ object Router {
             rawTournament.toLongOption.fold(IO.pure(Errors.badRequest(s"'$rawTournament' is not a tournament id")))(t =>
                 f(game, TournamentId(t))
             )
+        )
+
+    private def withRound(rawGame: String, rawTournament: String, rawRound: String)(
+        f: (GameId, TournamentId, Int) => IO[Response]
+    ): IO[Response] =
+        withTournament(rawGame, rawTournament)((g, t) =>
+            rawRound.toIntOption.fold(IO.pure(Errors.badRequest(s"'$rawRound' is not a round")))(n => f(g, t, n))
         )
 
     private def withCharacterId(raw: String)(f: CharacterId => IO[Response]): IO[Response] =

@@ -27,7 +27,8 @@ case class Services[T](
     ending: EndingService,
     notifications: NotificationService,
     suppression: SuppressionService,
-    tournaments: TournamentService[T]
+    tournaments: TournamentService[T],
+    tournamentPlay: TournamentPlayService[T]
 )
 
 object Services {
@@ -83,21 +84,29 @@ object Services {
     )(using codec: TextCodec[T]): Services[T] = {
         val notifications = new Notifications(notifier, mail)
         val archives = new ArchiveService(pool, archiveStore)
-        val ending = new EndingService(pool, engineClient)
-        val endings = matchEndings.getOrElse(
-          MatchEndings.fromEnvironment(
-            MatchEndings.inline((gameId, matchId) => ending.settle(gameId, matchId).void, ending.rank(_).void)
-          )
-        )
-        val matches = new MatchService(pool, notifications, Some(archives), endings)
-
         /* Built before the services it is given to, because it is given to one of them: a challenge
          * offered as starting itself turns an acceptance into a start, and the acceptance is
          * `challenges`' to record while the start is this one's to carry out. Only the function is
          * shared, so neither service has to know about the other -- see
          * `ChallengeService.autoStart`. */
-        val engine =
+        lazy val engine: GameEngineService[T] =
             new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications, Some(archives), endings)
+
+        // Built after the services that queue its work, which it needs in turn: lazy vals break the circle.
+        lazy val play: TournamentPlayService[T] = new TournamentPlayService[T](pool, engine, endings, notifications)
+        lazy val ending: EndingService =
+            new EndingService(pool, engineClient, tournament = (gameId, matchId) => play.matchSettled(gameId, matchId))
+        lazy val endings: MatchEndings = matchEndings.getOrElse(
+          MatchEndings.fromEnvironment(
+            MatchEndings.inline(
+              (gameId, matchId) => ending.settle(gameId, matchId).void,
+              ending.rank(_).void,
+              play.createMatch(_).void,
+              play.check(_, _).void
+            )
+          )
+        )
+        val matches = new MatchService(pool, notifications, Some(archives), endings)
 
         Services(
           registration = new RegistrationService(pool),
@@ -117,7 +126,8 @@ object Services {
           ending = ending,
           notifications = new NotificationService(pool),
           suppression = new SuppressionService(pool),
-          tournaments = new TournamentService[T](pool)
+          tournaments = new TournamentService[T](pool, notifications),
+          tournamentPlay = play
         )
     }
 }

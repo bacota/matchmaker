@@ -4,7 +4,9 @@ import java.io.{InputStream, OutputStream}
 import java.nio.charset.StandardCharsets
 import java.time.{Duration, Instant}
 import scala.util.control.NonFatal
+import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all._
 import com.amazonaws.services.lambda.runtime.{Context, RequestStreamHandler}
 import com.vivi.matchmaker.model.{GameId, MatchId}
 import com.vivi.matchmaker.service.{Services, Settlement}
@@ -32,43 +34,13 @@ class Handler extends RequestStreamHandler {
         val deadline =
             Option(context).map(c => Instant.now().plusMillis(c.getRemainingTimeInMillis.toLong).minus(Handler.margin))
 
-        val failures = Handler.records(event).flatMap {
-            case Handler.Record.Unreadable(messageId, why) =>
-                log(s"could not read $messageId ($why); failing it to the dead-letter queue")
-                Some(messageId)
-
-            case Handler.Record.Understood(messageId, _) if deadline.exists(d => !Instant.now().isBefore(d)) =>
-                log(s"no time left for $messageId; it will be delivered again")
-                Some(messageId)
-
-            case Handler.Record.Understood(messageId, message) =>
-                val (what, settling) = message match {
-                    case ended: MatchEnded =>
-                        (
-                          s"match ${ended.matchId} of game ${ended.gameId}",
-                          Handler.services.ending.settle(GameId(ended.gameId), MatchId(ended.matchId))
-                        )
-                    case changed: RatingsChanged =>
-                        (
-                          s"the leaderboard of game ${changed.gameId}",
-                          Handler.services.ending.rank(GameId(changed.gameId))
-                        )
-                }
-                try {
-                    settling.unsafeRunSync() match {
-                        case Settlement.Settled =>
-                            log(s"settled $what")
-                            None
-                        case Settlement.Owed(why) =>
-                            log(s"$what is still owed something ($why); it will be delivered again")
-                            Some(messageId)
-                    }
-                } catch {
-                    case NonFatal(error) =>
-                        log(s"settling $what failed: $error")
-                        Some(messageId)
-                }
-        }
+        // The batch at once, up to `parallelism` at a time: each message is one match, and the engine is what any
+        // of them waits on (tournament-plan D5). Settling an ending touches only its own match's rows, so endings
+        // run beside each other as safely as the matches a round start queues.
+        val failures = IO
+            .parTraverseN(Handler.parallelism)(Handler.records(event).toList)(Handler.process(_, deadline, log))
+            .map(_.flatten)
+            .unsafeRunSync()
 
         output.write(Handler.response(failures).getBytes(StandardCharsets.UTF_8))
         output.flush()
@@ -83,11 +55,90 @@ object Handler {
     /** How long before the function's own timeout it stops starting on messages. */
     val margin: Duration = Duration.ofSeconds(30)
 
-    /** One queue message, read or not. */
+    /** How many of a batch's messages are worked on at once: a bound on engine calls in flight from one copy. */
+    val parallelism: Int = 8
+
+    /** How long a match that could not be made waits before it is tried again: half an hour, rather than the queue's
+      * hour and a half, since a round is waiting on it. SQS caps a send's delay at fifteen minutes, so the message's
+      * own visibility is moved instead.
+      */
+    val makeAgainAfterSeconds: Int = 1800
+
+    /** One queue message, read or not. `receipt` is what changing its visibility names it by. */
     enum Record {
-        case Understood(id: String, message: MatchEnded | RatingsChanged)
+        case Understood(id: String, message: MatchEnded.Message, receipt: Option[String] = None)
         case Unreadable(id: String, why: String)
     }
+
+    /** One message's work, answering its id if it is to be delivered again. */
+    def process(record: Record, deadline: Option[Instant], log: String => Unit): IO[Option[String]] =
+        record match {
+            case Record.Unreadable(messageId, why) =>
+                IO(log(s"could not read $messageId ($why); failing it to the dead-letter queue")).as(Some(messageId))
+
+            case Record.Understood(messageId, _, _) if deadline.exists(d => !Instant.now().isBefore(d)) =>
+                IO(log(s"no time left for $messageId; it will be delivered again")).as(Some(messageId))
+
+            case Record.Understood(messageId, message, receipt) =>
+                val (what, work) = message match {
+                    case ended: MatchEnded =>
+                        (
+                          s"match ${ended.matchId} of game ${ended.gameId}",
+                          services.ending.settle(GameId(ended.gameId), MatchId(ended.matchId))
+                        )
+                    case changed: RatingsChanged =>
+                        (s"the leaderboard of game ${changed.gameId}", services.ending.rank(GameId(changed.gameId)))
+                    case due: MatchDue =>
+                        (
+                          s"match ${due.matchNo} of pool ${due.fixtureId} of tournament ${due.tournamentId}",
+                          services.tournamentPlay.createMatch(due)
+                        )
+                    case check: MatchCheck =>
+                        (
+                          s"the check of match ${check.matchId}",
+                          services.tournamentPlay.check(GameId(check.gameId), MatchId(check.matchId))
+                        )
+                }
+                val failed: IO[Option[String]] = message match {
+                    // A match a round is waiting on is tried again sooner than the queue would.
+                    case _: MatchDue => receipt.traverse_(makeAgainSooner(_, log)).as(Some(messageId))
+                    case _           => IO.pure(Some(messageId))
+                }
+                work.attempt.flatMap {
+                    case Right(Settlement.Settled) => IO(log(s"settled $what")).as(None)
+                    case Right(Settlement.Owed(why)) =>
+                        IO(log(s"$what is still owed something ($why); it will be delivered again")) *> failed
+                    case Left(error) => IO(log(s"settling $what failed: $error")) *> failed
+                }
+        }
+
+    /* The queue the listener drains, as the environment names it, and a client for it. */
+    private lazy val queueUrl: Option[String] =
+        Option(System.getenv("MATCH_ENDED_QUEUE_URL")).map(_.trim).filter(_.nonEmpty)
+
+    private lazy val sqs = com.vivi.matchmaker.notify.SqsNotifier.lazily(() =>
+        com.vivi.matchmaker.notify.SqsNotifier.client(
+          Option(System.getenv("AWS_REGION")).orElse(Option(System.getenv("AWS_DEFAULT_REGION"))).getOrElse("us-east-1")
+        )
+    )
+
+    /* Moves a failed message's next delivery to half an hour from now. If this fails too, the message is delivered
+     * again on the queue's own timeout, which is slower but still right. */
+    private def makeAgainSooner(receipt: String, log: String => Unit): IO[Unit] =
+        queueUrl.traverse_ { url =>
+            IO.blocking(
+              sqs()
+                  .changeMessageVisibility(
+                    software.amazon.awssdk.services.sqs.model.ChangeMessageVisibilityRequest
+                        .builder()
+                        .queueUrl(url)
+                        .receiptHandle(receipt)
+                        .visibilityTimeout(makeAgainAfterSeconds)
+                        .build()
+                  )
+            ).void
+                .handleError(e => log(s"could not bring the retry forward: $e"))
+        }
 
     /** The messages in an SQS event. One with no id is skipped: a batch item failure names a message by its id, so
       * there is nothing to say about one that has none, and SQS always sends one.
@@ -101,8 +152,9 @@ object Handler {
                 case None => Record.Unreadable(messageId, "no body")
                 case Some(body) =>
                     MatchEnded.parse(body) match {
-                        case Left(why)   => Record.Unreadable(messageId, why)
-                        case Right(read) => Record.Understood(messageId, read)
+                        case Left(why) => Record.Unreadable(messageId, why)
+                        case Right(read) =>
+                            Record.Understood(messageId, read, obj.get("receiptHandle").flatMap(_.strOpt))
                     }
             }
         }

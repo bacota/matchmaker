@@ -13,6 +13,7 @@ import ResultRepo.{ParticipantResultRow, TimeTakenRow}
 class ResultRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val participantId = SkunkIdCodecs.participantId
+    private val matchIdCodec = SkunkIdCodecs.matchId
 
     // result.scores is jsonb holding an object; SkunkCodecs.jsonObject presents it as a Map.
     private val scores: Codec[Map[String, Any]] = SkunkCodecs.jsonObject
@@ -174,6 +175,28 @@ class ResultRepo(session: Session[IO]) {
       */
     def setEloDelta(gameId: GameId, id: ParticipantId, delta: Option[Int], roleDelta: Option[Int] = None): IO[Unit] =
         session.execute(updateEloDelta)((delta, roleDelta, gameId, id)).void
+
+    private val deleteForMatchSeats: Command[(GameId, MatchId)] =
+        sql"""DELETE FROM result r USING participant p
+          WHERE p.game_id = r.game_id AND p.participant_id = r.participant_id
+            AND p.game_id = $gameId AND p.match_id = $matchIdCodec""".command
+
+    private val insertManual: Command[(GameId, ParticipantId, Int, Boolean)] =
+        sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, forfeit, manual)
+          VALUES ($gameId, $participantId, $int4, '{}'::jsonb, $bool, false, true)""".command
+
+    /** Replaces a cancelled tournament match's results with the ranks its tournament's owner set by hand (D12): one row
+      * per seat, marked manual, the winner a seat alone at the best rank, and nothing about anybody's rating — a
+      * cancelled match moves none.
+      */
+    def replaceManual(gameId: GameId, matchId: MatchId, ranks: Map[ParticipantId, Int]): IO[Unit] = {
+        val best = ranks.values.minOption
+        val alone = best.exists(b => ranks.values.count(_ == b) == 1)
+        session.execute(deleteForMatchSeats)((gameId, matchId)) *>
+            ranks.toList.traverse_((id, rank) =>
+                session.execute(insertManual)((gameId, id, rank, alone && best.contains(rank)))
+            )
+    }
 
     def create(result: Result): IO[Result] =
         session

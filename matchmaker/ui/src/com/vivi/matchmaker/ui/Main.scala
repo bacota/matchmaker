@@ -2780,6 +2780,8 @@ object Views {
         val unimportantRoles = Var(existing.exists(_.unimportantRoles))
         // The engine lets players choose their roles in the match itself (V52).
         val choosesRoles = Var(existing.exists(_.choosesRoles))
+        // The score a tournament's SCORE tiebreaker adds up (V53): a key in the engine's results.
+        val scoreKey = Var(existing.flatMap(_.scoreKey).getOrElse(""))
         // What this form's tip ids start with: a game's edit form and the new-game form are different forms.
         val formKey = existing.fold("new-game")(game => s"game-${game.gameId.value}")
         // Write-only: starts empty whether or not a key is stored, because the stored one is never sent here.
@@ -2946,6 +2948,18 @@ object Views {
                 )
               )
           },
+          tipField(
+            s"$formKey-score-key-tip",
+            "Score key",
+            "The score in the game engine's results that a tournament's Score tiebreaker adds up, such as " +
+                "\"score\" for boxing. Left blank, players level on points are separated by their finishing places."
+          )(
+            input(
+              autoComplete := "off",
+              spellCheck := false,
+              controlled(value <-- scoreKey.signal, onInput.mapToValue --> scoreKey)
+            )
+          ),
           parameterEditor(formKey, parameters),
           busyButton(
             if (existing.isDefined) "Save Changes" else "Create Game",
@@ -2988,6 +3002,7 @@ object Views {
                         timeoutAction = timeoutAction.now(),
                         unimportantRoles = unimportantRoles.now(),
                         choosesRoles = choosesRoles.now(),
+                        scoreKey = Option(scoreKey.now().trim).filter(_.nonEmpty),
                         characterUrl = Option
                             .when(gameType.now() == GameType.Character)(characterUrl.now().trim)
                             .filter(_.nonEmpty)
@@ -3011,6 +3026,7 @@ object Views {
                               characterUrl.set("")
                               unimportantRoles.set(false)
                               choosesRoles.set(false)
+                              scoreKey.set("")
                               roles.set(List(emptyRole))
                               parameters.set(Nil)
                           } else {

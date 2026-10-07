@@ -20,12 +20,26 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private val value: Codec[T] = SkunkCodecs.plainText[T]
 
     private val insertGameRow: Query[
-      (GameType, String, String, String, String, Option[String], Boolean, String, TimeoutAction, Boolean, Boolean),
+      (
+          GameType,
+          String,
+          String,
+          String,
+          String,
+          Option[String],
+          Boolean,
+          String,
+          TimeoutAction,
+          Boolean,
+          Boolean,
+          Option[String]
+      ),
       GameId
     ] =
         sql"""INSERT INTO game (game_type, name, display_name, description, url, character_url, active, external_id,
-                                timeout_action, unimportant_roles, chooses_roles)
-          VALUES ($gameType, $text, $text, $text, $text, ${text.opt}, $bool, $text, $timeoutAction, $bool, $bool)
+                                timeout_action, unimportant_roles, chooses_roles, score_key)
+          VALUES ($gameType, $text, $text, $text, $text, ${text.opt}, $bool, $text, $timeoutAction, $bool, $bool,
+                  ${text.opt})
           RETURNING game_id""".query(gameId)
 
     private val updateGameRow: Command[
@@ -41,12 +55,14 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           TimeoutAction,
           Boolean,
           Boolean,
+          Option[String],
           GameId
       )
     ] =
         sql"""UPDATE game SET game_type = $gameType, name = $text, display_name = $text, description = $text, url = $text,
           character_url = ${text.opt}, active = $bool,
-          external_id = $text, timeout_action = $timeoutAction, unimportant_roles = $bool, chooses_roles = $bool
+          external_id = $text, timeout_action = $timeoutAction, unimportant_roles = $bool, chooses_roles = $bool,
+          score_key = ${text.opt}
           WHERE game_id = $gameId""".command
 
     private val selectGameRow: Query[
@@ -63,17 +79,19 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           TimeoutAction,
           Boolean,
           Boolean,
-          Boolean
+          Boolean,
+          Option[String]
       )
     ] =
         // Whether a key is stored, never the key: no read of a game carries it (V34).
         sql"""SELECT game_type, name, display_name, description, url, character_url, active, external_id, timeout_action,
-                 EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = game.game_id), unimportant_roles, chooses_roles
+                 EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = game.game_id), unimportant_roles, chooses_roles,
+                 score_key
           FROM game
           WHERE game_id = $gameId"""
             .query(
               gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *: bool *: bool *:
-                  bool
+                  bool *: text.opt
             )
 
     /* Confirms a game exists and holds it that way for the rest of the transaction.
@@ -156,7 +174,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                 game.externalId,
                 game.timeoutAction,
                 game.unimportantRoles,
-                game.choosesRoles
+                game.choosesRoles,
+                game.scoreKey.map(_.trim).filter(_.nonEmpty)
               )
             )
             roles <- game.roles.toList.traverse(insertRole(gameId, _))
@@ -204,7 +223,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                     timeoutAction,
                     hasKey,
                     unimportantRoles,
-                    choosesRoles
+                    choosesRoles,
+                    scoreKey
                   )
                 ) =>
                 for {
@@ -226,7 +246,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                     characterUrl,
                     hasKey,
                     unimportantRoles,
-                    choosesRoles
+                    choosesRoles,
+                    scoreKey
                   )
                 )
         }
@@ -246,6 +267,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                 game.timeoutAction,
                 game.unimportantRoles,
                 game.choosesRoles,
+                game.scoreKey.map(_.trim).filter(_.nonEmpty),
                 game.gameId
               )
             )
@@ -339,6 +361,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         hasApiKey: Boolean,
         unimportantRoles: Boolean,
         choosesRoles: Boolean,
+        scoreKey: Option[String],
         roleId: Option[Int],
         roleName: Option[String],
         roleOptional: Option[Boolean],
@@ -359,7 +382,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private val selectGameAggregate =
         sql"""SELECT g.game_id, g.game_type, g.name, g.display_name, g.description, g.url, g.character_url, g.active, g.external_id,
                  g.timeout_action, EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = g.game_id), g.unimportant_roles,
-                 g.chooses_roles, r.game_role_id, r.name, r.optional, r.display_name, r.preferred,
+                 g.chooses_roles, g.score_key, r.game_role_id, r.name, r.optional, r.display_name, r.preferred,
                  p.game_parameter_id, p.name, p.default_value, p.display_name,
                  v.value
           FROM game g
@@ -371,7 +394,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           ORDER BY g.game_id"""
             .query(
               gameId *: gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *: bool *:
-                  bool *: bool *: int4.opt *: text.opt *: bool.opt *: text.opt *: bool.opt *:
+                  bool *: bool *: text.opt *: int4.opt *: text.opt *: bool.opt *: text.opt *: bool.opt *:
                   int4.opt *: text.opt *: value.opt *: text.opt *: value.opt
             )
 
@@ -455,7 +478,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                       head.characterUrl,
                       head.hasApiKey,
                       head.unimportantRoles,
-                      head.choosesRoles
+                      head.choosesRoles,
+                      head.scoreKey
                     )
                 }
                 // game_id breaks ties, so games sharing a name still come back in a stable order.

@@ -32,7 +32,7 @@ class EndingHandlerSpec extends FunSuite {
         val body = upickle.default.write(MatchEnded.of(GameId(7), MatchId("3f1c-match")))
         assertEquals(
           Handler.records(sqsEvent("m-1" -> body)),
-          Seq(Handler.Record.Understood("m-1", MatchEnded(7, "3f1c-match")))
+          Seq(Handler.Record.Understood("m-1", MatchEnded(7, "3f1c-match"), Some("AQEB...")))
         )
     }
 
@@ -46,9 +46,23 @@ class EndingHandlerSpec extends FunSuite {
         assertEquals(
           records,
           Seq(
-            Handler.Record.Understood("m-1", RatingsChanged(7)),
-            Handler.Record.Understood("m-2", MatchEnded(7, "3f1c-match"))
+            Handler.Record.Understood("m-1", RatingsChanged(7), Some("AQEB...")),
+            Handler.Record.Understood("m-2", MatchEnded(7, "3f1c-match"), Some("AQEB..."))
           )
+        )
+    }
+
+    test("a match due and a match check are read back as themselves, and neither is taken for an ending") {
+        val records = Handler.records(
+          sqsEvent(
+            "m-1" -> upickle.default.write(MatchDue(7, 3L, 11L, 2)),
+            "m-2" -> MatchCheck.body(GameId(7), MatchId("3f1c-match")),
+            "m-3" -> upickle.default.write(MatchEnded.of(GameId(7), MatchId("3f1c-match")))
+          )
+        )
+        assertEquals(
+          records.map { case Handler.Record.Understood(_, m, _) => m; case other => other },
+          Seq(MatchDue(7, 3L, 11L, 2), MatchCheck(7, "3f1c-match"), MatchEnded(7, "3f1c-match"))
         )
     }
 

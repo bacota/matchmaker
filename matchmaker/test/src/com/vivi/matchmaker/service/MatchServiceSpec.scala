@@ -891,6 +891,30 @@ class MatchServiceSpec extends PropertySuite {
         outcome.timeout(30.seconds).unsafeRunSync()
     }
 
+    // D12: a challenge's creator may call its match off, but never set how it came out.
+    test("a challenge's match cannot be ranked by hand, as it is cancelled or after") {
+        val (player, game, matchId) =
+            makeMatch(genUniqueString.sample.get, genUniqueString.sample.get, genUniqueString.sample.get, false, true)
+                .unsafeRunSync()
+        val seat = TestSession.resource
+            .use(session =>
+                new ParticipantRepo(session).listForMatch(game.gameId, matchId).map(_.head._1.participantId)
+            )
+            .unsafeRunSync()
+        val outcome = for {
+            onCancel <- matchService.cancel(game.gameId, matchId, player.externalId, Some(Map(seat -> 1))).attempt
+            cancelled <- matchService.cancel(game.gameId, matchId, player.externalId)
+            after <- matchService.setRanks(game.gameId, matchId, Map(seat -> 1), player.externalId).attempt
+            results <- TestSession.resource.use(session => new ResultRepo(session).read(game.gameId, seat))
+        } yield {
+            assert(onCancel.left.exists(_.isInstanceOf[ValidationError]), onCancel)
+            assert(cancelled.cancelled)
+            assert(after.left.exists(_.isInstanceOf[ValidationError]), after)
+            assertEquals(results, None)
+        }
+        outcome.timeout(30.seconds).unsafeRunSync()
+    }
+
     // The seats, not just the match. A cancelled match is over, so nothing in it is anybody's turn and
     // no clock in it is running -- which is what the results and forfeit paths already write, and what
     // anything asking "is this seat still in play" now reads instead of joining `match`.

@@ -196,10 +196,20 @@ object EloRatingService {
         gameId: GameId,
         seats: Seq[(PlayerId, GameRoleId)],
         byRole: Boolean
+    ): IO[StartingRatings] = startingRatingsOf(session, gameId, seats.map((p, r) => (p, Some(r))), byRole)
+
+    /** As [[startingRatings]], for seats some of which have no role yet — a tournament seat whose player chooses it in
+      * the engine (V52). A seat with none has a rating in no role until it chooses.
+      */
+    def startingRatingsOf(
+        session: skunk.Session[IO],
+        gameId: GameId,
+        seats: Seq[(PlayerId, Option[GameRoleId])],
+        byRole: Boolean
     ): IO[StartingRatings] = {
         val repo = new EloRatingRepo(session)
-        val keys = seats.map((player, _) => RatingKey(None, player)) ++
-            (if (byRole) seats.map((player, role) => RatingKey(Some(role), player)) else Nil)
+        val keys = (seats.map((player, _) => RatingKey(None, player)) ++
+            (if (byRole) seats.flatMap((player, role) => role.map(r => RatingKey(Some(r), player))) else Nil)).distinct
         (repo.ensureRatedIn(gameId, keys) *> repo.readForShare(gameId, keys)).map(StartingRatings(_))
     }
 

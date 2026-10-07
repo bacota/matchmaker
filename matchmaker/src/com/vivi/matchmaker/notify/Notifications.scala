@@ -197,6 +197,45 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         }
 
     // -------------------------------------------------------------------------
+    // Things that happen to a tournament (V54)
+    // -------------------------------------------------------------------------
+
+    /** Every match of a round is over. Told to the tournament's owner, who starts the next. */
+    def tournamentRoundComplete(session: Session[IO], t: Tournament, round: Int): IO[Unit] =
+        aboutTournament(session, t, t.owner, NotificationType.TournamentRoundComplete, s"round $round of tournament") {
+            TournamentNews(_, t.name, round = round)
+        }
+
+    /** A player — or the owner of a character — has been invited to a tournament. Told to them. */
+    def tournamentInvited(session: Session[IO], t: Tournament, invited: PlayerId, owner: String): IO[Unit] =
+        aboutTournament(session, t, invited, NotificationType.TournamentInvitation, "invitation to tournament") {
+            TournamentNews(_, t.name, owner = owner)
+        }
+
+    private def aboutTournament(
+        session: Session[IO],
+        t: Tournament,
+        to: PlayerId,
+        kind: NotificationType,
+        about: String
+    )(
+        news: String => TournamentNews
+    ): IO[Unit] =
+        dispatch(session, s"$about ${t.tournamentId.value} of game ${t.gameId.value}") { (from, uiBaseUrl) =>
+            val notificationRepo = new NotificationRepo(session)
+            (notificationRepo.gameNotice(t.gameId), new PlayerRepo(session).read(to)).tupled.flatMap {
+                case (Some(notice), Some(recipient)) =>
+                    notificationRepo.levelsForPlayer(to, t.gameId).map { levels =>
+                        Option
+                            .when(NotificationPolicy.wants(kind, levels.apply))(())
+                            .flatMap(_ => TournamentMail.compose(from, uiBaseUrl, recipient, kind, news(notice.name)))
+                            .toSeq
+                    }
+                case _ => IO.pure(Seq.empty[MailMessage])
+            }
+        }
+
+    // -------------------------------------------------------------------------
     // Things that happen to a match
     // -------------------------------------------------------------------------
 

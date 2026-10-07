@@ -348,7 +348,12 @@ class RouterSpec extends FunSuite {
       ("DELETE", "/tournaments/1/2/character-invitations/4", "{}"),
       ("POST", "/tournaments/1/2/entries", "{}"),
       ("DELETE", "/tournaments/1/2/entries/5", "{}"),
-      ("POST", "/tournaments/1/2/start", "{}")
+      ("POST", "/tournaments/1/2/start", "{}"),
+      // A round's overrides are each optional; none at all is a round started as the tournament says.
+      ("POST", "/tournaments/1/2/rounds/1/start", """{"duration":3600}"""),
+      ("POST", "/tournaments/1/2/rounds/1/check", "{}"),
+      ("POST", "/tournaments/1/2/rounds/1/resume", "{}"),
+      ("PUT", "/games/1/matches/m1/ranks", """{"ranks":[{"participantId":1,"rank":1},{"participantId":2,"rank":2}]}""")
     )
 
     test("every routed endpoint reaches a service rather than falling through to 404") {
@@ -365,7 +370,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 72)
+        assertEquals(routed.size, 76)
         assertEquals(routed.distinct.size, routed.size)
     }
 

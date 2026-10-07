@@ -204,3 +204,17 @@ case class TournamentDetail(
 
 /** A tournament in a player's own list, with what it is to them. */
 case class TournamentSummary(tournament: Tournament, owned: Boolean, entered: Boolean, invited: Boolean)
+
+/** What the owner may set for one round as they start it, over the tournament's own settings. A pool size can be set
+  * only for the first round, which lays the tournament out again; the rest apply to the round they are set for.
+  */
+case class RoundOverrides(
+    duration: Option[Duration] = None,
+    rotations: Option[Int] = None,
+    poolSize: Option[Int] = None,
+    minPoolAdvance: Option[Int] = None,
+    tiebreaker: Option[Tiebreaker] = None
+)
+
+/** What starting, checking or resuming a round set going: how many matches were queued to be made or checked. */
+case class RoundWork(queued: Int)

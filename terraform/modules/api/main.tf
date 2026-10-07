@@ -375,6 +375,11 @@ locals {
     "POST /tournaments/{gameId}/{tournamentId}/entries",
     "DELETE /tournaments/{gameId}/{tournamentId}/entries/{entryId}",
     "POST /tournaments/{gameId}/{tournamentId}/start",
+    # A round's buttons: start it, check its matches against their clocks, queue again what of it
+    # has not been made.
+    "POST /tournaments/{gameId}/{tournamentId}/rounds/{round}/start",
+    "POST /tournaments/{gameId}/{tournamentId}/rounds/{round}/check",
+    "POST /tournaments/{gameId}/{tournamentId}/rounds/{round}/resume",
 
     "POST /challenges",
     "DELETE /challenges/{gameId}/{challengeId}",
@@ -395,6 +400,8 @@ locals {
     "POST /games/{gameId}/matches/{matchId}/refresh",
     # Calling a match off, which only its creator may do.
     "POST /games/{gameId}/matches/{matchId}/cancel",
+    # Correcting the ranks of a cancelled tournament match, until its round is over.
+    "PUT /games/{gameId}/matches/{matchId}/ranks",
     # A game's matches, for its admins; and whether one is friendly (V36), which they say.
     "GET /games/{gameId}/matches",
     "PUT /games/{gameId}/matches/{matchId}/friendly",
