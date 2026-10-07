@@ -300,7 +300,8 @@ class TournamentService[T](
       *
       * An invitational tournament needs an invitation, by name or for a character the caller owns. An open one checks
       * the caller's overall rating against its bounds; a player with no rating yet is at the starting rating. A
-      * tournament that has started takes entries only if it is a ladder.
+      * tournament that has started takes entries only if it is a ladder: the entrant joins it at once at rank 0, with
+      * the next seed — or, having withdrawn, rejoins it at the rank they left with.
       */
     def enter(
         gameId: GameId,
@@ -313,8 +314,16 @@ class TournamentService[T](
                 val repo = new TournamentRepo(session)
                 for {
                     caller <- requireCaller(session, callerExternalId)
-                    // Held against a start, which would seed the field without this entry.
-                    t <- requireTournament(repo.readForShare(gameId, tournamentId), gameId, tournamentId)
+                    // A class never changes, so it may be read before choosing the lock. A ladder's is exclusive: an
+                    // entry to a running one takes the next seed, and two taking it at once would both take one.
+                    found <- requireTournament(repo.read(gameId, tournamentId), gameId, tournamentId)
+                    // Otherwise held against a start, which would seed the field without this entry.
+                    t <- requireTournament(
+                      if (found.tournamentClass == TournamentClass.Ladder) repo.readForUpdate(gameId, tournamentId)
+                      else repo.readForShare(gameId, tournamentId),
+                      gameId,
+                      tournamentId
+                    )
                     _ <- IO.raiseWhen(t.ended)(ConflictError("the tournament is over"))
                     _ <- IO.raiseWhen(t.started && t.tournamentClass != TournamentClass.Ladder)(
                       ConflictError("the tournament has started and takes no more entries")
@@ -345,12 +354,43 @@ class TournamentService[T](
                             }
                         else checkRating(session, t, caller.playerId)
                     existing <- new EntryRepo(session).listForPlayer(gameId, tournamentId, caller.playerId)
-                    _ <- IO.raiseWhen(existing.sizeIs >= t.maxEntriesPerPlayer)(
-                      ConflictError("the caller has already entered this tournament")
-                    )
-                    entry <- new EntryRepo(session)
-                        .create(TournamentEntry(gameId, tournamentId, EntryId(0), caller.playerId, character))
-                        .adaptError(uniqueViolation("the caller has already entered this tournament"))
+                    participants = new TournamentParticipantRepo(session)
+                    field <- if (t.started) participants.listForUpdate(gameId, tournamentId) else IO.pure(Nil)
+                    // A ladder's withdrawn entrant coming back, as whoever they entered as.
+                    rejoining = existing.flatMap(e => field.find(p => p.entryId == e.entryId && p.withdrawn))
+                    entry <- rejoining.headOption match {
+                        case Some(p) =>
+                            participants
+                                .setWithdrawn(gameId, tournamentId, p.tournamentParticipantId, false)
+                                .as(existing.find(_.entryId == p.entryId).get)
+                        case None =>
+                            for {
+                                _ <- IO.raiseWhen(existing.sizeIs >= t.maxEntriesPerPlayer)(
+                                  ConflictError("the caller has already entered this tournament")
+                                )
+                                entry <- new EntryRepo(session)
+                                    .create(
+                                      TournamentEntry(gameId, tournamentId, EntryId(0), caller.playerId, character)
+                                    )
+                                    .adaptError(uniqueViolation("the caller has already entered this tournament"))
+                                next = field.map(_.seed).maxOption.getOrElse(0) + 1
+                                _ <- IO.whenA(t.started)(
+                                  participants
+                                      .create(
+                                        TournamentParticipant(
+                                          gameId,
+                                          tournamentId,
+                                          TournamentParticipantId(0),
+                                          entry.entryId,
+                                          next,
+                                          next,
+                                          ladderRank = Some(0)
+                                        )
+                                      )
+                                      .void
+                                )
+                            } yield entry
+                    }
                 } yield entry
             }
         }
@@ -393,7 +433,8 @@ class TournamentService[T](
     // ---- starting -------------------------------------------------------------------------------------
 
     /** The owner starting the tournament: the field seeded by overall rating — a character by its owner's — with ties
-      * drawn at random, and every round's pools laid out. Round 1 is not started: the owner starts each round.
+      * drawn at random, and every round's pools laid out. Round 1 is not started: the owner starts each round. A ladder
+      * lays nothing out: everybody is at rank 0, and each round is paired as the owner starts it.
       */
     def start(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[TournamentDetail] =
         sessionPool
@@ -405,11 +446,14 @@ class TournamentService[T](
                         t <- requireTournament(repo.readForUpdate(gameId, tournamentId), gameId, tournamentId)
                         _ <- requireOwner(t, caller)
                         _ <- IO.raiseWhen(t.started)(ConflictError("the tournament has already started"))
-                        settings <- t.elimination.filter(e => startable.contains(e.tournamentType)) match {
-                            case Some(e) if t.tournamentClass == TournamentClass.Elimination => IO.pure(e)
+                        settings <- (t.tournamentClass, t.elimination) match {
+                            case (TournamentClass.Ladder, _) => IO.pure(None)
+                            case (TournamentClass.Elimination, Some(e)) if startable.contains(e.tournamentType) =>
+                                IO.pure(Some(e))
                             case _ =>
                                 IO.raiseError(ValidationError("this kind of tournament cannot be started yet"))
                         }
+                        ladderRank = Option.when(t.tournamentClass == TournamentClass.Ladder)(0)
                         entries <- new EntryRepo(session).listForTournament(gameId, tournamentId)
                         _ <- IO.raiseWhen(entries.sizeIs < 2)(
                           ValidationError("a tournament needs at least two entrants to start")
@@ -425,15 +469,19 @@ class TournamentService[T](
                                 TournamentParticipantId(0),
                                 e.entryId,
                                 i + 1,
-                                i + 1
+                                i + 1,
+                                ladderRank = ladderRank
                               )
                             )
                         }
-                        _ <- TournamentLayout.layOut(
-                          session,
-                          gameId,
-                          tournamentId,
-                          TournamentLayout.bracket(settings, participants.size)
+                        // A ladder's rounds are paired one at a time, as each starts.
+                        _ <- settings.traverse_(e =>
+                            TournamentLayout.layOut(
+                              session,
+                              gameId,
+                              tournamentId,
+                              TournamentLayout.bracket(e, participants.size)
+                            )
                         )
                         _ <- repo.start(gameId, tournamentId)
                     } yield ()

@@ -314,6 +314,73 @@ class TournamentEndToEndSpec extends FunSuite with QuietTests {
         assertEquals(f.bySeed.map(p => finalRanks(d)(p.playerId)), List(Some(3), Some(2), Some(1)))
     }
 
+    test("a ladder: paired by rank each round, up one for a win and down one for a loss; join, leave and rejoin") {
+        val w = world()
+        def detail(g: Game, f: Field) = w.services.tournaments.detail(g.gameId, f.t.tournamentId, f.owner.externalId)
+        def rankOf(d: TournamentDetail, p: Player) =
+            d.entrants.find(_.player.playerId == p.playerId).flatMap(_.participant).flatMap(_.ladderRank)
+        // One round, every match decided for the better of the seeds in `order`; answers the round's matches' players.
+        def round(g: Game, f: Field, n: Int, order: List[Player]): IO[List[Set[PlayerId]]] =
+            for {
+                _ <- w.services.tournamentPlay
+                    .startRound(g.gameId, f.t.tournamentId, n, RoundOverrides(), f.owner.externalId)
+                _ <- { val ds = w.queue.dues; w.queue.dues = Nil; ds.traverse(w.services.tournamentPlay.createMatch) }
+                open <- unfinished(g, f.t)
+                _ <- open.traverse_(p => report(w, g, p, bySeed(f.copy(bySeed = order))(p)))
+            } yield open.map(_.seats.map(_._2).toSet)
+
+        val (f, newcomer, first, second, afterTwo, rejoined) = run(for {
+            g <- game()
+            owner <- w.services.registration.register(unique("owner"), unique("owner-sub"))
+            players <- List.fill(4)(w.services.registration.register(unique("p"), unique("p-sub"))).sequence
+            t <- w.services.tournaments.create(
+              Tournament(
+                g.gameId,
+                TournamentId.unassigned,
+                TournamentClass.Ladder,
+                "The Ladder",
+                PlayerId.unassigned,
+                invitational = false,
+                roundDuration = Duration.ofHours(2)
+              ),
+              owner.externalId
+            )
+            _ <- players.traverse(p => w.services.tournaments.enter(g.gameId, t.tournamentId, None, p.externalId))
+            started <- w.services.tournaments.start(g.gameId, t.tournamentId, owner.externalId)
+            bySeed = started.entrants
+                .sortBy(_.participant.map(_.seed))
+                .map(e => players.find(_.playerId == e.player.playerId).get)
+            f = Field(owner, started.tournament, bySeed)
+            // Everybody at 0, all rated alike: 1 against 4 and 2 against 3, and the better seeds win.
+            first <- round(g, f, 1, bySeed)
+            // A newcomer joins between rounds, at 0 and the next seed.
+            newcomer <- w.services.registration.register(unique("p"), unique("p-sub"))
+            _ <- w.services.tournaments.enter(g.gameId, t.tournamentId, None, newcomer.externalId)
+            second <- round(g, f, 2, bySeed :+ newcomer)
+            afterTwo <- detail(g, f)
+            // Seed 4 leaves the ladder and comes back, at the rank they left with.
+            entry = afterTwo.entrants.find(_.player.playerId == bySeed(3).playerId).get.entryId
+            _ <- w.services.tournaments.withdraw(g.gameId, t.tournamentId, entry, bySeed(3).externalId)
+            _ <- w.services.tournaments.enter(g.gameId, t.tournamentId, None, bySeed(3).externalId)
+            rejoined <- detail(g, f)
+        } yield (f, newcomer, first, second, afterTwo, rejoined))
+
+        val List(s1, s2, s3, s4) = f.bySeed: @unchecked
+        def ids(ps: Player*) = ps.map(_.playerId).toSet
+        assertEquals(first.toSet, Set(ids(s1, s4), ids(s2, s3)))
+        // Round 2: the two at +1 meet; the newcomer, alone at 0, borrows from -1 the first of its two; the other sits out.
+        assertEquals(second.toSet, Set(ids(s1, s2), ids(newcomer, s3)))
+        assertEquals(
+          (f.bySeed :+ newcomer).map(rankOf(afterTwo, _)),
+          List(Some(2), Some(0), Some(0), Some(-1), Some(-1))
+        )
+        assertEquals(afterTwo.rounds.map(r => (r.round, r.completed)), List(1 -> true, 2 -> true))
+        assert(!afterTwo.tournament.ended)
+        assertEquals(rankOf(rejoined, s4), Some(-1))
+        assertEquals(rejoined.entrants.size, 5)
+        assert(!rejoined.entrants.exists(_.participant.exists(_.withdrawn)))
+    }
+
     test("a player whose turn runs out is forfeited by Check round, and the round goes on") {
         val w = world()
         val (checked, d) = run(for {

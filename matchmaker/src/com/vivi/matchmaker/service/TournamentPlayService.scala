@@ -28,6 +28,8 @@ import com.vivi.matchmaker.notify.Notifications
 import com.vivi.matchmaker.tournament.{
     Advancement,
     FinalRanks,
+    LadderPairing,
+    LadderRanks,
     PlannedMatch,
     PlayedMatch,
     PoolSchedule,
@@ -56,6 +58,9 @@ import com.vivi.matchmaker.tournament.{
   * A pool plays every way of seating its members together (see [[PoolSchedule]]); a pool with fewer members than a
   * match has seats plays nothing, and its lone member goes through. A match one of whose players has withdrawn, and
   * that has not been made yet, is not made: its seat plays as a bye.
+  *
+  * A ladder (Phase 8) has no layout: each round is paired as it starts, rank by rank (see [[LadderPairing]]), into
+  * pools of one match's seats, and its ranks move as each match is settled (see [[LadderRanks]]). It never ends.
   */
 class TournamentPlayService[T](
     sessionPool: SessionPool,
@@ -82,11 +87,14 @@ class TournamentPlayService[T](
                         caller <- requireCaller(session, callerExternalId)
                         t <- requireTournament(session, gameId, tournamentId, forUpdate = true)
                         _ <- requireOwner(t, caller)
-                        settings <- IO.fromOption(t.elimination)(
-                          ValidationError("a ladder's rounds are not started here")
-                        )
                         _ <- IO.raiseUnless(t.started)(ConflictError("the tournament has not started"))
+                        _ <- IO.raiseWhen(t.ended)(ConflictError("the tournament is over"))
                         game <- requireGame(session, gameId)
+                        settings = settingsOf(t, game)
+                        _ <- IO.raiseWhen(
+                          ladder(t) && (overrides.minPoolAdvance.isDefined || overrides.tiebreaker.isDefined)
+                        )(ValidationError("a ladder's rounds have nobody going through, and no ties to break"))
+                        _ <- IO.whenA(ladder(t))(pairLadderRound(session, t, game, round, overrides))
                         // The first round may be laid out again with pools of another size; no later one may.
                         _ <- overrides.poolSize.filter(_ != settings.poolSize).traverse_ { size =>
                             if (round != 1)
@@ -165,10 +173,9 @@ class TournamentPlayService[T](
                     caller <- requireCaller(session, callerExternalId)
                     t <- requireTournament(session, gameId, tournamentId, forUpdate = false)
                     _ <- requireOwner(t, caller)
-                    settings <- IO.fromOption(t.elimination)(ValidationError("a ladder's rounds are not resumed here"))
                     game <- requireGame(session, gameId)
                     r <- requireRunning(fixtures, gameId, tournamentId, round)
-                    pools <- poolsOf(session, t, settings, game, r)
+                    pools <- poolsOf(session, t, settingsOf(t, game), game, r)
                 } yield pools.flatMap(p => p.owed.map(m => due(t, p.fixture, m.matchNo)))
             }
             .flatMap(queue)
@@ -177,13 +184,13 @@ class TournamentPlayService[T](
     def progress(gameId: GameId, tournamentId: TournamentId): IO[TournamentProgress] =
         sessionPool.use { session =>
             new TournamentRepo(session).read(gameId, tournamentId).flatMap {
-                case Some(t) if t.elimination.isDefined =>
+                case Some(t) =>
                     for {
                         game <- requireGame(session, gameId)
                         rounds <- new FixtureRepo(session).listRounds(gameId, tournamentId)
                         pools <- rounds
                             .filter(_.started)
-                            .flatTraverse(r => poolsOf(session, t, t.elimination.get, game, r))
+                            .flatTraverse(r => poolsOf(session, t, settingsOf(t, game), game, r))
                     } yield TournamentProgress(
                       pools.flatMap(p =>
                           p.made.toList.sortBy(_._1).map { (no, seats) =>
@@ -204,7 +211,7 @@ class TournamentPlayService[T](
                           )
                       )
                     )
-                case _ => IO.pure(TournamentProgress())
+                case None => IO.pure(TournamentProgress())
             }
         }
 
@@ -260,9 +267,51 @@ class TournamentPlayService[T](
                 }
             }
             .flatMap {
-                case None                      => IO.pure(Settlement.Settled)
-                case Some((tournament, round)) => completeIfOver(gameId, tournament, round).as(Settlement.Settled)
+                case None => IO.pure(Settlement.Settled)
+                case Some((tournament, round)) =>
+                    moveLadder(gameId, tournament) *> completeIfOver(gameId, tournament, round).as(Settlement.Settled)
             }
+
+    /** A ladder's ranks, worked out again from every match it has finished: each the sum of its moves (see
+      * [[LadderRanks]]). Worked out whole rather than moved by the one match, so a match settled twice — or ranked
+      * again after it was cancelled — moves nobody twice. Nothing, for any other class.
+      */
+    private def moveLadder(gameId: GameId, tournamentId: TournamentId): IO[Unit] =
+        sessionPool.use { session =>
+            session.transaction.use { _ =>
+                val participants = new TournamentParticipantRepo(session)
+                requireTournament(session, gameId, tournamentId, forUpdate = false).flatMap { t =>
+                    IO.whenA(ladder(t)) {
+                        for {
+                            field <- participants.listForUpdate(gameId, tournamentId)
+                            rounds <- new FixtureRepo(session).listRounds(gameId, tournamentId)
+                            seats <- rounds
+                                .filter(_.started)
+                                .flatTraverse(r =>
+                                    new TournamentMatchRepo(session).seatsOfRound(gameId, tournamentId, r.round)
+                                )
+                            played = seats
+                                .filter(s => s.completed || s.cancelled)
+                                .groupBy(_.matchId)
+                                .values
+                                .toList
+                                .map(_.flatMap(s => s.occupant.map(_ -> s.rank)).toMap)
+                            ranks = LadderRanks.of(field.map(_.tournamentParticipantId), played)
+                            _ <- field
+                                .filter(p => !p.ladderRank.contains(ranks(p.tournamentParticipantId)))
+                                .traverse_(p =>
+                                    participants.setLadderRank(
+                                      gameId,
+                                      tournamentId,
+                                      p.tournamentParticipantId,
+                                      ranks(p.tournamentParticipantId)
+                                    )
+                                )
+                        } yield ()
+                    }
+                }
+            }
+        }
 
     /** A tournament's field has changed — somebody withdrew — so a running round may have nothing left to play. */
     def fieldChanged(gameId: GameId, tournamentId: TournamentId): IO[Unit] =
@@ -282,10 +331,8 @@ class TournamentPlayService[T](
                     val fixtures = new FixtureRepo(session)
                     for {
                         t <- requireTournament(session, gameId, tournamentId, forUpdate = false)
-                        settings <- IO.fromOption(t.elimination)(
-                          ValidationError("a ladder's rounds are not completed here")
-                        )
                         game <- requireGame(session, gameId)
+                        settings = settingsOf(t, game)
                         locked <- fixtures.readRoundForUpdate(gameId, tournamentId, round)
                         outcome <- locked match {
                             case Some(r) if r.started && !r.completed =>
@@ -530,6 +577,72 @@ class TournamentPlayService[T](
         } yield field.map(p => p.copy(seed = seeds(p.tournamentParticipantId)))
     }
 
+    private def ladder(t: Tournament): Boolean = t.tournamentClass == TournamentClass.Ladder
+
+    /** How many seats a ladder's match has: the game's required roles, and two at least. */
+    private def ladderSeats(game: Game): Int = math.max(2, game.roles.count(!_.optional))
+
+    /** The settings a round is played by: the tournament's, or for a ladder, which has none, pools of one match's seats
+      * played once each, ties left level.
+      */
+    private def settingsOf(t: Tournament, game: Game): EliminationSettings =
+        t.elimination.getOrElse(EliminationSettings(TournamentType.RoundRobin, ladderSeats(game)))
+
+    /** Writes a ladder's next round, paired from the ranks as they stand: one pool per match, rank by rank from the top
+      * (see [[LadderPairing]]), its slots filled at once. Whoever is left over at the bottom sits the round out, and so
+      * does everybody withdrawn. The round itself is started by [[startRound]], as any other is.
+      */
+    private def pairLadderRound(
+        session: Session[IO],
+        t: Tournament,
+        game: Game,
+        round: Int,
+        overrides: RoundOverrides
+    ): IO[Unit] = {
+        val fixtures = new FixtureRepo(session)
+        for {
+            _ <- IO.raiseWhen(overrides.poolSize.isDefined)(ValidationError("a ladder's pools are one match each"))
+            rounds <- fixtures.listRounds(t.gameId, t.tournamentId)
+            next = rounds.map(_.round).maxOption.getOrElse(0) + 1
+            _ <- IO.raiseWhen(round != next)(
+              if (round < next) ConflictError(s"round $round has already started")
+              else NotFoundError(s"the ladder's next round is $next")
+            )
+            field <- new TournamentParticipantRepo(session).listForUpdate(t.gameId, t.tournamentId)
+            playing = field.filterNot(_.withdrawn)
+            entries <- new EntryRepo(session).listForTournament(t.gameId, t.tournamentId)
+            rungs <- playing.traverse { p =>
+                entries
+                    .find(_.entryId == p.entryId)
+                    .traverse(TournamentService.ratingOf[T](session, t.gameId, _))
+                    .map(r => LadderPairing.Rung(p, p.ladderRank.getOrElse(0), r.getOrElse(EloRating.initial)))
+            }
+            matches = LadderPairing.matches(rungs, ladderSeats(game))
+            _ <- IO.raiseWhen(matches.isEmpty)(ValidationError("too few players are on the ladder for a match"))
+            _ <- fixtures.createRound(TournamentRound(t.gameId, t.tournamentId, round))
+            _ <- matches.zipWithIndex.traverse_ { (players, i) =>
+                for {
+                    pool <- fixtures.createFixture(Fixture(t.gameId, t.tournamentId, FixtureId(0), round, i + 1))
+                    _ <- players.sortBy(_.seed).traverse_ { p =>
+                        fixtures
+                            .createSlot(
+                              FixtureSlot(t.gameId, t.tournamentId, pool.fixtureId, SlotId(0), SlotSource.Seed(p.seed))
+                            )
+                            .flatMap(slot =>
+                                fixtures.fill(
+                                  t.gameId,
+                                  t.tournamentId,
+                                  pool.fixtureId,
+                                  slot.slotId,
+                                  p.tournamentParticipantId
+                                )
+                            )
+                    }
+                } yield ()
+            }
+        } yield ()
+    }
+
     /** A playoff's rounds after its first are pairs, single elimination with its own rotations. */
     private def pairs(settings: EliminationSettings, round: Int): Boolean =
         settings.tournamentType == TournamentType.Playoff && round > 1
@@ -544,12 +657,15 @@ class TournamentPlayService[T](
         for {
             _ <- participants.listForUpdate(t.gameId, t.tournamentId)
             // In place, two at a time where seeds swap: the unique constraint on a seed waits for the commit (V53).
+            // A ladder's seeds are only the order it was entered in; its ranks are what move.
             _ <- pools
+                .filterNot(_ => ladder(t))
                 .flatMap(p => Seeding.withinPool(p.standings).toList)
                 .traverse_((member, seed) => participants.setSeed(t.gameId, t.tournamentId, member, seed))
             _ <- new FixtureRepo(session).completeRound(t.gameId, t.tournamentId, round)
             rounds <- new FixtureRepo(session).listRounds(t.gameId, t.tournamentId)
-            _ <- IO.whenA(rounds.map(_.round).maxOption.contains(round))(finish(session, t, pools))
+            // A ladder's latest round is always its last so far, and it has no last.
+            _ <- IO.whenA(!ladder(t) && rounds.map(_.round).maxOption.contains(round))(finish(session, t, pools))
         } yield ()
     }
 
@@ -636,8 +752,8 @@ class TournamentPlayService[T](
             case None =>
                 for {
                     t <- requireTournament(session, gameId, tournamentId, forUpdate = false)
-                    settings <- IO.fromOption(t.elimination)(ValidationError("not an elimination tournament"))
                     game <- requireGame(session, gameId)
+                    settings = settingsOf(t, game)
                     fixture <- new FixtureRepo(session)
                         .listFixtures(gameId, tournamentId)
                         .map(_.find(_.fixtureId == fixtureId))

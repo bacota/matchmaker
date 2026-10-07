@@ -533,6 +533,9 @@ class MatchService(
     /** The owner of a tournament correcting the ranks of one of its matches that has been cancelled (D12), until its
       * round is over: the round's standings and seeds are worked out from them then. A match that has not been
       * cancelled cannot be ranked by hand, and a challenge's match never can.
+      *
+      * Its end is said again after the commit, so that what follows from the ranks — a ladder's moves — follows now
+      * rather than at the next match's end.
       */
     def setRanks(gameId: GameId, matchId: MatchId, ranks: Map[ParticipantId, Int], callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
@@ -564,7 +567,7 @@ class MatchService(
                     _ <- writeRanks(session, gameId, matchId, ranks)
                 } yield ()
             }
-        }
+        } *> endings.ended(gameId, matchId)
 
     /* Ranks for every seat of the match, each at least 1, ties allowed; written as manual results. */
     private def writeRanks(

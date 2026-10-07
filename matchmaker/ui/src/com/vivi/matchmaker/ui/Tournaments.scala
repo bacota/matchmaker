@@ -67,6 +67,9 @@ object Tournaments {
         val key = s"new-tournament-${game.gameId.value}"
         val name = Var("")
         val kind = Var[TournamentType](TournamentType.SingleElim)
+        // A ladder is a class of its own rather than a kind of elimination, but it is offered as one more kind.
+        val ladder = Var(false)
+        val ladderCode = "Ladder"
         val poolSize = Var(math.max(2, game.roles.count(!_.optional)).toString)
         val advance = Var("1")
         val roundHours = Var("48")
@@ -95,68 +98,79 @@ object Tournaments {
             "Single elimination: pools play off, and the best of each go through to the next round until one pool " +
                 "is left for the final, with a consolation pool beside it. Round robin: everybody plays everybody once. " +
                 "Playoff: pools of three or more each play round robin, then the best of them, seeded again by how " +
-                "they did, play off in pairs."
+                "they did, play off in pairs. Ladder: everybody starts at rank 0 and plays somebody near their rank " +
+                "each round, going up one for a win and down one for a loss; players may join at any time, and it " +
+                "never ends."
           )(
             field(
               "Kind",
               select(
-                value <-- kind.signal.map(_.code),
+                value <-- kind.signal.combineWith(ladder.signal).map((k, l) => if (l) ladderCode else k.code),
                 onChange.mapToValue --> { code =>
-                    val chosen = TournamentType.fromCode(code)
-                    // A playoff's pools hold more than two.
-                    if (chosen == TournamentType.Playoff && number(poolSize.now()).forall(_ < 3)) poolSize.set("4")
-                    kind.set(chosen)
+                    ladder.set(code == ladderCode)
+                    if (code != ladderCode) {
+                        val chosen = TournamentType.fromCode(code)
+                        // A playoff's pools hold more than two.
+                        if (chosen == TournamentType.Playoff && number(poolSize.now()).forall(_ < 3)) poolSize.set("4")
+                        kind.set(chosen)
+                    }
                 },
                 option(value := TournamentType.SingleElim.code, TournamentType.SingleElim.label),
                 option(value := TournamentType.RoundRobin.code, TournamentType.RoundRobin.label),
-                option(value := TournamentType.Playoff.code, TournamentType.Playoff.label)
+                option(value := TournamentType.Playoff.code, TournamentType.Playoff.label),
+                option(value := ladderCode, TournamentClass.Ladder.label)
               )
             )
           ),
-          child.maybe <-- kind.signal.map(k =>
-              Option.when(k == TournamentType.SingleElim || k == TournamentType.Playoff)(
-                div(
-                  tipField(
-                    s"$key-pool-tip",
-                    "Players per pool",
-                    "How many players each pool holds. Usually as many as one match has seats; a larger pool plays " +
-                        "everyone in it against everyone else."
-                  )(
-                    input(
-                      tpe := "number",
-                      minAttr := (if (k == TournamentType.Playoff) "3" else "2"),
-                      controlled(value <-- poolSize.signal, onInput.mapToValue --> poolSize)
-                    )
-                  ),
-                  tipField(
-                    s"$key-advance-tip",
-                    "Going through from each pool",
-                    "How many of each pool's best go on to the next round, at least. More go through when the next " +
-                        "round's pools would otherwise be short."
-                  )(
-                    input(
-                      tpe := "number",
-                      minAttr := "1",
-                      controlled(value <-- advance.signal, onInput.mapToValue --> advance)
-                    )
-                  ),
-                  Option.when(k == TournamentType.Playoff)(
-                    tipField(
-                      s"$key-elimination-rotations-tip",
-                      "Rotations in the pairs",
-                      "Rotations for the rounds of pairs after the pools: 0, and roles go by seed; more, and both " +
-                          "players play every role that many times."
-                    )(
-                      input(
-                        tpe := "number",
-                        minAttr := "0",
-                        controlled(value <-- eliminationRotations.signal, onInput.mapToValue --> eliminationRotations)
+          child.maybe <-- kind.signal
+              .combineWith(ladder.signal)
+              .map((k, l) =>
+                  Option.when(!l && (k == TournamentType.SingleElim || k == TournamentType.Playoff))(
+                    div(
+                      tipField(
+                        s"$key-pool-tip",
+                        "Players per pool",
+                        "How many players each pool holds. Usually as many as one match has seats; a larger pool plays " +
+                            "everyone in it against everyone else."
+                      )(
+                        input(
+                          tpe := "number",
+                          minAttr := (if (k == TournamentType.Playoff) "3" else "2"),
+                          controlled(value <-- poolSize.signal, onInput.mapToValue --> poolSize)
+                        )
+                      ),
+                      tipField(
+                        s"$key-advance-tip",
+                        "Going through from each pool",
+                        "How many of each pool's best go on to the next round, at least. More go through when the next " +
+                            "round's pools would otherwise be short."
+                      )(
+                        input(
+                          tpe := "number",
+                          minAttr := "1",
+                          controlled(value <-- advance.signal, onInput.mapToValue --> advance)
+                        )
+                      ),
+                      Option.when(k == TournamentType.Playoff)(
+                        tipField(
+                          s"$key-elimination-rotations-tip",
+                          "Rotations in the pairs",
+                          "Rotations for the rounds of pairs after the pools: 0, and roles go by seed; more, and both " +
+                              "players play every role that many times."
+                        )(
+                          input(
+                            tpe := "number",
+                            minAttr := "0",
+                            controlled(
+                              value <-- eliminationRotations.signal,
+                              onInput.mapToValue --> eliminationRotations
+                            )
+                          )
+                        )
                       )
                     )
                   )
-                )
-              )
-          ),
+              ),
           tipField(
             s"$key-round-tip",
             "Round length in hours",
@@ -168,20 +182,24 @@ object Tournaments {
               controlled(value <-- roundHours.signal, onInput.mapToValue --> roundHours)
             )
           ),
-          withTip(
-            s"$key-tiebreaker-tip",
-            "Tiebreaker",
-            "How players level on points in a pool are separated. Score adds up each match's score difference; " +
-                "Rematch has them play once more, with no tie allowed."
-          )(
-            field(
-              "Tiebreaker",
-              select(
-                value <-- tiebreaker.signal.map(_.code),
-                onChange.mapToValue --> (code => tiebreaker.set(Tiebreaker.fromCode(code))),
-                Tiebreaker.values.toSeq.map(t => option(value := t.code, t.label))
+          child.maybe <-- ladder.signal.map(l =>
+              Option.when(!l)(
+                withTip(
+                  s"$key-tiebreaker-tip",
+                  "Tiebreaker",
+                  "How players level on points in a pool are separated. Score adds up each match's score difference; " +
+                      "Rematch has them play once more, with no tie allowed."
+                )(
+                  field(
+                    "Tiebreaker",
+                    select(
+                      value <-- tiebreaker.signal.map(_.code),
+                      onChange.mapToValue --> (code => tiebreaker.set(Tiebreaker.fromCode(code))),
+                      Tiebreaker.values.toSeq.map(t => option(value := t.code, t.label))
+                    )
+                  )
+                )
               )
-            )
           ),
           tipField(
             s"$key-rotations-tip",
@@ -236,12 +254,12 @@ object Tournaments {
                 val draft = Tournament(
                   gameId = game.gameId,
                   tournamentId = TournamentId.unassigned,
-                  tournamentClass = TournamentClass.Elimination,
+                  tournamentClass = if (ladder.now()) TournamentClass.Ladder else TournamentClass.Elimination,
                   name = name.now().trim,
                   owner = player.playerId,
                   invitational = invitational.now(),
                   roundDuration = Duration.ofHours(hours.toLong),
-                  elimination = Some(
+                  elimination = Option.unless(ladder.now())(
                     EliminationSettings(
                       kind.now(),
                       number(poolSize.now()).getOrElse(2),
@@ -348,7 +366,9 @@ object Tournaments {
                 d.rounds.find(!_.completed) match {
                     case Some(r) if r.started => s"Round ${r.round} is under way."
                     case Some(r)              => s"Round ${r.round} is waiting to be started."
-                    case None                 => "Every round is over."
+                    case None if isLadder(d.tournament) =>
+                        s"Round ${nextLadderRound(d)} is waiting to be started."
+                    case None => "Every round is over."
                 }
         p(cls := "detail", text)
     }
@@ -365,19 +385,30 @@ object Tournaments {
           else
               ol(
                 cls := "rows",
-                d.entrants.map { e =>
-                    val seat = e.participant
-                    li(
-                      cls := "row",
-                      span(
-                        cls := "title",
-                        e.character.map(c => s"${c.name} (${e.player.nickname})").getOrElse(e.player.nickname)
-                      ),
-                      seat.map(p => span(cls := "detail", s" seed ${p.seed}")).getOrElse(emptyNode),
-                      seat.flatMap(_.finalRank).map(r => span(cls := "detail", s", finished $r")).getOrElse(emptyNode),
-                      if (seat.exists(_.withdrawn)) span(cls := "detail", ", withdrawn") else emptyNode
-                    )
-                }
+                // A ladder's entrants stand in rank order, highest first; anybody else's in the order they come.
+                (if (isLadder(t)) d.entrants.sortBy(e => e.participant.flatMap(_.ladderRank).map(-_)) else d.entrants)
+                    .map { e =>
+                        val seat = e.participant
+                        li(
+                          cls := "row",
+                          span(
+                            cls := "title",
+                            e.character.map(c => s"${c.name} (${e.player.nickname})").getOrElse(e.player.nickname)
+                          ),
+                          seat
+                              .map(p =>
+                                  span(
+                                    cls := "detail",
+                                    p.ladderRank.filter(_ => isLadder(t)).fold(s" seed ${p.seed}")(r => s" rank $r")
+                                  )
+                              )
+                              .getOrElse(emptyNode),
+                          seat.flatMap(_.finalRank)
+                              .map(r => span(cls := "detail", s", finished $r"))
+                              .getOrElse(emptyNode),
+                          if (seat.exists(_.withdrawn)) span(cls := "detail", ", withdrawn") else emptyNode
+                        )
+                    }
               ),
           player.fold(emptyNode)(p => entryControls(d, p, mine))
         )
@@ -388,14 +419,27 @@ object Tournaments {
         mine match {
             case Some(e) if !e.participant.exists(_.withdrawn) && !t.ended =>
                 busyButton("Withdraw", classes = Some("link")) { busy =>
-                    if (dom.window.confirm("Withdraw from the tournament? You cannot rejoin it."))
+                    val warning =
+                        if (isLadder(t)) "Leave the ladder? You may rejoin it later, at the rank you leave with."
+                        else "Withdraw from the tournament? You cannot rejoin it."
+                    if (dom.window.confirm(warning))
                         Store.run(ApiClient.withdrawFromTournament(t.gameId, t.tournamentId, e.entryId), busy) { _ =>
                             said.set("You have withdrawn.")
                             reload(d)
                         }
                     else busy.set(false)
                 }
-            case None if !t.started =>
+            case Some(e) if e.participant.exists(_.withdrawn) && isLadder(t) && !t.ended =>
+                busyButton("Rejoin the ladder") { busy =>
+                    Store.run(
+                      ApiClient.enterTournament(t.gameId, t.tournamentId, e.character.map(_.characterId)),
+                      busy
+                    ) { _ =>
+                        said.set("You are back on the ladder.")
+                        reload(d)
+                    }
+                }
+            case None if !t.started || (isLadder(t) && !t.ended) =>
                 val characters = Store.charactersByGame.signal.map(_.getOrElse(t.gameId, Seq.empty))
                 val chosen = Var(Option.empty[CharacterId])
                 div(
@@ -441,8 +485,12 @@ object Tournaments {
               withTip(
                 s"start-tip-${t.tournamentId.value}",
                 "Start the tournament",
-                "Seeds the entrants by rating and lays out every round. Nobody can enter after this; the first round " +
-                    "waits for you to start it."
+                if (isLadder(t))
+                    "Puts everybody who has entered on the ladder at rank 0. Players may still join afterwards; each " +
+                        "round waits for you to start it."
+                else
+                    "Seeds the entrants by rating and lays out every round. Nobody can enter after this; the first " +
+                        "round waits for you to start it."
               )(
                 busyButton("Start the tournament") { busy =>
                     Store.run(ApiClient.startTournament(t.gameId, t.tournamentId), busy) { detail =>
@@ -452,10 +500,18 @@ object Tournaments {
                 }
               )
           else emptyNode,
-          current.filter(_ => t.started && !t.ended).fold(emptyNode)(r => roundControls(d, r)),
+          // A ladder's next round is not there until it is started, so it is offered by number.
+          current
+              .orElse(Option.when(isLadder(t))(TournamentRound(t.gameId, t.tournamentId, nextLadderRound(d))))
+              .filter(_ => t.started && !t.ended)
+              .fold(emptyNode)(r => roundControls(d, r)),
           if (!t.ended) inviteControl(d) else emptyNode
         )
     }
+
+    private def isLadder(t: Tournament): Boolean = t.tournamentClass == TournamentClass.Ladder
+
+    private def nextLadderRound(d: TournamentDetail): Int = d.rounds.map(_.round).maxOption.getOrElse(0) + 1
 
     private def roundControls(d: TournamentDetail, r: TournamentRound): HtmlElement = {
         val t = d.tournament
