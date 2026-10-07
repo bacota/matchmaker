@@ -34,15 +34,33 @@ class ParticipantRepo(session: Session[IO]) {
      * The player and the game are each named twice -- once as the seat's own column, once to resolve
      * the chain -- so each value is bound twice. */
     private val insertParticipant: Query[
-      (GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], Option[GameRoleId], Int, Option[Int]),
+      (
+          GameId,
+          MatchId,
+          GameType,
+          PlayerId,
+          Boolean,
+          Boolean,
+          Option[Instant],
+          Option[GameRoleId],
+          Int,
+          Option[Int],
+          Option[TournamentId],
+          Option[FixtureId],
+          Option[SlotId],
+          Option[Int]
+      ),
       ParticipantId
     ] =
         // `completed_at` (V41) is the database's now() for a seat created already finished, as
         // `updateParticipant` stamps one below; Scala says only whether it is.
         sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed_at, due, game_role_id,
-              elo_start, elo_role_start, notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended)
+              elo_start, elo_role_start, tournament_id, fixture_id, slot_id, seed,
+              notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended)
           SELECT $gameId, $matchId, $gameType, $playerId, $bool, CASE WHEN $bool THEN now() END, ${instant.opt},
                  ${gameRoleId.opt}, $int4, ${int4.opt},
+                 ${SkunkIdCodecs.tournamentId.opt}, ${SkunkIdCodecs.fixtureId.opt}, ${SkunkIdCodecs.slotId.opt},
+                 ${int4.opt},
                  COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
                  COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
                  COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
@@ -52,7 +70,7 @@ class ParticipantRepo(session: Session[IO]) {
           WHERE pl.player_id = $playerId
           RETURNING participant_id"""
             .query(participantId)
-            .contramap { case t @ (game, _, _, player, _, _, _, _, _, _) => t ++ (game, player) }
+            .contramap { case t @ (game, _, _, player, _, _, _, _, _, _, _, _, _, _) => t ++ (game, player) }
 
     private val insertCharacterParticipant: Command[(GameId, ParticipantId, CharacterId)] =
         sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id)
@@ -171,16 +189,37 @@ class ParticipantRepo(session: Session[IO]) {
     }
 
     /** Seats `p`, whose player was rated `eloStart` in the game as the match began (V43), and `eloRoleStart` in the
-      * seat's role (V49) — none for a game whose roles are unimportant.
+      * seat's role (V49) — none for a game whose roles are unimportant, or a seat with no role yet. `seat` is the
+      * tournament slot it is filled from, for a tournament match's seat (V53).
       */
-    def create(p: Participant, eloStart: Int, eloRoleStart: Option[Int] = None): IO[Participant] = {
+    def create(
+        p: Participant,
+        eloStart: Int,
+        eloRoleStart: Option[Int] = None,
+        seat: Option[TournamentSeat] = None
+    ): IO[Participant] = {
         val gt = p match {
             case _: CharacterParticipant => GameType.Character
             case _: PlainParticipant     => GameType.Plain
         }
         for {
             id <- session.unique(insertParticipant)(
-              (p.gameId, p.matchId, gt, p.playerId, p.pending, p.completed, p.due, p.gameRoleId, eloStart, eloRoleStart)
+              (
+                p.gameId,
+                p.matchId,
+                gt,
+                p.playerId,
+                p.pending,
+                p.completed,
+                p.due,
+                p.gameRoleId,
+                eloStart,
+                eloRoleStart,
+                seat.map(_.tournamentId),
+                seat.map(_.fixtureId),
+                seat.map(_.slotId),
+                seat.map(_.seed)
+              )
             )
             _ <- p match {
                 case cp: CharacterParticipant =>

@@ -57,6 +57,10 @@ class WireFormatSpec extends FunSuite {
         assert(json.obj.get("challengeId").forall(_.isNull), json)
         assertEquals(json("creator").num.toLong, 4L)
         assertEquals(read[Match](write(created)), created)
+        // And a tournament's, with the pool it was made for (V53).
+        val pooled = created.copy(fixture = Some(MatchFixture(TournamentId(9), FixtureId(10), 2)))
+        assertEquals(read[Match](write(pooled)), pooled)
+        assertEquals(ujson.read(write(pooled))("fixture")("matchNo").num.toInt, 2)
     }
 
     test("a game round-trips, including the existential parameters field") {
