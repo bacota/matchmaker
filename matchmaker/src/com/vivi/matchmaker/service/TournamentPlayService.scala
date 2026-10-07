@@ -403,8 +403,19 @@ class TournamentPlayService[T](
                     )
             }
 
-        def standings: List[Standing[TournamentParticipantId]] =
-            Standings.of(seeds, played(regular), byScore, played(rematches))
+        /** The pool's finishing order. A member who withdrew with a match of the pool left unmade forfeits it, and
+          * finishes behind everybody who did not: otherwise their seed could still put them ahead of the opponent they
+          * never played, who would then be the one taken for second place — sent to a losers' bracket rather than on.
+          */
+        def standings: List[Standing[TournamentParticipantId]] = {
+            val forfeited =
+                members.filter(m => withdrawn(m) && all.exists(x => skipped(x) && x.seats.exists(_.member == m)))
+            val (behind, ahead) =
+                Standings
+                    .of(seeds, played(regular), byScore, played(rematches))
+                    .partition(s => forfeited.contains(s.member))
+            ahead ++ behind
+        }
 
         def regularPlayed: List[PlayedMatch[TournamentParticipantId]] = played(regular)
     }

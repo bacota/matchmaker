@@ -245,6 +245,31 @@ class TournamentEndToEndSpec extends FunSuite with QuietTests {
         assertEquals(f.bySeed.map(p => finalRanks(d)(p.playerId)), List(1, 2, 3, 4, 5, 5, 7, 7).map(Some(_)))
     }
 
+    test("a double elimination's player whose opponent withdrew unplayed goes on, not to the losers' bracket") {
+        val w = world()
+        val (f, d) = run(for {
+            g <- game()
+            f <- started(w, g, 4, TournamentType.DoubleElim)
+            _ <- w.services.tournamentPlay
+                .startRound(g.gameId, f.t.tournamentId, 1, RoundOverrides(), f.owner.externalId)
+            // Seed 1 is drawn against seed 4, and withdraws before their match is made: its seed must not carry it
+            // past the opponent it never played.
+            entry <- w.services.tournaments
+                .detail(g.gameId, f.t.tournamentId, f.owner.externalId)
+                .map(_.entrants.find(_.player.playerId == f.bySeed(0).playerId).get.entryId)
+            _ <- w.services.tournaments.withdraw(g.gameId, f.t.tournamentId, entry, f.bySeed(0).externalId)
+            d <- playOut(w, g, f)(bySeed(f))
+        } yield (f, d))
+        assert(d.tournament.ended)
+        val idOf = d.entrants.flatMap(e => e.participant.map(p => e.player.playerId -> p.tournamentParticipantId)).toMap
+        // Round 2's first pool is the winners' final: seed 4 is in it, against seed 2.
+        assertEquals(
+          d.pools.find(p => p.fixture.round == 2 && p.fixture.position == 1).map(_.slots.flatMap(_.occupant).toSet),
+          Some(Set(idOf(f.bySeed(3).playerId), idOf(f.bySeed(1).playerId)))
+        )
+        assertEquals(finalRanks(d)(f.bySeed(1).playerId), Some(1))
+    }
+
     test("five players: three byes in the first round, and everybody still finishes ranked") {
         val w = world()
         val d = run(for {
