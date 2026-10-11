@@ -55,7 +55,7 @@ object SkunkCodecs {
       */
     val notificationPreferences: Codec[NotificationPreferences] =
         (bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *:
-            bool.opt *: bool.opt).to[NotificationPreferences]
+            bool.opt *: bool.opt *: bool.opt).to[NotificationPreferences]
 
     /** The four `notify_*` columns of `participant` (V24), as one value.
       *

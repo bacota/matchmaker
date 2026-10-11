@@ -7,6 +7,7 @@ import java.util.UUID
 import skunk.Session
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.notify.Notifications
 import com.vivi.matchmaker.model.tournament.{
     Clock,
     Env,
@@ -30,7 +31,8 @@ import com.vivi.matchmaker.persistence._
   *     (`MatchEndings.tournamentMatchDue`), its engine's game made by [[GameEngineService.launchTournamentMatch]] with
   *     no transaction open across the call.
   *   - A match's end reaches the tournament through `EndingService.settle`, which every ending passes through, and is
-  *     recorded in the state. The last match of a round completes it, and the tournament advances.
+  *     recorded in the state. The last match of a round completes it, and the tournament advances: to the next round at
+  *     once with automatic rounds, and otherwise to waiting on its owner, who is mailed to say so.
   *
   * Every change is one transaction that locks the tournament first and then whichever of its matches it touches, in
   * that order, so that two of them cannot deadlock. The game is read plainly, as a reference table.
@@ -39,6 +41,7 @@ class TournamentRounds[T](
     sessionPool: SessionPool,
     engine: GameEngineService[T],
     endings: MatchEndings,
+    notifications: Notifications = Notifications.disabled,
     now: () => Instant = () => Instant.now()
 )(using codec: TextCodec[T]) {
 
@@ -299,7 +302,7 @@ class TournamentRounds[T](
 
     private enum Prepared {
         case Nothing
-        case Decided(t: Tournament, roundDone: Option[Boolean])
+        case Decided(t: Tournament, roundDone: Option[Int])
         case Launch(
             saved: Match,
             game: Game,
@@ -510,15 +513,15 @@ class TournamentRounds[T](
                             } yield done
                         }
                         .flatMap {
-                            case Some((t, roundDone)) => afterRecording(t, Some(roundDone))
-                            case None                 => IO.unit
+                            case Some((t, round)) => afterRecording(t, Some(round))
+                            case None             => IO.unit
                         }
             }
         }
 
     /** Records a match's placings in the state and marks it done, under the tournament's lock. Completes the round if
-      * it was the last, advancing the tournament, and finishes the tournament if that ends it. Whether the round is
-      * done.
+      * it was the last, advancing the tournament, and finishes the tournament if that ends it. The round's number, if
+      * this completed it and the tournament goes on.
       */
     private def record(
         session: Session[IO],
@@ -527,7 +530,7 @@ class TournamentRounds[T](
         poolId: Int,
         matchNo: Int,
         placings: List[Placing]
-    ): IO[Option[Boolean]] =
+    ): IO[Option[Int]] =
         for {
             state <- requireState(session, t)
             recorded = Progress.record(state, poolId, matchNo, placings)
@@ -541,15 +544,16 @@ class TournamentRounds[T](
                         if (advanced.finished) finish(session, t, advanced).as(true)
                         else new TournamentRepo(session).writeState(t.gameId, t.tournamentId, advanced).as(false)
                     }
-        } yield Some(roundDone && !finished)
+        } yield Option.when(roundDone && !finished)(recorded.round)
 
-    /** After a match is recorded and committed: a round it completed in a tournament with automatic rounds begins the
-      * next.
+    /** After a match is recorded and committed, a round it completed: in a tournament with automatic rounds the next
+      * begins, and in one whose owner starts them the owner is told it is waiting on them.
       */
-    private def afterRecording(t: Tournament, roundDone: Option[Boolean]): IO[Unit] =
-        IO.whenA(roundDone.contains(true) && t.settings.autoRounds)(
-          endings.tournamentRoundDue(t.gameId, t.tournamentId)
-        )
+    private def afterRecording(t: Tournament, roundDone: Option[Int]): IO[Unit] =
+        roundDone.traverse_ { round =>
+            if (t.settings.autoRounds) endings.tournamentRoundDue(t.gameId, t.tournamentId)
+            else sessionPool.use(notifications.tournamentRoundDone(_, t, round))
+        }
 
     private def finish(session: Session[IO], t: Tournament, state: TournamentState): IO[Unit] =
         new TournamentRepo(session).writeState(t.gameId, t.tournamentId, state) *>

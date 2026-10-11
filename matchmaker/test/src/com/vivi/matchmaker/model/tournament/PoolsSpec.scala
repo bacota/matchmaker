@@ -56,13 +56,14 @@ class PoolsSpec extends ScalaCheckSuite {
         assert(!pools.exists(_.stratum == -2))
     }
 
-    test("without strict strata, a short stratum's pool is filled from below, strongest seed first") {
-        val ps = seeded(1, 0) ++ seeded(3, -1, from = 2)
+    test("without strict strata, a short stratum's pool is filled from the nearest stratum below, weakest seed first") {
+        val ps = seeded(1, 0) ++ seeded(3, -1, from = 2) ++ seeded(2, -2, from = 5)
         val pools = Pools.form(ps, 2, 2, Some(1), brackets = true, strict = false)
         val top = pools.find(_.stratum == 0).get
-        assertEquals(top.members.map(_.entrant), List(1L, 2L))
-        // What is left of stratum -1 forms its own pool.
-        assertEquals(pools.filter(_.stratum == -1).flatMap(_.members.map(_.entrant)).toSet, Set(3L, 4L))
+        assertEquals(top.members.map(_.entrant), List(1L, 4L))
+        // What is left of stratum -1 forms its own pool, and -2 its own.
+        assertEquals(pools.filter(_.stratum == -1).flatMap(_.members.map(_.entrant)).toSet, Set(2L, 3L))
+        assertEquals(pools.filter(_.stratum == -2).flatMap(_.members.map(_.entrant)).toSet, Set(5L, 6L))
     }
 
     property("every participant of a stratum that can fill a match is in exactly one pool, and no pool is over size") {

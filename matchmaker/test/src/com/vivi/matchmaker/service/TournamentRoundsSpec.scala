@@ -14,6 +14,7 @@ import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.notify.RecordingNotifier
 import com.vivi.matchmaker.persistence.{GameRepo, Generators, MatchRepo, TestSession, TournamentMatchRepo}
 
 /** Tournaments played through their rounds, against the local database and a stub engine: rounds begun, roles chosen,
@@ -52,14 +53,20 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         override def tournamentRoundDue(g: GameId, t: TournamentId): IO[Unit] = services.rounds.autoStart(g, t).void
     }
 
-    private case class World(services: Services[String], engine: StubEngine)
+    private case class World(services: Services[String], engine: StubEngine, mail: RecordingNotifier)
 
     private def world(): World = {
         val engine = StubEngine()
         val endings = SyncEndings()
-        val services = TestServices.servicesWith(engine, matchEndings = Some(endings))
+        val mail = RecordingNotifier()
+        val services = TestServices.servicesWith(
+          engine,
+          notifier = mail,
+          mail = TestServices.mailSettings,
+          matchEndings = Some(endings)
+        )
         endings.services = services
-        World(services, engine)
+        World(services, engine, mail)
     }
 
     private def unique(prefix: String) = s"$prefix-${java.util.UUID.randomUUID()}"
@@ -81,7 +88,8 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
               new GameRepo[String](_)
                   .create(Generators.genGame(GameType.Plain).sample.get.copy(unimportantRoles = !roles))
             )
-            owner <- s.registration.register(unique("owner"), unique("sub"))
+            // Only the owner has an address, so the only mail sent is to them.
+            owner <- s.registration.register(unique("owner"), unique("sub"), Some(s"${unique("owner")}@example.com"))
             players <- (1 to n).toList.traverse(_ => s.registration.register(unique("p"), unique("sub")))
             t <- s.tournaments.create(
               game.gameId,
@@ -180,6 +188,39 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(request.flatMap(_.timeLimitSeconds), Some(Duration.ofDays(1).getSeconds))
     }
 
+    test("the owner is mailed when every match of a round is over, and its summary says the round waits on them") {
+        val (afterFirst, summaryAfterFirst, afterLast, ownerAddress) = run(for {
+            f <- started(4)
+            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            _ <- chooseAll(f)
+            _ <- reportAll(f)
+            afterFirst = f.w.mail.messages
+            d <- detail(f)
+            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            _ <- chooseAll(f)
+            _ <- reportAll(f)
+        } yield (afterFirst, d.summary, f.w.mail.messages, f.owner.email))
+        assertEquals(afterFirst.map(_.recipient), ownerAddress.toList)
+        assertEquals(afterFirst.map(_.subject), List("Round 1 of Cup is over"))
+        assert(summaryAfterFirst.roundOver)
+        // The last round finished the tournament, which waits on nobody.
+        assertEquals(afterLast, afterFirst)
+    }
+
+    test("an owner who has turned the round mail off is not sent it") {
+        val sent = run(for {
+            f <- started(4, roles = false)
+            _ <- f.w.services.notifications.updateMine(
+              f.owner.externalId,
+              NotificationPreferences(tournamentRoundDone = Some(false))
+            )
+            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            _ <- reportAll(f)
+            d <- detail(f)
+        } yield (f.w.mail.messages, d.summary.tournament.status))
+        assertEquals(sent, (Nil, TournamentStatus.Running))
+    }
+
     test("a round cannot begin before the last is finished, and only its owner may begin one") {
         val (stranger, early) = run(for {
             f <- started(4, roles = false)
@@ -194,7 +235,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
     }
 
     test("where roles do not matter nobody chooses, and with automatic rounds the next begins as the last ends") {
-        val (statuses, d) = run(for {
+        val (statuses, finalState) = run(for {
             f <- started(
               4,
               roles = false,
@@ -207,9 +248,12 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             // The second round began as the first's last match ended.
             _ <- reportAll(f)
             d <- detail(f)
-        } yield (first.map(_.status), d))
+        } yield (first.map(_.status), (d, f.w.mail.messages)))
+        val (d, sent) = finalState
         assert(statuses.nonEmpty && statuses.forall(_ == TournamentMatchStatus.Started), statuses.toString)
         assertEquals(d.summary.tournament.status, TournamentStatus.Finished)
+        // Its rounds start themselves, so its owner is waited on for nothing.
+        assertEquals(sent, Nil)
     }
 
     test("only the seat whose turn it is may choose, and only a role still free") {

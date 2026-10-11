@@ -109,7 +109,7 @@ object Services {
          * `ChallengeService.autoStart`. */
         lazy val engine: GameEngineService[T] =
             new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications, Some(archives), endings)
-        lazy val rounds: TournamentRounds[T] = new TournamentRounds[T](pool, engine, endings)
+        lazy val rounds: TournamentRounds[T] = new TournamentRounds[T](pool, engine, endings, notifications)
 
         Services(
           registration = new RegistrationService(pool),

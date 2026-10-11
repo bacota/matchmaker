@@ -187,15 +187,13 @@ CREATE TRIGGER trg_tournament_seat_update_date
 
 -- A match comes from a challenge or from a tournament, never both and never neither.
 --
--- NOT VALID: binding on every row written from now on, but not checked against those already
--- there. Between V50 making challenge_id optional and this, the only matches written without a
--- challenge were tests' -- nothing deployed creates one -- and a migration has no business
--- refusing to run over a developer's test data, nor deleting it.
+-- Checked against every existing row. Nothing deployed creates a match without a challenge; a
+-- database where tests wrote such matches between V50 and this has to be rid of them first.
 ALTER TABLE match ADD COLUMN tournament_id BIGINT;
 ALTER TABLE match ADD CONSTRAINT match_tournament_fk
     FOREIGN KEY (game_id, tournament_id) REFERENCES tournament (game_id, tournament_id);
 ALTER TABLE match ADD CONSTRAINT match_one_origin
-    CHECK ((challenge_id IS NULL) <> (tournament_id IS NULL)) NOT VALID;
+    CHECK ((challenge_id IS NULL) <> (tournament_id IS NULL));
 CREATE INDEX match_tournament ON match (game_id, tournament_id) WHERE tournament_id IS NOT NULL;
 
 -- Ranks the tournament's owner gave a cancelled tournament match by hand (new-design.md, D12).

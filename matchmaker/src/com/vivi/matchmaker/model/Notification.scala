@@ -96,6 +96,18 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
     case MatchEnded
         extends NotificationType("MATCH_ENDED", "A match I am in ends", "However it ends, including cancellation.")
 
+    /** (10) Every match of a round of a tournament you own is over, and the next waits on you to start it (V53).
+      *
+      * Not about a match, so a seat holds no answer for it; and sent only for a tournament whose rounds its owner
+      * starts, since one that starts its own rounds waits on nobody.
+      */
+    case TournamentRoundDone
+        extends NotificationType(
+          "TOURNAMENT_ROUND_DONE",
+          "A round of my tournament ends",
+          "When you start each round yourself."
+        )
+
     /** The column this kind is stored in, on `player` and `player_game` alike — and on `participant` for the [[onSeat]]
       * kinds, which are the only ones it has a column for. Derived from the code rather than stated twice, so the two
       * cannot drift.
@@ -160,7 +172,8 @@ case class NotificationPreferences(
     matchStarted: Option[Boolean] = None,
     turnTaken: Option[Boolean] = None,
     yourTurn: Option[Boolean] = None,
-    matchEnded: Option[Boolean] = None
+    matchEnded: Option[Boolean] = None,
+    tournamentRoundDone: Option[Boolean] = None
 ) {
 
     def apply(kind: NotificationType): Option[Boolean] = kind match {
@@ -175,6 +188,7 @@ case class NotificationPreferences(
         case NotificationType.TurnTaken              => turnTaken
         case NotificationType.YourTurn               => yourTurn
         case NotificationType.MatchEnded             => matchEnded
+        case NotificationType.TournamentRoundDone    => tournamentRoundDone
     }
 
     /** This, with one kind answered differently. `None` for `choice` is the "Use Default" the forms offer. */
@@ -190,6 +204,7 @@ case class NotificationPreferences(
         case NotificationType.TurnTaken              => copy(turnTaken = choice)
         case NotificationType.YourTurn               => copy(yourTurn = choice)
         case NotificationType.MatchEnded             => copy(matchEnded = choice)
+        case NotificationType.TournamentRoundDone    => copy(tournamentRoundDone = choice)
     }
 
     /** The kinds this and `other` answer differently: what a save actually changed.

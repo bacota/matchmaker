@@ -46,7 +46,8 @@ object Pools {
       * `n` is the pool size and `required` how many a match needs. A stratum smaller than a pool is one pool if it can
       * fill a match and none if it cannot (`tournament-design.md`; its members sit the stage out, neither promoted nor
       * demoted). With strict strata no pool mixes strata. Without, strata are taken from the highest down, and the
-      * places a stratum's pools leave empty are filled from the strata below it, strongest seed first.
+      * places a stratum's pools leave empty are filled from the strata below it, the nearest stratum first and the
+      * weakest seed (the largest seed number) of it first.
       */
     def form(
         participants: List[Seeded],
@@ -67,16 +68,17 @@ object Pools {
             }
         else {
             // Strata from the highest down. Each takes what is left of its own stratum, then fills the
-            // places its pools leave empty from the strata below, highest stratum and strongest seed first.
+            // places its pools leave empty from the strata below, nearest stratum and weakest seed first.
             val (pools, _) = strata.foldLeft((List.empty[FormedPool], Set.empty[Long])) { case ((made, used), s) =>
                 val own = bySeed(participants.filter(p => p.stratum == s && !used(p.entrant)))
                 if (own.isEmpty) (made, used)
                 else {
                     val below = participants
                         .filter(p => p.stratum < s && !used(p.entrant))
-                        .sortBy(p => (-p.stratum, p.seed, p.entrant))
+                        .sortBy(p => (-p.stratum, -p.seed, -p.entrant))
                     val count = poolCount(own.size, n, advancing, brackets)
-                    val fillers = below.take(count * n - own.size)
+                    // Chosen weakest first, but dealt like everyone else, in seed order.
+                    val fillers = below.take(count * n - own.size).sortBy(p => (-p.stratum, p.seed, p.entrant))
                     val members = own ++ fillers
                     if (members.sizeIs < required) (made, used)
                     else (made ++ deal(members, count).map(FormedPool(s, _)), used ++ members.map(_.entrant))

@@ -340,6 +340,44 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         }
 
     // -------------------------------------------------------------------------
+    // Things that happen to a tournament (V53)
+    // -------------------------------------------------------------------------
+
+    /** Every match of a round is over, and the tournament waits on its owner to start the next. Told to the owner, and
+      * to nobody else: nobody else can start it.
+      *
+      * The caller decides that it waits on them — a tournament that starts its own rounds does not — so this only
+      * decides whether the owner wants to hear it.
+      */
+    def tournamentRoundDone(session: Session[IO], tournament: Tournament, round: Int): IO[Unit] =
+        dispatch(
+          session,
+          s"round $round of tournament ${tournament.tournamentId.value} of game ${tournament.gameId.value}"
+        ) { (from, uiBaseUrl) =>
+            val notificationRepo = new NotificationRepo(session)
+            notificationRepo.gameNotice(tournament.gameId).flatMap {
+                case None => IO.pure(Seq.empty[MailMessage])
+                case Some(notice) =>
+                    for {
+                        owner <- new PlayerRepo(session).read(tournament.owner)
+                        levels <- notificationRepo.levelsForPlayer(tournament.owner, tournament.gameId)
+                    } yield owner.toSeq.flatMap { recipient =>
+                        Option
+                            .when(NotificationPolicy.wants(NotificationType.TournamentRoundDone, levels.apply))(())
+                            .flatMap(_ =>
+                                TournamentMail.compose(
+                                  from,
+                                  uiBaseUrl,
+                                  recipient,
+                                  NotificationType.TournamentRoundDone,
+                                  TournamentNews(notice.name, tournament.name, round)
+                                )
+                            )
+                    }
+            }
+        }
+
+    // -------------------------------------------------------------------------
     // The two shapes those five events come in
     // -------------------------------------------------------------------------
 

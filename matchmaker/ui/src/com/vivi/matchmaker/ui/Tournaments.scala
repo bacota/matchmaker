@@ -76,6 +76,35 @@ object Tournaments {
                   )
           },
           child <-- Store.myTournaments.signal.map { mine =>
+              val waiting = mine.filter(waitsOnMe)
+              if (waiting.isEmpty) emptyNode
+              else
+                  Views.refreshableSection("Rounds to Start", () => Store.reloadMyTournaments(), subsection = false)(
+                    ul(
+                      aria.live := "polite",
+                      waiting.map { s =>
+                          val t = s.tournament
+                          li(
+                            cls := "row",
+                            button(
+                              cls := "link",
+                              tpe := "button",
+                              t.name,
+                              onClick --> (_ => Store.show(Store.Page.OneTournament(t.gameId, t.tournamentId)))
+                            ),
+                            span(cls := "detail", s" · ${s.gameName} · every match of the round is over"),
+                            busyButton("Start Next Round")(busy =>
+                                Store.run(ApiClient.startRound(t.gameId, t.tournamentId), busy) { _ =>
+                                    Store.reloadMyTournaments()
+                                    Store.reloadTournamentChoices()
+                                }
+                            ).amend(aria.label := s"Start the next round of ${t.name}")
+                          )
+                      }
+                    )
+                  )
+          },
+          child <-- Store.myTournaments.signal.map { mine =>
               if (mine.isEmpty) emptyNode
               else
                   Views.refreshableSection("My Tournaments", () => Store.reloadMyTournaments(), subsection = false)(
@@ -83,6 +112,10 @@ object Tournaments {
                   )
           }
         )
+
+    /** A tournament of the viewer's own whose round is over and that waits on them to start the next. */
+    private def waitsOnMe(s: TournamentSummary): Boolean =
+        s.isOwner && s.roundOver && !s.tournament.settings.autoRounds
 
     private def summaryList(rows: Seq[TournamentSummary], showGame: Boolean): HtmlElement =
         ul(
@@ -99,6 +132,7 @@ object Tournaments {
                 span(
                   cls := "detail",
                   (Option.when(showGame)(s.gameName).toList ++ List(t.status.label, s"${s.entrants} entered") ++
+                      Option.when(waitsOnMe(s))("round over") ++
                       Option.when(s.isOwner)("yours") ++ Option.when(s.entered)("entered") ++
                       Option.when(s.invited && !s.entered)("invited")).mkString(" · ", " · ", "")
                 )
@@ -333,9 +367,18 @@ object Tournaments {
             sectionTag(
               aria.live := "polite",
               h3(s"Round ${d.state.map(_.round).getOrElse(0)}"),
-              t.roundDeadline.fold(emptyNode)(at =>
-                  p(cls := "detail", s"Every match of this round must be over by ${when(at)}.")
-              ),
+              if (d.summary.roundOver)
+                  p(
+                    cls := "detail",
+                    "Every match of this round is over." +
+                        (if (t.settings.autoRounds) ""
+                         else if (d.summary.isOwner) " Start the next round when you are ready."
+                         else s" The next starts when ${d.summary.ownerNickname} starts it.")
+                  )
+              else
+                  t.roundDeadline.fold(emptyNode)(at =>
+                      p(cls := "detail", s"Every match of this round must be over by ${when(at)}.")
+                  ),
               ul(
                 d.round.map { m =>
                     val myTurn = m.seats.find(s =>

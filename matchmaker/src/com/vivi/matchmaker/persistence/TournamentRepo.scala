@@ -223,7 +223,8 @@ class TournamentRepo(session: Session[IO]) {
             .map(_.map { case g *: id *: r => tournamentOf(g, id, r) })
 
     // What a list shows beside each tournament, for a viewer: its game's name, its owner's nickname, how many
-    // entries are still in it, and whether the viewer has an entry or an invitation.
+    // entries are still in it, whether the viewer has an entry or an invitation, and whether it is under way
+    // with every match of its round over -- waiting, unless its rounds start themselves, on its owner.
     private val summaryColumns =
         sql"""g.display_name, o.nickname,
               (SELECT count(*) FROM entrant e
@@ -231,19 +232,21 @@ class TournamentRepo(session: Session[IO]) {
               EXISTS (SELECT 1 FROM entrant e
                        WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId),
               EXISTS (SELECT 1 FROM tournament_invitation i
-                       WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = $playerId)"""
+                       WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = $playerId),
+              t.status = 'running' AND NOT EXISTS (SELECT 1 FROM tournament_match m
+                       WHERE m.game_id = t.game_id AND m.tournament_id = t.tournament_id AND m.status <> 'done')"""
 
-    private val summaryRow = text *: text *: int8 *: bool *: bool
+    private val summaryRow = text *: text *: int8 *: bool *: bool *: bool
 
-    // The row decodes as one element, its summary as five more: (game, id, row, game name, owner, entries,
-    // entered, invited).
-    private type SummaryRow = (GameId, TournamentId, Row, String, String, Long, Boolean, Boolean)
+    // The row decodes as one element, its summary as six more: (game, id, row, game name, owner, entries,
+    // entered, invited, round over).
+    private type SummaryRow = (GameId, TournamentId, Row, String, String, Long, Boolean, Boolean, Boolean)
     private val summaryCodec: Codec[SummaryRow] = gameId *: tournamentId *: row *: summaryRow
 
     private def summaryOf(viewer: PlayerId)(s: SummaryRow): TournamentSummary = {
-        val (game, id, r, gameName, owner, entrants, entered, invited) = s
+        val (game, id, r, gameName, owner, entrants, entered, invited, roundOver) = s
         val t = tournamentOf(game, id, r)
-        TournamentSummary(t, gameName, owner, entrants.toInt, t.owner == viewer, entered, invited)
+        TournamentSummary(t, gameName, owner, entrants.toInt, t.owner == viewer, entered, invited, roundOver)
     }
 
     private val selectSummariesForGame: Query[((PlayerId, PlayerId), GameId), SummaryRow] =
