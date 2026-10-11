@@ -423,8 +423,8 @@ object ApiClient {
     def startRound(gameId: GameId, tournamentId: TournamentId): Future[TournamentJson.RoundStarted] =
         send[TournamentJson.RoundStarted](HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/rounds", None)
 
-    def checkRound(gameId: GameId, tournamentId: TournamentId): Future[TournamentJson.RoundChecked] =
-        send[TournamentJson.RoundChecked](HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/check", None)
+    def checkRound(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
+        sendUnit(HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/check", None)
 
     def stopTournamentStage(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
         sendUnit(HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/stop", None)

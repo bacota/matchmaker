@@ -51,6 +51,8 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         override def tournamentMatchDue(g: GameId, t: TournamentId, p: Int, n: Int): IO[Unit] =
             services.rounds.createMatch(g, t, p, n).void
         override def tournamentRoundDue(g: GameId, t: TournamentId): IO[Unit] = services.rounds.autoStart(g, t).void
+        override def tournamentRoundCheck(g: GameId, t: TournamentId, at: Instant): IO[Unit] =
+            services.rounds.runCheck(g, t).void
     }
 
     private case class World(services: Services[String], engine: StubEngine, mail: RecordingNotifier)
@@ -334,12 +336,38 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             again <- f.w.services.rounds.checkRound(f.game.gameId, f.t.tournamentId, f.owner.externalId).attempt
             d <- detail(f)
         } yield (m, checked, again, d))
-        val (m, checked, again, detailNow) = d
-        assertEquals(checked, 1)
+        val (m, _, again, detailNow) = d
         assert(again.left.exists(_.isInstanceOf[ConflictError]), "a second check straight away is refused")
         val chooser = com.vivi.matchmaker.service.TournamentRounds.nextChooser(m.seats).get.entrantId
         val other = m.seats.map(_.entrantId).find(_ != chooser).get
         assertEquals(detailNow.state.get.root.ranking.map(_(other.value)), Some(1))
+    }
+
+    test("a check forfeits nobody whose time to choose has not run out, however often it is delivered") {
+        val after = run(for {
+            f <- started(4)
+            _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
+            _ <- f.w.services.rounds.runCheck(f.game.gameId, f.t.tournamentId)
+            _ <- f.w.services.rounds.runCheck(f.game.gameId, f.t.tournamentId)
+            matches <- TestSession.resource.use(
+              new TournamentMatchRepo(_).listRound(f.game.gameId, f.t.tournamentId, 1)
+            )
+        } yield matches)
+        assertEquals(after.size, 2)
+        assert(after.forall(_.status == TournamentMatchStatus.Choosing), after.map(_.status).toString)
+        assert(after.flatMap(_.seats).forall(!_.forfeit))
+    }
+
+    test("only a tournament's owner may check its round") {
+        val (stranger, owner) = run(for {
+            f <- started(4, roles = false)
+            stranger <- f.w.services.rounds
+                .checkRound(f.game.gameId, f.t.tournamentId, f.players.head.externalId)
+                .attempt
+            ok <- f.w.services.rounds.checkRound(f.game.gameId, f.t.tournamentId, f.owner.externalId).attempt
+        } yield (stranger, ok))
+        assert(stranger.left.exists(_.isInstanceOf[UnauthorizedError]))
+        assert(owner.isRight)
     }
 
     test("an engine that cannot create the match leaves it due, and it is created when asked again") {

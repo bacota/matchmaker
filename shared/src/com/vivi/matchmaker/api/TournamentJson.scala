@@ -46,10 +46,6 @@ object TournamentJson {
     case class RoundStarted(round: Option[Int])
     given ReadWriter[RoundStarted] = macroRW
 
-    /** How many matches a Check round looked at. */
-    case class RoundChecked(matches: Int)
-    given ReadWriter[RoundChecked] = macroRW
-
     /** Inviting a player to a tournament. */
     case class TournamentInvite(playerId: PlayerId)
     given ReadWriter[TournamentInvite] = macroRW

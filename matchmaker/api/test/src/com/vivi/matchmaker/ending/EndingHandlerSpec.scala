@@ -52,13 +52,14 @@ class EndingHandlerSpec extends FunSuite {
         )
     }
 
-    test("a tournament's match due and round due are read back as themselves, and mistaken for nothing else") {
+    test("a tournament's match due, round due and round check are read back as themselves, and nothing else") {
         val records = Handler.records(
           sqsEvent(
             "m-1" -> upickle.default.write(TournamentMatchDue(7, 3, 2, 0)),
             "m-2" -> upickle.default.write(TournamentRoundDue(7, 3)),
             "m-3" -> upickle.default.write(RatingsChanged(7)),
-            "m-4" -> upickle.default.write(MatchEnded.of(GameId(7), MatchId("3f1c-match")))
+            "m-4" -> upickle.default.write(MatchEnded.of(GameId(7), MatchId("3f1c-match"))),
+            "m-5" -> upickle.default.write(TournamentRoundCheck(7, 3, 1760000000000L))
           )
         )
         assertEquals(
@@ -67,7 +68,8 @@ class EndingHandlerSpec extends FunSuite {
             Handler.Record.Understood("m-1", TournamentMatchDue(7, 3, 2, 0)),
             Handler.Record.Understood("m-2", TournamentRoundDue(7, 3)),
             Handler.Record.Understood("m-3", RatingsChanged(7)),
-            Handler.Record.Understood("m-4", MatchEnded(7, "3f1c-match"))
+            Handler.Record.Understood("m-4", MatchEnded(7, "3f1c-match")),
+            Handler.Record.Understood("m-5", TournamentRoundCheck(7, 3, 1760000000000L))
           )
         )
     }

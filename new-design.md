@@ -509,8 +509,9 @@ Where the implementation differs from the plan above:
 - **`match.tournament_id` is not on the `Match` model.** It is written by `MatchRepo.createForTournament`; adding a
   field to `Match` overflowed the Scala.js compiler's stack while it derived the codec.
 - **Phase 1d is folded into 1c's commit.**
-- **Check round runs in the request**, one match at a time, rather than one queued `MatchCheck` per match. It still
-  only calls the engine for matches that look overdue.
+- **Check round is one queued message per check**, `TournamentRoundCheck`, rather than one `MatchCheck` per match. The
+  request records the check and queues it; the ending function looks at the round's matches one at a time, each under
+  its own lock.
 - **D12 is a separate owner action**, `POST .../matches/{pool}/{no}/result`, rather than an optional body on the
   match cancel route. It cancels a running match and writes `manual` results. A recorded result stands; there is no
   correction route.

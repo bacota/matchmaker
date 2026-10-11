@@ -198,6 +198,8 @@ object Tournaments {
                 Store.run(ApiClient.tournamentStep(t.gameId, t.tournamentId, name), busy)(_ => reload(d))
             )
         val roundOpen = d.round.exists(_.status != TournamentMatchStatus.Done)
+        // Set once a Check round is queued: the check finishes after the request does, so the page says so.
+        val checking = Var(false)
         div(
           cls := "card",
           h3("Run This Tournament"),
@@ -218,13 +220,21 @@ object Tournaments {
                             freshTipId("check-round-tip"),
                             "Check Round",
                             "Ends any match of this round whose clock has run out, as a player's look at it would, and " +
-                                "forfeits any seat that ran out of time to choose its role."
+                                "forfeits any seat that ran out of time to choose its role. It runs in the background, " +
+                                "so what it changes shows when the page is next refreshed."
                           )(
                             busyButton("Check Round")(busy =>
-                                Store.run(ApiClient.checkRound(t.gameId, t.tournamentId), busy)(_ => reload(d))
+                                Store.run(ApiClient.checkRound(t.gameId, t.tournamentId), busy)(_ => checking.set(true))
                             )
                           )
                       else emptyNode,
+                      span(
+                        aria.live := "polite",
+                        child <-- checking.signal.map(
+                          if (_) span(cls := "detail", " Checking the round. Refresh in a minute to see what changed.")
+                          else emptyNode
+                        )
+                      ),
                       if (t.design.stages.exists(_.repeat == Repetition.UntilStopped))
                           busyButton("Stop Repeating")(busy =>
                               Store.run(ApiClient.stopTournamentStage(t.gameId, t.tournamentId), busy)(_ => reload(d))

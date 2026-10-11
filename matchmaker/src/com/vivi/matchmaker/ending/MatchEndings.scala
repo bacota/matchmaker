@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.ending
 
 import cats.effect.IO
+import java.time.Instant
 import upickle.default.{macroRW, read, write, ReadWriter}
 import software.amazon.awssdk.services.sqs.SqsClient
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest
@@ -33,6 +34,13 @@ trait MatchEndings {
 
     /** That a tournament with automatic rounds has finished a round, and its next is to be begun. */
     def tournamentRoundDue(gameId: GameId, tournamentId: TournamentId): IO[Unit] = IO.unit
+
+    /** That a tournament's owner pressed Check round at `checkedAt`, and the round's matches are to be looked at:
+      * clocks run out enforced, late choosers forfeited, matches still due queued again (`TournamentRounds.runCheck`).
+      * On the queue rather than in the request, because each match may be a call to its engine, and a round of many
+      * could outlast the API's thirty seconds.
+      */
+    def tournamentRoundCheck(gameId: GameId, tournamentId: TournamentId, checkedAt: Instant): IO[Unit] = IO.unit
 }
 
 /** What goes on the queue: the match, and nothing about it. Whoever settles it reads the rest from the database, as it
@@ -64,8 +72,12 @@ object MatchEnded {
         try Right(read[TournamentMatchDue](body))
         catch {
             case _: Exception =>
-                try Right(read[TournamentRoundDue](body))
-                catch { case _: Exception => parse(body) }
+                try Right(read[TournamentRoundCheck](body))
+                catch {
+                    case _: Exception =>
+                        try Right(read[TournamentRoundDue](body))
+                        catch { case _: Exception => parse(body) }
+                }
         }
 }
 
@@ -85,8 +97,17 @@ object TournamentRoundDue {
     given ReadWriter[TournamentRoundDue] = macroRW
 }
 
+/** A tournament's round, to be checked because its owner asked at `checkedAt` (epoch milliseconds). Told from a round
+  * due by `checkedAt`, which a round due does not have.
+  */
+case class TournamentRoundCheck(gameId: Int, tournamentId: Long, checkedAt: Long)
+
+object TournamentRoundCheck {
+    given ReadWriter[TournamentRoundCheck] = macroRW
+}
+
 /** Everything the ending queue carries. */
-type QueueMessage = MatchEnded | RatingsChanged | TournamentMatchDue | TournamentRoundDue
+type QueueMessage = MatchEnded | RatingsChanged | TournamentMatchDue | TournamentRoundDue | TournamentRoundCheck
 
 /** What goes on the queue when a game's ratings have moved with no match ending: the game, for its leaderboard. */
 case class RatingsChanged(gameId: Int)
@@ -125,6 +146,12 @@ class SqsMatchEndings(queueUrl: String, client: () => SqsClient) extends MatchEn
           s"the next round of tournament ${tournamentId.value} was not queued; its owner can start it"
         )
 
+    override def tournamentRoundCheck(gameId: GameId, tournamentId: TournamentId, checkedAt: Instant): IO[Unit] =
+        send(
+          write(TournamentRoundCheck(gameId.value, tournamentId.value, checkedAt.toEpochMilli)),
+          s"the check of tournament ${tournamentId.value}'s round was not queued; its owner can check it again"
+        )
+
     private def send(body: String, failed: String): IO[Unit] =
         IO.blocking {
             client().sendMessage(SendMessageRequest.builder().queueUrl(queueUrl).messageBody(body).build())
@@ -154,7 +181,8 @@ object MatchEndings {
         settle: (GameId, MatchId) => IO[Unit],
         rank: GameId => IO[Unit],
         matchDue: (GameId, TournamentId, Int, Int) => IO[Unit] = (_, _, _, _) => IO.unit,
-        roundDue: (GameId, TournamentId) => IO[Unit] = (_, _) => IO.unit
+        roundDue: (GameId, TournamentId) => IO[Unit] = (_, _) => IO.unit,
+        roundCheck: (GameId, TournamentId) => IO[Unit] = (_, _) => IO.unit
     ): MatchEndings =
         new MatchEndings {
             def ended(gameId: GameId, matchId: MatchId): IO[Unit] =
@@ -178,6 +206,16 @@ object MatchEndings {
                 background(
                   roundDue(gameId, tournamentId),
                   s"starting the next round of tournament ${tournamentId.value} failed"
+                )
+
+            override def tournamentRoundCheck(
+                gameId: GameId,
+                tournamentId: TournamentId,
+                checkedAt: Instant
+            ): IO[Unit] =
+                background(
+                  roundCheck(gameId, tournamentId),
+                  s"checking the round of tournament ${tournamentId.value} failed"
                 )
 
             private def background(work: IO[Unit], failed: String): IO[Unit] =

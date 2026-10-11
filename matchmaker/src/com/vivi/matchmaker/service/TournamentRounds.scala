@@ -563,11 +563,11 @@ class TournamentRounds[T](
 
     // ---- the owner's tools -----------------------------------------------------------------
 
-    /** The owner's Check round: enforces the clocks of the round's matches being played, forfeits any seat whose time
-      * to choose a role has run out, and queues again any match left due. How many matches it looked at. Refused within
-      * [[checkInterval]] of the last check.
+    /** The owner's Check round. Records when it was asked for and queues the check itself ([[runCheck]]), which the
+      * ending function carries out: each match may be a call to its engine, and a round of many could outlast the
+      * request. Refused within [[checkInterval]] of the last check.
       */
-    def checkRound(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Int] =
+    def checkRound(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Unit] =
         sessionPool
             .use { session =>
                 session.transaction.use { _ =>
@@ -577,37 +577,55 @@ class TournamentRounds[T](
                         _ <- IO.raiseUnless(t.owner == caller.playerId)(
                           UnauthorizedError("only the tournament's owner may check a round")
                         )
+                        _ <- IO.raiseUnless(t.status == TournamentStatus.Running)(
+                          ConflictError("this tournament is not under way")
+                        )
                         at = now()
                         _ <- IO.raiseWhen(t.checkedAt.exists(c => at.isBefore(c.plus(checkInterval))))(
                           ConflictError("this round was checked moments ago; its matches are still being looked at")
                         )
                         _ <- new TournamentRepo(session).update(t.copy(checkedAt = Some(at)))
-                        unfinished <- new TournamentMatchRepo(session).listUnfinished(gameId, tournamentId)
-                        game <- requireGame(session, gameId)
-                        state <- new TournamentRepo(session).readState(gameId, tournamentId)
-                    } yield (t, unfinished, game, state, at)
+                    } yield at
                 }
             }
-            .flatMap { (t, unfinished, game, state, at) =>
-                unfinished
-                    .traverse_ { tm =>
-                        tm.status match {
-                            case TournamentMatchStatus.Started =>
-                                tm.matchId.traverse_(engine.enforceNow(gameId, _)).attempt.void
-                            case TournamentMatchStatus.Due =>
-                                endings.tournamentMatchDue(gameId, tournamentId, tm.poolId, tm.matchNo)
-                            case TournamentMatchStatus.Choosing =>
-                                val late = state
-                                    .flatMap(s => TournamentRounds.chooseBy(t, game, s, tm))
-                                    .exists(!at.isBefore(_))
-                                IO.whenA(late)(forfeitChooser(gameId, tournamentId, tm.poolId, tm.matchNo))
-                            case TournamentMatchStatus.Done => IO.unit
-                        }
-                    }
-                    .as(unfinished.size)
-            }
+            .flatMap(at => endings.tournamentRoundCheck(gameId, tournamentId, at))
 
-    /** The seat whose time to choose has run out forfeits, and the choosing moves on without it. */
+    /** A queued Check round: enforces the clocks of the round's matches being played, forfeits any seat whose time to
+      * choose a role has run out, and queues again any match left due. Nothing, for a tournament no longer under way.
+      *
+      * Each match is its own transaction, under the locks every change takes, and re-decides there what it acts on: the
+      * list read here is only where to look, and a message the queue delivers twice must not forfeit twice.
+      */
+    def runCheck(gameId: GameId, tournamentId: TournamentId): IO[Settlement] =
+        sessionPool
+            .use { session =>
+                // Read plainly: nothing here is written from it. Each match is re-read under lock below.
+                new TournamentRepo(session).read(gameId, tournamentId).flatMap {
+                    case Some(t) if t.status == TournamentStatus.Running =>
+                        new TournamentMatchRepo(session).listUnfinished(gameId, tournamentId)
+                    case _ => IO.pure(Nil)
+                }
+            }
+            .flatMap(
+              _.traverse_ { tm =>
+                  tm.status match {
+                      case TournamentMatchStatus.Started =>
+                          // One match whose engine cannot be reached does not stop the rest being looked at.
+                          tm.matchId.traverse_(engine.enforceNow(gameId, _)).attempt.void
+                      case TournamentMatchStatus.Due =>
+                          endings.tournamentMatchDue(gameId, tournamentId, tm.poolId, tm.matchNo)
+                      case TournamentMatchStatus.Choosing =>
+                          forfeitChooser(gameId, tournamentId, tm.poolId, tm.matchNo)
+                      case TournamentMatchStatus.Done => IO.unit
+                  }
+              }
+            )
+            .as(Settlement.Settled)
+
+    /** The seat whose time to choose has run out forfeits, and the choosing moves on without it. Whether its time has
+      * run out is decided here, under the match's lock: a seat that has chosen meanwhile, or whose turn has only just
+      * begun, is left alone.
+      */
     private def forfeitChooser(gameId: GameId, tournamentId: TournamentId, poolId: Int, matchNo: Int): IO[Unit] =
         sessionPool.use { session =>
             session.transaction
@@ -617,10 +635,12 @@ class TournamentRounds[T](
                         t <- requireTournamentForUpdate(session, gameId, tournamentId)
                         tm <- requireMatchForUpdate(session, t, poolId, matchNo)
                         game <- requireGame(session, gameId)
+                        state <- requireState(session, t)
+                        at = now()
+                        late = TournamentRounds.chooseBy(t, game, state, tm).exists(!at.isBefore(_))
                         status <-
-                            if (tm.status != TournamentMatchStatus.Choosing) IO.pure(tm.status)
+                            if (tm.status != TournamentMatchStatus.Choosing || !late) IO.pure(tm.status)
                             else {
-                                val at = now()
                                 val out = TournamentRounds.nextChooser(tm.seats).map(_.entrantId)
                                 val forfeited = tm.seats.map(s =>
                                     if (out.contains(s.entrantId)) s.copy(forfeit = true, chooseOrder = None) else s

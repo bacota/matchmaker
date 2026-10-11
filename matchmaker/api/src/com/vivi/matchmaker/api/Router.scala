@@ -613,9 +613,7 @@ object Router {
                 )
 
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "check" :: Nil) =>
-                withTournament(gameId, tid)((gid, t) =>
-                    ok(services.rounds.checkRound(gid, t, caller).map(TournamentJson.RoundChecked(_)))
-                )
+                withTournament(gameId, tid)((gid, t) => noContent(services.rounds.checkRound(gid, t, caller)))
 
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "stop" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) => noContent(services.rounds.stop(gid, t, caller)))
