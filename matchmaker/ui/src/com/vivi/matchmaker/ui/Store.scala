@@ -104,6 +104,10 @@ object Store {
         gameAdminsByGame.set(Map.empty)
         acceptances.set(Seq.empty)
         invitations.set(Seq.empty)
+        myTournaments.set(Seq.empty)
+        tournamentChoices.set(Seq.empty)
+        tournamentsByGame.set(Map.empty)
+        tournament.set(None)
         // And what was last said about one. The stamp above would keep it from being read anyway;
         // this is so that nothing is held about a player who has gone, which is what the rest of
         // this method is for.
@@ -159,6 +163,10 @@ object Store {
         case PublicMatches
         case PlayerSearch
         case NotificationSettings
+        // Tournaments (V52): the caller's own, the seats waiting on them, a game's, and the one shown.
+        case MyTournaments, TournamentChoices
+        case Tournaments(gameId: GameId)
+        case OneTournament
     }
 
     /* How each list's *latest* answer went: absent until one has come, `true` for an answer that
@@ -236,6 +244,20 @@ object Store {
     def failed(what: Fetch): Signal[Boolean] = Outcomes.of(outcomes.signal, what)(_.contains(false))
 
     val due: Var[Seq[MatchSummary]] = Var(Seq.empty)
+
+    /** The tournaments the caller owns, has entered or is invited to, for the main page. */
+    val myTournaments: Var[Seq[TournamentSummary]] = Var(Seq.empty)
+
+    /** The seats waiting on the caller to choose a role in a tournament match. */
+    val tournamentChoices: Var[Seq[TournamentChoice]] = Var(Seq.empty)
+
+    /** Each game's tournaments, for its screen, fetched as it is opened. */
+    val tournamentsByGame: Var[Map[GameId, Seq[TournamentSummary]]] = Var(Map.empty)
+
+    /** The tournament whose page is showing: emptied as another is opened, so one tournament's page never shows
+      * another's entries while it loads.
+      */
+    val tournament: Var[Option[TournamentDetail]] = Var(None)
     val active: Var[Seq[MatchSummary]] = Var(Seq.empty)
 
     /** Which completed list a window belongs to: the caller's own, in every game or in one, or another player's public
@@ -597,6 +619,12 @@ object Store {
           * carries the player: whatever linked here already knew them, and the page is headed with the name.
           */
         case OneCharacter(character: CharacterName)
+
+        /** A tournament's page. */
+        case OneTournament(gameId: GameId, tournamentId: TournamentId)
+
+        /** The form that creates a tournament in a game. */
+        case NewTournament(gameId: GameId)
     }
 
     val page: Var[Page] = Var(Page.Home)
@@ -629,7 +657,11 @@ object Store {
         // like the rest of what a screen needs, and again on arriving again, which is a refresh.
         completedFor(next).foreach(showCompleted(_))
         next match {
+            case Page.OneTournament(gameId, tournamentId) =>
+                if (!tournament.now().exists(_.summary.tournament.tournamentId == tournamentId)) tournament.set(None)
+                reloadTournament(gameId, tournamentId)
             case Page.OneGame(gameId) =>
+                reloadTournaments(gameId)
                 refreshChallenges(gameId)
                 refreshCharacters(gameId)
                 refreshGameAdmins(gameId)
@@ -991,7 +1023,30 @@ object Store {
         load(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
         load(ApiClient.invitations(), Fetch.Invitations)(invitations.set)
         load(ApiClient.results(), Fetch.Results)(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
+        load(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
+        load(ApiClient.tournamentChoices(), Fetch.TournamentChoices)(tournamentChoices.set)
     }
+
+    def reloadMyTournaments(): Future[Unit] = reload(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
+
+    def reloadTournamentChoices(): Future[Unit] =
+        reload(ApiClient.tournamentChoices(), Fetch.TournamentChoices)(tournamentChoices.set)
+
+    def reloadTournaments(gameId: GameId): Future[Unit] =
+        reload(ApiClient.tournaments(gameId), Fetch.Tournaments(gameId))(found =>
+            tournamentsByGame.update(_.updated(gameId, found))
+        )
+
+    /** The tournament shown, again. Committed only while it is still the tournament on screen: an answer about one
+      * opened before is not this page's.
+      */
+    def reloadTournament(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
+        reload(ApiClient.tournament(gameId, tournamentId), Fetch.OneTournament)(found =>
+            page.now() match {
+                case Page.OneTournament(_, shown) if shown == tournamentId => tournament.set(Some(found))
+                case _                                                     => ()
+            }
+        )
 
     /** The same as `run`, but handing back a `Future` that says when the request has settled.
       *
