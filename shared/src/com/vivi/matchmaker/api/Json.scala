@@ -34,6 +34,10 @@ object Json {
     /** By its stored code, so the wire form is the column's form: 'FORFEIT'. */
     given ReadWriter[TimeoutAction] = readwriter[String].bimap(_.code, TimeoutAction.fromCode)
 
+    /** By code, as the columns hold them (V51): 'required' / 'recommended' / 'optional', and 'seq' / 'sim'. */
+    given ReadWriter[RoleType] = readwriter[String].bimap(_.code, RoleType.fromCode)
+    given ReadWriter[MoveType] = readwriter[String].bimap(_.code, MoveType.fromCode)
+
     /** Likewise: 'PER_TURN' or 'TOTAL'. */
     given ReadWriter[TimeLimitKind] = readwriter[String].bimap(_.code, TimeLimitKind.fromCode)
 
@@ -154,7 +158,10 @@ object Json {
         hasApiKey: Boolean = false,
         // No role of the game has any advantage in winning it (V49). Defaulted so that a client
         // written before it existed still parses, and keeps ratings by role.
-        unimportantRoles: Boolean = false
+        unimportantRoles: Boolean = false,
+        // How players take turns, and how many a simultaneous game lasts (V51). Defaulted as above.
+        moveType: MoveType = MoveType.Sequential,
+        maxTurns: Option[Int] = None
     )
 
     private given ReadWriter[GameDto] = macroRW
@@ -175,7 +182,9 @@ object Json {
             game.timeoutAction,
             game.characterUrl,
             game.hasApiKey,
-            game.unimportantRoles
+            game.unimportantRoles,
+            game.moveType,
+            game.maxTurns
           ),
       dto =>
           Game(
@@ -192,7 +201,9 @@ object Json {
             dto.timeoutAction,
             dto.characterUrl,
             dto.hasApiKey,
-            dto.unimportantRoles
+            dto.unimportantRoles,
+            dto.moveType,
+            dto.maxTurns
           )
     )
 

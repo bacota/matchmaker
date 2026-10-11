@@ -6,7 +6,9 @@ import skunk.data.Type
 import java.time.{Instant, OffsetDateTime, ZoneOffset}
 import com.vivi.matchmaker.model.{
     GameType,
+    MoveType,
     NotificationPreferences,
+    RoleType,
     SeatNotifications,
     TimeLimitKind,
     TimeLimitUnit,
@@ -28,6 +30,9 @@ object SkunkCodecs {
       * one-character discriminator, because the set of actions is expected to grow and 'FORFEIT' reads as itself in a
       * query.
       */
+    /* Text under check constraints, as `timeoutAction` is (V51). */
+    val roleType: Codec[RoleType] = text.imap(RoleType.fromCode)(_.code)
+    val moveType: Codec[MoveType] = text.imap(MoveType.fromCode)(_.code)
     val timeoutAction: Codec[TimeoutAction] = text.imap(TimeoutAction.fromCode)(_.code)
 
     /** `time_limit_kind` on `match` and `challenge`: whether the limit is per turn or the player's budget for the whole

@@ -111,7 +111,7 @@ class GameServiceSpec extends PropertySuite {
                   GameRoleId(0),
                   GameId.unassigned,
                   "  attacker  ",
-                  optional = false,
+                  roleType = RoleType.Required,
                   displayName = "  attacker  "
                 )
               ),
@@ -143,8 +143,20 @@ class GameServiceSpec extends PropertySuite {
             base <- IO(Generators.genGameWithRole.sample.get)
             game = base.copy(roles =
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false, displayName = "attacker"),
-                  GameRole(GameRoleId(0), GameId.unassigned, "  attacker", optional = false, displayName = "  attacker")
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "attacker",
+                    roleType = RoleType.Required,
+                    displayName = "attacker"
+                  ),
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "  attacker",
+                    roleType = RoleType.Required,
+                    displayName = "  attacker"
+                  )
                 )
             )
             attempt <- gameService.createOrUpdate(admin.externalId, game).attempt
@@ -395,8 +407,14 @@ class GameServiceSpec extends PropertySuite {
             base <- IO(Generators.genGame().sample.get)
             game = base.copy(roles =
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "red", optional = false, displayName = "  Red corner "),
-                  GameRole(GameRoleId(0), GameId.unassigned, "blue", optional = false, displayName = "   ")
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "red",
+                    roleType = RoleType.Required,
+                    displayName = "  Red corner "
+                  ),
+                  GameRole(GameRoleId(0), GameId.unassigned, "blue", roleType = RoleType.Required, displayName = "   ")
                 )
             )
             created <- gameService.createOrUpdate(admin.externalId, game)
@@ -429,8 +447,8 @@ class GameServiceSpec extends PropertySuite {
             base <- IO(Generators.genGame().sample.get)
             game = base.copy(roles =
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "red", optional = false, displayName = "Red"),
-                  GameRole(GameRoleId(0), GameId.unassigned, "Red", optional = false, displayName = "Red")
+                  GameRole(GameRoleId(0), GameId.unassigned, "red", roleType = RoleType.Required, displayName = "Red"),
+                  GameRole(GameRoleId(0), GameId.unassigned, "Red", roleType = RoleType.Required, displayName = "Red")
                 )
             )
             attempt <- gameService.createOrUpdate(admin.externalId, game).attempt
@@ -485,7 +503,13 @@ class GameServiceSpec extends PropertySuite {
             edited = created.copy(
               name = "renamed",
               description = "redescribed",
-              roles = created.roles.map(role => role.copy(name = s"${role.name}-renamed", optional = !role.optional))
+              roles = created.roles.map(role =>
+                  role.copy(
+                    name = s"${role.name}-renamed",
+                    roleType = if (role.optional) RoleType.Required else RoleType.Recommended,
+                    preferenceLevel = Some(3)
+                  )
+              )
             )
             updated <- gameService.createOrUpdate(admin.externalId, edited)
         } yield updated.name == "renamed" &&
@@ -495,7 +519,8 @@ class GameServiceSpec extends PropertySuite {
             updated.roles.map(_.gameRoleId).toSet == created.roles.map(_.gameRoleId).toSet &&
             updated.roles.map(_.name).toSet == created.roles.map(_.name + "-renamed").toSet &&
             updated.roles.forall(role =>
-                created.roles.exists(c => c.gameRoleId == role.gameRoleId && c.optional != role.optional)
+                created.roles.exists(c => c.gameRoleId == role.gameRoleId && c.optional != role.optional) &&
+                    role.preferenceLevel.contains(3)
             )
 
         assert(result.unsafeRunSync())
@@ -512,7 +537,7 @@ class GameServiceSpec extends PropertySuite {
                   GameRoleId.unassigned,
                   created.gameId,
                   "added",
-                  optional = true,
+                  roleType = RoleType.Optional,
                   displayName = "added"
                 )
             )

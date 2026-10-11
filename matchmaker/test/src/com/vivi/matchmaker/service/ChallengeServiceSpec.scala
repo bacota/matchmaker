@@ -47,9 +47,27 @@ class ChallengeServiceSpec extends PropertySuite {
                     // name the same one, so a challenger plus two accepters need one each -- and the
                     // capacity check below has to be reachable without running out of roles first.
                     Seq(
-                      GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false, displayName = "first"),
-                      GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false, displayName = "second"),
-                      GameRole(GameRoleId(0), GameId.unassigned, "third", optional = false, displayName = "third")
+                      GameRole(
+                        GameRoleId(0),
+                        GameId.unassigned,
+                        "first",
+                        roleType = RoleType.Required,
+                        displayName = "first"
+                      ),
+                      GameRole(
+                        GameRoleId(0),
+                        GameId.unassigned,
+                        "second",
+                        roleType = RoleType.Required,
+                        displayName = "second"
+                      ),
+                      GameRole(
+                        GameRoleId(0),
+                        GameId.unassigned,
+                        "third",
+                        roleType = RoleType.Required,
+                        displayName = "third"
+                      )
                     ),
                     Seq.empty,
                     genUniqueString.sample.get
@@ -132,14 +150,14 @@ class ChallengeServiceSpec extends PropertySuite {
                               GameRoleId(0),
                               base.game.gameId,
                               "attacker",
-                              optional = false,
+                              roleType = RoleType.Required,
                               displayName = "attacker"
                             ),
                             GameRole(
                               GameRoleId(0),
                               base.game.gameId,
                               "defender",
-                              optional = false,
+                              roleType = RoleType.Required,
                               displayName = "defender"
                             )
                           )
@@ -557,9 +575,27 @@ class ChallengeServiceSpec extends PropertySuite {
                 "url",
                 active = true,
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false, displayName = "first"),
-                  GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false, displayName = "second"),
-                  GameRole(GameRoleId(0), GameId.unassigned, "third", optional = false, displayName = "third")
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "first",
+                    roleType = RoleType.Required,
+                    displayName = "first"
+                  ),
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "second",
+                    roleType = RoleType.Required,
+                    displayName = "second"
+                  ),
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "third",
+                    roleType = RoleType.Required,
+                    displayName = "third"
+                  )
                 ),
                 Seq.empty,
                 genUniqueString.sample.get

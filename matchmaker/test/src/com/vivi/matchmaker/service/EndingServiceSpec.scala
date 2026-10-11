@@ -74,7 +74,9 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                     "description",
                     "url",
                     active = true,
-                    Seq(GameRole(GameRoleId(0), GameId.unassigned, "X", optional = false, displayName = "X")),
+                    Seq(
+                      GameRole(GameRoleId(0), GameId.unassigned, "X", roleType = RoleType.Required, displayName = "X")
+                    ),
                     Seq.empty,
                     unique("engine")
                   )

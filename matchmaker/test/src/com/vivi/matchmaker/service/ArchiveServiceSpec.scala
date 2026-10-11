@@ -71,7 +71,15 @@ class ArchiveServiceSpec extends FunSuite {
                     "description",
                     "url",
                     active = true,
-                    Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false, displayName = "only")),
+                    Seq(
+                      GameRole(
+                        GameRoleId(0),
+                        GameId.unassigned,
+                        "only",
+                        roleType = RoleType.Required,
+                        displayName = "only"
+                      )
+                    ),
                     Seq.empty,
                     unique("engine")
                   )

@@ -57,8 +57,20 @@ class MatchStartedNotificationSpec extends PropertySuite {
                 "https://engine.example.com/games",
                 active = true,
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false, displayName = "attacker"),
-                  GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = true, displayName = "defender")
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "attacker",
+                    roleType = RoleType.Required,
+                    displayName = "attacker"
+                  ),
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "defender",
+                    roleType = RoleType.Optional,
+                    displayName = "defender"
+                  )
                 ),
                 Seq.empty,
                 gameExternalId

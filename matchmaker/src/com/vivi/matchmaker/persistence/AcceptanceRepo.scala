@@ -282,11 +282,12 @@ class AcceptanceRepo(session: Session[IO]) {
                  ch.challenger,
                  -- Ready to start: no required role of the game is still unclaimed. Computed here
                  -- rather than by counting acceptances, because a challenge is full when its
-                 -- roles are taken, and optional roles are not ones a start waits for. This is
+                 -- roles are taken, and optional and recommended roles are not ones a start waits
+                 -- for (V51). This is
                  -- the same rule GameEngineService.start enforces, asked of the row already in
                  -- hand rather than of a second query per challenge.
                  NOT EXISTS (SELECT 1 FROM game_role gr
-                              WHERE gr.game_id = a.game_id AND NOT gr.optional
+                              WHERE gr.game_id = a.game_id AND gr.type = 'required'
                                 AND NOT EXISTS (SELECT 1 FROM acceptance taken
                                                  WHERE taken.game_id = a.game_id
                                                    AND taken.challenge_id = a.challenge_id
@@ -331,12 +332,12 @@ class AcceptanceRepo(session: Session[IO]) {
      * enforces -- no required role unclaimed -- asked the other way round, because the answer is
      * wanted for two things at once: whether the challenge is ready (nothing here) and, when it is
      * not, what it is still waiting for, which is what a notification about an acceptance can
-     * usefully say. Optional roles are left out: a start does not wait for them.
+     * usefully say. Optional and recommended roles are left out: a start does not wait for them.
      */
     private val selectUnclaimedRoles: Query[(GameId, ChallengeId), String] =
         sql"""SELECT gr.display_name
           FROM game_role gr
-          WHERE gr.game_id = $gameId AND NOT gr.optional
+          WHERE gr.game_id = $gameId AND gr.type = 'required'
             AND NOT EXISTS (SELECT 1 FROM acceptance taken
                              WHERE taken.game_id = gr.game_id
                                AND taken.challenge_id = $challengeId

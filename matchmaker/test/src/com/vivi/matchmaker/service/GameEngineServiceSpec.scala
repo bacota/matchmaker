@@ -138,9 +138,12 @@ class GameEngineServiceSpec extends PropertySuite {
                     // challenger alone and still have a second role for a second player to accept as.
                     // Each is shown as something other than its name, so that what reaches the engine
                     // (the name) and what reaches a player (the display name) can be told apart.
+                    // Defender is recommended rather than optional, so every start here is also the proof
+                    // that a recommended role is one a start does not wait for (V51); other specs keep
+                    // an optional one.
                     Seq(
-                      GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false, "Attacker side"),
-                      GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = true, "Defender side")
+                      GameRole(GameRoleId(0), GameId.unassigned, "attacker", RoleType.Required, "Attacker side"),
+                      GameRole(GameRoleId(0), GameId.unassigned, "defender", RoleType.Recommended, "Defender side")
                     ),
                     parameters,
                     gameExternalId
@@ -300,7 +303,7 @@ class GameEngineServiceSpec extends PropertySuite {
             val services = TestServices.servicesWith(StubEngine())
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                // The challenger takes 'defender', which is optional, leaving the required 'attacker'
+                // The challenger takes 'defender', which is recommended, leaving the required 'attacker'
                 // with nobody playing it — the only thing standing between this challenge and a match.
                 // The refusal is read by a player, so it names the seat the way they see it.
                 challenge <- services.challenges.create(

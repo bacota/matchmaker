@@ -51,9 +51,27 @@ class ChallengeNotificationSpec extends PropertySuite {
                 "https://engine.example.com/games",
                 active = true,
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false, displayName = "attacker"),
-                  GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = false, displayName = "defender"),
-                  GameRole(GameRoleId(0), GameId.unassigned, "healer", optional = false, displayName = "healer")
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "attacker",
+                    roleType = RoleType.Required,
+                    displayName = "attacker"
+                  ),
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "defender",
+                    roleType = RoleType.Required,
+                    displayName = "defender"
+                  ),
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "healer",
+                    roleType = RoleType.Required,
+                    displayName = "healer"
+                  )
                 ),
                 Seq.empty,
                 s"game-$seed"
