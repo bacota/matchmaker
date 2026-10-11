@@ -179,6 +179,7 @@ class Engine(
           matchId = m.matchId,
           scheduledRounds = m.scheduledRounds,
           round = if (over) m.rounds.size else m.currentRound,
+          extraRound = (if (over) m.rounds.size else m.currentRound) > m.scheduledRounds,
           waitingFor = m.pending.map(_.side.toString),
           you = corner.map(_.side.toString),
           yourPlan =

@@ -53,14 +53,15 @@ class Engine(
                   Refusal.Invalid("you have already thrown; a throw cannot be taken back")
                 )
             } yield {
-                // Both clocks started when the match was created — see `RpsMatch` — or, in a live match,
-                // when this player opened the board, if that was later.
+                // Both clocks started when the round did — the match's creation, unless a tie started
+                // another; see `RpsMatch` — or, in a live match, when this player opened the board, if
+                // that was later.
                 val record =
                     ThrowRecord(
                       seat.participantId,
                       shape,
                       at,
-                      TurnClock.turnStart(current.clock, seat.participantId, current.createdAt)
+                      TurnClock.turnStart(current.clock, seat.participantId, current.roundStartedAt)
                     )
                 (current.copy(throws = current.throws :+ record), record)
             }
@@ -82,6 +83,7 @@ class Engine(
           completed = over,
           winner = Option.when(over)(m.winner.map(_.side.toString)).flatten,
           draw = m.isDraw,
+          tiedRounds = m.tiedRounds.map(_.toString),
           players = m.seats.map(s =>
               SeatView(
                 side = s.side.toString,

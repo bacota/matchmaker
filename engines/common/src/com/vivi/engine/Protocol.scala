@@ -52,8 +52,19 @@ object Protocol {
         // What players call the game, and the match's own message: what the engine titles its pages
         // with. Absent from a matchmaker that predates them.
         gameDisplayName: Option[String] = None,
-        description: Option[String] = None
+        description: Option[String] = None,
+        // False when the match must not end in a draw — a tournament's elimination match. Sent only then,
+        // so absent means ties are allowed, as from a matchmaker that predates it. What an engine does about
+        // it is the game's business, and a game may do nothing: see `Protocol.tiesAllowed`.
+        tiesAllowed: Option[Boolean] = None
     )
+
+    /** Whether a create request allows the match to end in a draw: true unless matchmaker said otherwise. An engine
+      * that can find a winner where it would have declared a draw does so when this is false — boxing fights another
+      * round, stratego counts captures, rock-paper-scissors throws again. One that cannot, plays the match as it always
+      * would.
+      */
+    def tiesAllowed(request: CreateGameRequest): Boolean = request.tiesAllowed.getOrElse(true)
 
     /** The terms of a live match, which the engine keeps rather than matchmaker.
       *

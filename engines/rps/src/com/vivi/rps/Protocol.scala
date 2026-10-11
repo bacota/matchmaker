@@ -34,6 +34,10 @@ object Protocol {
       * empty once the match is over.
       *
       * `clock` is a live match's turn clock, and absent from any other.
+      *
+      * `tiedRounds` is what was thrown in each round that tied before this one, in a match that does not allow ties — a
+      * tie is the same shape twice, so one shape each. Both throws of a tied round are already known to both players,
+      * so there is nothing here to hide. Empty in any other match.
       */
     case class StateResponse(
         matchId: String,
@@ -44,7 +48,8 @@ object Protocol {
         winner: Option[String],
         draw: Boolean,
         players: List[SeatView],
-        clock: Option[ClockView] = None
+        clock: Option[ClockView] = None,
+        tiedRounds: List[String] = Nil
     )
 
     /** One seat as a viewer may see it. `shape` is `None` until the match is over, whoever is asking — including of the

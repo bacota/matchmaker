@@ -411,6 +411,71 @@ class EngineSpec extends FunSuite with QuietTests {
         )
     }
 
+    test(
+      "when ties are not allowed, a bout level after its schedule fights an extra round, and that round decides it"
+    ) {
+        val (engine, recorder, store, _, _) = fixture(createRequest().copy(tiesAllowed = Some(false)))
+        (1 to 3).foreach { _ =>
+            engine.plan("m-1", alice, Allocation(2, 2, 1))
+            engine.plan("m-1", bob, Allocation(2, 2, 1))
+        }
+        val level = bout(store)
+        assert(!level.isOver, "a bout that may not be drawn goes on when the cards are level")
+        assertEquals(level.roundLimit, 4)
+        assertEquals(level.pending.map(_.participantId).toSet, Set(11L, 22L))
+        assert(engine.stateOf(level, None).extraRound)
+        assertEquals(recorder.results, Nil)
+
+        // Red outworks Blue in the extra round, 10-9.
+        engine.plan("m-1", alice, Allocation(5, 0, 0))
+        engine.plan("m-1", bob, Allocation(0, 5, 0))
+        val m = bout(store)
+        assert(m.isOver)
+        assertEquals(m.winner.map(_.side), Some(Side.Red))
+        assertEquals(m.method, Some("points"))
+        val results = recorder.results.head._2
+        assertEquals(results.results.find(_.isWinner).map(_.participantId), Some(11L))
+        assertEquals(results.results.find(_.participantId == 11L).map(_.scores("score").num), Some(40.0))
+        assertEquals(
+          results.summary,
+          Some(
+            "<strong>Iron Mike</strong> beat <strong>Sugar Ray</strong> on points in an extra round, 40–39 after 4 rounds."
+          )
+        )
+    }
+
+    test("an extra round that is level too is decided by lot, the same way every time the bout is read") {
+        val (engine, recorder, store, _, _) = fixture(createRequest().copy(tiesAllowed = Some(false)))
+        (1 to 4).foreach { _ =>
+            engine.plan("m-1", alice, Allocation(2, 2, 1))
+            engine.plan("m-1", bob, Allocation(2, 2, 1))
+        }
+        val m = bout(store)
+        assert(m.isOver)
+        assertEquals(m.rounds.size, 4)
+        assert(m.decidedByLot)
+        assert(!m.isDraw)
+        assertEquals(m.method, Some("lot"))
+        // The lot is the match id's, so reading the bout again cannot change it.
+        assertEquals(bout(store).winner, m.winner)
+        val results = recorder.results.head._2
+        assertEquals(results.results.count(_.isWinner), 1)
+        assertEquals(results.results.map(_.rank).sorted, List(1, 2))
+        assert(results.summary.exists(_.contains("won the bout by lot")))
+    }
+
+    test("a knockout adds 25 to the winner's score, and a bout that allows ties is stored without the flag") {
+        val (engine, recorder, store, _, _) =
+            fixture(createRequest(red = Some(slugger), parameters = Map("rounds" -> "12")))
+        engine.plan("m-1", alice, Allocation(0, 0, 10))
+        engine.plan("m-1", bob, Allocation(5, 0, 0))
+        val results = recorder.results.head._2.results
+        assertEquals(results.find(_.participantId == 11L).map(_.scores("score").num), Some(25.0))
+        assertEquals(results.find(_.participantId == 22L).map(_.scores("score").num), Some(0.0))
+        val stored = upickle.default.write(bout(store))(using Bout.given_ReadWriter_Bout)
+        assert(!stored.contains("tiesAllowed"))
+    }
+
     test("a bout stored before fighters' names were kept is summed up by the players' nicknames") {
         val (engine, _, store, _, _) = fixture()
         (1 to 3).foreach { _ =>

@@ -34,6 +34,10 @@ case class ThrowRecord(participantId: Long, shape: Shape, takenAt: Instant, star
   *
   * `clock` is a live match's turn clock, and `None` for every other match — defaulted, so that a match stored before
   * live matches existed reads back as the match it was.
+  *
+  * `tiesAllowed` is false for a match that must not end in a draw. Then a tied throw starts another: `throws` holds
+  * every throw of every round, a round being each seat's next throw, and the match is over at the first round somebody
+  * wins. Defaulted, so a match stored before it existed is the one-throw match it always was.
   */
 case class RpsMatch(
     matchId: String,
@@ -48,7 +52,8 @@ case class RpsMatch(
     // What the match's pages are titled by (`MatchTitle`). Defaulted, so a match stored before they
     // were kept reads back as it was, and is titled by the game alone.
     override val gameDisplayName: Option[String] = None,
-    override val description: Option[String] = None
+    override val description: Option[String] = None,
+    tiesAllowed: Boolean = true
 ) extends MatchLike {
 
     def seatOf(side: Side): Option[Seat] = seats.find(_.side == side)
@@ -56,9 +61,48 @@ case class RpsMatch(
     /** The seat belonging to a signed-in player, if they have one in this match. */
     def seatFor(cognitoId: String): Option[Seat] = seats.find(_.cognitoId == cognitoId)
 
-    def throwOf(seat: Seat): Option[ThrowRecord] = throws.find(_.participantId == seat.participantId)
+    /** Every throw a seat has made, one per round, in order. */
+    def throwsOf(seat: Seat): List[ThrowRecord] = throws.filter(_.participantId == seat.participantId)
 
+    /** The rounds both seats have thrown in: one, at most, unless ties are not allowed. */
+    def completeRounds: Int = if (seats.isEmpty) 0 else seats.map(throwsOf(_).size).min
+
+    /** The throws of a round both seats have thrown in, in seat order. */
+    private def round(index: Int): List[ThrowRecord] = seats.flatMap(throwsOf(_).lift(index))
+
+    /** The last complete round's two throws, if there is one: the round that decided the match, once it is over. */
+    private def lastRound: List[ThrowRecord] = if (completeRounds == 0) Nil else round(completeRounds - 1)
+
+    /** The shapes of the rounds that were thrown and tied before the current one, oldest first. In this game a tie is
+      * the same shape twice, so one shape says what both threw.
+      */
+    def tiedRounds: List[Shape] = {
+        val tied = (0 until completeRounds).toList.map(round).filter(r => decide(r).isEmpty).flatMap(_.headOption)
+        tied.map(_.shape)
+    }
+
+    /** The round being thrown now, counting from 0: past the last one once the match is over. */
+    def currentRound: Int = completeRounds
+
+    /** When the current round began: the match's creation for the first, and the moment the round before resolved — its
+      * second throw — after that.
+      */
+    def roundStartedAt: Instant = lastRound.map(_.takenAt).maxOption.getOrElse(createdAt)
+
+    /** A seat's throw in the round being played, or once the match is over, in the round that decided it. */
+    def throwOf(seat: Seat): Option[ThrowRecord] =
+        throwsOf(seat).lift(if (isOver) completeRounds - 1 else currentRound)
+
+    /** Whether a seat has thrown in the round being played. */
     def hasThrown(seat: Seat): Boolean = throwOf(seat).isDefined
+
+    /** The seat whose throw won a round, or `None` for a tie or a round not yet thrown. */
+    private def decide(round: List[ThrowRecord]): Option[Seat] =
+        round match {
+            case x :: y :: Nil if x.shape.beats(y.shape) => seats.find(_.participantId == x.participantId)
+            case x :: y :: Nil if y.shape.beats(x.shape) => seats.find(_.participantId == y.participantId)
+            case _                                       => None
+        }
 
     /** The seats still being waited on — all of them at the start, and none once the match is over.
       *
@@ -69,10 +113,10 @@ case class RpsMatch(
     def pending: List[Seat] = if (isOver) Nil else seats.filterNot(hasThrown)
 
     /** Over the moment both players have thrown, which is the rule the game is: nobody waits for a turn, so there is
-      * nothing to end but the pair being complete. Or, in a live match, the moment the clock ran out on whoever had
-      * not.
+      * nothing to end but the pair being complete — or, when ties are not allowed, the moment a pair is thrown that
+      * somebody wins. Or, in a live match, the moment the clock ran out on whoever had not.
       */
-    def isOver: Boolean = ranOut || seats.forall(hasThrown)
+    def isOver: Boolean = ranOut || (completeRounds > 0 && (tiesAllowed || decide(lastRound).isDefined))
 
     /** Whether a live match's clock ended this one. */
     def ranOut: Boolean = clock.exists(_.ranOut)
@@ -82,16 +126,8 @@ case class RpsMatch(
       */
     def winner: Option[Seat] =
         if (ranOut) seats.find(s => clock.flatMap(_.outcomeOf(s.participantId)).contains(Outcome.Win))
-        else
-            seats match {
-                case a :: b :: Nil =>
-                    (throwOf(a), throwOf(b)) match {
-                        case (Some(x), Some(y)) if x.shape.beats(y.shape) => Some(a)
-                        case (Some(x), Some(y)) if y.shape.beats(x.shape) => Some(b)
-                        case _                                            => None
-                    }
-                case _ => None
-            }
+        else if (isOver) decide(lastRound)
+        else None
 
     /** Not a match the clock ended with nobody winning: two players who both ran out both lost. */
     def isDraw: Boolean = isOver && !ranOut && winner.isEmpty
@@ -148,7 +184,8 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
 
     def pending(m: RpsMatch): List[Seat] = m.pending
 
-    def clockStartedAt(m: RpsMatch): Instant = m.createdAt
+    /** The start of the round being thrown: the match's creation, unless a tie has started another. */
+    def clockStartedAt(m: RpsMatch): Instant = m.roundStartedAt
 
     def turns(m: RpsMatch): List[ThrowRecord] = m.throws
 
@@ -168,6 +205,12 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
         Option.when(m.isOver) {
             def who(s: Seat) = ResultText.name(s.nickname, s"Player ${s.side}")
             def threw(s: Seat) = m.throwOf(s).map(_.shape.toString.toLowerCase).getOrElse("nothing")
+            // When ties were not allowed and some were thrown first, how many.
+            val after = m.tiedRounds.size match {
+                case 0 => ""
+                case 1 => ", after a tied throw"
+                case n => s", after $n tied throws"
+            }
             (m.winner, m.seats) match {
                 case (Some(w), _) if m.ranOut =>
                     m.seats
@@ -179,7 +222,9 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
                 case (Some(w), _) =>
                     m.seats
                         .find(_ != w)
-                        .fold(s"${who(w)} wins.")(l => s"${who(w)}'s ${threw(w)} beat ${who(l)}'s ${threw(l)}.")
+                        .fold(s"${who(w)} wins$after.")(l =>
+                            s"${who(w)}'s ${threw(w)} beat ${who(l)}'s ${threw(l)}$after."
+                        )
                 case (None, a :: b :: Nil) => s"${who(a)} and ${who(b)} both threw ${threw(a)}. A draw."
                 case (None, _)             => "A draw."
             }
@@ -188,7 +233,10 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
     def scores(m: RpsMatch, seat: Seat): Map[String, ujson.Value] =
         Map(
           "throw" -> m.throwOf(seat).map(t => ujson.Str(t.shape.toString)).getOrElse(ujson.Null),
-          "side" -> ujson.Str(seat.side.toString)
+          "side" -> ujson.Str(seat.side.toString),
+          // The number a tournament's score tiebreak reads: rounds this seat's throw won, which is 1 for the
+          // winner and 0 for everyone else, ties and all.
+          "score" -> ujson.Num(if (m.winner.exists(_.participantId == seat.participantId)) 1 else 0)
         )
 
     def create(request: Protocol.CreateGameRequest, now: Instant): Either[String, RpsMatch] =
@@ -203,7 +251,8 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
               moveCallbackUrl = request.moveCallbackUrl,
               resultsCallbackUrl = request.resultsCallbackUrl,
               gameDisplayName = request.gameDisplayName,
-              description = request.description
+              description = request.description,
+              tiesAllowed = Protocol.tiesAllowed(request)
             )
         }
 

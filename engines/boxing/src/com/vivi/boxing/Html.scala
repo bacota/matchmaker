@@ -251,7 +251,8 @@ ${Finale.script(victory, defeat)}
     showClock(state && state.clock, corner ? corner.participantId : null);
     showFinale(result());
     document.getElementById("round").textContent = state
-      ? (state.completed ? "Scheduled for " + state.scheduledRounds + " rounds"
+      ? (state.completed ? "Scheduled for " + state.scheduledRounds + " rounds" + (state.extraRound ? ", and an extra round" : "")
+                         : state.extraRound ? "Extra round: the bout was level after " + state.scheduledRounds + " rounds"
                          : "Round " + state.round + " of " + state.scheduledRounds)
       : "";
 
