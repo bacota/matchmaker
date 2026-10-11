@@ -22,8 +22,7 @@ class WireFormatSpec extends FunSuite {
         val played = Match(
           gameId = GameId(7),
           matchId = MatchId("6b7c-uuid"),
-          challengeId = Some(ChallengeId(3)),
-          creator = PlayerId(4),
+          challengeId = ChallengeId(3),
           description = "a friendly game",
           completedAt = Some(Instant.parse("2030-01-01T10:42:00Z")),
           cancelled = false,
@@ -37,26 +36,6 @@ class WireFormatSpec extends FunSuite {
         )
 
         assertEquals(read[Match](write(played)), played)
-    }
-
-    // A tournament's match has no challenge (V50), and its creator says whose it is.
-    test("a match with no challenge round-trips, carrying its creator") {
-        val created = Match(
-          gameId = GameId(7),
-          matchId = MatchId("7c8d-uuid"),
-          challengeId = None,
-          creator = PlayerId(4),
-          description = "round 1",
-          completedAt = None,
-          start = Instant.parse("2030-01-01T10:00:00Z"),
-          timeLimit = None,
-          settings = "{}"
-        )
-
-        val json = ujson.read(write(created))
-        assert(json.obj.get("challengeId").forall(_.isNull), json)
-        assertEquals(json("creator").num.toLong, 4L)
-        assertEquals(read[Match](write(created)), created)
     }
 
     test("a game round-trips, including the existential parameters field") {

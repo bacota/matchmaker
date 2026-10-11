@@ -74,8 +74,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                 m = Match(
                   game.gameId,
                   matchId,
-                  Some(challenge.challengeId),
-                  challenge.challenger,
+                  challenge.challengeId,
                   "d",
                   None,
                   Instant.ofEpochSecond(1000),

@@ -85,8 +85,8 @@ class GameEngineService[T](
       * can simply try again.
       *
       * The challenge itself is never deleted, and its claim is never released once the start has succeeded. It is what
-      * the match points at, and its challenger becomes the match's creator — see `Match.creator`. A started challenge
-      * is excluded from the open-challenge listings and refuses further acceptances, which is what "spent" now means in
+      * the match points at, and its challenger is the match's creator — see `Match.challengeId`. A started challenge is
+      * excluded from the open-challenge listings and refuses further acceptances, which is what "spent" now means in
       * place of "gone".
       */
     def start(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Match] =
@@ -280,9 +280,8 @@ class GameEngineService[T](
                     newMatch = Match(
                       gameId = gameId,
                       matchId = matchId,
-                      challengeId = Some(challengeId),
-                      // Whose match it is: the challenger, copied so that nothing needs the challenge to say.
-                      creator = challenge.challenger,
+                      // The match's creator, by reference: whoever this challenge's challenger is.
+                      challengeId = challengeId,
                       description = challenge.message,
                       completedAt = None,
                       start = challenge.start.getOrElse(Instant.now()),

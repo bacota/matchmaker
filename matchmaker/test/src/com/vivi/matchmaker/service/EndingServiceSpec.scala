@@ -96,8 +96,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                 m = Match(
                   game.gameId,
                   matchId,
-                  Some(challenge.challengeId),
-                  challenge.challenger,
+                  challenge.challengeId,
                   "d",
                   finishedAgo.map(ago => Instant.now().minus(ago)),
                   Instant.ofEpochSecond(1000),

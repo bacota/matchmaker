@@ -98,8 +98,7 @@ class ArchiveServiceSpec extends FunSuite {
                   Match(
                     game.gameId,
                     matchId,
-                    Some(challenge.challengeId),
-                    challenge.challenger,
+                    challenge.challengeId,
                     "description",
                     Option.when(completed)(completedAt),
                     Instant.ofEpochSecond(1000),
@@ -152,8 +151,7 @@ class ArchiveServiceSpec extends FunSuite {
                   Match(
                     f.game.gameId,
                     matchId,
-                    Some(challenge.challengeId),
-                    challenge.challenger,
+                    challenge.challengeId,
                     "description",
                     Some(completedAt),
                     Instant.ofEpochSecond(1000),
