@@ -333,24 +333,30 @@ class AcceptanceRepo(session: Session[IO]) {
      * wanted for two things at once: whether the challenge is ready (nothing here) and, when it is
      * not, what it is still waiting for, which is what a notification about an acceptance can
      * usefully say. Optional and recommended roles are left out: a start does not wait for them.
+     *
+     * Except that an automatic start does wait for recommended roles, so the flag counts them too:
+     * a challenge that starts itself would otherwise begin short of a seat the game recommends,
+     * with no challenger deciding that it should.
      */
-    private val selectUnclaimedRoles: Query[(GameId, ChallengeId), String] =
+    private val selectUnclaimedRoles: Query[(GameId, Boolean, ChallengeId), String] =
         sql"""SELECT gr.display_name
           FROM game_role gr
-          WHERE gr.game_id = $gameId AND gr.type = 'required'
+          WHERE gr.game_id = $gameId AND (gr.type = 'required' OR ($bool AND gr.type = 'recommended'))
             AND NOT EXISTS (SELECT 1 FROM acceptance taken
                              WHERE taken.game_id = gr.game_id
                                AND taken.challenge_id = $challengeId
                                AND taken.game_role_id = gr.game_role_id)
           ORDER BY gr.game_role_id""".query(text)
 
-    /** The display names of the required roles in this challenge that are still free, in the game's own role order.
+    /** The display names of the required roles in this challenge that are still free, in the game's own role order —
+      * and its recommended ones too, with `recommended`.
       *
       * Empty means the challenge is ready to be started, which is the same question `listForPlayer` answers as
-      * `readyToStart` — asked here for one challenge, by whatever has just changed its roster.
+      * `readyToStart` — asked here for one challenge, by whatever has just changed its roster. With `recommended`,
+      * empty means it is ready to start itself (`GameEngineService.startIfReady`).
       */
-    def unclaimedRoles(gameId: GameId, challengeId: ChallengeId): IO[List[String]] =
-        session.execute(selectUnclaimedRoles)((gameId, challengeId))
+    def unclaimedRoles(gameId: GameId, challengeId: ChallengeId, recommended: Boolean = false): IO[List[String]] =
+        session.execute(selectUnclaimedRoles)((gameId, recommended, challengeId))
 
     private val selectAcceptancesForChallenge: Query[
       (GameId, ChallengeId),

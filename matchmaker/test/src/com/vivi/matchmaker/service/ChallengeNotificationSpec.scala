@@ -2,6 +2,7 @@ package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
 import cats.effect.IO
+import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import java.time.Instant
 import org.scalacheck.Gen
@@ -39,7 +40,7 @@ class ChallengeNotificationSpec extends PropertySuite {
     /* Three required roles, so that the roster can be half full: the challenger takes one at
      * creation, and it then takes two more acceptances to fill -- which is what makes "somebody
      * accepted" and "it is ready to start" two separate events to be told apart. */
-    private def makeGame(seed: String): IO[Game] =
+    private def makeGame(seed: String, healer: RoleType = RoleType.Required): IO[Game] =
         TestSession.resource.use { session =>
             new GameRepo[String](session).create(
               Game(
@@ -69,7 +70,7 @@ class ChallengeNotificationSpec extends PropertySuite {
                     GameRoleId(0),
                     GameId.unassigned,
                     "healer",
-                    roleType = RoleType.Required,
+                    roleType = healer,
                     displayName = "healer"
                   )
                 ),
@@ -99,7 +100,8 @@ class ChallengeNotificationSpec extends PropertySuite {
         seed: String,
         autoStart: Boolean = false,
         engineFails: Boolean = false,
-        message: String = "friendly game"
+        message: String = "friendly game",
+        healer: RoleType = RoleType.Required
     ): IO[Fixture] = {
         val notifier = new RecordingNotifier
         val services = TestServices.servicesWith(
@@ -110,7 +112,7 @@ class ChallengeNotificationSpec extends PropertySuite {
         )
 
         for {
-            game <- makeGame(seed)
+            game <- makeGame(seed, healer)
             challenger <- services.registration
                 .register(s"challenger-$seed", s"challenger-$seed", Some(s"challenger-$seed@example.com"))
             second <- services.registration
@@ -340,6 +342,28 @@ class ChallengeNotificationSpec extends PropertySuite {
                         )
                 }
             }
+            result.timeout(caseTimeout).unsafeRunSync()
+        }
+    }
+
+    /* What a challenge that starts itself waits for: its recommended roles as well as its required
+     * ones, since nobody is there to decide to go without them -- but not its optional ones. */
+    property("a challenge that starts itself waits for recommended roles, and not for optional ones") {
+        forAll(genUniqueString) { seed =>
+            def startedAfter(healer: RoleType, roles: List[Int]) =
+                fixture(s"$seed-${healer.code}-${roles.size}", autoStart = true, healer = healer).flatMap { f =>
+                    roles.zip(List(f.second, f.third)).traverse_((role, who) => accept(f, who, role)) *>
+                        TestSession.resource.use(session =>
+                            new com.vivi.matchmaker.persistence.ChallengeRepo(session)
+                                .readForUpdate(f.game.gameId, f.challenge.challengeId)
+                                .map(_.flatMap(_.startedMatchId).isDefined)
+                        )
+                }
+            val result = for {
+                recommendedEmpty <- startedAfter(RoleType.Recommended, List(1))
+                recommendedTaken <- startedAfter(RoleType.Recommended, List(1, 2))
+                optionalEmpty <- startedAfter(RoleType.Optional, List(1))
+            } yield !recommendedEmpty && recommendedTaken && optionalEmpty
             result.timeout(caseTimeout).unsafeRunSync()
         }
     }

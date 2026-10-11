@@ -145,7 +145,9 @@ class GameEngineService[T](
         (for {
             claimed <- challengeRepo.startedMatch(gameId, challengeId)
             challenge <- challengeRepo.read(gameId, challengeId)
-            unfilled <- new AcceptanceRepo(session).unclaimedRoles(gameId, challengeId)
+            // Recommended roles as well as required ones: nobody presses Start here to say that a
+            // challenge short of a recommended seat should begin anyway.
+            unfilled <- new AcceptanceRepo(session).unclaimedRoles(gameId, challengeId, recommended = true)
         } yield
             if (claimed.isDefined) GameEngineService.AutoStart.AlreadyStarted
             else if (challenge.exists(_.autoStart) && unfilled.isEmpty) GameEngineService.AutoStart.Ready

@@ -2584,8 +2584,9 @@ object Views {
             s"$formKey-roles-tip",
             "Roles",
             "Every seat in a match names a role, so a game needs at least one. A match cannot start until " +
-                "every required role is filled. Optional and recommended roles can be left empty, but a " +
-                "recommended one counts toward a tournament's pool size. A role that already exists can " +
+                "every required role is filled, or, for a challenge that starts itself, every required and " +
+                "recommended role. Optional roles can always be left empty, and a recommended one counts " +
+                "toward a tournament's pool size. A role that already exists can " +
                 "be renamed but not removed — acceptances and played matches name it, so retire one by " +
                 "making it optional."
           )(h4("Roles")),
@@ -4568,14 +4569,16 @@ object Views {
               busyButton("Accept") { busy =>
                   val chosen = role.now().getOrElse(choices.head.gameRoleId)
                   // Whether this acceptance is also the start: an auto-starting challenge whose last
-                  // required role is the one being taken here. Worked out from what this row already
+                  // required or recommended role is the one being taken here. Worked out from what this row already
                   // knows rather than asked of the server, because the server answers an acceptance
                   // with the acceptance — the match it may have started is not in the reply.
                   //
                   // Optional roles are not counted, for the same reason the server does not count
-                  // them: they are the ones a start need not wait for.
+                  // them: they are the ones an automatic start need not wait for.
                   val starts = challenge.autoStart &&
-                      unfilledRoles(game, summary).forall(_.gameRoleId == chosen)
+                      freeRoles(game, summary)
+                          .filter(_.roleType != RoleType.Optional)
+                          .forall(_.gameRoleId == chosen)
                   Store.run(ApiClient.accept(game.gameId, challenge.challengeId, characterId, chosen), busy) { _ =>
                       // Two lists change: this one, which now shows the role as taken, and the acceptances
                       // — the challenge has joined what this player is waiting on, and if they are its
