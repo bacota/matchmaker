@@ -1,0 +1,38 @@
+package com.vivi.matchmaker.api
+
+import upickle.default.{ReadWriter, readwriter, macroRW}
+import com.vivi.matchmaker.model._
+import Json.given
+
+/** The tournament half of the wire format (V52), beside [[Json]] rather than in it: one object holding every codec
+  * grows past what the Scala.js compiler's stack will take while it expands them.
+  *
+  * The design and the state are the model's own codecs, which the server's services share, re-exported by name rather
+  * than imported so that nothing here is ambiguous. Import `TournamentJson.given` beside `Json.given`.
+  */
+object TournamentJson {
+    given ReadWriter[com.vivi.matchmaker.model.tournament.TournamentDesign] =
+        com.vivi.matchmaker.model.tournament.TournamentCodecs.designRW
+    given ReadWriter[com.vivi.matchmaker.model.tournament.TournamentState] =
+        com.vivi.matchmaker.model.tournament.TournamentCodecs.stateRW
+    given ReadWriter[TournamentStatus] = readwriter[String].bimap(_.code, TournamentStatus.fromCode)
+    given ReadWriter[TournamentMatchStatus] = readwriter[String].bimap(_.code, TournamentMatchStatus.fromCode)
+    given ReadWriter[TournamentSettings] = macroRW
+    given ReadWriter[Tournament] = macroRW
+    given ReadWriter[TournamentRequest] = macroRW
+    given ReadWriter[Entrant] = macroRW
+    given ReadWriter[PlayerName] = macroRW
+    given ReadWriter[TournamentSummary] = macroRW
+    given ReadWriter[TournamentSeatView] = macroRW
+    given ReadWriter[TournamentMatchView] = macroRW
+    given ReadWriter[TournamentDetail] = macroRW
+
+    /** Entering a tournament: with which character, in a character game. */
+    case class EnterRequest(characterId: Option[CharacterId] = None)
+    given ReadWriter[EnterRequest] = macroRW
+
+    /** Inviting a player to a tournament. */
+    case class TournamentInvite(playerId: PlayerId)
+    given ReadWriter[TournamentInvite] = macroRW
+
+}

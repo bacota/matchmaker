@@ -123,3 +123,64 @@ case class TournamentMatch(
     matchId: Option[MatchId],
     seats: List[TournamentSeat]
 )
+
+/** What a tournament is created or edited with: a standard design by key (with a pool size, for one that needs it) or a
+  * design of the creator's own, and its settings. `owner` hands an existing tournament to another player; a new one is
+  * its creator's.
+  */
+case class TournamentRequest(
+    name: String,
+    description: String = "",
+    standardDesign: Option[String] = None,
+    poolSize: Option[Int] = None,
+    design: Option[TournamentDesign] = None,
+    settings: TournamentSettings = TournamentSettings(),
+    owner: Option[PlayerId] = None
+)
+
+/** A tournament as a list shows it: the tournament, its game's name, its owner's nickname, how many have entered, and
+  * whether the viewer owns it, has entered it, or is invited.
+  */
+case class TournamentSummary(
+    tournament: Tournament,
+    gameName: String,
+    ownerNickname: String,
+    entrants: Int,
+    isOwner: Boolean,
+    entered: Boolean,
+    invited: Boolean
+)
+
+/** A seat of a match being played in a tournament's round, as its page shows it: the entrant, the role (once chosen),
+  * whether it is this seat's turn to choose, and by when.
+  */
+case class TournamentSeatView(
+    entrantId: EntrantId,
+    role: Option[GameRoleId],
+    choosing: Boolean,
+    chooseBy: Option[Instant]
+)
+
+/** A match of the round being played: where it is in the tournament, its seats, and the match it became, once it has.
+  */
+case class TournamentMatchView(
+    poolId: Int,
+    matchNo: Int,
+    status: TournamentMatchStatus,
+    matchId: Option[MatchId],
+    seats: List[TournamentSeatView]
+)
+
+/** Everything a tournament's page shows: the tournament, who has entered and who is invited, its state once it has
+  * started, the matches of the round being played, and what the viewer may do.
+  */
+case class TournamentDetail(
+    summary: TournamentSummary,
+    entries: List[Entrant],
+    invited: List[PlayerName],
+    state: Option[com.vivi.matchmaker.model.tournament.TournamentState],
+    round: List[TournamentMatchView] = Nil
+)
+
+/** A player by name, for a list that shows people. */
+case class PlayerName(playerId: PlayerId, nickname: String)

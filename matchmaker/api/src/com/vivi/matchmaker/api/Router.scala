@@ -8,6 +8,7 @@ import com.vivi.matchmaker.service._
 import com.vivi.matchmaker.util.JsonValues
 import ApiGateway.{Request, Response}
 import Json.given
+import TournamentJson.given
 
 /** Maps requests onto service calls.
   *
@@ -542,6 +543,67 @@ object Router {
                     }
                 }
 
+            // ---- tournaments (V52) ----------------------------------------------------------
+
+            // The caller's own: owned, entered or invited to, in every game.
+            case ("GET", "me" :: "tournaments" :: Nil) =>
+                ok(services.tournaments.mine(caller))
+
+            case ("GET", "games" :: gameId :: "tournaments" :: Nil) =>
+                withGameId(gameId)(gid => ok(services.tournaments.listForGame(gid, caller)))
+
+            // A new tournament, in draft: a standard design by key, or a design of the creator's own.
+            case ("POST", "games" :: gameId :: "tournaments" :: Nil) =>
+                withGameId(gameId)(gid =>
+                    body[TournamentRequest](request).flatMap(r => created(services.tournaments.create(gid, r, caller)))
+                )
+
+            case ("GET", "games" :: gameId :: "tournaments" :: tid :: Nil) =>
+                withTournament(gameId, tid)((gid, t) => ok(services.tournaments.detail(gid, t, caller)))
+
+            case ("PUT", "games" :: gameId :: "tournaments" :: tid :: Nil) =>
+                withTournament(gameId, tid)((gid, t) =>
+                    body[TournamentRequest](request).flatMap(r => ok(services.tournaments.update(gid, t, r, caller)))
+                )
+
+            // The owner's steps through a tournament's life: open for entries, start, call off.
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "open" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) => ok(services.tournaments.open(gid, t, caller)))
+
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "start" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) => ok(services.tournaments.start(gid, t, caller)))
+
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "cancel" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) => ok(services.tournaments.cancel(gid, t, caller)))
+
+            // Inviting a player, and taking it back -- the owner's revoke or the player's decline.
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "invitations" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) =>
+                    body[TournamentJson.TournamentInvite](request).flatMap(r =>
+                        noContent(services.tournaments.invite(gid, t, r.playerId, caller))
+                    )
+                )
+
+            case ("DELETE", "games" :: gameId :: "tournaments" :: tid :: "invitations" :: playerId :: Nil) =>
+                withTournament(gameId, tid)((gid, t) =>
+                    withPlayerId(playerId)(p => noContent(services.tournaments.revoke(gid, t, p, caller)))
+                )
+
+            // Entering, with a character in a character game, and withdrawing an entry.
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "entries" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) =>
+                    body[TournamentJson.EnterRequest](request).flatMap(r =>
+                        created(services.tournaments.enter(gid, t, r.characterId, caller))
+                    )
+                )
+
+            case ("DELETE", "games" :: gameId :: "tournaments" :: tid :: "entries" :: entrantId :: Nil) =>
+                withTournament(gameId, tid)((gid, t) =>
+                    entrantId.toLongOption.fold(IO.pure(Errors.badRequest(s"'$entrantId' is not an entry id")))(e =>
+                        noContent(services.tournaments.withdraw(gid, t, EntrantId(e), caller))
+                    )
+                )
+
             // A completed match's archive, the engine's to move and matchmaker's to keep track of
             // (archiving-matches-plan.md). Authorized as the game, like the callbacks above, but addressed
             // by match id alone: an engine whose live copy is gone no longer knows the game id.
@@ -643,6 +705,15 @@ object Router {
                     f(Some(GameRoleId(id)))
                 )
         }
+
+    private def withTournament(rawGame: String, rawTournament: String)(
+        f: (GameId, TournamentId) => IO[Response]
+    ): IO[Response] =
+        withGameId(rawGame)(gid =>
+            rawTournament.toLongOption.fold(IO.pure(Errors.badRequest(s"'$rawTournament' is not a tournament id")))(t =>
+                f(gid, TournamentId(t))
+            )
+        )
 
     private def withPlayerId(raw: String)(f: PlayerId => IO[Response]): IO[Response] =
         raw.toLongOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a player id")))(id => f(PlayerId(id)))

@@ -1,0 +1,254 @@
+package com.vivi.matchmaker.service
+
+import cats.effect.IO
+import cats.syntax.all._
+import cats.effect.unsafe.implicits.global
+import java.time.Duration
+import scala.concurrent.duration._
+import munit.FunSuite
+import com.vivi.matchmaker.QuietTests
+import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.persistence.{CharacterRepo, EloRatingRepo, GameRepo, Generators, TestSession}
+
+/** Creating, entering and starting tournaments, against the local database. */
+class TournamentServiceSpec extends FunSuite with QuietTests {
+
+    private val services = TestServices.services
+    private val tournaments = services.tournaments
+
+    private def unique(prefix: String) = s"$prefix-${java.util.UUID.randomUUID()}"
+
+    private case class Fixture(game: Game, owner: Player, players: List[Player])
+
+    /** A plain two-player game, its owner, and `n` other registered players. */
+    private def fixture(n: Int = 4, gameType: GameType = GameType.Plain): IO[Fixture] =
+        for {
+            game <- TestSession.resource.use(new GameRepo[String](_).create(Generators.genGame(gameType).sample.get))
+            owner <- services.registration.register(unique("owner"), unique("sub"))
+            players <- (1 to n).toList.traverse(_ => services.registration.register(unique("p"), unique("sub")))
+        } yield Fixture(game, owner, players)
+
+    private def request(
+        standard: String = "single-elimination",
+        settings: TournamentSettings =
+            TournamentSettings(invitational = false, roundDuration = Some(Duration.ofDays(2)))
+    ) = TournamentRequest("Open", "an open", standardDesign = Some(standard), settings = settings)
+
+    private def run[A](io: IO[A]): A = io.timeout(60.seconds).unsafeRunSync()
+
+    private def refusal[A](io: IO[A]): Option[Throwable] = run(io.attempt).left.toOption
+
+
+    test("a tournament is created in draft from a standard design, owned by its creator") {
+        val (f, t) = run(for {
+            f <- fixture(0)
+            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+        } yield (f, t))
+        assertEquals(t.status, TournamentStatus.Draft)
+        assertEquals(t.owner, f.owner.playerId)
+        assertEquals(t.standardDesign, Some("single-elimination"))
+        assertEquals(t.design.stages.size, 1)
+    }
+
+    test("a design that cannot be played is refused, naming what is wrong") {
+        val refused = refusal(for {
+            f <- fixture(0)
+            _ <- tournaments.create(f.game.gameId, request(settings = TournamentSettings()), f.owner.externalId)
+        } yield ())
+        assert(refused.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("round duration")), refused)
+        val unknown =
+            refusal(fixture(0).flatMap(f => tournaments.create(f.game.gameId, request("no-such"), f.owner.externalId)))
+        assert(unknown.exists(_.isInstanceOf[ValidationError]))
+    }
+
+    test("only the owner may edit, open, start or cancel a tournament") {
+        val outcome = run(for {
+            f <- fixture(1)
+            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            stranger = f.players.head.externalId
+            edit <- tournaments.update(f.game.gameId, t.tournamentId, request(), stranger).attempt
+            open <- tournaments.open(f.game.gameId, t.tournamentId, stranger).attempt
+            start <- tournaments.start(f.game.gameId, t.tournamentId, stranger).attempt
+            cancel <- tournaments.cancel(f.game.gameId, t.tournamentId, stranger).attempt
+        } yield List(edit, open, start, cancel))
+        assert(outcome.forall(_.left.exists(_.isInstanceOf[UnauthorizedError])), outcome.toString)
+    }
+
+    test("a player can enter an open tournament once, and not a draft") {
+        val (draft, entered, again) = run(for {
+            f <- fixture(1)
+            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            p = f.players.head.externalId
+            draft <- tournaments.enter(f.game.gameId, t.tournamentId, None, p).attempt
+            _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
+            entered <- tournaments.enter(f.game.gameId, t.tournamentId, None, p)
+            again <- tournaments.enter(f.game.gameId, t.tournamentId, None, p).attempt
+        } yield (draft, entered, again))
+        assert(draft.left.exists(_.isInstanceOf[ConflictError]))
+        assertEquals(entered.ratingAtEntry, EloRating.initial)
+        assert(again.left.exists(e => e.isInstanceOf[ConflictError] && e.getMessage.contains("already entered")))
+    }
+
+    test("an invitational tournament takes only those invited, and its owner") {
+        val (uninvited, invited, owner) = run(for {
+            f <- fixture(2)
+            t <- tournaments.create(
+              f.game.gameId,
+              request(settings = TournamentSettings(roundDuration = Some(Duration.ofDays(1)))),
+              f.owner.externalId
+            )
+            _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
+            uninvited <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players.head.externalId).attempt
+            _ <- tournaments.invite(f.game.gameId, t.tournamentId, f.players(1).playerId, f.owner.externalId)
+            invited <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players(1).externalId).attempt
+            owner <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.owner.externalId).attempt
+        } yield (uninvited, invited, owner))
+        assert(uninvited.left.exists(_.isInstanceOf[UnauthorizedError]))
+        assert(invited.isRight && owner.isRight)
+    }
+
+    test("a rating outside the tournament's limits is refused") {
+        val refused = refusal(for {
+            f <- fixture(1)
+            t <- tournaments.create(
+              f.game.gameId,
+              request(settings =
+                  TournamentSettings(
+                    invitational = false,
+                    minRating = Some(1600),
+                    roundDuration = Some(Duration.ofDays(1))
+                  )
+              ),
+              f.owner.externalId
+            )
+            _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
+            _ <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players.head.externalId)
+        } yield ())
+        assert(refused.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("at least 1600")), refused)
+    }
+
+    test("a character game's entry is one of the caller's characters") {
+        val (none, theirs, mine) = run(for {
+            f <- fixture(2, GameType.Character)
+            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
+            other <- TestSession.resource.use(
+              new CharacterRepo[String](_)
+                  .create(Generators.genCharacter(f.game.gameId, Some(f.players(1).playerId)).sample.get)
+            )
+            own <- TestSession.resource.use(
+              new CharacterRepo[String](_)
+                  .create(Generators.genCharacter(f.game.gameId, Some(f.players.head.playerId)).sample.get)
+            )
+            none <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players.head.externalId).attempt
+            theirs <- tournaments
+                .enter(f.game.gameId, t.tournamentId, Some(other.characterId), f.players.head.externalId)
+                .attempt
+            mine <- tournaments.enter(f.game.gameId, t.tournamentId, Some(own.characterId), f.players.head.externalId)
+        } yield (none, theirs, mine))
+        assert(none.left.exists(_.isInstanceOf[ValidationError]))
+        assert(theirs.left.exists(_.isInstanceOf[ValidationError]))
+        assert(mine.characterId.isDefined)
+    }
+
+    test("starting seeds the entrants by rating and forms the first stage's pools; it needs two entries") {
+        val (tooFew, started, detail) = run(for {
+            f <- fixture(4)
+            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
+            _ <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players.head.externalId)
+            tooFew <- tournaments.start(f.game.gameId, t.tournamentId, f.owner.externalId).attempt
+            // The last to enter is rated highest, so takes the top seed.
+            _ <- TestSession.resource.use(
+              new EloRatingRepo(_).set(f.game.gameId, f.players(3).playerId, 1900, f.owner.playerId)
+            )
+            _ <- f.players.tail.traverse(p => tournaments.enter(f.game.gameId, t.tournamentId, None, p.externalId))
+            started <- tournaments.start(f.game.gameId, t.tournamentId, f.owner.externalId)
+            detail <- tournaments.detail(f.game.gameId, t.tournamentId, f.players.head.externalId)
+        } yield (tooFew, started, detail))
+        assert(tooFew.left.exists(_.isInstanceOf[ConflictError]))
+        assertEquals(started.status, TournamentStatus.Running)
+        val state = detail.state.getOrElse(fail("a started tournament has a state"))
+        val top = state.root.members.minBy(_.seed).entrant
+        assertEquals(detail.entries.find(_.entrantId.value == top).map(_.playerId), Some(detail.entries.last.playerId))
+        // Single elimination of four: two pools of two.
+        assertEquals(state.root.runs.head.pools.map(_.members.size), List(2, 2))
+        assertEquals(detail.summary.entrants, 4)
+    }
+
+    test("withdrawing before the start removes the entry; after it, marks it and keeps it out of later pools") {
+        val (before, after) = run(for {
+            f <- fixture(3)
+            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
+            entries <- f.players.traverse(p => tournaments.enter(f.game.gameId, t.tournamentId, None, p.externalId))
+            _ <- tournaments.withdraw(f.game.gameId, t.tournamentId, entries.head.entrantId, f.players.head.externalId)
+            before <- tournaments.detail(f.game.gameId, t.tournamentId, f.owner.externalId)
+            _ <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players.head.externalId)
+            _ <- tournaments.start(f.game.gameId, t.tournamentId, f.owner.externalId)
+            _ <- tournaments.withdraw(f.game.gameId, t.tournamentId, entries(1).entrantId, f.owner.externalId)
+            after <- tournaments.detail(f.game.gameId, t.tournamentId, f.owner.externalId)
+        } yield (before, after))
+        assertEquals(before.entries.size, 2)
+        assert(after.entries.exists(e => e.withdrawn))
+        assert(after.state.exists(_.withdrawn.nonEmpty))
+    }
+
+    test("a running tournament with late entries takes them into its state, and refuses them otherwise") {
+        val (refused, late) = run(for {
+            f <- fixture(3)
+            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
+            _ <- f.players.take(2).traverse(p => tournaments.enter(f.game.gameId, t.tournamentId, None, p.externalId))
+            _ <- tournaments.start(f.game.gameId, t.tournamentId, f.owner.externalId)
+            refused <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players(2).externalId).attempt
+            _ <- tournaments.update(
+              f.game.gameId,
+              t.tournamentId,
+              request(settings = TournamentSettings(lateEntries = true, roundDuration = Some(Duration.ofDays(2)))),
+              f.owner.externalId
+            )
+            entry <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players(2).externalId)
+            detail <- tournaments.detail(f.game.gameId, t.tournamentId, f.owner.externalId)
+        } yield (refused, detail.state.exists(_.root.members.exists(_.entrant == entry.entrantId.value))))
+        assert(refused.left.exists(_.isInstanceOf[ConflictError]))
+        assert(late)
+    }
+
+    test("a running tournament's design cannot be changed, nor anything once it is over") {
+        val (designKept, overRefused) = run(for {
+            f <- fixture(2)
+            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
+            _ <- f.players.traverse(p => tournaments.enter(f.game.gameId, t.tournamentId, None, p.externalId))
+            _ <- tournaments.start(f.game.gameId, t.tournamentId, f.owner.externalId)
+            edited <- tournaments.update(
+              f.game.gameId,
+              t.tournamentId,
+              request("modified-double-elimination").copy(name = "Renamed"),
+              f.owner.externalId
+            )
+            _ <- tournaments.cancel(f.game.gameId, t.tournamentId, f.owner.externalId)
+            over <- tournaments.update(f.game.gameId, t.tournamentId, request(), f.owner.externalId).attempt
+        } yield (edited.design == t.design && edited.name == "Renamed", over))
+        assert(designKept)
+        assert(overRefused.left.exists(_.isInstanceOf[ConflictError]))
+    }
+
+    test("a player's tournaments list those they own, entered or were invited to") {
+        val (mine, theirs) = run(
+          for {
+              f <- fixture(2)
+              t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+              _ <- tournaments.invite(f.game.gameId, t.tournamentId, f.players.head.playerId, f.owner.externalId)
+              mine <- tournaments.mine(f.owner.externalId)
+              theirs <- tournaments.mine(f.players.head.externalId)
+          } yield (
+            mine.find(_.tournament.tournamentId == t.tournamentId),
+            theirs.find(_.tournament.tournamentId == t.tournamentId)
+          )
+        )
+        assert(mine.exists(_.isOwner))
+        assert(theirs.exists(s => s.invited && !s.isOwner))
+    }
+}

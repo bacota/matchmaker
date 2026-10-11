@@ -386,6 +386,21 @@ locals {
     # Muting one match: the most specific thing a player can say about notifications.
     "GET /games/{gameId}/matches/{matchId}/notifications",
     "PUT /games/{gameId}/matches/{matchId}/notifications",
+
+    # Tournaments (V52): the caller's own, a game's, and one tournament's page; creating and editing
+    # one; its owner opening, starting and cancelling it; invitations; and entering and withdrawing.
+    "GET /me/tournaments",
+    "GET /games/{gameId}/tournaments",
+    "POST /games/{gameId}/tournaments",
+    "GET /games/{gameId}/tournaments/{tournamentId}",
+    "PUT /games/{gameId}/tournaments/{tournamentId}",
+    "POST /games/{gameId}/tournaments/{tournamentId}/open",
+    "POST /games/{gameId}/tournaments/{tournamentId}/start",
+    "POST /games/{gameId}/tournaments/{tournamentId}/cancel",
+    "POST /games/{gameId}/tournaments/{tournamentId}/invitations",
+    "DELETE /games/{gameId}/tournaments/{tournamentId}/invitations/{playerId}",
+    "POST /games/{gameId}/tournaments/{tournamentId}/entries",
+    "DELETE /games/{gameId}/tournaments/{tournamentId}/entries/{entrantId}",
   ]
 
   /* The game engine's calls, which are not player actions at all: a game engine tells

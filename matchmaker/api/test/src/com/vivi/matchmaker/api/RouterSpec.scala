@@ -320,7 +320,21 @@ class RouterSpec extends FunSuite {
       ("POST", "/matches/m1/archive", """{"size":10,"sha256":"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="}"""),
       ("POST", "/matches/m1/archive/confirm", "{}"),
       ("POST", "/matches/m1/archive/read", "{}"),
-      ("POST", "/matches/m1/archive/expired", "{}")
+      ("POST", "/matches/m1/archive/expired", "{}"),
+      // Tournaments (V52). A create or edit names a standard design by key; settings are all defaulted.
+      ("GET", "/me/tournaments", "{}"),
+      ("GET", "/games/1/tournaments", "{}"),
+      ("POST", "/games/1/tournaments", """{"name":"Open","standardDesign":"single-elimination"}"""),
+      ("GET", "/games/1/tournaments/2", "{}"),
+      ("PUT", "/games/1/tournaments/2", """{"name":"Open","standardDesign":"single-elimination"}"""),
+      ("POST", "/games/1/tournaments/2/open", "{}"),
+      ("POST", "/games/1/tournaments/2/start", "{}"),
+      ("POST", "/games/1/tournaments/2/cancel", "{}"),
+      ("POST", "/games/1/tournaments/2/invitations", """{"playerId":3}"""),
+      ("DELETE", "/games/1/tournaments/2/invitations/3", "{}"),
+      // An Option field is the bare value, and absent when there is none.
+      ("POST", "/games/1/tournaments/2/entries", """{"characterId":4}"""),
+      ("DELETE", "/games/1/tournaments/2/entries/5", "{}")
     )
 
     test("every routed endpoint reaches a service rather than falling through to 404") {
@@ -337,7 +351,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 60)
+        assertEquals(routed.size, 72)
         assertEquals(routed.distinct.size, routed.size)
     }
 
