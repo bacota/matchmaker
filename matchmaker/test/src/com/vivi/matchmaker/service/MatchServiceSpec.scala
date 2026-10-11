@@ -21,7 +21,8 @@ import com.vivi.matchmaker.persistence.{
     PlayerRepo,
     ResultRepo,
     SkunkCodecs,
-    TestSession
+    TestSession,
+    TournamentRepo
 }
 
 class MatchServiceSpec extends PropertySuite {
@@ -146,22 +147,40 @@ class MatchServiceSpec extends PropertySuite {
                           )
                         )
                         .map(Some(_))
+            // A match not from a challenge is from a tournament: it has to come from one or the other (V52).
+            tournament <-
+                if (fromChallenge) IO.pure(None)
+                else
+                    new TournamentRepo(session)
+                        .create(
+                          Tournament(
+                            game.gameId,
+                            TournamentId.unassigned,
+                            "tournament",
+                            "",
+                            creator.getOrElse(player.playerId),
+                            com.vivi.matchmaker.model.tournament.StandardDesigns.eliminationMatch,
+                            None,
+                            TournamentSettings()
+                          )
+                        )
+                        .map(t => Some(t.tournamentId))
             matchId = MatchId(matchIdStr)
-            _ <- new MatchRepo(session).create(
-              Match(
-                game.gameId,
-                matchId,
-                challenge.map(_.challengeId),
-                creator.getOrElse(player.playerId),
-                "description",
-                completedAt,
-                Instant.ofEpochSecond(1000),
-                None,
-                settings,
-                isPublic = isPublic,
-                publicUrl = publicUrl
-              )
+            made = Match(
+              game.gameId,
+              matchId,
+              challenge.map(_.challengeId),
+              creator.getOrElse(player.playerId),
+              "description",
+              completedAt,
+              Instant.ofEpochSecond(1000),
+              None,
+              settings,
+              isPublic = isPublic,
+              publicUrl = publicUrl
             )
+            _ <- tournament
+                .fold(new MatchRepo(session).create(made))(new MatchRepo(session).createForTournament(made, _))
             _ <- new ParticipantRepo(session).create(
               CharacterParticipant(
                 ParticipantId(0),

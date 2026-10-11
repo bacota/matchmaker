@@ -14,6 +14,7 @@ class MatchRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val matchId = SkunkIdCodecs.matchId
     private val challengeId = SkunkIdCodecs.challengeId
+    private val tournamentId = SkunkIdCodecs.tournamentId
     // Declared here rather than beside the queries that use it further down, as `playerId` is: a val
     // is initialised in order, and the game's match list above comes first.
     private val playerIdOf = SkunkIdCodecs.playerId
@@ -45,15 +46,16 @@ class MatchRepo(session: Session[IO]) {
           TimeLimitKind,
           TimeLimitUnit,
           Boolean,
-          Boolean
+          Boolean,
+          Option[TournamentId]
       )
     ] =
         sql"""INSERT INTO match (game_id, match_id, challenge_id, creator, description, completed, cancelled, start,
                              time_limit, settings, public, status_url, play_url, public_url, time_limit_kind,
-                             time_limit_unit, live, friendly)
+                             time_limit_unit, live, friendly, tournament_id)
           VALUES ($gameId, $matchId, ${challengeId.opt}, $playerIdOf, $text, ${instant.opt}, $bool, $instant, ${float8.opt} * INTERVAL '1 second',
                   $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt}, $timeLimitKind, $timeLimitUnit, $bool,
-                  $bool)""".command
+                  $bool, ${tournamentId.opt})""".command
 
     private type MatchRow =
         (
@@ -130,7 +132,15 @@ class MatchRepo(session: Session[IO]) {
           time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit, friendly = $bool
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
-    def create(m: Match): IO[Match] =
+    def create(m: Match): IO[Match] = write(m, None)
+
+    /** Writes a new match of a tournament (V52). A match comes from a challenge or a tournament, exactly one, which the
+      * table checks. The tournament is not on [[Match]], which every reader and the wire format share, since nothing
+      * reads it back but the tournament's own tables.
+      */
+    def createForTournament(m: Match, tournament: TournamentId): IO[Match] = write(m, Some(tournament))
+
+    private def write(m: Match, tournament: Option[TournamentId]): IO[Match] =
         session
             .execute(insertMatch)(
               (
@@ -151,7 +161,8 @@ class MatchRepo(session: Session[IO]) {
                 m.timeLimitKind,
                 m.timeLimitUnit,
                 m.live,
-                m.friendly
+                m.friendly,
+                tournament
               )
             )
             .as(m)
