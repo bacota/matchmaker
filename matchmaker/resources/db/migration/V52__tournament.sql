@@ -44,7 +44,6 @@ CREATE TABLE tournament (
     create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, tournament_id),
-    UNIQUE (tournament_id),
     CHECK (min_rating IS NULL OR max_rating IS NULL OR min_rating <= max_rating)
 );
 
@@ -92,7 +91,6 @@ CREATE TABLE entrant (
     create_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, entrant_id),
-    UNIQUE (entrant_id),
     FOREIGN KEY (game_id, tournament_id) REFERENCES tournament,
     FOREIGN KEY (game_type, game_id) REFERENCES game (game_type, game_id)
 );
@@ -179,7 +177,7 @@ CREATE TABLE tournament_seat (
     FOREIGN KEY (game_id, participant_id) REFERENCES participant
 );
 
-CREATE INDEX tournament_seat_entrant ON tournament_seat (entrant_id);
+CREATE INDEX tournament_seat_entrant ON tournament_seat (game_id, entrant_id);
 
 CREATE TRIGGER trg_tournament_seat_update_date
     BEFORE UPDATE ON tournament_seat
