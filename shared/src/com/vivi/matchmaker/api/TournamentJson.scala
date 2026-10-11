@@ -31,6 +31,25 @@ object TournamentJson {
     case class EnterRequest(characterId: Option[CharacterId] = None)
     given ReadWriter[EnterRequest] = macroRW
 
+    given ReadWriter[TournamentChoice] = macroRW
+    given ReadWriter[EntrantRank] = macroRW
+
+    /** A seat's choice of role. */
+    case class ChooseRoleRequest(gameRoleId: GameRoleId)
+    given ReadWriter[ChooseRoleRequest] = macroRW
+
+    /** The owner's ranks for a match decided by hand, one per seat. */
+    case class DecideRequest(ranks: List[EntrantRank])
+    given ReadWriter[DecideRequest] = macroRW
+
+    /** The round a start began, or none if it finished the tournament. */
+    case class RoundStarted(round: Option[Int])
+    given ReadWriter[RoundStarted] = macroRW
+
+    /** How many matches a Check round looked at. */
+    case class RoundChecked(matches: Int)
+    given ReadWriter[RoundChecked] = macroRW
+
     /** Inviting a player to a tournament. */
     case class TournamentInvite(playerId: PlayerId)
     given ReadWriter[TournamentInvite] = macroRW

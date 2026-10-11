@@ -604,6 +604,41 @@ object Router {
                     )
                 )
 
+            // Playing a tournament's rounds: the owner beginning the next, checking the one being played
+            // for clocks run out, and stopping a stage that repeats until stopped; a seat choosing its
+            // role; the owner deciding a match by hand; and the caller's seats waiting on a choice.
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "rounds" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) =>
+                    ok(services.rounds.startRound(gid, t, caller).map(TournamentJson.RoundStarted(_)))
+                )
+
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "check" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) =>
+                    ok(services.rounds.checkRound(gid, t, caller).map(TournamentJson.RoundChecked(_)))
+                )
+
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "stop" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) => noContent(services.rounds.stop(gid, t, caller)))
+
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "matches" :: pool :: no :: "role" :: Nil) =>
+                withTournamentMatch(gameId, tid, pool, no)((gid, t, p, n) =>
+                    body[TournamentJson.ChooseRoleRequest](request).flatMap(r =>
+                        ok(services.rounds.chooseRole(gid, t, p, n, r.gameRoleId, caller))
+                    )
+                )
+
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "matches" :: pool :: no :: "result" :: Nil) =>
+                withTournamentMatch(gameId, tid, pool, no)((gid, t, p, n) =>
+                    body[TournamentJson.DecideRequest](request).flatMap(r =>
+                        noContent(
+                          services.rounds.decide(gid, t, p, n, r.ranks.map(x => x.entrantId -> x.rank).toMap, caller)
+                        )
+                    )
+                )
+
+            case ("GET", "me" :: "tournament-choices" :: Nil) =>
+                ok(services.rounds.choicesFor(caller))
+
             // A completed match's archive, the engine's to move and matchmaker's to keep track of
             // (archiving-matches-plan.md). Authorized as the game, like the callbacks above, but addressed
             // by match id alone: an engine whose live copy is gone no longer knows the game id.
@@ -713,6 +748,16 @@ object Router {
             rawTournament.toLongOption.fold(IO.pure(Errors.badRequest(s"'$rawTournament' is not a tournament id")))(t =>
                 f(gid, TournamentId(t))
             )
+        )
+
+    private def withTournamentMatch(rawGame: String, rawTournament: String, rawPool: String, rawNo: String)(
+        f: (GameId, TournamentId, Int, Int) => IO[Response]
+    ): IO[Response] =
+        withTournament(rawGame, rawTournament)((gid, t) =>
+            (rawPool.toIntOption, rawNo.toIntOption) match {
+                case (Some(p), Some(n)) => f(gid, t, p, n)
+                case _                  => IO.pure(Errors.badRequest(s"'$rawPool/$rawNo' is not a tournament match"))
+            }
         )
 
     private def withPlayerId(raw: String)(f: PlayerId => IO[Response]): IO[Response] =

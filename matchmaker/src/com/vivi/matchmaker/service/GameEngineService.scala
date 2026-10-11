@@ -375,6 +375,91 @@ class GameEngineService[T](
         } yield started
     }
 
+    /** The engine half of a tournament match's start (new-design.md, Phase 5): `saved`, its participants and its
+      * tournament's claim on it already written and committed by [[TournamentRounds]], are sent to the engine, and its
+      * answer recorded as a challenge's start records it — the urls, then whose turn it is, then the mail.
+      *
+      * `undo` takes back what was written before, if the engine refuses: the tournament's match goes back to being due,
+      * to be created again. After the engine has made its game there is no undoing, as for a challenge's start, and a
+      * failure past that point leaves the urlless match `refresh` reports.
+      */
+    private[service] def launchTournamentMatch(
+        session: Session[IO],
+        saved: Match,
+        game: Game,
+        players: List[EnginePlayer],
+        tiesAllowed: Boolean,
+        undo: IO[Unit]
+    ): IO[Match] =
+        for {
+            apiKey <- new GameApiKeyRepo(session).forGame(game.gameId)
+            request = CreateGameRequest(
+              matchId = saved.matchId.value,
+              gameName = game.name,
+              isPublic = saved.isPublic,
+              parameters = ChallengeSettings.resolve(
+                defaults = game.parameters
+                    .map(p => p.name -> p.defaultValue.map(v => codec.encode(v.asInstanceOf[T])).getOrElse(""))
+                    .toMap,
+                allowed =
+                    game.parameters.map(p => p.name -> p.values.map(v => codec.encode(v.value.asInstanceOf[T]))).toMap,
+                settings = saved.settings
+              ),
+              settings = saved.settings,
+              timeLimitSeconds = saved.timeLimit.map(_.getSeconds),
+              players = players,
+              gameDisplayName = Some(game.displayName),
+              description = Some(saved.description.trim).filter(_.nonEmpty),
+              moveCallbackUrl =
+                  callbackBaseUrl.map(base => s"$base/games/${game.gameId.value}/matches/${saved.matchId.value}/moves"),
+              resultsCallbackUrl = callbackBaseUrl.map(base =>
+                  s"$base/games/${game.gameId.value}/matches/${saved.matchId.value}/results"
+              ),
+              tiesAllowed = Option.when(!tiesAllowed)(false)
+            )
+            response <- engine.createGame(game.url, apiKey, request).onError(_ => undo)
+            withUrls = saved.copy(
+              statusUrl = Some(response.statusUrl),
+              playUrl = Some(response.playUrl),
+              publicUrl = response.publicUrl
+            )
+            started <- retrying(finish(session, withUrls, response.cancelUrl).as(withUrls))
+            _ <- applyEngineStatus(session, saved.gameId, saved.matchId, response.statusUrl).attempt
+            // Nobody pressed anything: everyone in the match hears that it has begun.
+            _ <- notifications.matchStarted(session, started, None, None)
+        } yield started
+
+    /** A tournament seat as the engine is told it: who plays it, as what, with which character. */
+    private[service] def tournamentPlayer(
+        session: Session[IO],
+        participant: Participant,
+        player: Player,
+        roleName: String,
+        characterId: Option[CharacterId]
+    ): IO[EnginePlayer] =
+        characterId.flatTraverse(new CharacterRepo[T](session).read).map { c =>
+            EnginePlayer(
+              cognitoId = player.externalId,
+              participantId = participant.participantId.value,
+              role = Some(roleName),
+              characterId = c.map(_.characterId.value),
+              characterState = c.map(ch => codec.encode(ch.state)),
+              nickname = Some(player.nickname),
+              characterName = c.map(_.name)
+            )
+        }
+
+    /** Enforces a tournament match's clock now, for its owner's Check round: the same enforcement a player's look at
+      * the match would make, the engine asked first.
+      */
+    private[service] def enforceNow(gameId: GameId, matchId: MatchId): IO[Unit] =
+        sessionPool.use { session =>
+            new MatchRepo(session).read(gameId, matchId).flatMap {
+                case Some(m) => enforceTimeouts(session, gameId, matchId, m).void
+                case None    => IO.unit
+            }
+        }
+
     /* Asks the engine how a match stands and writes the answer onto its participants: whose turn
      * it is, when that turn is due, and who is finished — plus the match's own completed flag.
      *

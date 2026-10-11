@@ -140,6 +140,14 @@ class TournamentMatchRepo(session: Session[IO]) {
     ): IO[Unit] =
         session.execute(updateStatus)((st, id, game, tournament, pool, no)).void
 
+    private val updateDone: Command[(GameId, TournamentId, Int, Int)] =
+        sql"""UPDATE tournament_match SET status = 'done'
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = $int4 AND match_no = $int4""".command
+
+    /** Marks a match's result recorded, keeping the match it became. */
+    def markDone(game: GameId, tournament: TournamentId, pool: Int, no: Int): IO[Unit] =
+        session.execute(updateDone)((game, tournament, pool, no)).void
+
     private val updateSeat: Command[
       (
           Option[GameRoleId],

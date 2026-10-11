@@ -39,20 +39,33 @@ class EndingService(
     engine: GameEngineClient,
     now: () => Instant = () => Instant.now(),
     /** How long after a match completes its engine is left to archive it before being prompted. */
-    grace: Duration = Duration.ofMinutes(5)
+    grace: Duration = Duration.ofMinutes(5),
+    /** What a tournament makes of one of its matches ending (`TournamentRounds.recordEnding`): its result recorded in
+      * the tournament, and the round completed if it was the last. A function, so that this service need not know the
+      * tournament's; nothing, for a match that is not a tournament's, and where no tournaments are wired in.
+      */
+    tournamentEnding: (GameId, MatchId) => IO[Unit] = (_, _) => IO.unit
 ) {
 
     private val ranking = new RankingService(sessionPool)
 
     def settle(gameId: GameId, matchId: MatchId): IO[Settlement] =
         sessionPool.use(session => new ArchiveRepo(session).ending(gameId, matchId)).flatMap {
-            case Some(row) if row.cancelled => release(row)
+            case Some(row) if row.cancelled => (release(row), tournament(gameId, matchId)).mapN(EndingService.both)
             // Placed first: it is the database's alone, and a player is waiting to see it, where the archive may be
             // waiting on its engine.
             case Some(row) if row.completedAt.isDefined =>
-                (rank(gameId), archive(row)).mapN(EndingService.both)
+                (rank(gameId), tournament(gameId, matchId), archive(row))
+                    .mapN((a, b, c) => EndingService.both(EndingService.both(a, b), c))
             // Not over, or not there: nothing about its end is owed, and nothing would come of asking again.
             case _ => IO.pure(Settlement.Settled)
+        }
+
+    /** The match's tournament told it has ended, if it is one's. Owed, and so tried again, if that fails. */
+    private def tournament(gameId: GameId, matchId: MatchId): IO[Settlement] =
+        tournamentEnding(gameId, matchId).attempt.map {
+            case Right(_) => Settlement.Settled
+            case Left(e)  => Settlement.Owed(s"recording it in its tournament failed: $e")
         }
 
     /** Puts the game's leaderboard in order: everybody whose rating has moved since they were placed, the players of a

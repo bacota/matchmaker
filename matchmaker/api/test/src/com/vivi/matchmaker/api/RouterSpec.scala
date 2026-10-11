@@ -334,7 +334,17 @@ class RouterSpec extends FunSuite {
       ("DELETE", "/games/1/tournaments/2/invitations/3", "{}"),
       // An Option field is the bare value, and absent when there is none.
       ("POST", "/games/1/tournaments/2/entries", """{"characterId":4}"""),
-      ("DELETE", "/games/1/tournaments/2/entries/5", "{}")
+      ("DELETE", "/games/1/tournaments/2/entries/5", "{}"),
+      ("POST", "/games/1/tournaments/2/rounds", "{}"),
+      ("POST", "/games/1/tournaments/2/check", "{}"),
+      ("POST", "/games/1/tournaments/2/stop", "{}"),
+      ("POST", "/games/1/tournaments/2/matches/3/0/role", """{"gameRoleId":7}"""),
+      (
+        "POST",
+        "/games/1/tournaments/2/matches/3/0/result",
+        """{"ranks":[{"entrantId":5,"rank":1},{"entrantId":6,"rank":2}]}"""
+      ),
+      ("GET", "/me/tournament-choices", "{}")
     )
 
     test("every routed endpoint reaches a service rather than falling through to 404") {
@@ -351,7 +361,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 72)
+        assertEquals(routed.size, 78)
         assertEquals(routed.distinct.size, routed.size)
     }
 

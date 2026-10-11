@@ -401,6 +401,14 @@ locals {
     "DELETE /games/{gameId}/tournaments/{tournamentId}/invitations/{playerId}",
     "POST /games/{gameId}/tournaments/{tournamentId}/entries",
     "DELETE /games/{gameId}/tournaments/{tournamentId}/entries/{entrantId}",
+    # Playing its rounds: the owner beginning, checking and stopping them; a seat choosing its
+    # role; the owner deciding a match by hand; and the caller's seats waiting on a choice.
+    "POST /games/{gameId}/tournaments/{tournamentId}/rounds",
+    "POST /games/{gameId}/tournaments/{tournamentId}/check",
+    "POST /games/{gameId}/tournaments/{tournamentId}/stop",
+    "POST /games/{gameId}/tournaments/{tournamentId}/matches/{poolId}/{matchNo}/role",
+    "POST /games/{gameId}/tournaments/{tournamentId}/matches/{poolId}/{matchNo}/result",
+    "GET /me/tournament-choices",
   ]
 
   /* The game engine's calls, which are not player actions at all: a game engine tells

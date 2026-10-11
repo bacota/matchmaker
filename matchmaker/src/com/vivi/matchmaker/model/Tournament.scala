@@ -184,3 +184,17 @@ case class TournamentDetail(
 
 /** A player by name, for a list that shows people. */
 case class PlayerName(playerId: PlayerId, nickname: String)
+
+/** A seat whose turn it is to choose a role, for the player who is to: where, and by when. */
+case class TournamentChoice(
+    gameId: GameId,
+    tournamentId: TournamentId,
+    tournamentName: String,
+    gameName: String,
+    poolId: Int,
+    matchNo: Int,
+    chooseBy: Option[Instant]
+)
+
+/** A rank the owner gives one seat of a match they decide by hand. */
+case class EntrantRank(entrantId: EntrantId, rank: Int)

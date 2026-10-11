@@ -52,6 +52,26 @@ class EndingHandlerSpec extends FunSuite {
         )
     }
 
+    test("a tournament's match due and round due are read back as themselves, and mistaken for nothing else") {
+        val records = Handler.records(
+          sqsEvent(
+            "m-1" -> upickle.default.write(TournamentMatchDue(7, 3, 2, 0)),
+            "m-2" -> upickle.default.write(TournamentRoundDue(7, 3)),
+            "m-3" -> upickle.default.write(RatingsChanged(7)),
+            "m-4" -> upickle.default.write(MatchEnded.of(GameId(7), MatchId("3f1c-match")))
+          )
+        )
+        assertEquals(
+          records,
+          Seq(
+            Handler.Record.Understood("m-1", TournamentMatchDue(7, 3, 2, 0)),
+            Handler.Record.Understood("m-2", TournamentRoundDue(7, 3)),
+            Handler.Record.Understood("m-3", RatingsChanged(7)),
+            Handler.Record.Understood("m-4", MatchEnded(7, "3f1c-match"))
+          )
+        )
+    }
+
     test("a body that is not a match's ending is unreadable, and one without an id is skipped") {
         val records = Handler.records(sqsEvent("m-1" -> "not json", "m-2" -> """{"gameId":"seven"}"""))
         assertEquals(records.map(_.getClass.getSimpleName), Seq("Unreadable", "Unreadable"))

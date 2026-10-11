@@ -23,9 +23,12 @@ import com.vivi.matchmaker.persistence._
   * plainly, as `game` is everywhere a write lands elsewhere: its catalogue changes when an admin edits it, rarely and
   * never in step with a tournament's entries (CLAUDE.md, "a reference table read on the way to a write elsewhere").
   */
-class TournamentService[T](sessionPool: SessionPool, now: () => Instant = () => Instant.now())(using
-    codec: TextCodec[T]
-) {
+class TournamentService[T](
+    sessionPool: SessionPool,
+    now: () => Instant = () => Instant.now(),
+    /** What a tournament with automatic rounds does as it starts: begin its first. */
+    started: (GameId, TournamentId) => IO[Unit] = (_, _) => IO.unit
+)(using codec: TextCodec[T]) {
 
     // ---- reading ---------------------------------------------------------------------------
 
@@ -63,12 +66,18 @@ class TournamentService[T](sessionPool: SessionPool, now: () => Instant = () => 
                     case Some(s) => new TournamentMatchRepo(session).listRound(gameId, tournamentId, s.round)
                     case None    => IO.pure(Nil)
                 }
+                game <- new GameRepo[T](session).read(gameId)
             } yield TournamentDetail(
               summary,
               entries,
               invited.map((id, name) => PlayerName(id, name)),
               state,
-              round.map(TournamentService.view)
+              round.map { m =>
+                  val by =
+                      (game, state).tupled.flatMap((g, s) => TournamentRounds.chooseBy(summary.tournament, g, s, m))
+                  val v = TournamentService.view(m)
+                  v.copy(seats = v.seats.map(s => if (s.choosing) s.copy(chooseBy = by) else s))
+              }
             )
         }
 
@@ -348,34 +357,38 @@ class TournamentService[T](sessionPool: SessionPool, now: () => Instant = () => 
       * pools. Its first round is begun separately — by the owner, or at once for automatic rounds.
       */
     def start(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Tournament] =
-        sessionPool.use { session =>
-            session.transaction.use { _ =>
-                for {
-                    caller <- requireCaller(session, callerExternalId)
-                    t <- requireOwned(session, gameId, tournamentId, caller)
-                    _ <- IO.raiseUnless(t.status == TournamentStatus.Draft || t.status == TournamentStatus.Open)(
-                      ConflictError(s"this tournament cannot be started; it is ${t.status.label.toLowerCase}")
-                    )
-                    game <- requireGame(session, gameId)
-                    entries <- new EntrantRepo(session).list(gameId, tournamentId).map(_.filterNot(_.withdrawn))
-                    _ <- IO.raiseWhen(entries.sizeIs < math.max(2, game.requiredSeats))(
-                      ConflictError(s"a tournament needs at least ${math.max(2, game.requiredSeats)} entries to start")
-                    )
-                    problems = Validation
-                        .validate(t.design, TournamentGame.of(game), t.settings.roundDuration, t.settings.maxTurns)
-                        .filterNot(_.warning)
-                    _ <- IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.map(_.describe).mkString("; ")))
-                    ratings <- currentRatings(session, gameId, entries)
-                    state = Progress.start(
-                      entries.map(_.entrantId.value),
-                      Env(t.design, TournamentGame.of(game), ratings)
-                    )
-                    started = t.copy(status = TournamentStatus.Running, startedAt = Some(now()))
-                    _ <- new TournamentRepo(session).update(started)
-                    _ <- new TournamentRepo(session).writeState(gameId, tournamentId, state)
-                } yield started
+        sessionPool
+            .use { session =>
+                session.transaction.use { _ =>
+                    for {
+                        caller <- requireCaller(session, callerExternalId)
+                        t <- requireOwned(session, gameId, tournamentId, caller)
+                        _ <- IO.raiseUnless(t.status == TournamentStatus.Draft || t.status == TournamentStatus.Open)(
+                          ConflictError(s"this tournament cannot be started; it is ${t.status.label.toLowerCase}")
+                        )
+                        game <- requireGame(session, gameId)
+                        entries <- new EntrantRepo(session).list(gameId, tournamentId).map(_.filterNot(_.withdrawn))
+                        _ <- IO.raiseWhen(entries.sizeIs < math.max(2, game.requiredSeats))(
+                          ConflictError(
+                            s"a tournament needs at least ${math.max(2, game.requiredSeats)} entries to start"
+                          )
+                        )
+                        problems = Validation
+                            .validate(t.design, TournamentGame.of(game), t.settings.roundDuration, t.settings.maxTurns)
+                            .filterNot(_.warning)
+                        _ <- IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.map(_.describe).mkString("; ")))
+                        ratings <- currentRatings(session, gameId, entries)
+                        state = Progress.start(
+                          entries.map(_.entrantId.value),
+                          Env(t.design, TournamentGame.of(game), ratings)
+                        )
+                        running = t.copy(status = TournamentStatus.Running, startedAt = Some(now()))
+                        _ <- new TournamentRepo(session).update(running)
+                        _ <- new TournamentRepo(session).writeState(gameId, tournamentId, state)
+                    } yield running
+                }
             }
-        }
+            .flatTap(t => IO.whenA(t.settings.autoRounds)(started(t.gameId, t.tournamentId)))
 
     // ---- shared ----------------------------------------------------------------------------
 

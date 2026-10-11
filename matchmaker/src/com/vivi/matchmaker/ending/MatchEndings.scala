@@ -4,7 +4,7 @@ import cats.effect.IO
 import upickle.default.{macroRW, read, write, ReadWriter}
 import software.amazon.awssdk.services.sqs.SqsClient
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest
-import com.vivi.matchmaker.model.{GameId, MatchId}
+import com.vivi.matchmaker.model.{GameId, MatchId, TournamentId}
 import com.vivi.matchmaker.notify.SqsNotifier
 
 /** That a match has ended — played out, forfeited or cancelled — and what its end still owes is to be settled: its
@@ -24,6 +24,15 @@ trait MatchEndings {
       * [[ended]] is; one that is lost is put in order by the next ending of the game.
       */
     def ratingsChanged(gameId: GameId): IO[Unit]
+
+    /** That a tournament's match is due to be created (new-design.md, Phase 5): its seats are settled, and the engine's
+      * game is to be made. Said after the transaction that made it due has committed. Creating it twice is refused by
+      * its claim, so a message delivered twice makes one match.
+      */
+    def tournamentMatchDue(gameId: GameId, tournamentId: TournamentId, poolId: Int, matchNo: Int): IO[Unit] = IO.unit
+
+    /** That a tournament with automatic rounds has finished a round, and its next is to be begun. */
+    def tournamentRoundDue(gameId: GameId, tournamentId: TournamentId): IO[Unit] = IO.unit
 }
 
 /** What goes on the queue: the match, and nothing about it. Whoever settles it reads the rest from the database, as it
@@ -47,7 +56,37 @@ object MatchEnded {
                 try Right(read[RatingsChanged](body))
                 catch { case e: Exception => Left(s"not a match ending: ${e.getMessage}") }
         }
+
+    /** Any message the queue carries, most specific first: each of these reads as the less specific ones after it, by a
+      * reader that ignores the fields it does not know.
+      */
+    def parseAny(body: String): Either[String, QueueMessage] =
+        try Right(read[TournamentMatchDue](body))
+        catch {
+            case _: Exception =>
+                try Right(read[TournamentRoundDue](body))
+                catch { case _: Exception => parse(body) }
+        }
 }
+
+/** A tournament's match, due to be created. */
+case class TournamentMatchDue(gameId: Int, tournamentId: Long, poolId: Int, matchNo: Int)
+
+object TournamentMatchDue {
+    given ReadWriter[TournamentMatchDue] = macroRW
+}
+
+/** A tournament with automatic rounds, whose next round is due to begin. Told from a game's ratings changing by its
+  * `tournamentId`, and from a match due by having no pool.
+  */
+case class TournamentRoundDue(gameId: Int, tournamentId: Long)
+
+object TournamentRoundDue {
+    given ReadWriter[TournamentRoundDue] = macroRW
+}
+
+/** Everything the ending queue carries. */
+type QueueMessage = MatchEnded | RatingsChanged | TournamentMatchDue | TournamentRoundDue
 
 /** What goes on the queue when a game's ratings have moved with no match ending: the game, for its leaderboard. */
 case class RatingsChanged(gameId: Int)
@@ -72,6 +111,18 @@ class SqsMatchEndings(queueUrl: String, client: () => SqsClient) extends MatchEn
         send(
           write(RatingsChanged(gameId.value)),
           s"the change to game ${gameId.value}'s ratings was not queued, and its leaderboard waits for its next ending"
+        )
+
+    override def tournamentMatchDue(gameId: GameId, tournamentId: TournamentId, poolId: Int, matchNo: Int): IO[Unit] =
+        send(
+          write(TournamentMatchDue(gameId.value, tournamentId.value, poolId, matchNo)),
+          s"match $matchNo of pool $poolId of tournament ${tournamentId.value} was not queued; Check round will create it"
+        )
+
+    override def tournamentRoundDue(gameId: GameId, tournamentId: TournamentId): IO[Unit] =
+        send(
+          write(TournamentRoundDue(gameId.value, tournamentId.value)),
+          s"the next round of tournament ${tournamentId.value} was not queued; its owner can start it"
         )
 
     private def send(body: String, failed: String): IO[Unit] =
@@ -99,13 +150,35 @@ object MatchEndings {
       * own. Run in the request, it would wait for a connection while holding one, which with a pool of one is a
       * deadlock and with more is a way to exhaust it. On its own fiber it simply waits until one is given back.
       */
-    def inline(settle: (GameId, MatchId) => IO[Unit], rank: GameId => IO[Unit]): MatchEndings =
+    def inline(
+        settle: (GameId, MatchId) => IO[Unit],
+        rank: GameId => IO[Unit],
+        matchDue: (GameId, TournamentId, Int, Int) => IO[Unit] = (_, _, _, _) => IO.unit,
+        roundDue: (GameId, TournamentId) => IO[Unit] = (_, _) => IO.unit
+    ): MatchEndings =
         new MatchEndings {
             def ended(gameId: GameId, matchId: MatchId): IO[Unit] =
                 background(settle(gameId, matchId), s"settling the end of match ${matchId.value} failed")
 
             def ratingsChanged(gameId: GameId): IO[Unit] =
                 background(rank(gameId), s"ranking game ${gameId.value} failed")
+
+            override def tournamentMatchDue(
+                gameId: GameId,
+                tournamentId: TournamentId,
+                poolId: Int,
+                matchNo: Int
+            ): IO[Unit] =
+                background(
+                  matchDue(gameId, tournamentId, poolId, matchNo),
+                  s"creating match $matchNo of pool $poolId of tournament ${tournamentId.value} failed"
+                )
+
+            override def tournamentRoundDue(gameId: GameId, tournamentId: TournamentId): IO[Unit] =
+                background(
+                  roundDue(gameId, tournamentId),
+                  s"starting the next round of tournament ${tournamentId.value} failed"
+                )
 
             private def background(work: IO[Unit], failed: String): IO[Unit] =
                 work.handleErrorWith(e => IO.blocking(System.err.println(s"$failed: $e"))).start.void

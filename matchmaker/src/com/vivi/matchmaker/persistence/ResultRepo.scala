@@ -174,6 +174,16 @@ class ResultRepo(session: Session[IO]) {
     def setEloDelta(gameId: GameId, id: ParticipantId, delta: Option[Int], roleDelta: Option[Int] = None): IO[Unit] =
         session.execute(updateEloDelta)((delta, roleDelta, gameId, id)).void
 
+    private val insertManual: Command[(GameId, ParticipantId, Int, Boolean)] =
+        sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, forfeit, manual)
+          VALUES ($gameId, $participantId, $int4, '{}'::jsonb, $bool, false, true)""".command
+
+    /** A rank a tournament's owner gave a seat of a match they called off (V52): no scores, no rating change, marked as
+      * given by hand. Only ever on a cancelled tournament match, which nothing that moves a rating reads.
+      */
+    def createManual(gameId: GameId, id: ParticipantId, rank: Int, isWinner: Boolean): IO[Unit] =
+        session.execute(insertManual)((gameId, id, rank, isWinner)).void
+
     def create(result: Result): IO[Result] =
         session
             .execute(insertResult)(
