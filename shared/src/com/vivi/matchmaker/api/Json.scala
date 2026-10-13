@@ -37,14 +37,14 @@ object Json {
     /** By its stored code, so the wire form is the column's form: 'FORFEIT'. */
     given ReadWriter[TimeoutAction] = readwriter[String].bimap(_.code, TimeoutAction.fromCode)
 
-    /** By code, as the columns hold them (V51): 'required' / 'recommended' / 'optional', and 'seq' / 'sim'. */
+    /** By code, as the columns hold them: 'required' / 'recommended' / 'optional', and 'seq' / 'sim'. */
     given ReadWriter[RoleType] = readwriter[String].bimap(_.code, RoleType.fromCode)
     given ReadWriter[MoveType] = readwriter[String].bimap(_.code, MoveType.fromCode)
 
     /** Likewise: 'PER_TURN' or 'TOTAL'. */
     given ReadWriter[TimeLimitKind] = readwriter[String].bimap(_.code, TimeLimitKind.fromCode)
 
-    /** Where a match is in its life (V52), by its one-letter code: 'S', 'C', 'D', 'P' or 'F'. */
+    /** Where a match is in its life, by its one-letter code: 'S', 'C', 'D', 'P' or 'F'. */
     given ReadWriter[MatchStatus] = readwriter[String].bimap(_.code, MatchStatus.fromCode)
 
     /** And 'SECONDS' / 'MINUTES' / 'HOURS' / 'DAYS'. */
@@ -158,14 +158,14 @@ object Json {
         // Defaulted so that a client written before turn timeouts existed still parses, and one
         // that omits it still creates a game — with the action every existing game already has.
         timeoutAction: TimeoutAction = TimeoutAction.Forfeit,
-        // Where a player makes a character, for a character game whose engine has a page for it (V28).
+        // Where a player makes a character, for a character game whose engine has a page for it.
         characterUrl: Option[String] = None,
         // Whether a key is stored, for the admin form; never the key. Ignored on a save.
         hasApiKey: Boolean = false,
-        // No role of the game has any advantage in winning it (V49). Defaulted so that a client
+        // No role of the game has any advantage in winning it. Defaulted so that a client
         // written before it existed still parses, and keeps ratings by role.
         unimportantRoles: Boolean = false,
-        // How players take turns, and how many a simultaneous game lasts (V51). Defaulted as above.
+        // How players take turns, and how many a simultaneous game lasts. Defaulted as above.
         moveType: MoveType = MoveType.Sequential,
         maxTurns: Option[Int] = None
     )
@@ -277,7 +277,7 @@ object Json {
     // role, and a challenge cannot be started until each of its game's required roles is taken.
     case class AcceptRequest(characterId: Option[CharacterId], gameRoleId: GameRoleId)
 
-    /** A challenge and the invitations to send with it (V22).
+    /** A challenge and the invitations to send with it.
       *
       * A wrapper rather than an `invitations` field on `Challenge`, because an invitation is not part of what a
       * challenge *is*: the rows live in their own table, `ChallengeSummary` already carries `Invitation`s for reading,
@@ -290,8 +290,8 @@ object Json {
       * shape rather than accepting both: a bare challenge would parse as a `CreateChallenge` with no `challenge` field
       * and fail, loudly, instead of silently creating something.
       *
-      * `characterInvitations` is the character game's list (V25), and the service refuses whichever of the two does not
-      * suit the game: a plain game invites players, a character game invites characters.
+      * `characterInvitations` is the character game's list, and the service refuses whichever of the two does not suit
+      * the game: a plain game invites players, a character game invites characters.
       */
     case class CreateChallenge(
         challenge: Challenge,
@@ -419,7 +419,7 @@ object Json {
         // like every other Duration here; zero for a match played before turns were recorded.
         timeTaken: Duration = Duration.ZERO,
         // The player's Elo rating as the match began, friendly or not, and what the match did to it,
-        // which only one that is not friendly does (V43). Defaulted, like the fields above it, for a
+        // which only one that is not friendly does. Defaulted, like the fields above it, for a
         // client that has not heard of it.
         eloStart: Int = EloRating.initial,
         eloDelta: Option[Int] = None

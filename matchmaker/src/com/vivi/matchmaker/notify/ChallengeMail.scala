@@ -38,9 +38,9 @@ case class ChallengeNews(
   * withdrawal) and the roster is now complete. Each pair is said once to the player who offered the challenge and once
   * to the players who accepted it, because those are different pieces of news — one of them can press Start.
   *
-  * The other three are the invitation kinds (V22), which are the same shape one level out: an invitation is made, taken
-  * up, or turned down, and the first of those is the only mail here addressed to somebody who is not yet in the
-  * challenge at all.
+  * The other three are the invitation kinds, which are the same shape one level out: an invitation is made, taken up,
+  * or turned down, and the first of those is the only mail here addressed to somebody who is not yet in the challenge
+  * at all.
   *
   * Rendering is separated from deciding who to write to, and is a pure function of its arguments, so what the mail says
   * can be tested without a challenge or a database. The deciding halves are `ChallengeService.accept`,

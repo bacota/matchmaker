@@ -10,7 +10,7 @@ import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign, Tour
 import com.vivi.matchmaker.model.tournament.standard.StandardModels
 import com.vivi.matchmaker.persistence.{PoolRepo, StageRepo, TournamentModelRepo, TournamentRepo}
 
-/** Tournaments for specs (V52): the model of a standard format, offered in a game, and a tournament made from one. */
+/** Tournaments for specs: the model of a standard format, offered in a game, and a tournament made from one. */
 object TournamentFixtures {
 
     /** The model of the standard format `key`, offered in `game`: added first if it is not stored yet, as a sync adds

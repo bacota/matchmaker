@@ -5,7 +5,7 @@ import skunk.Session
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{GameAdminRepo, PlayerRepo}
 
-/** Who administers a game: an overall admin (`player.is_admin`), or one of the game's own (V35). */
+/** Who administers a game: an overall admin (`player.is_admin`), or one of the game's own. */
 object GameAdmins {
 
     /** That `caller` administers game `gameId`, or an `UnauthorizedError` saying `refusal`. Their player row and their

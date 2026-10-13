@@ -9,8 +9,8 @@ import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign}
 
-/** A tournament's stages (V52): `stage`, with its atomic and nesting rows, copied from the model the tournament was
-  * made from.
+/** A tournament's stages: `stage`, with its atomic and nesting rows, copied from the model the tournament was made
+  * from.
   *
   * Every stage of a tournament -- however deeply nested -- belongs to it: an inner design is a chain of the
   * tournament's own stages, from `nesting_stage.inner_first_stage_id` along each `current_stage_id`, as its top-level

@@ -11,7 +11,7 @@ import java.time.{Duration, Instant}
   * create call returning.
   *
   * `creator` is the player whose match this is: the one who may cancel it. For a match started from a challenge
-  * (`challengeId`) that is the challenger, copied onto the match when it is started (V50). A match need not come from a
+  * (`challengeId`) that is the challenger, copied onto the match when it is started. A match need not come from a
   * challenge at all — a tournament's are created by the tournament — and holding the creator on the match itself is
   * what lets every listing and the cancel say whose a match is without joining a challenge that may not exist.
   *
@@ -23,8 +23,8 @@ import java.time.{Duration, Instant}
   * particular order is not much of a history. `completed` is kept beside it as a derived answer to the question most
   * callers actually ask, and is deliberately not a field: two stored columns saying the same thing could disagree.
   *
-  * `status` says where the match is in its life (V52), and is the source of truth: a tournament's match is written when
-  * its pool is formed, long before the engine has a game for it, and spends that time [[MatchStatus.Scheduled]],
+  * `status` says where the match is in its life, and is the source of truth: a tournament's match is written when its
+  * pool is formed, long before the engine has a game for it, and spends that time [[MatchStatus.Scheduled]],
   * [[MatchStatus.Choosing]] and [[MatchStatus.Due]], with no urls and no `start`. A challenge's match is created in the
   * engine as it is written, so it begins [[MatchStatus.InProgress]]. [[MatchStatus.Finished]] is completed or
   * cancelled, which the database holds in step with `completedAt` and `cancelled`.
@@ -72,14 +72,14 @@ case class Match(
       * never pending here and never due: the engine runs its turns and their clock, and reports only the result.
       */
     live: Boolean = false,
-    /** Whether this is a friendly match (V36). Every match is, unless it is classified otherwise. */
+    /** Whether this is a friendly match. Every match is, unless it is classified otherwise. */
     friendly: Boolean = true,
-    /** When the match's archive was confirmed (V38). From then on the engine has dropped its live copy, and its urls
-      * are handed out marked as an archived match's — see `ArchiveService.forViewer`.
+    /** When the match's archive was confirmed. From then on the engine has dropped its live copy, and its urls are
+      * handed out marked as an archived match's — see `ArchiveService.forViewer`.
       */
     archivedAt: Option[Instant] = None,
-    /** Whether a friendly match's archive has expired (V38). There is nothing left to view, so a player is not offered
-      * the urls; they are cleared where they are handed out.
+    /** Whether a friendly match's archive has expired. There is nothing left to view, so a player is not offered the
+      * urls; they are cleared where they are handed out.
       */
     archiveExpired: Boolean = false,
     status: MatchStatus = MatchStatus.InProgress

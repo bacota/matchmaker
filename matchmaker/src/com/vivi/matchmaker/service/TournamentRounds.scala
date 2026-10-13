@@ -23,8 +23,8 @@ import com.vivi.matchmaker.persistence.TournamentStateRepo.Loaded
 /** A tournament's rounds (`design/new-tournament-plan.md`, Phase 6): beginning each, its seats choosing their roles,
   * its matches being created and played, and the tournament advancing past what they finish.
   *
-  * A tournament's matches are `match` rows from the moment their pools are formed (V52), scheduled until a round takes
-  * them, and their seats `participant` rows:
+  * A tournament's matches are `match` rows from the moment their pools are formed, scheduled until a round takes them,
+  * and their seats `participant` rows:
   *
   *   - A round is begun by its owner, or by its last match ending in a tournament with automatic rounds. Beginning it
   *     gives the next slot of each pool's schedule its round, settles who forfeits before play, and starts the first

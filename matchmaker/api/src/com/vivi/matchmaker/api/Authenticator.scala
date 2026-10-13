@@ -16,7 +16,7 @@ import com.vivi.matchmaker.auth.ApiKeys
   * header and an expired token are not the same 401.
   *
   * An `IO`, because one of them has to look something up: an engine's API key is checked against the keys stored with
-  * the games (V34). The others answer from the request alone and are pure underneath.
+  * the games. The others answer from the request alone and are pure underneath.
   */
 trait Authenticator {
     def callerOf(request: Request): IO[Either[Response, String]]
@@ -61,7 +61,7 @@ object Authenticator {
       *
       * This is how the game engine's callbacks are authenticated. Matchmaker and each engine share one secret: the
       * engine has it from its own configuration, and matchmaker from the game's stored key, which an admin sets on the
-      * game's form (V34). The key names the engine — the game it is stored with has the engine's identity as its
+      * game's form. The key names the engine — the game it is stored with has the engine's identity as its
       * `externalId`, which is what the services compare a game-authorized caller against.
       *
       * `keys` is asked on every call rather than once, so that a key an admin has just changed is the one checked.

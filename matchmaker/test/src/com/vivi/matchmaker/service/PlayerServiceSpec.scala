@@ -70,7 +70,7 @@ class PlayerServiceSpec extends PropertySuite {
     }
 
     /* Case insensitive: the search compares a normalized nickname -- lowercased, whitespace
-     * collapsed, trimmed -- and V21 indexes that same expression. Nickname uniqueness is still case
+     * collapsed, trimmed -- and `player_nickname_search` indexes that same expression. Nickname uniqueness is still case
      * sensitive, so "Ash" and "ash" are two players, and a search that folds case offers both. */
     property("search ignores the case of the prefix and of the nickname") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (suffix, externalId, callerId) =>
@@ -157,7 +157,7 @@ class PlayerServiceSpec extends PropertySuite {
     }
 
     /* The prefix is text, not a pattern. The search is a LIKE underneath -- which is what lets it use
-     * the index of V20 -- so every character LIKE reads as a wildcard has to be escaped on the way
+     * `player_nickname_search` -- so every character LIKE reads as a wildcard has to be escaped on the way
      * in: unescaped, the `%` and the `_` below would match the other player too, and the searcher has
      * no way to say they meant the character. */
     property("a wildcard character in the prefix matches itself") {

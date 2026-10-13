@@ -4,8 +4,8 @@ import upickle.default.{ReadWriter, readwriter, macroRW}
 import com.vivi.matchmaker.model._
 import Json.given
 
-/** The tournament half of the wire format (V52), beside [[Json]] rather than in it: one object holding every codec
-  * grows past what the Scala.js compiler's stack will take while it expands them.
+/** The tournament half of the wire format, beside [[Json]] rather than in it: one object holding every codec grows past
+  * what the Scala.js compiler's stack will take while it expands them.
   *
   * The design and the state are the model's own codecs, which the server's services share, re-exported by name rather
   * than imported so that nothing here is ambiguous. Import `TournamentJson.given` beside `Json.given`.

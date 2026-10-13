@@ -47,8 +47,8 @@ object TestMigration {
      * spec means to break (`GameEngineService.finish`, recording what the engine handed back).
      *
      * Narrow on purpose. A trigger that refused *every* update of such a row also refused
-     * Flyway's: V11 backfills a column across the whole `match` table, and a leftover 'explode'
-     * row from an earlier test run was enough to fail the migration and with it every suite.
+     * Flyway's: a migration that backfilled a column across the whole `match` table met a leftover
+     * 'explode' row from an earlier test run, which was enough to fail it and with it every suite.
      *
      * Under an advisory lock, for the same reason Flyway holds one over the migrations: `migrated`
      * is one lazy val per JVM and mill runs several of them, so without it two `CREATE OR REPLACE

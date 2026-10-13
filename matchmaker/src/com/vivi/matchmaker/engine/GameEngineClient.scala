@@ -141,8 +141,8 @@ trait GameEngineClient {
 
     /** Creates a game at `gameUrl`, which is the `url` recorded on the [[com.vivi.matchmaker.model.Game]].
       *
-      * `apiKey` is that game's stored key (V34), presented to the engine — given by the caller, which has the game in
-      * hand, rather than looked up here, so that two games on one engine host each present their own.
+      * `apiKey` is that game's stored key, presented to the engine — given by the caller, which has the game in hand,
+      * rather than looked up here, so that two games on one engine host each present their own.
       */
     def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse]
 

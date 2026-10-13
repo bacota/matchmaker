@@ -91,7 +91,7 @@ case class TournamentState(
 
 /** What advancing a tournament needs that is not in its state: the design, the game, and everyone's rating now.
   *
-  * `defaultPoolSize` is the tournament's (V52), for a stage that sets no pool size; `None`, as in a test that has no
+  * `defaultPoolSize` is the tournament's, for a stage that sets no pool size; `None`, as in a test that has no
   * tournament, is the game's R. `concurrentRounds` is the tournament's: set, every round-robin pool may play all of its
   * matches in one round, as a stage that says so itself may.
   */
@@ -318,7 +318,7 @@ object Tournament {
                               stage.rotateRoles,
                               env.concurrent(stage)
                             )
-                        // Ties by the pool's size (V52): none in a pool of two, an elimination match.
+                        // Ties by the pool's size: none in a pool of two, an elimination match.
                         Pool(id, f.stratum, members, matches = planned.map(PoolMatch(_, Ties.allowed(f.members.size))))
                 }
         }
@@ -433,7 +433,7 @@ object Tournament {
     private def reseed(members: List[Member], run: StageRun, stage: StageDesign, env: Env): List[Member] = {
         val poolOf: Map[Long, PoolMember] = run.pools.flatMap(_.members.map(m => m.entrant -> m)).toMap
         // The active members in `order`, then those eliminated, by the seed they had: seeds stay one number per member,
-        // as a node's seeds are kept (V52).
+        // as a node's seeds are kept.
         def renumber(order: List[Member]): List[Member] = {
             val all = order ++ members.filter(_.eliminated).sortBy(m => (m.seed, m.entrant))
             val seeds = all.zipWithIndex.map((m, i) => m.entrant -> (i + 1)).toMap

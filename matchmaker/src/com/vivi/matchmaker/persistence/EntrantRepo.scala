@@ -9,7 +9,7 @@ import natchez.Trace.Implicits.noop
 import java.time.Instant
 import com.vivi.matchmaker.model._
 
-/** Reads and writes `entrant` and `character_entrant` (V52): who has entered a tournament, and with what.
+/** Reads and writes `entrant` and `character_entrant`: who has entered a tournament, and with what.
   *
   * A character entry is read with its character's owner as it stands now — `character.player_id` — beside the player
   * who entered it: the owner is who plays it, and may have changed since.

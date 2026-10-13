@@ -9,10 +9,9 @@ import com.vivi.matchmaker.model._
   * being about, whether it asks the player to do anything, what it says is still missing — are all made here, with no
   * challenge and no database in sight.
   *
-  * Four are about an acceptance and three about an invitation (V22). The invitation three are the same shape one level
-  * out — an offer is made, taken up, or turned down — and what is worth a test of its own in each is the thing that
-  * makes it *not* the acceptance mail beside it: who it is addressed to, and whether the roster is any of their
-  * business.
+  * Four are about an acceptance and three about an invitation. The invitation three are the same shape one level out —
+  * an offer is made, taken up, or turned down — and what is worth a test of its own in each is the thing that makes it
+  * *not* the acceptance mail beside it: who it is addressed to, and whether the roster is any of their business.
   */
 class ChallengeMailSpec extends FunSuite {
 

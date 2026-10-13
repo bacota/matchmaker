@@ -11,7 +11,7 @@ import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament._
 
 /** A tournament's progress as the rules hold it -- a [[TournamentState]] -- read from its rows and written back to them
-  * (V52, `design/new-tournament-plan.md` Phase 5).
+  * (`design/new-tournament-plan.md` Phase 5).
   *
   * The rules stay pure: [[load]] assembles the state, the rules work out the next one, and [[save]] writes what changed
   * between the two. How the state maps onto the tables:

@@ -37,7 +37,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             } yield characters
         }
 
-    /** Another player's characters in one game, by name only (V25).
+    /** Another player's characters in one game, by name only.
       *
       * What a challenger needs in order to invite one of them, and deliberately no more: [[listForGame]]'s reason for
       * not enumerating another player's characters is their state, which [[CharacterName]] leaves out. The caller must
@@ -171,7 +171,7 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
     /** A character handed by its owner to the player called `toNickname`, done in its game engine.
       *
       * Checked as [[edit]] is. The new owner is named by nickname because that is what one player knows of another, and
-      * it is unique. An invitation to the character follows it (V25): whoever owns it when they answer is who may.
+      * it is unique. An invitation to the character follows it: whoever owns it when they answer is who may.
       */
     def transfer(
         characterId: CharacterId,

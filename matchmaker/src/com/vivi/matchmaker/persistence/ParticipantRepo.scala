@@ -21,7 +21,7 @@ class ParticipantRepo(session: Session[IO]) {
 
     /* A seat, stamped on creation with what its player wants to hear about it.
      *
-     * INSERT ... SELECT rather than VALUES, because the seat's four `notify_*` columns are NOT NULL (V14)
+     * INSERT ... SELECT rather than VALUES, because the seat's four `notify_*` columns are NOT NULL
      * and what goes in them is the chain resolved at this moment: what the player has said about this
      * game, else what they have said in general, else send it. That is the same rule as
      * `NotificationLevels.apply`, done here instead of read and passed in, so that a seat cannot be
@@ -37,9 +37,9 @@ class ParticipantRepo(session: Session[IO]) {
       (GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Int, Option[Int]),
       ParticipantId
     ] =
-        // `completed_at` (V41) is the database's now() for a seat created already finished, as
+        // `completed_at` is the database's now() for a seat created already finished, as
         // `updateParticipant` stamps one below; Scala says only whether it is.
-        // The seat names its match's challenge (V52), taken from the match itself so that it cannot name another.
+        // The seat names its match's challenge, taken from the match itself so that it cannot name another.
         sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed_at, due, game_role_id,
               elo_start, elo_role_start, notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended,
               challenge_id)
@@ -132,7 +132,7 @@ class ParticipantRepo(session: Session[IO]) {
 
     private val updateParticipant
         : Command[(PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, GameId, ParticipantId)] =
-        // A seat finished keeps the time it was first finished at (V41): completing is sticky, and a
+        // A seat finished keeps the time it was first finished at: completing is sticky, and a
         // later write to a finished seat -- a re-stamp of its settings, a repeated callback -- is not
         // a second ending. One not finished has none.
         sql"""UPDATE participant SET player_id = $playerId, pending = $bool,
@@ -159,8 +159,8 @@ class ParticipantRepo(session: Session[IO]) {
         }
     }
 
-    /** Seats `p`, whose player was rated `eloStart` in the game as the match began (V43), and `eloRoleStart` in the
-      * seat's role (V49) — none for a game whose roles are unimportant.
+    /** Seats `p`, whose player was rated `eloStart` in the game as the match began, and `eloRoleStart` in the seat's
+      * role — none for a game whose roles are unimportant.
       */
     def create(p: Participant, eloStart: Int, eloRoleStart: Option[Int] = None): IO[Participant] = {
         val gt = p match {
@@ -242,7 +242,7 @@ class ParticipantRepo(session: Session[IO]) {
       *
       * The two extra columns are there for the game-engine calls: the engine is told which Cognito identity plays which
       * role, and knows nothing of matchmaker's own player or role ids. Both are inner joins -- a participant always has
-      * a player and, since V4, always has a role.
+      * a player, and a seat of a challenge always has a role.
       */
     def listForMatch(gameId: GameId, matchId: MatchId): IO[List[(Participant, String, String)]] =
         session
@@ -258,7 +258,7 @@ class ParticipantRepo(session: Session[IO]) {
             })
 
     private val selectEloSeats: Query[(GameId, MatchId), ParticipantRepo.EloSeatRow] =
-        // Not a tournament seat that forfeited before play (V52): it played nothing, and is rated for nothing.
+        // Not a tournament seat that forfeited before play: it played nothing, and is rated for nothing.
         sql"""SELECT participant_id, player_id, elo_start, game_role_id, elo_role_start FROM participant
           WHERE game_id = $gameId AND match_id = $matchId AND NOT forfeit
           ORDER BY participant_id"""
@@ -266,7 +266,7 @@ class ParticipantRepo(session: Session[IO]) {
             .to[ParticipantRepo.EloSeatRow]
 
     /** Every seat in a match as rating sees it: whose it is, its role, and what they were rated as it began, overall
-      * (V43) and in the role (V49).
+      * and in the role.
       */
     def eloSeatsForMatch(gameId: GameId, matchId: MatchId): IO[List[ParticipantRepo.EloSeatRow]] =
         session.execute(selectEloSeats)((gameId, matchId))
@@ -286,7 +286,7 @@ class ParticipantRepo(session: Session[IO]) {
         sql"""UPDATE participant SET elo_role_start = elo_role_start + $int4
           WHERE game_id = $gameId AND participant_id = $participantId""".command
 
-    /** As [[adjustEloStart]], for the seat's starting rating in its role (V49). A seat with none keeps none. */
+    /** As [[adjustEloStart]], for the seat's starting rating in its role. A seat with none keeps none. */
     def adjustEloRoleStart(gameId: GameId, id: ParticipantId, change: Int): IO[Unit] =
         session.execute(updateEloRoleStartBy)((change, gameId, id)).void
 
@@ -348,8 +348,8 @@ class ParticipantRepo(session: Session[IO]) {
 
 object ParticipantRepo {
 
-    /** A seat's player and role, and what they were rated as the match began: overall (V43), and in the role (V49) —
-      * none for a seat of a game whose roles are unimportant, or from before ratings were kept by role.
+    /** A seat's player and role, and what they were rated as the match began: overall, and in the role — none for a
+      * seat of a game whose roles are unimportant, or from before ratings were kept by role.
       */
     case class EloSeatRow(
         participantId: ParticipantId,

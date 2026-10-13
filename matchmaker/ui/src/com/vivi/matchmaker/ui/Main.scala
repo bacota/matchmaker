@@ -555,7 +555,7 @@ object Views {
     private def reloadAcceptanceSections(): Unit =
         refresh(refreshingAcceptances, () => Store.reloadAcceptances())
 
-    /** What this player has been invited to and has not answered (V22).
+    /** What this player has been invited to and has not answered.
       *
       * First on the page, and absent when there is nothing in it, for the reason "Ready to Start" is both: an
       * invitation is a thing somebody else did that is waiting on this player, not a list they came to check. Every
@@ -679,7 +679,7 @@ object Views {
       */
     private def invitationRow(invited: ChallengeInvitation): HtmlElement = {
         val invitation = invited.invitation
-        // A character game's invitation names the character (V25), so the acceptance can name it too;
+        // A character game's invitation names the character, so the acceptance can name it too;
         // one that somehow arrives without it is sent to the game screen. A role-less invitation is an
         // offer of any free seat, and which are free is not in this response.
         val acceptableHere =
@@ -1492,7 +1492,7 @@ object Views {
           )
         )
 
-    /** Asking this player for a game (V22): pick the game, and go and compose the challenge.
+    /** Asking this player for a game: pick the game, and go and compose the challenge.
       *
       * Two steps rather than one, because a challenge is more than who it is for — it has a message, a clock, a seat
       * for its challenger — and all of that lives in the form on the game's screen. So this carries the one thing that
@@ -1673,7 +1673,7 @@ object Views {
       *
       * Addressed to them means a player invitation in a plain game, and in a character game an invitation to any
       * character they own now -- which is why their characters are fetched: an invitation names the character, and the
-      * owner is whoever holds it at the moment (V25). Nothing at all on the reader's own page.
+      * owner is whoever holds it at the moment. Nothing at all on the reader's own page.
       */
     private def offeredChallenges(game: Game, invitee: PublicPlayer): HtmlElement = {
         val characterGame = game.gameType == GameType.Character
@@ -2810,9 +2810,9 @@ object Views {
         val url = Var(existing.map(_.url).getOrElse(""))
         val engineIdentity = Var(existing.map(_.externalId).getOrElse(""))
         val disabled = Var(existing.exists(!_.active))
-        // No role has an advantage in winning: ratings are then kept overall only (V49).
+        // No role has an advantage in winning: ratings are then kept overall only.
         val unimportantRoles = Var(existing.exists(_.unimportantRoles))
-        // How players take turns, and how many a simultaneous game lasts (V51); max turns as typed.
+        // How players take turns, and how many a simultaneous game lasts; max turns as typed.
         val moveType: Var[MoveType] = Var(existing.map(_.moveType).getOrElse(MoveType.Sequential))
         val maxTurns = Var(existing.flatMap(_.maxTurns).fold("")(_.toString))
         // What this form's tip ids start with: a game's edit form and the new-game form are different forms.
@@ -2946,7 +2946,7 @@ object Views {
               )
           },
           roleEditor(formKey, roles),
-          // Beside the roles it is about. Unticked, ratings are kept by role as well as overall (V49).
+          // Beside the roles it is about. Unticked, ratings are kept by role as well as overall.
           {
               val tipId = s"$formKey-unimportant-roles-tip"
               withTip(
@@ -3095,8 +3095,8 @@ object Views {
     }
 
     /** `player`'s matches in the game, for an admin of it looking at that player's page: where they say whether each is
-      * friendly (V36). Every match the player has a seat in, public or not — an admin manages them all — and nothing at
-      * all for a reader who is not an admin of the game: not a heading, not a request beyond the one that finds out.
+      * friendly. Every match the player has a seat in, public or not — an admin manages them all — and nothing at all
+      * for a reader who is not an admin of the game: not a heading, not a request beyond the one that finds out.
       *
       * On the player's page rather than the game's, so that an admin deals with one player's matches at a time, from
       * the page that is about that player.
@@ -3208,9 +3208,8 @@ object Views {
         )
     }
 
-    /** The game's leaderboard (V45), [[Leaderboard.pageSize]] places at a time, best first, for anybody signed in; and
-      * for its admins, a box on each row that sets that player's rating, and a form that rates a player who has none
-      * yet.
+    /** The game's leaderboard, [[Leaderboard.pageSize]] places at a time, best first, for anybody signed in; and for
+      * its admins, a box on each row that sets that player's rating, and a form that rates a player who has none yet.
       *
       * Held in the section rather than the store, as [[adminMatchList]] holds its matches and for the same reason: an
       * answer written into the store would rebuild the page this sits in, remount it, and ask again.
@@ -3222,10 +3221,10 @@ object Views {
           )
         )
 
-    /** Under the overall rankings of a game whose roles matter (V49), a dropdown that shows one role's rankings — asked
-      * for, rather than shown, since most visitors want the overall ones. Not there for a game whose admin says no role
-      * has an advantage, which keeps no ratings by role, nor for a game of one role, whose only role's rankings would
-      * be the overall ones again.
+    /** Under the overall rankings of a game whose roles matter, a dropdown that shows one role's rankings — asked for,
+      * rather than shown, since most visitors want the overall ones. Not there for a game whose admin says no role has
+      * an advantage, which keeps no ratings by role, nor for a game of one role, whose only role's rankings would be
+      * the overall ones again.
       */
     private def roleRankings(game: Game, player: Player): Node =
         if (game.unimportantRoles || game.roles.sizeIs < 2) emptyNode
@@ -3250,8 +3249,8 @@ object Views {
             )
         }
 
-    /** The leaderboard — the game's overall one, or `role`'s (V49). A role's has no rating to set: an admin sets the
-      * overall rating, and a role's is moved only by play.
+    /** The leaderboard — the game's overall one, or `role`'s. A role's has no rating to set: an admin sets the overall
+      * rating, and a role's is moved only by play.
       */
     private def ratingsList(game: Game, player: Player, role: Option[GameRole]): HtmlElement = {
         val roleId = role.map(_.gameRoleId)
@@ -3595,9 +3594,9 @@ object Views {
     private def notRanked: HtmlElement =
         span(span(aria.hidden := true, "—"), span(cls := "sr-only", "not ranked yet"))
 
-    /** A player's win–loss–draw record (V46), as the rankings show it: "12 (2)–5 (1)–3", the numbers in parentheses the
-      * wins and losses that came by forfeit, and left out when there are none. Said in words to a screen reader, which
-      * would otherwise read the dashes and parentheses as punctuation.
+    /** A player's win–loss–draw record, as the rankings show it: "12 (2)–5 (1)–3", the numbers in parentheses the wins
+      * and losses that came by forfeit, and left out when there are none. Said in words to a screen reader, which would
+      * otherwise read the dashes and parentheses as punctuation.
       */
     private def recordText(r: MatchRecord): HtmlElement = {
         def byForfeit(n: Int) = if (n > 0) s" ($n)" else ""
@@ -4026,7 +4025,7 @@ object Views {
         val challengeId = summary.challenge.challengeId
 
         /* One row per invitation, whichever kind: a plain game's name players, a character game's name
-         * characters (V25). What differs is who is named and what Revoke addresses; the rest -- the
+         * characters. What differs is who is named and what Revoke addresses; the rest -- the
          * seat, and Remove for an acceptance -- reads the same. `acceptedBy` is the player whose
          * acceptance holds the seat, which is what Remove addresses in both cases. */
         case class Invited(
@@ -4110,7 +4109,7 @@ object Views {
         )
     }
 
-    /** Which of `owner`'s characters to invite, in a character game (V25).
+    /** Which of `owner`'s characters to invite, in a character game.
       *
       * A character game's invitation names a character, so choosing the player is half the answer. Their characters are
       * fetched when this is mounted — by name only, which is all another player may see of them — and the first one not
@@ -4204,7 +4203,7 @@ object Views {
         val chosen = Var(Option.empty[PublicPlayer])
         // The seat to hold for them, `None` meaning any that is still free when they answer.
         val seat = Var(Option.empty[GameRoleId])
-        // In a character game, which of their characters is being asked (V25).
+        // In a character game, which of their characters is being asked.
         val characterGame = game.gameType == GameType.Character
         val character = Var(Option.empty[CharacterId])
 
@@ -4471,11 +4470,11 @@ object Views {
 
     /** A challenge somebody else is offering, and this player's way into it.
       *
-      * `me` is here for the roles (V22). A seat is not free merely because nobody has accepted it: an invitation holds
-      * one for the player it names, and an invitation *to this player* that names a seat is an offer of that seat and
-      * no other. Both are refused by the server — the first with a 409, the second with a 400 — so both narrow the
-      * picker rather than being left to fail on submit, which for the second would fail on the *default* selection and
-      * so on the first click.
+      * `me` is here for the roles. A seat is not free merely because nobody has accepted it: an invitation holds one
+      * for the player it names, and an invitation *to this player* that names a seat is an offer of that seat and no
+      * other. Both are refused by the server — the first with a 409, the second with a 400 — so both narrow the picker
+      * rather than being left to fail on submit, which for the second would fail on the *default* selection and so on
+      * the first click.
       */
     private def openChallengeRow(
         game: Game,
@@ -4487,7 +4486,7 @@ object Views {
         // Which character this row accepts as. Only one not already seated here: a character accepted
         // and then transferred to this player holds a seat that is not theirs, and accepting as it again
         // is refused. Of those, the one invited to this challenge if there is one -- an invitation is to a
-        // character (V25), and accepting as any other is refused on a closed challenge and is a different
+        // character, and accepting as any other is refused on a closed challenge and is a different
         // seat on an open one. Otherwise their first eligible one. A player holds one seat per challenge,
         // so if two of theirs were invited, either will do.
         val eligible = myCharacters.filterNot(summary.seatedCharacters.contains)
@@ -4505,7 +4504,7 @@ object Views {
         val free = freeRoles(game, summary)
         // The seat held for this player, if they were invited to one. `accept` refuses any other role
         // for them, so it is not one choice among the free ones -- it is the only one.
-        // In a character game the invitation is to the character this row would accept as (V25), not to
+        // In a character game the invitation is to the character this row would accept as, not to
         // the player, so a seat held for another of their characters is held for somebody else.
         val (mySeat, heldForOthers) = characterId match {
             case Some(mine) =>
@@ -4944,7 +4943,7 @@ object Views {
         // A challenge is its challenger's own acceptance, so it names a role like any other. Nothing
         // has been claimed yet, so every role of the game is on offer and the first stands selected.
         val role = Var(game.roles.headOption.map(_.gameRoleId))
-        // Whether this player administers the game (V35), which is what lets them offer a match they
+        // Whether this player administers the game, which is what lets them offer a match they
         // will not play in, or one that is not friendly: `Store.administers`, held here so that the
         // button can read it when it is pressed.
         val administers = Var(player.isAdmin)
@@ -4964,7 +4963,7 @@ object Views {
         // own choice of role is what `None` leaves them, and it is the default: holding a particular
         // seat is the stronger statement of the two, so it is the one the challenger has to make.
         val inviteeRole = Var(Option.empty[GameRoleId])
-        // In a character game the invitation names one of the invitee's characters (V25).
+        // In a character game the invitation names one of the invitee's characters.
         val characterGame = game.gameType == GameType.Character
         val inviteeCharacter = Var(Option.empty[CharacterId])
         // And the challenge is offered as one of the challenger's own: the first of them to start

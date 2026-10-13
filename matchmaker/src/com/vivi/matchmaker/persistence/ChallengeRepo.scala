@@ -432,13 +432,13 @@ class ChallengeRepo(session: Session[IO]) {
             -- same reason the full one below is: it cannot be accepted by a passer-by, and the
             -- people it is still about are its challenger and the players it was addressed to.
             -- `is_open` first because it is the common case and the cheapest test. It does not
-            -- make V22's (game_id, is_open) index usable -- an OR cannot be an index condition,
+            -- make the (game_id, is_open) index usable -- an OR cannot be an index condition,
             -- so this whole clause is a filter over the rows an index on game_id already found,
             -- exactly as `started_match_id IS NULL` above it has always been. Recovering the
             -- index means splitting this into a union of three branches (open, mine, invited),
             -- measured at 15.6ms against 19.4ms on a game of 22k challenges -- at the cost of
-            -- writing the select list above three times. See the note in V22 for why that trade
-            -- is not taken yet.
+            -- writing the select list above three times, where drift between the copies would
+            -- show a challenge to the wrong player. Not worth it while a game has a handful.
             AND (ch.is_open
                  OR ch.challenger = $playerId
                  -- Anybody already seated in it, who needs it to see what they are waiting for and
@@ -451,7 +451,7 @@ class ChallengeRepo(session: Session[IO]) {
                  OR EXISTS (SELECT 1 FROM invitation i
                              WHERE i.game_id = ch.game_id AND i.challenge_id = ch.challenge_id
                                AND i.player_id = $playerId)
-                 -- A character game's invitation (V25) reaches whoever owns the character now --
+                 -- A character game's invitation reaches whoever owns the character now --
                  -- unless the character has already accepted, which leaves its new owner (after a
                  -- transfer) nothing to answer: the seat is the previous owner's acceptance, and the
                  -- clause above still shows the challenge to them. The same exclusion as
@@ -471,7 +471,7 @@ class ChallengeRepo(session: Session[IO]) {
             -- those are seats a latecomer could still take, even though a start need not wait
             -- for them.
             --
-            -- "Spoken for" means accepted or reserved (V22). A role held by an invitation to
+            -- "Spoken for" means accepted or reserved. A role held by an invitation to
             -- somebody else is not a seat this viewer can take -- `ChallengeService.accept`
             -- refuses it -- so a challenge whose every remaining role is reserved for other
             -- people is as good as full to them, open or not. Reserved for *this* viewer counts
@@ -513,8 +513,8 @@ class ChallengeRepo(session: Session[IO]) {
       * A challenge that has been started is excluded: it is no longer something to accept, and since starting one no
       * longer deletes it, it would otherwise sit in the list forever offering a Start that would be refused.
       *
-      * A challenge that is not open is excluded unless `viewer` offered it or was invited to it (V22). Nobody else can
-      * join it, so listing it would be listing an Accept the service refuses — the same reasoning as the full challenge
+      * A challenge that is not open is excluded unless `viewer` offered it or was invited to it. Nobody else can join
+      * it, so listing it would be listing an Accept the service refuses — the same reasoning as the full challenge
       * below, and the same exception for the people it is actually about. Which invitations it carries is not read
       * here: `ChallengeService.listByGame` adds them, since they are rows in another table and this query is already
       * asking three questions.

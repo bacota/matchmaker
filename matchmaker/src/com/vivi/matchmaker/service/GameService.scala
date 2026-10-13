@@ -64,11 +64,11 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                                             IO.raiseError(NotFoundError(s"no game with id ${trimmed.gameId.value}"))
                                     }
                             }
-                    // A new game offers every tournament model it can play, which its admins may then change (V52).
+                    // A new game offers every tournament model it can play, which its admins may then change.
                     _ <- IO.whenA(trimmed.gameId == GameId.unassigned)(
                       TournamentModelService.offerPlayable(session, result).void
                     )
-                    // Unique across games (V34). A clash rolls the whole save back, game and all.
+                    // Unique across games. A clash rolls the whole save back, game and all.
                     _ <- newKey.traverse_(key =>
                         new GameApiKeyRepo(session).set(result.gameId, key).recoverWith {
                             case SqlState.UniqueViolation(_) =>
@@ -180,9 +180,9 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
     /** What the schema would refuse anyway, refused here first so that it is a 400 explaining itself rather than a
       * constraint violation surfacing as a 500.
       *
-      * The one rule that is not the schema's: a game must define at least one role. Since V4 every acceptance names a
-      * role, so a game with none is a game nothing can be offered or accepted for — it would take challenges no further
-      * than the form that tried to create one.
+      * The one rule that is not the schema's: a game must define at least one role. Every acceptance names a role, so a
+      * game with none is a game nothing can be offered or accepted for — it would take challenges no further than the
+      * form that tried to create one.
       */
     private def validate(game: Game): IO[Unit] =
         for {

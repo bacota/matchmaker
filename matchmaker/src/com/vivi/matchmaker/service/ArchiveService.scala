@@ -90,7 +90,7 @@ class ArchiveService(
                                 // The key is fixed the first time it is chosen: a game renamed meanwhile does
                                 // not move an archive half-way through being made.
                                 val key = row.key.getOrElse(keyFor(row.gameName, completedAt, matchId))
-                                // The bucket the url is signed for, recorded with it (V44): the match's as
+                                // The bucket the url is signed for, recorded with it: the match's as
                                 // it stands now, and where `confirm` will look.
                                 repo
                                     .recordRequest(row.gameId, matchId, key, sha256, row.friendly)
@@ -277,10 +277,10 @@ class ArchiveService(
                 IO.blocking(System.err.println(s"archive check for match ${matchId.value} failed: $e")).as(false)
             )
 
-    /** The first step of moving a match's archive from the friendly bucket to the permanent one (V44), when a game's
-      * admin says a match archived as friendly was not: the copy, made before anything about the match changes, and
-      * answered with what [[recordMove]] and [[finishMove]] then need. Nothing to copy — no archive yet, an archive
-      * already permanent, or one already known to have expired — is `None`.
+    /** The first step of moving a match's archive from the friendly bucket to the permanent one, when a game's admin
+      * says a match archived as friendly was not: the copy, made before anything about the match changes, and answered
+      * with what [[recordMove]] and [[finishMove]] then need. Nothing to copy — no archive yet, an archive already
+      * permanent, or one already known to have expired — is `None`.
       *
       * Before the change rather than after it, and in the same request: if the copy fails, so does the request, and
       * nothing has changed. Until the change commits, readers are sent to the original, which is untouched.
@@ -369,8 +369,8 @@ class ArchiveService(
 
 object ArchiveService {
 
-    /** The bucket the archive is in (V44), or for a row from before that was recorded, the one its friendliness says —
-      * which is where every such archive went, since a match could not change it then.
+    /** The bucket the archive is in, or for a row from before that was recorded, the one its friendliness says — which
+      * is where every such archive went, since a match could not change it then.
       */
     def bucketOf(row: ArchiveRow): ArchiveBucket = ArchiveBucket.of(row.archiveFriendly.getOrElse(row.friendly))
 

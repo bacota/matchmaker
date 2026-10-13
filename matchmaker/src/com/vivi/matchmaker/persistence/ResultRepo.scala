@@ -75,7 +75,7 @@ class ResultRepo(session: Session[IO]) {
           JOIN player pl ON pl.player_id = p.player_id
           JOIN game_role gr ON gr.game_id = p.game_id AND gr.game_role_id = p.game_role_id
           LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
-          -- Begun (V52): a tournament's match cancelled before it began has seats with no ratings and no results.
+          -- Begun: a tournament's match cancelled before it began has seats with no ratings and no results.
           WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND m.start IS NOT NULL
             AND ((m.completed_at IS NOT NULL) OR m.cancelled)
           ORDER BY p.match_id, r.rank ASC NULLS LAST, p.participant_id"""
@@ -170,8 +170,8 @@ class ResultRepo(session: Session[IO]) {
         sql"""UPDATE result SET elo_delta = ${int4.opt}, elo_role_delta = ${int4.opt}
           WHERE game_id = $gameId AND participant_id = $participantId""".command
 
-    /** Says what the match did to the seat's player's rating, overall and in the seat's role (V49): for a completed
-      * match reclassified as friendly (none) or not (the deltas worked out now).
+    /** Says what the match did to the seat's player's rating, overall and in the seat's role: for a completed match
+      * reclassified as friendly (none) or not (the deltas worked out now).
       */
     def setEloDelta(gameId: GameId, id: ParticipantId, delta: Option[Int], roleDelta: Option[Int] = None): IO[Unit] =
         session.execute(updateEloDelta)((delta, roleDelta, gameId, id)).void
@@ -180,8 +180,8 @@ class ResultRepo(session: Session[IO]) {
         sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, forfeit, manual)
           VALUES ($gameId, $participantId, $int4, '{}'::jsonb, $bool, false, true)""".command
 
-    /** A rank a tournament's owner gave a seat of a match they called off (V52): no scores, no rating change, marked as
-      * given by hand. Only ever on a cancelled tournament match, which nothing that moves a rating reads.
+    /** A rank a tournament's owner gave a seat of a match they called off: no scores, no rating change, marked as given
+      * by hand. Only ever on a cancelled tournament match, which nothing that moves a rating reads.
       */
     def createManual(gameId: GameId, id: ParticipantId, rank: Int, isWinner: Boolean): IO[Unit] =
         session.execute(insertManual)((gameId, id, rank, isWinner)).void
@@ -244,13 +244,13 @@ object ResultRepo {
         isWinner: Boolean,
         forfeit: Boolean,
         // Its player's rating as the match began, from the seat, and the match's change to it, from the
-        // result (V43).
+        // result.
         eloStart: Int,
         eloDelta: Option[Int]
     )
 
     /** A result as rating sees it: where the seat finished, and what the match did to its player's rating, overall and
-      * in the seat's role (V49).
+      * in the seat's role.
       */
     case class RatedResultRow(
         participantId: ParticipantId,

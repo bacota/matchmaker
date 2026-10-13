@@ -185,7 +185,7 @@ resource "aws_lambda_function" "api" {
       # this function, so taking its invoke_url here would close a dependency cycle.
       MATCHMAKER_BASE_URL = "https://${aws_apigatewayv2_api.api.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
 
-      # No engine API keys: each game's key is stored with it in the database (V34), set by an
+      # No engine API keys: each game's key is stored with it in the database, set by an
       # admin on the game's form, and read from there in both directions.
 
       # The two archive buckets (archive.tf). Without both, archiving is off and the engine is told
@@ -321,7 +321,7 @@ locals {
     # invitation -- there is no player id for the path to carry. The challenger's side is the
     # revoke below, on the challenge itself.
     "DELETE /me/invitations/{gameId}/{challengeId}",
-    # The same for a character game's invitation, which names a character (V25).
+    # The same for a character game's invitation, which names a character.
     "DELETE /me/character-invitations/{gameId}/{challengeId}/{characterId}",
     "GET /me/matches",
     "GET /me/matches/due",
@@ -338,18 +338,18 @@ locals {
 
     "GET /games",
     "POST /games",
-    # A game's admins (V35): who they are, making one, and taking it away.
+    # A game's admins: who they are, making one, and taking it away.
     "GET /games/{gameId}/admins",
     "PUT /games/{gameId}/admins/{playerId}",
     "DELETE /games/{gameId}/admins/{playerId}",
-    # Players' Elo ratings in a game (V42): the leaderboard (V45), one player's standing on it, and an
+    # Players' Elo ratings in a game: the leaderboard, one player's standing on it, and an
     # admin of the game setting one.
     "GET /games/{gameId}/ratings",
     "GET /games/{gameId}/ratings/{playerId}",
     "PUT /games/{gameId}/ratings/{playerId}",
     "GET /games/{gameId}/challenges",
     "GET /games/{gameId}/characters",
-    # Another player's characters by name, for inviting one (V25). No state.
+    # Another player's characters by name, for inviting one. No state.
     "GET /games/{gameId}/players/{playerId}/characters",
     # A character's page: the character, and its public matches running and finished.
     "GET /games/{gameId}/characters/{characterId}",
@@ -365,12 +365,12 @@ locals {
     "DELETE /challenges/{gameId}/{challengeId}",
     "POST /challenges/{gameId}/{challengeId}/acceptances",
     "DELETE /challenges/{gameId}/{challengeId}/acceptances/{playerId}",
-    # Asking particular players to a challenge, and then removing an invitation (V22). The POST is
+    # Asking particular players to a challenge, and then removing an invitation. The POST is
     # the challenger's alone; DELETE lets the invitee reject their own invitation or the challenger
     # revoke it. The create route above carries the invitations a challenge starts with.
     "POST /challenges/{gameId}/{challengeId}/invitations",
     "DELETE /challenges/{gameId}/{challengeId}/invitations/{playerId}",
-    # A character game's invitations name characters, not players (V25).
+    # A character game's invitations name characters, not players.
     "POST /challenges/{gameId}/{challengeId}/character-invitations",
     "DELETE /challenges/{gameId}/{challengeId}/character-invitations/{characterId}",
     # Turning a challenge into a match, and the two match routes that go with it. All three are
@@ -380,14 +380,14 @@ locals {
     "POST /games/{gameId}/matches/{matchId}/refresh",
     # Calling a match off, which only its creator may do.
     "POST /games/{gameId}/matches/{matchId}/cancel",
-    # A game's matches, for its admins; and whether one is friendly (V36), which they say.
+    # A game's matches, for its admins; and whether one is friendly, which they say.
     "GET /games/{gameId}/matches",
     "PUT /games/{gameId}/matches/{matchId}/friendly",
     # Muting one match: the most specific thing a player can say about notifications.
     "GET /games/{gameId}/matches/{matchId}/notifications",
     "PUT /games/{gameId}/matches/{matchId}/notifications",
 
-    # Tournaments (V52): the caller's own, a game's, and one tournament's page; creating and editing
+    # Tournaments: the caller's own, a game's, and one tournament's page; creating and editing
     # one; its owner opening, starting and cancelling it; invitations; and entering and withdrawing.
     "GET /me/tournaments",
     "GET /me/tournament-standings",
@@ -428,7 +428,7 @@ locals {
    * of its own, and giving it one to impersonate would be a password shared between two systems
    * with a great deal more reach than a key scoped to these routes.
    *
-   * Matchmaker holds a different key per game, stored with it in the database (V34), so the key
+   * Matchmaker holds a different key per game, stored with it in the database, so the key
    * also says *which* engine is calling: the game it is stored with names the engine as its
    * `external_id`.
    */

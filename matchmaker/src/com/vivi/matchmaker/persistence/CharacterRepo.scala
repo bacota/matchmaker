@@ -88,7 +88,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           ORDER BY name""".query(characterId *: text)
 
     /** The names of one player's characters in one game, without their state — what another player may see of them in
-      * order to invite one (V25). Ordered by name for the reason `listForPlayerAndGame` is.
+      * order to invite one. Ordered by name for the reason `listForPlayerAndGame` is.
       */
     def listNamesForPlayerAndGame(playerId: PlayerId, gameId: GameId): IO[List[CharacterName]] =
         session

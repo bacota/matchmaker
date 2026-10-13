@@ -10,9 +10,9 @@ import com.vivi.matchmaker.persistence.EloRatingRepo
 import com.vivi.matchmaker.persistence.EloRatingRepo.{Board, Placed, RatingKey, Standing}
 import scala.math.Ordering.Implicits._
 
-/** Keeps each game's leaderboards (V45) in order — its overall one, and each role's (V49) — run by the listener that
-  * settles the ends of matches, after a match's completion has moved its players' ratings, and after an admin has set
-  * one. Each board is ranked on its own, by the rules below; one run places whoever is waiting on any of them.
+/** Keeps each game's leaderboards in order — its overall one, and each role's — run by the listener that settles the
+  * ends of matches, after a match's completion has moved its players' ratings, and after an admin has set one. Each
+  * board is ranked on its own, by the rules below; one run places whoever is waiting on any of them.
   *
   * Players are ranked by rating, and of two rated the same, the one more rated matches stand behind is ranked higher —
   * together, their standing. A place is one more than how many stand higher, so only players equal in both share one,

@@ -50,7 +50,7 @@ class ParticipantRepoSpec extends PropertySuite {
         }
     }
 
-    /* A seat finished is a time (V41), stamped by the database when the seat is first marked
+    /* A seat finished is a time, stamped by the database when the seat is first marked
      * finished and kept through every later write: completing is sticky, and a repeated callback is
      * not a second ending. */
     test("finishing a seat stamps when, and later writes to the finished seat keep that time") {

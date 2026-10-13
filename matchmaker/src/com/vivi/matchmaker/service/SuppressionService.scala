@@ -101,7 +101,7 @@ class SuppressionService(sessionPool: SessionPool) {
             }
         }
 
-    /* The caller's stored address, or nothing when they have none -- a row that predates V12, or a
+    /* The caller's stored address, or nothing when they have none -- a player who has not signed in since addresses were kept, or a
      * local caller with no Cognito identity behind their `X-External-Id`. An unknown externalId is
      * `UnauthorizedError` for the same reason `PlayerService.me` says so: the caller holds a valid
      * identity that has never registered. */

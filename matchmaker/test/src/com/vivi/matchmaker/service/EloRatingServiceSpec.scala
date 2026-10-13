@@ -20,8 +20,8 @@ import com.vivi.matchmaker.persistence.{
     TestSession
 }
 
-/** Players' Elo ratings in a game (V42): moved by a match that is not friendly as it completes, left alone by one that
-  * is, and set outright by an admin of the game. And in each role (V49), for a game whose roles matter.
+/** Players' Elo ratings in a game: moved by a match that is not friendly as it completes, left alone by one that is,
+  * and set outright by an admin of the game. And in each role, for a game whose roles matter.
   */
 class EloRatingServiceSpec extends PropertySuite {
     TestMigration.ensure()
@@ -222,8 +222,9 @@ class EloRatingServiceSpec extends PropertySuite {
                 .map(_.flatten.toMap)
         }
 
-    /** What V43 holds for each seat, by its player: what they began the match rated, from the seat, and what the match
-      * did to that, from its result — none for a seat with no result, or a result with no delta.
+    /** What `elo_start` and `elo_delta` hold for each seat, by its player: what they began the match rated, from the
+      * seat, and what the match did to that, from its result — none for a seat with no result, or a result with no
+      * delta.
       */
     private def eloSeats(f: Fixture, matchId: MatchId): IO[Map[PlayerId, (Int, Option[Int])]] =
         TestSession.resource.use { session =>
@@ -259,8 +260,8 @@ class EloRatingServiceSpec extends PropertySuite {
                 .map(_.flatten.toMap)
         }
 
-    /** What V49 holds for each seat, by its player: what they began the match rated in the seat's role, and what the
-      * match did to that.
+    /** What `elo_role_start` and `elo_role_delta` hold for each seat, by its player: what they began the match rated in
+      * the seat's role, and what the match did to that.
       */
     private def roleSeats(f: Fixture, matchId: MatchId): IO[Map[PlayerId, (Option[Int], Option[Int])]] =
         TestSession.resource.use { session =>

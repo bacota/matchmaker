@@ -7,7 +7,7 @@ import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model._
 
-/** A tournament's pools (V52): the root pool, the groups of its nesting stages, and the atomic pools that play matches.
+/** A tournament's pools: the root pool, the groups of its nesting stages, and the atomic pools that play matches.
   *
   * Opens no transaction of its own; that is the calling service's job.
   */

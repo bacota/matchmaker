@@ -8,7 +8,7 @@ import natchez.Trace.Implicits.noop
 import java.time.Instant
 import com.vivi.matchmaker.model._
 
-/** Reads and writes `invitation` (V22): who may accept a challenge, and as what.
+/** Reads and writes `invitation`: who may accept a challenge, and as what.
   *
   * Beside [[AcceptanceRepo]] rather than inside [[ChallengeRepo]], and shaped like it: an invitation is a row per
   * player per challenge, created and deleted one at a time, and read both by challenge (what does this challenge look

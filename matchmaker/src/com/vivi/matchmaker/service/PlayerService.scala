@@ -12,9 +12,9 @@ import com.vivi.matchmaker.persistence.PlayerRepo
   *
   * The email address is a halfway case. Cognito still owns it: it is the username on the pool, the browser still
   * changes it there, and this service cannot verify an address or refuse a change. What `updateEmail` does is record
-  * the change *after* Cognito has accepted it, so that matchmaker has somewhere to write to (see V12). That makes the
-  * account form the one writer, and makes a browser that changes the address and then fails to report it the one way
-  * the copy can go stale.
+  * the change *after* Cognito has accepted it, so that matchmaker has somewhere to write to (see `player.email`). That
+  * makes the account form the one writer, and makes a browser that changes the address and then fails to report it the
+  * one way the copy can go stale.
   */
 class PlayerService(sessionPool: SessionPool) {
 

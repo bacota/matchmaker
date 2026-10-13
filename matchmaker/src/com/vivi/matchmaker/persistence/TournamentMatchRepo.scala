@@ -9,7 +9,7 @@ import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model._
 
-/** A tournament's matches as its rounds play them (V52): `match` rows of its atomic pools, and their seats, which are
+/** A tournament's matches as its rounds play them: `match` rows of its atomic pools, and their seats, which are
   * `participant` rows from the moment the pool is formed. A scheduled match (`S`) is not yet in a round, and none of
   * these lists it.
   *

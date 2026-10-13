@@ -54,7 +54,7 @@ object Generators {
             externalId <- genUniqueString
             characterUrl <- Gen.option(genString)
             unimportantRoles <- Gen.oneOf(true, false)
-            // Two roles, always: since V4 every acceptance names one, so a game with no roles is a
+            // Two roles, always: every acceptance names one, so a game with no roles is a
             // game nothing can be offered or accepted for. Two rather than one because two players in
             // the same challenge may not share a role.
         } yield Game(
@@ -128,7 +128,7 @@ object Generators {
           timeLimitKind,
           timeLimitUnit,
           friendly = friendly,
-          // A challenge's match, begun as it is written: over once it is completed or cancelled (V52).
+          // A challenge's match, begun as it is written: over once it is completed or cancelled.
           status = if (completedAt.isDefined || cancelled) MatchStatus.Finished else MatchStatus.InProgress
         )
 
@@ -173,7 +173,7 @@ object Generators {
             rank <- Gen.choose(1, 100)
             scores <- genScores
             isWinner <- Gen.oneOf(true, false)
-            // A friendly match's result has none, a rated one's has one (V43).
+            // A friendly match's result has none, a rated one's has one.
             eloDelta <- Gen.option(Gen.choose(-32, 32))
         } yield Result(gameId, participantId, rank, scores, isWinner, eloDelta = eloDelta)
 

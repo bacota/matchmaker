@@ -43,7 +43,7 @@ sealed trait Challenge {
     def gameRoleId: Option[GameRoleId]
 
     /** Whether the match starts by itself as soon as every required and recommended role is taken, rather than waiting
-      * for the challenger to press Start (V18).
+      * for the challenger to press Start.
       *
       * The challenger's decision, which is why it is here and not on the game: the same game is offered on different
       * terms by different people, and "whoever turns up, and we play" is one of them. A manual start waits only for
@@ -53,7 +53,7 @@ sealed trait Challenge {
       */
     def autoStart: Boolean
 
-    /** Whether anybody may accept this, rather than only the players invited to it (V22).
+    /** Whether anybody may accept this, rather than only the players invited to it.
       *
       * The challenger's policy, and the whole of what "open" means — there is no second flag saying the same thing
       * another way, because two flags can disagree. False makes the [[Invitation]] rows the only way in:
@@ -66,8 +66,8 @@ sealed trait Challenge {
       */
     def isOpen: Boolean
 
-    /** Whether the match this becomes is played live (V27): its turns, and the clock on each, are the game engine's to
-      * run, and matchmaker hears from the engine only when the match is over.
+    /** Whether the match this becomes is played live: its turns, and the clock on each, are the game engine's to run,
+      * and matchmaker hears from the engine only when the match is over.
       *
       * The challenger's choice, like the time limit it depends on — a live challenge must have one, since it is the
       * clock the engine plays the match against. Either kind: per turn, or a chess clock the engine keeps across the
@@ -75,8 +75,8 @@ sealed trait Challenge {
       */
     def live: Boolean
 
-    /** Whether the match this becomes is friendly (V36, V37), copied to it at the start like the rest of its terms.
-      * Every challenge is, unless a game's admin offers one that is not — see `Match.friendly`.
+    /** Whether the match this becomes is friendly, copied to it at the start like the rest of its terms. Every
+      * challenge is, unless a game's admin offers one that is not — see `Match.friendly`.
       */
     def friendly: Boolean
 }
@@ -153,8 +153,8 @@ case class ChallengeSummary(
       * invitation to revoke, and listing it would say more about who is playing than the rest of this summary does.
       */
     acceptedInvitees: Seq[PlayerId] = Seq.empty,
-    /** A character game's invitations (V25), which name characters rather than players. Always empty for a plain game,
-      * as `invitations` is for a character game.
+    /** A character game's invitations, which name characters rather than players. Always empty for a plain game, as
+      * `invitations` is for a character game.
       */
     invitedCharacters: Seq[InvitedCharacter] = Seq.empty,
     /** In a character game, the characters holding a seat in this challenge. Derived on read like `takenRoles`.

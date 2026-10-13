@@ -354,7 +354,7 @@ class ChallengeServiceSpec extends PropertySuite {
                       accepterExternalId
                     )
                     // A different, free role and room to spare, so the only thing that can refuse this is
-                    // the rule that a player takes one seat per challenge -- which since V5 is the
+                    // the rule that a player takes one seat per challenge -- which is the
                     // application's to enforce and not the key's.
                     attempt <- challengeService
                         .accept(
@@ -556,11 +556,11 @@ class ChallengeServiceSpec extends PropertySuite {
     }
 
     // ---------------------------------------------------------------------------
-    // Invitations (V22)
+    // Invitations
     // ---------------------------------------------------------------------------
 
-    /* A plain ('P') game and its challenger, for the player-invitation paths: V22's `invitation` is
-     * a plain game's alone since V25, so those paths need a game with no characters to test them in. */
+    /* A plain ('P') game and its challenger, for the player-invitation paths: `invitation` is
+     * a plain game's alone, so those paths need a game with no characters to test them in. */
     private case class PlainFixture(owner: Player, game: Game)
 
     private def makePlainGame: IO[Game] =
@@ -1601,7 +1601,7 @@ class ChallengeServiceSpec extends PropertySuite {
                     named.exists(i =>
                         i.challengerNickname == nickname &&
                             i.gameName == first.game.name &&
-                            // The kind of game, and the character invited (V25): an acceptance in a
+                            // The kind of game, and the character invited: an acceptance in a
                             // character game has to name a character, and this is where the list
                             // learns which one.
                             i.gameType == GameType.Character &&
@@ -1617,7 +1617,7 @@ class ChallengeServiceSpec extends PropertySuite {
         }
     }
 
-    /* The point of V25: an invitation in a character game is to the character, so a character handed
+    /* The point of `character_invitation`: an invitation in a character game is to the character, so a character handed
      * to another player takes its invitation with it. The previous owner can neither see it, answer it,
      * nor use it to accept as some other character of theirs; the new owner can do all three. */
     property("a character's invitation follows it to a new owner") {
@@ -1843,8 +1843,8 @@ class ChallengeServiceSpec extends PropertySuite {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Player invitations, in a plain game (V22). The properties above test a character game, whose
-    // invitations name characters (V25); these keep the player-invitation paths under test.
+    // Player invitations, in a plain game. The properties above test a character game, whose
+    // invitations name characters; these keep the player-invitation paths under test.
     // ---------------------------------------------------------------------------------------------
 
     property("plain: a closed challenge is accepted by its invited player, as the seat held, and by nobody else") {

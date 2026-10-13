@@ -9,9 +9,9 @@ import com.vivi.matchmaker.model._
 
 /** One seat's answer to "who wants to hear about this?".
   *
-  * Already resolved, because since V14 there is nothing to resolve: the seat's own eleven columns are NOT NULL and are
-  * what it was stamped with when it was created (or what its player has said about this match since). No other level is
-  * read, and so none is carried here.
+  * Already resolved, because there is nothing to resolve: the seat's own eleven columns are NOT NULL and are what it
+  * was stamped with when it was created (or what its player has said about this match since). No other level is read,
+  * and so none is carried here.
   */
 /** One seat in a match, with what that seat says it wants to hear about it.
   *
@@ -156,7 +156,7 @@ class NotificationRepo(session: Session[IO]) {
 
     /* Every seat in a match with what it says about itself.
      *
-     * One table, and no COALESCE: since V14 a seat's own columns are NOT NULL and are the answer,
+     * One table, and no COALESCE: a seat's own columns are NOT NULL and are the answer,
      * which is the whole point of the change -- deciding whether to write to a seat no longer depends
      * on what its player has said since about the game in general. Carrying that into a match they
      * are already in is something they ask for; see `applyToMatches`.
@@ -322,13 +322,13 @@ class NotificationRepo(session: Session[IO]) {
      * defaults. A NULL there matches every game rather than none.
      *
      * "Matches they are still playing" is `NOT p.completed`, and the seat answers that itself: every
-     * way a match ends retires its seats -- results, forfeit, and (since V15) cancellation. A match
+     * way a match ends retires its seats -- results, forfeit, and cancellation. A match
      * that is over will not send anything again, and rewriting its seats would edit the record of what
      * it did send.
      *
-     * No join to `match`, which is what this needed before V15: cancelling marked the match and left
-     * the seats reading `completed = false`, so the only way to tell a called-off match from a live one
-     * was to go and look. Now that a seat knows, asking it is both cheaper and the right question --
+     * No join to `match`, which this would need if cancelling marked only the match and left
+     * the seats unfinished: the only way to tell a called-off match from a live one would be to go and
+     * look. Since a seat knows, asking it is both cheaper and the right question --
      * this is about seats, and `participant.completed` is per-seat, which is where an engine that
      * retires one player from a match that carries on would say so.
      *
@@ -357,7 +357,7 @@ class NotificationRepo(session: Session[IO]) {
               WHERE pl.player_id = $playerId AND g.game_id = COALESCE(${gameId.opt}, g.game_id)
           ) r
           WHERE p.player_id = $playerId AND p.game_id = r.game_id AND p.completed_at IS NULL""".command
-            // Four flags, in `NotificationType.onSeat` order: since V24 those are the only columns a
+            // Four flags, in `NotificationType.onSeat` order: those are the only columns a
             // seat has, so they are the only kinds a cascade into one can touch -- a player who changed
             // what they hear about challenges has changed nothing a seat holds. Bound positionally like
             // every other column list here. The player is named twice in the statement -- once to
@@ -530,8 +530,7 @@ class NotificationRepo(session: Session[IO]) {
 
     /** Every seat in a match with what it says about whether its player hears about it.
       *
-      * Takes no defaults and joins no other level: a seat's own eleven columns are the answer, which is what V14 made
-      * them for.
+      * Takes no defaults and joins no other level: a seat's own columns are the answer, which is what they are for.
       */
     /* One player's two levels for one game, for a notification about somebody who is not in the
      * challenge yet.

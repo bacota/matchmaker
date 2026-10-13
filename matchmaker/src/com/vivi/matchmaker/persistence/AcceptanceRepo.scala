@@ -108,10 +108,10 @@ class AcceptanceRepo(session: Session[IO]) {
 
     /** Whether this player has already accepted this challenge.
       *
-      * Since V5 the primary key is (game_id, challenge_id, game_role_id), so the database no longer refuses a player a
-      * second seat in one challenge — `ChallengeService.accept` does, and this is what it asks. `EXISTS` rather than
-      * reading the row: the question is only whether there is one, and unlike [[read]] this stays a straight answer if
-      * the rule is ever relaxed and a player does hold two.
+      * The primary key is (game_id, challenge_id, game_role_id), so the database no longer refuses a player a second
+      * seat in one challenge — `ChallengeService.accept` does, and this is what it asks. `EXISTS` rather than reading
+      * the row: the question is only whether there is one, and unlike [[read]] this stays a straight answer if the rule
+      * is ever relaxed and a player does hold two.
       */
     def hasAccepted(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId): IO[Boolean] =
         session.unique(selectHasAccepted)((gameId, challengeId, playerId))
@@ -283,7 +283,7 @@ class AcceptanceRepo(session: Session[IO]) {
                  -- Ready to start: no required role of the game is still unclaimed. Computed here
                  -- rather than by counting acceptances, because a challenge is full when its
                  -- roles are taken, and optional and recommended roles are not ones a start waits
-                 -- for (V51). This is
+                 -- for. This is
                  -- the same rule GameEngineService.start enforces, asked of the row already in
                  -- hand rather than of a second query per challenge.
                  NOT EXISTS (SELECT 1 FROM game_role gr

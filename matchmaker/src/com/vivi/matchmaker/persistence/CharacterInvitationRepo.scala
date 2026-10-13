@@ -8,8 +8,8 @@ import natchez.Trace.Implicits.noop
 import java.time.Instant
 import com.vivi.matchmaker.model._
 
-/** Reads and writes `character_invitation` (V25): which characters may accept a character game's challenge, and as
-  * what. [[InvitationRepo]]'s counterpart, and shaped like it.
+/** Reads and writes `character_invitation`: which characters may accept a character game's challenge, and as what.
+  * [[InvitationRepo]]'s counterpart, and shaped like it.
   *
   * Nothing here stores or trusts an owner. Where a question is about a player — what has this player been invited to —
   * the answer is joined through `character.player_id` as it stands now, which is what makes an invitation follow its

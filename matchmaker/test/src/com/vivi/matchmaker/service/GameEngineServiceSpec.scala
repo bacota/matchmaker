@@ -139,7 +139,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     // Each is shown as something other than its name, so that what reaches the engine
                     // (the name) and what reaches a player (the display name) can be told apart.
                     // Defender is recommended rather than optional, so every start here is also the proof
-                    // that a recommended role is one a start does not wait for (V51); other specs keep
+                    // that a recommended role is one a start does not wait for; other specs keep
                     // an optional one.
                     Seq(
                       GameRole(GameRoleId(0), GameId.unassigned, "attacker", RoleType.Required, "Attacker side"),
@@ -245,7 +245,7 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val engine = StubEngine()
             val services = TestServices.servicesWith(engine)
-            // Fresh for each case: keys are unique across games (V34), and the database outlives a run.
+            // Fresh for each case: keys are unique across games, and the database outlives a run.
             val (otherKey, thisKey) = (s"other-$gameExternalId", s"this-$gameExternalId")
             val result = for {
                 other <- makeFixture(s"$nickname-o", s"$externalId-o", s"$gameExternalId-o")

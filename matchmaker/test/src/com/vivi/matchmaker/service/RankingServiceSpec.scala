@@ -14,9 +14,9 @@ import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{GameRepo, TestSession}
 
-/** A game's leaderboard (V45): whatever order ratings are moved in, and however many move before the leaderboard is put
-  * in order, it ends up in the order the ratings are in — equal ratings sharing a place, and the places after them
-  * skipped — and a placing that cannot have a lock gives up and is tried again rather than waiting.
+/** A game's leaderboard: whatever order ratings are moved in, and however many move before the leaderboard is put in
+  * order, it ends up in the order the ratings are in — equal ratings sharing a place, and the places after them skipped
+  * — and a placing that cannot have a lock gives up and is tried again rather than waiting.
   */
 class RankingServiceSpec extends PropertySuite {
     TestMigration.ensure()

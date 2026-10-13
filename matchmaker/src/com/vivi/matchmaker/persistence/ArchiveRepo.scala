@@ -9,7 +9,7 @@ import java.time.Instant
 import com.vivi.matchmaker.model._
 import ArchiveRepo.{ArchiveRow, EndingRow}
 
-/** A match's archive (V38): where it went, whether it arrived, and whether a friendly one has since expired.
+/** A match's archive: where it went, whether it arrived, and whether a friendly one has since expired.
   *
   * The columns live on `match`, but nothing else writes them — [[MatchRepo.update]] rewrites the match's own fields and
   * leaves these alone — so an archive's state cannot be overwritten by an unrelated change to the match.
@@ -115,7 +115,7 @@ class ArchiveRepo(session: Session[IO]) {
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
     /** Records that the engine has been given a url to upload `sha256`'s content to under `key`, in the friendly bucket
-      * or the permanent one (V44).
+      * or the permanent one.
       */
     def recordRequest(game: GameId, id: MatchId, key: String, sha256: String, friendly: Boolean): IO[Unit] =
         session.execute(updateRequest)((key, sha256, friendly, game, id)).void
@@ -148,8 +148,8 @@ class ArchiveRepo(session: Session[IO]) {
       * that both found the object gone both write the same fact, and the second changes nothing.
       *
       * Only while the archive is recorded in the friendly bucket, the one bucket that expires anything. Not finding it
-      * there is also what a check sees that read the match just before its archive was moved to the permanent bucket
-      * (V44): the move records the permanent bucket before it deletes the friendly original, so a check that finds the
+      * there is also what a check sees that read the match just before its archive was moved to the permanent bucket :
+      * the move records the permanent bucket before it deletes the friendly original, so a check that finds the
       * original gone writes after that, and this matches nothing. See also [[ArchiveRepo.expiredAt]], which ignores a
       * record that is not about the friendly bucket however it came to be there.
       */
@@ -204,10 +204,10 @@ class ArchiveRepo(session: Session[IO]) {
 object ArchiveRepo {
 
     /** When the match's archive expired, as every read of it is to be answered: `archive_expired_at`, but only while
-      * the archive is in the friendly bucket (V44), and null otherwise — the permanent bucket expires nothing, so a
-      * record of expiry about an archive there is not one. The one place that rule is written; every query that says
-      * whether an archive has expired, here and in [[MatchRepo]], selects this rather than the column. `table` is how
-      * the query names `match`.
+      * the archive is in the friendly bucket, and null otherwise — the permanent bucket expires nothing, so a record of
+      * expiry about an archive there is not one. The one place that rule is written; every query that says whether an
+      * archive has expired, here and in [[MatchRepo]], selects this rather than the column. `table` is how the query
+      * names `match`.
       */
     def expiredAt(table: String): String =
         s"CASE WHEN COALESCE($table.archive_friendly, $table.friendly) THEN $table.archive_expired_at END"
@@ -232,7 +232,7 @@ object ArchiveRepo {
         requestedAt: Option[Instant],
         archivedAt: Option[Instant],
         expiredAt: Option[Instant],
-        // Which bucket the archive is in, or is to be uploaded to (V44): true for the friendly one. None until an
+        // Which bucket the archive is in, or is to be uploaded to: true for the friendly one. None until an
         // upload has been asked for. Not `friendly`: a move to match a change of that takes time.
         archiveFriendly: Option[Boolean]
     )

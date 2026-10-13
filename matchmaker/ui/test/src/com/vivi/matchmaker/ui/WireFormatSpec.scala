@@ -39,7 +39,7 @@ class WireFormatSpec extends FunSuite {
         assertEquals(read[Match](write(played)), played)
     }
 
-    // A tournament's match has no challenge (V50), and its creator says whose it is.
+    // A tournament's match has no challenge, and its creator says whose it is.
     test("a match with no challenge round-trips, carrying its creator") {
         val created = Match(
           gameId = GameId(7),
@@ -150,9 +150,9 @@ class WireFormatSpec extends FunSuite {
         assertEquals(decoded.completedAt, summary.completedAt)
     }
 
-    // The browser's half of the V22 contract. `isOpen` and `invitations` both have defaults, and
+    // The browser's half of the invitations contract. `isOpen` and `invitations` both have defaults, and
     // upickle omits a field equal to its default -- so an open challenge arrives with neither field
-    // present, as does every challenge stored before V22 existed. Reading that as "open, nobody
+    // present, as does every challenge stored before invitations existed. Reading that as "open, nobody
     // invited" is what keeps those challenges joinable in a browser holding a newer bundle.
     test("a closed challenge and its invitations survive the trip, and an open one needs no flag") {
         val closed = ChallengeSummary(
@@ -195,7 +195,7 @@ class WireFormatSpec extends FunSuite {
         assert(fromOlderServer.acceptedInvitees.isEmpty)
     }
 
-    // The body `POST /challenges` takes since V22: the challenge nested, and the invitations to
+    // The body `POST /challenges` takes: the challenge nested, and the invitations to
     // send with it beside it. Written here rather than only on the server because the browser is
     // what composes it, and a nested `Challenge` has to keep its discriminator through the wrapper
     // -- the same hazard `ChallengeSummary` has below.

@@ -302,7 +302,7 @@ class GameEngineService[T](
                     // Under the lock taken above, so the next start of this challenge sees the claim.
                     _ <- challengeRepo.claimForStart(gameId, challengeId, matchId)
                     // What each player is rated as they sit down, overall and -- for a game whose roles
-                    // matter (V49) -- in the role they sit down in, written on their seat and what the
+                    // matter -- in the role they sit down in, written on their seat and what the
                     // match is rated from when it ends -- see `EloRatingService.startingRatings`.
                     starting <- EloRatingService.startingRatings(
                       session,
@@ -688,9 +688,9 @@ class GameEngineService[T](
       * this move's number. An engine sends its callbacks after committing each move, from whichever request made it, so
       * two can arrive in the opposite order to the moves — and applied in arrival order the late one undoes the early
       * one, clearing a seat the later move had made pending again. So a move numbered no higher than the match's
-      * `move_sequence` (V26) is older than what the seats already say: its turn is recorded, since the time was really
-      * spent, and nothing else is touched or mailed. Without `state`, the callback is applied as it arrives, which is
-      * all matchmaker could do before and is still right for an engine whose callbacks cannot overtake each other.
+      * `move_sequence` is older than what the seats already say: its turn is recorded, since the time was really spent,
+      * and nothing else is touched or mailed. Without `state`, the callback is applied as it arrives, which is all
+      * matchmaker could do before and is still right for an engine whose callbacks cannot overtake each other.
       */
     def recordMove(
         gameId: GameId,
@@ -1223,7 +1223,7 @@ class GameEngineService[T](
           timeLimitSeconds = challenge.timeLimit.map(_.getSeconds),
           players = players,
           // The limit again, with its kind, as the clock the engine itself enforces. A live challenge
-          // always has one (V27); `filter` rather than `get` so that a row that somehow has none starts
+          // always has one; `filter` rather than `get` so that a row that somehow has none starts
           // an ordinary match rather than failing the start.
           live = challenge.timeLimit
               .filter(_ => challenge.live)
@@ -1368,7 +1368,7 @@ class GameEngineService[T](
             case None    => IO.raiseError(NotFoundError(s"no match '${matchId.value}' in game ${gameId.value}"))
         }
 
-    /* A match a player may open: one that has begun. A tournament's match exists before that (V52),
+    /* A match a player may open: one that has begun. A tournament's match exists before that,
      * scheduled or with its seats still choosing roles, and is answered as no match at all -- there is
      * no board to send anyone to, and no listing names it. */
     private def requireBegunMatch(repo: MatchRepo, gameId: GameId, matchId: MatchId): IO[Match] =

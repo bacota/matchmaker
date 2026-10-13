@@ -1,9 +1,9 @@
 package com.vivi.matchmaker.model.tournament
 package standard
 
-/** A tournament model as the code defines it (V52): what a site admin's sync writes to `tournament_model`, for any game
-  * to offer. Each is an object in a file of its own in this package, which spells out its whole design and shares
-  * nothing with another's, so that changing one cannot change another without its version.
+/** A tournament model as the code defines it: what a site admin's sync writes to `tournament_model`, for any game to
+  * offer. Each is an object in a file of its own in this package, which spells out its whole design and shares nothing
+  * with another's, so that changing one cannot change another without its version.
   *
   * `id` names it for good -- a tournament made from it refers to it by that -- so it is never reused for a different
   * format. `version` is bumped whenever anything else in its file changes, which is what tells the sync to rewrite the

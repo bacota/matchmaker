@@ -7,7 +7,7 @@ import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model._
 
-/** Reads and writes `tournament_invitation` (V52): who may enter an invitational tournament.
+/** Reads and writes `tournament_invitation`: who may enter an invitational tournament.
   *
   * Opens no transaction of its own; that is the calling service's job.
   */

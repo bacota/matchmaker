@@ -11,7 +11,7 @@ import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.{QuietTests, TestMigration}
 import com.vivi.matchmaker.model.GameType
 
-/** The tournament schema (V52) as the database enforces it, written row by row in plain SQL rather than through any
+/** The tournament schema as the database enforces it, written row by row in plain SQL rather than through any
   * repository: a model copied into a tournament, and the rows its constraints refuse.
   *
   * Everything happens in one transaction that is rolled back, so nothing is left behind. Each refusal is tried inside a

@@ -85,7 +85,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           Option[Int]
       )
     ] =
-        // Whether a key is stored, never the key: no read of a game carries it (V34).
+        // Whether a key is stored, never the key: no read of a game carries it.
         sql"""SELECT game_type, name, display_name, description, url, character_url, active, external_id, timeout_action,
                  EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = game.game_id), unimportant_roles,
                  move_type, max_turns

@@ -136,19 +136,19 @@ class NotificationPolicySpec extends FunSuite {
             NotificationType.AcceptedChallengeReady,
             // An invitation cannot be made to a match: by the time there is one, the challenge it was
             // offered on is spoken for and its invitations are about to be deleted with it. So a match's
-            // own settings form does not ask about these three (V23).
+            // own settings form does not ask about these three.
             NotificationType.InvitationReceived,
             NotificationType.InvitationAccepted,
             NotificationType.InvitationRejected,
             NotificationType.MatchStarted,
-            // About a tournament's round rather than any one match in it (V53).
+            // About a tournament's round rather than any one match in it.
             NotificationType.TournamentRoundDone
           ),
           "every other kind is about a challenge, the start itself, or a tournament"
         )
     }
 
-    /* What `participant` stores (V24), and the reason the type is its own rather than the eleven-kind
+    /* What `participant` stores, and the reason the type is its own rather than the eleven-kind
      * one: a seat is only ever asked about the match it is in. */
     test("a seat answers about its match and about nothing else") {
         assertEquals(

@@ -34,8 +34,8 @@ import com.vivi.matchmaker.persistence._
   *     acceptance is recorded, the turn is taken; failing the request that did it because a queue would not take a mail
   *     would undo nothing and help nobody.
   *   - *Nothing to an address that has stopped working.* An address SES has told us is dead, or whose owner reported us
-  *     as spam, is dropped from the recipients of every event — see `email_suppression` (V16) and the bounce consumer
-  *     that writes it. Dropped here rather than earlier because this is where every mail passes, and rather than in the
+  *     as spam, is dropped from the recipients of every event — see `email_suppression` and the bounce consumer that
+  *     writes it. Dropped here rather than earlier because this is where every mail passes, and rather than in the
   *     mailer because the mailer has no database and is deliberately outside the VPC. The mail is not queued at all, so
   *     there is nothing to retry and no reputation spent on a send SES would discard.
   *   - *Never silently, either.* A failure is printed with what it was about, because a queue that cannot be reached
@@ -56,9 +56,9 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       *   the player who accepted. Passed rather than read because the caller has just had it in hand, and because they
       *   are the one person not told.
       * @param wasInvited
-      *   whether this acceptance answers an invitation (V22). It changes what the *challenger* can be told — their
-      *   invitation was taken up, which is more than that somebody accepted — and nothing else: being invited is
-      *   between them and the invitee, so the other acceptors hear what they always hear. One mail either way, with
+      *   whether this acceptance answers an invitation. It changes what the *challenger* can be told — their invitation
+      *   was taken up, which is more than that somebody accepted — and nothing else: being invited is between them and
+      *   the invitee, so the other acceptors hear what they always hear. One mail either way, with
       *   [[com.vivi.matchmaker.model.NotificationPolicy.choose]] picking the best kind the challenger has not refused;
       *   a second call for the invitation would write to them twice about one event.
       */
@@ -90,7 +90,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         rosterChanged(session, gameId, challengeId, acceptor, joined = false, except = Some(removedBy.playerId))
 
     // -------------------------------------------------------------------------
-    // Things that happen to an invitation (V22)
+    // Things that happen to an invitation
     // -------------------------------------------------------------------------
 
     /** Somebody has been invited to a challenge. Told to them, and to nobody else.
@@ -340,7 +340,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         }
 
     // -------------------------------------------------------------------------
-    // Things that happen to a tournament (V53)
+    // Things that happen to a tournament
     // -------------------------------------------------------------------------
 
     /** Every match of a round is over, and the tournament waits on its owner to start the next. Told to the owner, and

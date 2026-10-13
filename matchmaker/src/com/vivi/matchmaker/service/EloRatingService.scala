@@ -25,19 +25,17 @@ import com.vivi.matchmaker.persistence.{
     TextCodec
 }
 
-/** Players' Elo ratings in each game (V42), overall and, for a game whose roles matter, in each role (V49): the
-  * leaderboards anybody may read, and the setting of an overall one that a game's admin may do. What moves them is a
-  * match that is not friendly completing, which is [[EloRatingService.rate]], called from inside the transaction that
-  * completes it.
+/** Players' Elo ratings in each game, overall and, for a game whose roles matter, in each role: the leaderboards
+  * anybody may read, and the setting of an overall one that a game's admin may do. What moves them is a match that is
+  * not friendly completing, which is [[EloRatingService.rate]], called from inside the transaction that completes it.
   */
 class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = MatchEndings.disabled)(using
     TextCodec[T]
 ) {
 
-    /** A page of the game's leaderboard (V45), or of `role`'s (V49), from `page` 0, best first, for any registered
-      * player: a rating is there to be compared. A page is a range of places — page 0 everybody placed 1 to 20, page 1
-      * 21 to 40 — so a tie is never split between two pages, and a page can hold more than 20 players, or none at all
-      * after a long one.
+    /** A page of the game's leaderboard, or of `role`'s, from `page` 0, best first, for any registered player: a rating
+      * is there to be compared. A page is a range of places — page 0 everybody placed 1 to 20, page 1 21 to 40 — so a
+      * tie is never split between two pages, and a page can hold more than 20 players, or none at all after a long one.
       */
     /* A board that is not there: the game, or the role in it when one is named. */
     private def noBoard(gameId: GameId, role: Option[GameRoleId]): NotFoundError =
@@ -174,9 +172,9 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
 
 object EloRatingService {
 
-    /** What each of a match's players is rated as it begins (V43) — the starting rating for a player who has none yet —
-      * for the start to write on their seats: overall, and when `byRole`, in the role each seat is for (V49). For every
-      * match, friendly or not: it is a fact about the seat either way.
+    /** What each of a match's players is rated as it begins — the starting rating for a player who has none yet — for
+      * the start to write on their seats: overall, and when `byRole`, in the role each seat is for. For every match,
+      * friendly or not: it is a fact about the seat either way.
       *
       * For the start's own transaction, the one that writes the seats. Every seat's number has to come from the same
       * moment: a match of some of these players completing alongside the start is either in all of them or in none. So
@@ -213,8 +211,8 @@ object EloRatingService {
         def inRole(player: PlayerId, role: GameRoleId): Option[Int] = ratings.get(RatingKey(Some(role), player))
     }
 
-    /** What a rated match did to each seat's ratings: overall, and in the seat's role (V49) — none in a role for a
-      * match some seat of which began with no rating in its role.
+    /** What a rated match did to each seat's ratings: overall, and in the seat's role — none in a role for a match some
+      * seat of which began with no rating in its role.
       */
     case class EloDeltas(overall: Map[ParticipantId, Int] = Map.empty, inRole: Map[ParticipantId, Int] = Map.empty)
 
@@ -238,11 +236,10 @@ object EloRatingService {
 
     /** Rates a match that is not friendly and has just completed: works out each seat's delta from the ratings its
       * seats began it at, moves each player's rating by it, and answers with the deltas by seat, for the caller to
-      * write on the result rows it is about to insert (V43). The same again in each seat's role, from the ratings its
-      * seats began it at in their roles (V49), when every seat has one. `ranks` is where each seat with a result
-      * finished; a seat with none has nothing to be rated by, and has no delta. Each rated player's record (V46) moves
-      * with their rating, a win or a loss counted as one by forfeit too when `forfeit` says a turn running out ended
-      * the match.
+      * write on the result rows it is about to insert. The same again in each seat's role, from the ratings its seats
+      * began it at in their roles, when every seat has one. `ranks` is where each seat with a result finished; a seat
+      * with none has nothing to be rated by, and has no delta. Each rated player's record moves with their rating, a
+      * win or a loss counted as one by forfeit too when `forfeit` says a turn running out ended the match.
       *
       * For the caller's transaction, the one that records the results: the ratings move exactly when the results are
       * recorded, and a repeated callback that finds them recorded does not call this again. The caller decides that the
@@ -284,7 +281,7 @@ object EloRatingService {
                 // Over every seat, as `playersOnce` is: a seat with no result has no rank, and no delta.
                 val inRole = roleDeltas(rows, ranks.get)
                 // Each rating to move, overall and in a role: one seat per player, so a seat's delta is its
-                // player's. And each player's record (V46), from where they finished among the seats with a
+                // player's. And each player's record, from where they finished among the seats with a
                 // result, which a role's rating keeps too.
                 val moves = ranked
                     .flatMap { row =>
@@ -367,7 +364,7 @@ object EloRatingService {
                         )
                       )
                     )
-            // In each seat's role too (V49), when every seat began with a rating in its role.
+            // In each seat's role too, when every seat began with a rating in its role.
             inRole =
                 if (friendly) Map.empty[ParticipantId, Int]
                 else roleDeltas(seats, id => results.find(_.participantId == id).map(_.rank))

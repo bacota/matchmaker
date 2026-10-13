@@ -468,7 +468,7 @@ class ChallengeNotificationSpec extends PropertySuite {
     /* Editing the game needs an admin, and the fixture's players are not. Registered here rather
      * than in the fixture because only one property needs one. */
     // ---------------------------------------------------------------------------
-    // Invitations (V23)
+    // Invitations
     // ---------------------------------------------------------------------------
 
     private def invite(f: Fixture, who: Player, role: Option[Int] = None): IO[Invitation] =

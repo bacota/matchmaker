@@ -22,7 +22,7 @@ provider "aws" {
 /* The secret matchmaker and each bundled engine authenticate each other with — one per engine.
  *
  * Generated here and given to the engine; matchmaker's copy is stored with the game in its
- * database (V34), where an admin enters it on the game's form — the deploy scripts print the
+ * database, where an admin enters it on the game's form — the deploy scripts print the
  * command that reads it out of the `<engine>_api_key` output. It lands in the state file, as
  * `db_password` already does, and is readable from the engine's configuration by anyone holding
  * lambda:GetFunction, which is the same trade this deployment already makes for the database.

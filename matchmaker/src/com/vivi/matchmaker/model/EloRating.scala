@@ -1,9 +1,9 @@
 package com.vivi.matchmaker.model
 
-/** A player's Elo rating in one game (V42), as anybody may see it: the number as it stands, how many rated matches
-  * moved it, their place on the game's leaderboard (V45), and the rating that place was worked out from — which the
-  * leaderboard shows, so that it reads in order, and which trails `rating` for the moment between a match moving it and
-  * the player being placed again. No place, and no rating it was worked out from, for a player not placed yet.
+/** A player's Elo rating in one game, as anybody may see it: the number as it stands, how many rated matches moved it,
+  * their place on the game's leaderboard, and the rating that place was worked out from — which the leaderboard shows,
+  * so that it reads in order, and which trails `rating` for the moment between a match moving it and the player being
+  * placed again. No place, and no rating it was worked out from, for a player not placed yet.
   */
 case class EloRating(
     player: PublicPlayer,
@@ -15,9 +15,9 @@ case class EloRating(
     record: MatchRecord = MatchRecord()
 )
 
-/** A player's win–loss–draw record in one game (V46), over the rated matches that moved their rating: friendly ones are
-  * not in it. `forfeitWins` and `forfeitLosses` are the wins and losses that came of a turn running out, and are
-  * counted in `wins` and `losses` as well.
+/** A player's win–loss–draw record in one game, over the rated matches that moved their rating: friendly ones are not
+  * in it. `forfeitWins` and `forfeitLosses` are the wins and losses that came of a turn running out, and are counted in
+  * `wins` and `losses` as well.
   */
 case class MatchRecord(wins: Int = 0, losses: Int = 0, draws: Int = 0, forfeitWins: Int = 0, forfeitLosses: Int = 0) {
 
@@ -86,8 +86,8 @@ object EloRating {
       */
     case class Seat(participant: ParticipantId, player: PlayerId, rating: Int, rank: Int)
 
-    /** Whether every seat is a different player's — which a match that is not friendly requires (V42): a player in two
-      * of its seats would be rated against themselves, and the deltas would no longer add up to nothing.
+    /** Whether every seat is a different player's — which a match that is not friendly requires: a player in two of its
+      * seats would be rated against themselves, and the deltas would no longer add up to nothing.
       */
     def playersOnce(players: Seq[PlayerId]): Boolean = players.distinct.size == players.size
 

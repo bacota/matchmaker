@@ -130,12 +130,12 @@ class PlayerRepo(session: Session[IO]) {
      * Case insensitive, and insensitive to how the name was spaced: both sides of the comparison are
      * normalized the same way -- lowercased, every run of whitespace collapsed to one space, and
      * trimmed -- so "red  BARON" finds "Red Baron". `normalized` below is the Scala half; the SQL
-     * expression here is the other, and V20 indexes exactly this expression. The three must stay
+     * expression here is the other, and `player_nickname_search` indexes exactly this expression. The three must stay
      * identical: a difference in any of them is not a wrong answer but a silent table scan, or a
      * nickname that cannot be found by the way it is written.
      *
      * `LIKE` rather than `starts_with`, because this is the form the index can serve: Postgres turns
-     * `expr LIKE 'abc%'` into the range `expr ~>=~ 'abc' AND expr ~<~ 'abd'` over V21's
+     * `expr LIKE 'abc%'` into the range `expr ~>=~ 'abc' AND expr ~<~ 'abd'` over that
      * `text_pattern_ops` index. The price is that the pattern has a language, so the prefix is
      * escaped on the way in -- see `likePrefix`.
      *
@@ -222,13 +222,15 @@ object PlayerRepo {
       */
     private[persistence] def nicknamePrefixPattern(prefix: String): String = likePrefix(normalized(prefix))
 
-    /** The SQL half of the comparison, for a query over `player` aliased `alias`: V20's indexed expression. */
+    /** The SQL half of the comparison, for a query over `player` aliased `alias`: what `player_nickname_search`
+      * indexes.
+      */
     private[persistence] def nicknameKey(alias: String): String =
         s"btrim(regexp_replace(lower($alias.nickname), '[ \\t\\n\\r\\f\\v]+', ' ', 'g'))"
 
     /* A nickname, or the start of one, in the form the search compares.
      *
-     * The Scala half of V21's index expression, and it has to agree with it character for character:
+     * The Scala half of `player_nickname_search`'s expression, and it has to agree with it character for character:
      * lowercase, every run of whitespace one space, ends trimmed.
      *
      * Two deliberate details. The whitespace class is written out rather than `\\s`, because

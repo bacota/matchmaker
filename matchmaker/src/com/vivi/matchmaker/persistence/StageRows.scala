@@ -4,9 +4,9 @@ import skunk._
 import skunk.codec.all._
 import com.vivi.matchmaker.model.tournament.{Repetition, SeedPolicy, StageDesign, TournamentDesign}
 
-/** A stage as a row (V52), the same in `stage_model` and in `stage`: its kind, its properties, the stage played after
-  * it, and its subtype's one column -- `rotate_roles` for an atomic stage, the inner design for a nesting one, which a
-  * model names as another model and a tournament as the first stage of a chain of its own.
+/** A stage as a row, the same in `stage_model` and in `stage`: its kind, its properties, the stage played after it, and
+  * its subtype's one column -- `rotate_roles` for an atomic stage, the inner design for a nesting one, which a model
+  * names as another model and a tournament as the first stage of a chain of its own.
   *
   * Shared by [[TournamentModelRepo]] and [[StageRepo]], which read and write the two tables with the same columns. A
   * model's stages are named by text and a tournament's by number, so the id's type `I` is the caller's.

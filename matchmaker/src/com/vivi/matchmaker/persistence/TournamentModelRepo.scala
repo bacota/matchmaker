@@ -9,8 +9,8 @@ import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign}
 
-/** Reads and writes the models every game's tournaments are made from (V52): `tournament_model`, its stages in
-  * `stage_model` with their atomic and nesting rows, and `tournament_model_game`, the models each game offers.
+/** Reads and writes the models every game's tournaments are made from: `tournament_model`, its stages in `stage_model`
+  * with their atomic and nesting rows, and `tournament_model_game`, the models each game offers.
   *
   * A model's design is its stages, chained from `first_stage_model_id` along each stage's `current_stage_model_id`. A
   * nesting stage's pools play another model, named by `nesting_stage_model.inner_tournament_model_id`: when a design is

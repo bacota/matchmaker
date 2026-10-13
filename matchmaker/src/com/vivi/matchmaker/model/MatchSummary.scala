@@ -71,17 +71,17 @@ case class MatchSummary(
     // deliberately not on a summary at all, since a player's own row asks for the match when it
     // needs one.
     publicUrl: Option[String] = None,
-    // Whether the match is friendly (V36). Every match is, unless a game's admin says otherwise.
+    // Whether the match is friendly. Every match is, unless a game's admin says otherwise.
     friendly: Boolean = true,
-    // When the match's archive was confirmed (V38), as on `Match`.
+    // When the match's archive was confirmed, as on `Match`.
     archivedAt: Option[Instant] = None,
-    // Whether a friendly match's archive has expired (V38): no Review or Watch link, and `publicUrl`
+    // Whether a friendly match's archive has expired: no Review or Watch link, and `publicUrl`
     // is cleared.
     archiveExpired: Boolean = false,
     // The value of each of the game's parameters this match is played under, in the order the
     // game defines them; empty for a game that has none.
     parameters: Seq[MatchParameter] = Nil,
-    // How a finished match came out, as its game engine said it with the results (V40): a line of
+    // How a finished match came out, as its game engine said it with the results: a line of
     // HTML, cleaned by `SummaryHtml`, shown in place of the result table. `None` for an engine that
     // sends none, for a match completed before engines could, and for one still being played.
     resultSummary: Option[String] = None,

@@ -10,9 +10,8 @@ import com.vivi.matchmaker.model.{EloRating, GameId, GameRoleId, Leaderboard, Ma
 import EloRatingRepo.{placed, standing, Board, Placed, Placing, RankingLockSpace, RatingKey, Standing}
 import scala.math.Ordering.Implicits._
 
-/** Each player's Elo rating in each game (V42), and for a game whose roles matter, in each role (V49). How it moves,
-  * and who may set it, is [[com.vivi.matchmaker.service.EloRatingService]]'s and [[EloRating]]'s business, not this
-  * one's.
+/** Each player's Elo rating in each game, and for a game whose roles matter, in each role. How it moves, and who may
+  * set it, is [[com.vivi.matchmaker.service.EloRatingService]]'s and [[EloRating]]'s business, not this one's.
   *
   * The overall ratings are `elo_rating`, and a role's are `elo_role_rating`, whose key has the role in it. The two
   * tables hold the same columns but for `set_by` — an admin sets only the overall rating — and are kept, ranked and
@@ -201,7 +200,7 @@ class EloRatingRepo(session: Session[IO]) {
 
     private def on(b: Board): BoardSql = if (b.role.isEmpty) overallSql else roleSql
 
-    // The overall rating only: an admin sets that, and a role's is only ever moved by play (V49).
+    // The overall rating only: an admin sets that, and a role's is only ever moved by play.
     private val upsertSet: Command[(GameId, PlayerId, Int, PlayerId)] =
         sql"""INSERT INTO elo_rating (game_id, player_id, rating, set_by) VALUES ($gameId, $playerId, $int4, $playerId)
           ON CONFLICT (game_id, player_id) DO UPDATE SET rating = EXCLUDED.rating, set_by = EXCLUDED.set_by""".command
@@ -277,9 +276,9 @@ class EloRatingRepo(session: Session[IO]) {
             .map(_.toMap)
 
     /** Records a rated match's effect on one player's rating, overall or in `role`: moved by `delta`, one more match
-      * behind it, and `record` — what the match was to them (V46) — added to its record. An addition in the update
-      * itself rather than a value worked out from a read, so it needs no read to be locked: two matches finishing at
-      * once each add their own.
+      * behind it, and `record` — what the match was to them — added to its record. An addition in the update itself
+      * rather than a value worked out from a read, so it needs no read to be locked: two matches finishing at once each
+      * add their own.
       */
     def played(
         game: GameId,
@@ -352,8 +351,8 @@ class EloRatingRepo(session: Session[IO]) {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Places (V45): the primitives `RankingService` places a player with, each on one board -- the
-    // game's overall leaderboard, or one role's (V49). Every one is for its transaction, which holds
+    // Places: the primitives `RankingService` places a player with, each on one board -- the
+    // game's overall leaderboard, or one role's. Every one is for its transaction, which holds
     // the game's ranking lock (`tryLockRanking`) -- one for all of its boards -- so nothing else
     // moves a place while it runs. What it does not keep out is play, which moves ratings: so every
     // row a place is written to is locked first, NOWAIT, and a lock held elsewhere fails the
@@ -370,7 +369,7 @@ class EloRatingRepo(session: Session[IO]) {
       */
     def tryLockRanking(game: GameId): IO[Boolean] = session.unique(tryLock)(game)
 
-    // The predicates are V45's `elo_rating_unplaced` and V49's `elo_role_rating_unplaced` word for
+    // The predicates are the indexes `elo_rating_unplaced` and `elo_role_rating_unplaced` word for
     // word, so that the indexes serve them.
     private val selectUnplaced: Query[(GameId, Int), PlayerId] =
         sql"""SELECT player_id FROM elo_rating WHERE game_id = $gameId AND (
@@ -455,7 +454,7 @@ class EloRatingRepo(session: Session[IO]) {
 
 object EloRatingRepo {
 
-    /** One leaderboard of a game: its overall one, or one role's (V49). */
+    /** One leaderboard of a game: its overall one, or one role's. */
     case class Board(game: GameId, role: Option[GameRoleId] = None)
 
     /** A player's rating row on one of a game's boards: overall, or in `role`. Ordered as every writer takes their row

@@ -40,7 +40,7 @@ object SeedPolicy {
 case class TournamentDesign(stages: List[StageDesign])
 
 /** One stage of a design, with the defaults `tournament-design.md` gives each property: a `stage` row, or a
-  * `stage_model` row of a model (V52).
+  * `stage_model` row of a model.
   *
   * `design` is the tournament each pool plays: set, the stage is a nesting stage; unset, an atomic one, whose pools
   * play a round robin: every `R`-member subset of the pool plays one match, `R` times over with the roles turned when
@@ -194,7 +194,7 @@ object Validation {
         val here = if (path.isEmpty) "" else path
         if (depth > MaxDepth) List(Problem(here, s"designs may nest at most $MaxDepth deep"))
         else if (design.stages.isEmpty) List(Problem(here, "a design needs at least one stage"))
-        // Every match of a round is played in one stage (V52, round.stage_id), and the pools of a nesting stage play
+        // Every match of a round is played in one stage (round.stage_id), and the pools of a nesting stage play
         // their designs side by side: with more than one stage, one pool could be in another stage than the next.
         else if (depth > 1 && design.stages.sizeIs > 1)
             List(Problem(here, "a design played in a stage's pools may have only one stage"))

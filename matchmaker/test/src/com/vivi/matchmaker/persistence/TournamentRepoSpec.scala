@@ -17,7 +17,7 @@ import com.vivi.matchmaker.model.tournament.standard.{
 }
 import com.vivi.matchmaker.service.TournamentFixtures
 
-/** The tournament tables (V52) through their repositories, against the local database. */
+/** The tournament tables through their repositories, against the local database. */
 class TournamentRepoSpec extends FunSuite with QuietTests {
 
     private case class Fixture(game: Game, owner: Player, other: Player, model: TournamentModel)

@@ -19,10 +19,10 @@ case class Result(
     // Recorded on every row of such a match, so that a row can say "won by forfeit" or
     // "forfeited" — `isWinner` says which — without reading the rest of the table.
     forfeit: Boolean = false,
-    // What the match did to this player's Elo rating (V43), worked out from what they began it rated.
+    // What the match did to this player's Elo rating, worked out from what they began it rated.
     // Only a match that is not friendly has one.
     eloDelta: Option[Int] = None,
-    // And to their rating in the seat's role (V49): only for a match that is not friendly, of a game
+    // And to their rating in the seat's role: only for a match that is not friendly, of a game
     // whose roles matter.
     eloRoleDelta: Option[Int] = None
 )
@@ -52,7 +52,7 @@ case class ParticipantResult(
     // are not worth distinguishing to a reader, and a table of zeroes is one nothing is drawn
     // from.
     timeTaken: Duration = Duration.ZERO,
-    // What this player was rated when the match began (V43) -- friendly or not, and the starting
+    // What this player was rated when the match began -- friendly or not, and the starting
     // rating for a seat from before ratings were kept -- and what the match did to it, which only a
     // match that is not friendly does.
     eloStart: Int = EloRating.initial,

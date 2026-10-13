@@ -14,8 +14,8 @@ import EngineJson.given
   * `java.net.http` rather than a library, because this module is deployed as a Lambda whose cold start is proportional
   * to the size of its jar, and the JDK's own client costs nothing to add.
   *
-  * Each call is given the key to present: the stored key of the game it is about (V34), which the caller reads with the
-  * game. A call with no key is made without one, which is what makes a local stub engine work with no setup at all; a
+  * Each call is given the key to present: the stored key of the game it is about, which the caller reads with the game.
+  * A call with no key is made without one, which is what makes a local stub engine work with no setup at all; a
   * *deployed* engine would answer 401, so the missing key is reported here instead, where what is actually missing can
   * be said.
   */

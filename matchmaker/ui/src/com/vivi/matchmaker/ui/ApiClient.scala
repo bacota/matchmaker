@@ -178,12 +178,12 @@ object ApiClient {
     def characters(gameId: GameId): Future[Seq[Character[String]]] =
         get[Seq[Character[String]]](s"/games/${gameId.value}/characters")
 
-    /** Another player's characters in one game, by name only — what the invite form offers a choice from (V25). */
+    /** Another player's characters in one game, by name only — what the invite form offers a choice from. */
     def characterNames(gameId: GameId, playerId: PlayerId): Future[Seq[CharacterName]] =
         get[Seq[CharacterName]](s"/games/${gameId.value}/players/${playerId.value}/characters")
 
-    /** A game's admins (V35), each with who made them one: what tells the challenge form whether to offer what only a
-      * game's admin may — a match they will not play in, and one that is not friendly.
+    /** A game's admins, each with who made them one: what tells the challenge form whether to offer what only a game's
+      * admin may — a match they will not play in, and one that is not friendly.
       */
     def gameAdmins(gameId: GameId): Future[Seq[GameAdmin]] =
         get[Seq[GameAdmin]](s"/games/${gameId.value}/admins")
@@ -192,7 +192,7 @@ object ApiClient {
     def gameMatches(gameId: GameId, player: Option[PlayerId] = None): Future[Seq[GameMatch]] =
         get[Seq[GameMatch]](s"/games/${gameId.value}/matches${player.fold("")(p => s"?playerId=${p.value}")}")
 
-    /** Says whether a match is friendly — a game's admin's to say (V36). */
+    /** Says whether a match is friendly — a game's admin's to say. */
     def setFriendly(gameId: GameId, matchId: MatchId, friendly: Boolean): Future[Match] =
         send[Match](
           HttpMethod.PUT,
@@ -200,11 +200,11 @@ object ApiClient {
           Some(write(Json.FriendlyRequest(friendly)))
         )
 
-    /* `role=` for one role's ratings (V49), after whatever else the query asks; nothing for the overall ones. */
+    /* `role=` for one role's ratings, after whatever else the query asks; nothing for the overall ones. */
     private def roleQuery(role: Option[GameRoleId], first: Boolean): String =
         role.fold("")(r => s"${if (first) "?" else "&"}role=${r.value}")
 
-    /** A page of a game's leaderboard (V45), or of one role's (V49), from page 0, best first: anybody may see it. */
+    /** A page of a game's leaderboard, or of one role's, from page 0, best first: anybody may see it. */
     def leaderboard(gameId: GameId, page: Int, role: Option[GameRoleId] = None): Future[Leaderboard] =
         get[Leaderboard](s"/games/${gameId.value}/ratings?page=$page${roleQuery(role, first = false)}")
 
@@ -216,13 +216,13 @@ object ApiClient {
           s"/games/${gameId.value}/ratings?prefix=${js.URIUtils.encodeURIComponent(prefix)}${roleQuery(role, first = false)}"
         )
 
-    /** One player's standing in a game (V45), overall or in a role: their place, the rating it was worked out from, and
-      * their rating now. A 404 if they have no rating in it.
+    /** One player's standing in a game, overall or in a role: their place, the rating it was worked out from, and their
+      * rating now. A 404 if they have no rating in it.
       */
     def standing(gameId: GameId, playerId: PlayerId, role: Option[GameRoleId] = None): Future[EloRating] =
         get[EloRating](s"/games/${gameId.value}/ratings/${playerId.value}${roleQuery(role, first = true)}")
 
-    /** Sets a player's Elo rating in a game outright — a game's admin's to do (V42). */
+    /** Sets a player's Elo rating in a game outright — a game's admin's to do. */
     def setRating(gameId: GameId, playerId: PlayerId, rating: Int): Future[EloRating] =
         send[EloRating](
           HttpMethod.PUT,
@@ -280,8 +280,8 @@ object ApiClient {
           Some(write(invite))
         )
 
-    /** Asks one character to a challenge in a character game (V25). Its owner, whoever that is when they answer, is who
-      * may accept.
+    /** Asks one character to a challenge in a character game. Its owner, whoever that is when they answer, is who may
+      * accept.
       */
     def inviteCharacter(
         gameId: GameId,
@@ -376,7 +376,7 @@ object ApiClient {
           None
         )
 
-    // ---- tournaments (V52) ------------------------------------------------------------------
+    // ---- tournaments ------------------------------------------------------------------------
 
     /** The tournaments the caller owns, has entered or is invited to. */
     def myTournaments(): Future[Seq[TournamentSummary]] = get[Seq[TournamentSummary]]("/me/tournaments")
@@ -466,11 +466,11 @@ object ApiClient {
           Some(write(TournamentJson.DecideRequest(ranks)))
         )
 
-    /** The models a game's tournaments are made from (V52). */
+    /** The models a game's tournaments are made from. */
     def tournamentModels(gameId: GameId): Future[Seq[TournamentModel]] =
         get[Seq[TournamentModel]](s"/games/${gameId.value}/tournament-models")
 
-    /** Every model a game could offer (V52). */
+    /** Every model a game could offer. */
     def allTournamentModels(): Future[Seq[TournamentModel]] =
         get[Seq[TournamentModel]]("/tournament-models")
 

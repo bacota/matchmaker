@@ -29,8 +29,8 @@ import com.vivi.matchmaker.service.UnavailableError
 
 /** Which of the two archive buckets a match's archive is in: a friendly match's archive is kept for 30 days and every
   * other one permanently, and only the friendly bucket's lifecycle rule expires anything current. See
-  * archiving-matches-plan.md. Where an archive *is* is recorded (V44) rather than worked out from the match, since a
-  * match whose friendliness changes after it is archived has its archive moved, and a move takes time.
+  * archiving-matches-plan.md. Where an archive *is* is recorded rather than worked out from the match, since a match
+  * whose friendliness changes after it is archived has its archive moved, and a move takes time.
   */
 enum ArchiveBucket {
     case Permanent, Friendly
@@ -41,7 +41,7 @@ object ArchiveBucket {
 
     extension (bucket: ArchiveBucket) {
 
-        /** Whether this is the bucket whose archives expire: the column's form of it (V44). */
+        /** Whether this is the bucket whose archives expire: the column's form of it. */
         def isFriendly: Boolean = bucket == Friendly
     }
 }

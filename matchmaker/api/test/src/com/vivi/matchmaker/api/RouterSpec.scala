@@ -152,7 +152,7 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request("GET", "/me/matches/completed?asOf=2999-01-01T00:00:00Z")).statusCode, 400)
     }
 
-    // `?role=` (V49) names a role's ratings rather than the overall ones, by its id.
+    // `?role=` names a role's ratings rather than the overall ones, by its id.
     test("a ratings role that is not a role id is a bad request") {
         assertEquals(dispatch(request("GET", "/games/1/ratings?role=first")).statusCode, 400)
         assertEquals(dispatch(request("GET", "/games/1/ratings/2?role=first")).statusCode, 400)
@@ -190,7 +190,7 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request("DELETE", "/challenges/1/1/invitations/abc")).statusCode, 400)
     }
 
-    // The one deliberate break in the V22 wire format: `POST /challenges` takes the challenge
+    // The one deliberate break in the wire format when invitations came: `POST /challenges` takes the challenge
     // nested now, so a client sending the bare challenge it used to send is refused rather than
     // creating something. Answered at parsing, before the service -- a 500 here would mean the
     // body had been understood.
@@ -307,7 +307,7 @@ class RouterSpec extends FunSuite {
       ("GET", "/games/1/matches", "{}"),
       ("PUT", "/games/1/matches/11/friendly", """{"friendly":false}"""),
       ("GET", "/games/1/matches/11/notifications", "{}"),
-      // The four a seat holds (V24), and not optional: a seat answers every kind it can be asked
+      // The four a seat holds, and not optional: a seat answers every kind it can be asked
       // about, so there is nothing here to leave out. The seven kinds about a challenge are not a
       // seat's to answer and are not accepted here.
       (
@@ -327,7 +327,7 @@ class RouterSpec extends FunSuite {
       ("POST", "/matches/11/archive/confirm", "{}"),
       ("POST", "/matches/11/archive/read", "{}"),
       ("POST", "/matches/11/archive/expired", "{}"),
-      // Tournaments (V52). A create or edit names a standard design by key; settings are all defaulted.
+      // Tournaments. A create or edit names a standard design by key; settings are all defaulted.
       ("GET", "/me/tournaments", "{}"),
       ("GET", "/me/tournament-standings", "{}"),
       ("GET", "/games/1/tournaments", "{}"),

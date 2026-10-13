@@ -21,7 +21,7 @@ case class GameParameter[T](
     displayName: String
 )
 
-/** Whether a match needs a role filled (V51).
+/** Whether a match needs a role filled.
   *
   * `Recommended` is a role a match can go without, as an optional one can, but which counts toward the size of a
   * tournament pool: a game's "R" is its required and recommended roles together. Outside tournaments the two are the
@@ -38,7 +38,7 @@ object RoleType {
         values.find(_.code == code).getOrElse(throw new IllegalArgumentException(s"unknown game_role.type '$code'"))
 }
 
-/** How a game's players take their turns (V51): one after another, or all at once. A tournament spends a round's time
+/** How a game's players take their turns: one after another, or all at once. A tournament spends a round's time
   * differently for each — a chess clock per seat for `Sequential`, a limit per turn for `Simultaneous`.
   */
 enum MoveType(val code: String, val label: String) {
@@ -122,29 +122,29 @@ case class Game(
     parameters: Seq[GameParameter[_]],
     // The engine's identity. A request made on the game's behalf (a move, a result, a character
     // it made) is authorized by the API key it carries being one stored with a game of this
-    // identity (V34).
+    // identity.
     externalId: String,
     // What happens when a player's turn runs out. Defaulted rather than required, because every
     // game had this behaviour decided for it by the migration that added the column, and
     // Forfeit is what it decided.
     timeoutAction: TimeoutAction = TimeoutAction.Forfeit,
-    /* Where a player makes a character for this game (V28), for a character game whose engine offers
+    /* Where a player makes a character for this game, for a character game whose engine offers
      * a page for it. Characters are made in their engine, which then reports each one to matchmaker,
      * so this is where matchmaker's UI sends a player who has none. `None` for a plain game, and for
      * a character game nobody has given one. */
     characterUrl: Option[String] = None,
-    /* Whether the game has an engine API key stored (V34) — never the key itself, which no read of a
+    /* Whether the game has an engine API key stored — never the key itself, which no read of a
      * game carries. What the admin form shows in its place, so that an admin can tell a game whose
      * engine will refuse every call from one that is ready. Read-only: a save sets the key, not this. */
     hasApiKey: Boolean = false,
-    /* The admin saying that no role of the game has any advantage in winning it (V49). Unticked, a
+    /* The admin saying that no role of the game has any advantage in winning it. Unticked, a
      * rated match moves its players' ratings in the roles they played as well as overall, and each
      * role has a leaderboard of its own. */
     unimportantRoles: Boolean = false,
-    /* Whether players move in turn or all at once (V51). Sequential for every game until an admin says
+    /* Whether players move in turn or all at once. Sequential for every game until an admin says
      * otherwise. */
     moveType: MoveType = MoveType.Sequential,
-    /* How many turns a simultaneous game lasts, for a tournament to divide a round's time among (V51).
+    /* How many turns a simultaneous game lasts, for a tournament to divide a round's time among.
      * `None` where the game does not say, in which case a tournament must. */
     maxTurns: Option[Int] = None
 ) {

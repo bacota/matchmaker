@@ -21,8 +21,8 @@ import java.security.MessageDigest
   *   - Outbound, matchmaker has the url it is about to call and no engine identity in hand: the entries are keyed by
   *     host.
   *
-  * Both are read from the database, where an admin sets each game's key on its form (V34) — see `GameApiKeyRepo`. A
-  * list of pairs rather than a map, because two games may share an engine identity and each has a key of its own.
+  * Both are read from the database, where an admin sets each game's key on its form — see `GameApiKeyRepo`. A list of
+  * pairs rather than a map, because two games may share an engine identity and each has a key of its own.
   */
 case class ApiKeys(entries: Iterable[(String, String)]) {
 

@@ -12,13 +12,13 @@ import com.vivi.matchmaker.persistence.{NotificationRepo, PlayerRepo, Suppressio
   * not something another player, or an admin, has any business changing — so, like `AcceptanceService.mine`, most of
   * these take no player id and there is nothing to refuse.
   *
-  * There is no fourth level. A game used to carry defaults of its own for the chain to end at; since V30 it ends at
-  * "send it" (`NotificationLevels.unsaid`), the same for every game.
+  * There is no fourth level: a game has no defaults of its own, and the chain ends at "send it"
+  * (`NotificationLevels.unsaid`), the same for every game.
   *
-  * The three read as a chain only when a seat is created: since V14 a seat carries its own eleven answers and nothing
-  * reads past it, so changing a game's settings does not change a match already being played. What makes that sayable
-  * is the cascades below — the offers `updateMine` and `updateForGame` take, which carry a player's answers into the
-  * rows that had inherited from them.
+  * The three read as a chain only when a seat is created: a seat carries its own eleven answers and nothing reads past
+  * it, so changing a game's settings does not change a match already being played. What makes that sayable is the
+  * cascades below — the offers `updateMine` and `updateForGame` take, which carry a player's answers into the rows that
+  * had inherited from them.
   */
 class NotificationService(sessionPool: SessionPool) {
 
@@ -151,7 +151,7 @@ class NotificationService(sessionPool: SessionPool) {
     /** What the caller's seats in one match say. Every kind a seat can answer, all of them said: a seat cannot leave
       * one unsaid, so the form that shows these has no "Use Default" option and nothing to fall back to.
       *
-      * Four kinds rather than eleven since V24 — a seat is only ever asked about the match it is in, which is what
+      * Four kinds rather than all of them — a seat is only ever asked about the match it is in, which is what
       * [[com.vivi.matchmaker.model.SeatNotifications]] holds.
       *
       * Refused unless the caller is in the match: the answer would otherwise tell someone who is not playing that a

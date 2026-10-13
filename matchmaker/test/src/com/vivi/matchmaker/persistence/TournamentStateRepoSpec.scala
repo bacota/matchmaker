@@ -14,7 +14,7 @@ import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{Tournament as Progress, *}
 import com.vivi.matchmaker.service.TournamentFixtures
 
-/** A tournament's progress through its rows (V52, `design/new-tournament-plan.md` Phase 5): whole tournaments of the
+/** A tournament's progress through its rows (`design/new-tournament-plan.md` Phase 5): whole tournaments of the
   * standard formats played through the database, every state saved, read back and compared with what the rules made,
   * and every result written as a played match's would be.
   */

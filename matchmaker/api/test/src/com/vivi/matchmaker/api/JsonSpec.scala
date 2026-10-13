@@ -45,7 +45,7 @@ class JsonSpec extends FunSuite {
         assertEquals(decoded.parameters.head.displayName, "Parameter")
     }
 
-    // Unimportant roles (V49) travel with the game, and a game written before they existed keeps ratings by role.
+    // Unimportant roles travel with the game, and a game written before they existed keeps ratings by role.
     test("a game says whether its roles are unimportant, and one that does not say has important ones") {
         val game = Game(GameId(1), GameType.Plain, "n", "n", "d", "u", true, Seq.empty, Seq.empty, "boxing")
         assert(read[Game](write(game.copy(unimportantRoles = true))).unimportantRoles)
@@ -84,7 +84,7 @@ class JsonSpec extends FunSuite {
           read[SeatNotifications]("""{"matchStarted":true,"turnTaken":false,"yourTurn":true,"matchEnded":false}"""),
           SeatNotifications(matchStarted = true, turnTaken = false, yourTurn = true, matchEnded = false)
         )
-        // Four fields, not eleven: the kinds about a challenge are not a seat's to answer (V24), and a
+        // Four fields, not eleven: the kinds about a challenge are not a seat's to answer, and a
         // body naming them is not a seat's settings.
         assertEquals(ujson.read(seat).obj.keySet, Set("matchStarted", "turnTaken", "yourTurn", "matchEnded"))
     }
@@ -199,7 +199,7 @@ class JsonSpec extends FunSuite {
     }
 
     // What an invitational challenge looks like on the wire: the flag that closes it, and the rows
-    // saying who may accept it. Both are new in V22, and both have defaults -- which is the catch
+    // saying who may accept it. Both were added later, and both have defaults -- which is the catch
     // below.
     test("a ChallengeSummary carries a closed challenge and its invitations") {
         val summary = ChallengeSummary(
@@ -236,7 +236,7 @@ class JsonSpec extends FunSuite {
 
     // upickle omits a field whose value equals its default, so `isOpen = true` and no invitations
     // write nothing at all -- which is the wire format an older browser sends, and what every
-    // challenge created before V22 amounts to. Reading that back as "open, nobody invited" is the
+    // challenge created before them amounts to. Reading that back as "open, nobody invited" is the
     // only answer that keeps those challenges joinable.
     test("an open challenge says nothing about being open, and reads back open") {
         val open = ChallengeSummary(

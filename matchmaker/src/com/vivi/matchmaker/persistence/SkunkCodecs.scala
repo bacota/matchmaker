@@ -31,7 +31,7 @@ object SkunkCodecs {
       * one-character discriminator, because the set of actions is expected to grow and 'FORFEIT' reads as itself in a
       * query.
       */
-    /* Text under check constraints, as `timeoutAction` is (V51). */
+    /* Text under check constraints, as `timeoutAction` is. */
     val roleType: Codec[RoleType] = text.imap(RoleType.fromCode)(_.code)
     val moveType: Codec[MoveType] = text.imap(MoveType.fromCode)(_.code)
     val timeoutAction: Codec[TimeoutAction] = text.imap(TimeoutAction.fromCode)(_.code)
@@ -44,7 +44,7 @@ object SkunkCodecs {
     /** `time_limit_unit`: the unit a limit was offered in, and so the unit it is read back in. */
     val timeLimitUnit: Codec[TimeLimitUnit] = text.imap(TimeLimitUnit.fromCode)(_.code)
 
-    /** `match.status` (V52): where a match is in its life, by its one-letter code. */
+    /** `match.status`: where a match is in its life, by its one-letter code. */
     val matchStatus: Codec[MatchStatus] = text.imap(MatchStatus.fromCode)(_.code)
 
     /** The eleven `notify_*` columns of `player` and `player_game`, as one value.
@@ -61,7 +61,7 @@ object SkunkCodecs {
         (bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *:
             bool.opt *: bool.opt *: bool.opt).to[NotificationPreferences]
 
-    /** The four `notify_*` columns of `participant` (V24), as one value.
+    /** The four `notify_*` columns of `participant`, as one value.
       *
       * Four rather than eleven, and so its own codec rather than [[notificationPreferences]]: a seat can only be asked
       * about a match it is in, and the seven kinds about a challenge have no column here to answer from. Bound

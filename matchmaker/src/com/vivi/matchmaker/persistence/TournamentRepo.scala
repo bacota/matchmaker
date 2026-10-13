@@ -9,7 +9,7 @@ import natchez.Trace.Implicits.noop
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model._
 
-/** Reads and writes `tournament` (V52): a tournament's settings, the model it was made from, and where it is.
+/** Reads and writes `tournament`: a tournament's settings, the model it was made from, and where it is.
   *
   * Its design is its `stage` rows ([[StageRepo]]) and its progress is rows of their own; the round being played, when
   * it began and when it must be over, is read from `round` through `current_round`, and written there by whoever starts

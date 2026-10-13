@@ -8,7 +8,7 @@ import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.auth.ApiKeys
 import com.vivi.matchmaker.model._
 
-/** The key each game's engine and matchmaker authenticate each other with (V34).
+/** The key each game's engine and matchmaker authenticate each other with.
   *
   * Kept apart from [[GameRepo]] because nothing that reads a game should be able to carry its key along: a key is
   * written when an admin saves a game, and read only by the two things that authenticate with it: by game, for a call

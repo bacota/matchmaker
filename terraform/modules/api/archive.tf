@@ -135,7 +135,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "friendly_archive" {
  * the Review and Watch links of an expired match would never be withdrawn.
  *
  * DeleteObject is for moving an archive between the buckets, when a game's admin changes whether a
- * finished match was friendly (V44): a server-side copy, which GetObject on the source and PutObject
+ * finished match was friendly: a server-side copy, which GetObject on the source and PutObject
  * on the destination already cover, and then the original deleted. */
 data "aws_iam_policy_document" "archive" {
   statement {

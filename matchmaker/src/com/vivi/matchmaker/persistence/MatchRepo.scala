@@ -82,7 +82,7 @@ class MatchRepo(session: Session[IO]) {
             MatchStatus
         )
 
-    // The last two are the archive's (V38), read here and never written: `ArchiveRepo` owns them.
+    // The last two are the archive's, read here and never written: `ArchiveRepo` owns them.
     private val matchRow: Codec[MatchRow] =
         challengeId.opt *: playerIdOf *: text *: instant.opt *: bool *: instant.opt *: float8.opt *: settings *: bool *: text.opt *:
             text.opt *: text.opt *: timeLimitKind *: timeLimitUnit *: bool *: bool *: instant.opt *: bool *: matchStatus
@@ -136,7 +136,7 @@ class MatchRepo(session: Session[IO]) {
           time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit, friendly = $bool, status = $matchStatus
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
-    /** Writes a new match of a challenge. A tournament's matches are written with their pools (V52), by
+    /** Writes a new match of a challenge. A tournament's matches are written with their pools, by
       * `TournamentStateRepo`, since a tournament match is its pool's and its round's as well as its tournament's.
       */
     def create(m: Match): IO[Match] = write(m, None)
@@ -298,8 +298,8 @@ class MatchRepo(session: Session[IO]) {
         sql"""SELECT move_sequence FROM match WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
             .query(int8.opt)
 
-    /** The latest move sequence applied to this match's seats (V26), locked with the row. `None` when no numbered move
-      * or status has been applied, and also when there is no such match — the callers have already required it.
+    /** The latest move sequence applied to this match's seats, locked with the row. `None` when no numbered move or
+      * status has been applied, and also when there is no such match — the callers have already required it.
       */
     def moveSequenceForUpdate(gameId: GameId, matchId: MatchId): IO[Option[Long]] =
         session.option(moveSequenceForUpdateQuery)((gameId, matchId)).map(_.flatten)
@@ -448,7 +448,7 @@ class MatchRepo(session: Session[IO]) {
      * fragments: a query that has to be pieced together to be read is harder to check against the
      * plan the database actually runs. */
     /* Every list here begins its WHERE with `m.start IS NOT NULL`: a match is listed once it has
-     * begun. A tournament's match is written long before that (V52) -- scheduled, its seats choosing
+     * begun. A tournament's match is written long before that -- scheduled, its seats choosing
      * roles, or due to be created -- with no start, no urls and seats that may have no role yet, and
      * one cancelled in that time is over without ever having begun. None of those is a match a
      * player can open, and none is listed. */
@@ -492,7 +492,7 @@ class MatchRepo(session: Session[IO]) {
 
     /* One window of the player's finished matches: the seats they finished with from `from`, up to
      * but not including `until` -- by the seat's own
-     * `completed_at` (V41), and in one game where `game` names one. Served by the index on
+     * `completed_at`, and in one game where `game` names one. Served by the index on
      * participant(player_id, completed_at).
      *
      * Not a cancelled match: one called off was never finished, and is not listed as though it had
@@ -578,9 +578,9 @@ class MatchRepo(session: Session[IO]) {
           -- Nothing about the match is consulted, so a seat is in at most one of these two lists and
           -- `completed_at` alone decides which. That puts the weight on it being kept: a match ending
           -- retires its seats through the engine's status (`applyEngineStatus`) and a cancel retires
-          -- them outright (V15), which is what makes it the whole answer -- and keeps a cancelled match
+          -- them outright, which is what makes it the whole answer -- and keeps a cancelled match
           -- out of this list, as the next one leaves it out on purpose.
-          -- Supported by the index on participant(player_id, completed_at) -- V41.
+          -- Supported by the index on participant(player_id, completed_at).
           WHERE m.start IS NOT NULL AND p.player_id = $playerId AND m.public AND p.completed_at IS NULL
           -- Not by the caller's deadline, which is nothing to a reader who is not in the match:
           -- most recently started first, which is the order a stranger reads a list of games in.
@@ -952,21 +952,21 @@ object MatchRepo {
         // Where anyone may watch this match, and `None` for one that is not public. A fact about the
         // match rather than about this seat, and so the same on every row of it.
         publicUrl: Option[String],
-        // Whether the match is friendly (V36), likewise the match's.
+        // Whether the match is friendly, likewise the match's.
         friendly: Boolean,
-        // The match's archive (V38): when it was confirmed, and whether a friendly one has expired.
+        // The match's archive: when it was confirmed, and whether a friendly one has expired.
         archivedAt: Option[Instant] = None,
         archiveExpired: Boolean = false,
         // The match's settings, which hold the challenger's choice for each of the game's
         // parameters (see `ChallengeSettings`); likewise the match's.
         settings: String = "{}",
-        // How the match came out, in the engine's words (V40); likewise the match's.
+        // How the match came out, in the engine's words; likewise the match's.
         resultSummary: Option[String] = None,
         // Which seat this row is about, so the caller's own can be told from the others', and where it
         // finished: `None` until the engine reports a result for it.
         seatParticipantId: ParticipantId = ParticipantId(0L),
         seatRank: Option[Int] = None,
-        // What the match did to that seat's Elo rating (V43): `None` until it has a result, and on a friendly match's.
+        // What the match did to that seat's Elo rating: `None` until it has a result, and on a friendly match's.
         seatEloDelta: Option[Int] = None,
         // Whose seat it is, so a list can link to the player.
         seatPlayerId: PlayerId = PlayerId.unassigned,

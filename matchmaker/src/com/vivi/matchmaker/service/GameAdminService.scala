@@ -4,7 +4,7 @@ import cats.effect.IO
 import com.vivi.matchmaker.model.{GameAdmin, GameId, Player, PlayerId}
 import com.vivi.matchmaker.persistence.{GameAdminRepo, GameRepo, PlayerRepo, TextCodec}
 
-/** Who administers a game (V35): the players with special privileges in managing its matches.
+/** Who administers a game: the players with special privileges in managing its matches.
   *
   * Two kinds of admin, and they differ in what they may take away. An overall admin (`Player.isAdmin`) may make any
   * player an admin of any game, and take it away from any of them. A game's admin may make other players admins of that

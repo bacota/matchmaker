@@ -166,7 +166,7 @@ object Store {
         case PublicMatches
         case PlayerSearch
         case NotificationSettings
-        // Tournaments (V52): the caller's own, the seats waiting on them, a game's, and the one shown.
+        // Tournaments: the caller's own, the seats waiting on them, a game's, and the one shown.
         case MyTournaments, TournamentChoices, TournamentStandings
         case Tournaments(gameId: GameId)
         case OneTournament
@@ -262,8 +262,8 @@ object Store {
     /** Each game's tournaments, for its screen, fetched as it is opened. */
     val tournamentsByGame: Var[Map[GameId, Seq[TournamentSummary]]] = Var(Map.empty)
 
-    /** Each game's tournament models (V52), for the form that creates a tournament and for its admins, fetched as its
-      * screen or that form is opened.
+    /** Each game's tournament models, for the form that creates a tournament and for its admins, fetched as its screen
+      * or that form is opened.
       */
     val tournamentModelsByGame: Var[Map[GameId, Seq[TournamentModel]]] = Var(Map.empty)
 
@@ -364,9 +364,9 @@ object Store {
       */
     val charactersByGame: Var[Map[GameId, Seq[Character[String]]]] = Var(Map.empty)
 
-    /** Each game's admins (V35), loaded when the game's screen is shown: what decides whether that screen offers what
-      * only an admin of the game may do. One list per game for the whole screen, read through [[administers]], rather
-      * than a request from each part of it that wants to know.
+    /** Each game's admins, loaded when the game's screen is shown: what decides whether that screen offers what only an
+      * admin of the game may do. One list per game for the whole screen, read through [[administers]], rather than a
+      * request from each part of it that wants to know.
       */
     val gameAdminsByGame: Var[Map[GameId, Seq[GameAdmin]]] = Var(Map.empty)
 
@@ -384,7 +384,7 @@ object Store {
       */
     val acceptances: Var[Seq[PendingAcceptance]] = Var(Seq.empty)
 
-    /** What the caller has been invited to and could still accept (V22), newest first and across every game.
+    /** What the caller has been invited to and could still accept, newest first and across every game.
       *
       * Beside `acceptances` rather than inside it: an invitation is a challenge the caller has *not* answered, where a
       * pending acceptance is one they have, and the two sections ask different things of them. It carries the game's

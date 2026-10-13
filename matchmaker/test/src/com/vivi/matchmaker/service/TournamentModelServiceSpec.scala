@@ -23,8 +23,8 @@ import com.vivi.matchmaker.persistence.{
     TournamentRepo
 }
 
-/** The models every game's tournaments are made from (V52): offered and withdrawn by each game's admins, and synced
-  * with the code by a site admin, against the local database.
+/** The models every game's tournaments are made from: offered and withdrawn by each game's admins, and synced with the
+  * code by a site admin, against the local database.
   *
   * The models are every game's, shared with the specs running at the same time, so a model this spec makes up for a
   * sync to remove has an id of its own, and nothing here changes a standard model another spec plays.

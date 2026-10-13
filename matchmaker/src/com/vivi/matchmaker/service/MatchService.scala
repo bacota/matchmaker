@@ -344,7 +344,7 @@ class MatchService(
                                 s"caller '$callerExternalId' did not create match ${matchId.value} and may not cancel it"
                               )
                             )
-                            // A tournament's match that has not begun (V52) is its tournament's to call off.
+                            // A tournament's match that has not begun is its tournament's to call off.
                             _ <- IO.raiseUnless(existing.status.begun)(
                               ConflictError(
                                 s"match ${matchId.value} has not begun; its tournament decides what becomes of it"
@@ -411,8 +411,8 @@ class MatchService(
             } yield matches
         }
 
-    /** Says whether the match is friendly (V36): a game admin's to decide, or an overall admin's, and nobody else's —
-      * not even the match's creator. Saying what it already is changes nothing.
+    /** Says whether the match is friendly: a game admin's to decide, or an overall admin's, and nobody else's — not
+      * even the match's creator. Saying what it already is changes nothing.
       *
       * A completed match may change too, and is re-rated when it does — see [[EloRatingService.reclassify]], which
       * refuses a change that would cascade into another match's rating. A match with a player in two of its seats can
@@ -461,12 +461,12 @@ class MatchService(
                                   NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
                                 )
                         }
-                        // Its seats are not yet rated before it begins (V52), and rating is what this changes.
+                        // Its seats are not yet rated before it begins, and rating is what this changes.
                         _ <- IO.raiseUnless(existing.status.begun)(
                           ConflictError(s"match ${matchId.value} has not begun")
                         )
                         changed = existing.friendly != friendly
-                        // A match that is not friendly is rated (V42), and cannot rate a player against
+                        // A match that is not friendly is rated, and cannot rate a player against
                         // themselves. Its seats are written once, at its start, so read under the match's
                         // lock they are what they will be when it ends.
                         players <- new ParticipantRepo(session)

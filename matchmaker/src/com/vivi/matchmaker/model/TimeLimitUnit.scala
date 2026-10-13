@@ -14,8 +14,8 @@ import java.time.Duration
   */
 enum TimeLimitUnit(val code: String, val label: String, val perUnit: Duration) {
 
-    /** What a live match's turns were measured in (V27). No longer offered by the challenge form, but read and shown
-      * for the challenges and matches that were.
+    /** What a live match's turns were measured in. No longer offered by the challenge form, but read and shown for the
+      * challenges and matches that were.
       */
     case Seconds extends TimeLimitUnit("SECONDS", "seconds", Duration.ofSeconds(1))
     case Minutes extends TimeLimitUnit("MINUTES", "minutes", Duration.ofMinutes(1))

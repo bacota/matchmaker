@@ -201,5 +201,5 @@ Nothing arriving? In order of likelihood:
     com.amazonaws.<region>.sqs interface endpoint. The enqueue fails quietly; its log line is in
     the API's own log group.
   - the players have no address stored. Only an account that has signed in since matchmaker began
-    keeping addresses has one; see V12.
+    keeping addresses has one; see `player.email` in V1__init.sql.
 EOF

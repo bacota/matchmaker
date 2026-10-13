@@ -10,9 +10,9 @@ import com.vivi.matchmaker.model.tournament.{TournamentGame, Validation}
 import com.vivi.matchmaker.model.tournament.standard.StandardModels
 import com.vivi.matchmaker.persistence._
 
-/** The models every game's tournaments are made from (V52): the standard formats the code defines ([[StandardModels]]),
-  * which a site admin syncs into the database, and which each game's admins choose to offer. Nobody makes a model of
-  * their own.
+/** The models every game's tournaments are made from: the standard formats the code defines ([[StandardModels]]), which
+  * a site admin syncs into the database, and which each game's admins choose to offer. Nobody makes a model of their
+  * own.
   *
   * Every change is one transaction. A sync locks each model it writes or removes; choosing one for a game, as making a
   * tournament from one, holds it FOR SHARE, so that a sync waits for either to be written and neither waits on another

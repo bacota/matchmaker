@@ -2,7 +2,7 @@ package com.vivi.matchmaker.model
 
 import java.time.Instant
 
-/** An invitation to accept one challenge (V22).
+/** An invitation to accept one challenge.
   *
   * Permission, and nothing more: it says this player may accept this challenge, and — when [[gameRoleId]] is set —
   * which seat they were asked to take. It carries no state about whether they have accepted, because it outlives the
@@ -63,11 +63,10 @@ case class Invite(playerId: PlayerId, gameRoleId: Option[GameRoleId] = None)
   *   `invitation.gameRoleId` is, and read from `game_role` in the same query rather than looked up per row.
   * @param invitedAt
   *   when the invitation was made. What the list is ordered by, and carried rather than only sorted on because the list
-  *   is assembled from two tables — a plain game's invitations and a character game's (V25) — which the service merges
-  *   by it.
+  *   is assembled from two tables — a plain game's invitations and a character game's — which the service merges by it.
   * @param character
-  *   for a character game, the character invited (V25). `invitation.playerId` is then that character's *current* owner
-  *   — the caller — resolved on read rather than stored, and the acceptance has to name this character.
+  *   for a character game, the character invited. `invitation.playerId` is then that character's *current* owner — the
+  *   caller — resolved on read rather than stored, and the acceptance has to name this character.
   */
 case class ChallengeInvitation(
     invitation: Invitation,
@@ -81,7 +80,7 @@ case class ChallengeInvitation(
     character: Option[CharacterName] = None
 )
 
-/** An invitation to one character to accept one challenge (V25) — a character game's counterpart of [[Invitation]].
+/** An invitation to one character to accept one challenge — a character game's counterpart of [[Invitation]].
   *
   * Names the character and not its owner, because in a character game it is the character that plays: whoever owns
   * [[characterId]] when the invitation is answered is who may answer it. The owner is never stored here, so a character

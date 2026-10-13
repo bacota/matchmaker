@@ -8,7 +8,7 @@ import skunk.data.Completion
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model.{EmailSuppression, SuppressionReason}
 
-/** The addresses mail is held back from: `email_suppression` (V16).
+/** The addresses mail is held back from: `email_suppression`.
   *
   * A repo of its own rather than a few more columns on `PlayerRepo`, because it is not about players. The key is an
   * address, which may belong to no player row, to one whose `email` has since changed, or to two players sharing a
@@ -117,7 +117,7 @@ class SuppressionRepo(session: Session[IO]) {
         sql"""UPDATE email_suppression SET released_at = now()
               WHERE email = lower($text) AND released_at IS NULL AND reason <> 'complaint'""".command
 
-    /* The event's own identity, claimed before it is counted (V17).
+    /* The event's own identity, claimed before it is counted.
      *
      * `ON CONFLICT DO NOTHING` reports `Insert(0)` when the id is already there, which is the whole
      * deduplication mechanism: a redelivered notification loses the race to claim its id, and the

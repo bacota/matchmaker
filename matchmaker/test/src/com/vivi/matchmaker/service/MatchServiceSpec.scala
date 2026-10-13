@@ -148,7 +148,7 @@ class MatchServiceSpec extends PropertySuite {
                           )
                         )
                         .map(Some(_))
-            // A match not from a challenge is from a tournament: it has to come from one or the other (V52).
+            // A match not from a challenge is from a tournament: it has to come from one or the other.
             tournament <-
                 if (fromChallenge) IO.pure(None)
                 else TournamentFixtures.tournament(session, game, creator.getOrElse(player.playerId)).map(Some(_))
@@ -168,7 +168,7 @@ class MatchServiceSpec extends PropertySuite {
             )
             _ <- tournament
                 .fold(new MatchRepo(session).create(made))(TournamentFixtures.begunMatch(session, _, made))
-            // A tournament's seat names its entrant (V52), as a challenge's names its challenge.
+            // A tournament's seat names its entrant, as a challenge's names its challenge.
             _ <- tournament match {
                 case Some(t) =>
                     TournamentFixtures.begunSeat(
@@ -796,7 +796,7 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     /* The completed list is a history, so it is read from the most recent end: by when each of the
-     * player's seats was finished with (V41). A cancelled match is not in it at all. */
+     * player's seats was finished with. A cancelled match is not in it at all. */
     property("completed matches come back most recently finished first, and a cancelled one not at all") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId, Generators.genMatchId, Generators.genMatchId) {
             (nickname, externalId, olderId, newerId, cancelledId) =>
@@ -892,11 +892,11 @@ class MatchServiceSpec extends PropertySuite {
         }
     }
 
-    // A match need not come from a challenge (V50): a tournament's is created by the tournament, for its
+    // A match need not come from a challenge: a tournament's is created by the tournament, for its
     // owner. Its creator alone says whose it is, on the lists and to the cancel.
-    /** Takes a tournament match back to before it began (V52): `status` with no start or urls, and its seats with no
-      * role and no rating, as a match is while its seats choose. `cancelled` is a match called off in that time: over,
-      * never begun.
+    /** Takes a tournament match back to before it began: `status` with no start or urls, and its seats with no role and
+      * no rating, as a match is while its seats choose. `cancelled` is a match called off in that time: over, never
+      * begun.
       */
     private def unbegin(session: skunk.Session[IO], gameId: GameId, matchId: MatchId, cancelled: Boolean): IO[Unit] =
         session.execute(

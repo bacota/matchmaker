@@ -3,7 +3,7 @@ package com.vivi.matchmaker.model
 import java.time.{Duration, Instant}
 import com.vivi.matchmaker.model.tournament.TournamentDesign
 
-/** Where a tournament is in its life (V52). */
+/** Where a tournament is in its life. */
 enum TournamentStatus(val code: String, val label: String) {
 
     /** Being set up by its owner: nobody may enter yet. */
@@ -46,8 +46,8 @@ case class TournamentSettings(
     isPublic: Boolean = true
 )
 
-/** A design every game may offer (V52), which a tournament is made from by copying its stages: one of the standard
-  * formats the code defines ([[com.vivi.matchmaker.model.tournament.standard.StandardModels]]), as a site admin's sync last
+/** A design every game may offer, which a tournament is made from by copying its stages: one of the standard formats
+  * the code defines ([[com.vivi.matchmaker.model.tournament.standard.StandardModels]]), as a site admin's sync last
   * wrote it, at `version`. `classification` is the group it is listed under where a tournament is created; a model with
   * none is never offered on its own, being the inner design of another's nesting stage. `poolSize` is the default pool
   * size to suggest, `None` for the game's R. A model that is not `active` is one the code no longer defines, kept for
@@ -76,7 +76,7 @@ case class TournamentModelSync(
     deleted: List[TournamentModelId]
 )
 
-/** A tournament, without its design or its state (V52): those are rows of their own.
+/** A tournament, without its design or its state: those are rows of their own.
   *
   * `owner` may edit it and run its rounds. `tournamentModelId` is the model it was made from, whose stages were copied
   * into it. `defaultPoolSize` is the size of a pool of any stage that sets none. `roundStartedAt` and `roundDeadline`
@@ -118,7 +118,7 @@ case class Entrant(
 }
 
 /** Where a tournament match is: its seats choosing roles, due to be created, created, or over -- `match.status` `C`,
-  * `D`, `P` and `F` (V52).
+  * `D`, `P` and `F`.
   */
 enum TournamentMatchStatus(val code: String) {
     case Choosing extends TournamentMatchStatus("choosing")
@@ -134,9 +134,9 @@ object TournamentMatchStatus {
             .getOrElse(throw new IllegalArgumentException(s"unknown tournament match status '$code'"))
 }
 
-/** A seat of a tournament match (V52), which is a `participant` row from the moment its pool is formed: its entrant,
-  * the role it plays (`None` while still to be chosen), its turn to choose, what choosing cost it, and whether it
-  * forfeits before play.
+/** A seat of a tournament match, which is a `participant` row from the moment its pool is formed: its entrant, the role
+  * it plays (`None` while still to be chosen), its turn to choose, what choosing cost it, and whether it forfeits
+  * before play.
   */
 case class TournamentSeat(
     participantId: ParticipantId,
@@ -148,8 +148,8 @@ case class TournamentSeat(
     forfeit: Boolean = false
 )
 
-/** A match of a tournament's round (V52): a `match` row of one of its atomic pools, from the round it is played in
-  * until it is over. Its status is the match's, from choosing roles to done.
+/** A match of a tournament's round: a `match` row of one of its atomic pools, from the round it is played in until it
+  * is over. Its status is the match's, from choosing roles to done.
   */
 case class TournamentMatch(
     gameId: GameId,
@@ -220,8 +220,8 @@ case class TournamentDetail(
     round: List[TournamentMatchView] = Nil
 )
 
-/** Where a player stands in a tournament they entered (V52): the entry (by its character, in a character game), its
-  * seed and stratum as they stand, whether it is out, how many are still in, and its final place once it is over.
+/** Where a player stands in a tournament they entered: the entry (by its character, in a character game), its seed and
+  * stratum as they stand, whether it is out, how many are still in, and its final place once it is over.
   */
 case class TournamentStanding(
     gameId: GameId,

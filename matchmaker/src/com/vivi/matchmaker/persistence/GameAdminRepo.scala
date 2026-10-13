@@ -7,7 +7,7 @@ import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model.{GameAdmin, GameId, PlayerId, PublicPlayer}
 
-/** Who administers which game, and who made them one (V35). Who may change that is
+/** Who administers which game, and who made them one. Who may change that is
   * [[com.vivi.matchmaker.service.GameAdminService]]'s business, not this one's.
   */
 class GameAdminRepo(session: Session[IO]) {

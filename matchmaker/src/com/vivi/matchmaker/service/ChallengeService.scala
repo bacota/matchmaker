@@ -160,7 +160,7 @@ class ChallengeService[T](
         } yield ()
     }
 
-    /** [[validateInvitations]] for a character game's invitations (V25), which name characters.
+    /** [[validateInvitations]] for a character game's invitations, which name characters.
       *
       * The same rules, asked of characters: each named once, each a character of this game, none of them the
       * challenger's, and no role held twice or held when it is already gone. A character with no owner is refused too —
@@ -370,7 +370,7 @@ class ChallengeService[T](
                         .fold(IO.unit)(why => IO.raiseError(ValidationError(why)))
                     // A live match is played against the clock the engine is given, which is this limit --
                     // per turn or a chess clock, either -- so there has to be one, of at least a second. The
-                    // database refuses a live challenge without one too (V27); this is where the challenger can
+                    // database refuses a live challenge without one too; this is where the challenger can
                     // be told why.
                     _ <- IO.raiseWhen(challenge.live && !challenge.timeLimit.exists(_.getSeconds >= 1))(
                       ValidationError(
@@ -455,7 +455,7 @@ class ChallengeService[T](
             }
         }
 
-    /* That `challenger` administers `game`: an overall admin, or one of the game's own (V35). Their
+    /* That `challenger` administers `game`: an overall admin, or one of the game's own. Their
      * player row and their admin row are both held FOR SHARE, so that losing either waits for the
      * challenge this is permitting to be written. */
     private def requireGameAdmin(
@@ -554,7 +554,7 @@ class ChallengeService[T](
                     _ <- IO.raiseWhen(taken.contains(gameRoleId))(
                       ConflictError(s"role ${gameRoleId.value} is already taken in challenge ${challengeId.value}")
                     )
-                    // And it must not be a seat held for somebody else (V22). Asked of every challenge
+                    // And it must not be a seat held for somebody else. Asked of every challenge
                     // and not only a closed one: otherwise a role named on an invitation would mean
                     // something on a closed challenge and nothing on an open one, and a challenger who
                     // asked their friend to play the defender and left the rest open would have that
@@ -607,11 +607,11 @@ class ChallengeService[T](
                               ValidationError(s"challenge ${challengeId.value} does not accept a characterId")
                             )
                     }
-                    // Whether this player may accept this challenge at all (V22). A challenge that is not
+                    // Whether this player may accept this challenge at all. A challenge that is not
                     // open is accepted only by the players invited to it, and the invitation is read under
                     // the same lock as the acceptance, so a revoke cannot land between the two.
                     //
-                    // A character game's invitation is to the character (V25): it is answered by
+                    // A character game's invitation is to the character: it is answered by
                     // accepting *as that character*, by whoever owns it now -- ownership was checked,
                     // under the character's lock, when the acceptance was built above. A plain game's is
                     // to the player. Either way what matters below is whether there is one and which
@@ -659,7 +659,7 @@ class ChallengeService[T](
                         s"role ${gameRoleId.value} in challenge ${challengeId.value} is held for another player"
                       )
                     )
-                    // One seat per player per challenge. This check is the whole of that rule: since V5 the
+                    // One seat per player per challenge. This check is the whole of that rule: the
                     // acceptance key is (game_id, challenge_id, game_role_id), so the database will happily
                     // hold two rows for one player, and nothing but this refuses them. It is under the
                     // challenge's FOR UPDATE lock, taken above, so two simultaneous accepts by the same
@@ -668,7 +668,7 @@ class ChallengeService[T](
                     // The rule may be relaxed one day — a player holding two seats in a six-player game is
                     // a coherent thing to want — and relaxing it means deleting these four lines and
                     // nothing else, which is why it lives here rather than in the schema. Not for a match
-                    // that is not friendly, though: that one is rated (V42), and a player in two of its
+                    // that is not friendly, though: that one is rated, and a player in two of its
                     // seats would be rated against themselves. Starting one, `MatchService.setFriendly`
                     // and the rating itself each refuse that on their own, so relaxing this for friendly
                     // matches stays a matter of these four lines.
@@ -784,7 +784,7 @@ class ChallengeService[T](
                     case None         => IO.raiseError(UnauthorizedError(s"no such user '$callerExternalId'"))
                 }
                 invitations <- new InvitationRepo(session).listForPlayer(caller.playerId)
-                // Through the characters the caller owns now (V25), so one transferred to them since it was
+                // Through the characters the caller owns now, so one transferred to them since it was
                 // invited is theirs to answer, and one transferred away is not.
                 characterInvitations <- new CharacterInvitationRepo(session).listForOwner(caller.playerId)
             } yield (invitations ++ characterInvitations).sorted(ChallengeService.newestInvitationFirst)
@@ -925,7 +925,7 @@ class ChallengeService[T](
             }
         }
 
-    /** Invites a character to an existing challenge in a character game (V25) — [[invite]], addressed to a character.
+    /** Invites a character to an existing challenge in a character game — [[invite]], addressed to a character.
       *
       * The same rules as [[invite]]: only the challenger, not after a start, one invitation per character, a named role
       * must be free, and nobody already seated. "Already seated" is asked of the character's owner, since a player
@@ -1042,7 +1042,7 @@ class ChallengeService[T](
             rejected.flatMap(caller => notifications.invitationRejected(session, gameId, challengeId, caller))
         }
 
-    /** Turns down a character's invitation (V25) — [[reject]], answered by whoever owns the character now.
+    /** Turns down a character's invitation — [[reject]], answered by whoever owns the character now.
       *
       * The character is read `FOR UPDATE`: its owner is what authorizes the delete, and a transfer landing between the
       * check and the delete would let the previous owner turn down the new one's invitation.
@@ -1137,8 +1137,8 @@ class ChallengeService[T](
             }
         }
 
-    /** Takes a character's invitation back (V25) — [[revoke]] for a character game, refused once that character has
-      * accepted for [[revoke]]'s reason.
+    /** Takes a character's invitation back — [[revoke]] for a character game, refused once that character has accepted
+      * for [[revoke]]'s reason.
       */
     def revokeCharacter(
         gameId: GameId,

@@ -81,7 +81,7 @@ object MatchEnded {
         }
 }
 
-/** A tournament's match, due to be created in its engine: the `match` row it already is (V52). */
+/** A tournament's match, due to be created in its engine: the `match` row it already is. */
 case class TournamentMatchDue(gameId: Int, tournamentId: Long, matchId: Long)
 
 object TournamentMatchDue {

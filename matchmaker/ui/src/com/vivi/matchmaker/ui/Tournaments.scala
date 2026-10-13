@@ -15,8 +15,8 @@ import com.vivi.matchmaker.model.tournament.{
     Validation
 }
 
-/** The tournament screens (V52): a game's tournaments, the caller's own on the main page, a tournament's page, and the
-  * form that creates or edits one.
+/** The tournament screens: a game's tournaments, the caller's own on the main page, a tournament's page, and the form
+  * that creates or edits one.
   *
   * Built from `Views`' own pieces — `field`, `withTip`, `busyButton`, `listing` — so that a tournament's page reads
   * like every other screen: labelled controls, explanations behind a "?", buttons that say they are busy. Everything

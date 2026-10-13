@@ -6,7 +6,7 @@ import com.vivi.matchmaker.model.NotificationType
   */
 case class TournamentNews(gameName: String, tournamentName: String, round: Int)
 
-/** The mails about a tournament (V53). One kind so far: a round is over and the next waits on its owner.
+/** The mails about a tournament. One kind so far: a round is over and the next waits on its owner.
   *
   * Pure, like the other templates. Who is written to is `TournamentRounds`.
   */

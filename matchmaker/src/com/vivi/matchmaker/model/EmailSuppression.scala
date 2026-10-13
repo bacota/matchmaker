@@ -112,8 +112,8 @@ object EmailSuppression {
       * expires mid-write, a function that times out, a batch that fails partway — so the same notification arrives more
       * than once in ordinary operation, and a threshold of three that could be advanced by a redelivery would suppress
       * a reachable player after two real failures. The id is derived from what SES put in the document, per
-      * `SesEvent.identity`, and is unique in `email_suppression_event` (V17): an event whose id is already there
-      * changes nothing.
+      * `SesEvent.identity`, and is unique in `email_suppression_event`: an event whose id is already there changes
+      * nothing.
       *
       * Deliberately not the SQS message id, which is the one identifier that cannot serve: a redelivery is a new
       * receipt of the same message, and a *retry* after a partial-batch failure carries the same message id as the

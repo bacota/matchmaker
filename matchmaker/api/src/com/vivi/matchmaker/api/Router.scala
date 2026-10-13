@@ -168,7 +168,7 @@ object Router {
                     ok(services.games.createOrUpdate(caller, game, key.apiKey))
                 )
 
-            /* A game's admins (V35): anybody registered may see who they are, and who made them; an
+            /* A game's admins: anybody registered may see who they are, and who made them; an
              * admin, or an admin of this game, may make a player one; an admin may take it away, and so
              * may the game's admin who made them one. A PUT rather than a POST, because making an admin
              * of somebody who already is one changes nothing. */
@@ -185,9 +185,9 @@ object Router {
                     withPlayerId(playerId)(pid => noContent(services.gameAdmins.revoke(gid, pid, caller)))
                 )
 
-            /* Players' Elo ratings in a game (V42): anybody registered may see its leaderboard (V45), a page
+            /* Players' Elo ratings in a game: anybody registered may see its leaderboard, a page
              * at a time from `page` 0, and any one player's standing on it; an admin, or an admin of this game, may set one. A PUT, because
-             * what is sent is the rating, not a change to it. `?role=` asks about one role's ratings (V49)
+             * what is sent is the rating, not a change to it. `?role=` asks about one role's ratings
              * instead of the overall ones. */
             case ("GET", "games" :: gameId :: "ratings" :: Nil) =>
                 withGameId(gameId)(id =>
@@ -228,7 +228,7 @@ object Router {
                 withGameId(gameId)(id => ok(services.characters.listForGame(id, caller)))
 
             // Another player's characters in one game, by name and without their state: what the
-            // challenger needs in order to invite one of them (V25).
+            // challenger needs in order to invite one of them.
             case ("GET", "games" :: gameId :: "players" :: playerId :: "characters" :: Nil) =>
                 withGameId(gameId) { gid =>
                     withPlayerId(playerId)(player => ok(services.characters.namesFor(gid, player, caller)))
@@ -332,7 +332,7 @@ object Router {
                     withChallengeId(challengeId)(id => noContent(services.challenges.reject(gid, id, caller)))
                 }
 
-            // A character game's invitation is to a character (V25), and one player may own several
+            // A character game's invitation is to a character, and one player may own several
             // characters invited to the same challenge, so the character is in the path.
             case ("DELETE", "me" :: "character-invitations" :: gameId :: challengeId :: characterId :: Nil) =>
                 withGameId(gameId) { gid =>
@@ -370,7 +370,7 @@ object Router {
                     }
                 }
 
-            // The same pair for a character game (V25), where the invitation names a character.
+            // The same pair for a character game, where the invitation names a character.
             case ("POST", "challenges" :: gameId :: challengeId :: "character-invitations" :: Nil) =>
                 withGameId(gameId) { gid =>
                     withChallengeId(challengeId) { id =>
@@ -473,7 +473,7 @@ object Router {
                     }
                 )
 
-            // Whether the match is friendly (V36), which a game's admin says.
+            // Whether the match is friendly, which a game's admin says.
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "friendly" :: Nil) =>
                 withMatch(gameId, matchId) { (gid, mid) =>
                     body[Json.FriendlyRequest](request).flatMap(r =>
@@ -491,7 +491,7 @@ object Router {
                 withMatch(gameId, matchId) { (gid, mid) =>
                     // `SeatNotifications`, not preferences: a seat answers every kind it can be asked
                     // about, so there is nothing here a caller may leave unsaid and nothing below it to
-                    // fall through to. Four kinds since V24 -- the seven about a challenge are not a
+                    // fall through to. Four kinds -- the others, about a challenge are not a
                     // seat's to answer.
                     body[SeatNotifications](request).flatMap(p =>
                         noContent(services.notifications.updateForMatch(caller, gid, mid, p))
@@ -543,7 +543,7 @@ object Router {
                     }
                 }
 
-            // ---- tournaments (V52) ----------------------------------------------------------
+            // ---- tournaments ------------------------------------------------------------------------
 
             // The caller's own: owned, entered or invited to, in every game.
             case ("GET", "me" :: "tournaments" :: Nil) =>
@@ -647,7 +647,7 @@ object Router {
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "stop" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) => noContent(services.rounds.stop(gid, t, caller)))
 
-            // A tournament match is a match (V52), addressed by its id.
+            // A tournament match is a match, addressed by its id.
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "matches" :: matchId :: "role" :: Nil) =>
                 withTournamentMatch(gameId, tid, matchId)((gid, t, mid) =>
                     body[TournamentJson.ChooseRoleRequest](request).flatMap(r =>

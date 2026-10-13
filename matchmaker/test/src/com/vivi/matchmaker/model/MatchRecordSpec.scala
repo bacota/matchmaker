@@ -2,7 +2,7 @@ package com.vivi.matchmaker.model
 
 import munit.FunSuite
 
-/** What one match adds to one seat's win-loss-draw record (V46). */
+/** What one match adds to one seat's win-loss-draw record. */
 class MatchRecordSpec extends FunSuite {
 
     test("first alone is a win, below first a loss, and a forfeit is counted as one too") {
