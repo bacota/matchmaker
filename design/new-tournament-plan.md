@@ -429,42 +429,50 @@ byes, with a consolation match, double elimination, group round robins then a kn
 tournament's pool size. It saves every state, reads it back, and compares it with what the rules made, with results
 written as an engine's report leaves them. A finished tournament's ranking is read back from `entrant.final_rank`.
 
-**Known failures until Phase 6:** the rounds still go through `tournament_match`.
+**Known failures until Phase 6:** the rounds still went through `tournament_match` (fixed in Phase 6).
 
-### Phase 6: Rounds on `match` rows
+### Phase 6: Rounds on `match` rows (done)
 
-`TournamentRounds` moves from `tournament_match`/`tournament_seat` to `match`/`participant`. The flow is unchanged.
+`TournamentRounds` works on `match` and `participant` rows through a rewritten `TournamentMatchRepo`, and on the
+state through `TournamentStateRepo`. A tournament match is identified by its `MatchId` everywhere: the routes, the
+queue, the views.
 
-- **Forming a pool** writes all its matches as `S` (D2), each with a fresh UUID and the round it is planned for, and
-  with `ties_allowed` true for an atomic pool of three or more members and false for one of two (a rubber match is
-  always false). Its seats are written with them, each with its
-  planned role and its choose order. Its ratings stay NULL for now (D6).
-- **Starting a round** sets the `round` row's `start_date` and `deadline`, and sets `tournament.current_round`. The
-  round's matches move from `S` to `C` (or `D` when no seat chooses). It's all one transaction.
-- **The round's duration** is `tournament.round_duration`, unless the owner starting a round by hand gives another. So
-  `POST .../rounds` takes an optional duration in its body, which goes only into `round.deadline`. The route already exists, so terraform doesn't change.
-  RouterSpec's body for it does change, and the UI's Start round control gets a duration field (16px, labelled),
-  defaulting to the tournament's.
-- **Choosing a role** updates `participant.game_role_id` and `chosen_at` on the match locked `FOR UPDATE`. When the
-  last seat chooses, the match becomes `D` and `endings.tournamentMatchDue` is enqueued, as today.
-- **Creating the match** is `TournamentRounds.createMatch`, keyed by `match_id` instead of `(pool_id, match_no)`. It
-  locks the match, checks it is `D`, and writes `start`, the current character owner (D3), and each seat's
-  `elo_start` and `elo_role_start` (D6), taken by `EloRatingService.startingRatings` as a challenge's start takes
-  them. Then it commits.
-  Then `launchTournamentMatch` sends the existing id. On failure the match **stays `D`** under the same id, and the
-  queue retries it; Phase 1 makes that safe. `undo` goes away for tournament matches. On success the match becomes `P`.
-- **Ending** is unchanged in shape. `recordEnding` finds the pool through `match.pool_id` rather than through
-  `TournamentMatchRepo.findByMatch`.
-- **Forfeits and the round check:** `forfeit` moves from `tournament_seat` to `participant`. The deadline comes from
-  `round.deadline`.
-- **Queue messages:** `TournamentMatchDue` carries a `matchId` instead of `poolId` and `matchNo`. Accept the old shape
-  in `parseAny` until the queue has drained. A message still in flight during deploy would otherwise be undeliverable.
-- **Stopping:** a stage with neither `repetitions` nor `remaining_participants` repeats until the owner stops it.
-  `stop` sets `tournament.stop_requested`, as today's `requestStop` sets the flag in the state.
-- **Routes:** `.../matches/{pool}/{no}/role` and `.../result` become `.../matches/{matchId}/role` and `.../result`.
-  Changing a route is the same three changes as adding one: Router, terraform and RouterSpec.
-- **Delete:** `TournamentMatchRepo`, `TournamentMatch`, `TournamentSeat`, `TournamentRepo.readState`/`writeState` and
-  the state JSON codecs in `TournamentCodecs`.
+- **Beginning a round** loads the state, gives the next slot of each pool its round (`nextRound`, then a save that
+  moves those matches from `S` to `C` or `D`), and sets the round row's `start_date` and `deadline`. The deadline uses
+  the owner's duration for this round if given (`POST .../rounds` takes `roundDurationSeconds`), else the tournament's.
+  Then each match of the round is seated: who forfeits before play (withdrawn, a second entry of a player already
+  seated, a character with nobody to play it), and the first chooser's clock started.
+- **Choosing a role** is unchanged in its rules, on `participant` under the match's lock.
+- **Creating a match** (`createMatch`, from the queue's `TournamentMatchDue`, which now carries the match id) locks the
+  match, checks it is `D`, and launches it in one statement: status `P`, its start, clock and description. In the same
+  transaction:
+  - each playing seat gets its ratings, taken then, and its current player (D3, D6);
+  - each forfeited seat gets a role nobody plays, so no seat of a begun match lacks one, a last-place result marked
+    manual, and its seat finished with.
+
+  Then the engine's game is made under the same id. If the engine can't be reached, the match goes back to `D` under
+  that id (`backToDue`); Phase 1 makes the retry safe.
+- **Too few seats to play.** Such a match is decided without being played: manual results, and the match called off.
+- **A match's end** (`recordEnding`) loads the tournament, whose results are now its outcome. If the round is complete,
+  it advances and saves (or finishes). `round.complete` is set once, which is what keeps a twice-delivered ending from
+  mailing the owner twice or beginning two rounds.
+- **The owner deciding a match** writes manual results for seats that have none and calls the match off; a begun
+  match's engine is told through the ending.
+- **The round check and stop** work as before, by match id. Stopping saves `stop_requested`.
+- **Rating** leaves forfeited seats out (`eloSeatsForMatch`), since the engine reports only the seats it was told of.
+- **`MatchRepo.createForTournament` is gone:** only `TournamentStateRepo` writes tournament matches.
+- **Load's outcome rule:** a cancelled match counts as over with whatever ranks it has, as the old recording did.
+- **Load's numbering:** matches are numbered within a pool by participant id rather than by role, so a choice of role
+  doesn't renumber them.
+- **Routes:** `.../matches/{matchId}/role` and `.../matches/{matchId}/result` replace the pool-and-number paths, in
+  Router, terraform and RouterSpec. The queue message `TournamentMatchDue` carries `matchId`. Nothing deployed sends the
+  old shape, so it isn't kept.
+- **UI:** the chooser and the decider address a match by id, and the owner's Start Next Round has a "This round's
+  length (hours)" field, blank for the tournament's.
+- **Tests:** `TournamentRoundsSpec` runs on the new tables. `MatchServiceSpec`'s tournament matches are written with
+  their pool, round and stage, and their seats with an entrant (`TournamentFixtures.begunMatch` and `begunSeat`).
+
+Every matchmaker suite passes again: 794 tests, with no known failures left.
 
 ### Phase 7: Reads and the UI
 

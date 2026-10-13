@@ -413,8 +413,8 @@ locals {
     "POST /games/{gameId}/tournaments/{tournamentId}/rounds",
     "POST /games/{gameId}/tournaments/{tournamentId}/check",
     "POST /games/{gameId}/tournaments/{tournamentId}/stop",
-    "POST /games/{gameId}/tournaments/{tournamentId}/matches/{poolId}/{matchNo}/role",
-    "POST /games/{gameId}/tournaments/{tournamentId}/matches/{poolId}/{matchNo}/result",
+    "POST /games/{gameId}/tournaments/{tournamentId}/matches/{matchId}/role",
+    "POST /games/{gameId}/tournaments/{tournamentId}/matches/{matchId}/result",
     "GET /me/tournament-choices",
   ]
 

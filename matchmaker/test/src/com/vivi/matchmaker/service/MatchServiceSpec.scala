@@ -150,10 +150,7 @@ class MatchServiceSpec extends PropertySuite {
             // A match not from a challenge is from a tournament: it has to come from one or the other (V52).
             tournament <-
                 if (fromChallenge) IO.pure(None)
-                else
-                    TournamentFixtures
-                        .tournament(session, game, creator.getOrElse(player.playerId))
-                        .map(t => Some(t.tournamentId))
+                else TournamentFixtures.tournament(session, game, creator.getOrElse(player.playerId)).map(Some(_))
             matchId = MatchId(matchIdStr)
             made = Match(
               game.gameId,
@@ -169,21 +166,39 @@ class MatchServiceSpec extends PropertySuite {
               publicUrl = publicUrl
             )
             _ <- tournament
-                .fold(new MatchRepo(session).create(made))(new MatchRepo(session).createForTournament(made, _))
-            _ <- new ParticipantRepo(session).create(
-              CharacterParticipant(
-                ParticipantId(0),
-                game.gameId,
-                matchId,
-                player.playerId,
-                pending,
-                seatCompleted.getOrElse(completedAt.isDefined),
-                Some(Instant.ofEpochSecond(2000)),
-                character.characterId,
-                game.roles.head.gameRoleId
-              ),
-              EloRating.initial
-            )
+                .fold(new MatchRepo(session).create(made))(TournamentFixtures.begunMatch(session, _, made))
+            // A tournament's seat names its entrant (V52), as a challenge's names its challenge.
+            _ <- tournament match {
+                case Some(t) =>
+                    TournamentFixtures.begunSeat(
+                      session,
+                      t,
+                      matchId,
+                      player.playerId,
+                      character.characterId,
+                      game.roles.head.gameRoleId,
+                      pending,
+                      seatCompleted.getOrElse(completedAt.isDefined),
+                      Some(Instant.ofEpochSecond(2000))
+                    )
+                case None =>
+                    new ParticipantRepo(session)
+                        .create(
+                          CharacterParticipant(
+                            ParticipantId(0),
+                            game.gameId,
+                            matchId,
+                            player.playerId,
+                            pending,
+                            seatCompleted.getOrElse(completedAt.isDefined),
+                            Some(Instant.ofEpochSecond(2000)),
+                            character.characterId,
+                            game.roles.head.gameRoleId
+                          ),
+                          EloRating.initial
+                        )
+                        .void
+            }
         } yield matchId
 
     // ---------------------------------------------------------------------------

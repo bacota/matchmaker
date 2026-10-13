@@ -2,6 +2,7 @@ package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
 import cats.syntax.all._
+import java.time.Instant
 import java.util.UUID
 import skunk._
 import skunk.implicits._
@@ -74,9 +75,9 @@ class TournamentStateRepo(session: Session[IO]) {
             .to[SeedRow]
 
     private val selectMatches: Query[(GameId, TournamentId), MatchRow] =
-        sql"""SELECT match_id, pool_id, round, status, ties_allowed, rubber FROM match
+        sql"""SELECT match_id, pool_id, round, status, ties_allowed, rubber, cancelled FROM match
           WHERE game_id = $gameId AND tournament_id = $tournamentId"""
-            .query(text *: int8 *: int4 *: text *: bool *: bool)
+            .query(text *: int8 *: int4 *: text *: bool *: bool *: bool)
             .to[MatchRow]
 
     private val selectSeats: Query[(GameId, TournamentId), SeatRow] =
@@ -415,6 +416,31 @@ class TournamentStateRepo(session: Session[IO]) {
     private val selectOwner: Query[(GameId, Long), Option[Long]] =
         sql"SELECT player_id FROM character WHERE game_id = $gameId AND character_id = $int8".query(int8.opt)
 
+    private val startRound: Command[(Instant, Option[Instant], GameId, TournamentId, Int)] =
+        sql"""UPDATE round SET start_date = ${SkunkCodecs.instant}, deadline = ${SkunkCodecs.instant.opt}
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4""".command
+
+    /** Round `round` begins at `at`, every match of it to be over by `deadline`. */
+    def beginRound(
+        game: GameId,
+        tournament: TournamentId,
+        round: Int,
+        at: Instant,
+        deadline: Option[Instant]
+    ): IO[Unit] =
+        session.execute(startRound)((at, deadline, game, tournament, round)).void
+
+    private val completeRound: Query[(GameId, TournamentId, Int), Int] =
+        sql"""UPDATE round SET complete = true
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4 AND NOT complete
+          RETURNING round""".query(int4)
+
+    /** Marks round `round` complete, answering whether this is what did: so that an ending delivered twice tells the
+      * owner once that the round is over.
+      */
+    def markRoundComplete(game: GameId, tournament: TournamentId, round: Int): IO[Boolean] =
+        session.option(completeRound)((game, tournament, round)).map(_.isDefined)
+
     /** [[load]] then [[save]]: what writing a state used to be, for a caller that has the next state and not the one it
       * was worked out from. In the same transaction as whatever read the state, under the tournament's lock.
       */
@@ -475,7 +501,15 @@ object TournamentStateRepo {
         points: Option[Double]
     )
     case class SeedRow(pool: Long, entrant: Long, round: Int, seed: Int, stratum: Int, eliminated: Option[Int])
-    case class MatchRow(id: String, pool: Long, round: Int, status: String, tiesAllowed: Boolean, rubber: Boolean)
+    case class MatchRow(
+        id: String,
+        pool: Long,
+        round: Int,
+        status: String,
+        tiesAllowed: Boolean,
+        rubber: Boolean,
+        cancelled: Boolean
+    )
     case class SeatRow(
         matchId: String,
         participant: Long,
@@ -647,11 +681,16 @@ object TournamentStateRepo {
                     val seats = seatsOf.getOrElse(m.id, Nil)
                     (m, seats)
                 }
+                // By round and seats, and then by the seats' own ids, which a choice of role does not change.
                 val ordered = rows.sortBy { (m, seats) =>
-                    (m.round, seats.map(_.entrant).mkString(","), seats.map(_.role.getOrElse(-1)).mkString(","))
+                    (m.round, seats.map(_.entrant).mkString(","), seats.headOption.map(_.participant).getOrElse(0L))
                 }
                 val numbered = ordered.zipWithIndex.map { case ((m, seats), i) =>
-                    val outcome = Option.when(m.status == "F" && seats.nonEmpty && seats.forall(_.rank.isDefined))(
+                    // Over with a result for every seat, or called off: a cancelled match nobody ranked is over
+                    // with every seat unranked.
+                    val outcome = Option.when(
+                      m.status == "F" && seats.nonEmpty && (m.cancelled || seats.forall(_.rank.isDefined))
+                    )(
                       seats.map(s => Placing(s.entrant, s.rank, scoreOf(s.scores)))
                     )
                     val planned = PlannedMatch(

@@ -45,9 +45,9 @@ class Handler extends RequestStreamHandler {
                 val (what, settling) = message match {
                     case due: TournamentMatchDue =>
                         (
-                          s"match ${due.matchNo} of pool ${due.poolId} of tournament ${due.tournamentId}",
+                          s"match ${due.matchId} of tournament ${due.tournamentId}",
                           Handler.services.rounds
-                              .createMatch(GameId(due.gameId), TournamentId(due.tournamentId), due.poolId, due.matchNo)
+                              .createMatch(GameId(due.gameId), TournamentId(due.tournamentId), MatchId(due.matchId))
                         )
                     case check: TournamentRoundCheck =>
                         (

@@ -258,8 +258,9 @@ class ParticipantRepo(session: Session[IO]) {
             })
 
     private val selectEloSeats: Query[(GameId, MatchId), ParticipantRepo.EloSeatRow] =
+        // Not a tournament seat that forfeited before play (V52): it played nothing, and is rated for nothing.
         sql"""SELECT participant_id, player_id, elo_start, game_role_id, elo_role_start FROM participant
-          WHERE game_id = $gameId AND match_id = $matchId
+          WHERE game_id = $gameId AND match_id = $matchId AND NOT forfeit
           ORDER BY participant_id"""
             .query(participantId *: playerId *: int4 *: gameRoleId *: int4.opt)
             .to[ParticipantRepo.EloSeatRow]

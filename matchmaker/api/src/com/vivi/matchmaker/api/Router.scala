@@ -634,9 +634,17 @@ object Router {
             // Playing a tournament's rounds: the owner beginning the next, checking the one being played
             // for clocks run out, and stopping a stage that repeats until stopped; a seat choosing its
             // role; the owner deciding a match by hand; and the caller's seats waiting on a choice.
+            // The owner may give this round a duration of its own; with no body, it lasts the tournament's.
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "rounds" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
-                    ok(services.rounds.startRound(gid, t, caller).map(TournamentJson.RoundStarted(_)))
+                    (if (Option(request.body).forall(_.trim.isEmpty)) IO.pure(TournamentJson.StartRoundRequest())
+                     else body[TournamentJson.StartRoundRequest](request)).flatMap(r =>
+                        ok(
+                          services.rounds
+                              .startRound(gid, t, caller, r.roundDurationSeconds.map(java.time.Duration.ofSeconds))
+                              .map(TournamentJson.RoundStarted(_))
+                        )
+                    )
                 )
 
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "check" :: Nil) =>
@@ -645,18 +653,20 @@ object Router {
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "stop" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) => noContent(services.rounds.stop(gid, t, caller)))
 
-            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "matches" :: pool :: no :: "role" :: Nil) =>
-                withTournamentMatch(gameId, tid, pool, no)((gid, t, p, n) =>
+            // A tournament match is a match (V52), addressed by its id.
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "matches" :: matchId :: "role" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) =>
                     body[TournamentJson.ChooseRoleRequest](request).flatMap(r =>
-                        ok(services.rounds.chooseRole(gid, t, p, n, r.gameRoleId, caller))
+                        ok(services.rounds.chooseRole(gid, t, MatchId(matchId), r.gameRoleId, caller))
                     )
                 )
 
-            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "matches" :: pool :: no :: "result" :: Nil) =>
-                withTournamentMatch(gameId, tid, pool, no)((gid, t, p, n) =>
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "matches" :: matchId :: "result" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) =>
                     body[TournamentJson.DecideRequest](request).flatMap(r =>
                         noContent(
-                          services.rounds.decide(gid, t, p, n, r.ranks.map(x => x.entrantId -> x.rank).toMap, caller)
+                          services.rounds
+                              .decide(gid, t, MatchId(matchId), r.ranks.map(x => x.entrantId -> x.rank).toMap, caller)
                         )
                     )
                 )
@@ -782,16 +792,6 @@ object Router {
             rawModel.toLongOption.fold(IO.pure(Errors.badRequest(s"'$rawModel' is not a tournament model id")))(m =>
                 f(gid, TournamentModelId(m))
             )
-        )
-
-    private def withTournamentMatch(rawGame: String, rawTournament: String, rawPool: String, rawNo: String)(
-        f: (GameId, TournamentId, Int, Int) => IO[Response]
-    ): IO[Response] =
-        withTournament(rawGame, rawTournament)((gid, t) =>
-            (rawPool.toIntOption, rawNo.toIntOption) match {
-                case (Some(p), Some(n)) => f(gid, t, p, n)
-                case _                  => IO.pure(Errors.badRequest(s"'$rawPool/$rawNo' is not a tournament match"))
-            }
         )
 
     private def withPlayerId(raw: String)(f: PlayerId => IO[Response]): IO[Response] =

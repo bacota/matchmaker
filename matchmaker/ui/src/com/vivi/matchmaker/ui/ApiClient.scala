@@ -420,8 +420,17 @@ object ApiClient {
     def withdrawFromTournament(gameId: GameId, tournamentId: TournamentId, entrantId: EntrantId): Future[Unit] =
         sendUnit(HttpMethod.DELETE, s"${tournamentPath(gameId, tournamentId)}/entries/${entrantId.value}", None)
 
-    def startRound(gameId: GameId, tournamentId: TournamentId): Future[TournamentJson.RoundStarted] =
-        send[TournamentJson.RoundStarted](HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/rounds", None)
+    /** Begins the next round: for `duration` if given, and otherwise for the tournament's round duration. */
+    def startRound(
+        gameId: GameId,
+        tournamentId: TournamentId,
+        duration: Option[java.time.Duration] = None
+    ): Future[TournamentJson.RoundStarted] =
+        send[TournamentJson.RoundStarted](
+          HttpMethod.POST,
+          s"${tournamentPath(gameId, tournamentId)}/rounds",
+          Some(write(TournamentJson.StartRoundRequest(duration.map(_.getSeconds))))
+        )
 
     def checkRound(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
         sendUnit(HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/check", None)
@@ -432,26 +441,24 @@ object ApiClient {
     def chooseRole(
         gameId: GameId,
         tournamentId: TournamentId,
-        poolId: Int,
-        matchNo: Int,
+        matchId: MatchId,
         role: GameRoleId
     ): Future[TournamentMatchView] =
         send[TournamentMatchView](
           HttpMethod.POST,
-          s"${tournamentPath(gameId, tournamentId)}/matches/$poolId/$matchNo/role",
+          s"${tournamentPath(gameId, tournamentId)}/matches/${matchId.value}/role",
           Some(write(TournamentJson.ChooseRoleRequest(role)))
         )
 
     def decideMatch(
         gameId: GameId,
         tournamentId: TournamentId,
-        poolId: Int,
-        matchNo: Int,
+        matchId: MatchId,
         ranks: List[EntrantRank]
     ): Future[Unit] =
         sendUnit(
           HttpMethod.POST,
-          s"${tournamentPath(gameId, tournamentId)}/matches/$poolId/$matchNo/result",
+          s"${tournamentPath(gameId, tournamentId)}/matches/${matchId.value}/result",
           Some(write(TournamentJson.DecideRequest(ranks)))
         )
 

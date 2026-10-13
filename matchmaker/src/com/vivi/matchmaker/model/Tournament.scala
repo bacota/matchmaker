@@ -112,7 +112,9 @@ case class Entrant(
     def withdrawn: Boolean = withdrawnAt.isDefined
 }
 
-/** Where a tournament match is: its seats choosing roles, due to be created, created, or finished and recorded. */
+/** Where a tournament match is: its seats choosing roles, due to be created, created, or over -- `match.status` `C`,
+  * `D`, `P` and `F` (V52).
+  */
 enum TournamentMatchStatus(val code: String) {
     case Choosing extends TournamentMatchStatus("choosing")
     case Due extends TournamentMatchStatus("due")
@@ -127,29 +129,31 @@ object TournamentMatchStatus {
             .getOrElse(throw new IllegalArgumentException(s"unknown tournament match status '$code'"))
 }
 
-/** A seat of a tournament match: its entrant, the role it plays (`None` while still to be chosen), its turn to choose,
-  * what choosing cost it, whether it forfeits before play, and the match seat it became.
+/** A seat of a tournament match (V52), which is a `participant` row from the moment its pool is formed: its entrant,
+  * the role it plays (`None` while still to be chosen), its turn to choose, what choosing cost it, and whether it
+  * forfeits before play.
   */
 case class TournamentSeat(
+    participantId: ParticipantId,
     entrantId: EntrantId,
     gameRoleId: Option[GameRoleId],
     chooseOrder: Option[Int],
     chooseStartedAt: Option[Instant] = None,
     chosenAt: Option[Instant] = None,
-    forfeit: Boolean = false,
-    participantId: Option[ParticipantId] = None
+    forfeit: Boolean = false
 )
 
-/** A match of a tournament's round (V52), found by its pool and number in the tournament's state. */
+/** A match of a tournament's round (V52): a `match` row of one of its atomic pools, from the round it is played in
+  * until it is over. Its status is the match's, from choosing roles to done.
+  */
 case class TournamentMatch(
     gameId: GameId,
     tournamentId: TournamentId,
+    matchId: MatchId,
     poolId: Int,
-    matchNo: Int,
     round: Int,
     status: TournamentMatchStatus,
     tiesAllowed: Boolean,
-    matchId: Option[MatchId],
     seats: List[TournamentSeat]
 )
 
@@ -191,13 +195,11 @@ case class TournamentSeatView(
     chooseBy: Option[Instant]
 )
 
-/** A match of the round being played: where it is in the tournament, its seats, and the match it became, once it has.
-  */
+/** A match of the round being played: its pool, the match itself, where it is, and its seats. */
 case class TournamentMatchView(
     poolId: Int,
-    matchNo: Int,
+    matchId: MatchId,
     status: TournamentMatchStatus,
-    matchId: Option[MatchId],
     seats: List[TournamentSeatView]
 )
 
@@ -222,8 +224,7 @@ case class TournamentChoice(
     tournamentId: TournamentId,
     tournamentName: String,
     gameName: String,
-    poolId: Int,
-    matchNo: Int,
+    matchId: MatchId,
     chooseBy: Option[Instant]
 )
 

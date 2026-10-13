@@ -78,7 +78,7 @@ class TournamentService[T](
               state,
               round.map { m =>
                   val by =
-                      (game, state).tupled.flatMap((g, s) => TournamentRounds.chooseBy(summary.tournament, g, s, m))
+                      game.flatMap(g => TournamentRounds.chooseBy(summary.tournament, g, m))
                   val v = TournamentService.view(m)
                   v.copy(seats = v.seats.map(s => if (s.choosing) s.copy(chooseBy = by) else s))
               }
@@ -564,9 +564,8 @@ object TournamentService {
         val next = m.seats.filter(s => s.gameRoleId.isEmpty && !s.forfeit).flatMap(_.chooseOrder).minOption
         TournamentMatchView(
           m.poolId,
-          m.matchNo,
-          m.status,
           m.matchId,
+          m.status,
           m.seats.map(s =>
               TournamentSeatView(
                 s.entrantId,

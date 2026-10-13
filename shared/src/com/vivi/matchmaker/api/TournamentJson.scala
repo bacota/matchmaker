@@ -44,6 +44,10 @@ object TournamentJson {
     case class DecideRequest(ranks: List[EntrantRank])
     given ReadWriter[DecideRequest] = macroRW
 
+    /** Beginning a round: for a duration of its own, in seconds, or for the tournament's round duration. */
+    case class StartRoundRequest(roundDurationSeconds: Option[Long] = None)
+    given ReadWriter[StartRoundRequest] = macroRW
+
     /** The round a start began, or none if it finished the tournament. */
     case class RoundStarted(round: Option[Int])
     given ReadWriter[RoundStarted] = macroRW

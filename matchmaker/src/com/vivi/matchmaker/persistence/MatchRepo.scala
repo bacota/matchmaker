@@ -136,13 +136,10 @@ class MatchRepo(session: Session[IO]) {
           time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit, friendly = $bool, status = $matchStatus
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
-    def create(m: Match): IO[Match] = write(m, None)
-
-    /** Writes a new match of a tournament (V52). A match comes from a challenge or a tournament, exactly one, which the
-      * table checks. The tournament is not on [[Match]], which every reader and the wire format share, since nothing
-      * reads it back but the tournament's own tables.
+    /** Writes a new match of a challenge. A tournament's matches are written with their pools (V52), by
+      * `TournamentStateRepo`, since a tournament match is its pool's and its round's as well as its tournament's.
       */
-    def createForTournament(m: Match, tournament: TournamentId): IO[Match] = write(m, Some(tournament))
+    def create(m: Match): IO[Match] = write(m, None)
 
     private def write(m: Match, tournament: Option[TournamentId]): IO[Match] =
         session

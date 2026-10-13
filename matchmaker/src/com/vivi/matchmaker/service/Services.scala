@@ -96,7 +96,7 @@ object Services {
             MatchEndings.inline(
               (gameId, matchId) => ending.settle(gameId, matchId).void,
               ending.rank(_).void,
-              (g, t, p, n) => rounds.createMatch(g, t, p, n).void,
+              (g, t, m) => rounds.createMatch(g, t, m).void,
               (g, t) => rounds.autoStart(g, t).void,
               (g, t) => rounds.runCheck(g, t).void
             )

@@ -92,31 +92,41 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
 
     private case class Setup(game: Game, t: Tournament, env: Env, entrants: List[Long])
 
-    private def setup(key: String, n: Int, poolSize: Option[Int]): Setup = run { session =>
-        for {
-            game <- new GameRepo[String](session).create(Generators.genGame(GameType.Plain).sample.get)
-            owner <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
-            made <- TournamentFixtures.tournament(session, game, owner.playerId, key)
-            t = poolSize.fold(made)(p => made.copy(defaultPoolSize = p))
-            _ <- new TournamentRepo(session).update(
-              t.copy(status = TournamentStatus.Running, startedAt = Some(java.time.Instant.now()))
+    // Outside a transaction of its own: the tournament is made in one by TournamentFixtures, and the rest are single
+    // statements.
+    private def setup(key: String, n: Int, poolSize: Option[Int]): Setup = TestSession.resource
+        .use { session =>
+            for {
+                game <- new GameRepo[String](session).create(Generators.genGame(GameType.Plain).sample.get)
+                owner <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
+                made <- TournamentFixtures.tournament(session, game, owner.playerId, key)
+                t = poolSize.fold(made)(p => made.copy(defaultPoolSize = p))
+                _ <- new TournamentRepo(session).update(
+                  t.copy(status = TournamentStatus.Running, startedAt = Some(java.time.Instant.now()))
+                )
+                entrants <- (1 to n).toList.traverse { _ =>
+                    new PlayerRepo(session)
+                        .create(Generators.genPlayer.sample.get)
+                        .flatMap(p =>
+                            new EntrantRepo(session)
+                                .create(game.gameId, GameType.Plain, t.tournamentId, p.playerId, None, 1500)
+                        )
+                }
+                design <- new StageRepo(session).design(game.gameId, t.tournamentId).map(_.get)
+            } yield Setup(
+              game,
+              t,
+              Env(
+                design,
+                TournamentGame.of(game),
+                entrants.map(_.entrantId.value -> 1500).toMap,
+                Some(t.defaultPoolSize)
+              ),
+              entrants.map(_.entrantId.value)
             )
-            entrants <- (1 to n).toList.traverse { _ =>
-                new PlayerRepo(session)
-                    .create(Generators.genPlayer.sample.get)
-                    .flatMap(p =>
-                        new EntrantRepo(session)
-                            .create(game.gameId, GameType.Plain, t.tournamentId, p.playerId, None, 1500)
-                    )
-            }
-            design <- new StageRepo(session).design(game.gameId, t.tournamentId).map(_.get)
-        } yield Setup(
-          game,
-          t,
-          Env(design, TournamentGame.of(game), entrants.map(_.entrantId.value -> 1500).toMap, Some(t.defaultPoolSize)),
-          entrants.map(_.entrantId.value)
-        )
-    }
+        }
+        .timeout(60.seconds)
+        .unsafeRunSync()
 
     /** Saves `next` and reads it back. */
     private def saved(s: Setup, next: TournamentState): TournamentStateRepo.Loaded = run { session =>

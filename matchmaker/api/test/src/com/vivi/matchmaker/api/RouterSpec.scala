@@ -343,10 +343,10 @@ class RouterSpec extends FunSuite {
       ("POST", "/games/1/tournaments/2/rounds", "{}"),
       ("POST", "/games/1/tournaments/2/check", "{}"),
       ("POST", "/games/1/tournaments/2/stop", "{}"),
-      ("POST", "/games/1/tournaments/2/matches/3/0/role", """{"gameRoleId":7}"""),
+      ("POST", "/games/1/tournaments/2/matches/m-3/role", """{"gameRoleId":7}"""),
       (
         "POST",
-        "/games/1/tournaments/2/matches/3/0/result",
+        "/games/1/tournaments/2/matches/m-3/result",
         """{"ranks":[{"entrantId":5,"rank":1},{"entrantId":6,"rank":2}]}"""
       ),
       ("GET", "/me/tournament-choices", "{}")

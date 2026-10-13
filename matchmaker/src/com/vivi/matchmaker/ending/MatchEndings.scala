@@ -27,10 +27,10 @@ trait MatchEndings {
     def ratingsChanged(gameId: GameId): IO[Unit]
 
     /** That a tournament's match is due to be created (new-design.md, Phase 5): its seats are settled, and the engine's
-      * game is to be made. Said after the transaction that made it due has committed. Creating it twice is refused by
-      * its claim, so a message delivered twice makes one match.
+      * game is to be made. Said after the transaction that made it due has committed. Only a due match is created, and
+      * the engine answers a create it already has with the game it made, so a message delivered twice makes one game.
       */
-    def tournamentMatchDue(gameId: GameId, tournamentId: TournamentId, poolId: Int, matchNo: Int): IO[Unit] = IO.unit
+    def tournamentMatchDue(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Unit] = IO.unit
 
     /** That a tournament with automatic rounds has finished a round, and its next is to be begun. */
     def tournamentRoundDue(gameId: GameId, tournamentId: TournamentId): IO[Unit] = IO.unit
@@ -81,8 +81,8 @@ object MatchEnded {
         }
 }
 
-/** A tournament's match, due to be created. */
-case class TournamentMatchDue(gameId: Int, tournamentId: Long, poolId: Int, matchNo: Int)
+/** A tournament's match, due to be created in its engine: the `match` row it already is (V52). */
+case class TournamentMatchDue(gameId: Int, tournamentId: Long, matchId: String)
 
 object TournamentMatchDue {
     given ReadWriter[TournamentMatchDue] = macroRW
@@ -134,10 +134,10 @@ class SqsMatchEndings(queueUrl: String, client: () => SqsClient) extends MatchEn
           s"the change to game ${gameId.value}'s ratings was not queued, and its leaderboard waits for its next ending"
         )
 
-    override def tournamentMatchDue(gameId: GameId, tournamentId: TournamentId, poolId: Int, matchNo: Int): IO[Unit] =
+    override def tournamentMatchDue(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Unit] =
         send(
-          write(TournamentMatchDue(gameId.value, tournamentId.value, poolId, matchNo)),
-          s"match $matchNo of pool $poolId of tournament ${tournamentId.value} was not queued; Check round will create it"
+          write(TournamentMatchDue(gameId.value, tournamentId.value, matchId.value)),
+          s"match ${matchId.value} of tournament ${tournamentId.value} was not queued; Check round will create it"
         )
 
     override def tournamentRoundDue(gameId: GameId, tournamentId: TournamentId): IO[Unit] =
@@ -180,7 +180,7 @@ object MatchEndings {
     def inline(
         settle: (GameId, MatchId) => IO[Unit],
         rank: GameId => IO[Unit],
-        matchDue: (GameId, TournamentId, Int, Int) => IO[Unit] = (_, _, _, _) => IO.unit,
+        matchDue: (GameId, TournamentId, MatchId) => IO[Unit] = (_, _, _) => IO.unit,
         roundDue: (GameId, TournamentId) => IO[Unit] = (_, _) => IO.unit,
         roundCheck: (GameId, TournamentId) => IO[Unit] = (_, _) => IO.unit
     ): MatchEndings =
@@ -191,15 +191,10 @@ object MatchEndings {
             def ratingsChanged(gameId: GameId): IO[Unit] =
                 background(rank(gameId), s"ranking game ${gameId.value} failed")
 
-            override def tournamentMatchDue(
-                gameId: GameId,
-                tournamentId: TournamentId,
-                poolId: Int,
-                matchNo: Int
-            ): IO[Unit] =
+            override def tournamentMatchDue(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Unit] =
                 background(
-                  matchDue(gameId, tournamentId, poolId, matchNo),
-                  s"creating match $matchNo of pool $poolId of tournament ${tournamentId.value} failed"
+                  matchDue(gameId, tournamentId, matchId),
+                  s"creating match ${matchId.value} of tournament ${tournamentId.value} failed"
                 )
 
             override def tournamentRoundDue(gameId: GameId, tournamentId: TournamentId): IO[Unit] =

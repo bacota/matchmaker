@@ -204,6 +204,10 @@ object Tournaments {
         val roundOpen = d.round.exists(_.status != TournamentMatchStatus.Done)
         // Set once a Check round is queued: the check finishes after the request does, so the page says so.
         val checking = Var(false)
+        // This round's own length, in hours; blank for the tournament's.
+        val roundHours = Var("")
+        def roundLength =
+            roundHours.now().trim.toDoubleOption.filter(_ > 0).map(h => java.time.Duration.ofMinutes((h * 60).round))
         div(
           cls := "card",
           h3("Run This Tournament"),
@@ -216,8 +220,24 @@ object Tournaments {
                     span(
                       if (roundOpen) emptyNode
                       else
-                          busyButton("Start Next Round")(busy =>
-                              Store.run(ApiClient.startRound(t.gameId, t.tournamentId), busy)(_ => reload(d))
+                          span(
+                            Views.tipField(
+                              freshTipId("round-length-tip"),
+                              "This round's length (hours)",
+                              "How long this round lasts. Blank uses the tournament's round length."
+                            )(
+                              input(
+                                tpe := "number",
+                                inputMode := "decimal",
+                                minAttr := "0",
+                                controlled(value <-- roundHours.signal, onInput.mapToValue --> roundHours)
+                              )
+                            ),
+                            busyButton("Start Next Round")(busy =>
+                                Store.run(ApiClient.startRound(t.gameId, t.tournamentId, roundLength), busy)(_ =>
+                                    reload(d)
+                                )
+                            )
                           ),
                       if (roundOpen)
                           withTip(
@@ -452,7 +472,7 @@ object Tournaments {
               picked
                   .now()
                   .foreach(r =>
-                      Store.run(ApiClient.chooseRole(t.gameId, t.tournamentId, m.poolId, m.matchNo, r), busy)(_ =>
+                      Store.run(ApiClient.chooseRole(t.gameId, t.tournamentId, m.matchId, r), busy)(_ =>
                           Store.tournament.now().foreach(reload)
                       )
                   )
@@ -505,7 +525,7 @@ object Tournaments {
                         else
                             Store.run(
                               ApiClient
-                                  .decideMatch(t.gameId, t.tournamentId, m.poolId, m.matchNo, typed.flatten.toList),
+                                  .decideMatch(t.gameId, t.tournamentId, m.matchId, typed.flatten.toList),
                               busy
                             )(_ => reload(d))
                     )

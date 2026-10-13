@@ -48,8 +48,8 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         @volatile var services: Services[String] = null
         def ended(gameId: GameId, matchId: MatchId): IO[Unit] = services.ending.settle(gameId, matchId).void
         def ratingsChanged(gameId: GameId): IO[Unit] = services.ending.rank(gameId).void
-        override def tournamentMatchDue(g: GameId, t: TournamentId, p: Int, n: Int): IO[Unit] =
-            services.rounds.createMatch(g, t, p, n).void
+        override def tournamentMatchDue(g: GameId, t: TournamentId, m: MatchId): IO[Unit] =
+            services.rounds.createMatch(g, t, m).void
         override def tournamentRoundDue(g: GameId, t: TournamentId): IO[Unit] = services.rounds.autoStart(g, t).void
         override def tournamentRoundCheck(g: GameId, t: TournamentId, at: Instant): IO[Unit] =
             services.rounds.runCheck(g, t).void
@@ -130,8 +130,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                         _ <- f.w.services.rounds.chooseRole(
                           f.game.gameId,
                           f.t.tournamentId,
-                          m.poolId,
-                          m.matchNo,
+                          m.matchId,
                           role,
                           who.externalId
                         )
@@ -148,9 +147,9 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             _ <- matches.filter(_.status == TournamentMatchStatus.Started).traverse_ { m =>
                 val ordered = m.seats.sortBy(s => seedOf.getOrElse(s.entrantId.value, Int.MaxValue))
                 val results = ordered.zipWithIndex.map((s, i) =>
-                    ReportedResult(s.participantId.get, i + 1, Map("score" -> (10 - i).toDouble), isWinner = i == 0)
+                    ReportedResult(s.participantId, i + 1, Map("score" -> (10 - i).toDouble), isWinner = i == 0)
                 )
-                f.w.services.engine.recordResults(f.game.gameId, m.matchId.get, results, f.game.externalId)
+                f.w.services.engine.recordResults(f.game.gameId, m.matchId, results, f.game.externalId)
             }
         } yield ()
 
@@ -178,8 +177,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(matches.size, 2)
         assert(matches.forall(_.status == TournamentMatchStatus.Choosing))
         // Choosing one role gives the other seat the last: every match is then created.
-        assert(afterChoosing.forall(m => m.status == TournamentMatchStatus.Started && m.matchId.isDefined))
-        assert(afterChoosing.forall(_.seats.forall(_.participantId.isDefined)))
+        assert(afterChoosing.forall(_.status == TournamentMatchStatus.Started))
         val (second, d, last) = finalDetail
         assertEquals(second, Some(2))
         assertEquals(d.summary.tournament.status, TournamentStatus.Finished)
@@ -275,8 +273,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                 .chooseRole(
                   f.game.gameId,
                   f.t.tournamentId,
-                  m.poolId,
-                  m.matchNo,
+                  m.matchId,
                   f.game.roles.head.gameRoleId,
                   otherPlayer.externalId
                 )
@@ -285,8 +282,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                 .chooseRole(
                   f.game.gameId,
                   f.t.tournamentId,
-                  m.poolId,
-                  m.matchNo,
+                  m.matchId,
                   GameRoleId(-1),
                   chooserPlayer.externalId
                 )
@@ -306,12 +302,11 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             _ <- f.w.services.rounds.decide(
               f.game.gameId,
               f.t.tournamentId,
-              m.poolId,
-              m.matchNo,
+              m.matchId,
               Map(winner -> 1, loser -> 2),
               f.owner.externalId
             )
-            played <- TestSession.resource.use(new MatchRepo(_).read(f.game.gameId, m.matchId.get))
+            played <- TestSession.resource.use(new MatchRepo(_).read(f.game.gameId, m.matchId))
             d <- detail(f)
         } yield (played.exists(_.cancelled), (d, winner)))
         assert(cancelled)
@@ -328,7 +323,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             // A week ago: long past a chooser's whole clock.
             _ <- TestSession.resource.use(
               _.execute(
-                sql"UPDATE tournament_seat SET choose_started_at = now() - interval '7 days' WHERE choose_started_at IS NOT NULL AND tournament_id = ${skunk.codec.all.int8}".command
+                sql"UPDATE participant SET choose_started_at = now() - interval '7 days' WHERE choose_started_at IS NOT NULL AND tournament_id = ${skunk.codec.all.int8}".command
               )(
                 f.t.tournamentId.value
               )
@@ -377,7 +372,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             _ = f.w.engine.refusals.set(1)
             _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
             before <- round(f).map(_.head)
-            settled <- f.w.services.rounds.createMatch(f.game.gameId, f.t.tournamentId, before.poolId, before.matchNo)
+            settled <- f.w.services.rounds.createMatch(f.game.gameId, f.t.tournamentId, before.matchId)
             after <- round(f).map(_.head)
         } yield (f.w.engine.created.get, before.status, settled, after.status))
         assertEquals(statusBefore, TournamentMatchStatus.Due)
@@ -394,10 +389,11 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                 .withdraw(f.game.gameId, f.t.tournamentId, entries.head.entrantId, f.players.head.externalId)
             _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
             d <- detail(f)
-        } yield (entries, d))
-        val (entries, detailNow) = d
+        } yield (entries, d, f.w.engine.created.get))
+        val (entries, detailNow, created) = d
         assertEquals(detailNow.summary.tournament.status, TournamentStatus.Finished)
         assertEquals(detailNow.state.get.root.ranking.get(entries(1).entrantId.value), 1)
-        assertEquals(detailNow.round.flatMap(_.matchId), Nil)
+        // Decided without being played: the engine never made a game of it.
+        assertEquals(created, 0)
     }
 }

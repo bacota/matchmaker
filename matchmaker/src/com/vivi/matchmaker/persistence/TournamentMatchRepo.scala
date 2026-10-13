@@ -2,217 +2,251 @@ package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
 import cats.syntax.all._
+import java.time.Instant
 import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import java.time.Instant
 import com.vivi.matchmaker.model._
 
-/** Reads and writes `tournament_match` and `tournament_seat` (V52): each match of a tournament's round, from the moment
-  * the round starts until its result is recorded, and its seats.
+/** A tournament's matches as its rounds play them (V52): `match` rows of its atomic pools, and their seats, which are
+  * `participant` rows from the moment the pool is formed. A scheduled match (`S`) is not yet in a round, and none of
+  * these lists it.
   *
   * Opens no transaction of its own; that is the calling service's job.
   */
 class TournamentMatchRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val tournamentId = SkunkIdCodecs.tournamentId
-    private val entrantId = SkunkIdCodecs.entrantId
-    private val gameRoleId = SkunkIdCodecs.gameRoleId
-    private val participantId = SkunkIdCodecs.participantId
     private val matchId = SkunkIdCodecs.matchId
     private val instant = SkunkCodecs.instant
 
-    private val status: Codec[TournamentMatchStatus] = text.imap(TournamentMatchStatus.fromCode)(_.code)
-
-    private type Key = (GameId, TournamentId, Int, Int)
-
-    private val insertMatch: Command[(GameId, TournamentId, Int, Int, Int, TournamentMatchStatus, Boolean)] =
-        sql"""INSERT INTO tournament_match (game_id, tournament_id, pool_id, match_no, round, status, ties_allowed)
-          VALUES ($gameId, $tournamentId, $int4, $int4, $int4, $status, $bool)""".command
-
-    private val insertSeat: Command[
-      (GameId, TournamentId, Int, Int, EntrantId, Option[GameRoleId], Option[Int], Option[Instant], Boolean)
-    ] =
-        sql"""INSERT INTO tournament_seat (game_id, tournament_id, pool_id, match_no, entrant_id, game_role_id,
-                                           choose_order, choose_started_at, forfeit)
-          VALUES ($gameId, $tournamentId, $int4, $int4, $entrantId, ${gameRoleId.opt}, ${int4.opt}, ${instant.opt},
-                  $bool)""".command
-
-    /** Writes a round's matches and their seats. */
-    def insert(matches: List[TournamentMatch]): IO[Unit] =
-        matches.traverse_ { m =>
-            session.execute(insertMatch)(
-              (m.gameId, m.tournamentId, m.poolId, m.matchNo, m.round, m.status, m.tiesAllowed)
-            ) *>
-                m.seats.traverse_(s =>
-                    session.execute(insertSeat)(
-                      (
-                        m.gameId,
-                        m.tournamentId,
-                        m.poolId,
-                        m.matchNo,
-                        s.entrantId,
-                        s.gameRoleId,
-                        s.chooseOrder,
-                        s.chooseStartedAt,
-                        s.forfeit
-                      )
-                    )
-                )
-        }
-
-    private val matchColumns = sql"pool_id, match_no, round, status, ties_allowed, match_id"
-    private val matchRow = int4 *: int4 *: int4 *: status *: bool *: matchId.opt
-
-    private val selectOne: Query[Key, (Int, Int, Int, TournamentMatchStatus, Boolean, Option[MatchId])] =
-        sql"""SELECT $matchColumns FROM tournament_match
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = $int4 AND match_no = $int4"""
-            .query(matchRow)
-
-    private val selectOneForUpdate: Query[Key, (Int, Int, Int, TournamentMatchStatus, Boolean, Option[MatchId])] =
-        sql"""SELECT $matchColumns FROM tournament_match
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = $int4 AND match_no = $int4
-          FOR UPDATE""".query(matchRow)
-
-    private val selectRound
-        : Query[(GameId, TournamentId, Int), (Int, Int, Int, TournamentMatchStatus, Boolean, Option[MatchId])] =
-        sql"""SELECT $matchColumns FROM tournament_match
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4
-          ORDER BY pool_id, match_no""".query(matchRow)
-
-    private val selectUnfinished
-        : Query[(GameId, TournamentId), (Int, Int, Int, TournamentMatchStatus, Boolean, Option[MatchId])] =
-        sql"""SELECT $matchColumns FROM tournament_match
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND status <> 'done'
-          ORDER BY pool_id, match_no""".query(matchRow)
-
-    private val selectSeats: Query[
-      Key,
-      (EntrantId, Option[GameRoleId], Option[Int], Option[Instant], Option[Instant], Boolean, Option[ParticipantId])
-    ] =
-        sql"""SELECT entrant_id, game_role_id, choose_order, choose_started_at, chosen_at, forfeit, participant_id
-          FROM tournament_seat
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = $int4 AND match_no = $int4
-          ORDER BY choose_order NULLS LAST, entrant_id""".query(
-          entrantId *: gameRoleId.opt *: int4.opt *: instant.opt *: instant.opt *: bool *: participantId.opt
-        )
-
-    private def withSeats(game: GameId, tournament: TournamentId)(
-        row: (Int, Int, Int, TournamentMatchStatus, Boolean, Option[MatchId])
-    ): IO[TournamentMatch] = {
-        val (pool, no, round, st, ties, id) = row
-        session
-            .execute(selectSeats)((game, tournament, pool, no))
-            .map(_.map(TournamentSeat.apply.tupled))
-            .map(TournamentMatch(game, tournament, pool, no, round, st, ties, id, _))
+    private val status: Codec[TournamentMatchStatus] = text.imap {
+        case "C" => TournamentMatchStatus.Choosing
+        case "D" => TournamentMatchStatus.Due
+        case "P" => TournamentMatchStatus.Started
+        case _   => TournamentMatchStatus.Done
+    } {
+        case TournamentMatchStatus.Choosing => "C"
+        case TournamentMatchStatus.Due      => "D"
+        case TournamentMatchStatus.Started  => "P"
+        case TournamentMatchStatus.Done     => "F"
     }
 
-    def read(game: GameId, tournament: TournamentId, pool: Int, no: Int): IO[Option[TournamentMatch]] =
-        session.option(selectOne)((game, tournament, pool, no)).flatMap(_.traverse(withSeats(game, tournament)))
+    private type MatchRow = (GameId, TournamentId, MatchId, Long, Int, TournamentMatchStatus, Boolean)
+    private val matchRow = gameId *: tournamentId *: matchId *: int8 *: int4 *: status *: bool
 
-    /** As [[read]], locking the match row for the rest of the transaction: the claim on it. */
-    def readForUpdate(game: GameId, tournament: TournamentId, pool: Int, no: Int): IO[Option[TournamentMatch]] =
-        session
-            .option(selectOneForUpdate)((game, tournament, pool, no))
-            .flatMap(_.traverse(withSeats(game, tournament)))
+    private type SeatRow = (MatchId, Long, Long, Option[Int], Option[Int], Option[Instant], Option[Instant], Boolean)
+    private val seatRow =
+        matchId *: int8 *: int8 *: int4.opt *: int4.opt *: instant.opt *: instant.opt *: bool
 
-    /** Every match of a round, with its seats. */
+    private val seatColumns =
+        "p.match_id, p.participant_id, p.entrant_id, p.game_role_id, p.choose_order, p.choose_started_at, p.chosen_at, p.forfeit"
+
+    private def seatOf(r: SeatRow): TournamentSeat = {
+        val (_, participant, entrant, role, order, started, chosen, forfeit) = r
+        TournamentSeat(
+          ParticipantId(participant),
+          EntrantId(entrant),
+          role.map(GameRoleId(_)),
+          order,
+          started,
+          chosen,
+          forfeit
+        )
+    }
+
+    private def assemble(matches: List[MatchRow], seats: List[SeatRow]): List[TournamentMatch] = {
+        val byMatch = seats.groupBy(_._1)
+        matches.map { case (g, t, id, pool, round, st, ties) =>
+            TournamentMatch(g, t, id, pool.toInt, round, st, ties, byMatch.getOrElse(id, Nil).map(seatOf))
+        }
+    }
+
+    private val selectRound: Query[(GameId, TournamentId, Int), MatchRow] =
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, ties_allowed FROM match
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4 AND status <> 'S'
+          ORDER BY pool_id, create_date, match_id""".query(matchRow)
+
+    private val selectOpen: Query[(GameId, TournamentId), MatchRow] =
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, ties_allowed FROM match
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND status IN ('C', 'D', 'P')
+          ORDER BY pool_id, create_date, match_id""".query(matchRow)
+
+    private val selectSeatsOfTournament: Query[(GameId, TournamentId), SeatRow] =
+        sql"""SELECT #$seatColumns FROM participant p
+          WHERE p.game_id = $gameId AND p.tournament_id = $tournamentId
+          ORDER BY p.participant_id""".query(seatRow)
+
+    /** The matches of round `round`, with their seats. */
     def listRound(game: GameId, tournament: TournamentId, round: Int): IO[List[TournamentMatch]] =
-        session.execute(selectRound)((game, tournament, round)).flatMap(_.traverse(withSeats(game, tournament)))
+        (
+          session.execute(selectRound)((game, tournament, round)),
+          session.execute(selectSeatsOfTournament)((game, tournament))
+        )
+            .mapN(assemble)
 
-    /** Every match whose result is not yet recorded. */
+    /** The matches still to be played to an end: choosing, due, or being played. */
     def listUnfinished(game: GameId, tournament: TournamentId): IO[List[TournamentMatch]] =
-        session.execute(selectUnfinished)((game, tournament)).flatMap(_.traverse(withSeats(game, tournament)))
+        (session.execute(selectOpen)((game, tournament)), session.execute(selectSeatsOfTournament)((game, tournament)))
+            .mapN(assemble)
 
-    private val updateStatus: Command[(TournamentMatchStatus, Option[MatchId], GameId, TournamentId, Int, Int)] =
-        sql"""UPDATE tournament_match SET status = $status, match_id = ${matchId.opt}
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = $int4 AND match_no = $int4""".command
+    private val selectOne: Query[(GameId, MatchId), MatchRow] =
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, ties_allowed FROM match
+          WHERE game_id = $gameId AND match_id = $matchId AND tournament_id IS NOT NULL AND status <> 'S'"""
+            .query(matchRow)
 
-    /** Moves a match on, recording the match it became once there is one. */
-    def setStatus(
-        game: GameId,
-        tournament: TournamentId,
-        pool: Int,
-        no: Int,
-        st: TournamentMatchStatus,
-        id: Option[MatchId]
-    ): IO[Unit] =
-        session.execute(updateStatus)((st, id, game, tournament, pool, no)).void
+    private val selectOneForUpdate: Query[(GameId, MatchId), MatchRow] =
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, ties_allowed FROM match
+          WHERE game_id = $gameId AND match_id = $matchId AND tournament_id IS NOT NULL AND status <> 'S'
+          FOR UPDATE""".query(matchRow)
 
-    private val updateDone: Command[(GameId, TournamentId, Int, Int)] =
-        sql"""UPDATE tournament_match SET status = 'done'
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = $int4 AND match_no = $int4""".command
+    private val selectSeatsOfMatch: Query[(GameId, MatchId), SeatRow] =
+        sql"""SELECT #$seatColumns FROM participant p
+          WHERE p.game_id = $gameId AND p.match_id = $matchId
+          ORDER BY p.participant_id""".query(seatRow)
 
-    /** Marks a match's result recorded, keeping the match it became. */
-    def markDone(game: GameId, tournament: TournamentId, pool: Int, no: Int): IO[Unit] =
-        session.execute(updateDone)((game, tournament, pool, no)).void
+    private val selectSeatsOfMatchForUpdate: Query[(GameId, MatchId), SeatRow] =
+        sql"""SELECT #$seatColumns FROM participant p
+          WHERE p.game_id = $gameId AND p.match_id = $matchId
+          ORDER BY p.participant_id FOR UPDATE""".query(seatRow)
 
-    private val updateSeat: Command[
-      (
-          Option[GameRoleId],
-          Option[Instant],
-          Option[Instant],
-          Boolean,
-          Option[ParticipantId],
-          GameId,
-          TournamentId,
-          Int,
-          Int,
-          EntrantId
-      )
-    ] =
-        sql"""UPDATE tournament_seat SET game_role_id = ${gameRoleId.opt}, choose_started_at = ${instant.opt},
-                 chosen_at = ${instant.opt}, forfeit = $bool, participant_id = ${participantId.opt}
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = $int4 AND match_no = $int4
-            AND entrant_id = $entrantId""".command
-
-    /** Rewrites a seat: its role, its choosing, its forfeit, and the match seat it became. */
-    def updateSeat(game: GameId, tournament: TournamentId, pool: Int, no: Int, seat: TournamentSeat): IO[Unit] =
+    /** A tournament match of a round, with its seats; `None` for one that is not a tournament's, or is not yet in a
+      * round.
+      */
+    def read(game: GameId, id: MatchId): IO[Option[TournamentMatch]] =
         session
-            .execute(updateSeat)(
+            .option(selectOne)((game, id))
+            .flatMap(
+              _.traverse(m =>
+                  session.execute(selectSeatsOfMatch)((game, id)).map(seats => assemble(List(m), seats).head)
+              )
+            )
+
+    /** As [[read]], locking the match and then its seats for the rest of the transaction. */
+    def readForUpdate(game: GameId, id: MatchId): IO[Option[TournamentMatch]] =
+        session
+            .option(selectOneForUpdate)((game, id))
+            .flatMap(
+              _.traverse(m =>
+                  session.execute(selectSeatsOfMatchForUpdate)((game, id)).map(seats => assemble(List(m), seats).head)
+              )
+            )
+
+    private val updateSeatCommand: Command[
+      (Option[Int], Option[Int], Option[Instant], Option[Instant], Boolean, GameId, ParticipantId)
+    ] =
+        sql"""UPDATE participant SET game_role_id = ${int4.opt}, choose_order = ${int4.opt},
+                 choose_started_at = ${instant.opt}, chosen_at = ${instant.opt}, forfeit = $bool
+          WHERE game_id = $gameId AND participant_id = ${SkunkIdCodecs.participantId}""".command
+
+    /** Rewrites what a seat has chosen, and when, and whether it forfeits. */
+    def updateSeat(game: GameId, seat: TournamentSeat): IO[Unit] =
+        session
+            .execute(updateSeatCommand)(
               (
-                seat.gameRoleId,
+                seat.gameRoleId.map(_.value),
+                seat.chooseOrder,
                 seat.chooseStartedAt,
                 seat.chosenAt,
                 seat.forfeit,
-                seat.participantId,
                 game,
-                tournament,
-                pool,
-                no,
-                seat.entrantId
+                seat.participantId
               )
             )
             .void
 
-    private val selectByMatch: Query[(GameId, MatchId), (TournamentId, Int, Int)] =
-        sql"""SELECT tournament_id, pool_id, match_no FROM tournament_match
-          WHERE game_id = $gameId AND match_id = $matchId""".query(tournamentId *: int4 *: int4)
+    private val updateStatus: Command[(TournamentMatchStatus, GameId, MatchId)] =
+        sql"UPDATE match SET status = $status WHERE game_id = $gameId AND match_id = $matchId".command
 
-    /** The tournament match a match is, if it is one. */
-    def findByMatch(game: GameId, id: MatchId): IO[Option[(TournamentId, Int, Int)]] =
-        session.option(selectByMatch)((game, id))
+    /** Moves a match between choosing and due. Begun and over are the match's own to say, with its start and its end.
+      */
+    def setStatus(game: GameId, id: MatchId, to: TournamentMatchStatus): IO[Unit] =
+        session.execute(updateStatus)((to, game, id)).void
 
-    // Seats whose turn it is to choose, for a player: the earliest unchosen seat of each choosing
-    // match, played by the player now (a character entry by its character's current owner).
-    private val selectChoosingFor: Query[PlayerId, (GameId, TournamentId, Int, Int)] =
-        sql"""SELECT m.game_id, m.tournament_id, m.pool_id, m.match_no
-          FROM tournament_match m
-          JOIN tournament_seat s ON s.game_id = m.game_id AND s.tournament_id = m.tournament_id
-                                AND s.pool_id = m.pool_id AND s.match_no = m.match_no
-          JOIN entrant e ON e.game_id = s.game_id AND e.entrant_id = s.entrant_id
-          LEFT JOIN character_entrant ce ON ce.game_id = e.game_id AND ce.entrant_id = e.entrant_id
-          LEFT JOIN character c ON c.game_id = ce.game_id AND c.character_id = ce.character_id
-          WHERE m.status = 'choosing' AND s.game_role_id IS NULL AND NOT s.forfeit
-            AND COALESCE(c.player_id, CASE WHEN ce.entrant_id IS NULL THEN e.player_id END) = ${SkunkIdCodecs.playerId}
-            AND s.choose_order = (SELECT min(o.choose_order) FROM tournament_seat o
-                                   WHERE o.game_id = s.game_id AND o.tournament_id = s.tournament_id
-                                     AND o.pool_id = s.pool_id AND o.match_no = s.match_no
+    private val launchMatch: Command[
+      (Instant, String, Option[Double], TimeLimitKind, TimeLimitUnit, Boolean, GameId, MatchId)
+    ] =
+        sql"""UPDATE match SET status = 'P', start = $instant, description = $text,
+                 time_limit = ${float8.opt} * INTERVAL '1 second', time_limit_kind = ${SkunkCodecs.timeLimitKind},
+                 time_limit_unit = ${SkunkCodecs.timeLimitUnit}, friendly = $bool
+          WHERE game_id = $gameId AND match_id = $matchId AND status = 'D'""".command
+
+    /** A due match beginning: in progress from `at`, played under `clock`. Its engine's game is made next, after the
+      * transaction that wrote this commits.
+      */
+    def launch(
+        game: GameId,
+        id: MatchId,
+        at: Instant,
+        description: String,
+        limit: Option[java.time.Duration],
+        kind: TimeLimitKind,
+        unit: TimeLimitUnit,
+        friendly: Boolean
+    ): IO[Unit] =
+        session
+            .execute(launchMatch)(
+              (at, description, limit.map(_.getSeconds.toDouble), kind, unit, friendly, game, id)
+            )
+            .void
+
+    private val relaunchable: Command[(GameId, MatchId)] =
+        sql"""UPDATE match SET status = 'D', start = NULL, status_url = NULL, play_url = NULL, public_url = NULL
+          WHERE game_id = $gameId AND match_id = $matchId AND status = 'P'""".command
+
+    /** A match whose engine would not make its game, due again under the same id: the engine answers a create it has
+      * already made with that game, so trying again is safe.
+      */
+    def backToDue(game: GameId, id: MatchId): IO[Unit] = session.execute(relaunchable)((game, id)).void
+
+    private val launchSeatCommand: Command[(Long, Option[Int], Option[Int], GameId, ParticipantId)] =
+        sql"""UPDATE participant SET player_id = $int8, elo_start = ${int4.opt}, elo_role_start = ${int4.opt}
+          WHERE game_id = $gameId AND participant_id = ${SkunkIdCodecs.participantId}""".command
+
+    /** A seat as its match begins: played by `player` -- a character entry's owner now -- rated as they are now. */
+    def launchSeat(
+        game: GameId,
+        seat: ParticipantId,
+        player: PlayerId,
+        eloStart: Option[Int],
+        eloRoleStart: Option[Int]
+    ): IO[Unit] =
+        session.execute(launchSeatCommand)((player.value, eloStart, eloRoleStart, game, seat)).void
+
+    private val retireSeatCommand: Command[(Option[Int], GameId, ParticipantId)] =
+        sql"""UPDATE participant SET game_role_id = COALESCE(game_role_id, ${int4.opt}), completed_at = now(),
+                 pending = false, due = NULL
+          WHERE game_id = $gameId AND participant_id = ${SkunkIdCodecs.participantId}""".command
+
+    /** A seat that forfeits as its match begins: given a role nobody plays, if it had none, so that no seat of a match
+      * being played lacks one, and finished with.
+      */
+    def retireSeat(game: GameId, seat: ParticipantId, role: Option[GameRoleId]): IO[Unit] =
+        session.execute(retireSeatCommand)((role.map(_.value), game, seat)).void
+
+    private val selectTournamentOf: Query[(GameId, MatchId), TournamentId] =
+        sql"SELECT tournament_id FROM match WHERE game_id = $gameId AND match_id = $matchId AND tournament_id IS NOT NULL"
+            .query(tournamentId)
+
+    /** The tournament a match is played in, or `None` for a challenge's. */
+    def tournamentOf(game: GameId, id: MatchId): IO[Option[TournamentId]] =
+        session.option(selectTournamentOf)((game, id))
+
+    // Seats whose turn it is to choose, for a player: the earliest unchosen seat of each choosing match, whose
+    // participant row names who plays it now.
+    private val selectChoosingFor: Query[PlayerId, (GameId, TournamentId, String)] =
+        sql"""SELECT m.game_id, m.tournament_id, m.match_id
+          FROM match m
+          JOIN participant s ON s.game_id = m.game_id AND s.match_id = m.match_id
+          WHERE m.status = 'C' AND s.game_role_id IS NULL AND NOT s.forfeit AND s.player_id = ${SkunkIdCodecs.playerId}
+            AND s.choose_order = (SELECT min(o.choose_order) FROM participant o
+                                   WHERE o.game_id = s.game_id AND o.match_id = s.match_id
                                      AND o.game_role_id IS NULL AND NOT o.forfeit)
-          ORDER BY m.create_date""".query(gameId *: tournamentId *: int4 *: int4)
+          ORDER BY m.create_date""".query(gameId *: tournamentId *: text)
 
     /** The tournament matches waiting on this player to choose a role. */
-    def choosingFor(player: PlayerId): IO[List[(GameId, TournamentId, Int, Int)]] =
-        session.execute(selectChoosingFor)(player)
+    def choosingFor(player: PlayerId): IO[List[(GameId, TournamentId, MatchId)]] =
+        // The match id decoded as text and wrapped: a trailing opaque-typed codec defeats the tuple's types.
+        session.execute(selectChoosingFor)(player).map(_.map((g, t, id) => (g, t, MatchId(id))))
 }
