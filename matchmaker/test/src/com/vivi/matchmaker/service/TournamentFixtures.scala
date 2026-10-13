@@ -6,7 +6,8 @@ import skunk.implicits._
 import skunk.codec.all.{int8, text}
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.{StageDesign, StandardModels, TournamentDesign, TournamentGame, Validation}
+import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign, TournamentGame, Validation}
+import com.vivi.matchmaker.model.tournament.standard.StandardModels
 import com.vivi.matchmaker.persistence.{PoolRepo, StageRepo, TournamentModelRepo, TournamentRepo}
 
 /** Tournaments for specs (V52): the model of a standard format, offered in a game, and a tournament made from one. */

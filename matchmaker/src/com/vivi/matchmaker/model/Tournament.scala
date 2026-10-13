@@ -47,7 +47,7 @@ case class TournamentSettings(
 )
 
 /** A design every game may offer (V52), which a tournament is made from by copying its stages: one of the standard
-  * formats the code defines ([[com.vivi.matchmaker.model.tournament.StandardModels]]), as a site admin's sync last
+  * formats the code defines ([[com.vivi.matchmaker.model.tournament.standard.StandardModels]]), as a site admin's sync last
   * wrote it, at `version`. `classification` is the group it is listed under where a tournament is created; a model with
   * none is never offered on its own, being the inner design of another's nesting stage. `poolSize` is the default pool
   * size to suggest, `None` for the game's R. A model that is not `active` is one the code no longer defines, kept for

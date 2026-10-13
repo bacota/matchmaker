@@ -8,7 +8,7 @@ import skunk.Session
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
 import cats.syntax.all._
-import com.vivi.matchmaker.model.tournament.{StandardModel, StandardModels}
+import com.vivi.matchmaker.model.tournament.standard.{Ladder, SingleElimination, StandardModel, StandardModels, WorldCup}
 import com.vivi.matchmaker.service.TournamentFixtures
 
 /** The tournament tables (V52) through their repositories, against the local database. */
@@ -31,7 +31,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             owner <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
             other <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
             models = new TournamentModelRepo(session)
-            written = copyOf(StandardModels.SingleElimination)
+            written = copyOf(SingleElimination)
             _ <- models.create(written)
             model <- models.read(written.tournamentModelId).map(_.get)
         } yield Fixture(game, owner, other, model)
@@ -103,7 +103,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             for {
                 f <- fixture(session)
                 _ <- repo.replace(
-                  StandardModels.Ladder.model.copy(tournamentModelId = f.model.tournamentModelId, version = 2)
+                  Ladder.model.copy(tournamentModelId = f.model.tournamentModelId, version = 2)
                 )
                 edited <- repo.read(f.model.tournamentModelId)
                 _ <- made(session, f)
@@ -116,7 +116,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             )
             .attempt
             .unsafeRunSync()
-        val lone = copyOf(StandardModels.WorldCup)
+        val lone = copyOf(WorldCup)
         val removed = run { session =>
             val repo = new TournamentModelRepo(session)
             for {
@@ -126,7 +126,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
                 inner <- repo.read(TournamentModelId(s"${lone.tournamentModelId.value}/stage-2"))
             } yield (removed, inner)
         }
-        assertEquals(edited.map(m => (m.design, m.version)), Some((StandardModels.Ladder.design, 2)))
+        assertEquals(edited.map(m => (m.design, m.version)), Some((Ladder.design, 2)))
         assert(refused.isLeft, refused)
         assertEquals(removed, (None, None))
     }

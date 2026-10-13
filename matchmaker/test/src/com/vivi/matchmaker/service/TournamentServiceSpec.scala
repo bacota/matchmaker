@@ -8,7 +8,7 @@ import scala.concurrent.duration._
 import munit.FunSuite
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.StandardModels
+import com.vivi.matchmaker.model.tournament.standard.StandardModels
 import com.vivi.matchmaker.persistence.{
     CharacterRepo,
     EloRatingRepo,

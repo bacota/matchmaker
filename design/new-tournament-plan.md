@@ -514,8 +514,10 @@ Replaces the admin-made, per-game models of Phase 4.
 - `tournament.tournament_model_id` references the model alone.
 
 **Code.**
-- `StandardModels` holds one object per standard format, built for two players from `StandardDesigns`' pieces. Each
-  has an `id` that is never reused and a `version` bumped whenever the object changes. Where a pool size follows the
+- Each standard format is an object in a file of its own in `model/tournament/standard`, built for two players and
+  spelling out its whole design, sharing nothing with another, so that no edit changes a model without its version.
+  `StandardModels.all` lists them. Each has an `id` that is never reused and a `version` bumped whenever its file
+  changes. Where a pool size follows the
   game, the stage leaves it unset, so it takes the tournament's default pool size.
 - `TournamentModelService.sync` adds what is missing, rewrites a model whose code version is newer (or that was
   deactivated), and deletes or deactivates what the code dropped. It runs under a transaction-scoped advisory lock,

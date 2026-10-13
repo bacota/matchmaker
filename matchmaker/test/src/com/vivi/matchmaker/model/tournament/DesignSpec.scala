@@ -5,6 +5,7 @@ import munit.FunSuite
 import upickle.default.{read, write}
 import TournamentCodecs.given
 import Fixtures.*
+import standard.StandardModels
 
 class DesignSpec extends FunSuite {
 
@@ -51,7 +52,7 @@ class DesignSpec extends FunSuite {
         StandardModels.all.foreach { m =>
             assertEquals(Validation.designProblems(m.design, twoPlayer, m.poolSize).filterNot(_.warning), Nil, m.id)
         }
-        val heats = StandardModels.Heats
+        val heats = standard.Heats
         assertEquals(heats.poolSize, Some(4))
         assertEquals(heats.design.stages.head.poolSize, None)
         def sized(d: TournamentDesign): Boolean = d.stages.forall(s => s.poolSize.isDefined && s.design.forall(sized))

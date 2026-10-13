@@ -6,7 +6,8 @@ import skunk.Session
 import skunk.implicits._
 import skunk.codec.all.int8
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.{StandardModels, TournamentGame, Validation}
+import com.vivi.matchmaker.model.tournament.{TournamentGame, Validation}
+import com.vivi.matchmaker.model.tournament.standard.StandardModels
 import com.vivi.matchmaker.persistence._
 
 /** The models every game's tournaments are made from (V52): the standard formats the code defines ([[StandardModels]]),

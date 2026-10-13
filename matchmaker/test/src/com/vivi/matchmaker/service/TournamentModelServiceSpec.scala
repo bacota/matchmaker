@@ -9,7 +9,8 @@ import skunk.implicits._
 import skunk.codec.all.int8
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.{StageDesign, StandardModels, TournamentDesign, TournamentGame, Validation}
+import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign, TournamentGame, Validation}
+import com.vivi.matchmaker.model.tournament.standard.StandardModels
 import com.vivi.matchmaker.persistence.{
     EntrantRepo,
     GameAdminRepo,

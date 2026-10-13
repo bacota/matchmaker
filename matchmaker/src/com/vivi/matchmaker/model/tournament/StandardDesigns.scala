@@ -81,15 +81,15 @@ object StandardDesigns {
     /** One match, and the loser drops a stratum: the building block of the elimination formats. It is played in a pool
       * of two, so it may not be drawn ([[Ties]]).
       */
-    val eliminationMatch: TournamentDesign =
+    private val eliminationMatch: TournamentDesign =
         TournamentDesign(List(StageDesign(brackets = false, rotateRoles = false, demote = Some(2))))
 
-    def singleEliminationStage(until: Int): StageDesign =
+    private def singleEliminationStage(until: Int): StageDesign =
         StageDesign(repeat = Repetition.UntilRemaining(until), brackets = true, design = Some(eliminationMatch))
 
     private def singleElimination: List[StageDesign] = List(singleEliminationStage(1))
 
-    def withConsolation: List[StageDesign] = List(
+    private def withConsolation: List[StageDesign] = List(
       StageDesign(
         repeat = Repetition.UntilRemaining(4),
         brackets = true,
@@ -113,7 +113,7 @@ object StandardDesigns {
       )
     )
 
-    def modifiedDoubleStage: StageDesign =
+    private def modifiedDoubleStage: StageDesign =
         StageDesign(
           repeat = Repetition.UntilRemaining(2),
           poolSize = Some(2),
@@ -128,7 +128,7 @@ object StandardDesigns {
     private def knockout(r: Int): List[StageDesign] = if (r == 2) withConsolation else singleElimination
 
     /** `stage`, and every stage nested in it, with an explicit pool size of `r` wherever it set none. */
-    def sized(stage: StageDesign, r: Int): StageDesign =
+    private def sized(stage: StageDesign, r: Int): StageDesign =
         stage.copy(
           poolSize = stage.poolSize.orElse(Some(r)),
           design = stage.design.map(d => TournamentDesign(d.stages.map(sized(_, r))))
