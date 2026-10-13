@@ -312,6 +312,8 @@ As built:
 - `ParticipantRepo.create` now writes a seat's `challenge_id`, taken from its match. The new V52 requires every seat to
   name its origin, and Phase 2 had added the column without writing it.
 - `design/reset-tournament-schema.sql` takes the local database back to V51 before the new V52 is migrated.
+- Since then every migration has been folded into a single `V1__init.sql` and every database rebuilt from it, so the
+  reset script is gone.
 - `TournamentSchemaSpec` copies a one-stage model into a tournament (root pool, round, atomic pool, entrant) in plain
   SQL. It checks that the constraints accept a scheduled match and a tournament seat with no role. It checks that they
   refuse a match with both origins, a `C` match with urls, an `F` match neither completed nor cancelled, a rubber match
