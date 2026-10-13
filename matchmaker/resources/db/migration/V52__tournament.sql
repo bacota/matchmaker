@@ -26,6 +26,9 @@ create table tournament_model(
     pool_size          int CHECK (pool_size > 0),
     first_stage_model_id BIGINT not null,
     late_entries       BOOLEAN NOT NULL DEFAULT false,
+    -- False once an admin has deactivated it: no longer offered where a tournament is created, kept
+    -- because a tournament made from it has entrants. Its stages and inner models are deactivated with it.
+    active             BOOLEAN NOT NULL DEFAULT true,
     create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, tournament_model_id)
@@ -60,6 +63,8 @@ create table stage_model(
     tie_breaker_stage boolean not null default false,
     seed_policy text not null check (seed_policy in ('CONST', 'ELO', 'PREV', 'WINNER')),
     current_stage_model_id BIGINT,
+    -- False with its model's active.
+    active             BOOLEAN NOT NULL DEFAULT true,
     create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, tournament_model_id, stage_model_id),

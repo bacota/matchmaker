@@ -484,8 +484,13 @@ object ApiClient {
           Some(write(request))
         )
 
-    def deleteTournamentModel(gameId: GameId, modelId: TournamentModelId): Future[Unit] =
-        sendUnit(HttpMethod.DELETE, s"/games/${gameId.value}/tournament-models/${modelId.value}", None)
+    /** Removes a model: deleted, with its tournaments, while nobody has entered one, else only deactivated. */
+    def removeTournamentModel(gameId: GameId, modelId: TournamentModelId): Future[TournamentModelRemoval] =
+        send[TournamentModelRemoval](
+          HttpMethod.DELETE,
+          s"/games/${gameId.value}/tournament-models/${modelId.value}",
+          None
+        )
 
     /** The standard formats the game does not offer yet, added as models: the ones added. */
     def addStandardModels(gameId: GameId): Future[Seq[TournamentModel]] =

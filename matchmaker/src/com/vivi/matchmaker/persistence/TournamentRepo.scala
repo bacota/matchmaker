@@ -1,6 +1,7 @@
 package com.vivi.matchmaker.persistence
 
 import cats.effect.IO
+import cats.syntax.all._
 import skunk._
 import skunk.implicits._
 import skunk.codec.all._
@@ -366,4 +367,57 @@ class TournamentRepo(session: Session[IO]) {
                   rank
                 )
             })
+
+    // ---- the tournaments made from a model, for an admin removing it ----
+
+    private val selectMadeFromForUpdate: Query[(GameId, TournamentModelId), TournamentId] =
+        sql"""SELECT tournament_id FROM tournament WHERE game_id = $gameId AND tournament_model_id = $modelId
+          ORDER BY tournament_id FOR UPDATE""".query(tournamentId)
+
+    /** Locks every tournament made from the model, for the rest of the transaction, and lists them: what removing the
+      * model takes first, so that nobody enters one -- entering takes the same lock -- while it is decided.
+      */
+    def lockMadeFrom(game: GameId, model: TournamentModelId): IO[List[TournamentId]] =
+        session.execute(selectMadeFromForUpdate)((game, model))
+
+    private val selectAnyEntrantMadeFrom: Query[(GameId, TournamentModelId), Boolean] =
+        sql"""SELECT EXISTS (SELECT 1 FROM entrant e JOIN tournament t USING (game_id, tournament_id)
+                              WHERE t.game_id = $gameId AND t.tournament_model_id = $modelId)""".query(bool)
+
+    /** Whether any tournament made from the model has an entrant, withdrawn or not. One that has a match has some. */
+    def anyEntrantMadeFrom(game: GameId, model: TournamentModelId): IO[Boolean] =
+        session.unique(selectAnyEntrantMadeFrom)((game, model))
+
+    private def deleting(table: String): Command[(GameId, TournamentId)] =
+        sql"DELETE FROM #$table WHERE game_id = $gameId AND tournament_id = $tournamentId".command
+
+    private val clearCurrentRound: Command[(GameId, TournamentId)] =
+        sql"""UPDATE tournament SET current_round = NULL
+          WHERE game_id = $gameId AND tournament_id = $tournamentId""".command
+
+    // Each table after every one that names it. pool names itself and is emptied in one statement; tournament names
+    // round through current_round, cleared first, and stage through the deferred first_stage_id.
+    private val deletes: List[Command[(GameId, TournamentId)]] =
+        List(
+          "seed",
+          "pool_member",
+          "atomic_pool",
+          "pool_group",
+          "pool",
+          "round",
+          "character_entrant",
+          "entrant",
+          "tournament_character_invitation",
+          "tournament_invitation",
+          "nesting_stage",
+          "atomic_stage",
+          "stage",
+          "tournament"
+        ).map(deleting)
+
+    /** Removes a tournament that nobody has entered, with its invitations, stages and root pool. Refused by the
+      * database, as a foreign key violation, if it has a match.
+      */
+    def delete(game: GameId, id: TournamentId): IO[Unit] =
+        session.execute(clearCurrentRound)((game, id)) *> deletes.traverse_(session.execute(_)((game, id)))
 }

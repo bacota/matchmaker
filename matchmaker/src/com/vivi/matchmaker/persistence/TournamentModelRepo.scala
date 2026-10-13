@@ -15,7 +15,7 @@ import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign}
   * A model's design is its stages, chained from `first_stage_model_id` along each stage's `current_stage_model_id`. A
   * nesting stage's pools play another model, named by `nesting_stage_model.inner_tournament_model_id`: when a design is
   * written, each inner design becomes a model of its own with no classification, which is what keeps it out of the list
-  * a tournament is created from. Editing or deleting a model takes its inner models with it.
+  * a tournament is created from. Editing, deactivating or deleting a model takes its inner models with it.
   *
   * Opens no transaction of its own; that is the calling service's job. Writing a model writes it and its stages before
   * each points at the other, which the deferred foreign keys between them allow within one transaction.
@@ -24,15 +24,17 @@ class TournamentModelRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val modelId = SkunkIdCodecs.tournamentModelId
 
-    private type ModelRow = (TournamentModelId, String, String, Option[String], Option[Int], Boolean, Long)
-    private val modelRow: Decoder[ModelRow] = modelId *: text *: text *: text.opt *: int4.opt *: bool *: int8
+    private type ModelRow = (TournamentModelId, String, String, Option[String], Option[Int], Boolean, Long, Boolean)
+    private val modelRow: Decoder[ModelRow] = modelId *: text *: text *: text.opt *: int4.opt *: bool *: int8 *: bool
 
     private val selectModels: Query[GameId, ModelRow] =
-        sql"""SELECT tournament_model_id, name, description, classification, pool_size, late_entries, first_stage_model_id
+        sql"""SELECT tournament_model_id, name, description, classification, pool_size, late_entries, first_stage_model_id,
+                 active
           FROM tournament_model WHERE game_id = $gameId""".query(modelRow)
 
     private val selectModelForUpdate: Query[(GameId, TournamentModelId), ModelRow] =
-        sql"""SELECT tournament_model_id, name, description, classification, pool_size, late_entries, first_stage_model_id
+        sql"""SELECT tournament_model_id, name, description, classification, pool_size, late_entries, first_stage_model_id,
+                 active
           FROM tournament_model WHERE game_id = $gameId AND tournament_model_id = $modelId FOR UPDATE""".query(modelRow)
 
     private val selectStages: Query[GameId, (Long, StageRows.Row)] =
@@ -59,15 +61,29 @@ class TournamentModelRepo(session: Session[IO]) {
                       firstOf.getOrElse(model, throw new IllegalStateException(s"model $model is not there")),
                       inner => designOf(inner, depth + 1)
                     )
-            models.map { case (id, name, description, classification, poolSize, late, _) =>
-                TournamentModel(game, id, name, description, classification, poolSize, late, designOf(id.value, 0))
+            models.map { case (id, name, description, classification, poolSize, late, _, active) =>
+                TournamentModel(
+                  game,
+                  id,
+                  name,
+                  description,
+                  classification,
+                  poolSize,
+                  late,
+                  designOf(id.value, 0),
+                  active
+                )
             }
         }
 
-    /** The models offered for creating a tournament of the game -- those with a classification -- by classification and
-      * then name.
+    /** The models offered for creating a tournament of the game -- those with a classification that are active -- by
+      * classification and then name.
       */
     def listOffered(game: GameId): IO[List[TournamentModel]] =
+        listClassified(game).map(_.filter(_.active))
+
+    /** Every model of the game with a classification, deactivated or not, by classification and then name. */
+    def listClassified(game: GameId): IO[List[TournamentModel]] =
         all(game).map(_.filter(_.classification.isDefined).sortBy(m => (m.classification, m.name.toLowerCase)))
 
     def read(game: GameId, id: TournamentModelId): IO[Option[TournamentModel]] =
@@ -76,6 +92,16 @@ class TournamentModelRepo(session: Session[IO]) {
     /** Locks the model's row for the rest of the transaction: what an edit or a delete takes first. */
     def lockForUpdate(game: GameId, id: TournamentModelId): IO[Boolean] =
         session.option(selectModelForUpdate)((game, id)).map(_.isDefined)
+
+    private val selectModelForShare: Query[(GameId, TournamentModelId), TournamentModelId] =
+        sql"""SELECT tournament_model_id FROM tournament_model
+          WHERE game_id = $gameId AND tournament_model_id = $modelId FOR SHARE""".query(modelId)
+
+    /** Holds the model's row for the rest of the transaction against an admin deactivating or deleting it, without
+      * making two tournaments made from it wait on each other: what making a tournament from it takes first.
+      */
+    def lockForShare(game: GameId, id: TournamentModelId): IO[Boolean] =
+        session.option(selectModelForShare)((game, id)).map(_.isDefined)
 
     private val insertModel: Query[(GameId, String, String, Option[String], Option[Int], Boolean), TournamentModelId] =
         sql"""INSERT INTO tournament_model (game_id, name, description, classification, pool_size, late_entries,
@@ -128,6 +154,22 @@ class TournamentModelRepo(session: Session[IO]) {
       * tournament made from it remains.
       */
     def delete(game: GameId, id: TournamentModelId): IO[Unit] = removeStages(game, id, keep = false)
+
+    private val deactivateModel: Command[(GameId, TournamentModelId)] =
+        sql"""UPDATE tournament_model SET active = false
+          WHERE game_id = $gameId AND tournament_model_id = $modelId""".command
+    private val deactivateStages: Command[(GameId, TournamentModelId)] =
+        sql"""UPDATE stage_model SET active = false
+          WHERE game_id = $gameId AND tournament_model_id = $modelId""".command
+
+    /** Deactivates a model, its stages and, depth first, its inner models: offered no longer, and kept. */
+    def deactivate(game: GameId, id: TournamentModelId): IO[Unit] =
+        for {
+            inner <- session.execute(selectInner)((game, id))
+            _ <- inner.traverse_(deactivate(game, _))
+            _ <- session.execute(deactivateStages)((game, id))
+            _ <- session.execute(deactivateModel)((game, id))
+        } yield ()
 
     /* The stages of `design` written last first, so that each names the one after it as it is written, and the first
      * set as the model's own. An inner design becomes an unclassified model of its own, named after the stage. */

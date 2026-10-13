@@ -566,7 +566,8 @@ object Router {
                 withTournament(gameId, tid)((gid, t) => ok(services.tournaments.detail(gid, t, caller)))
 
             // The models a game's tournaments are made from: listed for anyone creating one, and made, edited and
-            // removed by the game's admins, who may also add the standard formats the game does not offer yet.
+            // removed by the game's admins, who may also add the standard formats the game does not offer yet. Removing
+            // one deletes it, with its tournaments, while nobody has entered one; afterwards it only deactivates it.
             case ("GET", "games" :: gameId :: "tournament-models" :: Nil) =>
                 withGameId(gameId)(gid => ok(services.tournamentModels.list(gid, caller)))
 
@@ -588,9 +589,7 @@ object Router {
                 )
 
             case ("DELETE", "games" :: gameId :: "tournament-models" :: mid :: Nil) =>
-                withTournamentModel(gameId, mid)((gid, m) =>
-                    noContent(services.tournamentModels.delete(gid, m, caller))
-                )
+                withTournamentModel(gameId, mid)((gid, m) => ok(services.tournamentModels.remove(gid, m, caller)))
 
             case ("PUT", "games" :: gameId :: "tournaments" :: tid :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>

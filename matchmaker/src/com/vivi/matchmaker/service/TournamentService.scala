@@ -156,7 +156,12 @@ class TournamentService[T](
                     updated <- t.status match {
                         case TournamentStatus.Draft | TournamentStatus.Open =>
                             for {
-                                model <- requireModel(session, gameId, request.tournamentModelId)
+                                model <- requireModel(
+                                  session,
+                                  gameId,
+                                  request.tournamentModelId,
+                                  kept = Some(t.tournamentModelId)
+                                )
                                 poolSize = defaultPoolSize(game, model, request)
                                 _ <- checkSettings(game, model.design, request, poolSize)
                                 // Made from another model: its stages are the new model's from now on.
@@ -450,14 +455,23 @@ class TournamentService[T](
     private def env(t: Tournament, design: TournamentDesign, game: Game, ratings: Map[Long, Int]): Env =
         Env(design, TournamentGame.of(game), ratings, Some(t.defaultPoolSize), t.settings.concurrentRounds)
 
-    /* The model a tournament is made from: one the game offers, with a classification. Read plainly, as the game is:
-     * a game's admin edits its models rarely and never in step with a tournament being made from one, and the stages
-     * written from it are the tournament's own (CLAUDE.md, "a reference table read on the way to a write elsewhere"). */
-    private def requireModel(session: skunk.Session[IO], gameId: GameId, id: TournamentModelId): IO[TournamentModel] =
-        new TournamentModelRepo(session).read(gameId, id).flatMap {
-            case Some(m) if m.classification.isDefined => IO.pure(m)
+    /* The model a tournament is made from: one the game offers, with a classification and active -- or deactivated,
+     * if it is the one the tournament being edited was `kept` from all along. Held FOR SHARE, the middle course
+     * (CLAUDE.md): an admin removing the model looks at the tournaments made from it, and deletes it if none has a
+     * match, so the row is held against that until this tournament is written; two tournaments being made from it
+     * do not wait on each other. */
+    private def requireModel(
+        session: skunk.Session[IO],
+        gameId: GameId,
+        id: TournamentModelId,
+        kept: Option[TournamentModelId] = None
+    ): IO[TournamentModel] = {
+        val repo = new TournamentModelRepo(session)
+        repo.lockForShare(gameId, id) *> repo.read(gameId, id).flatMap {
+            case Some(m) if m.classification.isDefined && (m.active || kept.contains(id)) => IO.pure(m)
             case _ => IO.raiseError(NotFoundError(s"game $gameId offers no tournament model $id"))
         }
+    }
 
     /** A tournament's design, from its stages. */
     private def requireDesign(session: skunk.Session[IO], t: Tournament): IO[TournamentDesign] =

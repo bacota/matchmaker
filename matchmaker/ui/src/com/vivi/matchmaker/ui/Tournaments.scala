@@ -844,6 +844,12 @@ object Tournaments {
         val maxTurns = Var(s0.maxTurns.fold("")(_.toString))
         val problems: Var[List[Problem]] = Var(Nil)
         val chosen: Var[Option[TournamentModel]] = Var(None)
+        // The model an existing tournament was made from, when its admins have since deactivated it: not among those
+        // offered, and kept unless another is chosen.
+        val kept = existing.map(_.tournamentModelId)
+        val keptRetired: Signal[Option[TournamentModelId]] =
+            models.map(ms => kept.filter(id => ms.nonEmpty && !ms.exists(_.tournamentModelId == id)))
+        def keeping: Boolean = chosen.now().isEmpty && modelId.now().exists(kept.contains)
 
         /* Choosing a model fills in the pool size it suggests -- the game's R where it suggests none -- and whether it
          * takes late entries; both stay the creator's to change. */
@@ -871,7 +877,9 @@ object Tournaments {
         )
         def check(): Unit =
             problems.set(chosen.now() match {
-                case None => List(Problem("", "choose a format"))
+                // The format it was made from, checked again as it is saved.
+                case None if keeping => Nil
+                case None            => List(Problem("", "choose a format"))
                 case Some(m) =>
                     Validation.validate(
                       m.design,
@@ -928,12 +936,23 @@ object Tournaments {
                             Store.tournamentModelsByGame
                                 .now()
                                 .getOrElse(game.gameId, Seq.empty)
-                                .find(_.tournamentModelId.value == id)
-                                .foreach(choose)
+                                .find(_.tournamentModelId.value == id) match {
+                                case Some(m) => choose(m)
+                                // Back to the deactivated format it was made from.
+                                case None =>
+                                    modelId.set(kept)
+                                    chosen.set(None)
+                            }
                         }
                     },
                     value <-- modelId.signal.map(_.fold("")(_.value.toString)),
-                    children <-- models.map(modelOptions)
+                    children <-- models
+                        .combineWith(keptRetired)
+                        .map((ms, retired) =>
+                            modelOptions(ms) ++
+                                retired
+                                    .map(id => option(value := id.value.toString, "Current format (no longer offered)"))
+                        )
                   )
                 ),
                 child <-- models.combineWith(chosen.signal).map {
@@ -941,6 +960,15 @@ object Tournaments {
                         p(cls := "empty", "This game offers no tournament formats yet; its admins add them.")
                     case (_, Some(m)) => p(cls := "detail", m.description)
                     case _            => emptyNode
+                },
+                child <-- keptRetired.combineWith(modelId.signal).map {
+                    case (Some(id), Some(current)) if id == current =>
+                        p(
+                          cls := "detail",
+                          "This game's admins no longer offer the format this tournament was made from. It keeps it " +
+                              "unless you choose another."
+                        )
+                    case _ => emptyNode
                 },
                 number(
                   "Default pool size",
@@ -1062,10 +1090,25 @@ object Tournaments {
                         onClick --> (_ => editing.set(Some(Some(m))))
                       ),
                       busyButton("Remove", Some("link"))(busy =>
-                          Store.run(ApiClient.deleteTournamentModel(game.gameId, m.tournamentModelId), busy) { _ =>
-                              said.set(s"Removed ${m.name}.")
-                              Store.reloadTournamentModels(game.gameId)
-                          }
+                          if (
+                            org.scalajs.dom.window.confirm(
+                              s"Remove ${m.name}? If nobody has entered a tournament made from it, those " +
+                                  "tournaments are deleted with it. Otherwise it is only taken off the list of formats."
+                            )
+                          )
+                              Store.run(ApiClient.removeTournamentModel(game.gameId, m.tournamentModelId), busy) {
+                                  removal =>
+                                      said.set(
+                                        if (!removal.deleted)
+                                            s"${m.name} is no longer offered. Tournaments made from it carry on."
+                                        else if (removal.tournamentsDeleted == 0) s"Removed ${m.name}."
+                                        else
+                                            s"Removed ${m.name} and the ${removal.tournamentsDeleted} " +
+                                                s"tournament${if (removal.tournamentsDeleted == 1) "" else "s"} " +
+                                                "made from it."
+                                      )
+                                      Store.reloadTournamentModels(game.gameId)
+                              }
                       ).amend(aria.label := s"Remove ${m.name}")
                     )
                 }

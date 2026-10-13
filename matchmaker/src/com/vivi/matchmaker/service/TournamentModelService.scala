@@ -2,13 +2,13 @@ package com.vivi.matchmaker.service
 
 import cats.effect.IO
 import cats.syntax.all._
-import skunk.{Session, SqlState}
+import skunk.Session
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{StandardDesigns, TournamentGame, Validation}
 import com.vivi.matchmaker.persistence._
 
 /** The models a game's tournaments are made from (V52): listed for anyone creating a tournament, and created, edited
-  * and deleted by the game's admins (`design/new-tournament-plan.md`, Phase 4). Letting any player make one is left for
+  * and removed by the game's admins (`design/new-tournament-plan.md`, Phase 4). Letting any player make one is left for
   * later.
   *
   * Every change is one transaction. The game is read plainly, as everywhere a write lands elsewhere; the model an edit
@@ -16,7 +16,9 @@ import com.vivi.matchmaker.persistence._
   */
 class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 
-    /** The models the game offers, by classification and then name. Any registered player may look. */
+    /** The models the game offers -- not those deactivated -- by classification and then name. Any registered player
+      * may look.
+      */
     def list(gameId: GameId, callerExternalId: String): IO[List[TournamentModel]] =
         sessionPool.use { session =>
             requireCaller(session, callerExternalId) *> new TournamentModelRepo(session).listOffered(gameId)
@@ -35,7 +37,9 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
             }
         }
 
-    /** An admin's edit of a model. Tournaments already made from it keep the stages they copied. */
+    /** An admin's edit of a model. Tournaments already made from it keep the stages they copied. A deactivated model is
+      * not edited.
+      */
     def update(
         gameId: GameId,
         id: TournamentModelId,
@@ -47,6 +51,8 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
                 for {
                     game <- requireAdministered(session, gameId, callerExternalId)
                     _ <- requireLocked(session, gameId, id)
+                    current <- requireModel(session, gameId, id)
+                    _ <- IO.raiseUnless(current.active)(ConflictError("this model has been deactivated"))
                     _ <- checkModel(game, request)
                     _ <- new TournamentModelRepo(session).update(gameId, id, request)
                     updated <- requireModel(session, gameId, id)
@@ -54,20 +60,29 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
             }
         }
 
-    /** An admin removing a model. Refused while a tournament made from it remains. */
-    def delete(gameId: GameId, id: TournamentModelId, callerExternalId: String): IO[Unit] =
+    /** An admin removing a model, so that it is offered no longer. If nobody has entered a tournament made from it, the
+      * model is deleted, and so is every tournament made from it. Otherwise it is only deactivated: kept, with its
+      * stages and inner models, for the tournaments made from it, which carry on as they were.
+      */
+    def remove(gameId: GameId, id: TournamentModelId, callerExternalId: String): IO[TournamentModelRemoval] =
         sessionPool.use { session =>
             session.transaction.use { _ =>
+                val tournaments = new TournamentRepo(session)
                 for {
                     _ <- requireAdministered(session, gameId, callerExternalId)
                     _ <- requireLocked(session, gameId, id)
-                    _ <- new TournamentModelRepo(session).delete(gameId, id).recoverWith {
-                        case SqlState.ForeignKeyViolation(_) =>
-                            IO.raiseError(
-                              ConflictError("a tournament was made from this model, so it cannot be removed")
-                            )
-                    }
-                } yield ()
+                    // Locked, so that nobody enters one between the look and the delete.
+                    madeFrom <- tournaments.lockMadeFrom(gameId, id)
+                    entered <- tournaments.anyEntrantMadeFrom(gameId, id)
+                    removal <-
+                        if (entered)
+                            new TournamentModelRepo(session).deactivate(gameId, id).as(TournamentModelRemoval(false, 0))
+                        else
+                            madeFrom.traverse_(tournaments.delete(gameId, _)) *>
+                                new TournamentModelRepo(session)
+                                    .delete(gameId, id)
+                                    .as(TournamentModelRemoval(true, madeFrom.size))
+                } yield removal
             }
         }
 
@@ -143,7 +158,8 @@ object TournamentModelService {
         val repo = new TournamentModelRepo(session)
         if (r < 1) IO.pure(Nil)
         else
-            repo.listOffered(game.gameId).flatMap { existing =>
+            repo.listClassified(game.gameId).flatMap { existing =>
+                // A deactivated one too, which an admin took away and is not given back.
                 val names = existing.map(_.name.toLowerCase).toSet
                 StandardDesigns
                     .models(r)

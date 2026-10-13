@@ -98,6 +98,13 @@ The other rules that came with these:
 - **Repetition:** a stage's `repetitions` or `remaining_participants` says how often it is played. With neither set, it
   repeats until the owner stops the tournament (`tournament.stop_requested`).
 - **Renamed:** `next_stage` is now `current_stage`.
+- **Removing a model:** `tournament_model.active` and `stage_model.active` (default true). An admin's remove
+  (`DELETE /games/{g}/tournament-models/{m}`, answering `TournamentModelRemoval`) locks the tournaments made from the
+  model -- entering one takes the same lock. If none has an `entrant`, it deletes them, invitations, stages and root
+  pools included, and then the model. Otherwise it sets `active = false` on the model, its stages and its
+  inner models. A deactivated model isn't offered, can't be chosen for a new or changed tournament, can't be edited,
+  and isn't added back by the standard formats. A tournament already made from it keeps it, edits included. Making a
+  tournament takes the model `FOR SHARE`, so it can't be deleted from under that tournament.
 
 ## Changes the SQL still needs
 

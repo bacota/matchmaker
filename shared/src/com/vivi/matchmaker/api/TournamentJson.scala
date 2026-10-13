@@ -22,6 +22,7 @@ object TournamentJson {
     given ReadWriter[TournamentRequest] = macroRW
     given ReadWriter[TournamentModel] = macroRW
     given ReadWriter[TournamentModelRequest] = macroRW
+    given ReadWriter[TournamentModelRemoval] = macroRW
     given ReadWriter[Entrant] = macroRW
     given ReadWriter[PlayerName] = macroRW
     given ReadWriter[TournamentSummary] = macroRW

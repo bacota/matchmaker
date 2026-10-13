@@ -48,7 +48,8 @@ case class TournamentSettings(
 
 /** A design a game's admin offers (V52): a tournament is made from one, copying its stages. `classification` is the
   * group it is listed under where a tournament is created; a model with none is not offered on its own, being the inner
-  * design of another's nesting stage. `poolSize` is the default pool size to suggest, `None` for the game's R.
+  * design of another's nesting stage. `poolSize` is the default pool size to suggest, `None` for the game's R. A model
+  * that is not `active` has been deactivated by an admin, and is offered no longer.
   */
 case class TournamentModel(
     gameId: GameId,
@@ -58,8 +59,14 @@ case class TournamentModel(
     classification: Option[String],
     poolSize: Option[Int],
     lateEntries: Boolean,
-    design: TournamentDesign
+    design: TournamentDesign,
+    active: Boolean = true
 )
+
+/** What became of a model an admin removed: `deleted`, with the `tournamentsDeleted` made from it, when nobody had
+  * entered a tournament made from it; otherwise only deactivated, its tournaments left as they were.
+  */
+case class TournamentModelRemoval(deleted: Boolean, tournamentsDeleted: Int)
 
 /** What an admin creates or edits a model with. */
 case class TournamentModelRequest(
