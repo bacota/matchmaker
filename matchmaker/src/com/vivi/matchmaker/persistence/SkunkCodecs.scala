@@ -6,7 +6,10 @@ import skunk.data.Type
 import java.time.{Instant, OffsetDateTime, ZoneOffset}
 import com.vivi.matchmaker.model.{
     GameType,
+    MatchStatus,
+    MoveType,
     NotificationPreferences,
+    RoleType,
     SeatNotifications,
     TimeLimitKind,
     TimeLimitUnit,
@@ -28,6 +31,9 @@ object SkunkCodecs {
       * one-character discriminator, because the set of actions is expected to grow and 'FORFEIT' reads as itself in a
       * query.
       */
+    /* Text under check constraints, as `timeoutAction` is (V51). */
+    val roleType: Codec[RoleType] = text.imap(RoleType.fromCode)(_.code)
+    val moveType: Codec[MoveType] = text.imap(MoveType.fromCode)(_.code)
     val timeoutAction: Codec[TimeoutAction] = text.imap(TimeoutAction.fromCode)(_.code)
 
     /** `time_limit_kind` on `match` and `challenge`: whether the limit is per turn or the player's budget for the whole
@@ -37,6 +43,9 @@ object SkunkCodecs {
 
     /** `time_limit_unit`: the unit a limit was offered in, and so the unit it is read back in. */
     val timeLimitUnit: Codec[TimeLimitUnit] = text.imap(TimeLimitUnit.fromCode)(_.code)
+
+    /** `match.status` (V52): where a match is in its life, by its one-letter code. */
+    val matchStatus: Codec[MatchStatus] = text.imap(MatchStatus.fromCode)(_.code)
 
     /** The eleven `notify_*` columns of `player` and `player_game`, as one value.
       *
@@ -50,7 +59,7 @@ object SkunkCodecs {
       */
     val notificationPreferences: Codec[NotificationPreferences] =
         (bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *: bool.opt *:
-            bool.opt *: bool.opt).to[NotificationPreferences]
+            bool.opt *: bool.opt *: bool.opt).to[NotificationPreferences]
 
     /** The four `notify_*` columns of `participant` (V24), as one value.
       *

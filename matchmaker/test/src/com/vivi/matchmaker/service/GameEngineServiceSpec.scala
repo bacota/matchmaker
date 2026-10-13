@@ -138,9 +138,12 @@ class GameEngineServiceSpec extends PropertySuite {
                     // challenger alone and still have a second role for a second player to accept as.
                     // Each is shown as something other than its name, so that what reaches the engine
                     // (the name) and what reaches a player (the display name) can be told apart.
+                    // Defender is recommended rather than optional, so every start here is also the proof
+                    // that a recommended role is one a start does not wait for (V51); other specs keep
+                    // an optional one.
                     Seq(
-                      GameRole(GameRoleId(0), GameId.unassigned, "attacker", optional = false, "Attacker side"),
-                      GameRole(GameRoleId(0), GameId.unassigned, "defender", optional = true, "Defender side")
+                      GameRole(GameRoleId(0), GameId.unassigned, "attacker", RoleType.Required, "Attacker side"),
+                      GameRole(GameRoleId(0), GameId.unassigned, "defender", RoleType.Recommended, "Defender side")
                     ),
                     parameters,
                     gameExternalId
@@ -300,7 +303,7 @@ class GameEngineServiceSpec extends PropertySuite {
             val services = TestServices.servicesWith(StubEngine())
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                // The challenger takes 'defender', which is optional, leaving the required 'attacker'
+                // The challenger takes 'defender', which is recommended, leaving the required 'attacker'
                 // with nobody playing it — the only thing standing between this challenge and a match.
                 // The refusal is read by a player, so it names the seat the way they see it.
                 challenge <- services.challenges.create(
@@ -612,7 +615,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       seat,
                       List(seat),
                       prevMoveAt,
-                      started.start,
+                      started.start.get,
                       gameExternalId
                     )
                 after <- participantsOf(started)
@@ -1123,7 +1126,7 @@ class GameEngineServiceSpec extends PropertySuite {
             } yield stored.contains(model.Result(fixture.game.gameId, seat, 1, Map("points" -> 42.0), true)) &&
                 after.head.completed &&
                 !after.head.pending &&
-                reread.completedAt.exists(at => !at.isBefore(started.start)) &&
+                reread.completedAt.exists(at => !at.isBefore(started.start.get)) &&
                 completed.exists(_.matchId == started.matchId)
             result.timeout(15.seconds).unsafeRunSync()
         }
@@ -1287,7 +1290,7 @@ class GameEngineServiceSpec extends PropertySuite {
               takenAt = prevMoveAt,
               // The move before, which for the first move of a match is the match's own start: this is
               // the ordinary turn-taking engine, spelling out what it used to leave to be inferred.
-              startedAt = started.start,
+              startedAt = started.start.get,
               callerExternalId = gameExternalId
             )
             // What the engine will say when it is asked: the same thing, so that by default the

@@ -37,7 +37,15 @@ class NotificationServiceSpec extends PropertySuite {
                 "description",
                 "https://engine.example.com/games",
                 active = true,
-                Seq(GameRole(GameRoleId(0), GameId.unassigned, "player", optional = false, displayName = "player")),
+                Seq(
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "player",
+                    roleType = RoleType.Required,
+                    displayName = "player"
+                  )
+                ),
                 Seq.empty,
                 s"game-$seed"
               )

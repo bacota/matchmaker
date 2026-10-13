@@ -361,4 +361,62 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(turns.map(_.participantId).toSet, Set(11L, 22L))
         assert(turns.forall(_.startedAt.contains(created)))
     }
+
+    /** A match that may not end in a draw, on a clock the test moves. */
+    private def noTieFixture() = {
+        val store = InMemoryMatchStore[RpsMatch]()
+        val recorder = RecordingMatchmaker()
+        var at = created
+        val engine = Engine(store, recorder, "http://engine.test", () => at)
+        engine.createGame(createRequest().copy(tiesAllowed = Some(false)))
+        (engine, recorder, store, (seconds: Long) => at = at.plusSeconds(seconds))
+    }
+
+    test("when ties are not allowed, a tied throw starts another, and the first throw that wins ends the match") {
+        val (engine, recorder, store, advance) = noTieFixture()
+
+        engine.move("m-1", alice, Shape.Rock)
+        advance(30)
+        engine.move("m-1", bob, Shape.Rock)
+        val tied = store.get("m-1").get
+        assert(!tied.isOver, "a tie must not end a match that may not be drawn")
+        assertEquals(tied.pending.map(_.participantId), List(11L, 22L))
+        assertEquals(tied.tiedRounds, List(Shape.Rock))
+        assertEquals(tied.roundStartedAt, created.plusSeconds(30))
+        assertEquals(recorder.results, Nil)
+        // Both are named as the new round starts, from the moment the tie resolved.
+        assertEquals(recorder.moves.last._2.next.toSet, Set(11L, 22L))
+        // The tied throws are known to both now, but a new throw is not shown before the round is in.
+        assertEquals(engine.stateOf(tied, tied.seatFor(alice)).yourThrow, None)
+        assertEquals(engine.stateOf(tied, tied.seatFor(alice)).tiedRounds, List("Rock"))
+
+        advance(10)
+        engine.move("m-1", bob, Shape.Paper)
+        assertEquals(engine.stateOf(store.get("m-1").get, None).players.flatMap(_.shape), Nil)
+        engine.move("m-1", alice, Shape.Scissors)
+        val done = store.get("m-1").get
+        assert(done.isOver)
+        assertEquals(done.winner.map(_.participantId), Some(11L))
+        val results = recorder.results.head._2
+        assertEquals(results.results.find(_.participantId == 11L).map(_.rank), Some(1))
+        assertEquals(results.results.find(_.participantId == 11L).map(_.scores("score").num), Some(1.0))
+        assertEquals(
+          results.summary,
+          Some("<strong>Alice</strong>'s scissors beat <strong>Bob</strong>'s paper, after a tied throw.")
+        )
+        // Every throw of every round is a turn, the second round's charged from when it began.
+        val turns = results.turns.get
+        assertEquals(turns.size, 4)
+        assert(turns.takeRight(2).forall(_.startedAt.contains(created.plusSeconds(30))))
+    }
+
+    test("a match that allows ties still ends on the first tied throw, and one stored before the flag reads as one") {
+        val (engine, _, store, _, _) = fixture()
+        engine.move("m-1", alice, Shape.Rock)
+        engine.move("m-1", bob, Shape.Rock)
+        assert(store.get("m-1").get.isDraw)
+        val stored = write(store.get("m-1").get)
+        assert(!stored.contains("tiesAllowed"), "a match that allows ties is stored as it always was")
+        assert(read[RpsMatch](stored).tiesAllowed)
+    }
 }

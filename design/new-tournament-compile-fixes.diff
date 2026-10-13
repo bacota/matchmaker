@@ -1,0 +1,164 @@
+--- a/design/new-tournament.sql
++++ b/design/new-tournament.sql
+@@ -29,9 +29,9 @@
+     points_bonus boolean not null default true,
+     promote      int default 1 check (promote is null or demote is null or promote < demote),
+     rubber_match boolean not null default false, -- use a rubber match to break ties in pools, otherwise use total score differential
+-    stract_strata boolean not null default true,
++    strict_strata boolean not null default true,
+     tie_breaker_stage boolean not null default false,
+-    seed_policy text not null check (seed_policy in ('CONST', 'ELO', 'PREV', 'WINNER'))
++    seed_policy text not null check (seed_policy in ('CONST', 'ELO', 'PREV', 'WINNER')),
+     current_stage_model_id BIGINT,
+     create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
+     update_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
+@@ -80,7 +80,6 @@
+     automatic_rounds boolean not null default false,
+     friendly  boolean not null default true,
+     invitational boolean not null default false,
+-    late_entries boolean not null default false,
+     min_rating       int default null,
+     max_rating        int default null,
+     public        boolean not null default true,
+@@ -119,7 +118,7 @@
+     promote      int default 1 check (promote is null or demote is null or promote < demote),
+     strict_strata boolean not null default true,
+     tie_breaker_stage boolean not null default false,
+-    seed_policy text not null check (seed_policy in ('CONST', 'ELO', 'PREV', 'WINNER'))
++    seed_policy text not null check (seed_policy in ('CONST', 'ELO', 'PREV', 'WINNER')),
+     current_stage_id BIGINT,
+     create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
+     update_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
+@@ -132,9 +131,6 @@
+ create index on stage(game_id, tournament_id, current_stage_id) where current_stage_id is not null;
+ 
+ alter table tournament add foreign key (game_id, tournament_id, first_stage_id) references stage;
+-alter table tournament add   FOREIGN KEY (game_id, tournament_id, current_round) references round
+-
+-create index on tournament(game_id, tournament_id, current_round) where current_round is not null;
+ create index on tournament (game_id, tournament_id, first_stage_id);
+ 
+ 
+@@ -160,6 +156,23 @@
+ 
+ create index on nesting_stage(game_id, tournament_id, inner_tournament_id);
+ 
++-- Before SEED, which references it. A round is played within one atomic stage.
++CREATE TABLE ROUND (
++    game_id       INT     NOT NULL,
++    tournament_id BIGINT  NOT NULL,
++    round int NOT NULL,
++    stage_id bigint NOT NULL,
++    start_date  TIMESTAMPTZ,   -- null until started
++    deadline  TIMESTAMPTZ ,
++    complete boolean not null default false,
++    PRIMARY KEY (game_id, tournament_id, round),
++    FOREIGN KEY  (game_id, tournament_id, stage_id) references atomic_stage
++);
++
++create index on ROUND(game_id, tournament_id, stage_id);
++
++alter table tournament add FOREIGN KEY (game_id, tournament_id, current_round) references round;
++create index on tournament(game_id, tournament_id, current_round) where current_round is not null;
+ 
+ 
+ -- Who may enter an invitational tournament. 
+@@ -207,7 +220,7 @@
+     withdrawn_at    TIMESTAMPTZ,
+     create_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
+     update_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
+-    PRIMARY KEY (game_id, tournment_id, entrant_id),
++    PRIMARY KEY (game_id, tournament_id, entrant_id),
+     FOREIGN KEY (game_id, tournament_id) REFERENCES tournament,
+     FOREIGN KEY (game_type, game_id) REFERENCES game (game_type, game_id)
+ );
+@@ -230,7 +243,9 @@
+     FOREIGN KEY (game_id, character_id) REFERENCES character (game_id, character_id),
+     FOREIGN KEY (game_type, game_id) REFERENCES game (game_type, game_id),
+     -- A character enters a tournament once.
+-    UNIQUE (game_id, tournament_id, character_id)
++    UNIQUE (game_id, tournament_id, character_id),
++    -- For character_participant's foreign key, which names the character as well as the entrant.
++    UNIQUE (game_id, tournament_id, entrant_id, character_id)
+ );
+ 
+ CREATE INDEX character_entrant_character ON character_entrant (game_id,character_id);
+@@ -252,8 +267,8 @@
+     FOREIGN KEY (game_id, tournament_id, entrant_id) references entrant
+ );
+ 
+-create unique index on SEEDING  (game_id, tournament_id, entrant_id);
+-create  index on SEEDING  (game_id, tournament_id, eliminated) where eliminated is not null;
++create unique index on SEED  (game_id, tournament_id, entrant_id);
++create  index on SEED  (game_id, tournament_id, eliminated) where eliminated is not null;
+ 
+ 
+ -- Do we need this table at all?
+@@ -263,7 +278,7 @@
+     pool_id BIGINT not null GENERATED ALWAYS AS IDENTITY,
+     stage_id BIGINT not null,
+     stratum INT NOT NULL default 0,
+-    completed_at TIMESTAMPZ,
++    completed_at TIMESTAMPTZ,
+     create_date   TIMESTAMPTZ NOT NULL DEFAULT now(),
+     update_date   TIMESTAMPTZ NOT NULL DEFAULT now(),
+     PRIMARY KEY (game_id, tournament_id, pool_id),
+@@ -291,24 +306,6 @@
+ 
+ Create index on pool_member (game_id, tournament_id, entrant_id);
+ 
+-Create index on pool_character_member (game_id, tournament_id, entrant_id, character_id);
+-
+-CREATE TABLE ROUND (
+-    game_id       INT     NOT NULL,
+-    tournament_id BIGINT  NOT NULL,
+-    round int NOT NULL,
+-    stage_id bigint NOT NULL,
+-    start_date  TIMESTAMPTZ,   -- null until started
+-    deadline  TIMESTAMPTZ ,
+-    complete boolean not null default false,
+-    PRIMARY KEY (game_id, tournament_id, round),
+-    PRIMARY KEY (game_id, tournament_id, round),    
+-    FOREIGN KEY  (game_id, tournament_id, stage_id) references atomic_stage
+-);
+-
+-create index on ROUND(game_id, tournament_id, stage_id);
+-
+-
+ ALTER TABLE match ADD COLUMN tournament_id BIGINT;
+ ALTER TABLE match ADD COLUMN pool_id BIGINT;
+ ALTER TABLE match ADD COLUMN round INT;
+@@ -316,9 +313,9 @@
+ ALTER TABLE match ADD COLUMN ties_allowed boolean not null default true;
+ ALTER TABLE match ADD COLUMN rubber boolean not null default false;
+ alter table match add column    status        TEXT   CHECK (status IN ('S', 'C', 'D', 'P', 'F'));   -- for "Scheduled", "Choosing", "Due", "in Progress" or "Complete"
+-update match set status = 'F' where completed or canceled;
++update match set status = 'F' where completed is not null or cancelled;
+ update match set status='P' where status is null;
+-alter table match alter column status not null;
++alter table match alter column status set not null;
+ 
+ alter table match drop column completed;  -- made redundant by status;
+ 
+@@ -360,14 +357,18 @@
+ alter table participant add  CHECK ( (tournament_id is NULL) = (entrant_id is NULL)  AND ( (tournament_id is NULL) <> (challenge_id is NULL) ) );
+ alter table participant add foreign key (game_id, tournament_id, entrant_id)  references entrant;
+ 
+-create unique index on participant(game_id, tournament_id, entrant_id, participant_id) where tournament_id is not null;
++-- Not partial: a foreign key (character_participant's) cannot reference a partial index. Challenge seats,
++-- whose tournament_id is NULL, never conflict in it.
++create unique index on participant(game_id, tournament_id, entrant_id, participant_id);
+ create index on participant(game_id, challenge_id) where challenge_id is not null;
+ 
+ alter table character_participant add column tournament_id bigint;
+ alter table character_participant add column  entrant_id bigint;
+ 
+-alter table character_participant add foreign key (game_id, tournament_id, entrant_id, participant_id) references participant;
+-alter table character_participant add foreign key (game_id, tournament_id, entrant_id, character_id) references character_entrant;
++alter table character_participant add foreign key (game_id, tournament_id, entrant_id, participant_id)
++    references participant (game_id, tournament_id, entrant_id, participant_id);
++alter table character_participant add foreign key (game_id, tournament_id, entrant_id, character_id)
++    references character_entrant (game_id, tournament_id, entrant_id, character_id);
+ create index on character_participant (game_id, tournament_id, entrant_id, character_id) where tournament_id is not null;
+ 
+ 

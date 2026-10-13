@@ -18,6 +18,11 @@ enum Refusal(val status: Int, val message: String) {
       */
     case TimedOut(what: String) extends Refusal(409, what)
 
+    /** A create for a match id the engine already holds, naming different players: not the same match sent again, but a
+      * second match claiming the first one's id.
+      */
+    case Conflict(what: String) extends Refusal(409, what)
+
     /** Something behind the engine — matchmaker — did not answer. The request was fine, and may be repeated. */
     case Unavailable(what: String) extends Refusal(502, what)
 }

@@ -10,10 +10,10 @@ import java.time.{Duration, Instant}
   * empty until the engine has answered, which is the state a match is in for the moment between being written and the
   * create call returning.
   *
-  * `challengeId` is the challenge this match was started from, which is never deleted and is therefore where the
-  * match's creator comes from: the challenge's challenger. Holding the challenge rather than copying its challenger
-  * into a column of its own means the two cannot drift apart, and it keeps the settings, message and time limit the
-  * match was made under readable beside the match itself.
+  * `creator` is the player whose match this is: the one who may cancel it. For a match started from a challenge
+  * (`challengeId`) that is the challenger, copied onto the match when it is started (V50). A match need not come from a
+  * challenge at all — a tournament's are created by the tournament — and holding the creator on the match itself is
+  * what lets every listing and the cancel say whose a match is without joining a challenge that may not exist.
   *
   * `completedAt` and `cancelled` are separate rather than one status, because they answer different questions. A
   * completed match was played to an end the engine reported; a cancelled one was called off by its creator and has no
@@ -22,14 +22,38 @@ import java.time.{Duration, Instant}
   * `completedAt` is a time rather than a flag so that a finished match can say when it finished — a history in no
   * particular order is not much of a history. `completed` is kept beside it as a derived answer to the question most
   * callers actually ask, and is deliberately not a field: two stored columns saying the same thing could disagree.
+  *
+  * `status` says where the match is in its life (V52), and is the source of truth: a tournament's match is written when
+  * its pool is formed, long before the engine has a game for it, and spends that time [[MatchStatus.Scheduled]],
+  * [[MatchStatus.Choosing]] and [[MatchStatus.Due]], with no urls and no `start`. A challenge's match is created in the
+  * engine as it is written, so it begins [[MatchStatus.InProgress]]. [[MatchStatus.Finished]] is completed or
+  * cancelled, which the database holds in step with `completedAt` and `cancelled`.
   */
+enum MatchStatus(val code: String) {
+    case Scheduled extends MatchStatus("S")
+    case Choosing extends MatchStatus("C")
+    case Due extends MatchStatus("D")
+    case InProgress extends MatchStatus("P")
+    case Finished extends MatchStatus("F")
+
+    /** Whether the engine has been asked to create the match's game: it has begun, or is over. */
+    def begun: Boolean = this == InProgress || this == Finished
+}
+
+object MatchStatus {
+    def fromCode(code: String): MatchStatus =
+        values.find(_.code == code).getOrElse(throw new IllegalArgumentException(s"unknown match status '$code'"))
+}
+
 case class Match(
     gameId: GameId,
     matchId: MatchId,
-    challengeId: ChallengeId,
+    challengeId: Option[ChallengeId],
+    creator: PlayerId,
     description: String,
     completedAt: Option[Instant],
-    start: Instant,
+    /** When play began: set when the match is created in the engine, and `None` until then. */
+    start: Option[Instant],
     timeLimit: Option[Duration],
     settings: String,
     isPublic: Boolean = false,
@@ -57,7 +81,8 @@ case class Match(
     /** Whether a friendly match's archive has expired (V38). There is nothing left to view, so a player is not offered
       * the urls; they are cleared where they are handed out.
       */
-    archiveExpired: Boolean = false
+    archiveExpired: Boolean = false,
+    status: MatchStatus = MatchStatus.InProgress
 ) {
 
     /** Whether the match was played to an end. */

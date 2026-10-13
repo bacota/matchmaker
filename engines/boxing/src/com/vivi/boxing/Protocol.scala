@@ -75,11 +75,15 @@ object Protocol {
         completed: Boolean,
         winner: Option[String],
         draw: Boolean,
-        /** "knockout", "points" or "forfeit", once the bout is over. */
+        /** "knockout", "points", "lot" or "forfeit", once the bout is over. */
         method: Option[String],
         corners: List[CornerView],
         rounds: List[RoundView],
-        clock: Option[ClockView] = None
+        clock: Option[ClockView] = None,
+        /** Whether the bout is past its schedule: an extra round, fought because the bout may not be drawn and was
+          * level after the rounds it was scheduled for.
+          */
+        extraRound: Boolean = false
     )
 
     /** One corner as a viewer may see it. `fighter` is the fighter's characteristics, and only in the viewer's own

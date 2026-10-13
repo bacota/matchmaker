@@ -56,6 +56,10 @@ enum Ending(val label: String) {
   * `maxMoves` is how many piece moves, by both sides together, end the match as a draw. It has no default, so it is
   * always stored: a match keeps the cap it was created with, whatever the default becomes later. `clock` is a live
   * match's turn clock, and `None` for every other match.
+  *
+  * `tiesAllowed` is false for a match that must not end in a draw. Then a match that would be drawn — the move cap, or
+  * neither side able to move — goes to whichever side took more points of the other's pieces ([[capturePoints]]), and
+  * is drawn only if they are level. Defaulted, so a match stored before it existed is the match it always was.
   */
 case class StrategoMatch(
     matchId: String,
@@ -72,7 +76,8 @@ case class StrategoMatch(
     // What the match's pages are titled by (`MatchTitle`). Defaulted, so a match stored before they
     // were kept reads back as it was, and is titled by the game alone.
     override val gameDisplayName: Option[String] = None,
-    override val description: Option[String] = None
+    override val description: Option[String] = None,
+    tiesAllowed: Boolean = true
 ) extends MatchLike {
 
     def seatOf(side: Side): Option[Seat] = seats.find(_.side == side)
@@ -130,21 +135,48 @@ case class StrategoMatch(
             case Some(Ending.Conceded)                        => conceded.map(_.other)
             case Some(Ending.FlagTaken)                       => Side.values.find(board.hasFlag)
             case Some(Ending.NoMoves) if !stuck(toMove.other) => Some(toMove.other)
+            case Some(_) if !tiesAllowed                      => onPoints
             case _                                            => None
         }
+
+    /** The side ahead on [[capturePoints]], or `None` if they are level: what decides a match that would otherwise be
+      * drawn, when ties are not allowed.
+      */
+    def onPoints: Option[Side] = {
+        val (red, blue) = (capturePoints(Side.Red), capturePoints(Side.Blue))
+        if (red > blue) Some(Side.Red) else if (blue > red) Some(Side.Blue) else None
+    }
+
+    /** Whether a match that would have been drawn went to the side ahead on points instead. */
+    def decidedOnPoints: Boolean = !tiesAllowed && onPoints.isDefined && wouldBeDrawn
+
+    /** Whether the way the match ended is a draw by the game's own rules: the move cap, or neither side able to move.
+      */
+    private def wouldBeDrawn: Boolean =
+        ending.contains(Ending.MoveCap) || (ending.contains(Ending.NoMoves) && stuck(toMove.other))
 
     /** Not a match the clock ended with nobody winning: two players who both ran out both lost. */
     def isDraw: Boolean = isOver && !ranOut && winner.isEmpty
 
     /** How many enemy pieces `side` has taken: every battle it won, and every one where both pieces fell. */
-    def captured(side: Side): Int =
-        moves.flatMap(m => m.battle.map(m.side -> _)).count { (attacker, battle) =>
+    def captured(side: Side): Int = taken(side).size
+
+    /** The ranks of the enemy pieces `side` has taken, in the order it took them. */
+    def taken(side: Side): List[Rank] =
+        moves.flatMap(m => m.battle.map(m.side -> _)).flatMap { (attacker, battle) =>
             battle.result match {
-                case Result.AttackerWins => attacker == side
-                case Result.DefenderWins => attacker != side
-                case Result.BothLost     => true
+                case Result.AttackerWins if attacker == side => List(battle.defender)
+                case Result.DefenderWins if attacker != side => List(battle.attacker)
+                case Result.BothLost => List(if (attacker == side) battle.defender else battle.attacker)
+                case _               => Nil
             }
         }
+
+    /** What `side`'s captures are worth: each piece's strength, and 1 for a bomb or the spy, whose strengths say
+      * nothing of their worth. The number a tournament's score tiebreak reads, and what decides a match that may not be
+      * drawn.
+      */
+    def capturePoints(side: Side): Int = taken(side).map(StrategoMatch.pointsFor).sum
 
     /** The board as the two armies were deployed, before any piece moved — where a replay starts — or `None` until both
       * are down.
@@ -215,6 +247,12 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
     /** The cap for a match created without the `maxMoves` parameter. Changing it changes only matches created after. */
     val defaultMaxMoves = 2000
 
+    /** What taking a piece of this rank is worth: its strength, except a bomb or the spy, which are worth 1. */
+    def pointsFor(rank: Rank): Int = rank match {
+        case Rank.Bomb | Rank.Spy => 1
+        case other                => other.strength
+    }
+
     /** Seats the players, honouring the roles matchmaker sent when it sent usable ones.
       *
       * A game configured in matchmaker with roles named `Red` and `Blue` gets exactly those seats. With no roles, or
@@ -284,11 +322,16 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
                 case (Ending.Conceded, Some(w)) => s"${who(w.other)} surrendered to ${who(w)}."
                 case (Ending.FlagTaken, Some(w)) =>
                     s"${who(w)} captured ${who(w.other)}'s flag in ${moves(m.moves.size)}."
+                case (Ending.NoMoves, Some(w)) if m.decidedOnPoints =>
+                    s"Neither side could move. ${who(w)} wins on captures, ${m.capturePoints(w)}–${m.capturePoints(w.other)}."
                 case (Ending.NoMoves, Some(w)) => s"${who(w.other)} had no piece left to move. ${who(w)} wins."
-                case (Ending.NoMoves, None)    => "Neither side could move. A draw."
-                case (Ending.MoveCap, _)       => s"A draw: the limit of ${moves(m.maxMoves)} was reached."
-                case (_, Some(w))              => s"${who(w)} wins."
-                case (_, None)                 => "A draw."
+                case (Ending.MoveCap, Some(w)) =>
+                    s"The limit of ${moves(m.maxMoves)} was reached. ${who(w)} wins on captures, " +
+                        s"${m.capturePoints(w)}–${m.capturePoints(w.other)}."
+                case (Ending.NoMoves, None) => "Neither side could move. A draw."
+                case (Ending.MoveCap, _)    => s"A draw: the limit of ${moves(m.maxMoves)} was reached."
+                case (_, Some(w))           => s"${who(w)} wins."
+                case (_, None)              => "A draw."
             }
         }
 
@@ -297,6 +340,7 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
           "side" -> ujson.Str(seat.side.toString),
           "moves" -> ujson.Num(m.moves.count(_.side == seat.side).toDouble),
           "captured" -> ujson.Num(m.captured(seat.side).toDouble),
+          "score" -> ujson.Num(m.capturePoints(seat.side).toDouble),
           "ending" -> m.ending.map(e => ujson.Str(e.label)).getOrElse(ujson.Null)
         )
 
@@ -316,7 +360,8 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
           resultsCallbackUrl = request.resultsCallbackUrl,
           maxMoves = maxMoves,
           gameDisplayName = request.gameDisplayName,
-          description = request.description
+          description = request.description,
+          tiesAllowed = Protocol.tiesAllowed(request)
         )
 
     /** A piece as it is stored: on its square, since a board is mostly empty and storing 100 cells would mostly store

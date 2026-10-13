@@ -9,6 +9,8 @@ import org.scalajs.dom.{HttpMethod, RequestInit}
 import upickle.default.{ReadWriter, read, write}
 import com.vivi.matchmaker.api.Json
 import com.vivi.matchmaker.api.Json.given
+import com.vivi.matchmaker.api.TournamentJson
+import com.vivi.matchmaker.api.TournamentJson.given
 import com.vivi.matchmaker.model._
 
 /** A failed request, carrying the status so callers can distinguish the cases that mean something: 403 on `/me` means
@@ -373,6 +375,122 @@ object ApiClient {
           s"/challenges/${gameId.value}/${challengeId.value}/acceptances/${playerId.value}",
           None
         )
+
+    // ---- tournaments (V52) ------------------------------------------------------------------
+
+    /** The tournaments the caller owns, has entered or is invited to. */
+    def myTournaments(): Future[Seq[TournamentSummary]] = get[Seq[TournamentSummary]]("/me/tournaments")
+
+    /** The seats waiting on the caller to choose a role. */
+    def tournamentChoices(): Future[Seq[TournamentChoice]] = get[Seq[TournamentChoice]]("/me/tournament-choices")
+
+    /** Where the caller stands in every tournament they have entered. */
+    def tournamentStandings(): Future[Seq[TournamentStanding]] =
+        get[Seq[TournamentStanding]]("/me/tournament-standings")
+
+    def tournaments(gameId: GameId): Future[Seq[TournamentSummary]] =
+        get[Seq[TournamentSummary]](s"/games/${gameId.value}/tournaments")
+
+    def tournament(gameId: GameId, tournamentId: TournamentId): Future[TournamentDetail] =
+        get[TournamentDetail](tournamentPath(gameId, tournamentId))
+
+    def createTournament(gameId: GameId, request: TournamentRequest): Future[Tournament] =
+        send[Tournament](HttpMethod.POST, s"/games/${gameId.value}/tournaments", Some(write(request)))
+
+    def updateTournament(gameId: GameId, tournamentId: TournamentId, request: TournamentRequest): Future[Tournament] =
+        send[Tournament](HttpMethod.PUT, tournamentPath(gameId, tournamentId), Some(write(request)))
+
+    /** One of the owner's steps through a tournament's life: `open`, `start` or `cancel`. */
+    def tournamentStep(gameId: GameId, tournamentId: TournamentId, step: String): Future[Tournament] =
+        send[Tournament](HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/$step", None)
+
+    def inviteToTournament(gameId: GameId, tournamentId: TournamentId, playerId: PlayerId): Future[Unit] =
+        sendUnit(
+          HttpMethod.POST,
+          s"${tournamentPath(gameId, tournamentId)}/invitations",
+          Some(write(TournamentJson.TournamentInvite(playerId)))
+        )
+
+    def revokeTournamentInvitation(gameId: GameId, tournamentId: TournamentId, playerId: PlayerId): Future[Unit] =
+        sendUnit(HttpMethod.DELETE, s"${tournamentPath(gameId, tournamentId)}/invitations/${playerId.value}", None)
+
+    def enterTournament(gameId: GameId, tournamentId: TournamentId, characterId: Option[CharacterId]): Future[Entrant] =
+        send[Entrant](
+          HttpMethod.POST,
+          s"${tournamentPath(gameId, tournamentId)}/entries",
+          Some(write(TournamentJson.EnterRequest(characterId)))
+        )
+
+    def withdrawFromTournament(gameId: GameId, tournamentId: TournamentId, entrantId: EntrantId): Future[Unit] =
+        sendUnit(HttpMethod.DELETE, s"${tournamentPath(gameId, tournamentId)}/entries/${entrantId.value}", None)
+
+    /** Begins the next round: for `duration` if given, and otherwise for the tournament's round duration. */
+    def startRound(
+        gameId: GameId,
+        tournamentId: TournamentId,
+        duration: Option[java.time.Duration] = None
+    ): Future[TournamentJson.RoundStarted] =
+        send[TournamentJson.RoundStarted](
+          HttpMethod.POST,
+          s"${tournamentPath(gameId, tournamentId)}/rounds",
+          Some(write(TournamentJson.StartRoundRequest(duration.map(_.getSeconds))))
+        )
+
+    def checkRound(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
+        sendUnit(HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/check", None)
+
+    def stopTournamentStage(gameId: GameId, tournamentId: TournamentId): Future[Unit] =
+        sendUnit(HttpMethod.POST, s"${tournamentPath(gameId, tournamentId)}/stop", None)
+
+    def chooseRole(
+        gameId: GameId,
+        tournamentId: TournamentId,
+        matchId: MatchId,
+        role: GameRoleId
+    ): Future[TournamentMatchView] =
+        send[TournamentMatchView](
+          HttpMethod.POST,
+          s"${tournamentPath(gameId, tournamentId)}/matches/${matchId.value}/role",
+          Some(write(TournamentJson.ChooseRoleRequest(role)))
+        )
+
+    def decideMatch(
+        gameId: GameId,
+        tournamentId: TournamentId,
+        matchId: MatchId,
+        ranks: List[EntrantRank]
+    ): Future[Unit] =
+        sendUnit(
+          HttpMethod.POST,
+          s"${tournamentPath(gameId, tournamentId)}/matches/${matchId.value}/result",
+          Some(write(TournamentJson.DecideRequest(ranks)))
+        )
+
+    /** The models a game's tournaments are made from (V52). */
+    def tournamentModels(gameId: GameId): Future[Seq[TournamentModel]] =
+        get[Seq[TournamentModel]](s"/games/${gameId.value}/tournament-models")
+
+    /** Every model a game could offer (V52). */
+    def allTournamentModels(): Future[Seq[TournamentModel]] =
+        get[Seq[TournamentModel]]("/tournament-models")
+
+    /** Offers a model in a game: the models the game now offers. */
+    def offerTournamentModel(gameId: GameId, modelId: TournamentModelId): Future[Seq[TournamentModel]] =
+        send[Seq[TournamentModel]](HttpMethod.PUT, modelPath(gameId, modelId), None)
+
+    /** Stops offering a model in a game: the models the game now offers. */
+    def withdrawTournamentModel(gameId: GameId, modelId: TournamentModelId): Future[Seq[TournamentModel]] =
+        send[Seq[TournamentModel]](HttpMethod.DELETE, modelPath(gameId, modelId), None)
+
+    /** A site admin's sync of the stored models with those the code defines: what it did. */
+    def syncTournamentModels(): Future[TournamentModelSync] =
+        send[TournamentModelSync](HttpMethod.POST, "/tournament-models/sync", None)
+
+    private def modelPath(gameId: GameId, modelId: TournamentModelId): String =
+        s"/games/${gameId.value}/tournament-models/${scalajs.js.URIUtils.encodeURIComponent(modelId.value)}"
+
+    private def tournamentPath(gameId: GameId, tournamentId: TournamentId): String =
+        s"/games/${gameId.value}/tournaments/${tournamentId.value}"
 
     private def get[A: ReadWriter](path: String): Future[A] = send[A](HttpMethod.GET, path, None)
 

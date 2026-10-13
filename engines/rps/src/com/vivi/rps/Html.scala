@@ -199,10 +199,13 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
       if (!state.you) return state.winner + " wins";
       return state.winner === state.you ? "you win" : "you lose";
     }
-    if (state.you && !state.yourThrow) return "throw";
+    // A match that may not end in a draw throws again after a tie, and says what tied.
+    const tied = (state.tiedRounds || []);
+    const again = tied.length ? "both threw " + tied[tied.length - 1].toLowerCase() + " — " : "";
+    if (state.you && !state.yourThrow) return again + (tied.length ? "throw again" : "throw");
     // Both sides are pending from the start, so "waiting" here names whoever is left — which is
     // the other player when this viewer has thrown, and both of them on the public board.
-    return "waiting for " + state.waitingFor.join(" and ");
+    return again + "waiting for " + state.waitingFor.join(" and ");
   }
 
   function escapeHtml(s) {

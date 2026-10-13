@@ -69,6 +69,30 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(m.seatOf(Mark.X).get.participantId, 22L)
     }
 
+    test("a create sent again with the same match id is answered with the first one's urls, and changes nothing") {
+        val (engine, recorder, store, created, _) = fixture(isPublic = true)
+        engine.move("m-1", "sub-alice", 4)
+        val played = store.get("m-1").get
+
+        assertEquals(engine.createGame(createRequest(isPublic = true)), Right(created))
+        // The move made since stands: the repeat did not start the match again.
+        assertEquals(store.get("m-1").get, played)
+        assertEquals(recorder.moves.size, 1)
+    }
+
+    test("a create for a stored match id naming other players is refused as a conflict") {
+        val (engine, _, store, _, m) = fixture()
+        val other = createRequest().copy(players =
+            List(Protocol.EnginePlayer("sub-carol", 33L, None, None, None), createRequest().players(1))
+        )
+
+        assertEquals(
+          engine.createGame(other),
+          Left(Refusal.Conflict("match 'm-1' already exists with other players"))
+        )
+        assertEquals(store.get("m-1").get, m)
+    }
+
     test("a game for anything but two players is refused") {
         val store = InMemoryMatchStore[TicTacToeMatch]()
         val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")

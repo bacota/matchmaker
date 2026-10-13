@@ -61,8 +61,20 @@ class EloRatingServiceSpec extends PropertySuite {
                 "https://engine.example.com/games",
                 active = true,
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false, displayName = "First"),
-                  GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false, displayName = "Second")
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "first",
+                    roleType = RoleType.Required,
+                    displayName = "First"
+                  ),
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "second",
+                    roleType = RoleType.Required,
+                    displayName = "Second"
+                  )
                 ),
                 Seq.empty,
                 unique("duel"),
@@ -462,7 +474,7 @@ class EloRatingServiceSpec extends PropertySuite {
               moved = second.participantId,
               next = List(first.participantId),
               takenAt = anHourAgo,
-              startedAt = m.start,
+              startedAt = m.start.get,
               callerExternalId = f.game.externalId
             )
             _ <- IO {

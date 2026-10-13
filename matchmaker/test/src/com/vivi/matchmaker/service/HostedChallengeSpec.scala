@@ -51,8 +51,20 @@ class HostedChallengeSpec extends PropertySuite {
                 "https://engine.example.com/games",
                 active = true,
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false, displayName = "First"),
-                  GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false, displayName = "Second")
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "first",
+                    roleType = RoleType.Required,
+                    displayName = "First"
+                  ),
+                  GameRole(
+                    GameRoleId(0),
+                    GameId.unassigned,
+                    "second",
+                    roleType = RoleType.Required,
+                    displayName = "Second"
+                  )
                 ),
                 Seq.empty,
                 unique("duel")
@@ -183,7 +195,7 @@ class HostedChallengeSpec extends PropertySuite {
             started <- flaky.engine.start(f.game.gameId, created.challengeId, f.host.externalId)
         } yield (
           listed.exists(_.challenge.challengeId == created.challengeId),
-          started.challengeId == created.challengeId
+          started.challengeId.contains(created.challengeId)
         )
         assertEquals(result.timeout(caseTimeout).unsafeRunSync(), (true, true))
     }

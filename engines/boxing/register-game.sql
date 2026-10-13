@@ -31,7 +31,8 @@ SELECT :'HOST' LIKE '/%' OR :'HOST' IN ('localhost', '127.0.0.1', '::1') AS is_l
 
 BEGIN;
 
-INSERT INTO game (game_type, name, display_name, description, url, character_url, active, external_id)
+INSERT INTO game (game_type, name, display_name, description, url, character_url, active, external_id,
+                  move_type)
 VALUES (
   -- 'C' — a character game: every corner is a character, which this game calls a fighter. Its
   -- characteristics are the character's state. A fighter is built on the engine's own page, which
@@ -47,14 +48,16 @@ VALUES (
   -- Where matchmaker's UI sends a player who has no fighter yet.
   regexp_replace(:'url', '/games$', '/fighters'),
   true,
-  :'external_id'
+  :'external_id',
+  -- Both corners plan each round at once.
+  'sim'
 )
 RETURNING game_id \gset
 
 -- Red and Blue, both required: a bout needs two fighters. Neither corner has any advantage — both
 -- plan every round at the same time.
-INSERT INTO game_role (game_id, name, optional, display_name)
-VALUES (:game_id, 'Red', false, 'Red'), (:game_id, 'Blue', false, 'Blue');
+INSERT INTO game_role (game_id, name, type, display_name)
+VALUES (:game_id, 'Red', 'required', 'Red'), (:game_id, 'Blue', 'required', 'Blue');
 
 -- How many rounds a bout is scheduled for. The challenger picks one of these values on the
 -- challenge form; the default is what a challenge that picked nothing gets. The engine accepts 3

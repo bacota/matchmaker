@@ -51,6 +51,10 @@ case class Round(
   *
   * Like rock-paper-scissors, and unlike tic-tac-toe, both corners move at once: each round, both players plan, neither
   * sees the other's plan, and the round resolves on whichever plan arrives second.
+  *
+  * `tiesAllowed` is false for a bout that must not end in a draw. Then a bout level on points after its scheduled
+  * rounds fights one more, and if that round is level too, its winner is drawn by lot. Defaulted, so a bout stored
+  * before it existed is the bout it always was.
   */
 case class Bout(
     matchId: String,
@@ -69,7 +73,8 @@ case class Bout(
     // What the match's pages are titled by (`MatchTitle`). Defaulted, so a match stored before they
     // were kept reads back as it was, and is titled by the game alone.
     override val gameDisplayName: Option[String] = None,
-    override val description: Option[String] = None
+    override val description: Option[String] = None,
+    tiesAllowed: Boolean = true
 ) extends MatchLike {
 
     def cornerOf(side: Side): Option[Corner] = corners.find(_.side == side)
@@ -86,7 +91,9 @@ case class Bout(
             blue <- cornerOf(Side.Blue).toList
             redFighter <- red.fighter.toList
             blueFighter <- blue.fighter.toList
-            number <- 1 to scheduledRounds
+            // One past the schedule, for the extra round a bout that may not be drawn can need: its plans
+            // exist only if that round was fought.
+            number <- 1 to scheduledRounds + 1
             redPlan <- planOf(red, number).toList
             bluePlan <- planOf(blue, number).toList
         } yield {
@@ -98,9 +105,34 @@ case class Bout(
     def knockout: Option[Round] = rounds.find(_.outcome.decision == Decision.Knockout)
 
     /** Over on a knockout, or once every scheduled round has been fought — or, in a live bout, once a corner has let a
-      * round's clock run out.
+      * round's clock run out. A bout that may not be drawn and is level after its schedule fights [[roundLimit]]'s one
+      * more.
       */
-    def isOver: Boolean = ranOut || knockout.isDefined || rounds.size >= scheduledRounds
+    def isOver: Boolean = ranOut || knockout.isDefined || rounds.size >= roundLimit
+
+    /** Whether the scheduled rounds have all been fought, and left the cards level. */
+    private def levelAfterSchedule: Boolean =
+        rounds.size >= scheduledRounds && {
+            val scheduled = rounds.take(scheduledRounds).flatMap(_.outcome.score)
+            scheduled.map(_.red).sum == scheduled.map(_.blue).sum
+        }
+
+    /** How many rounds this bout can last: its schedule, and one more when ties are not allowed and the schedule left
+      * it level.
+      */
+    def roundLimit: Int = if (!tiesAllowed && levelAfterSchedule) scheduledRounds + 1 else scheduledRounds
+
+    /** Whether the bout went to an extra round because it may not be drawn. */
+    def extraRound: Boolean = rounds.size > scheduledRounds
+
+    /** The corner a lot gives an extra round that was level too. Fixed by the match id, so it is the same every time
+      * the bout is read rather than drawn again on each, and nothing either player chose can steer it.
+      */
+    private def lot: Side = if ((matchId.hashCode & 1) == 0) Side.Red else Side.Blue
+
+    /** Whether the bout was decided by lot: an extra round that was itself level. */
+    def decidedByLot: Boolean =
+        isOver && !ranOut && knockout.isEmpty && extraRound && points(Side.Red) == points(Side.Blue)
 
     /** Whether a live bout's clock ended this one. */
     def ranOut: Boolean = clock.exists(_.ranOut)
@@ -133,7 +165,10 @@ case class Bout(
                 case Some(side) => cornerOf(side)
                 case None =>
                     val (red, blue) = (points(Side.Red), points(Side.Blue))
-                    if (red > blue) cornerOf(Side.Red) else if (blue > red) cornerOf(Side.Blue) else None
+                    if (red > blue) cornerOf(Side.Red)
+                    else if (blue > red) cornerOf(Side.Blue)
+                    else if (decidedByLot) cornerOf(lot)
+                    else None
             }
 
     def isDraw: Boolean = isOver && !ranOut && winner.isEmpty
@@ -142,7 +177,15 @@ case class Bout(
       * as the page says it.
       */
     def method: Option[String] =
-        Option.when(isOver)(if (ranOut) "forfeit" else if (knockout.isDefined) "knockout" else "points")
+        Option.when(isOver)(
+          if (ranOut) "forfeit" else if (knockout.isDefined) "knockout" else if (decidedByLot) "lot" else "points"
+        )
+
+    /** The number a tournament's score tiebreak reads for a corner: its points on the cards, and 25 more for a corner
+      * that won by knockout, which ends a bout before the cards can say how far ahead it was.
+      */
+    def score(side: Side): Int =
+        points(side) + (if (knockout.flatMap(_.outcome.winner).contains(side)) Bout.KnockoutScore else 0)
 
     def outcomeFor(corner: Corner): Outcome =
         clock
@@ -165,6 +208,9 @@ object Bout extends Game[Bout, Corner, Plan] {
 
     /** How many rounds a bout is scheduled for, when nothing says otherwise. */
     val DefaultRounds = 10
+
+    /** What a knockout adds to the winner's score (`Bout.score`). */
+    val KnockoutScore = 25
     val MinRounds = 3
     val MaxRounds = 25
 
@@ -267,7 +313,8 @@ object Bout extends Game[Bout, Corner, Plan] {
           "rounds" -> ujson.Num(m.rounds.size),
           "points" -> ujson.Num(m.points(corner.side)),
           "knockdowns" -> ujson.Num(m.knockdownsScored(corner.side)),
-          "corner" -> ujson.Str(corner.side.toString)
+          "corner" -> ujson.Str(corner.side.toString),
+          "score" -> ujson.Num(m.score(corner.side))
         )
 
     /** "<strong>Iron Mike</strong> knocked out <strong>Glass Joe</strong> in round 4." — who won, how, and when or by
@@ -284,6 +331,12 @@ object Bout extends Game[Bout, Corner, Plan] {
                     s"${who(w)} won by forfeit: ${who(l)} ran out of time after ${rounds(fought)}."
                 case (Some(w), Some(l)) if m.knockout.isDefined =>
                     s"${who(w)} knocked out ${who(l)} in round ${m.knockout.map(_.number).getOrElse(fought)}."
+                case (Some(w), Some(l)) if m.decidedByLot =>
+                    s"${who(w)} and ${who(l)} were level after an extra round, ${m.points(w.side)}–${m.points(l.side)}. " +
+                        s"${who(w)} won the bout by lot."
+                case (Some(w), Some(l)) if m.extraRound =>
+                    s"${who(w)} beat ${who(l)} on points in an extra round, ${m.points(w.side)}–${m.points(l.side)} " +
+                        s"after ${rounds(fought)}."
                 case (Some(w), Some(l)) =>
                     s"${who(w)} beat ${who(l)} on points, ${m.points(w.side)}–${m.points(l.side)} after ${rounds(fought)}."
                 case _ if m.ranOut => "Both corners ran out of time. Nobody wins."
@@ -309,7 +362,8 @@ object Bout extends Game[Bout, Corner, Plan] {
           moveCallbackUrl = request.moveCallbackUrl,
           resultsCallbackUrl = request.resultsCallbackUrl,
           gameDisplayName = request.gameDisplayName,
-          description = request.description
+          description = request.description,
+          tiesAllowed = Protocol.tiesAllowed(request)
         )
 
     // Stored as JSON, as rock-paper-scissors stores its matches: the whole bout is one attribute.

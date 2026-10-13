@@ -55,6 +55,11 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
       * from whoever signed in. So matchmaker can hand the same url to everyone in the match, and a url that leaks is
       * not a seat that leaks — which matters all the more in a game where a seat is also the right to see a move the
       * other player cannot.
+      *
+      * Matchmaker chooses the match id and keeps it across attempts, so a create whose answer was lost on the way back
+      * is sent again with the same id. That repeat is answered as the first create was, with the stored match's urls,
+      * and changes nothing. A create for a stored id that names different players is a second match claiming the first
+      * one's id, and is refused.
       */
     def createGame(request: CreateGameRequest): Either[Refusal, CreateGameResponse] =
         (for {
@@ -63,17 +68,34 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         } yield clock.fold(made)(game.withClock(made, _))) match {
             case Left(why) => Left(Refusal.Invalid(why))
             case Right(created) =>
-                store.create(created)
-                announce(created)
-                Right(
-                  CreateGameResponse(
-                    statusUrl = s"$base/matches/${created.matchId}/status",
-                    playUrl = playUrl(created),
-                    publicUrl = Option.when(created.isPublic)(s"$base/matches/${created.matchId}/board"),
-                    cancelUrl = Some(s"$base/matches/${created.matchId}/cancel")
-                  )
-                )
+                try {
+                    store.create(created)
+                    announce(created)
+                    Right(responseFor(created))
+                } catch {
+                    case _: ConcurrentModification =>
+                        store.get(created.matchId) match {
+                            case Some(stored) if sameSeats(stored, request) => Right(responseFor(stored))
+                            case Some(_) =>
+                                Left(Refusal.Conflict(s"match '${created.matchId}' already exists with other players"))
+                            // Gone between the failed create and this read: cancelled in the meantime.
+                            case None => Left(Refusal.Conflict(s"match '${created.matchId}' was created and removed"))
+                        }
+                }
         }
+
+    private def responseFor(m: M): CreateGameResponse =
+        CreateGameResponse(
+          statusUrl = s"$base/matches/${m.matchId}/status",
+          playUrl = playUrl(m),
+          publicUrl = Option.when(m.isPublic)(s"$base/matches/${m.matchId}/board"),
+          cancelUrl = Some(s"$base/matches/${m.matchId}/cancel")
+        )
+
+    /** Whether a stored match seats exactly the players `request` names: the same create sent again. */
+    private def sameSeats(stored: M, request: CreateGameRequest): Boolean =
+        game.seats(stored).map(s => (s.participantId, s.cognitoId)).toSet ==
+            request.players.map(p => (p.participantId, p.cognitoId)).toSet
 
     def playUrl(m: M): String = s"$base/matches/${m.matchId}/play"
 

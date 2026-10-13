@@ -21,7 +21,8 @@ import com.vivi.matchmaker.persistence.{
     PlayerRepo,
     ResultRepo,
     SkunkCodecs,
-    TestSession
+    TestSession,
+    TournamentRepo
 }
 
 class MatchServiceSpec extends PropertySuite {
@@ -83,7 +84,9 @@ class MatchServiceSpec extends PropertySuite {
                 "url",
                 active = true,
                 // One role, because every participant names one.
-                Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false, displayName = "only")),
+                Seq(
+                  GameRole(GameRoleId(0), GameId.unassigned, "only", roleType = RoleType.Required, displayName = "only")
+                ),
                 parameters,
                 genUniqueString.sample.get
               )
@@ -94,8 +97,8 @@ class MatchServiceSpec extends PropertySuite {
         } yield (player, game, character)
 
     /** One more match for a player who already has a game and a character, so that a test about the order of a list can
-      * put two of them in it. Every match needs a challenge of its own — it is the match's creator, by reference — so
-      * one is made here rather than shared.
+      * put two of them in it. The player is its creator, and by default it is started from a challenge of its own, as
+      * every match was until tournaments.
       */
     private def addMatch(
         session: skunk.Session[IO],
@@ -117,55 +120,85 @@ class MatchServiceSpec extends PropertySuite {
          * their page split on the seat. */
         seatCompleted: Option[Boolean] = None,
         /* The challenger's parameter choices, carried by the challenge and the match alike. */
-        settings: String = "{}"
+        settings: String = "{}",
+        /* Whether the match is started from a challenge. One that is not -- a tournament's -- has only
+         * its creator to say whose it is. */
+        fromChallenge: Boolean = true,
+        /* Who created the match, when it is not the player seated in it. */
+        creator: Option[PlayerId] = None
     ): IO[MatchId] =
         for {
-            // The match's creator is its challenge's challenger, and a match cannot exist without a
-            // challenge to point at — so the whole chain is built here even though most of these
-            // tests only care about the lists.
-            challenge <- new ChallengeRepo(session).create(
-              CharacterChallenge(
-                ChallengeId(0),
-                player.playerId,
-                "challenge",
-                None,
-                None,
-                settings,
-                game.gameId,
-                Some(character.characterId),
-                isPublic = false,
-                Some(game.roles.head.gameRoleId)
-              )
-            )
+            challenge <-
+                if (!fromChallenge) IO.pure(None)
+                else
+                    new ChallengeRepo(session)
+                        .create(
+                          CharacterChallenge(
+                            ChallengeId(0),
+                            creator.getOrElse(player.playerId),
+                            "challenge",
+                            None,
+                            None,
+                            settings,
+                            game.gameId,
+                            Some(character.characterId),
+                            isPublic = false,
+                            Some(game.roles.head.gameRoleId)
+                          )
+                        )
+                        .map(Some(_))
+            // A match not from a challenge is from a tournament: it has to come from one or the other (V52).
+            tournament <-
+                if (fromChallenge) IO.pure(None)
+                else TournamentFixtures.tournament(session, game, creator.getOrElse(player.playerId)).map(Some(_))
             matchId = MatchId(matchIdStr)
-            _ <- new MatchRepo(session).create(
-              Match(
-                game.gameId,
-                matchId,
-                challenge.challengeId,
-                "description",
-                completedAt,
-                Instant.ofEpochSecond(1000),
-                None,
-                settings,
-                isPublic = isPublic,
-                publicUrl = publicUrl
-              )
+            made = Match(
+              game.gameId,
+              matchId,
+              challenge.map(_.challengeId),
+              creator.getOrElse(player.playerId),
+              "description",
+              completedAt,
+              Some(Instant.ofEpochSecond(1000)),
+              None,
+              settings,
+              isPublic = isPublic,
+              publicUrl = publicUrl
             )
-            _ <- new ParticipantRepo(session).create(
-              CharacterParticipant(
-                ParticipantId(0),
-                game.gameId,
-                matchId,
-                player.playerId,
-                pending,
-                seatCompleted.getOrElse(completedAt.isDefined),
-                Some(Instant.ofEpochSecond(2000)),
-                character.characterId,
-                game.roles.head.gameRoleId
-              ),
-              EloRating.initial
-            )
+            _ <- tournament
+                .fold(new MatchRepo(session).create(made))(TournamentFixtures.begunMatch(session, _, made))
+            // A tournament's seat names its entrant (V52), as a challenge's names its challenge.
+            _ <- tournament match {
+                case Some(t) =>
+                    TournamentFixtures.begunSeat(
+                      session,
+                      t,
+                      matchId,
+                      player.playerId,
+                      character.characterId,
+                      game.roles.head.gameRoleId,
+                      pending,
+                      seatCompleted.getOrElse(completedAt.isDefined),
+                      Some(Instant.ofEpochSecond(2000))
+                    )
+                case None =>
+                    new ParticipantRepo(session)
+                        .create(
+                          CharacterParticipant(
+                            ParticipantId(0),
+                            game.gameId,
+                            matchId,
+                            player.playerId,
+                            pending,
+                            seatCompleted.getOrElse(completedAt.isDefined),
+                            Some(Instant.ofEpochSecond(2000)),
+                            character.characterId,
+                            game.roles.head.gameRoleId
+                          ),
+                          EloRating.initial
+                        )
+                        .void
+            }
         } yield matchId
 
     // ---------------------------------------------------------------------------
@@ -227,7 +260,9 @@ class MatchServiceSpec extends PropertySuite {
                 "description",
                 "url",
                 active = true,
-                Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false, displayName = "only")),
+                Seq(
+                  GameRole(GameRoleId(0), GameId.unassigned, "only", roleType = RoleType.Required, displayName = "only")
+                ),
                 Seq.empty,
                 genUniqueString.sample.get
               )
@@ -828,6 +863,128 @@ class MatchServiceSpec extends PropertySuite {
                 due.isEmpty && active.isEmpty && over.isEmpty
             result.timeout(10.seconds).unsafeRunSync()
         }
+    }
+
+    // A match need not come from a challenge (V50): a tournament's is created by the tournament, for its
+    // owner. Its creator alone says whose it is, on the lists and to the cancel.
+    /** Takes a tournament match back to before it began (V52): `status` with no start or urls, and its seats with no
+      * role and no rating, as a match is while its seats choose. `cancelled` is a match called off in that time: over,
+      * never begun.
+      */
+    private def unbegin(session: skunk.Session[IO], gameId: GameId, matchId: MatchId, cancelled: Boolean): IO[Unit] =
+        session.execute(
+          sql"""UPDATE match SET status = $text, cancelled = ${skunk.codec.all.bool}, start = NULL,
+                   status_url = NULL, play_url = NULL, public_url = NULL
+            WHERE game_id = $int4 AND match_id = $text""".command
+        )((if (cancelled) "F" else "D", cancelled, gameId.value, matchId.value)) *>
+            session
+                .execute(
+                  sql"""UPDATE participant SET game_role_id = NULL, elo_start = NULL
+                    WHERE game_id = $int4 AND match_id = $text""".command
+                )((gameId.value, matchId.value))
+                .void
+
+    test("a tournament match that has not begun is in no list, no results, and cannot be opened or cancelled") {
+        val result = TestSession.resource.use { session =>
+            for {
+                prepared <- setup(session, genUniqueString.sample.get, genUniqueString.sample.get)
+                (player, game, character) = prepared
+                // Due to be created, and the player's turn by the seat's own flag: the due list's
+                // condition, apart from the match having begun.
+                waiting <- addMatch(
+                  session,
+                  player,
+                  game,
+                  character,
+                  genUniqueString.sample.get,
+                  None,
+                  pending = true,
+                  fromChallenge = false
+                )
+                _ <- unbegin(session, game.gameId, waiting, cancelled = false)
+                // Called off before it began: over, and still not a match the player played.
+                calledOff <- addMatch(
+                  session,
+                  player,
+                  game,
+                  character,
+                  genUniqueString.sample.get,
+                  None,
+                  pending = false,
+                  fromChallenge = false
+                )
+                _ <- unbegin(session, game.gameId, calledOff, cancelled = true)
+                _ <- new ParticipantRepo(session).completeForMatch(game.gameId, calledOff)
+            } yield (player, game, Set(waiting, calledOff), waiting)
+        }
+        val (player, game, unbegun, waiting) = result.timeout(30.seconds).unsafeRunSync()
+        val outcome = for {
+            active <- matchService.active(player.externalId)
+            due <- matchService.due(player.externalId)
+            completed <- matchService.completed(player.externalId)
+            results <- matchService.results(player.externalId)
+            read <- TestServices.services.engine.read(game.gameId, waiting, player.externalId).attempt
+            cancel <- matchService.cancel(game.gameId, waiting, player.externalId).attempt
+        } yield (active, due, completed, results, read, cancel)
+        val (active, due, completed, results, read, cancel) = outcome.timeout(30.seconds).unsafeRunSync()
+
+        assertEquals(active.map(_.matchId).filter(unbegun), Nil)
+        assertEquals(due.map(_.matchId).filter(unbegun), Nil)
+        assertEquals(completed.matches.map(_.matchId).filter(unbegun), Nil)
+        assertEquals(results.map(_.matchId).filter(unbegun), Nil)
+        assert(read.left.exists(_.isInstanceOf[NotFoundError]), read)
+        assert(cancel.left.exists(_.isInstanceOf[ConflictError]), cancel)
+    }
+
+    test("a match with no challenge is its creator's to cancel, and listed as theirs and nobody else's") {
+        val result = TestSession.resource.use { session =>
+            for {
+                prepared <- setup(session, genUniqueString.sample.get, genUniqueString.sample.get)
+                (owner, game, ownerCharacter) = prepared
+                ownerMatch <- addMatch(
+                  session,
+                  owner,
+                  game,
+                  ownerCharacter,
+                  genUniqueString.sample.get,
+                  None,
+                  pending = true,
+                  fromChallenge = false
+                )
+                otherExternalId = genUniqueString.sample.get
+                other <- registrationService.register(genUniqueString.sample.get, otherExternalId)
+                otherCharacter <- new CharacterRepo[String](session).create(
+                  Character(CharacterId(0), game.gameId, "other", "description", "", Some(other.playerId))
+                )
+                // Seated, but in a match the owner created for them.
+                seatedMatch <- addMatch(
+                  session,
+                  other,
+                  game,
+                  otherCharacter,
+                  genUniqueString.sample.get,
+                  None,
+                  pending = true,
+                  fromChallenge = false,
+                  creator = Some(owner.playerId)
+                )
+            } yield (owner, game, ownerMatch, otherExternalId, seatedMatch)
+        }
+        val (owner, game, ownerMatch, otherExternalId, seatedMatch) = result.unsafeRunSync()
+        val outcome = for {
+            ownersList <- matchService.active(owner.externalId)
+            othersList <- matchService.active(otherExternalId)
+            refused <- matchService.cancel(game.gameId, seatedMatch, otherExternalId).attempt
+            cancelled <- matchService.cancel(game.gameId, ownerMatch, owner.externalId)
+            cancelledSeated <- matchService.cancel(game.gameId, seatedMatch, owner.externalId)
+        } yield {
+            assertEquals(ownersList.map(s => (s.matchId, s.isCreator)), List((ownerMatch, true)))
+            assertEquals(othersList.map(s => (s.matchId, s.isCreator)), List((seatedMatch, false)))
+            assert(refused.left.exists(_.isInstanceOf[UnauthorizedError]), refused)
+            assert(cancelled.cancelled && cancelled.challengeId.isEmpty)
+            assert(cancelledSeated.cancelled)
+        }
+        outcome.timeout(30.seconds).unsafeRunSync()
     }
 
     // The seats, not just the match. A cancelled match is over, so nothing in it is anybody's turn and

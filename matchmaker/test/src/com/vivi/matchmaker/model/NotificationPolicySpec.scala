@@ -140,9 +140,11 @@ class NotificationPolicySpec extends FunSuite {
             NotificationType.InvitationReceived,
             NotificationType.InvitationAccepted,
             NotificationType.InvitationRejected,
-            NotificationType.MatchStarted
+            NotificationType.MatchStarted,
+            // About a tournament's round rather than any one match in it (V53).
+            NotificationType.TournamentRoundDone
           ),
-          "every other kind is about a challenge, or about the start itself"
+          "every other kind is about a challenge, the start itself, or a tournament"
         )
     }
 

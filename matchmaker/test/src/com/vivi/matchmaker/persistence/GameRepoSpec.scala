@@ -17,8 +17,8 @@ class GameRepoSpec extends PropertySuite {
         val values = Seq("a", "b", "c").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
         base.copy(
           roles = Seq(
-            GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false, displayName = "first"),
-            GameRole(GameRoleId(0), GameId.unassigned, "second", optional = true, displayName = "second")
+            GameRole(GameRoleId(0), GameId.unassigned, "first", roleType = RoleType.Required, displayName = "first"),
+            GameRole(GameRoleId(0), GameId.unassigned, "second", roleType = RoleType.Optional, displayName = "second")
           ),
           parameters = Seq(
             GameParameter(GameId.unassigned, GameParameterId(0), "parameter", Some("a"), values, "Parameter")
@@ -124,6 +124,55 @@ class GameRepoSpec extends PropertySuite {
         val game = found.getOrElse(fail("a game with no roles or parameters was dropped by the outer join"))
         assertEquals(game.roles, Seq.empty)
         assertEquals(game.parameters, Seq.empty)
+    }
+
+    test("a role's type and preference level, and a game's move type and turns, survive a save and every read") {
+        val (fromRead, fromList, afterUpdate) = TestSession.resource
+            .use { session =>
+                val repo = new GameRepo[String](session)
+                val game = gameWithFanOut.copy(
+                  moveType = MoveType.Simultaneous,
+                  maxTurns = Some(12),
+                  roles = Seq(
+                    GameRole(GameRoleId(0), GameId.unassigned, "first", RoleType.Required, "first", Some(2)),
+                    GameRole(GameRoleId(0), GameId.unassigned, "second", RoleType.Recommended, "second", None),
+                    GameRole(GameRoleId(0), GameId.unassigned, "third", RoleType.Optional, "third", Some(1))
+                  )
+                )
+                for {
+                    created <- repo.create(game)
+                    read <- repo.read(created.gameId)
+                    listed <- repo.list(activeOnly = false)
+                    _ <- repo.update(
+                      created.copy(
+                        moveType = MoveType.Sequential,
+                        maxTurns = None,
+                        roles = created.roles.map(r => r.copy(roleType = RoleType.Required, preferenceLevel = None))
+                      )
+                    )
+                    updated <- repo.read(created.gameId)
+                } yield (read, listed.find(_.gameId == created.gameId), updated)
+            }
+            .unsafeRunSync()
+
+        for (game <- List(fromRead, fromList).map(_.getOrElse(fail("the created game was not found")))) {
+            assertEquals(game.moveType, MoveType.Simultaneous)
+            assertEquals(game.maxTurns, Some(12))
+            assertEquals(
+              game.roles.map(r => (r.name, r.roleType, r.preferenceLevel)).toSet,
+              Set(
+                ("first", RoleType.Required, Some(2)),
+                ("second", RoleType.Recommended, None),
+                ("third", RoleType.Optional, Some(1))
+              )
+            )
+            assertEquals(game.poolSeats, 2)
+            assertEquals(game.requiredSeats, 1)
+        }
+        val updated = afterUpdate.getOrElse(fail("the updated game was not found"))
+        assertEquals(updated.moveType, MoveType.Sequential)
+        assertEquals(updated.maxTurns, None)
+        assert(updated.roles.forall(r => r.roleType == RoleType.Required && r.preferenceLevel.isEmpty))
     }
 
     property("create then read returns the game just created") {

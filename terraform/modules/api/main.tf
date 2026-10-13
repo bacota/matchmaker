@@ -386,6 +386,37 @@ locals {
     # Muting one match: the most specific thing a player can say about notifications.
     "GET /games/{gameId}/matches/{matchId}/notifications",
     "PUT /games/{gameId}/matches/{matchId}/notifications",
+
+    # Tournaments (V52): the caller's own, a game's, and one tournament's page; creating and editing
+    # one; its owner opening, starting and cancelling it; invitations; and entering and withdrawing.
+    "GET /me/tournaments",
+    "GET /me/tournament-standings",
+    "GET /games/{gameId}/tournaments",
+    "POST /games/{gameId}/tournaments",
+    "GET /games/{gameId}/tournaments/{tournamentId}",
+    "PUT /games/{gameId}/tournaments/{tournamentId}",
+    "POST /games/{gameId}/tournaments/{tournamentId}/open",
+    "POST /games/{gameId}/tournaments/{tournamentId}/start",
+    "POST /games/{gameId}/tournaments/{tournamentId}/cancel",
+    "POST /games/{gameId}/tournaments/{tournamentId}/invitations",
+    "DELETE /games/{gameId}/tournaments/{tournamentId}/invitations/{playerId}",
+    "POST /games/{gameId}/tournaments/{tournamentId}/entries",
+    "DELETE /games/{gameId}/tournaments/{tournamentId}/entries/{entrantId}",
+    # The models a game's tournaments are made from: listed for anyone, and made, edited, removed and
+    # filled in with the standard formats by the game's admins.
+    "GET /tournament-models",
+    "POST /tournament-models/sync",
+    "GET /games/{gameId}/tournament-models",
+    "PUT /games/{gameId}/tournament-models/{modelId}",
+    "DELETE /games/{gameId}/tournament-models/{modelId}",
+    # Playing its rounds: the owner beginning, checking and stopping them; a seat choosing its
+    # role; the owner deciding a match by hand; and the caller's seats waiting on a choice.
+    "POST /games/{gameId}/tournaments/{tournamentId}/rounds",
+    "POST /games/{gameId}/tournaments/{tournamentId}/check",
+    "POST /games/{gameId}/tournaments/{tournamentId}/stop",
+    "POST /games/{gameId}/tournaments/{tournamentId}/matches/{matchId}/role",
+    "POST /games/{gameId}/tournaments/{tournamentId}/matches/{matchId}/result",
+    "GET /me/tournament-choices",
   ]
 
   /* The game engine's calls, which are not player actions at all: a game engine tells

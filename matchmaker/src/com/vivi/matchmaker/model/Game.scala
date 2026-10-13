@@ -21,17 +21,55 @@ case class GameParameter[T](
     displayName: String
 )
 
+/** Whether a match needs a role filled (V51).
+  *
+  * `Recommended` is a role a match can go without, as an optional one can, but which counts toward the size of a
+  * tournament pool: a game's "R" is its required and recommended roles together. Outside tournaments the two are the
+  * same, so everything that asks whether a start must wait for a role asks [[GameRole.optional]].
+  */
+enum RoleType(val code: String, val label: String) {
+    case Required extends RoleType("required", "Required")
+    case Recommended extends RoleType("recommended", "Recommended")
+    case Optional extends RoleType("optional", "Optional")
+}
+
+object RoleType {
+    def fromCode(code: String): RoleType =
+        values.find(_.code == code).getOrElse(throw new IllegalArgumentException(s"unknown game_role.type '$code'"))
+}
+
+/** How a game's players take their turns (V51): one after another, or all at once. A tournament spends a round's time
+  * differently for each — a chess clock per seat for `Sequential`, a limit per turn for `Simultaneous`.
+  */
+enum MoveType(val code: String, val label: String) {
+    case Sequential extends MoveType("seq", "Sequential")
+    case Simultaneous extends MoveType("sim", "Simultaneous")
+}
+
+object MoveType {
+    def fromCode(code: String): MoveType =
+        values.find(_.code == code).getOrElse(throw new IllegalArgumentException(s"unknown game.move_type '$code'"))
+}
+
 /** A seat in a match. `name` is what the engine is told the seat is — the role it is sent with each player at a start.
   * `displayName` is what a player is shown for it, wherever matchmaker itself names the seat. Often the two are the
   * same, but both are always there.
+  *
+  * `preferenceLevel` ranks the roles a tournament hands out by seed: the highest level goes to the highest seed. `None`
+  * for a role with no preference, which is every role until an admin gives it one.
   */
 case class GameRole(
     gameRoleId: GameRoleId,
     gameId: GameId,
     name: String,
-    optional: Boolean,
-    displayName: String
-)
+    roleType: RoleType,
+    displayName: String,
+    preferenceLevel: Option[Int] = None
+) {
+
+    /** Whether a match may start with this role empty: true of a recommended role as well as an optional one. */
+    def optional: Boolean = roleType != RoleType.Required
+}
 
 /** Whether a game's challenges/acceptances/participants require an attached character. Mirrors the `game_type`
   * discriminator column (`'C'`/`'P'`) that `game` and every table split into a `character_*` sibling (`challenge`,
@@ -102,5 +140,18 @@ case class Game(
     /* The admin saying that no role of the game has any advantage in winning it (V49). Unticked, a
      * rated match moves its players' ratings in the roles they played as well as overall, and each
      * role has a leaderboard of its own. */
-    unimportantRoles: Boolean = false
-)
+    unimportantRoles: Boolean = false,
+    /* Whether players move in turn or all at once (V51). Sequential for every game until an admin says
+     * otherwise. */
+    moveType: MoveType = MoveType.Sequential,
+    /* How many turns a simultaneous game lasts, for a tournament to divide a round's time among (V51).
+     * `None` where the game does not say, in which case a tournament must. */
+    maxTurns: Option[Int] = None
+) {
+
+    /** The game's "R": how many seats a tournament pool is sized by — its required and recommended roles. */
+    def poolSeats: Int = roles.count(_.roleType != RoleType.Optional)
+
+    /** How many seats must be filled for a match to start. */
+    def requiredSeats: Int = roles.count(_.roleType == RoleType.Required)
+}

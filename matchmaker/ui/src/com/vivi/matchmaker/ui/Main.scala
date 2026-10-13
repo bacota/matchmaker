@@ -67,7 +67,7 @@ object Views {
       * busy button refuses is refused by the handler instead. `disabledWhen` is a real `disabled` -- a button that
       * cannot be used yet is one to skip over.
       */
-    private def busyButton(
+    private[ui] def busyButton(
         label: String,
         classes: Option[String] = None,
         disabledWhen: Signal[Boolean] = Val(false)
@@ -92,7 +92,7 @@ object Views {
       * once. A placeholder is not a label — it is a hint that disappears at the first keystroke, and leaves a screen
       * reader with an unnamed box — so every field that had only a placeholder gets one of these instead.
       */
-    private def field(caption: String, control: HtmlElement): HtmlElement =
+    private[ui] def field(caption: String, control: HtmlElement): HtmlElement =
         label(cls := "field", caption, control)
 
     /** The body of a list: its rows, or a line saying why there are none.
@@ -105,7 +105,7 @@ object Views {
       * and throwing away what is on screen to say "Loading…" would lose the rows in order to repeat what the dimming
       * has already said.
       */
-    private def listing[A](items: Signal[Seq[A]], fetching: Signal[Boolean])(
+    private[ui] def listing[A](items: Signal[Seq[A]], fetching: Signal[Boolean])(
         empty: => HtmlElement
     )(rows: Seq[A] => HtmlElement): Modifier[HtmlElement] =
         child <-- items.combineWith(fetching).map {
@@ -124,7 +124,7 @@ object Views {
       * acted on. A fast request would flash too briefly to register, so the dimming is held for a moment; a slow one
       * holds it until the answer arrives.
       */
-    private def refreshableSection(
+    private[ui] def refreshableSection(
         heading: String,
         reload: () => Future[Unit],
         subsection: Boolean
@@ -140,7 +140,7 @@ object Views {
       * created inside it is thrown away along with the element, and the dimming ends the moment the response lands
       * rather than being seen.
       */
-    private def refreshableSection(
+    private[ui] def refreshableSection(
         heading: String,
         refreshing: Var[Boolean],
         reload: () => Future[Unit],
@@ -344,12 +344,14 @@ object Views {
             // Focusable from script only: where the focus goes on a new screen that has no heading yet.
             tabIndex := -1,
             child <-- Store.page.signal.map {
-                case Store.Page.Home              => mainPage
-                case Store.Page.OneGame(gameId)   => gamePage(gameId)
-                case Store.Page.NewGame           => newGamePage
-                case Store.Page.FindPlayers       => findPlayersPage
-                case Store.Page.OnePlayer(player) => playerPage(player)
-                case Store.Page.OneCharacter(c)   => characterPage(c)
+                case Store.Page.Home                => mainPage
+                case Store.Page.OneGame(gameId)     => gamePage(gameId)
+                case Store.Page.NewGame             => newGamePage
+                case Store.Page.FindPlayers         => findPlayersPage
+                case Store.Page.OnePlayer(player)   => playerPage(player)
+                case Store.Page.OneCharacter(c)     => characterPage(c)
+                case Store.Page.OneTournament(g, t) => Tournaments.page(g, t)
+                case Store.Page.NewTournament(g)    => Tournaments.newPage(g)
             },
             inContext(screen => Store.page.signal.changes --> (_ => focusNewScreen(screen.ref)))
           )
@@ -461,6 +463,7 @@ object Views {
           dueSection(),
           myMatchesSection(),
           pendingAcceptances(),
+          Tournaments.mainSections,
           recentlyCompletedSection
         )
 
@@ -2308,6 +2311,7 @@ object Views {
                         myMatchesSection(Some(game)),
                         pendingAcceptances(Some(game)),
                         gameChallenges(game),
+                        Tournaments.gameSection(game),
                         ratingsSection(game),
                         gameHistory(game)
                       )
@@ -2535,7 +2539,9 @@ object Views {
         gameRoleId: GameRoleId,
         name: Var[String],
         displayName: Var[String],
-        optional: Var[Boolean]
+        roleType: Var[RoleType],
+        // As typed: blank is no preference.
+        preferenceLevel: Var[String]
     )
     private case class ParameterDraft(
         name: Var[String],
@@ -2544,11 +2550,18 @@ object Views {
         default: Var[String]
     )
 
-    private def emptyRole: RoleDraft = RoleDraft(GameRoleId.unassigned, Var(""), Var(""), Var(false))
+    private def emptyRole: RoleDraft =
+        RoleDraft(GameRoleId.unassigned, Var(""), Var(""), Var(RoleType.Required), Var(""))
     private def emptyParameter: ParameterDraft = ParameterDraft(Var(""), Var(""), Var(""), Var(""))
 
     private def draftOf(role: GameRole): RoleDraft =
-        RoleDraft(role.gameRoleId, Var(role.name), Var(role.displayName), Var(role.optional))
+        RoleDraft(
+          role.gameRoleId,
+          Var(role.name),
+          Var(role.displayName),
+          Var(role.roleType),
+          Var(role.preferenceLevel.fold("")(_.toString))
+        )
 
     private def draftOf(parameter: GameParameter[String]): ParameterDraft =
         ParameterDraft(
@@ -2570,14 +2583,17 @@ object Views {
           withTip(
             s"$formKey-roles-tip",
             "Roles",
-            "Every seat in a match names a role, so a game needs at least one. An optional role is one " +
-                "a match does not wait to see filled before it can start. A role that already exists can " +
+            "Every seat in a match names a role, so a game needs at least one. A match cannot start until " +
+                "every required role is filled, or, for a challenge that starts itself, every required and " +
+                "recommended role. Optional roles can always be left empty, and a recommended one counts " +
+                "toward a tournament's pool size. A role that already exists can " +
                 "be renamed but not removed — acceptances and played matches name it, so retire one by " +
                 "making it optional."
           )(h4("Roles")),
           children <-- roles.signal.map(_.zipWithIndex.map { (draft, i) =>
               val nameTip = s"$formKey-role-$i-name-tip"
               val displayTip = s"$formKey-role-$i-display-tip"
+              val preferenceTip = s"$formKey-role-$i-preference-tip"
               div(
                 cls := "row",
                 // A caption on each field, with what it means in a tip beside it rather than under it:
@@ -2611,11 +2627,33 @@ object Views {
                   )
                 ),
                 label(
-                  input(
-                    tpe := "checkbox",
-                    controlled(checked <-- draft.optional.signal, onClick.mapToChecked --> draft.optional)
-                  ),
-                  "optional"
+                  cls := "field",
+                  "Type",
+                  select(
+                    onChange.mapToValue --> (code => draft.roleType.set(RoleType.fromCode(code))),
+                    value <-- draft.roleType.signal.map(_.code),
+                    RoleType.values.toSeq.map(rt => option(value := rt.code, rt.label))
+                  )
+                ),
+                withTip(
+                  preferenceTip,
+                  "Role preference level",
+                  "In a tournament where roles are chosen, the role with the highest level goes to the " +
+                      "highest seed. Leave blank for no preference."
+                )(
+                  label(
+                    cls := "field",
+                    "Preference",
+                    input(
+                      tpe := "number",
+                      inputMode := "numeric",
+                      aria.describedBy := preferenceTip,
+                      controlled(
+                        value <-- draft.preferenceLevel.signal,
+                        onInput.mapToValue --> draft.preferenceLevel
+                      )
+                    )
+                  )
                 ),
                 // A role that exists cannot be removed: acceptances and played matches name it. The
                 // server refuses it too — this is why the button is not there to press.
@@ -2686,7 +2724,8 @@ object Views {
             val name = d.name.now().trim
             // Left blank, a role is shown by its name -- the server does the same.
             val displayName = Option(d.displayName.now().trim).filter(_.nonEmpty).getOrElse(name)
-            (d.gameRoleId, name, d.optional.now(), displayName)
+            val preference = d.preferenceLevel.now().trim
+            (d.gameRoleId, name, d.roleType.now(), displayName, preference)
         }
         // A blank new row is one the admin added and did not fill in, and is dropped. A blank
         // existing row is a role whose name has been cleared -- dropping that would ask the server to
@@ -2697,13 +2736,26 @@ object Views {
         else if (named.isEmpty) Left("A game needs at least one role: every player accepting a challenge takes one.")
         else if (named.map(_._2).distinct.sizeIs != named.size) Left("Two roles cannot have the same name.")
         else if (named.map(_._4).distinct.sizeIs != named.size) Left("Two roles cannot be shown under the same name.")
+        else if (named.exists((_, _, _, _, p) => p.nonEmpty && p.toIntOption.isEmpty))
+            Left("A role's preference level has to be a whole number, or blank.")
         else
             Right(
-              named.map((id, name, optional, displayName) =>
-                  GameRole(id, GameId.unassigned, name, optional, displayName)
+              named.map((id, name, roleType, displayName, preference) =>
+                  GameRole(id, GameId.unassigned, name, roleType, displayName, preference.toIntOption)
               )
             )
     }
+
+    /** A game's maximum turns as typed: blank for none, otherwise a whole number above 0. */
+    private def maxTurnsOf(raw: String): Either[String, Option[Int]] =
+        raw.trim match {
+            case "" => Right(None)
+            case trimmed =>
+                trimmed.toIntOption
+                    .filter(_ > 0)
+                    .map(Some(_))
+                    .toRight("Maximum turns has to be a whole number above 0, or blank.")
+        }
 
     private def parametersOf(drafts: List[ParameterDraft]): Either[String, Seq[GameParameter[String]]] = {
         val named = drafts
@@ -2760,6 +2812,9 @@ object Views {
         val disabled = Var(existing.exists(!_.active))
         // No role has an advantage in winning: ratings are then kept overall only (V49).
         val unimportantRoles = Var(existing.exists(_.unimportantRoles))
+        // How players take turns, and how many a simultaneous game lasts (V51); max turns as typed.
+        val moveType: Var[MoveType] = Var(existing.map(_.moveType).getOrElse(MoveType.Sequential))
+        val maxTurns = Var(existing.flatMap(_.maxTurns).fold("")(_.toString))
         // What this form's tip ids start with: a game's edit form and the new-game form are different forms.
         val formKey = existing.fold("new-game")(game => s"game-${game.gameId.value}")
         // Write-only: starts empty whether or not a key is stored, because the stored one is never sent here.
@@ -2908,6 +2963,45 @@ object Views {
                   "Unimportant Roles"
                 )
               )
+          }, {
+              val tipId = s"$formKey-move-type-tip"
+              withTip(
+                tipId,
+                "Moves",
+                "Whether players take turns one after another, or all move at once. A tournament gives each " +
+                    "player a chess clock in the first case and a time limit per turn in the second."
+              )(
+                label(
+                  cls := "field",
+                  "Moves",
+                  select(
+                    aria.describedBy := tipId,
+                    onChange.mapToValue --> (code => moveType.set(MoveType.fromCode(code))),
+                    value <-- moveType.signal.map(_.code),
+                    MoveType.values.toSeq.map(mt => option(value := mt.code, mt.label))
+                  )
+                )
+              )
+          }, {
+              val tipId = s"$formKey-max-turns-tip"
+              withTip(
+                tipId,
+                "Maximum turns",
+                "How many turns a match lasts, if the game always ends after a fixed number. A tournament " +
+                    "divides a round's time by it when everyone moves at once. Leave blank if it varies."
+              )(
+                label(
+                  cls := "field",
+                  "Maximum turns",
+                  input(
+                    tpe := "number",
+                    inputMode := "numeric",
+                    minAttr := "1",
+                    aria.describedBy := tipId,
+                    controlled(value <-- maxTurns.signal, onInput.mapToValue --> maxTurns)
+                  )
+                )
+              )
           },
           parameterEditor(formKey, parameters),
           busyButton(
@@ -2924,11 +3018,12 @@ object Views {
               val drafted = for {
                   roleModels <- rolesOf(roles.now())
                   parameterModels <- parametersOf(parameters.now())
-              } yield (roleModels, parameterModels)
+                  turns <- maxTurnsOf(maxTurns.now())
+              } yield (roleModels, parameterModels, turns)
 
               drafted match {
                   case Left(problem) => Store.reportProblem(problem)
-                  case Right((roleModels, parameterModels)) =>
+                  case Right((roleModels, parameterModels, turns)) =>
                       val game = Game(
                         // Unassigned means create and the server assigns the real id — the same sentinel
                         // the challenge form uses; a real id means update that game.
@@ -2950,6 +3045,8 @@ object Views {
                         externalId = engineIdentity.now().trim,
                         timeoutAction = timeoutAction.now(),
                         unimportantRoles = unimportantRoles.now(),
+                        moveType = moveType.now(),
+                        maxTurns = turns,
                         characterUrl = Option
                             .when(gameType.now() == GameType.Character)(characterUrl.now().trim)
                             .filter(_.nonEmpty)
@@ -2972,6 +3069,8 @@ object Views {
                               engineIdentity.set("")
                               characterUrl.set("")
                               unimportantRoles.set(false)
+                              moveType.set(MoveType.Sequential)
+                              maxTurns.set("")
                               roles.set(List(emptyRole))
                               parameters.set(Nil)
                           } else {
@@ -4470,14 +4569,16 @@ object Views {
               busyButton("Accept") { busy =>
                   val chosen = role.now().getOrElse(choices.head.gameRoleId)
                   // Whether this acceptance is also the start: an auto-starting challenge whose last
-                  // required role is the one being taken here. Worked out from what this row already
+                  // required or recommended role is the one being taken here. Worked out from what this row already
                   // knows rather than asked of the server, because the server answers an acceptance
                   // with the acceptance — the match it may have started is not in the reply.
                   //
                   // Optional roles are not counted, for the same reason the server does not count
-                  // them: they are the ones a start need not wait for.
+                  // them: they are the ones an automatic start need not wait for.
                   val starts = challenge.autoStart &&
-                      unfilledRoles(game, summary).forall(_.gameRoleId == chosen)
+                      freeRoles(game, summary)
+                          .filter(_.roleType != RoleType.Optional)
+                          .forall(_.gameRoleId == chosen)
                   Store.run(ApiClient.accept(game.gameId, challenge.challengeId, characterId, chosen), busy) { _ =>
                       // Two lists change: this one, which now shows the role as taken, and the acceptances
                       // — the challenge has joined what this player is waiting on, and if they are its
@@ -4554,7 +4655,7 @@ object Views {
     /** A captioned text field whose explanation is a tip beside it rather than a line under it: [[withTip]] around a
       * `label.field`, with the input pointed at the tip so that it is read out with the field.
       */
-    private def tipField(id: String, caption: String, text: String)(control: HtmlElement): HtmlElement =
+    private[ui] def tipField(id: String, caption: String, text: String)(control: HtmlElement): HtmlElement =
         withTip(id, caption, text)(label(cls := "field", caption, control.amend(aria.describedBy := id)))
 
     /** A control with a tip beside it: a "?" button that shows `text` on hover, on keyboard focus, and on a tap, which
@@ -4568,7 +4669,7 @@ object Views {
      * both list it -- so a tip under a row is numbered as it is made rather than named after the row. */
     private var tipsMade = 0
 
-    private def freshTipId(prefix: String): String = {
+    private[ui] def freshTipId(prefix: String): String = {
         tipsMade += 1
         s"$prefix-$tipsMade"
     }
@@ -4598,7 +4699,7 @@ object Views {
           tipWord(freshTipId("friendly-tip"), "Friendly", friendlyMeaning)
         )
 
-    private def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
+    private[ui] def withTip(id: String, subject: String, text: String)(control: HtmlElement): HtmlElement =
         tipped(id, text, control)(cls := "tip-toggle", aria.label := s"About $subject", "?")
 
     /** A word that is its own tip: hovered, focused or tapped, it shows what it means, as a "?" beside it would. For a

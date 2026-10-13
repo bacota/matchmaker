@@ -63,6 +63,26 @@ class ProtocolSpec extends FunSuite {
         assertEquals(read[Protocol.CreateGameRequest](write(fromMatchmaker)), create)
     }
 
+    test("a create request that disallows ties says so to the engine, and one that says nothing allows them") {
+        val fromMatchmaker = MmCreateGameRequest(
+          matchId = create.matchId,
+          gameName = create.gameName,
+          isPublic = create.isPublic,
+          parameters = create.parameters,
+          settings = create.settings,
+          timeLimitSeconds = create.timeLimitSeconds,
+          players = Nil,
+          moveCallbackUrl = None,
+          resultsCallbackUrl = None,
+          tiesAllowed = Some(false)
+        )
+        val asEngine = read[Protocol.CreateGameRequest](write(fromMatchmaker))
+        assert(!Protocol.tiesAllowed(asEngine))
+        // Absent rather than true: a match that allows ties is sent nothing new.
+        assert(!write(fromMatchmaker.copy(tiesAllowed = None)).contains("tiesAllowed"))
+        assert(Protocol.tiesAllowed(read[Protocol.CreateGameRequest](write(fromMatchmaker.copy(tiesAllowed = None)))))
+    }
+
     test("the engine's create response reads as matchmaker's") {
         val response =
             Protocol.CreateGameResponse("http://engine/status", "http://engine/play", Some("http://engine/board"))

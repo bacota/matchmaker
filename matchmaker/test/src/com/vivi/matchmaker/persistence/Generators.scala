@@ -57,8 +57,8 @@ object Generators {
           url,
           active,
           Seq(
-            GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false, displayName = "first"),
-            GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false, displayName = "second")
+            GameRole(GameRoleId(0), GameId.unassigned, "first", roleType = RoleType.Required, displayName = "first"),
+            GameRole(GameRoleId(0), GameId.unassigned, "second", roleType = RoleType.Required, displayName = "second")
           ),
           Seq.empty,
           externalId,
@@ -70,9 +70,10 @@ object Generators {
         for {
             base <- genGame()
             roleName <- genString
-            optional <- Gen.oneOf(true, false)
+            roleType <- Gen.oneOf(RoleType.values.toSeq)
+            preferenceLevel <- Gen.option(Gen.choose(0, 5))
         } yield {
-            val role = GameRole(GameRoleId(0), GameId.unassigned, roleName, optional, displayName = roleName)
+            val role = GameRole(GameRoleId(0), GameId.unassigned, roleName, roleType, roleName, preferenceLevel)
             base.copy(roles = Seq(role))
         }
 
@@ -83,7 +84,8 @@ object Generators {
             state <- genString
         } yield Character(CharacterId(0), gameId, name, description, state, playerId)
 
-    def genMatch(gameId: GameId, matchId: MatchId, challengeId: ChallengeId): Gen[Match] =
+    /** A match whose creator is `creator`, started from `challengeId` where there is one. */
+    def genMatch(gameId: GameId, matchId: MatchId, challengeId: Option[ChallengeId], creator: PlayerId): Gen[Match] =
         for {
             description <- genString
             completedAt <- Gen.option(genInstant)
@@ -103,9 +105,10 @@ object Generators {
           gameId,
           matchId,
           challengeId,
+          creator,
           description,
           completedAt,
-          start,
+          Some(start),
           timeLimit,
           "{}",
           isPublic,
@@ -115,7 +118,9 @@ object Generators {
           publicUrl,
           timeLimitKind,
           timeLimitUnit,
-          friendly = friendly
+          friendly = friendly,
+          // A challenge's match, begun as it is written: over once it is completed or cancelled (V52).
+          status = if (completedAt.isDefined || cancelled) MatchStatus.Finished else MatchStatus.InProgress
         )
 
     def genParticipant(
@@ -214,6 +219,12 @@ object Generators {
             game <- new GameRepo[String](session).create(genGame().sample.get)
             challengeId <- challengeIn(session, game)
         } yield (game, challengeId)
+
+    /** A generated match started from an existing challenge, created by its challenger as a started one would be. */
+    def matchFrom(session: Session[IO], gameId: GameId, matchId: MatchId, challengeId: ChallengeId): IO[Match] =
+        new ChallengeRepo(session).read(gameId, challengeId).map { found =>
+            genMatch(gameId, matchId, Some(challengeId), found.get.challenger).sample.get
+        }
 
     /** A challenge in an existing game, with the player and character it needs. */
     def challengeIn(session: Session[IO], game: Game): IO[ChallengeId] = {

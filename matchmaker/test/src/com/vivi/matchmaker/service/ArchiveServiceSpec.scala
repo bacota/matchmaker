@@ -71,7 +71,15 @@ class ArchiveServiceSpec extends FunSuite {
                     "description",
                     "url",
                     active = true,
-                    Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false, displayName = "only")),
+                    Seq(
+                      GameRole(
+                        GameRoleId(0),
+                        GameId.unassigned,
+                        "only",
+                        roleType = RoleType.Required,
+                        displayName = "only"
+                      )
+                    ),
                     Seq.empty,
                     unique("engine")
                   )
@@ -98,10 +106,11 @@ class ArchiveServiceSpec extends FunSuite {
                   Match(
                     game.gameId,
                     matchId,
-                    challenge.challengeId,
+                    Some(challenge.challengeId),
+                    challenge.challenger,
                     "description",
                     Option.when(completed)(completedAt),
-                    Instant.ofEpochSecond(1000),
+                    Some(Instant.ofEpochSecond(1000)),
                     None,
                     "{}",
                     isPublic = isPublic,
@@ -151,10 +160,11 @@ class ArchiveServiceSpec extends FunSuite {
                   Match(
                     f.game.gameId,
                     matchId,
-                    challenge.challengeId,
+                    Some(challenge.challengeId),
+                    challenge.challenger,
                     "description",
                     Some(completedAt),
-                    Instant.ofEpochSecond(1000),
+                    Some(Instant.ofEpochSecond(1000)),
                     None,
                     "{}",
                     isPublic = true,

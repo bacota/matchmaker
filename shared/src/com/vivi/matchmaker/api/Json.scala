@@ -22,6 +22,9 @@ object Json {
     given ReadWriter[GameParameterId] = readwriter[Int].bimap(_.value, GameParameterId.apply)
     given ReadWriter[ParticipantId] = readwriter[Long].bimap(_.value, ParticipantId.apply)
     given ReadWriter[ChallengeId] = readwriter[Long].bimap(_.value, ChallengeId.apply)
+    given ReadWriter[TournamentId] = readwriter[Long].bimap(_.value, TournamentId.apply)
+    given ReadWriter[TournamentModelId] = readwriter[String].bimap(_.value, TournamentModelId.apply)
+    given ReadWriter[EntrantId] = readwriter[Long].bimap(_.value, EntrantId.apply)
 
     given ReadWriter[GameType] = readwriter[String].bimap(
       _.code.toString,
@@ -34,8 +37,15 @@ object Json {
     /** By its stored code, so the wire form is the column's form: 'FORFEIT'. */
     given ReadWriter[TimeoutAction] = readwriter[String].bimap(_.code, TimeoutAction.fromCode)
 
+    /** By code, as the columns hold them (V51): 'required' / 'recommended' / 'optional', and 'seq' / 'sim'. */
+    given ReadWriter[RoleType] = readwriter[String].bimap(_.code, RoleType.fromCode)
+    given ReadWriter[MoveType] = readwriter[String].bimap(_.code, MoveType.fromCode)
+
     /** Likewise: 'PER_TURN' or 'TOTAL'. */
     given ReadWriter[TimeLimitKind] = readwriter[String].bimap(_.code, TimeLimitKind.fromCode)
+
+    /** Where a match is in its life (V52), by its one-letter code: 'S', 'C', 'D', 'P' or 'F'. */
+    given ReadWriter[MatchStatus] = readwriter[String].bimap(_.code, MatchStatus.fromCode)
 
     /** And 'SECONDS' / 'MINUTES' / 'HOURS' / 'DAYS'. */
     given ReadWriter[TimeLimitUnit] = readwriter[String].bimap(_.code, TimeLimitUnit.fromCode)
@@ -154,7 +164,10 @@ object Json {
         hasApiKey: Boolean = false,
         // No role of the game has any advantage in winning it (V49). Defaulted so that a client
         // written before it existed still parses, and keeps ratings by role.
-        unimportantRoles: Boolean = false
+        unimportantRoles: Boolean = false,
+        // How players take turns, and how many a simultaneous game lasts (V51). Defaulted as above.
+        moveType: MoveType = MoveType.Sequential,
+        maxTurns: Option[Int] = None
     )
 
     private given ReadWriter[GameDto] = macroRW
@@ -175,7 +188,9 @@ object Json {
             game.timeoutAction,
             game.characterUrl,
             game.hasApiKey,
-            game.unimportantRoles
+            game.unimportantRoles,
+            game.moveType,
+            game.maxTurns
           ),
       dto =>
           Game(
@@ -192,7 +207,9 @@ object Json {
             dto.timeoutAction,
             dto.characterUrl,
             dto.hasApiKey,
-            dto.unimportantRoles
+            dto.unimportantRoles,
+            dto.moveType,
+            dto.maxTurns
           )
     )
 

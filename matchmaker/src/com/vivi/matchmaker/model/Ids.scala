@@ -62,3 +62,30 @@ object ChallengeId {
     def apply(value: Long): ChallengeId = value
     extension (id: ChallengeId) def value: Long = id
 }
+
+opaque type TournamentId = Long
+object TournamentId {
+    def apply(value: Long): TournamentId = value
+    extension (id: TournamentId) def value: Long = id
+
+    /** Sentinel for a tournament that hasn't been persisted yet (its id is DB-generated on create). */
+    val unassigned: TournamentId = TournamentId(0)
+}
+
+/** A tournament model (V52): a design every game may offer, which a tournament is made from. Descriptive text, chosen
+  * where the model is defined: `world-cup`, say.
+  */
+opaque type TournamentModelId = String
+object TournamentModelId {
+    def apply(value: String): TournamentModelId = value
+    extension (id: TournamentModelId) def value: String = id
+}
+
+/** An entry in a tournament (V52): what `tournament-design.md` calls a participant, which `ParticipantId` already means
+  * a seat in a match. The tournament's state names entrants by this id's value.
+  */
+opaque type EntrantId = Long
+object EntrantId {
+    def apply(value: Long): EntrantId = value
+    extension (id: EntrantId) def value: Long = id
+}

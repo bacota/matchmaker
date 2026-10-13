@@ -6,7 +6,7 @@ import java.time.{Duration, Instant}
 import scala.util.control.NonFatal
 import cats.effect.unsafe.implicits.global
 import com.amazonaws.services.lambda.runtime.{Context, RequestStreamHandler}
-import com.vivi.matchmaker.model.{GameId, MatchId}
+import com.vivi.matchmaker.model.{GameId, MatchId, TournamentId}
 import com.vivi.matchmaker.service.{Services, Settlement}
 
 /** Settles the ends of matches: sees them archived, tells engines of cancels, and puts leaderboards in order — see
@@ -43,6 +43,22 @@ class Handler extends RequestStreamHandler {
 
             case Handler.Record.Understood(messageId, message) =>
                 val (what, settling) = message match {
+                    case due: TournamentMatchDue =>
+                        (
+                          s"match ${due.matchId} of tournament ${due.tournamentId}",
+                          Handler.services.rounds
+                              .createMatch(GameId(due.gameId), TournamentId(due.tournamentId), MatchId(due.matchId))
+                        )
+                    case check: TournamentRoundCheck =>
+                        (
+                          s"the check of tournament ${check.tournamentId}'s round",
+                          Handler.services.rounds.runCheck(GameId(check.gameId), TournamentId(check.tournamentId))
+                        )
+                    case due: TournamentRoundDue =>
+                        (
+                          s"the next round of tournament ${due.tournamentId}",
+                          Handler.services.rounds.autoStart(GameId(due.gameId), TournamentId(due.tournamentId))
+                        )
                     case ended: MatchEnded =>
                         (
                           s"match ${ended.matchId} of game ${ended.gameId}",
@@ -85,7 +101,7 @@ object Handler {
 
     /** One queue message, read or not. */
     enum Record {
-        case Understood(id: String, message: MatchEnded | RatingsChanged)
+        case Understood(id: String, message: QueueMessage)
         case Unreadable(id: String, why: String)
     }
 
@@ -100,7 +116,7 @@ object Handler {
             } yield obj.get("body").flatMap(_.strOpt) match {
                 case None => Record.Unreadable(messageId, "no body")
                 case Some(body) =>
-                    MatchEnded.parse(body) match {
+                    MatchEnded.parseAny(body) match {
                         case Left(why)   => Record.Unreadable(messageId, why)
                         case Right(read) => Record.Understood(messageId, read)
                     }

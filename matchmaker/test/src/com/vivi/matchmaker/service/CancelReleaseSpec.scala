@@ -52,7 +52,9 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                     "description",
                     "url",
                     active = true,
-                    Seq(GameRole(GameRoleId(0), GameId.unassigned, "X", optional = false, displayName = "X")),
+                    Seq(
+                      GameRole(GameRoleId(0), GameId.unassigned, "X", roleType = RoleType.Required, displayName = "X")
+                    ),
                     Seq.empty,
                     unique("engine")
                   )
@@ -74,10 +76,11 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                 m = Match(
                   game.gameId,
                   matchId,
-                  challenge.challengeId,
+                  Some(challenge.challengeId),
+                  challenge.challenger,
                   "d",
                   None,
-                  Instant.ofEpochSecond(1000),
+                  Some(Instant.ofEpochSecond(1000)),
                   None,
                   "{}"
                 )

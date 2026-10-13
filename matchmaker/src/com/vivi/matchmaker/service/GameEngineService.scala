@@ -85,8 +85,8 @@ class GameEngineService[T](
       * can simply try again.
       *
       * The challenge itself is never deleted, and its claim is never released once the start has succeeded. It is what
-      * the match points at, and its challenger is the match's creator — see `Match.challengeId`. A started challenge is
-      * excluded from the open-challenge listings and refuses further acceptances, which is what "spent" now means in
+      * the match points at, and its challenger becomes the match's creator — see `Match.creator`. A started challenge
+      * is excluded from the open-challenge listings and refuses further acceptances, which is what "spent" now means in
       * place of "gone".
       */
     def start(gameId: GameId, challengeId: ChallengeId, callerExternalId: String): IO[Match] =
@@ -145,7 +145,9 @@ class GameEngineService[T](
         (for {
             claimed <- challengeRepo.startedMatch(gameId, challengeId)
             challenge <- challengeRepo.read(gameId, challengeId)
-            unfilled <- new AcceptanceRepo(session).unclaimedRoles(gameId, challengeId)
+            // Recommended roles as well as required ones: nobody presses Start here to say that a
+            // challenge short of a recommended seat should begin anyway.
+            unfilled <- new AcceptanceRepo(session).unclaimedRoles(gameId, challengeId, recommended = true)
         } yield
             if (claimed.isDefined) GameEngineService.AutoStart.AlreadyStarted
             else if (challenge.exists(_.autoStart) && unfilled.isEmpty) GameEngineService.AutoStart.Ready
@@ -280,11 +282,12 @@ class GameEngineService[T](
                     newMatch = Match(
                       gameId = gameId,
                       matchId = matchId,
-                      // The match's creator, by reference: whoever this challenge's challenger is.
-                      challengeId = challengeId,
+                      challengeId = Some(challengeId),
+                      // Whose match it is: the challenger, copied so that nothing needs the challenge to say.
+                      creator = challenge.challenger,
                       description = challenge.message,
                       completedAt = None,
-                      start = challenge.start.getOrElse(Instant.now()),
+                      start = Some(challenge.start.getOrElse(Instant.now())),
                       timeLimit = challenge.timeLimit,
                       // Carried forward with the limit itself: the terms a match is played under are the
                       // ones its challenge was offered on, and editing the challenge later must not
@@ -373,6 +376,91 @@ class GameEngineService[T](
             )
         } yield started
     }
+
+    /** The engine half of a tournament match's start (new-design.md, Phase 5): `saved`, its participants and its
+      * tournament's claim on it already written and committed by [[TournamentRounds]], are sent to the engine, and its
+      * answer recorded as a challenge's start records it — the urls, then whose turn it is, then the mail.
+      *
+      * `undo` takes back what was written before, if the engine refuses: the tournament's match goes back to being due,
+      * to be created again. After the engine has made its game there is no undoing, as for a challenge's start, and a
+      * failure past that point leaves the urlless match `refresh` reports.
+      */
+    private[service] def launchTournamentMatch(
+        session: Session[IO],
+        saved: Match,
+        game: Game,
+        players: List[EnginePlayer],
+        tiesAllowed: Boolean,
+        undo: IO[Unit]
+    ): IO[Match] =
+        for {
+            apiKey <- new GameApiKeyRepo(session).forGame(game.gameId)
+            request = CreateGameRequest(
+              matchId = saved.matchId.value,
+              gameName = game.name,
+              isPublic = saved.isPublic,
+              parameters = ChallengeSettings.resolve(
+                defaults = game.parameters
+                    .map(p => p.name -> p.defaultValue.map(v => codec.encode(v.asInstanceOf[T])).getOrElse(""))
+                    .toMap,
+                allowed =
+                    game.parameters.map(p => p.name -> p.values.map(v => codec.encode(v.value.asInstanceOf[T]))).toMap,
+                settings = saved.settings
+              ),
+              settings = saved.settings,
+              timeLimitSeconds = saved.timeLimit.map(_.getSeconds),
+              players = players,
+              gameDisplayName = Some(game.displayName),
+              description = Some(saved.description.trim).filter(_.nonEmpty),
+              moveCallbackUrl =
+                  callbackBaseUrl.map(base => s"$base/games/${game.gameId.value}/matches/${saved.matchId.value}/moves"),
+              resultsCallbackUrl = callbackBaseUrl.map(base =>
+                  s"$base/games/${game.gameId.value}/matches/${saved.matchId.value}/results"
+              ),
+              tiesAllowed = Option.when(!tiesAllowed)(false)
+            )
+            response <- engine.createGame(game.url, apiKey, request).onError(_ => undo)
+            withUrls = saved.copy(
+              statusUrl = Some(response.statusUrl),
+              playUrl = Some(response.playUrl),
+              publicUrl = response.publicUrl
+            )
+            started <- retrying(finish(session, withUrls, response.cancelUrl).as(withUrls))
+            _ <- applyEngineStatus(session, saved.gameId, saved.matchId, response.statusUrl).attempt
+            // Nobody pressed anything: everyone in the match hears that it has begun.
+            _ <- notifications.matchStarted(session, started, None, None)
+        } yield started
+
+    /** A tournament seat as the engine is told it: who plays it, as what, with which character. */
+    private[service] def tournamentPlayer(
+        session: Session[IO],
+        participant: Participant,
+        player: Player,
+        roleName: String,
+        characterId: Option[CharacterId]
+    ): IO[EnginePlayer] =
+        characterId.flatTraverse(new CharacterRepo[T](session).read).map { c =>
+            EnginePlayer(
+              cognitoId = player.externalId,
+              participantId = participant.participantId.value,
+              role = Some(roleName),
+              characterId = c.map(_.characterId.value),
+              characterState = c.map(ch => codec.encode(ch.state)),
+              nickname = Some(player.nickname),
+              characterName = c.map(_.name)
+            )
+        }
+
+    /** Enforces a tournament match's clock now, for its owner's Check round: the same enforcement a player's look at
+      * the match would make, the engine asked first.
+      */
+    private[service] def enforceNow(gameId: GameId, matchId: MatchId): IO[Unit] =
+        sessionPool.use { session =>
+            new MatchRepo(session).read(gameId, matchId).flatMap {
+                case Some(m) => enforceTimeouts(session, gameId, matchId, m).void
+                case None    => IO.unit
+            }
+        }
 
     /* Asks the engine how a match stands and writes the answer onto its participants: whose turn
      * it is, when that turn is due, and who is finished — plus the match's own completed flag.
@@ -519,7 +607,11 @@ class GameEngineService[T](
         val turnRepo = new TurnRepo(session)
         turns
             .sortBy(_.takenAt)
-            .foldLeft(IO.pure(since.getOrElse(m.start))) { (previous, reported) =>
+            // A match reporting turns has begun, so it has a start; the first reported turn stands in for
+            // one only so that this cannot fail on a row that somehow lacks it. With no turns it is unused.
+            .foldLeft(
+              IO.pure(since.orElse(m.start).orElse(turns.map(_.takenAt).minOption).getOrElse(Instant.EPOCH))
+            ) { (previous, reported) =>
                 previous.flatMap { prev =>
                     val startedAt = reported.startedAt.getOrElse(prev)
                     turnRepo
@@ -899,7 +991,7 @@ class GameEngineService[T](
                 prepared <- session.transaction.use { _ =>
                     for {
                         player <- requireCaller(playerRepo, callerExternalId)
-                        existing <- requireMatch(matchRepo, gameId, matchId)
+                        existing <- requireBegunMatch(matchRepo, gameId, matchId)
                         participants <- participantRepo.listForMatch(gameId, matchId)
                         _ <- IO.raiseUnless(participants.exists(_._1.playerId == player.playerId))(
                           UnauthorizedError(s"caller '$callerExternalId' is not in match ${matchId.value}")
@@ -934,7 +1026,7 @@ class GameEngineService[T](
                 val participantRepo = new ParticipantRepo(session)
                 for {
                     player <- requireCaller(playerRepo, callerExternalId)
-                    existing <- requireMatch(matchRepo, gameId, matchId)
+                    existing <- requireBegunMatch(matchRepo, gameId, matchId)
                     participants <- participantRepo.listForMatch(gameId, matchId)
                     _ <- IO.raiseUnless(participants.exists(_._1.playerId == player.playerId))(
                       UnauthorizedError(s"caller '$callerExternalId' is not in match ${matchId.value}")
@@ -1275,6 +1367,15 @@ class GameEngineService[T](
         repo.read(gameId, matchId).flatMap {
             case Some(m) => IO.pure(m)
             case None    => IO.raiseError(NotFoundError(s"no match '${matchId.value}' in game ${gameId.value}"))
+        }
+
+    /* A match a player may open: one that has begun. A tournament's match exists before that (V52),
+     * scheduled or with its seats still choosing roles, and is answered as no match at all -- there is
+     * no board to send anyone to, and no listing names it. */
+    private def requireBegunMatch(repo: MatchRepo, gameId: GameId, matchId: MatchId): IO[Match] =
+        requireMatch(repo, gameId, matchId).flatMap { m =>
+            if (m.status.begun) IO.pure(m)
+            else IO.raiseError(NotFoundError(s"match '${matchId.value}' in game ${gameId.value} has not begun"))
         }
 
     private def requireMatchForUpdate(repo: MatchRepo, gameId: GameId, matchId: MatchId): IO[Match] =

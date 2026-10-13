@@ -40,7 +40,9 @@ class RankingServiceSpec extends PropertySuite {
                 "description",
                 "https://engine.example.com/games",
                 active = true,
-                Seq(GameRole(GameRoleId(0), GameId.unassigned, "only", optional = false, displayName = "Only")),
+                Seq(
+                  GameRole(GameRoleId(0), GameId.unassigned, "only", roleType = RoleType.Required, displayName = "Only")
+                ),
                 Seq.empty,
                 unique("ladder")
               )

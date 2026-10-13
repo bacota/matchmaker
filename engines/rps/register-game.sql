@@ -28,7 +28,7 @@ SELECT :'HOST' LIKE '/%' OR :'HOST' IN ('localhost', '127.0.0.1', '::1') AS is_l
 \endif
 
 WITH game AS (
-  INSERT INTO game (game_type, name, display_name, description, url, active, external_id)
+  INSERT INTO game (game_type, name, display_name, description, url, active, external_id, move_type)
   VALUES (
     -- 'P' — plain: a seat here is a player, not a character. The engine accepts a
     -- character-carrying seat too (it ignores the character), but nothing here needs one.
@@ -40,7 +40,9 @@ WITH game AS (
     'Two players throw at once. A test engine for matchmaker''s simultaneous-turn handling.',
     :'url',
     true,
-    :'external_id'
+    :'external_id',
+    -- Both players throw at once.
+    'sim'
   )
   RETURNING game_id
 )
@@ -48,7 +50,7 @@ WITH game AS (
 -- O, neither side is anything in particular: both throw at the same time and neither moves first.
 -- The names exist because matchmaker seats a player by accepting *into* a role, and because the
 -- play page has to call the two seats something.
-INSERT INTO game_role (game_id, name, optional, display_name)
-SELECT game_id, role, false, role FROM game, (VALUES ('One'), ('Two')) AS roles(role);
+INSERT INTO game_role (game_id, name, type, display_name)
+SELECT game_id, role, 'required', role FROM game, (VALUES ('One'), ('Two')) AS roles(role);
 
 SELECT game_id, name, url, external_id FROM game WHERE name = 'Rock-paper-scissors' ORDER BY game_id DESC LIMIT 1;

@@ -39,8 +39,20 @@ class AcceptanceServiceSpec extends PropertySuite {
                     // Two roles, because every acceptance names one and no two acceptances of a challenge
                     // may name the same one -- the challenger takes the first, the accepter the second.
                     Seq(
-                      GameRole(GameRoleId(0), GameId.unassigned, "first", optional = false, displayName = "first"),
-                      GameRole(GameRoleId(0), GameId.unassigned, "second", optional = false, displayName = "second")
+                      GameRole(
+                        GameRoleId(0),
+                        GameId.unassigned,
+                        "first",
+                        roleType = RoleType.Required,
+                        displayName = "first"
+                      ),
+                      GameRole(
+                        GameRoleId(0),
+                        GameId.unassigned,
+                        "second",
+                        roleType = RoleType.Required,
+                        displayName = "second"
+                      )
                     ),
                     Seq.empty,
                     genUniqueString.sample.get

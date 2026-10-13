@@ -26,7 +26,10 @@ case class Services[T](
     archives: ArchiveService,
     ending: EndingService,
     notifications: NotificationService,
-    suppression: SuppressionService
+    suppression: SuppressionService,
+    tournaments: TournamentService[T],
+    tournamentModels: TournamentModelService[T],
+    rounds: TournamentRounds[T]
 )
 
 object Services {
@@ -82,21 +85,33 @@ object Services {
     )(using codec: TextCodec[T]): Services[T] = {
         val notifications = new Notifications(notifier, mail)
         val archives = new ArchiveService(pool, archiveStore)
-        val ending = new EndingService(pool, engineClient)
-        val endings = matchEndings.getOrElse(
+        /* The ending, the queue and a tournament's rounds each need another of the three: a match's
+         * end is recorded in its tournament, a round's matches are created from the queue, and the
+         * queue -- where there is none -- settles endings and creates matches in this process. So
+         * they are lazy, and each is handed the others as functions. */
+        lazy val ending: EndingService =
+            new EndingService(pool, engineClient, tournamentEnding = (g, m) => rounds.recordEnding(g, m))
+        lazy val endings: MatchEndings = matchEndings.getOrElse(
           MatchEndings.fromEnvironment(
-            MatchEndings.inline((gameId, matchId) => ending.settle(gameId, matchId).void, ending.rank(_).void)
+            MatchEndings.inline(
+              (gameId, matchId) => ending.settle(gameId, matchId).void,
+              ending.rank(_).void,
+              (g, t, m) => rounds.createMatch(g, t, m).void,
+              (g, t) => rounds.autoStart(g, t).void,
+              (g, t) => rounds.runCheck(g, t).void
+            )
           )
         )
-        val matches = new MatchService(pool, notifications, Some(archives), endings)
+        lazy val matches = new MatchService(pool, notifications, Some(archives), endings)
 
         /* Built before the services it is given to, because it is given to one of them: a challenge
          * offered as starting itself turns an acceptance into a start, and the acceptance is
          * `challenges`' to record while the start is this one's to carry out. Only the function is
          * shared, so neither service has to know about the other -- see
          * `ChallengeService.autoStart`. */
-        val engine =
+        lazy val engine: GameEngineService[T] =
             new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications, Some(archives), endings)
+        lazy val rounds: TournamentRounds[T] = new TournamentRounds[T](pool, engine, endings, notifications)
 
         Services(
           registration = new RegistrationService(pool),
@@ -115,7 +130,11 @@ object Services {
           archives = archives,
           ending = ending,
           notifications = new NotificationService(pool),
-          suppression = new SuppressionService(pool)
+          suppression = new SuppressionService(pool),
+          // A tournament with automatic rounds begins its first as it starts.
+          tournaments = new TournamentService[T](pool, started = (g, t) => endings.tournamentRoundDue(g, t)),
+          tournamentModels = new TournamentModelService[T](pool),
+          rounds = rounds
         )
     }
 }
