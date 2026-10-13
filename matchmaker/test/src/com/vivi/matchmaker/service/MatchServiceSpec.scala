@@ -8,12 +8,13 @@ import org.scalacheck.Prop._
 import org.scalacheck.Gen
 import java.time.{Duration, Instant}
 import skunk.implicits._
-import skunk.codec.all.{int4, text}
+import skunk.codec.all.{int4, int8, text}
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.{PropertySuite, TestMigration}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{
     CharacterRepo,
+    Generators,
     GameRepo,
     MatchRepo,
     ChallengeRepo,
@@ -43,7 +44,7 @@ class MatchServiceSpec extends PropertySuite {
     private def makeMatch(
         nickname: String,
         externalId: String,
-        matchIdStr: String,
+        mid: MatchId,
         completed: Boolean,
         pending: Boolean
     ): IO[(Player, Game, MatchId)] =
@@ -56,7 +57,7 @@ class MatchServiceSpec extends PropertySuite {
                   player,
                   game,
                   character,
-                  matchIdStr,
+                  mid,
                   Option.when(completed)(Instant.ofEpochSecond(3000)),
                   pending
                 )
@@ -105,7 +106,7 @@ class MatchServiceSpec extends PropertySuite {
         player: Player,
         game: Game,
         character: Character[String],
-        matchIdStr: String,
+        mid: MatchId,
         completedAt: Option[Instant],
         pending: Boolean,
         /* Whether the match may be looked at by anybody, which is what the lists on another player's
@@ -151,7 +152,7 @@ class MatchServiceSpec extends PropertySuite {
             tournament <-
                 if (fromChallenge) IO.pure(None)
                 else TournamentFixtures.tournament(session, game, creator.getOrElse(player.playerId)).map(Some(_))
-            matchId = MatchId(matchIdStr)
+            matchId = mid
             made = Match(
               game.gameId,
               matchId,
@@ -212,7 +213,7 @@ class MatchServiceSpec extends PropertySuite {
         session
             .execute(
               sql"""UPDATE participant SET completed_at = ${SkunkCodecs.instant}
-                WHERE game_id = $int4 AND match_id = $text""".command
+                WHERE game_id = $int4 AND match_id = $int8""".command
             )((at, gameId.value, matchId.value))
             .void
 
@@ -226,7 +227,7 @@ class MatchServiceSpec extends PropertySuite {
         isPublic: Boolean = false
     ): IO[MatchId] =
         for {
-            id <- addMatch(session, player, game, character, genUniqueString.sample.get, Some(at), false, isPublic)
+            id <- addMatch(session, player, game, character, Generators.newMatchId(), Some(at), false, isPublic)
             _ <- finishedAt(session, game.gameId, id, at)
         } yield id
 
@@ -241,7 +242,7 @@ class MatchServiceSpec extends PropertySuite {
         isPublic: Boolean = false
     ): IO[MatchId] =
         for {
-            id <- addMatch(session, player, game, character, genUniqueString.sample.get, None, true, isPublic)
+            id <- addMatch(session, player, game, character, Generators.newMatchId(), None, true, isPublic)
             m <- new MatchRepo(session).read(game.gameId, id).map(_.get)
             _ <- new MatchRepo(session).update(m.copy(cancelled = true))
             _ <- new ParticipantRepo(session).completeForMatch(game.gameId, id)
@@ -379,7 +380,15 @@ class MatchServiceSpec extends PropertySuite {
             for {
                 prepared <- setup(session, unique, unique)
                 (player, game, character) = prepared
-                matchId <- addMatch(session, player, game, character, unique, Some(now), pending = false)
+                matchId <- addMatch(
+                  session,
+                  player,
+                  game,
+                  character,
+                  Generators.newMatchId(),
+                  Some(now),
+                  pending = false
+                )
                 other <- registrationService.register(rival, rival)
                 theirs <- new CharacterRepo[String](session).create(
                   Character(CharacterId(0), game.gameId, "rival", "description", "", Some(other.playerId))
@@ -435,10 +444,28 @@ class MatchServiceSpec extends PropertySuite {
             for {
                 prepared <- setup(session, unique, unique)
                 (player, game, character) = prepared
-                running <- addMatch(session, player, game, character, s"run-$unique", None, true, isPublic = true)
-                done <- addMatch(session, player, game, character, s"done-$unique", Some(Instant.now()), false, true)
+                running <- addMatch(
+                  session,
+                  player,
+                  game,
+                  character,
+                  Generators.newMatchId(),
+                  None,
+                  true,
+                  isPublic = true
+                )
+                done <- addMatch(
+                  session,
+                  player,
+                  game,
+                  character,
+                  Generators.newMatchId(),
+                  Some(Instant.now()),
+                  false,
+                  true
+                )
                 // Private: not on anybody's page but the players' own.
-                _ <- addMatch(session, player, game, character, s"hid-$unique", None, pending = true)
+                _ <- addMatch(session, player, game, character, Generators.newMatchId(), None, pending = true)
                 other <- registrationService.register(rival, rival)
                 theirs <- new CharacterRepo[String](session).create(
                   Character(CharacterId(0), game.gameId, "rival", "description", "", Some(other.playerId))
@@ -512,7 +539,7 @@ class MatchServiceSpec extends PropertySuite {
         assertEquals(record(character.characterId), MatchRecord())
         run(TestSession.resource.use { session =>
             session
-                .execute(sql"UPDATE match SET friendly = false WHERE game_id = $int4 AND match_id = $text".command)(
+                .execute(sql"UPDATE match SET friendly = false WHERE game_id = $int4 AND match_id = $int8".command)(
                   (game.gameId.value, done.value)
                 )
                 .void
@@ -526,7 +553,7 @@ class MatchServiceSpec extends PropertySuite {
      * in the query, so what these check is that the query is the one being used. */
 
     property("publicActive shows a public match and hides a private one") {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+        forAll(genUniqueString, genUniqueString, genUniqueString, Generators.genMatchId, Generators.genMatchId) {
             (nickname, externalId, watcherId, openId, hiddenId) =>
                 val result = TestSession.resource.use { session =>
                     for {
@@ -549,7 +576,7 @@ class MatchServiceSpec extends PropertySuite {
                         // And the player's own list is unchanged by any of it: they see both.
                         mine <- matchService.active(externalId)
                     } yield seen.map(_.matchId) == List(open) &&
-                        mine.map(_.matchId).toSet == Set(open, MatchId(hiddenId))
+                        mine.map(_.matchId).toSet == Set(open, hiddenId)
                 }
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -558,7 +585,7 @@ class MatchServiceSpec extends PropertySuite {
     property(
       "the public lists split a player's matches into running and finished, as the caller's own lists are split"
     ) {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+        forAll(genUniqueString, genUniqueString, genUniqueString, Generators.genMatchId, Generators.genMatchId) {
             (nickname, externalId, watcherId, runningId, finishedId) =>
                 val result = TestSession.resource.use { session =>
                     for {
@@ -589,8 +616,8 @@ class MatchServiceSpec extends PropertySuite {
                         over <- matchService
                             .publicCompleted(watcherId, player.playerId, CompletedQuery())
                             .map(_.matches.toList)
-                    } yield running.map(_.matchId) == List(MatchId(runningId)) &&
-                        over.map(_.matchId) == List(MatchId(finishedId)) &&
+                    } yield running.map(_.matchId) == List(runningId) &&
+                        over.map(_.matchId) == List(finishedId) &&
                         // The rows describe the player asked about, not the caller: it is their turn in
                         // the running one, and they created both.
                         running.forall(s => s.pending && s.isCreator)
@@ -603,7 +630,7 @@ class MatchServiceSpec extends PropertySuite {
      * chose, the default where they did not, and a choice the game no longer allows read as the
      * default -- what the engine is told at a start. Shown by display name, in the game's order. */
     property("a summary lists each of the game's parameters with the value its match is played under") {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId, Generators.genMatchId) {
             (nickname, externalId, runningId, finishedId) =>
                 def parameter(name: String, displayName: String, default: String, values: String*) =
                     GameParameter(
@@ -656,7 +683,7 @@ class MatchServiceSpec extends PropertySuite {
      * it is null for an engine that serves no board, so the absence has to survive the round trip
      * as plainly as the value does. */
     property("a summary carries the public url the engine issued, and none when there is none") {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+        forAll(genUniqueString, genUniqueString, genUniqueString, Generators.genMatchId, Generators.genMatchId) {
             (nickname, externalId, watcherId, watchableId, plainId) =>
                 val url = s"http://engine.test/matches/$watchableId/board"
                 val result = TestSession.resource.use { session =>
@@ -679,9 +706,9 @@ class MatchServiceSpec extends PropertySuite {
                         seen <- matchService.publicActive(watcherId, player.playerId)
                         // And on the player's own list, which is the same summary read by its owner.
                         mine <- matchService.active(externalId)
-                    } yield seen.find(_.matchId == MatchId(watchableId)).flatMap(_.publicUrl).contains(url) &&
-                        seen.find(_.matchId == MatchId(plainId)).exists(_.publicUrl.isEmpty) &&
-                        mine.find(_.matchId == MatchId(watchableId)).flatMap(_.publicUrl).contains(url)
+                    } yield seen.find(_.matchId == watchableId).flatMap(_.publicUrl).contains(url) &&
+                        seen.find(_.matchId == plainId).exists(_.publicUrl.isEmpty) &&
+                        mine.find(_.matchId == watchableId).flatMap(_.publicUrl).contains(url)
                 }
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -690,8 +717,8 @@ class MatchServiceSpec extends PropertySuite {
     /* The split is the seat's, not the match's: a player who is out of a match that is still being
      * played has finished with it, and their page should say so. */
     property("the public lists put a retired seat among the finished matches, though the match runs on") {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
-            (nickname, externalId, watcherId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, genUniqueString, Generators.genMatchId) {
+            (nickname, externalId, watcherId, mid) =>
                 val result = TestSession.resource.use { session =>
                     for {
                         prepared <- setup(session, nickname, externalId)
@@ -701,7 +728,7 @@ class MatchServiceSpec extends PropertySuite {
                           player,
                           game,
                           character,
-                          matchIdStr,
+                          mid,
                           // The match itself is unfinished; this player's seat is not.
                           None,
                           pending = false,
@@ -713,7 +740,7 @@ class MatchServiceSpec extends PropertySuite {
                         over <- matchService
                             .publicCompleted(watcherId, player.playerId, CompletedQuery())
                             .map(_.matches.toList)
-                    } yield running.isEmpty && over.map(_.matchId) == List(MatchId(matchIdStr)) &&
+                    } yield running.isEmpty && over.map(_.matchId) == List(mid) &&
                         // Still an unfinished match, which is why the row cannot say it completed.
                         over.forall(s => !s.completed && !s.cancelled)
                 }
@@ -735,9 +762,9 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("due returns matches where it is the caller's turn") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
                 (_, game, matchId) = made
                 due <- matchService.due(externalId)
             } yield due.map(s => (s.gameId, s.matchId)) == List((game.gameId, matchId)) &&
@@ -747,9 +774,9 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("due excludes matches where it is not the caller's turn") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                _ <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = false)
+                _ <- makeMatch(nickname, externalId, mid, completed = false, pending = false)
                 due <- matchService.due(externalId)
             } yield due.isEmpty
             result.timeout(10.seconds).unsafeRunSync()
@@ -757,9 +784,9 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("active returns unfinished matches and completed returns finished ones") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
                 (_, game, matchId) = made
                 active <- matchService.active(externalId)
                 completed <- matchService.completed(externalId).map(_.matches.toList)
@@ -771,7 +798,7 @@ class MatchServiceSpec extends PropertySuite {
     /* The completed list is a history, so it is read from the most recent end: by when each of the
      * player's seats was finished with (V41). A cancelled match is not in it at all. */
     property("completed matches come back most recently finished first, and a cancelled one not at all") {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId, Generators.genMatchId, Generators.genMatchId) {
             (nickname, externalId, olderId, newerId, cancelledId) =>
                 val result = TestSession.resource.use { session =>
                     for {
@@ -808,9 +835,9 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("completed returns finished matches and active excludes them") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = true, pending = false)
+                made <- makeMatch(nickname, externalId, mid, completed = true, pending = false)
                 (_, game, matchId) = made
                 active <- matchService.active(externalId)
                 completed <- matchService.completed(externalId).map(_.matches.toList)
@@ -820,10 +847,10 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("lists are scoped to the caller, so another player sees nothing") {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
-            (nickname, externalId, matchIdStr, otherNickname, otherExternalId) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId, genUniqueString, genUniqueString) {
+            (nickname, externalId, mid, otherNickname, otherExternalId) =>
                 val result = for {
-                    _ <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+                    _ <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
                     _ <- registrationService.register(otherNickname, otherExternalId)
                     due <- matchService.due(otherExternalId)
                     active <- matchService.active(otherExternalId)
@@ -849,9 +876,9 @@ class MatchServiceSpec extends PropertySuite {
     // from, so that player is the match's creator.
 
     property("the creator can cancel their own match") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
                 (_, game, matchId) = made
                 cancelled <- matchService.cancel(game.gameId, matchId, externalId)
                 due <- matchService.due(externalId)
@@ -875,12 +902,12 @@ class MatchServiceSpec extends PropertySuite {
         session.execute(
           sql"""UPDATE match SET status = $text, cancelled = ${skunk.codec.all.bool}, start = NULL,
                    status_url = NULL, play_url = NULL, public_url = NULL
-            WHERE game_id = $int4 AND match_id = $text""".command
+            WHERE game_id = $int4 AND match_id = $int8""".command
         )((if (cancelled) "F" else "D", cancelled, gameId.value, matchId.value)) *>
             session
                 .execute(
                   sql"""UPDATE participant SET game_role_id = NULL, elo_start = NULL
-                    WHERE game_id = $int4 AND match_id = $text""".command
+                    WHERE game_id = $int4 AND match_id = $int8""".command
                 )((gameId.value, matchId.value))
                 .void
 
@@ -896,7 +923,7 @@ class MatchServiceSpec extends PropertySuite {
                   player,
                   game,
                   character,
-                  genUniqueString.sample.get,
+                  Generators.newMatchId(),
                   None,
                   pending = true,
                   fromChallenge = false
@@ -908,7 +935,7 @@ class MatchServiceSpec extends PropertySuite {
                   player,
                   game,
                   character,
-                  genUniqueString.sample.get,
+                  Generators.newMatchId(),
                   None,
                   pending = false,
                   fromChallenge = false
@@ -946,7 +973,7 @@ class MatchServiceSpec extends PropertySuite {
                   owner,
                   game,
                   ownerCharacter,
-                  genUniqueString.sample.get,
+                  Generators.newMatchId(),
                   None,
                   pending = true,
                   fromChallenge = false
@@ -962,7 +989,7 @@ class MatchServiceSpec extends PropertySuite {
                   other,
                   game,
                   otherCharacter,
-                  genUniqueString.sample.get,
+                  Generators.newMatchId(),
                   None,
                   pending = true,
                   fromChallenge = false,
@@ -991,9 +1018,9 @@ class MatchServiceSpec extends PropertySuite {
     // no clock in it is running -- which is what the results and forfeit paths already write, and what
     // anything asking "is this seat still in play" now reads instead of joining `match`.
     property("cancelling retires every seat in the match") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
                 (_, game, matchId) = made
                 before <- TestSession.resource.use(new ParticipantRepo(_).listForMatch(game.gameId, matchId))
                 _ <- matchService.cancel(game.gameId, matchId, externalId)
@@ -1005,10 +1032,10 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("a player who did not create the match may not cancel it") {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
-            (nickname, externalId, matchIdStr, otherNickname, otherExternalId) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId, genUniqueString, genUniqueString) {
+            (nickname, externalId, mid, otherNickname, otherExternalId) =>
                 val result = for {
-                    made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+                    made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
                     (_, game, matchId) = made
                     _ <- registrationService.register(otherNickname, otherExternalId)
                     outcome <- matchService.cancel(game.gameId, matchId, otherExternalId).attempt
@@ -1023,9 +1050,9 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("a completed match can no longer be cancelled") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = true, pending = false)
+                made <- makeMatch(nickname, externalId, mid, completed = true, pending = false)
                 (_, game, matchId) = made
                 outcome <- matchService.cancel(game.gameId, matchId, externalId).attempt
             } yield outcome match {
@@ -1037,9 +1064,9 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("cancelling twice is a conflict, not a second cancel") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
                 (_, game, matchId) = made
                 _ <- matchService.cancel(game.gameId, matchId, externalId)
                 outcome <- matchService.cancel(game.gameId, matchId, externalId).attempt
@@ -1052,11 +1079,13 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("a match that does not exist is not found") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
                 (_, game, _) = made
-                outcome <- matchService.cancel(game.gameId, MatchId("no-such-match"), externalId).attempt
+                outcome <- matchService
+                    .cancel(game.gameId, com.vivi.matchmaker.persistence.Generators.newMatchId(), externalId)
+                    .attempt
             } yield outcome match {
                 case Left(_: NotFoundError) => true
                 case _                      => false
@@ -1082,7 +1111,7 @@ class MatchServiceSpec extends PropertySuite {
             made <- makeMatch(
               genUniqueString.sample.get,
               genUniqueString.sample.get,
-              genUniqueString.sample.get,
+              Generators.newMatchId(),
               completed = completed,
               pending = true
             )
@@ -1173,7 +1202,12 @@ class MatchServiceSpec extends PropertySuite {
             byOther <- matchService.setFriendly(game.gameId, matchId, friendly = false, otherAdmin.externalId).attempt
             stored <- friendlyOf(game, matchId)
             missing <- matchService
-                .setFriendly(other._2.gameId, MatchId("no-such-match"), friendly = false, otherAdmin.externalId)
+                .setFriendly(
+                  other._2.gameId,
+                  com.vivi.matchmaker.persistence.Generators.newMatchId(),
+                  friendly = false,
+                  otherAdmin.externalId
+                )
                 .attempt
         } yield (byCreator, byOther, stored, missing)
         val (byCreator, byOther, stored, missing) = result.timeout(30.seconds).unsafeRunSync()
@@ -1194,9 +1228,9 @@ class MatchServiceSpec extends PropertySuite {
         )
 
     property("results name the player, their role, and whatever the engine scored them on") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = true, pending = false)
+                made <- makeMatch(nickname, externalId, mid, completed = true, pending = false)
                 (_, game, matchId) = made
                 participantId <- onlyParticipant(game.gameId, matchId)
                 _ <- TestSession.resource.use(session =>
@@ -1215,9 +1249,9 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("a seat the engine reported no result for is still listed, with no rank") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = true, pending = false)
+                made <- makeMatch(nickname, externalId, mid, completed = true, pending = false)
                 (_, _, matchId) = made
                 results <- matchService.results(externalId)
                 mine = results.filter(_.matchId == matchId)
@@ -1228,9 +1262,9 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("results exclude matches still being played") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
                 (_, _, matchId) = made
                 results <- matchService.results(externalId)
             } yield results.forall(_.matchId != matchId)
@@ -1239,10 +1273,10 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("results are scoped to the caller, so another player sees nothing of them") {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
-            (nickname, externalId, matchIdStr, otherNickname, otherExternalId) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId, genUniqueString, genUniqueString) {
+            (nickname, externalId, mid, otherNickname, otherExternalId) =>
                 val result = for {
-                    _ <- makeMatch(nickname, externalId, matchIdStr, completed = true, pending = false)
+                    _ <- makeMatch(nickname, externalId, mid, completed = true, pending = false)
                     _ <- registrationService.register(otherNickname, otherExternalId)
                     results <- matchService.results(otherExternalId)
                 } yield results.isEmpty
@@ -1251,9 +1285,9 @@ class MatchServiceSpec extends PropertySuite {
     }
 
     property("the creator is told apart from a mere participant on every summary") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, matchIdStr) =>
+        forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, matchIdStr, completed = false, pending = true)
+                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
                 active <- matchService.active(externalId)
             } yield active.forall(_.isCreator)
             result.timeout(10.seconds).unsafeRunSync()

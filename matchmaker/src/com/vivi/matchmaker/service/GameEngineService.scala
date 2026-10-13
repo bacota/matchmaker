@@ -4,7 +4,6 @@ import cats.effect.IO
 import cats.syntax.all._
 import scala.concurrent.duration._
 import java.time.Instant
-import java.util.UUID
 import skunk.Session
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.ending.MatchEndings
@@ -215,9 +214,9 @@ class GameEngineService[T](
         val matchRepo = new MatchRepo(session)
         val participantRepo = new ParticipantRepo(session)
 
-        val matchId = MatchId(UUID.randomUUID().toString)
-
         for {
+            // Drawn before the transaction, as a sequence is never rolled back: a start that fails leaves a gap.
+            matchId <- matchRepo.nextId
             prepared <- session.transaction.use { _ =>
                 for {
                     // Locked first: two clicks of Start on the same challenge must not both get past the
@@ -396,7 +395,7 @@ class GameEngineService[T](
         for {
             apiKey <- new GameApiKeyRepo(session).forGame(game.gameId)
             request = CreateGameRequest(
-              matchId = saved.matchId.value,
+              matchId = saved.matchId.value.toString,
               gameName = game.name,
               isPublic = saved.isPublic,
               parameters = ChallengeSettings.resolve(
@@ -1205,7 +1204,7 @@ class GameEngineService[T](
         players: List[EnginePlayer]
     ): CreateGameRequest =
         CreateGameRequest(
-          matchId = matchId.value,
+          matchId = matchId.value.toString,
           // The name, not the display name: the engine is told the game's stable handle, which an
           // admin renaming the game for players does not change.
           gameName = game.name,

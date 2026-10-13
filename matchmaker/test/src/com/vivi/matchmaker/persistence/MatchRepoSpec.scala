@@ -8,14 +8,14 @@ import com.vivi.matchmaker.model.{ChallengeId, GameId, Match, MatchId, PlayerId}
 
 class MatchRepoSpec extends PropertySuite {
     property("create then read returns the match just created") {
-        forAll(Generators.genString) { matchIdStr =>
+        forAll(Generators.genMatchId) { mid =>
             TestSession.resource
                 .use { session =>
                     val matchRepo = new MatchRepo(session)
                     for {
                         gameAndChallenge <- Generators.gameWithChallenge(session)
                         (createdGame, challengeId) = gameAndChallenge
-                        matchId = MatchId(matchIdStr)
+                        matchId = mid
                         m <- Generators.matchFrom(session, createdGame.gameId, matchId, challengeId)
                         created <- matchRepo.create(m)
                         found <- matchRepo.read(createdGame.gameId, matchId)
@@ -26,14 +26,14 @@ class MatchRepoSpec extends PropertySuite {
     }
 
     property("update then read returns the match as it was rewritten, its friendliness included") {
-        forAll(Generators.genString) { matchIdStr =>
+        forAll(Generators.genMatchId) { mid =>
             TestSession.resource
                 .use { session =>
                     val matchRepo = new MatchRepo(session)
                     for {
                         gameAndChallenge <- Generators.gameWithChallenge(session)
                         (createdGame, challengeId) = gameAndChallenge
-                        matchId = MatchId(matchIdStr)
+                        matchId = mid
                         m <- Generators.matchFrom(session, createdGame.gameId, matchId, challengeId)
                         _ <- matchRepo.create(m)
                         rewritten = m.copy(friendly = !m.friendly, isPublic = !m.isPublic)
@@ -49,7 +49,7 @@ class MatchRepoSpec extends PropertySuite {
         val unsaid =
             Match(
               GameId(1),
-              MatchId("m"),
+              MatchId(1),
               Some(ChallengeId(1)),
               PlayerId(1),
               "",

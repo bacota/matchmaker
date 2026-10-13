@@ -94,7 +94,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                     Some(game.roles.head.gameRoleId)
                   )
                 )
-                matchId = MatchId(java.util.UUID.randomUUID().toString)
+                matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
                 m = Match(
                   game.gameId,
                   matchId,
@@ -187,7 +187,10 @@ class EndingServiceSpec extends FunSuite with QuietTests {
         val services = TestServices.servicesWith(engine, archiveStore = store)
         val (game, matchId) = run(matchOf(services, None))
         assertEquals(run(endingOf(engine).settle(game.gameId, matchId)), Settlement.Settled)
-        assertEquals(run(endingOf(engine).settle(game.gameId, MatchId("no-such-match"))), Settlement.Settled)
+        assertEquals(
+          run(endingOf(engine).settle(game.gameId, com.vivi.matchmaker.persistence.Generators.newMatchId())),
+          Settlement.Settled
+        )
         assertEquals((engine.asked, engine.cancelled), (Nil, Nil))
     }
 

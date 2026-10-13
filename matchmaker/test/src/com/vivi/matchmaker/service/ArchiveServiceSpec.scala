@@ -8,7 +8,7 @@ import java.nio.file.Files
 import java.time.{Duration, Instant}
 import munit.FunSuite
 import skunk.implicits._
-import skunk.codec.all.{int4, text}
+import skunk.codec.all.{int4, int8, text}
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.TestMigration
 import com.vivi.matchmaker.archive.{ArchiveBucket, ArchiveStore, LocalArchiveStore}
@@ -101,7 +101,7 @@ class ArchiveServiceSpec extends FunSuite {
                     Some(game.roles.head.gameRoleId)
                   )
                 )
-                matchId = MatchId(java.util.UUID.randomUUID().toString)
+                matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
                 _ <- new MatchRepo(session).create(
                   Match(
                     game.gameId,
@@ -155,7 +155,7 @@ class ArchiveServiceSpec extends FunSuite {
                     Some(f.game.roles.head.gameRoleId)
                   )
                 )
-                matchId = MatchId(java.util.UUID.randomUUID().toString)
+                matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
                 _ <- new MatchRepo(session).create(
                   Match(
                     f.game.gameId,
@@ -214,7 +214,7 @@ class ArchiveServiceSpec extends FunSuite {
             session
                 .execute(
                   sql"""UPDATE match SET archived_at = archived_at - make_interval(days => $int4)
-                    WHERE game_id = $int4 AND match_id = $text""".command
+                    WHERE game_id = $int4 AND match_id = $int8""".command
                 )((days, f.game.gameId.value, f.matchId.value))
                 .void
         }
@@ -414,7 +414,7 @@ class ArchiveServiceSpec extends FunSuite {
         run(TestSession.resource.use(session => new ArchiveRepo(session).recordExpired(f.game.gameId, f.matchId)))
         val recorded = run(TestSession.resource.use { session =>
             session.unique(
-              sql"SELECT archive_expired_at IS NOT NULL FROM match WHERE game_id = $int4 AND match_id = $text"
+              sql"SELECT archive_expired_at IS NOT NULL FROM match WHERE game_id = $int4 AND match_id = $int8"
                   .query(skunk.codec.all.bool)
             )((f.game.gameId.value, f.matchId.value))
         })
@@ -432,7 +432,7 @@ class ArchiveServiceSpec extends FunSuite {
         run(TestSession.resource.use { session =>
             session
                 .execute(
-                  sql"UPDATE match SET archive_expired_at = now() WHERE game_id = $int4 AND match_id = $text".command
+                  sql"UPDATE match SET archive_expired_at = now() WHERE game_id = $int4 AND match_id = $int8".command
                 )((f.game.gameId.value, f.matchId.value))
                 .void
         })
@@ -526,27 +526,27 @@ class ArchiveServiceSpec extends FunSuite {
 
     test("an archive's key is the game's folder, the day it completed, and the match id") {
         val at = Instant.parse("2026-01-31T23:59:59Z")
-        assertEquals(ArchiveService.keyFor("tictactoe", at, MatchId("abc-1")), "tictactoe/2026-01-31/abc-1.json")
+        assertEquals(ArchiveService.keyFor("tictactoe", at, MatchId(41)), "tictactoe/2026-01-31/41.json")
         // A name that would not survive as a key as it is.
         assertEquals(
-          ArchiveService.keyFor("rock paper/scissors", at, MatchId("m")),
-          "rock%20paper%2Fscissors/2026-01-31/m.json"
+          ArchiveService.keyFor("rock paper/scissors", at, MatchId(1)),
+          "rock%20paper%2Fscissors/2026-01-31/1.json"
         )
-        assertEquals(ArchiveService.keyFor("..", at, MatchId("m")), "%2E%2E/2026-01-31/m.json")
+        assertEquals(ArchiveService.keyFor("..", at, MatchId(1)), "%2E%2E/2026-01-31/1.json")
     }
 
     test("a game name too long for a key is cut short and hashed, without splitting an escape") {
         val at = Instant.parse("2026-01-31T00:00:00Z")
         val long = "é" * 300
-        val key = ArchiveService.keyFor(long, at, MatchId("m"))
+        val key = ArchiveService.keyFor(long, at, MatchId(1))
         val folder = key.split('/').head
         assert(folder.length <= ArchiveService.MaxSegment, folder)
         assert(folder.matches("(%[0-9A-F]{2})+-[0-9a-f]{16}"), folder)
         // Two names alike in what is kept still get folders of their own.
-        assertNotEquals(ArchiveService.keyFor(long + "x", at, MatchId("m")).split('/').head, folder)
+        assertNotEquals(ArchiveService.keyFor(long + "x", at, MatchId(1)).split('/').head, folder)
         assert(key.getBytes("UTF-8").length < 1024)
         // A short name is untouched.
-        assertEquals(ArchiveService.keyFor("stratego", at, MatchId("m")), "stratego/2026-01-31/m.json")
+        assertEquals(ArchiveService.keyFor("stratego", at, MatchId(1)), "stratego/2026-01-31/1.json")
     }
 
     test("a long history checks only so many archives per list, and the next list carries on") {

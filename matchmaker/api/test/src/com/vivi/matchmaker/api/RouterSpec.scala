@@ -124,6 +124,12 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request("POST", "/register", body = """{"wrong":"field"}""")).statusCode, 400)
     }
 
+    test("a match id that is not a number is a bad request") {
+        assertEquals(dispatch(request("GET", "/games/1/matches/m1")).statusCode, 400)
+        assertEquals(dispatch(request("POST", "/matches/m1/archive/confirm")).statusCode, 400)
+        assertEquals(dispatch(request("POST", "/games/1/tournaments/2/matches/m1/role", body = "{}")).statusCode, 400)
+    }
+
     // Every part of a completed list's window is optional, and each one given has to be well formed.
     test("a completed list's window with a part that is not well formed is a bad request") {
         assertEquals(dispatch(request("GET", "/me/matches/completed?frame=fortnight")).statusCode, 400)
@@ -295,32 +301,32 @@ class RouterSpec extends FunSuite {
       ("POST", "/challenges/1/1/character-invitations", """{"characterId":3,"gameRoleId":2}"""),
       ("DELETE", "/challenges/1/1/character-invitations/3", "{}"),
       ("POST", "/challenges/1/1/start", "{}"),
-      ("GET", "/games/1/matches/m1", "{}"),
-      ("POST", "/games/1/matches/m1/refresh", "{}"),
-      ("POST", "/games/1/matches/m1/cancel", "{}"),
+      ("GET", "/games/1/matches/11", "{}"),
+      ("POST", "/games/1/matches/11/refresh", "{}"),
+      ("POST", "/games/1/matches/11/cancel", "{}"),
       ("GET", "/games/1/matches", "{}"),
-      ("PUT", "/games/1/matches/m1/friendly", """{"friendly":false}"""),
-      ("GET", "/games/1/matches/m1/notifications", "{}"),
+      ("PUT", "/games/1/matches/11/friendly", """{"friendly":false}"""),
+      ("GET", "/games/1/matches/11/notifications", "{}"),
       // The four a seat holds (V24), and not optional: a seat answers every kind it can be asked
       // about, so there is nothing here to leave out. The seven kinds about a challenge are not a
       // seat's to answer and are not accepted here.
       (
         "PUT",
-        "/games/1/matches/m1/notifications",
+        "/games/1/matches/11/notifications",
         """{"matchStarted":true,"turnTaken":false,"yourTurn":true,"matchEnded":true}"""
       ),
       (
         "POST",
-        "/games/1/matches/m1/moves",
+        "/games/1/matches/11/moves",
         """{"participantId":1,"next":[2],"takenAt":"2030-01-01T00:00:00Z","startedAt":"2030-01-01T00:00:00Z"}"""
       ),
-      ("POST", "/games/1/matches/m1/results", resultsBody),
+      ("POST", "/games/1/matches/11/results", resultsBody),
       // The engine's archive calls. The upload request is the only one with a body: the size and
       // checksum it will be held to.
-      ("POST", "/matches/m1/archive", """{"size":10,"sha256":"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="}"""),
-      ("POST", "/matches/m1/archive/confirm", "{}"),
-      ("POST", "/matches/m1/archive/read", "{}"),
-      ("POST", "/matches/m1/archive/expired", "{}"),
+      ("POST", "/matches/11/archive", """{"size":10,"sha256":"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="}"""),
+      ("POST", "/matches/11/archive/confirm", "{}"),
+      ("POST", "/matches/11/archive/read", "{}"),
+      ("POST", "/matches/11/archive/expired", "{}"),
       // Tournaments (V52). A create or edit names a standard design by key; settings are all defaulted.
       ("GET", "/me/tournaments", "{}"),
       ("GET", "/me/tournament-standings", "{}"),
@@ -344,10 +350,10 @@ class RouterSpec extends FunSuite {
       ("POST", "/games/1/tournaments/2/rounds", "{}"),
       ("POST", "/games/1/tournaments/2/check", "{}"),
       ("POST", "/games/1/tournaments/2/stop", "{}"),
-      ("POST", "/games/1/tournaments/2/matches/m-3/role", """{"gameRoleId":7}"""),
+      ("POST", "/games/1/tournaments/2/matches/3/role", """{"gameRoleId":7}"""),
       (
         "POST",
-        "/games/1/tournaments/2/matches/m-3/result",
+        "/games/1/tournaments/2/matches/3/result",
         """{"ranks":[{"entrantId":5,"rank":1},{"entrantId":6,"rank":2}]}"""
       ),
       ("GET", "/me/tournament-choices", "{}")
@@ -413,7 +419,7 @@ class RouterSpec extends FunSuite {
     test("the gateway authenticator turns an engine's API key into that engine's name") {
         val request = ApiGateway.Request(
           "POST",
-          "/games/1/matches/m1/results",
+          "/games/1/matches/11/results",
           Map(ApiKeys.Header -> "s3cret"),
           Map.empty,
           "{}"
@@ -426,7 +432,7 @@ class RouterSpec extends FunSuite {
         def callerOf(headers: Map[String, String]) =
             Authenticator
                 .Gateway(keys)
-                .callerOf(ApiGateway.Request("POST", "/games/1/matches/m1/results", headers, Map.empty, "{}"))
+                .callerOf(ApiGateway.Request("POST", "/games/1/matches/11/results", headers, Map.empty, "{}"))
                 .unsafeRunSync()
 
         assertEquals(callerOf(Map(ApiKeys.Header -> "guess")), Left(Errors.unauthenticated))
@@ -439,7 +445,7 @@ class RouterSpec extends FunSuite {
         val unread = () => IO.raiseError[ApiKeys](new AssertionError("the keys were read"))
         val outcome = Authenticator
             .ApiKey(unread)
-            .callerOf(ApiGateway.Request("POST", "/games/1/matches/m1/results", Map.empty, Map.empty, "{}"))
+            .callerOf(ApiGateway.Request("POST", "/games/1/matches/11/results", Map.empty, Map.empty, "{}"))
             .unsafeRunSync()
 
         assertEquals(outcome, Left(Errors.unauthenticated))

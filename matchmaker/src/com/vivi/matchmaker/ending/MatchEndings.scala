@@ -46,7 +46,7 @@ trait MatchEndings {
 /** What goes on the queue: the match, and nothing about it. Whoever settles it reads the rest from the database, as it
   * stands then — a message that waited does not act on what was true when it was sent.
   */
-case class MatchEnded(gameId: Int, matchId: String)
+case class MatchEnded(gameId: Int, matchId: Long)
 
 object MatchEnded {
     given ReadWriter[MatchEnded] = macroRW
@@ -82,7 +82,7 @@ object MatchEnded {
 }
 
 /** A tournament's match, due to be created in its engine: the `match` row it already is (V52). */
-case class TournamentMatchDue(gameId: Int, tournamentId: Long, matchId: String)
+case class TournamentMatchDue(gameId: Int, tournamentId: Long, matchId: Long)
 
 object TournamentMatchDue {
     given ReadWriter[TournamentMatchDue] = macroRW

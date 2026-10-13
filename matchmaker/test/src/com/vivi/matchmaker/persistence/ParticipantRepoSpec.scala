@@ -11,7 +11,7 @@ import com.vivi.matchmaker.model.{CharacterParticipant, EloRating, MatchId, Part
 
 class ParticipantRepoSpec extends PropertySuite {
     property("create then read returns the participant just created") {
-        forAll(Generators.genString, Generators.genPlayer) { (matchIdStr, player) =>
+        forAll(Generators.genMatchId, Generators.genPlayer) { (mid, player) =>
             TestSession.resource
                 .use { session =>
                     val gameRepo = new GameRepo[String](session)
@@ -23,7 +23,7 @@ class ParticipantRepoSpec extends PropertySuite {
                     for {
                         createdGame <- gameRepo.create(Generators.genGameWithRole.sample.get)
                         challengeId <- Generators.challengeIn(session, createdGame)
-                        matchId = MatchId(matchIdStr)
+                        matchId = mid
                         m <- Generators.matchFrom(session, createdGame.gameId, matchId, challengeId)
                         _ <- matchRepo.create(m)
                         createdPlayer <- playerRepo.create(player)
@@ -68,7 +68,7 @@ class ParticipantRepoSpec extends PropertySuite {
                 for {
                     game <- new GameRepo[String](session).create(Generators.genGameWithRole.sample.get)
                     challengeId <- Generators.challengeIn(session, game)
-                    matchId = MatchId(Generators.genString.sample.get + java.util.UUID.randomUUID())
+                    matchId = Generators.newMatchId()
                     _ <- Generators
                         .matchFrom(session, game.gameId, matchId, challengeId)
                         .flatMap(new MatchRepo(session).create)

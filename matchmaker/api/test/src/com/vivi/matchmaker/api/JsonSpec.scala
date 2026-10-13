@@ -10,7 +10,7 @@ class JsonSpec extends FunSuite {
 
     test("ids are transparent numbers on the wire") {
         assertEquals(write(GameId(7)), "7")
-        assertEquals(write(MatchId("m-1")), "\"m-1\"")
+        assertEquals(write(MatchId(12)), "12")
         assertEquals(read[CharacterId]("42"), CharacterId(42))
     }
 
@@ -319,7 +319,7 @@ class JsonSpec extends FunSuite {
     test("a MatchSummary round-trips") {
         val summary = MatchSummary(
           GameId(1),
-          MatchId("m"),
+          MatchId(1),
           "game",
           "description",
           completedAt = Some(Instant.ofEpochSecond(3000)),

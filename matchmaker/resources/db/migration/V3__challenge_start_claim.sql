@@ -17,4 +17,4 @@
 -- match row today, but its purpose is to mark the challenge spoken for, and it must survive
 -- being cleared by the undo path that deletes that match.
 ALTER TABLE open_challenge
-    ADD COLUMN started_match_id TEXT;
+    ADD COLUMN started_match_id BIGINT;

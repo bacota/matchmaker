@@ -423,7 +423,7 @@ object Router {
                 }
 
             case ("GET", "games" :: gameId :: "matches" :: matchId :: Nil) =>
-                withGameId(gameId)(gid => ok(services.engine.read(gid, MatchId(matchId), caller)))
+                withMatch(gameId, matchId)((gid, mid) => ok(services.engine.read(gid, mid, caller)))
 
             // How the caller's finished matches turned out. One call for the whole completed list:
             // it is a join over five tables, and per-match would be a request per row.
@@ -452,12 +452,12 @@ object Router {
             // Re-checks a running match with the game engine, for a participant who suspects the
             // state matchmaker holds has fallen behind. Player-authorized, like any other match route.
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "refresh" :: Nil) =>
-                withGameId(gameId)(gid => ok(services.engine.refresh(gid, MatchId(matchId), caller)))
+                withMatch(gameId, matchId)((gid, mid) => ok(services.engine.refresh(gid, mid, caller)))
 
             // Calls a match off. Only its creator may — the challenger of the challenge it was started
             // from — which is why the challenge outlives the start.
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "cancel" :: Nil) =>
-                withGameId(gameId)(gid => ok(services.matches.cancel(gid, MatchId(matchId), caller)))
+                withMatch(gameId, matchId)((gid, mid) => ok(services.matches.cancel(gid, mid, caller)))
 
             // A game's matches, for its admins to manage them from -- whether each is friendly, above all.
             // `?playerId=` narrows it to one player's, as an admin sees them on that player's page.
@@ -475,9 +475,9 @@ object Router {
 
             // Whether the match is friendly (V36), which a game's admin says.
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "friendly" :: Nil) =>
-                withGameId(gameId) { gid =>
+                withMatch(gameId, matchId) { (gid, mid) =>
                     body[Json.FriendlyRequest](request).flatMap(r =>
-                        ok(services.matches.setFriendly(gid, MatchId(matchId), r.friendly, caller))
+                        ok(services.matches.setFriendly(gid, mid, r.friendly, caller))
                     )
                 }
 
@@ -485,28 +485,28 @@ object Router {
             // and the only one that is about a single thing they are playing. Player-authorized like
             // every other match route; the service refuses a caller with no seat in it.
             case ("GET", "games" :: gameId :: "matches" :: matchId :: "notifications" :: Nil) =>
-                withGameId(gameId)(gid => ok(services.notifications.forMatch(caller, gid, MatchId(matchId))))
+                withMatch(gameId, matchId)((gid, mid) => ok(services.notifications.forMatch(caller, gid, mid)))
 
             case ("PUT", "games" :: gameId :: "matches" :: matchId :: "notifications" :: Nil) =>
-                withGameId(gameId) { gid =>
+                withMatch(gameId, matchId) { (gid, mid) =>
                     // `SeatNotifications`, not preferences: a seat answers every kind it can be asked
                     // about, so there is nothing here a caller may leave unsaid and nothing below it to
                     // fall through to. Four kinds since V24 -- the seven about a challenge are not a
                     // seat's to answer.
                     body[SeatNotifications](request).flatMap(p =>
-                        noContent(services.notifications.updateForMatch(caller, gid, MatchId(matchId), p))
+                        noContent(services.notifications.updateForMatch(caller, gid, mid, p))
                     )
                 }
 
             // The game engine's two callbacks. Authorized on behalf of the game rather than a player:
             // X-External-Id carries the game's shared secret, as on the character-state route above.
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "moves" :: Nil) =>
-                withGameId(gameId) { gid =>
+                withMatch(gameId, matchId) { (gid, mid) =>
                     body[Json.MoveNotification](request).flatMap { r =>
                         noContent(
                           services.engine.recordMove(
                             gid,
-                            MatchId(matchId),
+                            mid,
                             r.participantId,
                             r.next,
                             r.takenAt,
@@ -521,7 +521,7 @@ object Router {
                 }
 
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "results" :: Nil) =>
-                withGameId(gameId) { gid =>
+                withMatch(gameId, matchId) { (gid, mid) =>
                     body[Json.MatchResults](request).flatMap { r =>
                         val results = r.results.map(entry =>
                             ReportedResult(
@@ -538,7 +538,7 @@ object Router {
                           )
                         )
                         noContent(
-                          services.engine.recordResults(gid, MatchId(matchId), results, caller, turns, r.summary)
+                          services.engine.recordResults(gid, mid, results, caller, turns, r.summary)
                         )
                     }
                 }
@@ -649,18 +649,18 @@ object Router {
 
             // A tournament match is a match (V52), addressed by its id.
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "matches" :: matchId :: "role" :: Nil) =>
-                withTournament(gameId, tid)((gid, t) =>
+                withTournamentMatch(gameId, tid, matchId)((gid, t, mid) =>
                     body[TournamentJson.ChooseRoleRequest](request).flatMap(r =>
-                        ok(services.rounds.chooseRole(gid, t, MatchId(matchId), r.gameRoleId, caller))
+                        ok(services.rounds.chooseRole(gid, t, mid, r.gameRoleId, caller))
                     )
                 )
 
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "matches" :: matchId :: "result" :: Nil) =>
-                withTournament(gameId, tid)((gid, t) =>
+                withTournamentMatch(gameId, tid, matchId)((gid, t, mid) =>
                     body[TournamentJson.DecideRequest](request).flatMap(r =>
                         noContent(
                           services.rounds
-                              .decide(gid, t, MatchId(matchId), r.ranks.map(x => x.entrantId -> x.rank).toMap, caller)
+                              .decide(gid, t, mid, r.ranks.map(x => x.entrantId -> x.rank).toMap, caller)
                         )
                     )
                 )
@@ -672,35 +672,45 @@ object Router {
             // (archiving-matches-plan.md). Authorized as the game, like the callbacks above, but addressed
             // by match id alone: an engine whose live copy is gone no longer knows the game id.
             case ("POST", "matches" :: matchId :: "archive" :: Nil) =>
-                body[Json.ArchiveUploadRequest](request).flatMap { r =>
-                    ok(
-                      services.archives
-                          .requestUpload(MatchId(matchId), r.size, r.sha256, r.formatVersion, caller)
-                          .map {
-                              case UploadAnswer.Upload(signed) =>
-                                  Json.ArchiveUploadAnswer(upload =
-                                      Some(
-                                        Json.ArchiveUpload(signed.url, signed.method, signed.headers, signed.expiresAt)
+                withMatchId(matchId)(mid =>
+                    body[Json.ArchiveUploadRequest](request).flatMap { r =>
+                        ok(
+                          services.archives
+                              .requestUpload(mid, r.size, r.sha256, r.formatVersion, caller)
+                              .map {
+                                  case UploadAnswer.Upload(signed) =>
+                                      Json.ArchiveUploadAnswer(upload =
+                                          Some(
+                                            Json.ArchiveUpload(
+                                              signed.url,
+                                              signed.method,
+                                              signed.headers,
+                                              signed.expiresAt
+                                            )
+                                          )
                                       )
-                                  )
-                              case UploadAnswer.AlreadyArchived(at) => Json.ArchiveUploadAnswer(archivedAt = Some(at))
-                          }
-                    )
-                }
+                                  case UploadAnswer.AlreadyArchived(at) =>
+                                      Json.ArchiveUploadAnswer(archivedAt = Some(at))
+                              }
+                        )
+                    }
+                )
 
             case ("POST", "matches" :: matchId :: "archive" :: "confirm" :: Nil) =>
-                ok(services.archives.confirm(MatchId(matchId), caller).map(Json.ArchiveConfirmation(_)))
+                withMatchId(matchId)(mid => ok(services.archives.confirm(mid, caller).map(Json.ArchiveConfirmation(_))))
 
             // A POST, not a GET: finding a friendly archive gone is recorded.
             case ("POST", "matches" :: matchId :: "archive" :: "read" :: Nil) =>
-                ok(
-                  services.archives
-                      .download(MatchId(matchId), caller)
-                      .map(signed => Json.ArchiveDownload(signed.url, signed.expiresAt))
+                withMatchId(matchId)(mid =>
+                    ok(
+                      services.archives
+                          .download(mid, caller)
+                          .map(signed => Json.ArchiveDownload(signed.url, signed.expiresAt))
+                    )
                 )
 
             case ("POST", "matches" :: matchId :: "archive" :: "expired" :: Nil) =>
-                noContent(services.archives.reportExpired(MatchId(matchId), caller))
+                withMatchId(matchId)(mid => noContent(services.archives.reportExpired(mid, caller)))
 
             case _ => IO.pure(Errors.notFound)
         }
@@ -724,6 +734,17 @@ object Router {
 
     private def withGameId(raw: String)(f: GameId => IO[Response]): IO[Response] =
         raw.toIntOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a game id")))(id => f(GameId(id)))
+
+    private def withMatchId(raw: String)(f: MatchId => IO[Response]): IO[Response] =
+        MatchId.parse(raw).fold(IO.pure(Errors.badRequest(s"'$raw' is not a match id")))(f)
+
+    private def withMatch(rawGame: String, rawMatch: String)(f: (GameId, MatchId) => IO[Response]): IO[Response] =
+        withGameId(rawGame)(gid => withMatchId(rawMatch)(mid => f(gid, mid)))
+
+    private def withTournamentMatch(rawGame: String, rawTournament: String, rawMatch: String)(
+        f: (GameId, TournamentId, MatchId) => IO[Response]
+    ): IO[Response] =
+        withTournament(rawGame, rawTournament)((gid, t) => withMatchId(rawMatch)(mid => f(gid, t, mid)))
 
     private def withCharacterId(raw: String)(f: CharacterId => IO[Response]): IO[Response] =
         raw.toLongOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a character id")))(id => f(CharacterId(id)))

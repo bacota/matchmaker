@@ -196,7 +196,7 @@ object ApiClient {
     def setFriendly(gameId: GameId, matchId: MatchId, friendly: Boolean): Future[Match] =
         send[Match](
           HttpMethod.PUT,
-          s"/games/${gameId.value}/matches/${js.URIUtils.encodeURIComponent(matchId.value)}/friendly",
+          s"/games/${gameId.value}/matches/${matchId.value}/friendly",
           Some(write(Json.FriendlyRequest(friendly)))
         )
 

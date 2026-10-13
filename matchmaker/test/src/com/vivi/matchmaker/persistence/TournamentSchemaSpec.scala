@@ -132,7 +132,9 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
 
     test("a tournament match may be scheduled, with no start and no urls, in a pool and round of one stage") {
         val ok = inRolledBack { (session, xa) =>
-            tournament(session).flatMap(ids => refused(session, xa, tournamentMatch(ids, s"s-${ids.tournament}", "S")))
+            tournament(session).flatMap(ids =>
+                refused(session, xa, tournamentMatch(ids, Generators.newMatchId().value.toString, "S"))
+            )
         }
         assert(!ok, "a scheduled tournament match was refused")
     }
@@ -143,7 +145,7 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
                 refused(
                   session,
                   xa,
-                  tournamentMatch(ids, s"b-${ids.tournament}", "S", s"challenge_id=${ids.challenge}")
+                  tournamentMatch(ids, Generators.newMatchId().value.toString, "S", s"challenge_id=${ids.challenge}")
                 )
             }
         })
@@ -155,7 +157,12 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
                 refused(
                   session,
                   xa,
-                  tournamentMatch(ids, s"c-${ids.tournament}", "C", "status_url='https://engine.test/s'")
+                  tournamentMatch(
+                    ids,
+                    Generators.newMatchId().value.toString,
+                    "C",
+                    "status_url='https://engine.test/s'"
+                  )
                 )
             }
         })
@@ -164,7 +171,7 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
     test("a finished match must be completed or cancelled") {
         assert(inRolledBack { (session, xa) =>
             tournament(session).flatMap { ids =>
-                refused(session, xa, tournamentMatch(ids, s"f-${ids.tournament}", "F", "start=now()"))
+                refused(session, xa, tournamentMatch(ids, Generators.newMatchId().value.toString, "F", "start=now()"))
             }
         })
     }
@@ -172,7 +179,11 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
     test("a rubber match may not allow ties") {
         assert(inRolledBack { (session, xa) =>
             tournament(session).flatMap { ids =>
-                refused(session, xa, tournamentMatch(ids, s"r-${ids.tournament}", "S", "rubber=true;ties_allowed=true"))
+                refused(
+                  session,
+                  xa,
+                  tournamentMatch(ids, Generators.newMatchId().value.toString, "S", "rubber=true;ties_allowed=true")
+                )
             }
         })
     }
@@ -181,7 +192,7 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
         val (challengeSeat, tournamentSeat) = inRolledBack { (session, xa) =>
             for {
                 ids <- tournament(session)
-                matchId = s"m-${ids.tournament}"
+                matchId = Generators.newMatchId().value.toString
                 _ <- exec(session, tournamentMatch(ids, matchId, "C"))
                 entrant <- long(
                   session,
@@ -192,7 +203,7 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
                                                 notify_turn_taken, notify_your_turn, notify_match_ended$more)
                         VALUES (${ids.game}, '${ids.gameType}', '$matchId', ${ids.player}, $value, true, true, true, true"""
                 // A challenge seat in the challenge's own match, rated but with no role: the role is what is refused.
-                challengeMatch = s"x-${ids.tournament}"
+                challengeMatch = Generators.newMatchId().value.toString
                 _ <- exec(
                   session,
                   s"""INSERT INTO match (game_id, match_id, challenge_id, creator, description, settings, start, status)

@@ -6,7 +6,7 @@ import cats.effect.unsafe.implicits.global
 import java.time.Instant
 import munit.FunSuite
 import skunk.implicits._
-import skunk.codec.all.{int4, text, timestamptz}
+import skunk.codec.all.{int4, int8, text, timestamptz}
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.{QuietTests, TestMigration}
 import com.vivi.matchmaker.engine.{
@@ -72,7 +72,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                     Some(game.roles.head.gameRoleId)
                   )
                 )
-                matchId = MatchId(java.util.UUID.randomUUID().toString)
+                matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
                 m = Match(
                   game.gameId,
                   matchId,
@@ -106,7 +106,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
         TestSession.resource.use { session =>
             session
                 .unique(
-                  sql"SELECT engine_released FROM match WHERE game_id = $int4 AND match_id = $text"
+                  sql"SELECT engine_released FROM match WHERE game_id = $int4 AND match_id = $int8"
                       .query(timestamptz.opt)
                 )((gameId.value, matchId.value))
                 .map(_.map(_.toInstant))

@@ -208,7 +208,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 started.isPublic &&
                 engine.lastUrl.contains(fixture.game.url) &&
                 request.isPublic &&
-                request.matchId == started.matchId.value &&
+                request.matchId == started.matchId.value.toString &&
                 // The engine is told the participant ids it will quote back in its callbacks, the
                 // player's Cognito id, and the role they are playing -- by its name, not the display
                 // name players see.
@@ -492,7 +492,7 @@ class GameEngineServiceSpec extends PropertySuite {
                         )
                     _ <- TestSession.resource.use { session =>
                         new ChallengeRepo(session)
-                            .claimForStart(fixture.game.gameId, challenge.challengeId, MatchId("in-flight"))
+                            .claimForStart(fixture.game.gameId, challenge.challengeId, MatchId(1))
                     }
                     restarted <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
                     accepted <- services.challenges

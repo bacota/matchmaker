@@ -12,7 +12,7 @@
 BEGIN;
 
 -- Tournament matches and what hangs off them, found by whichever column a version of V52 marks them with.
-CREATE TEMP TABLE gone (game_id INT, match_id TEXT) ON COMMIT DROP;
+CREATE TEMP TABLE gone (game_id INT, match_id BIGINT) ON COMMIT DROP;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'match' AND column_name = 'tournament_id') THEN

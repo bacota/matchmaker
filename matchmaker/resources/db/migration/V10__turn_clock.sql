@@ -13,7 +13,7 @@
 -- depends on the row before it in the table would be wrong the moment one arrives late.
 CREATE TABLE turn (
     game_id        INT NOT NULL,
-    match_id       TEXT NOT NULL,
+    match_id       BIGINT NOT NULL,
     participant_id BIGINT NOT NULL,
     taken_at       TIMESTAMPTZ NOT NULL,
     started_at     TIMESTAMPTZ NOT NULL,

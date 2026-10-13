@@ -29,10 +29,10 @@ class EndingHandlerSpec extends FunSuite {
         )
 
     test("the body a match's ending is queued with is read back as that match") {
-        val body = upickle.default.write(MatchEnded.of(GameId(7), MatchId("3f1c-match")))
+        val body = upickle.default.write(MatchEnded.of(GameId(7), MatchId(31)))
         assertEquals(
           Handler.records(sqsEvent("m-1" -> body)),
-          Seq(Handler.Record.Understood("m-1", MatchEnded(7, "3f1c-match")))
+          Seq(Handler.Record.Understood("m-1", MatchEnded(7, 31)))
         )
     }
 
@@ -40,14 +40,14 @@ class EndingHandlerSpec extends FunSuite {
         val records = Handler.records(
           sqsEvent(
             "m-1" -> upickle.default.write(RatingsChanged(7)),
-            "m-2" -> upickle.default.write(MatchEnded.of(GameId(7), MatchId("3f1c-match")))
+            "m-2" -> upickle.default.write(MatchEnded.of(GameId(7), MatchId(31)))
           )
         )
         assertEquals(
           records,
           Seq(
             Handler.Record.Understood("m-1", RatingsChanged(7)),
-            Handler.Record.Understood("m-2", MatchEnded(7, "3f1c-match"))
+            Handler.Record.Understood("m-2", MatchEnded(7, 31))
           )
         )
     }
@@ -55,20 +55,20 @@ class EndingHandlerSpec extends FunSuite {
     test("a tournament's match due, round due and round check are read back as themselves, and nothing else") {
         val records = Handler.records(
           sqsEvent(
-            "m-1" -> upickle.default.write(TournamentMatchDue(7, 3, "m-due")),
+            "m-1" -> upickle.default.write(TournamentMatchDue(7, 3, 32)),
             "m-2" -> upickle.default.write(TournamentRoundDue(7, 3)),
             "m-3" -> upickle.default.write(RatingsChanged(7)),
-            "m-4" -> upickle.default.write(MatchEnded.of(GameId(7), MatchId("3f1c-match"))),
+            "m-4" -> upickle.default.write(MatchEnded.of(GameId(7), MatchId(31))),
             "m-5" -> upickle.default.write(TournamentRoundCheck(7, 3, 1760000000000L))
           )
         )
         assertEquals(
           records,
           Seq(
-            Handler.Record.Understood("m-1", TournamentMatchDue(7, 3, "m-due")),
+            Handler.Record.Understood("m-1", TournamentMatchDue(7, 3, 32)),
             Handler.Record.Understood("m-2", TournamentRoundDue(7, 3)),
             Handler.Record.Understood("m-3", RatingsChanged(7)),
-            Handler.Record.Understood("m-4", MatchEnded(7, "3f1c-match")),
+            Handler.Record.Understood("m-4", MatchEnded(7, 31)),
             Handler.Record.Understood("m-5", TournamentRoundCheck(7, 3, 1760000000000L))
           )
         )

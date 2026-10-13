@@ -129,7 +129,7 @@ class InvitationRepoSpec extends PropertySuite {
                     // A started challenge is not something to accept, so an invitation to one is not
                     // something to show. The row survives the start -- it goes with the challenge -- so
                     // this is a filter in the query rather than a delete at the start.
-                    _ <- challenges.claimForStart(second.game.gameId, second.challenge.challengeId, MatchId("m-1"))
+                    _ <- challenges.claimForStart(second.game.gameId, second.challenge.challengeId, MatchId(1))
                     after <- invitations.listForPlayer(first.invitee.playerId)
                 } yield both.map(_.invitation.challengeId).toSet ==
                     Set(first.challenge.challengeId, second.challenge.challengeId) &&

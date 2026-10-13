@@ -140,7 +140,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
     private def play(s: Setup, matchId: MatchId): Unit = run { session =>
         for {
             seats <- session.execute(
-              sql"SELECT participant_id, entrant_id FROM participant WHERE game_id = $int4 AND match_id = $text ORDER BY entrant_id"
+              sql"SELECT participant_id, entrant_id FROM participant WHERE game_id = $int4 AND match_id = $int8 ORDER BY entrant_id"
                   .query(int8 *: int8)
             )((s.game.gameId.value, matchId.value))
             _ <- seats.zipWithIndex.traverse_ { case ((participant, _), i) =>
@@ -152,7 +152,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
             _ <- session.execute(
               sql"""UPDATE match SET status = 'F', completed_at = now(), start = now(),
                        status_url = 'https://engine.test/s', play_url = 'https://engine.test/p'
-                    WHERE game_id = $int4 AND match_id = $text""".command
+                    WHERE game_id = $int4 AND match_id = $int8""".command
             )((s.game.gameId.value, matchId.value))
         } yield ()
     }

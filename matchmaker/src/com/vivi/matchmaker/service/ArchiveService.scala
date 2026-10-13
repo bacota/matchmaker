@@ -403,7 +403,7 @@ object ArchiveService {
       */
     def keyFor(gameName: String, completedAt: Instant, matchId: MatchId): String = {
         val day = completedAt.atZone(ZoneOffset.UTC).toLocalDate
-        s"${bounded(gameName)}/$day/${bounded(matchId.value)}.json"
+        s"${bounded(gameName)}/$day/${bounded(matchId.value.toString)}.json"
     }
 
     private def bounded(raw: String): String = {

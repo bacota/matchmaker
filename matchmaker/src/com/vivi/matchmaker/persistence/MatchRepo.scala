@@ -222,6 +222,11 @@ class MatchRepo(session: Session[IO]) {
         )
     }
 
+    private val selectNextId: Query[Void, MatchId] = sql"SELECT nextval('match_id_seq')".query(matchId)
+
+    /** A new match's id, drawn before its row is written: one sequence serves every game's matches. */
+    def nextId: IO[MatchId] = session.unique(selectNextId)
+
     def read(gameId: GameId, matchId: MatchId): IO[Option[Match]] =
         session.option(selectMatch)((gameId, matchId)).map(_.map(toMatch(gameId, matchId, _)))
 

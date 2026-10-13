@@ -11,7 +11,7 @@ class TurnRepoSpec extends PropertySuite {
 
     /* A match with one seat in it, which is all any of these need: what is being checked is how
      * turns accumulate against a participant, not how the participants were seated. */
-    private def seated(matchIdStr: String, player: com.vivi.matchmaker.model.Player) =
+    private def seated(mid: MatchId, player: com.vivi.matchmaker.model.Player) =
         TestSession.resource.use { session =>
             val gameRepo = new GameRepo[String](session)
             val matchRepo = new MatchRepo(session)
@@ -22,7 +22,7 @@ class TurnRepoSpec extends PropertySuite {
             for {
                 game <- gameRepo.create(Generators.genGameWithRole.sample.get)
                 challengeId <- Generators.challengeIn(session, game)
-                matchId = MatchId(matchIdStr)
+                matchId = mid
                 _ <- Generators.matchFrom(session, game.gameId, matchId, challengeId).flatMap(matchRepo.create)
                 createdPlayer <- playerRepo.create(player)
                 character <- characterRepo.create(Generators.genCharacter(game.gameId, None).sample.get)
@@ -43,8 +43,8 @@ class TurnRepoSpec extends PropertySuite {
         }
 
     property("create then list returns the turns just recorded, oldest first") {
-        forAll(Generators.genString, Generators.genPlayer) { (matchIdStr, player) =>
-            seated(matchIdStr, player)
+        forAll(Generators.genMatchId, Generators.genPlayer) { (mid, player) =>
+            seated(mid, player)
                 .flatMap { case (session, gameId, matchId, participantId) =>
                     val repo = new TurnRepo(session)
                     val start = Instant.parse("2026-01-01T00:00:00Z")
@@ -64,8 +64,8 @@ class TurnRepoSpec extends PropertySuite {
     // The same turn is normally reported twice — once by the move callback and again by the next
     // status call — so recording one has to be something that can happen more than once.
     property("recording the same turn twice records it once") {
-        forAll(Generators.genString, Generators.genPlayer) { (matchIdStr, player) =>
-            seated(matchIdStr, player)
+        forAll(Generators.genMatchId, Generators.genPlayer) { (mid, player) =>
+            seated(mid, player)
                 .flatMap { case (session, gameId, matchId, participantId) =>
                     val repo = new TurnRepo(session)
                     val at = Instant.parse("2026-01-01T00:01:00Z")
@@ -81,8 +81,8 @@ class TurnRepoSpec extends PropertySuite {
     }
 
     property("timeUsed adds up what a seat has spent, and latestTakenAt is its last move") {
-        forAll(Generators.genString, Generators.genPlayer) { (matchIdStr, player) =>
-            seated(matchIdStr, player)
+        forAll(Generators.genMatchId, Generators.genPlayer) { (mid, player) =>
+            seated(mid, player)
                 .flatMap { case (session, gameId, matchId, participantId) =>
                     val repo = new TurnRepo(session)
                     val start = Instant.parse("2026-01-01T00:00:00Z")

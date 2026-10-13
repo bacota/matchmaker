@@ -21,7 +21,7 @@ class WireFormatSpec extends FunSuite {
     test("a match round-trips with the game engine's urls") {
         val played = Match(
           gameId = GameId(7),
-          matchId = MatchId("6b7c-uuid"),
+          matchId = MatchId(1),
           challengeId = Some(ChallengeId(3)),
           creator = PlayerId(4),
           description = "a friendly game",
@@ -43,7 +43,7 @@ class WireFormatSpec extends FunSuite {
     test("a match with no challenge round-trips, carrying its creator") {
         val created = Match(
           gameId = GameId(7),
-          matchId = MatchId("7c8d-uuid"),
+          matchId = MatchId(1),
           challengeId = None,
           creator = PlayerId(4),
           description = "round 1",
@@ -123,14 +123,14 @@ class WireFormatSpec extends FunSuite {
         // A UI that sent {"value": 7} where the server expects 7 would fail only at runtime, so the
         // encoding is asserted rather than just the round trip.
         assertEquals(write(GameId(7)), "7")
-        assertEquals(write(MatchId("m-1")), "\"m-1\"")
+        assertEquals(write(MatchId(12)), "12")
         assertEquals(read[PlayerId]("42"), PlayerId(42))
     }
 
     test("an instant survives the trip through scala-java-time") {
         val summary = MatchSummary(
           gameId = GameId(1),
-          matchId = MatchId("m-1"),
+          matchId = MatchId(1),
           gameName = "Chess",
           description = "d",
           completedAt = Some(Instant.parse("2026-08-09T09:30:00Z")),
@@ -367,7 +367,7 @@ class FormatSpec extends FunSuite {
     test("a result row's Elo round-trips, and its change is absent for a match that was not rated") {
         val rated = Json.ParticipantResultView(
           GameId(1),
-          MatchId("m"),
+          MatchId(1),
           ParticipantId(2),
           "alice",
           "First",

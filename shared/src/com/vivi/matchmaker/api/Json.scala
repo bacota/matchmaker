@@ -16,7 +16,7 @@ object Json {
     // SkunkIdCodecs maps them to their database columns.
     given ReadWriter[PlayerId] = readwriter[Long].bimap(_.value, PlayerId.apply)
     given ReadWriter[GameId] = readwriter[Int].bimap(_.value, GameId.apply)
-    given ReadWriter[MatchId] = readwriter[String].bimap(_.value, MatchId.apply)
+    given ReadWriter[MatchId] = readwriter[Long].bimap(_.value, MatchId.apply)
     given ReadWriter[CharacterId] = readwriter[Long].bimap(_.value, CharacterId.apply)
     given ReadWriter[GameRoleId] = readwriter[Int].bimap(_.value, GameRoleId.apply)
     given ReadWriter[GameParameterId] = readwriter[Int].bimap(_.value, GameParameterId.apply)

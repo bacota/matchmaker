@@ -259,9 +259,16 @@ class NotificationServiceSpec extends PropertySuite {
             val result = for {
                 _ <- services.registration.register(s"noseat-$seed", caller, None)
                 game <- makeGame(seed)
-                read <- services.notifications.forMatch(caller, game.gameId, MatchId(s"absent-$seed")).attempt
+                read <- services.notifications
+                    .forMatch(caller, game.gameId, com.vivi.matchmaker.persistence.Generators.newMatchId())
+                    .attempt
                 written <- services.notifications
-                    .updateForMatch(caller, game.gameId, MatchId(s"absent-$seed"), SeatNotifications.all(true))
+                    .updateForMatch(
+                      caller,
+                      game.gameId,
+                      com.vivi.matchmaker.persistence.Generators.newMatchId(),
+                      SeatNotifications.all(true)
+                    )
                     .attempt
             } yield read.left.exists(_.isInstanceOf[NotFoundError]) &&
                 written.left.exists(_.isInstanceOf[NotFoundError])

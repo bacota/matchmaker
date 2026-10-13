@@ -135,8 +135,8 @@ object Handler {
       */
     def main(args: Array[String]): Unit = {
         args match {
-            case Array(gameId, matchId) if gameId.toIntOption.isDefined =>
-                println(services.ending.settle(GameId(gameId.toInt), MatchId(matchId)).unsafeRunSync())
+            case Array(gameId, matchId) if gameId.toIntOption.isDefined && matchId.toLongOption.isDefined =>
+                println(services.ending.settle(GameId(gameId.toInt), MatchId(matchId.toLong)).unsafeRunSync())
                 sys.exit(0)
             case _ =>
                 System.err.println("usage: Handler <gameId> <matchId>")

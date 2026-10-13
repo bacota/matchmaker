@@ -21,7 +21,7 @@ class ArchiveRepo(session: Session[IO]) {
 
     private type Row = (
         Int,
-        String,
+        Long,
         String,
         Option[Instant],
         Boolean,
@@ -35,7 +35,7 @@ class ArchiveRepo(session: Session[IO]) {
     )
 
     private val row =
-        int4 *: text *: text *: instant.opt *: bool *: bool *: text.opt *: text.opt *: instant.opt *: instant.opt *:
+        int4 *: int8 *: text *: instant.opt *: bool *: bool *: text.opt *: text.opt *: instant.opt *: instant.opt *:
             instant.opt *: bool.opt
 
     private def toRow(r: Row): ArchiveRow = {
@@ -71,7 +71,7 @@ class ArchiveRepo(session: Session[IO]) {
 
     /* The match, found by its id and the engine asking about it rather than by game id: an engine
      * whose live copy is gone no longer knows which of matchmaker's games the match was in, only the
-     * match id and who it is. Match ids are UUIDs, so the id alone picks one match; the external id
+     * match id and who it is. Match ids are drawn from one sequence for every game, so the id alone picks one match; the external id
      * is what makes it this engine's. */
     private val selectForEngine: Query[(MatchId, String), Row] =
         sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.cancelled, m.friendly,

@@ -3,7 +3,6 @@ package com.vivi.matchmaker.persistence
 import cats.effect.IO
 import cats.syntax.all._
 import java.time.Instant
-import java.util.UUID
 import skunk._
 import skunk.implicits._
 import skunk.codec.all._
@@ -77,7 +76,7 @@ class TournamentStateRepo(session: Session[IO]) {
     private val selectMatches: Query[(GameId, TournamentId), MatchRow] =
         sql"""SELECT match_id, pool_id, round, status, ties_allowed, rubber, cancelled FROM match
           WHERE game_id = $gameId AND tournament_id = $tournamentId"""
-            .query(text *: int8 *: int4 *: text *: bool *: bool *: bool)
+            .query(int8 *: int8 *: int4 *: text *: bool *: bool *: bool)
             .to[MatchRow]
 
     private val selectSeats: Query[(GameId, TournamentId), SeatRow] =
@@ -86,7 +85,7 @@ class TournamentStateRepo(session: Session[IO]) {
           LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
           WHERE p.game_id = $gameId AND p.tournament_id = $tournamentId
           ORDER BY p.participant_id"""
-            .query(text *: int8 *: int8 *: int4.opt *: int4.opt *: int4.opt *: text.opt)
+            .query(int8 *: int8 *: int8 *: int4.opt *: int4.opt *: int4.opt *: text.opt)
             .to[SeatRow]
 
     private val selectEntrants: Query[(GameId, TournamentId), (Long, Long, Boolean, Option[Int], Option[Long])] =
@@ -179,25 +178,25 @@ class TournamentStateRepo(session: Session[IO]) {
           VALUES ($gameId, $tournamentId, $int8, $int8, $int4, $int4, $int4, ${int4.opt})""".command
 
     private val insertMatch: Command[
-      (GameId, String, PlayerId, Boolean, Boolean, TournamentId, Long, Int, Long, Boolean, Boolean)
+      (GameId, Long, PlayerId, Boolean, Boolean, TournamentId, Long, Int, Long, Boolean, Boolean)
     ] =
         sql"""INSERT INTO match (game_id, match_id, creator, description, settings, public, friendly, status,
                                  tournament_id, pool_id, round, stage_id, ties_allowed, rubber)
-          VALUES ($gameId, $text, ${SkunkIdCodecs.playerId}, '', '{}', $bool, $bool, 'S',
+          VALUES ($gameId, $int8, ${SkunkIdCodecs.playerId}, '', '{}', $bool, $bool, 'S',
                   $tournamentId, $int8, $int4, $int8, $bool, $bool)""".command
 
-    private val beginMatch: Command[(String, Int, GameId, String)] =
+    private val beginMatch: Command[(String, Int, GameId, Long)] =
         sql"""UPDATE match SET status = $text, round = $int4
-          WHERE game_id = $gameId AND match_id = $text AND status = 'S'""".command
+          WHERE game_id = $gameId AND match_id = $int8 AND status = 'S'""".command
 
     private val insertSeat: Query[
-      (GameId, String, String, Option[Int], TournamentId, Long, Option[Int], GameId, Long),
+      (GameId, Long, String, Option[Int], TournamentId, Long, Option[Int], GameId, Long),
       Long
     ] =
         sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, due, game_role_id,
               tournament_id, entrant_id, choose_order, notify_match_started, notify_turn_taken, notify_your_turn,
               notify_match_ended)
-          SELECT $gameId, $text, $text, pl.player_id, false, NULL, ${int4.opt}, $tournamentId, $int8, ${int4.opt},
+          SELECT $gameId, $int8, $text, pl.player_id, false, NULL, ${int4.opt}, $tournamentId, $int8, ${int4.opt},
                  COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
                  COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
                  COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
@@ -340,8 +339,8 @@ class TournamentStateRepo(session: Session[IO]) {
                             }
                         case None =>
                             val planned = m.round.getOrElse(lastRound + 1 + waitingSlots.indexOf(m.planned.slot))
-                            val id = UUID.randomUUID().toString
                             for {
+                                id <- new MatchRepo(session).nextId.map(_.value)
                                 _ <- ensureRound(planned, Some(stage))
                                 _ <- session.execute(insertMatch)(
                                   (
@@ -390,7 +389,7 @@ class TournamentStateRepo(session: Session[IO]) {
         game: GameId,
         tournament: TournamentId,
         ctx: Context,
-        matchId: String,
+        matchId: Long,
         seat: SeatPlan
     ): IO[Unit] = {
         val (player, character) = ctx.entrants.getOrElse(seat.entrant, (0L, None))
@@ -502,7 +501,7 @@ object TournamentStateRepo {
     )
     case class SeedRow(pool: Long, entrant: Long, round: Int, seed: Int, stratum: Int, eliminated: Option[Int])
     case class MatchRow(
-        id: String,
+        id: Long,
         pool: Long,
         round: Int,
         status: String,
@@ -511,7 +510,7 @@ object TournamentStateRepo {
         cancelled: Boolean
     )
     case class SeatRow(
-        matchId: String,
+        matchId: Long,
         participant: Long,
         entrant: Long,
         role: Option[Int],
@@ -578,7 +577,7 @@ object TournamentStateRepo {
         private val seedsOf: Map[(Long, Long), List[SeedRow]] = seeds.groupBy(s => (s.pool, s.entrant))
         private val seedsIn: Map[Long, List[SeedRow]] = seeds.groupBy(_.pool)
         private val matchesOf: Map[Long, List[MatchRow]] = matches.groupBy(_.pool)
-        private val seatsOf: Map[String, List[SeatRow]] = seats.groupBy(_.matchId)
+        private val seatsOf: Map[Long, List[SeatRow]] = seats.groupBy(_.matchId)
 
         private def designAt(path: List[Int]): TournamentDesign =
             com.vivi.matchmaker.model.tournament.Tournament.designAt(design, path)

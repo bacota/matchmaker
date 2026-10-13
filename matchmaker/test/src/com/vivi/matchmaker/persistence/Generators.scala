@@ -22,6 +22,15 @@ object Generators {
     // suffixed with a JVM-entropy-backed UUID to guarantee uniqueness across suites/runs.
     private def genUniqueString: Gen[String] = genString.map(s => s"$s-${java.util.UUID.randomUUID()}")
 
+    /** A match id no other spec will make: far above anything `match_id_seq` will reach, for a match a spec writes
+      * itself rather than starting, against a database the specs share.
+      */
+    def newMatchId(): MatchId = MatchId(
+      java.util.concurrent.ThreadLocalRandom.current().nextLong(1L << 40, Long.MaxValue)
+    )
+
+    def genMatchId: Gen[MatchId] = Gen.delay(Gen.const(newMatchId()))
+
     def genPlayer: Gen[Player] =
         for {
             nickname <- genUniqueString

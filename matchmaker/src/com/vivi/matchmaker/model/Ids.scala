@@ -18,10 +18,13 @@ object GameId {
     val unassigned: GameId = GameId(0)
 }
 
-opaque type MatchId = String
+opaque type MatchId = Long
 object MatchId {
-    def apply(value: String): MatchId = value
-    extension (id: MatchId) def value: String = id
+    def apply(value: Long): MatchId = value
+    extension (id: MatchId) def value: Long = id
+
+    /** The id in a path or a message from an engine, which carry it as text; `None` if it is not a number. */
+    def parse(text: String): Option[MatchId] = text.toLongOption
 }
 
 opaque type CharacterId = Long

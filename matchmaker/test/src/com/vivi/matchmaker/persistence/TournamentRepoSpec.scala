@@ -8,7 +8,13 @@ import skunk.Session
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
 import cats.syntax.all._
-import com.vivi.matchmaker.model.tournament.standard.{Ladder, SingleElimination, StandardModel, StandardModels, WorldCup}
+import com.vivi.matchmaker.model.tournament.standard.{
+    Ladder,
+    SingleElimination,
+    StandardModel,
+    StandardModels,
+    WorldCup
+}
 import com.vivi.matchmaker.service.TournamentFixtures
 
 /** The tournament tables (V52) through their repositories, against the local database. */
@@ -237,7 +243,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             for {
                 f <- fixture(session)
                 m = Generators
-                    .genMatch(f.game.gameId, MatchId(java.util.UUID.randomUUID().toString), None, f.owner.playerId)
+                    .genMatch(f.game.gameId, Generators.newMatchId(), None, f.owner.playerId)
                     .sample
                     .get
                 attempt <- new MatchRepo(session).create(m).attempt

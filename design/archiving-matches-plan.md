@@ -62,7 +62,7 @@ engine's game, as the results callback already does.
 They are addressed by match id alone, `/matches/{matchId}/archive...`, not under
 `/games/{gameId}/`. An engine whose live copy is gone no longer knows which of matchmaker's games
 the match was in, only the match id and its own identity. Matchmaker finds the match by its id and
-the caller's game external id; match ids are UUIDs, so the id alone picks one match, and the
+the caller's game external id; match ids come from one sequence for every game, so the id alone picks one match, and the
 external id is what makes it this engine's. Another game's match is not found.
 
 ### 1. Ask for an upload
@@ -89,7 +89,7 @@ Matchmaker:
     completion date, which gives the folder, is on the same row, and `archive_key` holds the whole
     key for anyone looking it up from the database.
 
-  Match ids are random UUIDs (`GameEngineService.start`), so two keys never collide even though
+  Match ids come from one sequence for every game (`match_id_seq`), so two keys never collide even though
   the schema does not make a game's `name` unique.
 
   The key is fixed once recorded: a later rename of the game does not move its archives. The name

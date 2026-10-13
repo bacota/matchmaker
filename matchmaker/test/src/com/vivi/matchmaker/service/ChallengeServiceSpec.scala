@@ -1118,7 +1118,7 @@ class ChallengeServiceSpec extends PropertySuite {
                     // not how it got there.
                     _ <- TestSession.resource.use(session =>
                         new ChallengeRepo(session)
-                            .claimForStart(fixture.game.gameId, created.challengeId, MatchId("m-1"))
+                            .claimForStart(fixture.game.gameId, created.challengeId, MatchId(1))
                     )
                     inviting <- challengeService
                         .inviteCharacter(
@@ -1159,7 +1159,7 @@ class ChallengeServiceSpec extends PropertySuite {
                     created <- challengeService.create(challengeFor(fixture), externalId)
                     _ <- TestSession.resource.use(session =>
                         new ChallengeRepo(session)
-                            .claimForStart(fixture.game.gameId, created.challengeId, MatchId("m-1"))
+                            .claimForStart(fixture.game.gameId, created.challengeId, MatchId(1))
                     )
                     attempt <- challengeService
                         .accept(

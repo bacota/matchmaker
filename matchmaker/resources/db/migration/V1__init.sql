@@ -99,9 +99,13 @@ CREATE TABLE game_parameter_value (
 alter table game_parameter add foreign key (game_id, game_parameter_id, default_value)
 references game_parameter_value deferrable;
 
+-- Match ids are drawn from one sequence for every game, before the match row is written: the engine is told the id
+-- when it makes its game, and the row follows its answer.
+CREATE SEQUENCE match_id_seq;
+
 CREATE TABLE match (
     game_id      INT NOT NULL REFERENCES game,
-    match_id     TEXT NOT NULL,
+    match_id     BIGINT NOT NULL,
     description TEXT NOT NULL default '',
     completed    BOOLEAN NOT NULL DEFAULT FALSE,
     start        TIMESTAMPTZ NOT NULL,
@@ -116,7 +120,7 @@ CREATE TABLE participant (
     game_id         INT NOT NULL,
     participant_id BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY,
     game_type CHAR(1) not null check (game_type in ('C','P')),
-    match_id        TEXT NOT NULL,
+    match_id        BIGINT NOT NULL,
     player_id         BIGINT NOT NULL REFERENCES player,
     pending         BOOLEAN NOT NULL DEFAULT FALSE,
     completed   BOOLEAN NOT NULL,

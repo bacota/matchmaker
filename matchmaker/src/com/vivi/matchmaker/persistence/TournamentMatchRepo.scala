@@ -235,7 +235,7 @@ class TournamentMatchRepo(session: Session[IO]) {
 
     // Seats whose turn it is to choose, for a player: the earliest unchosen seat of each choosing match, whose
     // participant row names who plays it now.
-    private val selectChoosingFor: Query[PlayerId, (GameId, TournamentId, String)] =
+    private val selectChoosingFor: Query[PlayerId, (GameId, TournamentId, Long)] =
         sql"""SELECT m.game_id, m.tournament_id, m.match_id
           FROM match m
           JOIN participant s ON s.game_id = m.game_id AND s.match_id = m.match_id
@@ -243,10 +243,10 @@ class TournamentMatchRepo(session: Session[IO]) {
             AND s.choose_order = (SELECT min(o.choose_order) FROM participant o
                                    WHERE o.game_id = s.game_id AND o.match_id = s.match_id
                                      AND o.game_role_id IS NULL AND NOT o.forfeit)
-          ORDER BY m.create_date""".query(gameId *: tournamentId *: text)
+          ORDER BY m.create_date""".query(gameId *: tournamentId *: int8)
 
     /** The tournament matches waiting on this player to choose a role. */
     def choosingFor(player: PlayerId): IO[List[(GameId, TournamentId, MatchId)]] =
-        // The match id decoded as text and wrapped: a trailing opaque-typed codec defeats the tuple's types.
+        // The match id decoded as a number and wrapped: a trailing opaque-typed codec defeats the tuple's types.
         session.execute(selectChoosingFor)(player).map(_.map((g, t, id) => (g, t, MatchId(id))))
 }
