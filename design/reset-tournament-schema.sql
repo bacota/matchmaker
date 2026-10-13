@@ -39,7 +39,8 @@ DROP TABLE IF EXISTS
     CASCADE;
 
 -- match, as V51 left it.
-DROP INDEX IF EXISTS match_game_id_challenge_id_match_id_idx, match_match_id_idx;
+-- CASCADE: participant's foreign keys to match lean on these, and go with them.
+DROP INDEX IF EXISTS match_game_id_challenge_id_match_id_idx, match_match_id_idx CASCADE;
 ALTER TABLE match
     DROP COLUMN IF EXISTS tournament_id,
     DROP COLUMN IF EXISTS pool_id,

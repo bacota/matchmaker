@@ -257,7 +257,7 @@ Left for Phase 6, when seats without a role are first written:
   completed, as a stand-in for "rated after that match". Once a tournament seat is created at pool formation and rated
   at launch, they must compare the time its rating was taken instead.
 
-### Phase 3: Schema
+### Phase 3: Schema (done)
 
 Rewrite `V52__tournament.sql` from `design/new-tournament.sql`, with the changes and the answers to the open questions
 above. V53 (the
@@ -286,6 +286,21 @@ round-done notification) is unaffected and keeps its number.
   - a `C` match with urls;
   - an `F` match with neither `completed_at` nor `cancelled`;
   - a non-tournament seat without a role.
+
+As built:
+- `V52__tournament.sql` is `design/new-tournament.sql` with a header, and with `result.manual` (D12) carried over from
+  the old V52.
+- `ParticipantRepo.create` now writes a seat's `challenge_id`, taken from its match. The new V52 requires every seat to
+  name its origin, and Phase 2 had added the column without writing it.
+- `design/reset-tournament-schema.sql` takes the local database back to V51 before the new V52 is migrated.
+- `TournamentSchemaSpec` copies a one-stage model into a tournament (root pool, round, atomic pool, entrant) in plain
+  SQL. It checks that the constraints accept a scheduled match and a tournament seat with no role. It checks that they
+  refuse a match with both origins, a `C` match with urls, an `F` match neither completed nor cancelled, a rubber match
+  allowing ties, a challenge seat with no role, and a stage missing its subtype row or carrying the other kind's.
+- **Known failures until Phase 6:** today's tournament code still reads `tournament.design`, `tournament.state`,
+  `tournament_match` and `tournament_seat`. `TournamentRoundsSpec`, `TournamentServiceSpec`, `TournamentRepoSpec` and
+  the tournament cases of `MatchServiceSpec` fail. So do two cases of `CancelReleaseSpec`, because settling any match's
+  ending asks the tournament code whether the match was one of its own. Every other spec passes.
 
 ### Phase 4: Designs as rows
 

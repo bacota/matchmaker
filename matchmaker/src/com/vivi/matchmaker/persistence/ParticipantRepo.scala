@@ -31,28 +31,32 @@ class ParticipantRepo(session: Session[IO]) {
      * game's settings has no `player_game` row, and NULLs from the outer join fall through the
      * COALESCE exactly as an unanswered question does.
      *
-     * The player and the game are each named twice -- once as the seat's own column, once to resolve
-     * the chain -- so each value is bound twice. */
+     * The player, the game and the match are each named again -- to find the match's challenge and to
+     * resolve the chain -- so each value is bound more than once. */
     private val insertParticipant: Query[
       (GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Int, Option[Int]),
       ParticipantId
     ] =
         // `completed_at` (V41) is the database's now() for a seat created already finished, as
         // `updateParticipant` stamps one below; Scala says only whether it is.
+        // The seat names its match's challenge (V52), taken from the match itself so that it cannot name another.
         sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed_at, due, game_role_id,
-              elo_start, elo_role_start, notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended)
+              elo_start, elo_role_start, notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended,
+              challenge_id)
           SELECT $gameId, $matchId, $gameType, $playerId, $bool, CASE WHEN $bool THEN now() END, ${instant.opt},
                  $gameRoleId, $int4, ${int4.opt},
                  COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
                  COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
                  COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
-                 COALESCE(pg.notify_match_ended, pl.notify_match_ended, TRUE)
+                 COALESCE(pg.notify_match_ended, pl.notify_match_ended, TRUE),
+                 m.challenge_id
           FROM player pl
+              JOIN match m ON m.game_id = $gameId AND m.match_id = $matchId
               LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = $gameId
           WHERE pl.player_id = $playerId
           RETURNING participant_id"""
             .query(participantId)
-            .contramap { case t @ (game, _, _, player, _, _, _, _, _, _) => t ++ (game, player) }
+            .contramap { case t @ (game, matchId, _, player, _, _, _, _, _, _) => t ++ (game, matchId, game, player) }
 
     private val insertCharacterParticipant: Command[(GameId, ParticipantId, CharacterId)] =
         sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id)
