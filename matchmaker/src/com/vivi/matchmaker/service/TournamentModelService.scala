@@ -117,8 +117,16 @@ object TournamentModelService {
     private val takeSyncLock: skunk.Query[Long, String] =
         sql"SELECT pg_advisory_xact_lock($int8)::text".query(skunk.codec.all.text)
 
+    private val takeSyncLockShared: skunk.Query[Long, String] =
+        sql"SELECT pg_advisory_xact_lock_shared($int8)::text".query(skunk.codec.all.text)
+
     /** Takes [[SyncLock]] for the rest of the transaction. */
     def lockSync(session: Session[IO]): IO[Unit] = session.unique(takeSyncLock)(SyncLock).void
+
+    /** Takes [[SyncLock]] shared for the rest of the transaction: no sync runs meanwhile, and nothing else that takes
+      * it shared waits.
+      */
+    def lockSyncShared(session: Session[IO]): IO[Unit] = session.unique(takeSyncLockShared)(SyncLock).void
 
     /** Makes the stored models what the code defines, within the caller's transaction: each model the code defines is
       * added if it is not stored, and rewritten if the code's version is newer or it had been deactivated. A stored
@@ -166,11 +174,15 @@ object TournamentModelService {
 
     /** Offers in `game` every active model it can play -- whose design has no problem for it but warnings: what a new
       * game is given as it is created, for its admins to change. The models offered.
+      *
+      * Under [[SyncLock]], shared, taken before the models are listed: a sync would otherwise delete or deactivate
+      * models between the list and the offers -- an offer of a deleted model fails its foreign key -- and lock them in
+      * an order of its own against these, a deadlock. Shared, so that games created at once do not queue for it.
       */
     def offerPlayable(session: Session[IO], game: Game): IO[List[TournamentModelId]] = {
         val repo = new TournamentModelRepo(session)
         val tg = TournamentGame.of(game)
-        repo.listActive.flatMap { models =>
+        lockSyncShared(session) *> repo.listActive.flatMap { models =>
             // None for a game with no role a match could start with.
             val playable =
                 if (tg.requiredSeats == 0) Nil
@@ -178,7 +190,7 @@ object TournamentModelService {
                     models
                         .filter(m => Validation.designProblems(m.design, tg, m.poolSize).forall(_.warning))
                         .map(_.tournamentModelId)
-            playable.traverse_(id => repo.lockForShare(id) *> repo.offer(game.gameId, id)).as(playable)
+            playable.traverse_(id => repo.offer(game.gameId, id)).as(playable)
         }
     }
 }

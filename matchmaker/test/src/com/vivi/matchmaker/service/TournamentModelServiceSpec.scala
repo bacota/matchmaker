@@ -1,6 +1,6 @@
 package com.vivi.matchmaker.service
 
-import cats.effect.IO
+import cats.effect.{Deferred, IO}
 import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import scala.concurrent.duration._
@@ -221,6 +221,36 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         assert(kept.forall(_.isDefined), kept)
         assert(fresh.left.exists(_.isInstanceOf[NotFoundError]), fresh)
         assertEquals(edited.name, "renamed")
+    }
+
+    test("a new game is made after a sync under way, never during it") {
+        val (waited, made) = run(for {
+            admin <- siteAdmin
+            held <- Deferred[IO, Unit]
+            release <- Deferred[IO, Unit]
+            // A sync under way, as far as anything else can tell: the lock held until released.
+            syncing <- TestSession.resource
+                .use(session =>
+                    session.transaction.use(_ =>
+                        TournamentModelService.lockSync(session) *> held.complete(()) *> release.get
+                    )
+                )
+                .start
+            _ <- held.get
+            creating <- services.games
+                .createOrUpdate(
+                  admin.externalId,
+                  Generators.genGame(GameType.Plain).sample.get.copy(gameId = GameId.unassigned)
+                )
+                .start
+            // Still waiting a second later.
+            waited <- creating.join.timeout(1.second).attempt
+            _ <- release.complete(())
+            _ <- syncing.joinWithNever
+            made <- creating.joinWithNever
+        } yield (waited, made))
+        assert(waited.isLeft, waited)
+        assertNotEquals(made.gameId, GameId.unassigned)
     }
 
     test("a new game offers every standard model it can play") {
