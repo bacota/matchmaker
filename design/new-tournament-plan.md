@@ -208,15 +208,16 @@ well. Code that creates a stage or pool writes both rows in one transaction, in 
 
 `engines/common`, independent of everything else, and mergeable first.
 
-- **Repeat create of an existing match:** `GameEngine.createGame` answers it with that match's `CreateGameResponse`,
-  instead of letting `MatchStore.create` throw `ConcurrentModification`. The same match is one that exists, isn't
-  cancelled, and has the same players and participant ids. A create that disagrees is a `409`.
-- **Store:** `MatchStore` needs a `read` before `create`, or a create that returns what was already there. For
-  DynamoDB that means catching the `ConditionalCheckFailed` from `attribute_not_exists(matchId)` and reading.
-- **Response code:** `EngineRoutes` returns `200` for the repeat and `201` for the first create. Matchmaker's
-  `EngineClient` accepts both.
-- **Tests:** a common-library spec run by every engine's suite. A create sent twice returns the same urls. A conflicting
-  second create is refused. A cancelled id isn't revived.
+- **Repeat create of an existing match** (done): `GameEngine.createGame` catches the `ConcurrentModification` that
+  `MatchStore.create` raises for a stored id, and reads the stored match. If it seats the same players (the same
+  participant ids and subjects), the answer is that match's `CreateGameResponse`, and nothing changes. Otherwise it's
+  `Refusal.Conflict` (409).
+- **No store or route changes:** both stores already refuse a second create of an id. The repeat is answered `201`
+  like the first, which `HttpGameEngineClient` accepts as it accepts any 2xx.
+- **A cancelled match:** cancelling deletes it from the store, so a create sent after a cancel would make it again.
+  Matchmaker never sends one: a cancelled match is `F`, and only a `D` match is created.
+- **Tests:** in tic-tac-toe's `EngineSpec`, since the common library has no game of its own. A create sent twice
+  returns the same urls and leaves a move made in between standing, and a create naming other players is refused.
 
 Every engine (boxing, rps, stratego, tictactoe) picks this up through the common library, so no engine code changes.
 
