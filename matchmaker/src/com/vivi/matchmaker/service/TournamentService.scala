@@ -396,7 +396,11 @@ class TournamentService[T](
                             .filterNot(_.warning)
                         _ <- IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.map(_.describe).mkString("; ")))
                         ratings <- currentRatings(session, gameId, entries)
-                        state = Progress.start(entries.map(_.entrantId.value), env(t, design, game, ratings))
+                        state = Progress.start(
+                          entries.map(_.entrantId.value),
+                          env(t, design, game, ratings),
+                          TournamentStateRepo.NewPoolIds
+                        )
                         running = t.copy(status = TournamentStatus.Running, startedAt = Some(now()))
                         _ <- new TournamentRepo(session).update(running)
                         _ <- new TournamentRepo(session).writeState(gameId, tournamentId, state)

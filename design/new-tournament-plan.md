@@ -380,34 +380,56 @@ give another.
 
 Everything else passes: 768 tests.
 
-### Phase 5: Running state as rows
+### Phase 5: Running state as rows (done)
 
-Keep the rules pure. `Tournament.advance` stays a function from one state to the next. What changes is how that state
-is loaded and saved.
+The rules stay pure. `TournamentStateRepo.load` assembles a `TournamentState` from the rows, the rules work out the
+next one, and `save` writes the difference. `write` is load-then-save, which is what `TournamentRepo.writeState` now
+does; `readState` loads, and answers `None` before a tournament has started.
 
-1. **Prerequisite:** `tournament-tables-design.md` Phase 1. The rules must not read completed runs, beyond a member's
-   last result and the tie-breaker placings, or loading the whole history on every call is the cost of this.
-2. **`TournamentStateRepo.loadLive(root)`:** reads the tournament (D1), assembling a `TournamentState` from:
-   - each entrant's current SEED row (latest round) in each pool it's scoped by: the root pool, and the groups still
-     playing. The rules' `Node` tree maps onto the pool tree: the root pool is the root node, and each group is a
-     sub-tournament node;
-   - the pools not yet complete, with their `pool_member`s;
-   - the matches still to be played, with their seats.
+How the state maps onto the rows:
+- **Nodes.** A node is a pool that scopes seeds: the root pool for the tournament, and a group for each
+  sub-tournament. Its members are the entrants with SEED rows in it: the latest row gives the seed, stratum and
+  elimination, and the first row gives the starting seed. A group that never seeded a sub-tournament (a nesting
+  stage's pool too small to play) has none.
+- **Runs.** A node's runs are its child pools grouped by stage and starting round. Its stage and repetition come from
+  its open run, which every unfinished node has between calls, so they need no column. Who sat a run out is derived
+  (open question 5).
+- **Pools.** A pool's members are `pool_member` rows. The seed and stratum each came in with are read from SEED as of
+  the pool's round, and the stratum each left with as of the next run's round.
+- **Matches.** A match is a `match` row, and its seats are `participant` rows in seat order. A match has its round
+  once it's no longer `S`, and an outcome once it's `F` with results, so recording a result is reading it.
+- **Match numbers** aren't stored: a match's number is its place among its pool's matches by round and seats, which is
+  stable from read to read. Matches are found by id; `Loaded.matchIds` maps each number to its id.
+- **Who has withdrawn** is `entrant.withdrawn_at`, and the final ranking is `entrant.final_rank`.
 
-   About six queries, all under the outer tournament's `FOR UPDATE`.
-3. **`save(before, after)`:**
-   - diffs the trees and writes only what changed: new pools and their scheduled matches, `pool_member` results,
-     and `completed_at`;
-   - writes a SEED row only for an entrant whose seed or stratum changed, as the table intends;
-   - writes nothing for `StageRun.sittingOut`. When a tournament finishes, the ranking works out who sat each run out
-     (open question 5) and passes it to `Ranking.rankNode` as today.
-   - writes several rows per statement (multi-row `UNNEST` inserts) rather than one statement per row.
-4. **Pool ids:** `pool.pool_id` is an identity column, so new pools are inserted before their matches, and the returned ids are put back into the tree before those are written. The rules number new pools
-   with negative placeholders (`-1`, `-2`, …), in place of `nextPoolId`, and `save` replaces each placeholder with the
-   real id. This is the remapping the earlier discussion said an identity column costs. It sits in one function and
-   is tested against the simulator.
-5. **Simulator test:** play whole tournaments of every standard design through load, advance and save against the
-   database. Check that each round matches what the in-memory simulator produces from the same results.
+What a save writes, each from the round after the one being played when the call began (`effective`):
+- **New pools,** parents first, with their subtype row, their members, and their matches. A match is written `S` with
+  the round its slot is planned for, and its seats with their planned role and turn to choose. The rules number new
+  pools from `NewPoolIds` down (`Progress.start` takes the number to begin from), and the save gives each its real id.
+- **Changes to pools:** results, and completion.
+- **SEED rows** for members whose seed, stratum or elimination changed, replacing any written earlier in the same
+  round.
+- **A match given its round:** it moves to `C` while a seat has a role to choose, else `D`.
+- **The tournament's** `current_round` and `stop_requested`, and the final ranks once it's over.
+- **Round rows,** as they're needed. Each names the atomic stage played in it: that of a new or open pool, failing
+  that the last one. A finished tournament's last seeds are written against the round after its last, whose row is
+  written but never begun.
+
+Two changes to the rules came with this:
+- **Seeds stay a permutation of a node's members.** A renumbering (the Previous and Re-initialize policies, a late
+  entry) numbers active members first and the eliminated after them, since SEED's key allows one member per seed per
+  round.
+- **A nested design must have exactly one stage** (`Validation`). Every match of a round is in one atomic stage
+  (`round.stage_id`), and the groups of a nesting stage play their inner designs side by side. With more than one inner
+  stage, one group could be playing a different stage from another in the same round. Every standard format already
+  complies.
+
+**Test.** `TournamentStateRepoSpec` plays whole tournaments through the database: single elimination with and without
+byes, with a consolation match, double elimination, group round robins then a knockout, and heats with the
+tournament's pool size. It saves every state, reads it back, and compares it with what the rules made, with results
+written as an engine's report leaves them. A finished tournament's ranking is read back from `entrant.final_rank`.
+
+**Known failures until Phase 6:** the rounds still go through `tournament_match`.
 
 ### Phase 6: Rounds on `match` rows
 

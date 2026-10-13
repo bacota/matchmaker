@@ -194,18 +194,26 @@ class TournamentRepo(session: Session[IO]) {
     def update(t: Tournament): IO[Unit] =
         session.execute(updateRow)(writtenOf(t) ++ (t.gameId, t.tournamentId)).void
 
-    /** The state as a whole, as the rules hold it: read and written from its tables from Phase 5 of
-      * design/new-tournament-plan.md. Until then there is none to read.
+    private val selectStarted: Query[(GameId, TournamentId), Boolean] =
+        sql"SELECT started_at IS NOT NULL FROM tournament WHERE game_id = $gameId AND tournament_id = $tournamentId"
+            .query(bool)
+
+    /** The tournament's progress as the rules hold it, read from its rows ([[TournamentStateRepo]]), or `None` before
+      * it has started.
       */
     def readState(game: GameId, id: TournamentId): IO[Option[com.vivi.matchmaker.model.tournament.TournamentState]] =
-        IO.raiseError(new UnsupportedOperationException("a tournament's state is read from its tables (Phase 5)"))
+        session.option(selectStarted)((game, id)).flatMap {
+            case Some(true) => new TournamentStateRepo(session).load(game, id).map(_.map(_.state))
+            case _          => IO.pure(None)
+        }
 
+    /** Writes the rules' next state, as what changed from the one its rows hold now ([[TournamentStateRepo.write]]). */
     def writeState(
         game: GameId,
         id: TournamentId,
         state: com.vivi.matchmaker.model.tournament.TournamentState
     ): IO[Unit] =
-        IO.raiseError(new UnsupportedOperationException("a tournament's state is written to its tables (Phase 5)"))
+        new TournamentStateRepo(session).write(game, id, state).void
 
     private val selectForGame: Query[GameId, TournamentId *: Row] =
         sql"""SELECT tournament_id, $columns FROM tournament WHERE game_id = $gameId

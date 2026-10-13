@@ -127,11 +127,12 @@ object Tournament {
         path.foldLeft(root)((d, s) => d.stages(s).design.getOrElse(d))
 
     /** A new tournament, seeded by rating, strongest first, ties to whoever entered first (`entrants` is in order of
-      * entry), and advanced to the start of its first round.
+      * entry), and advanced to the start of its first round. Its pools are numbered from `firstPoolId`: a store that
+      * gives pools ids of its own numbers them from where it can tell a new one from one it holds.
       */
-    def start(entrants: List[Long], env: Env): TournamentState = {
+    def start(entrants: List[Long], env: Env, firstPoolId: Int = 1): TournamentState = {
         val members = seedByRating(entrants, env).zipWithIndex.map((e, i) => Member(e, i + 1, 0, i + 1))
-        advance(TournamentState(Node(Nil, members)), env)
+        advance(TournamentState(Node(Nil, members), nextPoolId = firstPoolId), env)
     }
 
     private def seedByRating(entrants: List[Long], env: Env): List[Long] =
@@ -222,12 +223,15 @@ object Tournament {
                 case -1 => active.size
                 case i  => i
             }
-            val placed = (active.take(at) :+ Member(entrant, 0, 0, 0)) ++ active.drop(at)
+            // Those eliminated are numbered after everyone still in it, so that seeds stay one number per member.
+            val placed =
+                (active.take(at) :+ Member(entrant, 0, 0, 0)) ++ active.drop(at) ++
+                    root.members.filter(_.eliminated).sortBy(m => (m.seed, m.entrant))
             val renumbered = placed.zipWithIndex.map((m, i) =>
                 if (m.entrant == entrant) m.copy(seed = i + 1, initialSeed = root.members.size + 1)
                 else m.copy(seed = i + 1)
             )
-            state.copy(root = root.copy(members = renumbered ++ root.members.filter(_.eliminated)))
+            state.copy(root = root.copy(members = renumbered))
         }
 
     /** The owner asking a stage that repeats until stopped to stop, after the run being played. */
@@ -428,8 +432,11 @@ object Tournament {
     /** New seeds for a node's members after a run, by the stage's policy (`tournament-design.md`, "Seed Policy"). */
     private def reseed(members: List[Member], run: StageRun, stage: StageDesign, env: Env): List[Member] = {
         val poolOf: Map[Long, PoolMember] = run.pools.flatMap(_.members.map(m => m.entrant -> m)).toMap
+        // The active members in `order`, then those eliminated, by the seed they had: seeds stay one number per member,
+        // as a node's seeds are kept (V52).
         def renumber(order: List[Member]): List[Member] = {
-            val seeds = order.zipWithIndex.map((m, i) => m.entrant -> (i + 1)).toMap
+            val all = order ++ members.filter(_.eliminated).sortBy(m => (m.seed, m.entrant))
+            val seeds = all.zipWithIndex.map((m, i) => m.entrant -> (i + 1)).toMap
             members.map(m => seeds.get(m.entrant).fold(m)(s => m.copy(seed = s)))
         }
         val active = members.filterNot(_.eliminated)

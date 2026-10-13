@@ -194,6 +194,10 @@ object Validation {
         val here = if (path.isEmpty) "" else path
         if (depth > MaxDepth) List(Problem(here, s"designs may nest at most $MaxDepth deep"))
         else if (design.stages.isEmpty) List(Problem(here, "a design needs at least one stage"))
+        // Every match of a round is played in one stage (V52, round.stage_id), and the pools of a nesting stage play
+        // their designs side by side: with more than one stage, one pool could be in another stage than the next.
+        else if (depth > 1 && design.stages.sizeIs > 1)
+            List(Problem(here, "a design played in a stage's pools may have only one stage"))
         else
             design.stages.zipWithIndex.flatMap { (stage, i) =>
                 val where = (if (path.isEmpty) "" else s"$path, ") + s"stage ${i + 1}"

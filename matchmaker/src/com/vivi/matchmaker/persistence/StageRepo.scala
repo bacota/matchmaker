@@ -48,6 +48,35 @@ class StageRepo(session: Session[IO]) {
                 }
         }
 
+    /** The tournament's design with its stages' ids, each keyed as the rules name a stage: the indices of the stages
+      * from the top-level design down to it, a node's `path` and then the stage's index in the node's design.
+      */
+    def designWithIds(game: GameId, tournament: TournamentId): IO[Option[(TournamentDesign, Map[List[Int], Long])]] =
+        session.option(selectFirst)((game, tournament)).flatMap {
+            case None => IO.pure(None)
+            case Some(first) =>
+                session.execute(selectStages)((game, tournament)).map { rows =>
+                    val byId = rows.map(r => r.id -> r).toMap
+                    def chain(from: Long, depth: Int): TournamentDesign =
+                        if (depth > 8) throw new IllegalStateException(s"tournament $tournament nests inside itself")
+                        else StageRows.chain(byId, from, inner => chain(inner, depth + 1))
+                    // The ids along a chain, the same way the chain is followed.
+                    def ids(from: Long, prefix: List[Int]): Map[List[Int], Long] = {
+                        val along = Iterator
+                            .iterate(Option(from))(_.flatMap(id => byId.get(id).flatMap(_.next)))
+                            .takeWhile(_.isDefined)
+                            .flatten
+                            .take(byId.size)
+                            .toList
+                        along.zipWithIndex.flatMap { (id, i) =>
+                            val key = prefix :+ i
+                            (key -> id) :: byId(id).inner.filter(_ => byId(id).kind == "N").toList.flatMap(ids(_, key))
+                        }.toMap
+                    }
+                    Some((chain(first, 0), ids(first, Nil)))
+                }
+        }
+
     private val insertStage: Query[(GameId, TournamentId, (StageDesign, Option[Long])), Long] =
         sql"""INSERT INTO stage (game_id, tournament_id, #${StageRows.insertColumns("current_stage_id")})
           VALUES ($gameId, $tournamentId, ${StageRows.fields})
