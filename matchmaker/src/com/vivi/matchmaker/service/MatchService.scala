@@ -344,6 +344,12 @@ class MatchService(
                                 s"caller '$callerExternalId' did not create match ${matchId.value} and may not cancel it"
                               )
                             )
+                            // A tournament's match that has not begun (V52) is its tournament's to call off.
+                            _ <- IO.raiseUnless(existing.status.begun)(
+                              ConflictError(
+                                s"match ${matchId.value} has not begun; its tournament decides what becomes of it"
+                              )
+                            )
                             _ <- IO.raiseWhen(existing.completed)(
                               ConflictError(s"match ${matchId.value} is completed and can no longer be cancelled")
                             )
@@ -455,6 +461,10 @@ class MatchService(
                                   NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
                                 )
                         }
+                        // Its seats are not yet rated before it begins (V52), and rating is what this changes.
+                        _ <- IO.raiseUnless(existing.status.begun)(
+                          ConflictError(s"match ${matchId.value} has not begun")
+                        )
                         changed = existing.friendly != friendly
                         // A match that is not friendly is rated (V42), and cannot rate a player against
                         // themselves. Its seats are written once, at its start, so read under the match's

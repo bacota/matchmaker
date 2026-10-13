@@ -287,7 +287,7 @@ class GameEngineService[T](
                       creator = challenge.challenger,
                       description = challenge.message,
                       completedAt = None,
-                      start = challenge.start.getOrElse(Instant.now()),
+                      start = Some(challenge.start.getOrElse(Instant.now())),
                       timeLimit = challenge.timeLimit,
                       // Carried forward with the limit itself: the terms a match is played under are the
                       // ones its challenge was offered on, and editing the challenge later must not
@@ -607,7 +607,11 @@ class GameEngineService[T](
         val turnRepo = new TurnRepo(session)
         turns
             .sortBy(_.takenAt)
-            .foldLeft(IO.pure(since.getOrElse(m.start))) { (previous, reported) =>
+            // A match reporting turns has begun, so it has a start; the first reported turn stands in for
+            // one only so that this cannot fail on a row that somehow lacks it. With no turns it is unused.
+            .foldLeft(
+              IO.pure(since.orElse(m.start).orElse(turns.map(_.takenAt).minOption).getOrElse(Instant.EPOCH))
+            ) { (previous, reported) =>
                 previous.flatMap { prev =>
                     val startedAt = reported.startedAt.getOrElse(prev)
                     turnRepo
@@ -987,7 +991,7 @@ class GameEngineService[T](
                 prepared <- session.transaction.use { _ =>
                     for {
                         player <- requireCaller(playerRepo, callerExternalId)
-                        existing <- requireMatch(matchRepo, gameId, matchId)
+                        existing <- requireBegunMatch(matchRepo, gameId, matchId)
                         participants <- participantRepo.listForMatch(gameId, matchId)
                         _ <- IO.raiseUnless(participants.exists(_._1.playerId == player.playerId))(
                           UnauthorizedError(s"caller '$callerExternalId' is not in match ${matchId.value}")
@@ -1022,7 +1026,7 @@ class GameEngineService[T](
                 val participantRepo = new ParticipantRepo(session)
                 for {
                     player <- requireCaller(playerRepo, callerExternalId)
-                    existing <- requireMatch(matchRepo, gameId, matchId)
+                    existing <- requireBegunMatch(matchRepo, gameId, matchId)
                     participants <- participantRepo.listForMatch(gameId, matchId)
                     _ <- IO.raiseUnless(participants.exists(_._1.playerId == player.playerId))(
                       UnauthorizedError(s"caller '$callerExternalId' is not in match ${matchId.value}")
@@ -1363,6 +1367,15 @@ class GameEngineService[T](
         repo.read(gameId, matchId).flatMap {
             case Some(m) => IO.pure(m)
             case None    => IO.raiseError(NotFoundError(s"no match '${matchId.value}' in game ${gameId.value}"))
+        }
+
+    /* A match a player may open: one that has begun. A tournament's match exists before that (V52),
+     * scheduled or with its seats still choosing roles, and is answered as no match at all -- there is
+     * no board to send anyone to, and no listing names it. */
+    private def requireBegunMatch(repo: MatchRepo, gameId: GameId, matchId: MatchId): IO[Match] =
+        requireMatch(repo, gameId, matchId).flatMap { m =>
+            if (m.status.begun) IO.pure(m)
+            else IO.raiseError(NotFoundError(s"match '${matchId.value}' in game ${gameId.value} has not begun"))
         }
 
     private def requireMatchForUpdate(repo: MatchRepo, gameId: GameId, matchId: MatchId): IO[Match] =

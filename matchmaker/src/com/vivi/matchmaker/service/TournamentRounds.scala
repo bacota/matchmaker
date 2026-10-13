@@ -369,7 +369,7 @@ class TournamentRounds[T](
           creator = t.owner,
           description = s"${t.name}, round ${tm.round}",
           completedAt = None,
-          start = now(),
+          start = Some(now()),
           timeLimit = clock.map(_.limit),
           settings = "{}",
           timeLimitKind = clock.map(_.kind).getOrElse(TimeLimitKind.PerTurn),

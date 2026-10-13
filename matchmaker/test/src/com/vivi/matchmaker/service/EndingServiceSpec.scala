@@ -102,7 +102,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                   challenge.challenger,
                   "d",
                   finishedAgo.map(ago => Instant.now().minus(ago)),
-                  Instant.ofEpochSecond(1000),
+                  Some(Instant.ofEpochSecond(1000)),
                   None,
                   "{}",
                   cancelled = cancelled

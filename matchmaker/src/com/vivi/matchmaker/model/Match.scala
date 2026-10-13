@@ -22,7 +22,29 @@ import java.time.{Duration, Instant}
   * `completedAt` is a time rather than a flag so that a finished match can say when it finished — a history in no
   * particular order is not much of a history. `completed` is kept beside it as a derived answer to the question most
   * callers actually ask, and is deliberately not a field: two stored columns saying the same thing could disagree.
+  *
+  * `status` says where the match is in its life (V52), and is the source of truth: a tournament's match is written when
+  * its pool is formed, long before the engine has a game for it, and spends that time [[MatchStatus.Scheduled]],
+  * [[MatchStatus.Choosing]] and [[MatchStatus.Due]], with no urls and no `start`. A challenge's match is created in the
+  * engine as it is written, so it begins [[MatchStatus.InProgress]]. [[MatchStatus.Finished]] is completed or
+  * cancelled, which the database holds in step with `completedAt` and `cancelled`.
   */
+enum MatchStatus(val code: String) {
+    case Scheduled extends MatchStatus("S")
+    case Choosing extends MatchStatus("C")
+    case Due extends MatchStatus("D")
+    case InProgress extends MatchStatus("P")
+    case Finished extends MatchStatus("F")
+
+    /** Whether the engine has been asked to create the match's game: it has begun, or is over. */
+    def begun: Boolean = this == InProgress || this == Finished
+}
+
+object MatchStatus {
+    def fromCode(code: String): MatchStatus =
+        values.find(_.code == code).getOrElse(throw new IllegalArgumentException(s"unknown match status '$code'"))
+}
+
 case class Match(
     gameId: GameId,
     matchId: MatchId,
@@ -30,7 +52,8 @@ case class Match(
     creator: PlayerId,
     description: String,
     completedAt: Option[Instant],
-    start: Instant,
+    /** When play began: set when the match is created in the engine, and `None` until then. */
+    start: Option[Instant],
     timeLimit: Option[Duration],
     settings: String,
     isPublic: Boolean = false,
@@ -58,7 +81,8 @@ case class Match(
     /** Whether a friendly match's archive has expired (V38). There is nothing left to view, so a player is not offered
       * the urls; they are cleared where they are handed out.
       */
-    archiveExpired: Boolean = false
+    archiveExpired: Boolean = false,
+    status: MatchStatus = MatchStatus.InProgress
 ) {
 
     /** Whether the match was played to an end. */

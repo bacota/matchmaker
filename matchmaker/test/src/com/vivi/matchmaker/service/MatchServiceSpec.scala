@@ -173,7 +173,7 @@ class MatchServiceSpec extends PropertySuite {
               creator.getOrElse(player.playerId),
               "description",
               completedAt,
-              Instant.ofEpochSecond(1000),
+              Some(Instant.ofEpochSecond(1000)),
               None,
               settings,
               isPublic = isPublic,
@@ -863,6 +863,75 @@ class MatchServiceSpec extends PropertySuite {
 
     // A match need not come from a challenge (V50): a tournament's is created by the tournament, for its
     // owner. Its creator alone says whose it is, on the lists and to the cancel.
+    /** Takes a tournament match back to before it began (V52): `status` with no start or urls, and its seats with no
+      * role and no rating, as a match is while its seats choose. `cancelled` is a match called off in that time: over,
+      * never begun.
+      */
+    private def unbegin(session: skunk.Session[IO], gameId: GameId, matchId: MatchId, cancelled: Boolean): IO[Unit] =
+        session.execute(
+          sql"""UPDATE match SET status = $text, cancelled = ${skunk.codec.all.bool}, start = NULL,
+                   status_url = NULL, play_url = NULL, public_url = NULL
+            WHERE game_id = $int4 AND match_id = $text""".command
+        )((if (cancelled) "F" else "D", cancelled, gameId.value, matchId.value)) *>
+            session
+                .execute(
+                  sql"""UPDATE participant SET game_role_id = NULL, elo_start = NULL
+                    WHERE game_id = $int4 AND match_id = $text""".command
+                )((gameId.value, matchId.value))
+                .void
+
+    test("a tournament match that has not begun is in no list, no results, and cannot be opened or cancelled") {
+        val result = TestSession.resource.use { session =>
+            for {
+                prepared <- setup(session, genUniqueString.sample.get, genUniqueString.sample.get)
+                (player, game, character) = prepared
+                // Due to be created, and the player's turn by the seat's own flag: the due list's
+                // condition, apart from the match having begun.
+                waiting <- addMatch(
+                  session,
+                  player,
+                  game,
+                  character,
+                  genUniqueString.sample.get,
+                  None,
+                  pending = true,
+                  fromChallenge = false
+                )
+                _ <- unbegin(session, game.gameId, waiting, cancelled = false)
+                // Called off before it began: over, and still not a match the player played.
+                calledOff <- addMatch(
+                  session,
+                  player,
+                  game,
+                  character,
+                  genUniqueString.sample.get,
+                  None,
+                  pending = false,
+                  fromChallenge = false
+                )
+                _ <- unbegin(session, game.gameId, calledOff, cancelled = true)
+                _ <- new ParticipantRepo(session).completeForMatch(game.gameId, calledOff)
+            } yield (player, game, Set(waiting, calledOff), waiting)
+        }
+        val (player, game, unbegun, waiting) = result.timeout(30.seconds).unsafeRunSync()
+        val outcome = for {
+            active <- matchService.active(player.externalId)
+            due <- matchService.due(player.externalId)
+            completed <- matchService.completed(player.externalId)
+            results <- matchService.results(player.externalId)
+            read <- TestServices.services.engine.read(game.gameId, waiting, player.externalId).attempt
+            cancel <- matchService.cancel(game.gameId, waiting, player.externalId).attempt
+        } yield (active, due, completed, results, read, cancel)
+        val (active, due, completed, results, read, cancel) = outcome.timeout(30.seconds).unsafeRunSync()
+
+        assertEquals(active.map(_.matchId).filter(unbegun), Nil)
+        assertEquals(due.map(_.matchId).filter(unbegun), Nil)
+        assertEquals(completed.matches.map(_.matchId).filter(unbegun), Nil)
+        assertEquals(results.map(_.matchId).filter(unbegun), Nil)
+        assert(read.left.exists(_.isInstanceOf[NotFoundError]), read)
+        assert(cancel.left.exists(_.isInstanceOf[ConflictError]), cancel)
+    }
+
     test("a match with no challenge is its creator's to cancel, and listed as theirs and nobody else's") {
         val result = TestSession.resource.use { session =>
             for {

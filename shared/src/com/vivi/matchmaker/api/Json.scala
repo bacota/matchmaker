@@ -43,6 +43,9 @@ object Json {
     /** Likewise: 'PER_TURN' or 'TOTAL'. */
     given ReadWriter[TimeLimitKind] = readwriter[String].bimap(_.code, TimeLimitKind.fromCode)
 
+    /** Where a match is in its life (V52), by its one-letter code: 'S', 'C', 'D', 'P' or 'F'. */
+    given ReadWriter[MatchStatus] = readwriter[String].bimap(_.code, MatchStatus.fromCode)
+
     /** And 'SECONDS' / 'MINUTES' / 'HOURS' / 'DAYS'. */
     given ReadWriter[TimeLimitUnit] = readwriter[String].bimap(_.code, TimeLimitUnit.fromCode)
 

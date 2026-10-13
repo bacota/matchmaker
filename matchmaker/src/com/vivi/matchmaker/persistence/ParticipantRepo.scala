@@ -292,13 +292,13 @@ class ParticipantRepo(session: Session[IO]) {
         players: Int,
         noWait: Boolean
     ): Query[(GameId, MatchId, GameId, MatchId, List[PlayerId]), ParticipantRepo.LaterSeatRow] =
-        sql"""SELECT p.participant_id, p.player_id, p.game_role_id, p.create_date > t.completed
+        sql"""SELECT p.participant_id, p.player_id, p.game_role_id, p.create_date > t.completed_at
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN match t ON t.game_id = $gameId AND t.match_id = $matchId
           WHERE p.game_id = $gameId AND p.match_id <> $matchId
             AND p.player_id IN (${playerId.list(players)})
-            AND m.completed IS NULL AND NOT m.cancelled
+            AND m.completed_at IS NULL AND NOT m.cancelled
             AND m.create_date > t.create_date
           ORDER BY p.participant_id
           FOR UPDATE OF p #${if (noWait) "NOWAIT" else ""}"""
@@ -330,8 +330,8 @@ class ParticipantRepo(session: Session[IO]) {
             JOIN match t ON t.game_id = $gameId AND t.match_id = $matchId
             WHERE p.game_id = $gameId AND p.match_id <> $matchId
               AND p.player_id IN (${playerId.list(players)})
-              AND m.completed IS NOT NULL
-              AND p.create_date > t.completed)""".query(bool)
+              AND m.completed_at IS NOT NULL
+              AND p.create_date > t.completed_at)""".query(bool)
 
     /** Whether any of `players` has begun and finished another match of the game since match `matchId` finished: a
       * match whose starting ratings took in what that one did, and whose own result has been worked out from them.

@@ -108,7 +108,7 @@ object Generators {
           creator,
           description,
           completedAt,
-          start,
+          Some(start),
           timeLimit,
           "{}",
           isPublic,
@@ -118,7 +118,9 @@ object Generators {
           publicUrl,
           timeLimitKind,
           timeLimitUnit,
-          friendly = friendly
+          friendly = friendly,
+          // A challenge's match, begun as it is written: over once it is completed or cancelled (V52).
+          status = if (completedAt.isDefined || cancelled) MatchStatus.Finished else MatchStatus.InProgress
         )
 
     def genParticipant(

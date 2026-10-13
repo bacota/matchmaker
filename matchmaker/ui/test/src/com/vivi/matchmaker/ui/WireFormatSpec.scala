@@ -27,7 +27,7 @@ class WireFormatSpec extends FunSuite {
           description = "a friendly game",
           completedAt = Some(Instant.parse("2030-01-01T10:42:00Z")),
           cancelled = false,
-          start = Instant.parse("2030-01-01T10:00:00Z"),
+          start = Some(Instant.parse("2030-01-01T10:00:00Z")),
           timeLimit = Some(Duration.ofMinutes(30)),
           settings = "{}",
           isPublic = true,
@@ -48,7 +48,7 @@ class WireFormatSpec extends FunSuite {
           creator = PlayerId(4),
           description = "round 1",
           completedAt = None,
-          start = Instant.parse("2030-01-01T10:00:00Z"),
+          start = Some(Instant.parse("2030-01-01T10:00:00Z")),
           timeLimit = None,
           settings = "{}"
         )

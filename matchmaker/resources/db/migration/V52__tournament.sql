@@ -198,3 +198,45 @@ CREATE INDEX match_tournament ON match (game_id, tournament_id) WHERE tournament
 -- Only ever true on a cancelled tournament match; nothing that moves a rating reads a cancelled
 -- match, so these rows decide the tournament and nobody's rating.
 ALTER TABLE result ADD COLUMN manual BOOLEAN NOT NULL DEFAULT false;
+
+-- A match that exists before its engine game (design/new-tournament-plan.md, Phase 2).
+--
+-- A tournament match is written when its pool is formed, long before the engine has a game for it:
+-- `status` says where it is. 'S' scheduled, 'C' its seats choosing roles, 'D' due to be created in
+-- the engine, 'P' in progress, 'F' finished -- completed or cancelled. It is the source of truth, and
+-- the checks below keep the other columns from disagreeing with it. A challenge's match is created in
+-- the engine as it is written, so it starts at 'P'.
+ALTER TABLE match ADD COLUMN status TEXT CHECK (status IN ('S', 'C', 'D', 'P', 'F'));
+UPDATE match SET status = 'F' WHERE completed IS NOT NULL OR cancelled;
+UPDATE match SET status = 'P' WHERE status IS NULL;
+ALTER TABLE match ALTER COLUMN status SET NOT NULL;
+
+-- Status says that a match is over; completed_at says when.
+ALTER TABLE match RENAME COLUMN completed TO completed_at;
+ALTER TABLE match ADD CONSTRAINT match_finished
+    CHECK ((status = 'F') = (completed_at IS NOT NULL OR cancelled));
+
+-- Only a tournament match waits before it is played, and one not yet created in the engine has no
+-- urls and no start.
+ALTER TABLE match ALTER COLUMN start DROP NOT NULL;
+ALTER TABLE match ADD CONSTRAINT match_waits_in_tournament
+    CHECK (status NOT IN ('S', 'C', 'D') OR tournament_id IS NOT NULL);
+ALTER TABLE match ADD CONSTRAINT match_not_yet_created
+    CHECK (status NOT IN ('S', 'C', 'D') OR (status_url IS NULL AND play_url IS NULL AND start IS NULL));
+
+-- A seat names its challenge, as a tournament seat will name its tournament, so that each can reach
+-- its match through a key of its own origin.
+CREATE UNIQUE INDEX match_game_id_challenge_id_match_id_idx ON match (game_id, challenge_id, match_id);
+ALTER TABLE participant ADD COLUMN challenge_id BIGINT;
+UPDATE participant p SET challenge_id = m.challenge_id
+  FROM match m WHERE m.game_id = p.game_id AND m.match_id = p.match_id;
+ALTER TABLE participant ADD FOREIGN KEY (game_id, challenge_id, match_id)
+    REFERENCES match (game_id, challenge_id, match_id);
+CREATE INDEX participant_challenge ON participant (game_id, challenge_id) WHERE challenge_id IS NOT NULL;
+
+-- A tournament seat is written before its role is chosen and before its ratings are taken at launch.
+-- A challenge seat is accepted into a role and rated as it sits down, so it always has both.
+ALTER TABLE participant ALTER COLUMN game_role_id DROP NOT NULL;
+ALTER TABLE participant ALTER COLUMN elo_start DROP NOT NULL;
+ALTER TABLE participant ADD CONSTRAINT participant_challenge_seated
+    CHECK (challenge_id IS NULL OR (game_role_id IS NOT NULL AND elo_start IS NOT NULL));

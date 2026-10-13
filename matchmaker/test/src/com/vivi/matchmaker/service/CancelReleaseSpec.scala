@@ -80,7 +80,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                   challenge.challenger,
                   "d",
                   None,
-                  Instant.ofEpochSecond(1000),
+                  Some(Instant.ofEpochSecond(1000)),
                   None,
                   "{}"
                 )

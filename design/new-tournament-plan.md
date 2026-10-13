@@ -221,35 +221,41 @@ well. Code that creates a stage or pool writes both rows in one transaction, in 
 
 Every engine (boxing, rps, stratego, tictactoe) picks this up through the common library, so no engine code changes.
 
-### Phase 2: A match that exists before its engine game
+### Phase 2: A match that exists before its engine game (done)
 
-Matchmaker only, still with today's tournament code, so it is testable on its own. Challenges keep working throughout.
+Matchmaker only, on today's tournament code. Challenges keep working throughout.
 
-1. **Migration (in the rewritten V52):**
-   - `match.status` (`S`, `C`, `D`, `P`, `F`) with the D4 backfill and checks;
-   - `match.completed` renamed `completed_at`. About 30 SQL statements in the repos name it (`MatchRepo`,
-     `ParticipantRepo`, `ResultRepo`, `ArchiveRepo`, `CharacterRepo`), and each is renamed with it.
+1. **Migration**, appended to today's V52, which Phase 3 rewrites whole:
+   - `match.status` (`S`, `C`, `D`, `P`, `F`), backfilled `F` for completed or cancelled matches and `P` otherwise;
+   - `match.completed` renamed `completed_at`;
    - `start` nullable;
-   - `participant.game_role_id` and `elo_start` nullable, with their checks (D6);
-   - `participant.challenge_id` with its backfill, the composite foreign key and the origin check.
-2. **`Match`, `Participant` and their repos:** `status: MatchStatus`, `start: Option[Instant]`,
-   `gameRoleId: Option[GameRoleId]`, `eloStart: Option[Int]`. `EloRatingService` rates a finished match from its seats'
-   `elo_start`, which every played seat has by then. `MatchRepo.complete` and the cancels set `F` with `completed_at` and
-   `cancelled`, in the same statement.
-3. **The challenge path** writes `P` directly. Its `undo` still deletes, because a challenge match has nothing to
-   return to: it was never `D`.
-4. **Audit every reader of `match`.** The SQL lives in `MatchRepo`, `ParticipantRepo`, `ResultRepo`, `ArchiveRepo` and
-   `CharacterRepo`; the services that read through them are `GameEngineService`, `EloRatingService` and
-   `ArchiveService`. Each query that lists or acts on matches either takes `status IN ('P', 'F')` or says why it
-   doesn't need to. The known cases:
-   - player and character listings (`listActiveForPlayer`, `listDueForPlayer`, `clocksForPlayer`, the public
-     variants, `listForGame`): exclude `S`/`C`/`D`. Choices are already shown through `TournamentRounds.choicesFor`.
-   - `enforceTimeouts` and `listOverdueForMatch`: `due` is NULL before launch, so they're safe, but say so.
-   - `refresh` and `read`: an `S`/`C`/`D` match has no `status_url`. Answer with the match rather than "no status url".
-   - cancel: an `S`/`C`/`D` match has no engine game and no `cancel_url`, so nothing to release.
-   - archive sweep and ratings: keyed on `completed_at`, so unaffected apart from the rename.
-5. **Tests:** existing suites pass unchanged. A new spec inserts an `S` and a `D` match with seats and no role, and
-   shows that every listing and the timeout enforcer ignore them.
+   - `match_finished`, `match_waits_in_tournament` and `match_not_yet_created`;
+   - `participant.challenge_id`, backfilled, with its foreign key to `match (game_id, challenge_id, match_id)`;
+   - `participant.game_role_id` and `elo_start` nullable, with `participant_challenge_seated` keeping both required on
+     a challenge seat. Phase 3 restates that check through `tournament_id`.
+2. **`Match`** has `status: MatchStatus` and `start: Option[Instant]`. `MatchRepo` writes `Finished` whenever a match is
+   completed or cancelled (`statusOf`), so a caller that cancels by copying with `cancelled = true` keeps the row
+   consistent, and `complete` sets `F` with `completed_at`. The status is on the wire as its code.
+3. **The challenge path** writes `P`, through the default. Its `undo` still deletes.
+4. **Every reader of `match`:**
+   - all twelve player and admin listings in `MatchRepo`, and the results in `ResultRepo`, begin
+     `WHERE m.start IS NOT NULL`: a match is listed once it has begun. That also leaves out a tournament match cancelled
+     before it began, which is over but has seats with no role and no ratings;
+   - `GameEngineService.read` and `refresh` answer a match that hasn't begun as not found (`requireBegunMatch`), before
+     reading its seats;
+   - `MatchService.cancel` and `setFriendly` refuse it as a conflict: its tournament decides what becomes of it;
+   - timeout enforcement, the archive sweep and ratings key on `due`, `completed_at` and finished matches, so they
+     were renamed and need nothing else.
+5. **Test:** `MatchServiceSpec` takes two tournament matches back to before they began, one due and one cancelled.
+   Neither appears in the active, due, completed or results lists. Reading the due one is not found, and cancelling
+   it is a conflict.
+
+Left for Phase 6, when seats without a role are first written:
+- `Participant.gameRoleId` is still a plain `GameRoleId` in the model. Every path that reads seats either filters to
+  begun matches or refuses an unbegun one first, so no NULL role is decoded yet.
+- `ParticipantRepo.selectLaterSeats` and `selectLaterCompleted` compare a seat's `create_date` with when another match
+  completed, as a stand-in for "rated after that match". Once a tournament seat is created at pool formation and rated
+  at launch, they must compare the time its rating was taken instead.
 
 ### Phase 3: Schema
 
@@ -272,7 +278,7 @@ round-done notification) is unaffected and keeps its number.
   - delete today's tournament matches and their seats, turns and results, which fail the new checks;
   - drop the tournament tables, and revert the `match`, `participant` and `result` changes;
   - then delete the V52 and V53 rows from `flyway_schema_history`, and re-migrate. Write this as a script
-  in `scratch/` rather than as a migration. `TestMigration.ensure()` then migrates the test database the same way. No
+  in `design/reset-tournament-schema.sql` rather than as a migration. `TestMigration.ensure()` then migrates the test database the same way. No
   deployed database has V52.
 - **Tests:** a migration spec that creates a model and copies it into a tournament. It checks that the constraints
   refuse:

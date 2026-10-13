@@ -615,7 +615,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       seat,
                       List(seat),
                       prevMoveAt,
-                      started.start,
+                      started.start.get,
                       gameExternalId
                     )
                 after <- participantsOf(started)
@@ -1126,7 +1126,7 @@ class GameEngineServiceSpec extends PropertySuite {
             } yield stored.contains(model.Result(fixture.game.gameId, seat, 1, Map("points" -> 42.0), true)) &&
                 after.head.completed &&
                 !after.head.pending &&
-                reread.completedAt.exists(at => !at.isBefore(started.start)) &&
+                reread.completedAt.exists(at => !at.isBefore(started.start.get)) &&
                 completed.exists(_.matchId == started.matchId)
             result.timeout(15.seconds).unsafeRunSync()
         }
@@ -1290,7 +1290,7 @@ class GameEngineServiceSpec extends PropertySuite {
               takenAt = prevMoveAt,
               // The move before, which for the first move of a match is the match's own start: this is
               // the ordinary turn-taking engine, spelling out what it used to leave to be inferred.
-              startedAt = started.start,
+              startedAt = started.start.get,
               callerExternalId = gameExternalId
             )
             // What the engine will say when it is asked: the same thing, so that by default the

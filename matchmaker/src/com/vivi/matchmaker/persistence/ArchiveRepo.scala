@@ -74,7 +74,7 @@ class ArchiveRepo(session: Session[IO]) {
      * match id and who it is. Match ids are UUIDs, so the id alone picks one match; the external id
      * is what makes it this engine's. */
     private val selectForEngine: Query[(MatchId, String), Row] =
-        sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
+        sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.cancelled, m.friendly,
                  m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
                  m.archive_friendly
           FROM match m
@@ -82,7 +82,7 @@ class ArchiveRepo(session: Session[IO]) {
           WHERE m.match_id = $matchId AND g.external_id = $text""".query(row)
 
     private val selectForEngineForUpdate: Query[(MatchId, String), Row] =
-        sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
+        sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.cancelled, m.friendly,
                  m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
                  m.archive_friendly
           FROM match m
@@ -91,7 +91,7 @@ class ArchiveRepo(session: Session[IO]) {
           FOR UPDATE OF m""".query(row)
 
     private val selectByIds: Query[(GameId, MatchId), Row] =
-        sql"""SELECT m.game_id, m.match_id, g.name, m.completed, m.cancelled, m.friendly,
+        sql"""SELECT m.game_id, m.match_id, g.name, m.completed_at, m.cancelled, m.friendly,
                  m.archive_key, m.archive_sha256, m.archive_requested, m.archived_at, #${ArchiveRepo.expiredAt("m")},
                  m.archive_friendly
           FROM match m
@@ -160,7 +160,7 @@ class ArchiveRepo(session: Session[IO]) {
       (GameId, MatchId),
       (Option[Instant], Boolean, Option[Instant], Option[String], Option[String], Boolean)
     ] =
-        sql"""SELECT completed, cancelled, archived_at, status_url, cancel_url, engine_released IS NOT NULL
+        sql"""SELECT completed_at, cancelled, archived_at, status_url, cancel_url, engine_released IS NOT NULL
           FROM match WHERE game_id = $gameId AND match_id = $matchId"""
             .query(instant.opt *: bool *: instant.opt *: text.opt *: text.opt *: bool)
 

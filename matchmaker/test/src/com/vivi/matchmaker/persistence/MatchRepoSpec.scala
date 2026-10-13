@@ -54,7 +54,7 @@ class MatchRepoSpec extends PropertySuite {
               PlayerId(1),
               "",
               None,
-              java.time.Instant.EPOCH,
+              Some(java.time.Instant.EPOCH),
               None,
               "{}"
             )

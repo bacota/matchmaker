@@ -75,7 +75,9 @@ class ResultRepo(session: Session[IO]) {
           JOIN player pl ON pl.player_id = p.player_id
           JOIN game_role gr ON gr.game_id = p.game_id AND gr.game_role_id = p.game_role_id
           LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
-          WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND ((m.completed IS NOT NULL) OR m.cancelled)
+          -- Begun (V52): a tournament's match cancelled before it began has seats with no ratings and no results.
+          WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND m.start IS NOT NULL
+            AND ((m.completed_at IS NOT NULL) OR m.cancelled)
           ORDER BY p.match_id, r.rank ASC NULLS LAST, p.participant_id"""
             .query(
               gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text *: int4.opt *: scores.opt *: bool.opt *:
@@ -126,7 +128,7 @@ class ResultRepo(session: Session[IO]) {
           FROM turn t
           JOIN participant p ON p.game_id = t.game_id AND p.participant_id = t.participant_id
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
-          WHERE ((m.completed IS NOT NULL) OR m.cancelled)
+          WHERE ((m.completed_at IS NOT NULL) OR m.cancelled)
             AND EXISTS (SELECT 1 FROM participant mine
                          WHERE mine.game_id = m.game_id AND mine.match_id = m.match_id
                            AND mine.player_id = ${SkunkIdCodecs.playerId})

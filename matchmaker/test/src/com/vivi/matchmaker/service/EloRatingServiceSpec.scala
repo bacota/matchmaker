@@ -474,7 +474,7 @@ class EloRatingServiceSpec extends PropertySuite {
               moved = second.participantId,
               next = List(first.participantId),
               takenAt = anHourAgo,
-              startedAt = m.start,
+              startedAt = m.start.get,
               callerExternalId = f.game.externalId
             )
             _ <- IO {
