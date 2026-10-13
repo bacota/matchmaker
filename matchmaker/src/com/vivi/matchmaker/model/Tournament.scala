@@ -215,6 +215,24 @@ case class TournamentDetail(
     round: List[TournamentMatchView] = Nil
 )
 
+/** Where a player stands in a tournament they entered (V52): the entry (by its character, in a character game), its
+  * seed and stratum as they stand, whether it is out, how many are still in, and its final place once it is over.
+  */
+case class TournamentStanding(
+    gameId: GameId,
+    tournamentId: TournamentId,
+    tournamentName: String,
+    gameName: String,
+    status: TournamentStatus,
+    entrantId: EntrantId,
+    characterName: Option[String],
+    seed: Option[Int],
+    stratum: Option[Int],
+    eliminated: Boolean,
+    entrants: Int,
+    finalRank: Option[Int]
+)
+
 /** A player by name, for a list that shows people. */
 case class PlayerName(playerId: PlayerId, nickname: String)
 

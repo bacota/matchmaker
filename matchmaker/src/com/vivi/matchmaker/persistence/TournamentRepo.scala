@@ -301,4 +301,69 @@ class TournamentRepo(session: Session[IO]) {
     /** One tournament as `viewer` sees it in a list. */
     def summary(game: GameId, id: TournamentId, viewer: PlayerId): IO[Option[TournamentSummary]] =
         session.option(selectSummary)(((viewer, viewer), game, id)).map(_.map(summaryOf(viewer)))
+
+    // Every entry of a player's, with its seed and stratum as its latest SEED row in the tournament's root pool says,
+    // and how many are still in.
+    private val selectStandings: Query[PlayerId, TournamentStandingRow] =
+        sql"""SELECT t.game_id, t.tournament_id, t.name, g.display_name, t.status, e.entrant_id, ch.name,
+                 s.seed, s.stratum, s.eliminated IS NOT NULL,
+                 (SELECT count(*) FROM entrant o
+                   WHERE o.game_id = t.game_id AND o.tournament_id = t.tournament_id AND o.withdrawn_at IS NULL),
+                 e.final_rank
+          FROM entrant e
+          JOIN tournament t ON t.game_id = e.game_id AND t.tournament_id = e.tournament_id
+          JOIN game g ON g.game_id = t.game_id
+          LEFT JOIN character_entrant ce
+                 ON ce.game_id = e.game_id AND ce.tournament_id = e.tournament_id AND ce.entrant_id = e.entrant_id
+          LEFT JOIN character ch ON ch.game_id = ce.game_id AND ch.character_id = ce.character_id
+          LEFT JOIN LATERAL (
+              SELECT sd.seed, sd.stratum, sd.eliminated FROM seed sd
+              JOIN pool p ON p.game_id = sd.game_id AND p.tournament_id = sd.tournament_id AND p.pool_id = sd.pool_id
+              WHERE sd.game_id = e.game_id AND sd.tournament_id = e.tournament_id AND sd.entrant_id = e.entrant_id
+                AND p.kind = 'R'
+              ORDER BY sd.round DESC LIMIT 1
+          ) s ON true
+          WHERE e.player_id = $playerId
+          ORDER BY t.status = 'running' DESC, t.create_date DESC, e.entrant_id"""
+            .query(
+              gameId *: tournamentId *: text *: text *: status *: int8 *: text.opt *: int4.opt *: int4.opt *: bool *:
+                  int8 *: int4.opt
+            )
+
+    private type TournamentStandingRow =
+        (
+            GameId,
+            TournamentId,
+            String,
+            String,
+            TournamentStatus,
+            Long,
+            Option[String],
+            Option[Int],
+            Option[Int],
+            Boolean,
+            Long,
+            Option[Int]
+        )
+
+    /** Where a player stands in every tournament they have entered, those under way first and then the newest. */
+    def standingsForPlayer(player: PlayerId): IO[List[TournamentStanding]] =
+        session
+            .execute(selectStandings)(player)
+            .map(_.map { case (g, t, name, gameName, st, entrant, character, seed, stratum, out, entrants, rank) =>
+                TournamentStanding(
+                  g,
+                  t,
+                  name,
+                  gameName,
+                  st,
+                  EntrantId(entrant),
+                  character,
+                  seed,
+                  stratum,
+                  out,
+                  entrants.toInt,
+                  rank
+                )
+            })
 }

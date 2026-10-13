@@ -6,6 +6,7 @@ import java.time.Instant
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{
     Env,
+    Standings,
     Tournament as Progress,
     TournamentDesign,
     TournamentGame,
@@ -36,6 +37,17 @@ class TournamentService[T](
         sessionPool.use { session =>
             requireCaller(session, callerExternalId).flatMap(p =>
                 new TournamentRepo(session).summariesForGame(gameId, p.playerId)
+            )
+        }
+
+    /** Where the caller stands in every tournament they have entered, those under way first: their seed and stratum as
+      * they stand, and their final place once one is over. A ladder that runs for ever is one of these, always under
+      * way.
+      */
+    def standings(callerExternalId: String): IO[List[TournamentStanding]] =
+        sessionPool.use { session =>
+            requireCaller(session, callerExternalId).flatMap(p =>
+                new TournamentRepo(session).standingsForPlayer(p.playerId)
             )
         }
 
@@ -75,7 +87,8 @@ class TournamentService[T](
               design,
               entries,
               invited.map((id, name) => PlayerName(id, name)),
-              state,
+              // Pools still being played shown as their finished matches stand.
+              state.map(s => game.fold(s)(g => Standings.provisional(s, design, TournamentGame.of(g)))),
               round.map { m =>
                   val by =
                       game.flatMap(g => TournamentRounds.chooseBy(summary.tournament, g, m))

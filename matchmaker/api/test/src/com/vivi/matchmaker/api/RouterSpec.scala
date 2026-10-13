@@ -323,6 +323,7 @@ class RouterSpec extends FunSuite {
       ("POST", "/matches/m1/archive/expired", "{}"),
       // Tournaments (V52). A create or edit names a standard design by key; settings are all defaulted.
       ("GET", "/me/tournaments", "{}"),
+      ("GET", "/me/tournament-standings", "{}"),
       ("GET", "/games/1/tournaments", "{}"),
       ("POST", "/games/1/tournaments", """{"name":"Open","tournamentModelId":6}"""),
       ("GET", "/games/1/tournaments/2", "{}"),
@@ -366,7 +367,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 83)
+        assertEquals(routed.size, 84)
         assertEquals(routed.distinct.size, routed.size)
     }
 

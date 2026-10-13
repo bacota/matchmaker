@@ -283,4 +283,22 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assert(mine.exists(_.isOwner))
         assert(theirs.exists(s => s.invited && !s.isOwner))
     }
+
+    test("a player's standings say where they stand in each tournament they entered, by their seed while it runs") {
+        val (before, after, entrants) = run(for {
+            f <- fixture(2)
+            t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
+            _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
+            _ <- f.players.traverse(p => tournaments.enter(f.game.gameId, t.tournamentId, None, p.externalId))
+            before <- tournaments.standings(f.players.head.externalId)
+            _ <- tournaments.start(f.game.gameId, t.tournamentId, f.owner.externalId)
+            after <- tournaments.standings(f.players.head.externalId)
+        } yield (before, after, f.players.size))
+        assertEquals(before.map(_.status), List(TournamentStatus.Open))
+        assertEquals(before.flatMap(_.seed), Nil)
+        assertEquals(after.map(_.status), List(TournamentStatus.Running))
+        assert(after.head.seed.exists(s => s >= 1 && s <= entrants), after)
+        assertEquals(after.head.entrants, entrants)
+        assertEquals(after.head.finalRank, None)
+    }
 }

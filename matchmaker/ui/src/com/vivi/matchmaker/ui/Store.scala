@@ -106,6 +106,7 @@ object Store {
         invitations.set(Seq.empty)
         myTournaments.set(Seq.empty)
         tournamentChoices.set(Seq.empty)
+        tournamentStandings.set(Seq.empty)
         tournamentsByGame.set(Map.empty)
         tournamentModelsByGame.set(Map.empty)
         tournament.set(None)
@@ -165,7 +166,7 @@ object Store {
         case PlayerSearch
         case NotificationSettings
         // Tournaments (V52): the caller's own, the seats waiting on them, a game's, and the one shown.
-        case MyTournaments, TournamentChoices
+        case MyTournaments, TournamentChoices, TournamentStandings
         case Tournaments(gameId: GameId)
         case OneTournament
         case TournamentModels(gameId: GameId)
@@ -252,6 +253,9 @@ object Store {
 
     /** The seats waiting on the caller to choose a role in a tournament match. */
     val tournamentChoices: Var[Seq[TournamentChoice]] = Var(Seq.empty)
+
+    /** Where the caller stands in every tournament they have entered, for the main page. */
+    val tournamentStandings: Var[Seq[TournamentStanding]] = Var(Seq.empty)
 
     /** Each game's tournaments, for its screen, fetched as it is opened. */
     val tournamentsByGame: Var[Map[GameId, Seq[TournamentSummary]]] = Var(Map.empty)
@@ -1036,7 +1040,11 @@ object Store {
         load(ApiClient.results(), Fetch.Results)(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
         load(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
         load(ApiClient.tournamentChoices(), Fetch.TournamentChoices)(tournamentChoices.set)
+        load(ApiClient.tournamentStandings(), Fetch.TournamentStandings)(tournamentStandings.set)
     }
+
+    def reloadTournamentStandings(): Future[Unit] =
+        reload(ApiClient.tournamentStandings(), Fetch.TournamentStandings)(tournamentStandings.set)
 
     def reloadMyTournaments(): Future[Unit] = reload(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
 

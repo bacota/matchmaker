@@ -384,6 +384,10 @@ object ApiClient {
     /** The seats waiting on the caller to choose a role. */
     def tournamentChoices(): Future[Seq[TournamentChoice]] = get[Seq[TournamentChoice]]("/me/tournament-choices")
 
+    /** Where the caller stands in every tournament they have entered. */
+    def tournamentStandings(): Future[Seq[TournamentStanding]] =
+        get[Seq[TournamentStanding]]("/me/tournament-standings")
+
     def tournaments(gameId: GameId): Future[Seq[TournamentSummary]] =
         get[Seq[TournamentSummary]](s"/games/${gameId.value}/tournaments")
 

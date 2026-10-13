@@ -390,6 +390,7 @@ locals {
     # Tournaments (V52): the caller's own, a game's, and one tournament's page; creating and editing
     # one; its owner opening, starting and cancelling it; invitations; and entering and withdrawing.
     "GET /me/tournaments",
+    "GET /me/tournament-standings",
     "GET /games/{gameId}/tournaments",
     "POST /games/{gameId}/tournaments",
     "GET /games/{gameId}/tournaments/{tournamentId}",

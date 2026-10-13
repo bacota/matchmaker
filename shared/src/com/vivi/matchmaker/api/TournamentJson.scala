@@ -28,6 +28,7 @@ object TournamentJson {
     given ReadWriter[TournamentSeatView] = macroRW
     given ReadWriter[TournamentMatchView] = macroRW
     given ReadWriter[TournamentDetail] = macroRW
+    given ReadWriter[TournamentStanding] = macroRW
 
     /** Entering a tournament: with which character, in a character game. */
     case class EnterRequest(characterId: Option[CharacterId] = None)

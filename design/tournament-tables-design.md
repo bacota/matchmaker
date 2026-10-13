@@ -1,5 +1,8 @@
 # Plan: Tournament state in tables
 
+> **Superseded** by `design/new-tournament.sql` and `design/new-tournament-plan.md`, which unpacked the state into
+> tables as built. Kept for the reasoning it records.
+
 Replaces the `tournament.state` JSON column (V52) with tables. Written against branch `new-tournament`, where the
 newest migration is `V53__tournament_round_notification.sql`.
 

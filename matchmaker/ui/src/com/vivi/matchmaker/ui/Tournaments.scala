@@ -114,8 +114,73 @@ object Tournaments {
                   Views.refreshableSection("My Tournaments", () => Store.reloadMyTournaments(), subsection = false)(
                     summaryList(mine, showGame = true)
                   )
+          },
+          child <-- Store.tournamentStandings.signal.map { rows =>
+              if (rows.isEmpty) emptyNode
+              else
+                  Views.refreshableSection(
+                    "Where You Stand",
+                    () => Store.reloadTournamentStandings(),
+                    subsection = false
+                  )(
+                    standingsTable(rows)
+                  )
           }
         )
+
+    /** Where the caller stands in each tournament they entered: their place once it is over, and otherwise their seed
+      * among those still in, and whether they are out. A table, as standings are, with a header per column.
+      */
+    private def standingsTable(rows: Seq[TournamentStanding]): HtmlElement =
+        div(
+          cls := "table-scroll",
+          table(
+            caption(cls := "sr-only", "Your place in each tournament you entered"),
+            thead(
+              tr(
+                th(scopeAttr := "col", "Tournament"),
+                th(scopeAttr := "col", "Game"),
+                th(scopeAttr := "col", "Entry"),
+                th(scopeAttr := "col", "Standing")
+              )
+            ),
+            tbody(rows.map { r =>
+                val standing = r.finalRank match {
+                    case Some(rank)           => s"finished ${ordinal(rank)}"
+                    case None if r.eliminated => "out"
+                    case None if r.seed.isDefined =>
+                        s"seed ${r.seed.get} of ${r.entrants}" + r.stratum.filter(_ != 0).fold("")(s => s", stratum $s")
+                    case None => r.status.label
+                }
+                tr(
+                  td(
+                    button(
+                      cls := "link",
+                      tpe := "button",
+                      r.tournamentName,
+                      onClick --> (_ => Store.show(Store.Page.OneTournament(r.gameId, r.tournamentId)))
+                    )
+                  ),
+                  td(r.gameName),
+                  td(r.characterName.getOrElse("you")),
+                  td(standing)
+                )
+            })
+          )
+        )
+
+    private def ordinal(n: Int): String = {
+        val suffix =
+            if ((n % 100) / 10 == 1) "th"
+            else
+                n % 10 match {
+                    case 1 => "st"
+                    case 2 => "nd"
+                    case 3 => "rd"
+                    case _ => "th"
+                }
+        s"$n$suffix"
+    }
 
     /** A tournament of the viewer's own whose round is over and that waits on them to start the next. */
     private def waitsOnMe(s: TournamentSummary): Boolean =

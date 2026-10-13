@@ -474,18 +474,22 @@ queue, the views.
 
 Every matchmaker suite passes again: 794 tests, with no known failures left.
 
-### Phase 7: Reads and the UI
+### Phase 7: Reads and the UI (done)
 
-- **Tournament detail:** reads the current round's matches and the open pools' standings from the tables. Standings
-  are `pool_member` points while a pool plays, using `Ranking.rankPool` over its finished matches (earlier plan's
-  Phase 5).
-- **The match's place in the tournament:** the UI identifies a tournament match by `matchId` instead of pool and
-  number. Still no ids are shown as text: pools are labelled A, B, C, as now.
-- **Across tournaments:** `GET /me/tournament-standings` reads `pool_member` joined to `entrant` by player. The same
-  query serves a forever-running ladder's current standing.
-- **Cleanup:** `tournament-tables-design.md` gets a note that it is superseded here. The untracked `Bracket.scala`,
-  `FixtureRepo.scala` and `TournamentLayout.scala` use an older design's `fixture` tables, and none of this plan uses
-  them.
+- **Live standings.** `Standings.provisional` gives each round-robin pool still being played the ranks and points its
+  finished matches make (`Ranking.rankPool`, rubbers aside). The tournament's page applies it to the state it shows,
+  and nothing saves it. Completed pools keep the standings their completion recorded.
+- **Matches by id.** The tournament page's chooser and decider address a match by its id (Phase 6). Pools are still
+  labelled A, B, C, and no id is shown as text.
+- **Across tournaments.** `GET /me/tournament-standings` (Router, terraform, RouterSpec) lists every tournament the
+  caller entered, those under way first: the entry (by its character in a character game), its seed and stratum from
+  its latest SEED row in the root pool, whether it's out, how many are still in, and its final place once it's over. A
+  ladder that runs for ever is always one of these.
+- **UI.** The main page has a "Where You Stand" table: a column header for each column, a caption for screen readers,
+  inside the scrolling wrapper the other standings tables use, and each tournament a link to its page.
+- **Cleanup.** `tournament-tables-design.md` is marked superseded.
+- **Tests.** `StandingsSpec` covers provisional standings. `TournamentServiceSpec` checks that a player's standings
+  give an open tournament no seed, and a started one their seed among the entrants.
 
 ## How this splits into PRs
 

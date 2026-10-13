@@ -549,6 +549,10 @@ object Router {
             case ("GET", "me" :: "tournaments" :: Nil) =>
                 ok(services.tournaments.mine(caller))
 
+            // Where the caller stands in every tournament they have entered.
+            case ("GET", "me" :: "tournament-standings" :: Nil) =>
+                ok(services.tournaments.standings(caller))
+
             case ("GET", "games" :: gameId :: "tournaments" :: Nil) =>
                 withGameId(gameId)(gid => ok(services.tournaments.listForGame(gid, caller)))
 
