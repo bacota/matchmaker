@@ -6,7 +6,6 @@ import java.time.Instant
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{
     Env,
-    StandardDesigns,
     Tournament as Progress,
     TournamentDesign,
     TournamentGame,
@@ -59,9 +58,13 @@ class TournamentService[T](
                     case Some(s) => IO.pure(s)
                     case None    => IO.raiseError(NotFoundError(s"no tournament $tournamentId in game $gameId"))
                 }
+                design <- new StageRepo(session).design(gameId, tournamentId).map(_.getOrElse(TournamentDesign(Nil)))
                 entries <- new EntrantRepo(session).list(gameId, tournamentId)
                 invited <- new TournamentInvitationRepo(session).list(gameId, tournamentId)
-                state <- new TournamentRepo(session).readState(gameId, tournamentId)
+                // Only a tournament that has started has any progress to read.
+                state <-
+                    if (summary.tournament.startedAt.isEmpty) IO.pure(None)
+                    else new TournamentRepo(session).readState(gameId, tournamentId)
                 round <- state.filter(_.round > 0) match {
                     case Some(s) => new TournamentMatchRepo(session).listRound(gameId, tournamentId, s.round)
                     case None    => IO.pure(Nil)
@@ -69,6 +72,7 @@ class TournamentService[T](
                 game <- new GameRepo[T](session).read(gameId)
             } yield TournamentDetail(
               summary,
+              design,
               entries,
               invited.map((id, name) => PlayerName(id, name)),
               state,
@@ -83,15 +87,18 @@ class TournamentService[T](
 
     // ---- designing -------------------------------------------------------------------------
 
-    /** A new tournament, in draft, owned by the caller. */
+    /** A new tournament, in draft, owned by the caller: made from one of the game's models, whose stages are copied
+      * into it, with its root pool.
+      */
     def create(gameId: GameId, request: TournamentRequest, callerExternalId: String): IO[Tournament] =
         sessionPool.use { session =>
             session.transaction.use { _ =>
                 for {
                     caller <- requireCaller(session, callerExternalId)
                     game <- requireGame(session, gameId)
-                    design <- designFor(game, request)
-                    _ <- checkSettings(game, design, request)
+                    model <- requireModel(session, gameId, request.tournamentModelId)
+                    poolSize = defaultPoolSize(game, model, request)
+                    _ <- checkSettings(game, model.design, request, poolSize)
                     made <- new TournamentRepo(session).create(
                       Tournament(
                         gameId,
@@ -99,11 +106,13 @@ class TournamentService[T](
                         request.name.trim,
                         request.description.trim,
                         caller.playerId,
-                        design,
-                        request.standardDesign.filter(_ => request.design.isEmpty),
+                        model.tournamentModelId,
+                        poolSize,
                         request.settings
                       )
                     )
+                    _ <- new StageRepo(session).copy(gameId, made.tournamentId, model.design)
+                    _ <- new PoolRepo(session).createRoot(gameId, made.tournamentId)
                 } yield made
             }
         }
@@ -134,13 +143,19 @@ class TournamentService[T](
                     updated <- t.status match {
                         case TournamentStatus.Draft | TournamentStatus.Open =>
                             for {
-                                design <- designFor(game, request)
-                                _ <- checkSettings(game, design, request)
+                                model <- requireModel(session, gameId, request.tournamentModelId)
+                                poolSize = defaultPoolSize(game, model, request)
+                                _ <- checkSettings(game, model.design, request, poolSize)
+                                // Made from another model: its stages are the new model's from now on.
+                                _ <- IO.whenA(model.tournamentModelId != t.tournamentModelId)(
+                                  new StageRepo(session).removeAll(gameId, tournamentId) *>
+                                      new StageRepo(session).copy(gameId, tournamentId, model.design)
+                                )
                             } yield t.copy(
                               name = request.name.trim,
                               description = request.description.trim,
-                              design = design,
-                              standardDesign = request.standardDesign.filter(_ => request.design.isEmpty),
+                              tournamentModelId = model.tournamentModelId,
+                              defaultPoolSize = poolSize,
                               settings = request.settings
                             )
                         case TournamentStatus.Running =>
@@ -305,12 +320,14 @@ class TournamentService[T](
                                 ratings <-
                                     (if (late) currentRatings(session, gameId, existing.filterNot(_.withdrawn))
                                      else IO.pure(Map.empty[Long, Int]))
-                                _ <- IO.whenA(late)(updateState(session, t, game) { s =>
-                                    Progress.lateEntry(
-                                      s,
-                                      made.entrantId.value,
-                                      env(t, game, ratings + (made.entrantId.value -> rating))
-                                    )
+                                _ <- IO.whenA(late)(requireDesign(session, t).flatMap { design =>
+                                    updateState(session, t, game) { s =>
+                                        Progress.lateEntry(
+                                          s,
+                                          made.entrantId.value,
+                                          env(t, design, game, ratings + (made.entrantId.value -> rating))
+                                        )
+                                    }
                                 })
                             } yield made.copy(nickname = caller.nickname)
                     }
@@ -373,15 +390,13 @@ class TournamentService[T](
                             s"a tournament needs at least ${math.max(2, game.requiredSeats)} entries to start"
                           )
                         )
+                        design <- requireDesign(session, t)
                         problems = Validation
-                            .validate(t.design, TournamentGame.of(game), t.settings.roundDuration, t.settings.maxTurns)
+                            .validate(design, TournamentGame.of(game), t.settings.maxTurns, Some(t.defaultPoolSize))
                             .filterNot(_.warning)
                         _ <- IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.map(_.describe).mkString("; ")))
                         ratings <- currentRatings(session, gameId, entries)
-                        state = Progress.start(
-                          entries.map(_.entrantId.value),
-                          Env(t.design, TournamentGame.of(game), ratings)
-                        )
+                        state = Progress.start(entries.map(_.entrantId.value), env(t, design, game, ratings))
                         running = t.copy(status = TournamentStatus.Running, startedAt = Some(now()))
                         _ <- new TournamentRepo(session).update(running)
                         _ <- new TournamentRepo(session).writeState(gameId, tournamentId, state)
@@ -415,27 +430,41 @@ class TournamentService[T](
             case None    => IO.unit
         }
 
-    private def env(t: Tournament, game: Game, ratings: Map[Long, Int]): Env =
-        Env(t.design, TournamentGame.of(game), ratings)
+    private def env(t: Tournament, design: TournamentDesign, game: Game, ratings: Map[Long, Int]): Env =
+        Env(design, TournamentGame.of(game), ratings, Some(t.defaultPoolSize), t.settings.concurrentRounds)
 
-    /** The design a request asks for: a standard one built for the game, or the creator's own. */
-    private def designFor(game: Game, request: TournamentRequest): IO[TournamentDesign] =
-        (request.design, request.standardDesign) match {
-            case (Some(d), _) => IO.pure(d)
-            case (None, Some(key)) =>
-                StandardDesigns.build(key, game.poolSeats, request.poolSize) match {
-                    case Right(d)      => IO.pure(d)
-                    case Left(problem) => IO.raiseError(ValidationError(problem))
-                }
-            case (None, None) =>
-                IO.raiseError(ValidationError("choose a standard design, or give a design of your own"))
+    /* The model a tournament is made from: one the game offers, with a classification. Read plainly, as the game is:
+     * a game's admin edits its models rarely and never in step with a tournament being made from one, and the stages
+     * written from it are the tournament's own (CLAUDE.md, "a reference table read on the way to a write elsewhere"). */
+    private def requireModel(session: skunk.Session[IO], gameId: GameId, id: TournamentModelId): IO[TournamentModel] =
+        new TournamentModelRepo(session).read(gameId, id).flatMap {
+            case Some(m) if m.classification.isDefined => IO.pure(m)
+            case _ => IO.raiseError(NotFoundError(s"game $gameId offers no tournament model $id"))
         }
 
-    private def checkSettings(game: Game, design: TournamentDesign, request: TournamentRequest): IO[Unit] = {
+    /** A tournament's design, from its stages. */
+    private def requireDesign(session: skunk.Session[IO], t: Tournament): IO[TournamentDesign] =
+        new StageRepo(session).design(t.gameId, t.tournamentId).flatMap {
+            case Some(d) => IO.pure(d)
+            case None    => IO.raiseError(NotFoundError(s"no tournament ${t.tournamentId} in game ${t.gameId}"))
+        }
+
+    /** The default pool size a request asks for: its own, else the model's suggestion, else the game's R. */
+    private def defaultPoolSize(game: Game, model: TournamentModel, request: TournamentRequest): Int =
+        request.defaultPoolSize.orElse(model.poolSize).getOrElse(game.poolSeats)
+
+    private def checkSettings(
+        game: Game,
+        design: TournamentDesign,
+        request: TournamentRequest,
+        poolSize: Int
+    ): IO[Unit] = {
         val s = request.settings
         val problems =
             List(
               Option.when(request.name.trim.isEmpty)("a tournament needs a name"),
+              Option.when(poolSize < 1)("a pool must hold at least one participant"),
+              Option.when(s.roundDuration.exists(d => d.isZero || d.isNegative))("a round duration must be positive"),
               Option.when(s.entriesPerPlayer < 1)("a player must be allowed at least one entry"),
               Option.when(s.minRating.zip(s.maxRating).exists((lo, hi) => lo > hi))(
                 "the minimum rating cannot be above the maximum"
@@ -443,7 +472,7 @@ class TournamentService[T](
               Option.when(s.maxTurns.exists(_ < 1))("the maximum number of turns must be at least 1")
             ).flatten ++
                 Validation
-                    .validate(design, TournamentGame.of(game), s.roundDuration, s.maxTurns)
+                    .validate(design, TournamentGame.of(game), s.maxTurns, Some(poolSize))
                     .filterNot(_.warning)
                     .map(_.describe)
         IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.mkString("; ")))

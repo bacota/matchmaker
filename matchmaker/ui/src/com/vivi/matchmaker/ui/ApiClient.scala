@@ -455,6 +455,31 @@ object ApiClient {
           Some(write(TournamentJson.DecideRequest(ranks)))
         )
 
+    /** The models a game's tournaments are made from (V52). */
+    def tournamentModels(gameId: GameId): Future[Seq[TournamentModel]] =
+        get[Seq[TournamentModel]](s"/games/${gameId.value}/tournament-models")
+
+    def createTournamentModel(gameId: GameId, request: TournamentModelRequest): Future[TournamentModel] =
+        send[TournamentModel](HttpMethod.POST, s"/games/${gameId.value}/tournament-models", Some(write(request)))
+
+    def updateTournamentModel(
+        gameId: GameId,
+        modelId: TournamentModelId,
+        request: TournamentModelRequest
+    ): Future[TournamentModel] =
+        send[TournamentModel](
+          HttpMethod.PUT,
+          s"/games/${gameId.value}/tournament-models/${modelId.value}",
+          Some(write(request))
+        )
+
+    def deleteTournamentModel(gameId: GameId, modelId: TournamentModelId): Future[Unit] =
+        sendUnit(HttpMethod.DELETE, s"/games/${gameId.value}/tournament-models/${modelId.value}", None)
+
+    /** The standard formats the game does not offer yet, added as models: the ones added. */
+    def addStandardModels(gameId: GameId): Future[Seq[TournamentModel]] =
+        send[Seq[TournamentModel]](HttpMethod.POST, s"/games/${gameId.value}/tournament-models/standard", None)
+
     private def tournamentPath(gameId: GameId, tournamentId: TournamentId): String =
         s"/games/${gameId.value}/tournaments/${tournamentId.value}"
 

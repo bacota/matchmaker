@@ -76,6 +76,13 @@ existing function keeps both columns.
   - `concurrent_rounds` is on `tournament` and `stage`;
   - `round_duration` is set on the tournament, and can be overridden when a round is started by hand;
   - `ties_allowed` is derived rather than designed (below).
+- **D7. Pool sizes.** `pool_size` is on `stage` and `stage_model`, nullable. A stage with none takes
+  `tournament.default_pool_size`, which is `NOT NULL`. `tournament_model.pool_size` is the default the create form
+  suggests, which the creator may change; NULL suggests the game's R. So a standard format that took a pool size from
+  its creator (heats) leaves its first stage unsized and suggests a size, and sizes its knockout stages explicitly so
+  they don't inherit the heat size.
+- **D8. Only admins make models.** An admin of the game, or an overall admin. A player can't create a custom design,
+  so every tournament is made from a model and `tournament.tournament_model_id` is `NOT NULL`.
 - **D6. A seat's ratings are taken at launch.** `participant.elo_start` drops `NOT NULL` (`elo_role_start` already
   allows NULL), so a seat written when its pool forms has no rating yet. Only a tournament seat may lack `elo_start`:
   `participant_rated_or_tournament`. Both ratings are written when the match is created in the engine (`D` → `P`),
@@ -204,7 +211,7 @@ well. Code that creates a stage or pool writes both rows in one transaction, in 
 
 ## Phases
 
-### Phase 1: An engine create is idempotent on the match id
+### Phase 1: An engine create is idempotent on the match id (done)
 
 `engines/common`, independent of everything else, and mergeable first.
 
@@ -302,44 +309,76 @@ As built:
   the tournament cases of `MatchServiceSpec` fail. So do two cases of `CancelReleaseSpec`, because settling any match's
   ending asks the tournament code whether the match was one of its own. Every other spec passes.
 
-### Phase 4: Designs as rows
+### Phase 4: Designs as rows (done)
 
-1. **`TournamentModelRepo` and `StageRepo`:**
-   - read a model, or a tournament's stages, as the `TournamentDesign` the rules already take: from
-     `first_stage_id` along each stage's `current_stage_id` and, for a nesting stage, recursing into its inner model;
-   - write a `TournamentDesign` back as model rows, for an admin's new or edited model. A player can't create a
-     custom design, so tournaments are only ever copied from models;
-   - copy a model into a tournament in one transaction: its stages, the stages of every inner model as stages of the
-     same tournament (D1), and the root pool. A stage's `current_stage_id` must reference a stage that's already
-     there, so each chain is inserted last stage first;
-   - guard the walk along the stages against cycles, which the schema can't rule out.
-2. **Seed the models** from `StandardDesigns`. `tournament_model` is per game, so seed when a game is registered, and
-   with a backfill for existing games. `classification` takes the standard design's grouping: single elimination,
-   round robin, ladder, and so on.
-3. **Who makes models: admins only.** A game's models are created, edited and deleted by an admin of that game
-   (`game_admin`) or an overall admin (`player.is_admin`), the check `ChallengeService.requireGameAdmin` already makes (moved somewhere both services can share). Letting any
-   player make one is left for later. No creator column is needed. A model that a tournament was made from can't be
-   deleted, because `tournament.tournament_model_id`'s foreign key refuses it. Editing a model doesn't change
-   tournaments already made from it, since creating a tournament copied its stages.
-4. **The API:**
-   - `GET /games/{id}/tournament-models` lists them, for any signed-in player, for the drop-down.
-   - `POST /games/{id}/tournament-models`, `PUT` and `DELETE .../tournament-models/{modelId}` are for admins. A
-     write validates the design (`Validation.validate`) before saving it.
-   - `TournamentRequest` names a `tournamentModelId` instead of `standardDesign`.
+**Schema** (in V52):
+- `pool_size` moved from the atomic subtypes to `stage` and `stage_model`, nullable (D7);
+- `tournament.default_pool_size INT NOT NULL` and `tournament_model.pool_size`;
+- `stage_model.concurrent_rounds`, which `stage` already had, so that a model can carry it into the stages copied from
+  it.
 
-   Each new route needs Router, terraform `local.routes` and RouterSpec `routed`. The admin routes also need
-   RouterSpec cases refusing a player who isn't an admin.
-5. **The UI:**
-   - The create form's design drop-down groups by `classification`, with each model's description in its `withTip`.
-   - The game's admin page gets a models section to list, add, edit and remove them. It's mobile-first, with 16px
-     fields, a real label on each control, and live-region messages for saves and refusals.
-
-`Validation.validate` is unchanged: it validates the `TournamentDesign` read from the rows. `StageDesign` follows the
-columns:
-- `rubber_match` replaces `tiebreaker`;
-- `concurrent_rounds` replaces `concurrent: Int`;
-- `allowTies` and the per-stage `roundDuration` go;
+**Design types.** `StageDesign` follows the columns:
+- `rubberMatch` replaces `tiebreaker`;
+- `concurrentRounds` replaces `concurrent: Int`. True lets a round-robin pool play all of its matches in one round;
+  false is one match per member per round. The tournament's own `concurrent_rounds`, when set, applies to every stage;
+- `allowTies` is gone: `Ties.allowed` says a match may be drawn in a pool of three or more, never in a pool of two,
+  and never in a rubber match;
+- the per-stage `roundDuration` is gone: a round lasts the tournament's `round_duration`, and `Clock.duration` went;
+- `name` and `description`, as the stage rows have them;
 - seed policies take the SQL's codes (`CONST`, `ELO`, `PREV`, `WINNER`).
+
+`Env` carries the tournament's default pool size and concurrent rounds. `Validation.validate` checks a tournament's
+design with its default pool size; `Validation.designProblems` checks a model's alone, with the game's R for an
+unsized stage. Neither checks round durations any more: the tournament carries one, and a round started by hand may
+give another.
+
+**Repositories:**
+- `StageRows` maps a stage row to and from a `StageDesign`, the same for `stage` and `stage_model`, and follows a
+  chain of stages with a guard against cycles;
+- `TournamentModelRepo` lists, reads, creates, edits and deletes models. It reads every model of a game and all their
+  stages in two queries. An inner design is written as an unclassified model of its own; editing a model rewrites its
+  stages and inner models, and deleting it takes them with it;
+- `StageRepo` copies a model's design into a tournament, with each inner design as a chain of the same tournament's
+  stages, and reads a tournament's design back. Each chain is written last stage first;
+- `PoolRepo.createRoot` writes the tournament's root pool;
+- `TournamentRepo` is rewritten for the new columns. The round being played is read from `round` through
+  `current_round`. `readState` and `writeState` raise until Phase 5.
+
+**Services:**
+- `TournamentService.create` and `update` take a model and a default pool size (the request's, else the model's, else
+  the game's R) and copy the model's stages; a tournament changed to another model before it starts is re-copied.
+  `detail` returns the design, read from the stages.
+- `TournamentModelService` is for admins: list for anyone; create, update, delete and `addStandard` for admins of
+  the game, through `GameAdmins.require`. Deleting a model a tournament was made from is a conflict.
+- A new game is given the standard formats it can play as models (`TournamentModelService.seed`, called from
+  `GameService.createOrUpdate`). An older game gets them from its admin's Add the Standard Formats.
+
+**API.** `GET` and `POST /games/{gameId}/tournament-models`, `POST .../tournament-models/standard`, and `PUT` and
+`DELETE .../tournament-models/{modelId}`, in Router, terraform and RouterSpec. A tournament request names its
+`tournamentModelId` and `defaultPoolSize`. RouterSpec has no database, so non-admins being refused is checked in
+`TournamentModelServiceSpec`.
+
+**UI.**
+- The create form chooses a format from the game's models, grouped by classification. Choosing one fills in its
+  suggested pool size and late entries. Concurrent rounds and Public are added to the settings.
+- The game's screen has a Tournament Formats section for its admins: each format with Edit and Remove, Add a
+  Format (name, kind, suggested pool size, late entries, and the stage editor), and Add the Standard Formats. Every
+  control is labelled, its explanation is behind a tip, and what a save did is announced in a live region.
+
+**Tests:**
+- `TournamentModelServiceSpec`: an admin adds, edits and removes; a non-admin is refused; a design that can't be
+  played is refused; the standard formats are added once; a new game comes with them.
+- `TournamentRepoSpec`: every standard model is read back as written; edit and delete, refused while a tournament
+  uses the model; a tournament's columns and its copied stages.
+- The rules' specs, for the pool-size rule, the ties rule and the rubber match.
+
+**Known failures:**
+- until Phase 5: the four cases of `TournamentServiceSpec` that start a tournament, since starting writes the state,
+  which `TournamentRepo` no longer holds;
+- until Phase 6: `TournamentRoundsSpec`, the tournament-match cases of `MatchServiceSpec`, and two cases of
+  `CancelReleaseSpec`.
+
+Everything else passes: 768 tests.
 
 ### Phase 5: Running state as rows
 

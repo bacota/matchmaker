@@ -28,6 +28,7 @@ case class Services[T](
     notifications: NotificationService,
     suppression: SuppressionService,
     tournaments: TournamentService[T],
+    tournamentModels: TournamentModelService[T],
     rounds: TournamentRounds[T]
 )
 
@@ -132,6 +133,7 @@ object Services {
           suppression = new SuppressionService(pool),
           // A tournament with automatic rounds begins its first as it starts.
           tournaments = new TournamentService[T](pool, started = (g, t) => endings.tournamentRoundDue(g, t)),
+          tournamentModels = new TournamentModelService[T](pool),
           rounds = rounds
         )
     }

@@ -324,9 +324,9 @@ class RouterSpec extends FunSuite {
       // Tournaments (V52). A create or edit names a standard design by key; settings are all defaulted.
       ("GET", "/me/tournaments", "{}"),
       ("GET", "/games/1/tournaments", "{}"),
-      ("POST", "/games/1/tournaments", """{"name":"Open","standardDesign":"single-elimination"}"""),
+      ("POST", "/games/1/tournaments", """{"name":"Open","tournamentModelId":6}"""),
       ("GET", "/games/1/tournaments/2", "{}"),
-      ("PUT", "/games/1/tournaments/2", """{"name":"Open","standardDesign":"single-elimination"}"""),
+      ("PUT", "/games/1/tournaments/2", """{"name":"Open","tournamentModelId":6}"""),
       ("POST", "/games/1/tournaments/2/open", "{}"),
       ("POST", "/games/1/tournaments/2/start", "{}"),
       ("POST", "/games/1/tournaments/2/cancel", "{}"),
@@ -335,6 +335,11 @@ class RouterSpec extends FunSuite {
       // An Option field is the bare value, and absent when there is none.
       ("POST", "/games/1/tournaments/2/entries", """{"characterId":4}"""),
       ("DELETE", "/games/1/tournaments/2/entries/5", "{}"),
+      ("GET", "/games/1/tournament-models", "{}"),
+      ("POST", "/games/1/tournament-models", """{"name":"Knockout","design":{"stages":[{}]}}"""),
+      ("POST", "/games/1/tournament-models/standard", "{}"),
+      ("PUT", "/games/1/tournament-models/6", """{"name":"Knockout","design":{"stages":[{}]}}"""),
+      ("DELETE", "/games/1/tournament-models/6", "{}"),
       ("POST", "/games/1/tournaments/2/rounds", "{}"),
       ("POST", "/games/1/tournaments/2/check", "{}"),
       ("POST", "/games/1/tournaments/2/stop", "{}"),
@@ -361,7 +366,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 78)
+        assertEquals(routed.size, 83)
         assertEquals(routed.distinct.size, routed.size)
     }
 

@@ -8,7 +8,15 @@ import scala.concurrent.duration._
 import munit.FunSuite
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{CharacterRepo, EloRatingRepo, GameRepo, Generators, TestSession}
+import com.vivi.matchmaker.model.tournament.StandardDesigns
+import com.vivi.matchmaker.persistence.{
+    CharacterRepo,
+    EloRatingRepo,
+    GameRepo,
+    Generators,
+    TestSession,
+    TournamentModelRepo
+}
 
 /** Creating, entering and starting tournaments, against the local database. */
 class TournamentServiceSpec extends FunSuite with QuietTests {
@@ -18,55 +26,78 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
 
     private def unique(prefix: String) = s"$prefix-${java.util.UUID.randomUUID()}"
 
-    private case class Fixture(game: Game, owner: Player, players: List[Player])
+    private case class Fixture(game: Game, owner: Player, players: List[Player], models: Map[String, TournamentModel]) {
 
-    /** A plain two-player game, its owner, and `n` other registered players. */
+        /** The game's model of a standard format, by the format's key. */
+        def model(key: String): TournamentModel =
+            models.getOrElse(key, throw new IllegalArgumentException(s"no model of $key"))
+    }
+
+    /** A plain two-player game offering the standard formats as models, its owner, and `n` other registered players. */
     private def fixture(n: Int = 4, gameType: GameType = GameType.Plain): IO[Fixture] =
         for {
-            game <- TestSession.resource.use(new GameRepo[String](_).create(Generators.genGame(gameType).sample.get))
+            // One transaction, as the services run: a model and its stages are written before each names the other.
+            made <- TestSession.resource.use { session =>
+                session.transaction.use(_ =>
+                    for {
+                        game <- new GameRepo[String](session).create(Generators.genGame(gameType).sample.get)
+                        _ <- TournamentModelService.seed(session, game)
+                        offered <- new TournamentModelRepo(session).listOffered(game.gameId)
+                    } yield (game, offered)
+                )
+            }
+            (game, offered) = made
+            byKey = StandardDesigns.all.flatMap(std => offered.find(_.name == std.name).map(std.key -> _)).toMap
             owner <- services.registration.register(unique("owner"), unique("sub"))
             players <- (1 to n).toList.traverse(_ => services.registration.register(unique("p"), unique("sub")))
-        } yield Fixture(game, owner, players)
+        } yield Fixture(game, owner, players, byKey)
 
     private def request(
+        f: Fixture,
         standard: String = "single-elimination",
         settings: TournamentSettings =
             TournamentSettings(invitational = false, roundDuration = Some(Duration.ofDays(2)))
-    ) = TournamentRequest("Open", "an open", standardDesign = Some(standard), settings = settings)
+    ) = TournamentRequest("Open", f.model(standard).tournamentModelId, "an open", settings = settings)
 
     private def run[A](io: IO[A]): A = io.timeout(60.seconds).unsafeRunSync()
 
     private def refusal[A](io: IO[A]): Option[Throwable] = run(io.attempt).left.toOption
 
-
-    test("a tournament is created in draft from a standard design, owned by its creator") {
-        val (f, t) = run(for {
+    test("a tournament is created in draft from one of the game's models, its stages copied, owned by its creator") {
+        val (f, t, detail) = run(for {
             f <- fixture(0)
-            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
-        } yield (f, t))
+            t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
+            detail <- tournaments.detail(f.game.gameId, t.tournamentId, f.owner.externalId)
+        } yield (f, t, detail))
         assertEquals(t.status, TournamentStatus.Draft)
         assertEquals(t.owner, f.owner.playerId)
-        assertEquals(t.standardDesign, Some("single-elimination"))
-        assertEquals(t.design.stages.size, 1)
+        assertEquals(t.tournamentModelId, f.model("single-elimination").tournamentModelId)
+        assertEquals(detail.design, f.model("single-elimination").design)
+        // The model suggests no pool size, so the default is the game's R.
+        assertEquals(t.defaultPoolSize, f.game.poolSeats)
     }
 
-    test("a design that cannot be played is refused, naming what is wrong") {
-        val refused = refusal(for {
-            f <- fixture(0)
-            _ <- tournaments.create(f.game.gameId, request(settings = TournamentSettings()), f.owner.externalId)
-        } yield ())
-        assert(refused.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("round duration")), refused)
-        val unknown =
-            refusal(fixture(0).flatMap(f => tournaments.create(f.game.gameId, request("no-such"), f.owner.externalId)))
-        assert(unknown.exists(_.isInstanceOf[ValidationError]))
+    test("a model the game does not offer, or a pool size that cannot be played, is refused") {
+        val unknown = refusal(fixture(0).flatMap { f =>
+            tournaments.create(
+              f.game.gameId,
+              request(f).copy(tournamentModelId = TournamentModelId(Long.MaxValue)),
+              f.owner.externalId
+            )
+        })
+        assert(unknown.exists(_.isInstanceOf[NotFoundError]), unknown)
+        val empty = refusal(fixture(0).flatMap { f =>
+            tournaments.create(f.game.gameId, request(f).copy(defaultPoolSize = Some(0)), f.owner.externalId)
+        })
+        assert(empty.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("pool")), empty)
     }
 
     test("only the owner may edit, open, start or cancel a tournament") {
         val outcome = run(for {
             f <- fixture(1)
-            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
             stranger = f.players.head.externalId
-            edit <- tournaments.update(f.game.gameId, t.tournamentId, request(), stranger).attempt
+            edit <- tournaments.update(f.game.gameId, t.tournamentId, request(f), stranger).attempt
             open <- tournaments.open(f.game.gameId, t.tournamentId, stranger).attempt
             start <- tournaments.start(f.game.gameId, t.tournamentId, stranger).attempt
             cancel <- tournaments.cancel(f.game.gameId, t.tournamentId, stranger).attempt
@@ -77,7 +108,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
     test("a player can enter an open tournament once, and not a draft") {
         val (draft, entered, again) = run(for {
             f <- fixture(1)
-            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
             p = f.players.head.externalId
             draft <- tournaments.enter(f.game.gameId, t.tournamentId, None, p).attempt
             _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
@@ -94,7 +125,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             f <- fixture(2)
             t <- tournaments.create(
               f.game.gameId,
-              request(settings = TournamentSettings(roundDuration = Some(Duration.ofDays(1)))),
+              request(f, settings = TournamentSettings(roundDuration = Some(Duration.ofDays(1)))),
               f.owner.externalId
             )
             _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
@@ -112,12 +143,13 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             f <- fixture(1)
             t <- tournaments.create(
               f.game.gameId,
-              request(settings =
-                  TournamentSettings(
-                    invitational = false,
-                    minRating = Some(1600),
-                    roundDuration = Some(Duration.ofDays(1))
-                  )
+              request(
+                f,
+                settings = TournamentSettings(
+                  invitational = false,
+                  minRating = Some(1600),
+                  roundDuration = Some(Duration.ofDays(1))
+                )
               ),
               f.owner.externalId
             )
@@ -130,7 +162,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
     test("a character game's entry is one of the caller's characters") {
         val (none, theirs, mine) = run(for {
             f <- fixture(2, GameType.Character)
-            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
             _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
             other <- TestSession.resource.use(
               new CharacterRepo[String](_)
@@ -154,7 +186,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
     test("starting seeds the entrants by rating and forms the first stage's pools; it needs two entries") {
         val (tooFew, started, detail) = run(for {
             f <- fixture(4)
-            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
             _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
             _ <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players.head.externalId)
             tooFew <- tournaments.start(f.game.gameId, t.tournamentId, f.owner.externalId).attempt
@@ -179,7 +211,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
     test("withdrawing before the start removes the entry; after it, marks it and keeps it out of later pools") {
         val (before, after) = run(for {
             f <- fixture(3)
-            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
             _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
             entries <- f.players.traverse(p => tournaments.enter(f.game.gameId, t.tournamentId, None, p.externalId))
             _ <- tournaments.withdraw(f.game.gameId, t.tournamentId, entries.head.entrantId, f.players.head.externalId)
@@ -197,7 +229,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
     test("a running tournament with late entries takes them into its state, and refuses them otherwise") {
         val (refused, late) = run(for {
             f <- fixture(3)
-            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
             _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
             _ <- f.players.take(2).traverse(p => tournaments.enter(f.game.gameId, t.tournamentId, None, p.externalId))
             _ <- tournaments.start(f.game.gameId, t.tournamentId, f.owner.externalId)
@@ -205,7 +237,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             _ <- tournaments.update(
               f.game.gameId,
               t.tournamentId,
-              request(settings = TournamentSettings(lateEntries = true, roundDuration = Some(Duration.ofDays(2)))),
+              request(f, settings = TournamentSettings(lateEntries = true, roundDuration = Some(Duration.ofDays(2)))),
               f.owner.externalId
             )
             entry <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players(2).externalId)
@@ -218,19 +250,19 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
     test("a running tournament's design cannot be changed, nor anything once it is over") {
         val (designKept, overRefused) = run(for {
             f <- fixture(2)
-            t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+            t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
             _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
             _ <- f.players.traverse(p => tournaments.enter(f.game.gameId, t.tournamentId, None, p.externalId))
             _ <- tournaments.start(f.game.gameId, t.tournamentId, f.owner.externalId)
             edited <- tournaments.update(
               f.game.gameId,
               t.tournamentId,
-              request("modified-double-elimination").copy(name = "Renamed"),
+              request(f, "world-cup").copy(name = "Renamed"),
               f.owner.externalId
             )
             _ <- tournaments.cancel(f.game.gameId, t.tournamentId, f.owner.externalId)
-            over <- tournaments.update(f.game.gameId, t.tournamentId, request(), f.owner.externalId).attempt
-        } yield (edited.design == t.design && edited.name == "Renamed", over))
+            over <- tournaments.update(f.game.gameId, t.tournamentId, request(f), f.owner.externalId).attempt
+        } yield (edited.tournamentModelId == t.tournamentModelId && edited.name == "Renamed", over))
         assert(designKept)
         assert(overRefused.left.exists(_.isInstanceOf[ConflictError]))
     }
@@ -239,7 +271,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         val (mine, theirs) = run(
           for {
               f <- fixture(2)
-              t <- tournaments.create(f.game.gameId, request(), f.owner.externalId)
+              t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
               _ <- tournaments.invite(f.game.gameId, t.tournamentId, f.players.head.playerId, f.owner.externalId)
               mine <- tournaments.mine(f.owner.externalId)
               theirs <- tournaments.mine(f.players.head.externalId)

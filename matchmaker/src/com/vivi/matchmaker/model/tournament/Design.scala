@@ -1,7 +1,5 @@
 package com.vivi.matchmaker.model.tournament
 
-import java.time.Duration
-
 /** How many times a stage is played (`tournament-design.md`, "Tournament Design"). */
 enum Repetition {
 
@@ -19,16 +17,16 @@ enum Repetition {
 enum SeedPolicy(val code: String, val label: String) {
 
     /** The seeds the participants had when the tournament started. */
-    case Constant extends SeedPolicy("constant", "Constant")
+    case Constant extends SeedPolicy("CONST", "Constant")
 
     /** From the participants' ratings as they stand now. */
-    case Reinitialize extends SeedPolicy("reinitialize", "Re-initialize")
+    case Reinitialize extends SeedPolicy("ELO", "Re-initialize")
 
     /** From how they did in the stage: stratum, rank, points, score differential, total score, then rating. */
-    case Previous extends SeedPolicy("previous", "Previous")
+    case Previous extends SeedPolicy("PREV", "Previous")
 
     /** The seeds that entered each pool, handed back out in the order its members finished. */
-    case WinnerTakesSeed extends SeedPolicy("winner-takes-seed", "Winner takes seed")
+    case WinnerTakesSeed extends SeedPolicy("WINNER", "Winner takes seed")
 }
 
 object SeedPolicy {
@@ -36,41 +34,27 @@ object SeedPolicy {
         values.find(_.code == code).getOrElse(throw new IllegalArgumentException(s"unknown seed policy '$code'"))
 }
 
-/** How a tie in a round-robin pool is broken before the *Ties* rule (`tournament-design.md`, "Tiebreaker"). */
-enum Tiebreaker(val code: String, val label: String) {
-
-    /** One extra match between the two tied participants. Only in a game of exactly two roles (Q7); anywhere else it is
-      * treated as [[Scores]].
-      */
-    case Rubber extends Tiebreaker("rubber", "Rubber match")
-
-    /** Total score differential, then total score. */
-    case Scores extends Tiebreaker("scores", "Scores")
-}
-
-object Tiebreaker {
-    def fromCode(code: String): Tiebreaker =
-        values.find(_.code == code).getOrElse(throw new IllegalArgumentException(s"unknown tiebreaker '$code'"))
-}
-
 /** A tournament's design: its stages, in the order they are played. A stage's pools may themselves play a design, which
   * is how a tournament nests.
   */
 case class TournamentDesign(stages: List[StageDesign])
 
-/** One stage of a design, with the defaults `tournament-design.md` gives each property.
+/** One stage of a design, with the defaults `tournament-design.md` gives each property: a `stage` row, or a
+  * `stage_model` row of a model (V52).
   *
-  * `design` is the tournament each pool plays. Unset, the pool plays a round robin: every `R`-member subset of it plays
-  * one match, `R` times over with the roles turned when `rotateRoles` is set. A pool of `R` therefore plays a single
-  * match, which is all an *Elimination Match* is.
+  * `design` is the tournament each pool plays: set, the stage is a nesting stage; unset, an atomic one, whose pools
+  * play a round robin: every `R`-member subset of the pool plays one match, `R` times over with the roles turned when
+  * `rotateRoles` is set. A pool of `R` therefore plays a single match, which is all an *Elimination Match* is. Whether
+  * a match may end in a draw follows from its pool: not in a pool of two, which is an elimination match; otherwise yes.
   *
-  * `maxStratum` and `minStratum` are `None` for no bound. `demote` and `promote` are ranks: at or below `demote` a
-  * participant moves down a stratum, at or above `promote` up one. `roundDuration` is `None` to inherit the enclosing
-  * stage's, and failing that the tournament's.
+  * `poolSize` is how many a pool holds, `None` for the tournament's default pool size. `maxStratum` and `minStratum`
+  * are `None` for no bound. `demote` and `promote` are ranks: at or below `demote` a participant moves down a stratum,
+  * at or above `promote` up one. `concurrentRounds` lets a round-robin pool play all of its matches in one round,
+  * rather than each member one match a round. `rubberMatch` breaks a tie on points with one more match, in a game of
+  * two roles; otherwise ties go to scores.
   */
 case class StageDesign(
     repeat: Repetition = Repetition.Fixed(1),
-    allowTies: Boolean = true,
     brackets: Boolean = true,
     demote: Option[Int] = Some(2),
     promote: Option[Int] = None,
@@ -80,19 +64,32 @@ case class StageDesign(
     pointsForDraw: Int = 1,
     pointsBonus: Boolean = false,
     poolSize: Option[Int] = None,
-    roundDuration: Option[Duration] = None,
-    concurrent: Int = 1,
+    concurrentRounds: Boolean = false,
     rotateRoles: Boolean = false,
     strictStrata: Boolean = true,
     design: Option[TournamentDesign] = None,
     tieBreakerStage: Boolean = false,
     seedPolicy: SeedPolicy = SeedPolicy.WinnerTakesSeed,
-    // The design gives no default; scores is the one that always means something (Q6).
-    tiebreaker: Tiebreaker = Tiebreaker.Scores
+    rubberMatch: Boolean = false,
+    name: String = "",
+    description: String = ""
 ) {
 
     /** How many advance from a pool: everyone ranked above `demote`. `None` when nobody is demoted. */
     def advancing: Option[Int] = demote.map(_ - 1)
+
+    /** The size of this stage's pools, given the tournament's default for a stage that sets none. */
+    def poolSizeOr(default: Int): Int = poolSize.getOrElse(default)
+
+    /** The most matches a member of one of this stage's pools plays in a round. */
+    def concurrent: Int = if (concurrentRounds) Int.MaxValue else 1
+}
+
+/** Whether a match in a pool of `members` may end in a draw: not in a pool of two, which is an elimination match that
+  * must send one of them on; otherwise yes. A rubber match never may, whatever its pool: it exists to break a tie.
+  */
+object Ties {
+    def allowed(members: Int, rubber: Boolean = false): Boolean = !rubber && members > 2
 }
 
 /** One of a game's roles, as a tournament needs to know it. */
@@ -152,14 +149,15 @@ object Validation {
     /** How deep designs may nest: a stage's pools playing a design whose stages' pools play a design, and so on. */
     val MaxDepth = 4
 
-    /** Everything wrong with a design for this game. `tournamentDuration` and `maxTurns` are the tournament's own
-      * settings, which a stage inherits.
+    /** Everything wrong with a tournament's design for this game: the design's problems, and the game's own. `maxTurns`
+      * is the tournament's, for a game whose players move at once; `defaultPoolSize` is the tournament's, for a stage
+      * that sets no pool size.
       */
     def validate(
         design: TournamentDesign,
         game: TournamentGame,
-        tournamentDuration: Option[Duration],
-        maxTurns: Option[Int]
+        maxTurns: Option[Int],
+        defaultPoolSize: Option[Int]
     ): List[Problem] = {
         val gameProblems =
             List(
@@ -177,14 +175,20 @@ object Validation {
                 )
               )
             ).flatten
-        gameProblems ++ check(design, game, "", tournamentDuration, 1)
+        gameProblems ++ designProblems(design, game, defaultPoolSize)
     }
+
+    /** Everything wrong with a design itself, as a model holds it: before any tournament gives it a default pool size,
+      * a stage that sets none is checked as pools of the game's R.
+      */
+    def designProblems(design: TournamentDesign, game: TournamentGame, defaultPoolSize: Option[Int]): List[Problem] =
+        check(design, game, "", defaultPoolSize.getOrElse(game.poolSeats), 1)
 
     private def check(
         design: TournamentDesign,
         game: TournamentGame,
         path: String,
-        inherited: Option[Duration],
+        defaultPoolSize: Int,
         depth: Int
     ): List[Problem] = {
         val here = if (path.isEmpty) "" else path
@@ -193,9 +197,8 @@ object Validation {
         else
             design.stages.zipWithIndex.flatMap { (stage, i) =>
                 val where = (if (path.isEmpty) "" else s"$path, ") + s"stage ${i + 1}"
-                val duration = stage.roundDuration.orElse(inherited)
-                stageProblems(stage, game, where, duration) ++
-                    stage.design.toList.flatMap(check(_, game, s"$where's pools", duration, depth + 1))
+                stageProblems(stage, game, where, defaultPoolSize) ++
+                    stage.design.toList.flatMap(check(_, game, s"$where's pools", defaultPoolSize, depth + 1))
             }
     }
 
@@ -203,9 +206,9 @@ object Validation {
         stage: StageDesign,
         game: TournamentGame,
         where: String,
-        duration: Option[Duration]
+        defaultPoolSize: Int
     ): List[Problem] = {
-        val n = stage.poolSize.getOrElse(game.poolSeats)
+        val n = stage.poolSizeOr(defaultPoolSize)
         def p(message: String) = Problem(where, message)
         def w(message: String) = Problem(where, message, warning = true)
         List(
@@ -224,12 +227,7 @@ object Validation {
           Option.when(stage.minStratum.zip(stage.maxStratum).exists((lo, hi) => lo > hi))(
             p("the minimum stratum cannot be above the maximum")
           ),
-          Option.when(stage.concurrent < 1)(p("concurrent must be at least 1")),
           Option.when(stage.points < 0 || stage.pointsForDraw < 0)(p("points cannot be negative")),
-          Option.when(duration.isEmpty)(
-            p("no round duration is set here, on an enclosing stage, or on the tournament")
-          ),
-          Option.when(duration.exists(d => d.isZero || d.isNegative))(p("a round duration must be positive")),
           // Brackets: the pools are a power of n/a, which has to be a whole number above 1.
           if (!stage.brackets) None
           else
@@ -251,10 +249,10 @@ object Validation {
           Option.when(stage.design.isEmpty && n < game.requiredSeats)(
             w(s"a pool of $n cannot fill the game's ${game.requiredSeats} required roles, so it would play nothing")
           ),
-          Option.when(stage.design.isDefined && (stage.pointsBonus || stage.rotateRoles || stage.concurrent != 1))(
-            w("points, rotation and concurrency are set, but this stage's pools play a design, which ranks them")
+          Option.when(stage.design.isDefined && (stage.pointsBonus || stage.rotateRoles || stage.concurrentRounds))(
+            w("points, rotation and concurrent rounds are set, but this stage's pools play a design, which ranks them")
           ),
-          Option.when(stage.tiebreaker == Tiebreaker.Rubber && !game.rubberApplies)(
+          Option.when(stage.rubberMatch && !game.rubberApplies)(
             w("a rubber match only breaks ties in a game of two roles; scores will be used instead")
           ),
           Option.when(stage.brackets && stage.advancing.isDefined && stage.seedPolicy != SeedPolicy.WinnerTakesSeed)(

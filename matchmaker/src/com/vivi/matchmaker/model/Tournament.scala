@@ -28,8 +28,9 @@ object TournamentStatus {
 
 /** A tournament's settings (`tournament-design.md`, "Other Tournament Properties"), with its defaults.
   *
-  * `roundDuration` is the default a stage's round duration inherits; `maxTurns` is for a game whose players move at
-  * once and that has no maximum of its own.
+  * `roundDuration` is how long a round lasts, which its owner may change for a round started by hand; `maxTurns` is for
+  * a game whose players move at once and that has no maximum of its own. `concurrentRounds` lets every round-robin pool
+  * play all of its matches in one round. `isPublic` is whether anybody may see it listed.
   */
 case class TournamentSettings(
     autoRounds: Boolean = false,
@@ -40,13 +41,41 @@ case class TournamentSettings(
     maxRating: Option[Int] = None,
     entriesPerPlayer: Int = 1,
     roundDuration: Option[Duration] = None,
-    maxTurns: Option[Int] = None
+    maxTurns: Option[Int] = None,
+    concurrentRounds: Boolean = false,
+    isPublic: Boolean = true
 )
 
-/** A tournament, without its state (V52).
+/** A design a game's admin offers (V52): a tournament is made from one, copying its stages. `classification` is the
+  * group it is listed under where a tournament is created; a model with none is not offered on its own, being the inner
+  * design of another's nesting stage. `poolSize` is the default pool size to suggest, `None` for the game's R.
+  */
+case class TournamentModel(
+    gameId: GameId,
+    tournamentModelId: TournamentModelId,
+    name: String,
+    description: String,
+    classification: Option[String],
+    poolSize: Option[Int],
+    lateEntries: Boolean,
+    design: TournamentDesign
+)
+
+/** What an admin creates or edits a model with. */
+case class TournamentModelRequest(
+    name: String,
+    description: String = "",
+    classification: Option[String] = None,
+    poolSize: Option[Int] = None,
+    lateEntries: Boolean = false,
+    design: TournamentDesign
+)
+
+/** A tournament, without its design or its state (V52): those are rows of their own.
   *
-  * `owner` may edit it and run its rounds. `standardDesign` is the key of the standard design it was built from, or
-  * `None` for one designed by hand. `roundStartedAt` and `roundDeadline` are the round being played.
+  * `owner` may edit it and run its rounds. `tournamentModelId` is the model it was made from, whose stages were copied
+  * into it. `defaultPoolSize` is the size of a pool of any stage that sets none. `roundStartedAt` and `roundDeadline`
+  * are the round being played.
   */
 case class Tournament(
     gameId: GameId,
@@ -54,8 +83,8 @@ case class Tournament(
     name: String,
     description: String,
     owner: PlayerId,
-    design: TournamentDesign,
-    standardDesign: Option[String],
+    tournamentModelId: TournamentModelId,
+    defaultPoolSize: Int,
     settings: TournamentSettings,
     status: TournamentStatus = TournamentStatus.Draft,
     startedAt: Option[Instant] = None,
@@ -124,16 +153,15 @@ case class TournamentMatch(
     seats: List[TournamentSeat]
 )
 
-/** What a tournament is created or edited with: a standard design by key (with a pool size, for one that needs it) or a
-  * design of the creator's own, and its settings. `owner` hands an existing tournament to another player; a new one is
-  * its creator's.
+/** What a tournament is created or edited with: the model it is made from, its default pool size (`None` for the
+  * model's suggestion), and its settings. `owner` hands an existing tournament to another player; a new one is its
+  * creator's.
   */
 case class TournamentRequest(
     name: String,
+    tournamentModelId: TournamentModelId,
     description: String = "",
-    standardDesign: Option[String] = None,
-    poolSize: Option[Int] = None,
-    design: Option[TournamentDesign] = None,
+    defaultPoolSize: Option[Int] = None,
     settings: TournamentSettings = TournamentSettings(),
     owner: Option[PlayerId] = None
 )
@@ -173,11 +201,12 @@ case class TournamentMatchView(
     seats: List[TournamentSeatView]
 )
 
-/** Everything a tournament's page shows: the tournament, who has entered and who is invited, its state once it has
-  * started, the matches of the round being played, and what the viewer may do.
+/** Everything a tournament's page shows: the tournament and its design, who has entered and who is invited, its state
+  * once it has started, the matches of the round being played, and what the viewer may do.
   */
 case class TournamentDetail(
     summary: TournamentSummary,
+    design: com.vivi.matchmaker.model.tournament.TournamentDesign,
     entries: List[Entrant],
     invited: List[PlayerName],
     state: Option[com.vivi.matchmaker.model.tournament.TournamentState],

@@ -40,19 +40,20 @@ class RankingSpec extends FunSuite {
         assert(ranking.ranks(1L) > 1 && ranking.ranks(2L) > 1)
     }
 
-    test("a tie nothing breaks goes to the weaker seed when ties are not allowed, and stands when they are (Q6)") {
+    test("a tie nothing breaks goes to the weaker seed in a pool of two, and stands in a larger pool (Q6)") {
         val draw = List(List(Placing(1L, Some(1), Some(5)), Placing(2L, Some(1), Some(5))))
         val pair = Map(1L -> 1, 2L -> 2)
-        val strict = Ranking.rankPool(pair, draw, Map.empty, StageDesign(allowTies = false), twoPlayer)
+        val strict = Ranking.rankPool(pair, draw, Map.empty, StageDesign(), twoPlayer)
         assertEquals(strict.ranks, Map(2L -> 1, 1L -> 2))
-        val loose = Ranking.rankPool(pair, draw, Map.empty, StageDesign(), twoPlayer)
-        assertEquals(loose.ranks, Map(1L -> 1, 2L -> 1))
+        // A third member who has played nothing yet: the two level on a point each stay level.
+        val loose = Ranking.rankPool(pair + (3L -> 3), draw, Map.empty, StageDesign(), twoPlayer)
+        assertEquals(loose.ranks.view.filterKeys(Set(1L, 2L)).toMap, Map(1L -> 1, 2L -> 1))
     }
 
     test("a rubber is asked for to break a pair's tie in a two-role game, and settles it once played (Q7)") {
         val draw = List(List(Placing(1L, Some(1)), Placing(2L, Some(1))))
         val pair = Map(1L -> 1, 2L -> 2)
-        val rubber = StageDesign(tiebreaker = Tiebreaker.Rubber)
+        val rubber = StageDesign(rubberMatch = true)
         assertEquals(Ranking.rankPool(pair, draw, Map.empty, rubber, twoPlayer).rubbers, List((1L, 2L)))
         val played = Map(Set(1L, 2L) -> List(Placing(1L, Some(2)), Placing(2L, Some(1))))
         assertEquals(Ranking.rankPool(pair, draw, played, rubber, twoPlayer).ranks, Map(2L -> 1, 1L -> 2))

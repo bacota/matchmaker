@@ -9,23 +9,6 @@ case class MatchClock(kind: TimeLimitKind, limit: Duration)
 /** How a tournament spends a round's time (`tournament-design.md`, "Rounds"). */
 object Clock {
 
-    /** A match's round duration: its own stage's if that sets one, else the nearest enclosing stage's that does, else
-      * the tournament's (Q10). `None` only for a design validation would have refused.
-      */
-    def duration(
-        design: TournamentDesign,
-        nodePath: List[Int],
-        stage: Int,
-        tournament: Option[Duration]
-    ): Option[Duration] = {
-        // The stages from the root down to this one: each step of the path, then the match's own stage.
-        val (_, chain) = (nodePath :+ stage).foldLeft((Option(design), List.empty[StageDesign])) {
-            case ((Some(d), acc), s) if d.stages.isDefinedAt(s) => (d.stages(s).design, acc :+ d.stages(s))
-            case ((_, acc), _)                                  => (None, acc)
-        }
-        chain.reverse.flatMap(_.roundDuration).headOption.orElse(tournament)
-    }
-
     /** The clock of a match lasting a round of `d`, with `seats` seated.
       *
       * In a game of turns, each seat has a chess clock of `d / seats`. In a game where everyone moves at once, each

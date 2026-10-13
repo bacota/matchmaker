@@ -16,6 +16,7 @@ import com.vivi.matchmaker.model.tournament.{
     Placing,
     RoundMatch,
     Tournament as Progress,
+    TournamentDesign,
     TournamentGame,
     TournamentState
 }
@@ -120,9 +121,8 @@ class TournamentRounds[T](
                         at = now()
                         rows = matches.map(m => seated(t, game, next, players, m, at))
                         _ <- new TournamentMatchRepo(session).insert(rows)
-                        longest = matches
-                            .flatMap(m => Clock.duration(t.design, m.nodePath, m.stage, t.settings.roundDuration))
-                            .maxOption
+                        // Every match of a round lasts the tournament's round duration (V52).
+                        longest = Option.when(matches.nonEmpty)(()).flatMap(_ => t.settings.roundDuration)
                         _ <- new TournamentRepo(session).update(
                           t.copy(roundStartedAt = Some(at), roundDeadline = longest.map(at.plus))
                         )
@@ -767,7 +767,14 @@ class TournamentRounds[T](
                     case None => IO.pure(e.entrantId.value -> e.ratingAtEntry)
                 }
             }
-        } yield Env(t.design, TournamentGame.of(game), ratings.toMap)
+            design <- new StageRepo(session).design(t.gameId, t.tournamentId).map(_.getOrElse(TournamentDesign(Nil)))
+        } yield Env(
+          design,
+          TournamentGame.of(game),
+          ratings.toMap,
+          Some(t.defaultPoolSize),
+          t.settings.concurrentRounds
+        )
 
     private def requireState(session: Session[IO], t: Tournament): IO[TournamentState] =
         new TournamentRepo(session).readState(t.gameId, t.tournamentId).flatMap {
@@ -844,13 +851,13 @@ object TournamentRounds {
         if (nextChooser(seats).isEmpty || seats.count(!_.forfeit) < math.max(required, 2)) TournamentMatchStatus.Due
         else TournamentMatchStatus.Choosing
 
-    /** A match's clock: its round's duration, inherited from the nearest stage that sets one, spent as the game spends
-      * time (`Clock.forMatch`). `None` for a match the state does not know, or a tournament with no duration anywhere.
+    /** A match's clock: the tournament's round duration, spent as the game spends time (`Clock.forMatch`). `None` for a
+      * match the state does not know, or a tournament with no round duration.
       */
     def clockOf(t: Tournament, game: Game, state: TournamentState, tm: TournamentMatch): Option[MatchClock] =
         for {
             where <- Progress.findMatch(state, tm.poolId, tm.matchNo)
-            d <- Clock.duration(t.design, where.nodePath, where.stage, t.settings.roundDuration)
+            d <- t.settings.roundDuration
         } yield Clock.forMatch(
           TournamentGame.of(game),
           d,

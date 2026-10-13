@@ -6,124 +6,129 @@ import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
 import java.time.{Duration, Instant}
-import upickle.default.{read => readJson, write => writeJson}
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.{TournamentCodecs, TournamentDesign, TournamentState}
 
-/** Reads and writes `tournament` (V52): a tournament's settings and design, and, separately, its state.
+/** Reads and writes `tournament` (V52): a tournament's settings, the model it was made from, and where it is.
   *
-  * The state is read and written whole, as the JSON `TournamentCodecs` makes of it, and only ever under
-  * [[readForUpdate]]'s lock: every change to a tournament's progress is one transaction that reads the state, works out
-  * the next one, and writes it back.
+  * Its design is its `stage` rows ([[StageRepo]]) and its progress is rows of their own; the round being played, when
+  * it began and when it must be over, is read from `round` through `current_round`, and written there by whoever starts
+  * a round. Every change to a tournament reads it first under [[readForUpdate]]'s lock.
   *
   * Opens no transaction of its own; that is the calling service's job.
   */
 class TournamentRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val tournamentId = SkunkIdCodecs.tournamentId
+    private val modelId = SkunkIdCodecs.tournamentModelId
     private val playerId = SkunkIdCodecs.playerId
     private val instant = SkunkCodecs.instant
-    private val jsonb = SkunkCodecs.jsonb
 
     private val status: Codec[TournamentStatus] = text.imap(TournamentStatus.fromCode)(_.code)
-
-    private def designJson(d: TournamentDesign): String = writeJson(d)(using TournamentCodecs.designRW)
-    private def designOf(json: String): TournamentDesign = readJson(json)(using TournamentCodecs.designRW)
 
     // round_duration is bound and read as a number of seconds, as MatchRepo does time_limit.
     private def seconds(d: Option[Duration]): Option[Double] = d.map(_.getSeconds.toDouble)
     private def duration(s: Option[Double]): Option[Duration] = s.map(v => Duration.ofSeconds(v.toLong))
 
-    private type Row = (
+    // What is written of a tournament, in the order of `insert` and `updateRow`.
+    private type Written = (
         String,
         String,
         PlayerId,
-        String,
-        Option[String],
         TournamentStatus,
+        TournamentModelId,
+        Int,
         Boolean,
         Boolean,
         Boolean,
         Boolean,
         Option[Int],
         Option[Int],
+        Boolean,
         Int,
         Option[Double],
         Option[Int],
-        Option[Instant],
-        Option[Instant],
+        Boolean,
         Option[Instant],
         Option[Instant],
         Option[Instant]
     )
 
-    private val row: Codec[Row] =
-        text *: text *: playerId *: jsonb *: text.opt *: status *: bool *: bool *: bool *: bool *: int4.opt *: int4.opt *:
-            int4 *: float8.opt *: int4.opt *: instant.opt *: instant.opt *: instant.opt *: instant.opt *: instant.opt
+    private val written: Codec[Written] =
+        text *: text *: playerId *: status *: modelId *: int4 *: bool *: bool *: bool *: bool *: int4.opt *: int4.opt *:
+            bool *: int4 *: float8.opt *: int4.opt *: bool *: instant.opt *: instant.opt *: instant.opt
+
+    // What is read: the written columns, then the round being played's start and deadline.
+    private type Row = (Written, Option[Instant], Option[Instant])
+    private val row: Codec[Row] = written *: instant.opt *: instant.opt
 
     private def columnsOf(t: String): Fragment[Void] =
-        sql"""#$t.name, #$t.description, #$t.owner, #$t.design, #$t.standard_design, #$t.status, #$t.auto_rounds,
-              #$t.friendly, #$t.invitational, #$t.late_entries, #$t.min_rating, #$t.max_rating,
-              #$t.entries_per_player, EXTRACT(EPOCH FROM #$t.round_duration)::float8, #$t.max_turns, #$t.started_at,
-              #$t.ended_at, #$t.round_started_at, #$t.round_deadline, #$t.checked_at"""
+        sql"""#$t.name, #$t.description, #$t.owner, #$t.status, #$t.tournament_model_id, #$t.default_pool_size,
+              #$t.automatic_rounds, #$t.friendly, #$t.invitational, #$t.late_entries, #$t.min_rating, #$t.max_rating,
+              #$t.public, #$t.entries_per_player, EXTRACT(EPOCH FROM #$t.round_duration)::float8, #$t.max_turns,
+              #$t.concurrent_rounds, #$t.started_at, #$t.ended_at, #$t.checked_at,
+              (SELECT r.start_date FROM round r
+                WHERE r.game_id = #$t.game_id AND r.tournament_id = #$t.tournament_id AND r.round = #$t.current_round),
+              (SELECT r.deadline FROM round r
+                WHERE r.game_id = #$t.game_id AND r.tournament_id = #$t.tournament_id AND r.round = #$t.current_round)"""
 
     private val columns = columnsOf("tournament")
 
-    private def rowOf(t: Tournament): Row =
+    private def writtenOf(t: Tournament): Written =
         (
           t.name,
           t.description,
           t.owner,
-          designJson(t.design),
-          t.standardDesign,
           t.status,
+          t.tournamentModelId,
+          t.defaultPoolSize,
           t.settings.autoRounds,
           t.settings.friendly,
           t.settings.invitational,
           t.settings.lateEntries,
           t.settings.minRating,
           t.settings.maxRating,
+          t.settings.isPublic,
           t.settings.entriesPerPlayer,
           seconds(t.settings.roundDuration),
           t.settings.maxTurns,
+          t.settings.concurrentRounds,
           t.startedAt,
           t.endedAt,
-          t.roundStartedAt,
-          t.roundDeadline,
           t.checkedAt
         )
 
     private def tournamentOf(game: GameId, id: TournamentId, r: Row): Tournament = {
+        val (w, roundStartedAt, roundDeadline) = r
         val (
           name,
           description,
           owner,
-          design,
-          standard,
           st,
+          model,
+          defaultPoolSize,
           auto,
           friendly,
           invitational,
           late,
           minRating,
           maxRating,
+          isPublic,
           entries,
           roundSeconds,
           maxTurns,
+          concurrentRounds,
           startedAt,
           endedAt,
-          roundStartedAt,
-          roundDeadline,
           checkedAt
-        ) = r
+        ) = w
         Tournament(
           game,
           id,
           name,
           description,
           owner,
-          designOf(design),
-          standard,
+          model,
+          defaultPoolSize,
           TournamentSettings(
             auto,
             friendly,
@@ -133,7 +138,9 @@ class TournamentRepo(session: Session[IO]) {
             maxRating,
             entries,
             duration(roundSeconds),
-            maxTurns
+            maxTurns,
+            concurrentRounds,
+            isPublic
           ),
           st,
           startedAt,
@@ -144,18 +151,21 @@ class TournamentRepo(session: Session[IO]) {
         )
     }
 
-    private val insert: Query[GameId *: Row, TournamentId] =
-        sql"""INSERT INTO tournament (game_id, name, description, owner, design, standard_design, status, auto_rounds,
-                                      friendly, invitational, late_entries, min_rating, max_rating, entries_per_player,
-                                      round_duration, max_turns, started_at, ended_at, round_started_at, round_deadline,
-                                      checked_at)
-          VALUES ($gameId, $text, $text, $playerId, $jsonb, ${text.opt}, $status, $bool, $bool, $bool, $bool,
-                  ${int4.opt}, ${int4.opt}, $int4, ${float8.opt} * INTERVAL '1 second', ${int4.opt}, ${instant.opt},
-                  ${instant.opt}, ${instant.opt}, ${instant.opt}, ${instant.opt})
+    // first_stage_id is written as a placeholder, and set by StageRepo.copy before the transaction commits: the two
+    // reference each other, and the key between them is deferred.
+    private val insert: Query[GameId *: Written, TournamentId] =
+        sql"""INSERT INTO tournament (game_id, name, description, owner, status, tournament_model_id, default_pool_size,
+                                      automatic_rounds, friendly, invitational, late_entries, min_rating, max_rating,
+                                      public, entries_per_player, round_duration, max_turns, concurrent_rounds,
+                                      started_at, ended_at, checked_at, first_stage_id)
+          VALUES ($gameId, $text, $text, $playerId, $status, $modelId, $int4, $bool, $bool, $bool, $bool, ${int4.opt},
+                  ${int4.opt}, $bool, $int4, ${float8.opt} * INTERVAL '1 second', ${int4.opt}, $bool, ${instant.opt},
+                  ${instant.opt}, ${instant.opt}, 0)
           RETURNING tournament_id""".query(tournamentId)
 
+    /** Writes a new tournament. Its stages are written next, by [[StageRepo.copy]], in the same transaction. */
     def create(t: Tournament): IO[Tournament] =
-        session.unique(insert)(t.gameId *: rowOf(t)).map(id => t.copy(tournamentId = id))
+        session.unique(insert)(t.gameId *: writtenOf(t)).map(id => t.copy(tournamentId = id))
 
     private val select: Query[(GameId, TournamentId), Row] =
         sql"SELECT $columns FROM tournament WHERE game_id = $gameId AND tournament_id = $tournamentId".query(row)
@@ -171,32 +181,31 @@ class TournamentRepo(session: Session[IO]) {
     def readForUpdate(game: GameId, id: TournamentId): IO[Option[Tournament]] =
         session.option(selectForUpdate)((game, id)).map(_.map(tournamentOf(game, id, _)))
 
-    private val updateRow: Command[Tuple.Concat[Row, (GameId, TournamentId)]] =
-        sql"""UPDATE tournament SET name = $text, description = $text, owner = $playerId, design = $jsonb,
-                 standard_design = ${text.opt}, status = $status, auto_rounds = $bool, friendly = $bool,
+    private val updateRow: Command[Tuple.Concat[Written, (GameId, TournamentId)]] =
+        sql"""UPDATE tournament SET name = $text, description = $text, owner = $playerId, status = $status,
+                 tournament_model_id = $modelId, default_pool_size = $int4, automatic_rounds = $bool, friendly = $bool,
                  invitational = $bool, late_entries = $bool, min_rating = ${int4.opt}, max_rating = ${int4.opt},
-                 entries_per_player = $int4, round_duration = ${float8.opt} * INTERVAL '1 second',
-                 max_turns = ${int4.opt}, started_at = ${instant.opt}, ended_at = ${instant.opt},
-                 round_started_at = ${instant.opt}, round_deadline = ${instant.opt}, checked_at = ${instant.opt}
+                 public = $bool, entries_per_player = $int4, round_duration = ${float8.opt} * INTERVAL '1 second',
+                 max_turns = ${int4.opt}, concurrent_rounds = $bool, started_at = ${instant.opt},
+                 ended_at = ${instant.opt}, checked_at = ${instant.opt}
           WHERE game_id = $gameId AND tournament_id = $tournamentId""".command
 
+    /** Rewrites the tournament's own columns. Not the round being played, which is the round's to say. */
     def update(t: Tournament): IO[Unit] =
-        session.execute(updateRow)(rowOf(t) ++ (t.gameId, t.tournamentId)).void
+        session.execute(updateRow)(writtenOf(t) ++ (t.gameId, t.tournamentId)).void
 
-    private val selectState: Query[(GameId, TournamentId), Option[String]] =
-        sql"SELECT state FROM tournament WHERE game_id = $gameId AND tournament_id = $tournamentId".query(jsonb.opt)
+    /** The state as a whole, as the rules hold it: read and written from its tables from Phase 5 of
+      * design/new-tournament-plan.md. Until then there is none to read.
+      */
+    def readState(game: GameId, id: TournamentId): IO[Option[com.vivi.matchmaker.model.tournament.TournamentState]] =
+        IO.raiseError(new UnsupportedOperationException("a tournament's state is read from its tables (Phase 5)"))
 
-    /** The tournament's state, or `None` before it has started. */
-    def readState(game: GameId, id: TournamentId): IO[Option[TournamentState]] =
-        session
-            .option(selectState)((game, id))
-            .map(_.flatten.map(json => readJson[TournamentState](json)(using TournamentCodecs.stateRW)))
-
-    private val updateState: Command[(String, GameId, TournamentId)] =
-        sql"UPDATE tournament SET state = $jsonb WHERE game_id = $gameId AND tournament_id = $tournamentId".command
-
-    def writeState(game: GameId, id: TournamentId, state: TournamentState): IO[Unit] =
-        session.execute(updateState)((writeJson(state)(using TournamentCodecs.stateRW), game, id)).void
+    def writeState(
+        game: GameId,
+        id: TournamentId,
+        state: com.vivi.matchmaker.model.tournament.TournamentState
+    ): IO[Unit] =
+        IO.raiseError(new UnsupportedOperationException("a tournament's state is written to its tables (Phase 5)"))
 
     private val selectForGame: Query[GameId, TournamentId *: Row] =
         sql"""SELECT tournament_id, $columns FROM tournament WHERE game_id = $gameId
@@ -233,8 +242,9 @@ class TournamentRepo(session: Session[IO]) {
                        WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId),
               EXISTS (SELECT 1 FROM tournament_invitation i
                        WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = $playerId),
-              t.status = 'running' AND NOT EXISTS (SELECT 1 FROM tournament_match m
-                       WHERE m.game_id = t.game_id AND m.tournament_id = t.tournament_id AND m.status <> 'done')"""
+              t.status = 'running' AND t.current_round IS NOT NULL AND NOT EXISTS (SELECT 1 FROM match m
+                       WHERE m.game_id = t.game_id AND m.tournament_id = t.tournament_id
+                         AND m.round = t.current_round AND m.status <> 'F')"""
 
     private val summaryRow = text *: text *: int8 *: bool *: bool *: bool
 

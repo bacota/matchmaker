@@ -93,9 +93,10 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             // Only the owner has an address, so the only mail sent is to them.
             owner <- s.registration.register(unique("owner"), unique("sub"), Some(s"${unique("owner")}@example.com"))
             players <- (1 to n).toList.traverse(_ => s.registration.register(unique("p"), unique("sub")))
+            model <- TestSession.resource.use(TournamentFixtures.model(_, game, design))
             t <- s.tournaments.create(
               game.gameId,
-              TournamentRequest("Cup", standardDesign = Some(design), settings = settings),
+              TournamentRequest("Cup", model.tournamentModelId, settings = settings),
               owner.externalId
             )
             _ <- s.tournaments.open(game.gameId, t.tournamentId, owner.externalId)

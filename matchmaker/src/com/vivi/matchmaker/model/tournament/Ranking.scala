@@ -64,9 +64,9 @@ object Ranking {
       *
       * By points, then for members level on points by the stage's tiebreaker. A rubber settles a pair tied on points in
       * a game of two roles, and is asked for if it has not been played; anything else falls back to scores — total
-      * score differential, then total score (Q7). A tie that still stands goes to the weaker seed when the stage does
-      * not allow ties (Q6), and otherwise stays a tie. Ranks are shared by ties, the next rank skipping past them: 1,
-      * 1, 3.
+      * score differential, then total score (Q7). A tie that still stands goes to the weaker seed in a pool of two,
+      * whose match may not be drawn (Q6, [[Ties]]), and otherwise stays a tie. Ranks are shared by ties, the next rank
+      * skipping past them: 1, 1, 3.
       *
       * `seedIn` is each member's seed entering the pool. `rubbers` are the rubber matches already played, by pair.
       */
@@ -88,7 +88,8 @@ object Ranking {
             )
         }.toMap
 
-        val useRubber = stage.tiebreaker == Tiebreaker.Rubber && game.rubberApplies
+        val useRubber = stage.rubberMatch && game.rubberApplies
+        val tiesAllowed = Ties.allowed(members.size)
         var wanted = List.empty[(Long, Long)]
 
         // Members in groups that are still level, best group first; each group's order within it is decided below.
@@ -96,7 +97,7 @@ object Ranking {
             members.groupBy(e => standings(e).points).toList.sortBy(-_._1).map(_._2.sortBy(seedIn))
 
         def bySeedRule(group: List[Long]): List[List[Long]] =
-            if (stage.allowTies) List(group)
+            if (tiesAllowed) List(group)
             // The weaker seed — the higher number — takes the tie.
             else group.sortBy(e => -seedIn(e)).map(List(_))
 

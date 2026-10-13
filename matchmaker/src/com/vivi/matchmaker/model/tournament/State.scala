@@ -89,9 +89,26 @@ case class TournamentState(
     def finished: Boolean = root.finished
 }
 
-/** What advancing a tournament needs that is not in its state: the design, the game, and everyone's rating now. */
-case class Env(design: TournamentDesign, game: TournamentGame, ratings: Map[Long, Int]) {
+/** What advancing a tournament needs that is not in its state: the design, the game, and everyone's rating now.
+  *
+  * `defaultPoolSize` is the tournament's (V52), for a stage that sets no pool size; `None`, as in a test that has no
+  * tournament, is the game's R. `concurrentRounds` is the tournament's: set, every round-robin pool may play all of its
+  * matches in one round, as a stage that says so itself may.
+  */
+case class Env(
+    design: TournamentDesign,
+    game: TournamentGame,
+    ratings: Map[Long, Int],
+    defaultPoolSize: Option[Int] = None,
+    concurrentRounds: Boolean = false
+) {
     def rating(entrant: Long): Int = ratings.getOrElse(entrant, 0)
+
+    /** The size of `stage`'s pools. */
+    def poolSize(stage: StageDesign): Int = stage.poolSizeOr(defaultPoolSize.getOrElse(game.poolSeats))
+
+    /** The most matches a member of one of `stage`'s pools plays in a round. */
+    def concurrent(stage: StageDesign): Int = if (concurrentRounds) Int.MaxValue else stage.concurrent
 }
 
 /** A match of the round being played, with what creating it needs to know. */
@@ -270,7 +287,7 @@ object Tournament {
 
     /** Forms a run's pools and begins it. */
     private def beginRun(node: Node, stage: StageDesign, active: List[Member], env: Env, nextId: Int): (Node, Int) = {
-        val n = stage.poolSize.getOrElse(env.game.poolSeats)
+        val n = env.poolSize(stage)
         val formed = Pools.form(
           active.map(m => Seeded(m.entrant, m.seed, m.stratum)),
           n,
@@ -291,8 +308,14 @@ object Tournament {
                         Pool(id, f.stratum, members, sub = Some(Node(node.path :+ node.stage, subMembers)))
                     case None =>
                         val planned =
-                            Schedule.roundRobin(f.members.map(_.entrant), env.game, stage.rotateRoles, stage.concurrent)
-                        Pool(id, f.stratum, members, matches = planned.map(PoolMatch(_, stage.allowTies)))
+                            Schedule.roundRobin(
+                              f.members.map(_.entrant),
+                              env.game,
+                              stage.rotateRoles,
+                              env.concurrent(stage)
+                            )
+                        // Ties by the pool's size (V52): none in a pool of two, an elimination match.
+                        Pool(id, f.stratum, members, matches = planned.map(PoolMatch(_, Ties.allowed(f.members.size))))
                 }
         }
         val run = StageRun(node.stage, node.repetition, pools, active.map(_.entrant).filterNot(pooled))

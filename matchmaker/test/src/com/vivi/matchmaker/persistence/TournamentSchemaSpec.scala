@@ -54,7 +54,7 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
             )
             _ <- exec(
               session,
-              s"INSERT INTO atomic_stage_model (game_id, tournament_model_id, stage_model_id, pool_size) VALUES ($g, $model, $stageModel, 2)"
+              s"INSERT INTO atomic_stage_model (game_id, tournament_model_id, stage_model_id) VALUES ($g, $model, $stageModel)"
             )
             _ <- exec(
               session,
@@ -62,8 +62,8 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
             )
             t <- long(
               session,
-              s"""INSERT INTO tournament (game_id, name, owner, tournament_model_id, first_stage_id)
-                  VALUES ($g, 'tournament', $player, $model, 0) RETURNING tournament_id"""
+              s"""INSERT INTO tournament (game_id, name, owner, tournament_model_id, default_pool_size, first_stage_id)
+                  VALUES ($g, 'tournament', $player, $model, 2, 0) RETURNING tournament_id"""
             )
             stage <- long(
               session,
@@ -71,7 +71,7 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
             )
             _ <- exec(
               session,
-              s"INSERT INTO atomic_stage (game_id, tournament_id, stage_id, pool_size) VALUES ($g, $t, $stage, 2)"
+              s"INSERT INTO atomic_stage (game_id, tournament_id, stage_id) VALUES ($g, $t, $stage)"
             )
             _ <- exec(
               session,

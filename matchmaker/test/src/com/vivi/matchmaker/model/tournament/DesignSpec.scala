@@ -11,7 +11,7 @@ class DesignSpec extends FunSuite {
     test("every standard design is valid for a two-player game, with no errors") {
         StandardDesigns.all.foreach { std =>
             val design = StandardDesigns.build(std.key, 2, Some(4)).toOption.get
-            val errors = Validation.validate(design, twoPlayer, Some(hour), None).filterNot(_.warning)
+            val errors = Validation.validate(design, twoPlayer, None, None).filterNot(_.warning)
             assertEquals(errors, Nil, std.key)
         }
     }
@@ -29,7 +29,7 @@ class DesignSpec extends FunSuite {
             StageDesign(promote = Some(3), demote = Some(2), brackets = false)
           )
         )
-        val problems = Validation.validate(bad, twoPlayer, Some(hour), None).filterNot(_.warning).map(_.describe)
+        val problems = Validation.validate(bad, twoPlayer, None, None).filterNot(_.warning).map(_.describe)
         assert(problems.exists(_.startsWith("stage 1: demote must be greater than 1")), problems.toString)
         assert(
           problems.exists(_.contains("stage 2: with brackets, the number advancing (3) must divide")),
@@ -38,13 +38,30 @@ class DesignSpec extends FunSuite {
         assert(problems.exists(_.startsWith("stage 3: promote must be a better rank")), problems.toString)
     }
 
-    test("a round duration must be set somewhere, and is inherited from the nearest stage that sets one (Q10)") {
-        val inner = TournamentDesign(List(StageDesign()))
-        val design = TournamentDesign(List(StageDesign(roundDuration = Some(Duration.ofDays(2)), design = Some(inner))))
-        assertEquals(Validation.validate(design, twoPlayer, None, None).filterNot(_.warning), Nil)
-        assertEquals(Clock.duration(design, List(0), 0, None), Some(Duration.ofDays(2)))
-        assertEquals(Clock.duration(TournamentDesign(List(StageDesign())), Nil, 0, Some(hour)), Some(hour))
-        assert(Validation.validate(TournamentDesign(List(StageDesign())), twoPlayer, None, None).exists(!_.warning))
+    test("a stage with no pool size takes the tournament's default, and a model alone is checked as pools of R") {
+        // Three advance from each bracketed pool: a pool of the game's 2 cannot send three, a pool of 6 can.
+        val design = TournamentDesign(List(StageDesign(demote = Some(4))))
+        assert(Validation.designProblems(design, twoPlayer, None).exists(!_.warning))
+        assertEquals(Validation.designProblems(design, twoPlayer, Some(6)).filterNot(_.warning), Nil)
+        assertEquals(Env(design, twoPlayer, Map.empty, Some(6)).poolSize(design.stages.head), 6)
+        assertEquals(Env(design, twoPlayer, Map.empty).poolSize(design.stages.head), 2)
+    }
+
+    test("every standard model is valid with the pool size it suggests, and only heats leaves a stage unsized") {
+        StandardDesigns.models(2).foreach { m =>
+            assertEquals(Validation.designProblems(m.design, twoPlayer, m.poolSize).filterNot(_.warning), Nil, m.key)
+        }
+        val heats = StandardDesigns.models(2).find(_.key == "heats").get
+        assertEquals(heats.poolSize, Some(4))
+        assertEquals(heats.design.stages.head.poolSize, None)
+        def sized(d: TournamentDesign): Boolean = d.stages.forall(s => s.poolSize.isDefined && s.design.forall(sized))
+        assert(sized(TournamentDesign(heats.design.stages.tail)), heats.design.stages.tail)
+    }
+
+    test("a match may not be drawn in a pool of two, nor ever in a rubber; in a larger pool it may") {
+        assert(!Ties.allowed(2))
+        assert(Ties.allowed(3))
+        assert(!Ties.allowed(3, rubber = true))
     }
 
     test("a sequential game gives each seat a chess clock of d/n; a simultaneous one a turn limit of d/t") {

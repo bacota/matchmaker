@@ -23,6 +23,7 @@ object Json {
     given ReadWriter[ParticipantId] = readwriter[Long].bimap(_.value, ParticipantId.apply)
     given ReadWriter[ChallengeId] = readwriter[Long].bimap(_.value, ChallengeId.apply)
     given ReadWriter[TournamentId] = readwriter[Long].bimap(_.value, TournamentId.apply)
+    given ReadWriter[TournamentModelId] = readwriter[Long].bimap(_.value, TournamentModelId.apply)
     given ReadWriter[EntrantId] = readwriter[Long].bimap(_.value, EntrantId.apply)
 
     given ReadWriter[GameType] = readwriter[String].bimap(

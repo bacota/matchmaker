@@ -15,7 +15,6 @@ import com.vivi.matchmaker.model.tournament.{
     StageDesign,
     StageRun,
     StandardDesigns,
-    Tiebreaker,
     TournamentDesign,
     TournamentGame,
     Validation
@@ -48,7 +47,12 @@ object Tournaments {
             tpe := "button",
             "New Tournament",
             onClick --> (_ => Store.show(Store.Page.NewTournament(game.gameId)))
-          )
+          ),
+          // The game's models, for whoever administers it: nothing at all for anybody else.
+          child <-- Store.currentPlayer.flatMapSwitch {
+              case Some(player) => Store.administers(game.gameId, player).map(if (_) modelsSection(game) else emptyNode)
+              case None         => Val(emptyNode)
+          }
         )
 
     /** The main page's tournament sections: seats waiting on the caller to choose a role, and their tournaments. */
@@ -235,7 +239,7 @@ object Tournaments {
                           else emptyNode
                         )
                       ),
-                      if (t.design.stages.exists(_.repeat == Repetition.UntilStopped))
+                      if (d.design.stages.exists(_.repeat == Repetition.UntilStopped))
                           busyButton("Stop Repeating")(busy =>
                               Store.run(ApiClient.stopTournamentStage(t.gameId, t.tournamentId), busy)(_ => reload(d))
                           )
@@ -616,6 +620,7 @@ object Tournaments {
 
     /** A stage as the form edits it: every property as typed, so that a half-typed number is not lost. */
     private case class StageDraft(
+        name: Var[String],
         repeatKind: Var[String],
         repeatCount: Var[String],
         poolSize: Var[String],
@@ -624,23 +629,22 @@ object Tournaments {
         promote: Var[String],
         minStratum: Var[String],
         maxStratum: Var[String],
-        allowTies: Var[Boolean],
         points: Var[String],
         pointsForDraw: Var[String],
         pointsBonus: Var[Boolean],
         rotateRoles: Var[Boolean],
-        concurrent: Var[String],
+        concurrentRounds: Var[Boolean],
         strictStrata: Var[Boolean],
         tieBreakerStage: Var[Boolean],
         seedPolicy: Var[SeedPolicy],
-        tiebreaker: Var[Tiebreaker],
-        hours: Var[String],
+        rubberMatch: Var[Boolean],
         play: Var[String]
     )
 
     private def draftOf(s: StageDesign): StageDraft = {
         def opt(o: Option[Int]) = o.fold("")(_.toString)
         StageDraft(
+          Var(s.name),
           Var(s.repeat match {
               case Repetition.Fixed(_)          => "times"
               case Repetition.UntilRemaining(_) => "until"
@@ -657,21 +661,22 @@ object Tournaments {
           Var(opt(s.promote)),
           Var(opt(s.minStratum)),
           Var(opt(s.maxStratum)),
-          Var(s.allowTies),
           Var(s.points.toString),
           Var(s.pointsForDraw.toString),
           Var(s.pointsBonus),
           Var(s.rotateRoles),
-          Var(s.concurrent.toString),
+          Var(s.concurrentRounds),
           Var(s.strictStrata),
           Var(s.tieBreakerStage),
           Var(s.seedPolicy),
-          Var(s.tiebreaker),
-          Var(s.roundDuration.fold("")(d => (d.toMinutes / 60.0).toString.stripSuffix(".0"))),
+          Var(s.rubberMatch),
           Var(s.design match {
-              case None                                             => "round-robin"
-              case Some(d) if d == StandardDesigns.eliminationMatch => "elimination-match"
-              case Some(_)                                          => "keep"
+              case None => "round-robin"
+              case Some(d)
+                  if d.stages.map(_.copy(name = "", description = "", poolSize = None)) ==
+                      StandardDesigns.eliminationMatch.stages =>
+                  "elimination-match"
+              case Some(_) => "keep"
           })
         )
     }
@@ -685,7 +690,6 @@ object Tournaments {
               case "stopped" => Repetition.UntilStopped
               case _         => Repetition.Fixed(int(d.repeatCount).getOrElse(1))
           },
-          allowTies = d.allowTies.now(),
           brackets = d.brackets.now(),
           demote = int(d.demote),
           promote = int(d.promote),
@@ -695,9 +699,7 @@ object Tournaments {
           pointsForDraw = int(d.pointsForDraw).getOrElse(1),
           pointsBonus = d.pointsBonus.now(),
           poolSize = int(d.poolSize),
-          roundDuration =
-              d.hours.now().trim.toDoubleOption.filter(_ > 0).map(h => java.time.Duration.ofMinutes((h * 60).round)),
-          concurrent = int(d.concurrent).getOrElse(1),
+          concurrentRounds = d.concurrentRounds.now(),
           rotateRoles = d.rotateRoles.now(),
           strictStrata = d.strictStrata.now(),
           design = d.play.now() match {
@@ -707,37 +709,65 @@ object Tournaments {
           },
           tieBreakerStage = d.tieBreakerStage.now(),
           seedPolicy = d.seedPolicy.now(),
-          tiebreaker = d.tiebreaker.now()
+          rubberMatch = d.rubberMatch.now(),
+          name = d.name.now().trim
         )
     }
 
-    /** The form that creates a tournament, or edits `existing`. A running tournament's design is not offered for
-      * editing, since it cannot change.
+    /** The models offered for a game, grouped by classification, as a select's options. */
+    private def modelOptions(models: Seq[TournamentModel]): Seq[HtmlElement] =
+        models
+            .groupBy(_.classification.getOrElse(""))
+            .toSeq
+            .sortBy(_._1)
+            .map { (classification, inGroup) =>
+                optGroup(
+                  labelAttr := classification,
+                  inGroup
+                      .sortBy(_.name.toLowerCase)
+                      .map(m => option(value := m.tournamentModelId.value.toString, m.name))
+                )
+            }
+
+    private val labelAttr = htmlAttr("label", com.raquo.laminar.codecs.StringAsIsCodec)
+
+    /** The form that creates a tournament from one of its game's models, or edits `existing`. A running tournament's
+      * model and default pool size are not offered for editing, since its stages cannot change.
       */
     def form(game: Game, existing: Option[Tournament], onSaved: () => Unit): HtmlElement = {
         val key = existing.fold("new-tournament")(t => s"tournament-${t.tournamentId.value}")
         val running = existing.exists(_.status == TournamentStatus.Running)
         val r = game.poolSeats
-        val standards = StandardDesigns.all.filter(s => !s.twoRolesOnly || r == 2)
         val s0 = existing.map(_.settings).getOrElse(TournamentSettings())
         val name = Var(existing.map(_.name).getOrElse(""))
         val description = Var(existing.map(_.description).getOrElse(""))
-        val designKey = Var(
-          existing.fold(standards.headOption.map(_.key).getOrElse("custom"))(_.standardDesign.getOrElse("custom"))
-        )
-        val poolSize = Var("")
-        val stages = Var(existing.map(_.design.stages).getOrElse(List(StageDesign())).map(draftOf))
-        val originals = existing.map(_.design.stages).getOrElse(Nil)
+        val models: Signal[Seq[TournamentModel]] =
+            Store.tournamentModelsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty))
+        // The model chosen, by id; none until the models have come, for a new tournament.
+        val modelId: Var[Option[TournamentModelId]] = Var(existing.map(_.tournamentModelId))
+        val poolSize = Var(existing.fold("")(_.defaultPoolSize.toString))
         val invitational = Var(s0.invitational)
         val autoRounds = Var(s0.autoRounds)
         val friendly = Var(s0.friendly)
         val lateEntries = Var(s0.lateEntries)
+        val concurrentRounds = Var(s0.concurrentRounds)
+        val isPublic = Var(s0.isPublic)
         val minRating = Var(s0.minRating.fold("")(_.toString))
         val maxRating = Var(s0.maxRating.fold("")(_.toString))
         val entries = Var(s0.entriesPerPlayer.toString)
         val hours = Var(s0.roundDuration.fold("48")(d => (d.toMinutes / 60.0).toString.stripSuffix(".0")))
         val maxTurns = Var(s0.maxTurns.fold("")(_.toString))
         val problems: Var[List[Problem]] = Var(Nil)
+        val chosen: Var[Option[TournamentModel]] = Var(None)
+
+        /* Choosing a model fills in the pool size it suggests -- the game's R where it suggests none -- and whether it
+         * takes late entries; both stay the creator's to change. */
+        def choose(m: TournamentModel): Unit = {
+            modelId.set(Some(m.tournamentModelId))
+            chosen.set(Some(m))
+            poolSize.set(m.poolSize.getOrElse(r).toString)
+            lateEntries.set(m.lateEntries)
+        }
 
         def int(v: Var[String]) = v.now().trim.toIntOption
         def settings = TournamentSettings(
@@ -750,17 +780,20 @@ object Tournaments {
           entriesPerPlayer = int(entries).getOrElse(1),
           roundDuration =
               hours.now().trim.toDoubleOption.filter(_ > 0).map(h => java.time.Duration.ofMinutes((h * 60).round)),
-          maxTurns = int(maxTurns)
+          maxTurns = int(maxTurns),
+          concurrentRounds = concurrentRounds.now(),
+          isPublic = isPublic.now()
         )
-        def design: Either[String, TournamentDesign] =
-            if (designKey.now() == "custom")
-                Right(TournamentDesign(stages.now().zipWithIndex.map((d, i) => stageOf(d, originals.lift(i)))))
-            else StandardDesigns.build(designKey.now(), r, int(poolSize))
         def check(): Unit =
-            problems.set(design match {
-                case Left(why) => List(Problem("", why))
-                case Right(d) =>
-                    Validation.validate(d, TournamentGame.of(game), settings.roundDuration, settings.maxTurns)
+            problems.set(chosen.now() match {
+                case None => List(Problem("", "choose a format"))
+                case Some(m) =>
+                    Validation.validate(
+                      m.design,
+                      TournamentGame.of(game),
+                      settings.maxTurns,
+                      int(poolSize).orElse(Some(r))
+                    )
             })
 
         def checkbox(caption: String, v: Var[Boolean], tip: String) = {
@@ -783,34 +816,52 @@ object Tournaments {
 
         div(
           cls := "card",
+          // The models as they come: an existing tournament's is found among them, and a new one starts on the first.
+          models --> { ms =>
+              chosen.now() match {
+                  case Some(_) => ()
+                  case None =>
+                      modelId.now() match {
+                          case Some(id) => ms.find(_.tournamentModelId == id).foreach(m => chosen.set(Some(m)))
+                          case None     => ms.headOption.foreach(choose)
+                      }
+              }
+          },
           field("Name", input(controlled(value <-- name.signal, onInput.mapToValue --> name))),
           field("Description", input(controlled(value <-- description.signal, onInput.mapToValue --> description))),
-          if (running) p(cls := "detail", "The design of a tournament under way cannot be changed.")
+          if (running) p(cls := "detail", "The format of a tournament under way cannot be changed.")
           else
               div(
                 Views.tipField(
                   freshTipId(s"$key-tip"),
                   "Format",
-                  "A standard format, or Custom to set out the stages yourself."
+                  "The formats this game's admins offer, grouped by kind."
                 )(
                   select(
-                    onChange.mapToValue --> designKey,
-                    value <-- designKey.signal,
-                    standards.map(s => option(value := s.key, s.name)) :+ option(value := "custom", "Custom")
+                    onChange.mapToValue --> { v =>
+                        v.toLongOption.foreach { id =>
+                            Store.tournamentModelsByGame
+                                .now()
+                                .getOrElse(game.gameId, Seq.empty)
+                                .find(_.tournamentModelId.value == id)
+                                .foreach(choose)
+                        }
+                    },
+                    value <-- modelId.signal.map(_.fold("")(_.value.toString)),
+                    children <-- models.map(modelOptions)
                   )
                 ),
-                child <-- designKey.signal.map { k =>
-                    StandardDesigns.find(k) match {
-                        case Some(std) =>
-                            div(
-                              p(cls := "detail", std.description),
-                              if (std.needsPoolSize)
-                                  number("Pool size", poolSize, "How many play each other in each heat.")
-                              else emptyNode
-                            )
-                        case None => stageEditor(key, stages)
-                    }
-                }
+                child <-- models.combineWith(chosen.signal).map {
+                    case (ms, _) if ms.isEmpty =>
+                        p(cls := "empty", "This game offers no tournament formats yet; its admins add them.")
+                    case (_, Some(m)) => p(cls := "detail", m.description)
+                    case _            => emptyNode
+                },
+                number(
+                  "Default pool size",
+                  poolSize,
+                  "How many play in a pool of any stage that does not set its own size. Filled in from the format."
+                )
               ),
           h4("Settings"),
           checkbox(
@@ -825,14 +876,20 @@ object Tournaments {
           ),
           checkbox("Friendly", friendly, "Its matches change nobody's rating."),
           checkbox("Late entries", lateEntries, "Players may enter after it has started, joining from its next stage."),
+          checkbox(
+            "Concurrent rounds",
+            concurrentRounds,
+            "A round-robin pool plays all of its matches in one round, rather than each player one match a round."
+          ),
+          checkbox("Public", isPublic, "Anybody may see it listed."),
           number("Minimum rating", minRating, "Leave blank for no minimum."),
           number("Maximum rating", maxRating, "Leave blank for no maximum."),
           number("Entries per player", entries, "How many times one player may enter."),
           Views.tipField(
             freshTipId(s"$key-tip"),
             "Round length (hours)",
-            "How long a round lasts unless a stage says otherwise. In a game of turns each player has a chess clock of " +
-                "an equal share of it."
+            "How long a round lasts; you may give a round started by hand another. In a game of turns each player has " +
+                "a chess clock of an equal share of it."
           )(
             input(
               tpe := "number",
@@ -857,13 +914,12 @@ object Tournaments {
                 if (name.now().trim.isEmpty) Store.reportProblem("A tournament needs a name.")
                 else if (errors.nonEmpty) Store.reportProblem(errors.map(_.describe).mkString("; "))
                 else
-                    design.toOption.foreach { d =>
+                    modelId.now().foreach { id =>
                         val request = TournamentRequest(
                           name.now().trim,
+                          id,
                           description.now().trim,
-                          standardDesign = Option(designKey.now()).filterNot(_ == "custom"),
-                          poolSize = int(poolSize),
-                          design = Option.when(designKey.now() == "custom")(d),
+                          defaultPoolSize = int(poolSize),
                           settings = settings
                         )
                         val saving: Future[Tournament] = existing match {
@@ -891,7 +947,162 @@ object Tournaments {
         )
     }
 
-    /** The stages of a custom design, each a form of its properties. */
+    // ---- a game's models, for its admins ----------------------------------------------------
+
+    /** The models a game's tournaments are made from, for an admin of it: each with a way to edit or remove it, a way
+      * to add one, and a way to add the standard formats the game does not offer yet.
+      */
+    private def modelsSection(game: Game): HtmlElement = {
+        val editing: Var[Option[Option[TournamentModel]]] = Var(None)
+        val said = Var("")
+        div(
+          h3("Tournament Formats"),
+          div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
+          listing(
+            Store.tournamentModelsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty)),
+            Store.loading(Store.Fetch.TournamentModels(game.gameId))
+          )(p(cls := "empty", "No formats yet."))(models =>
+              ul(
+                cls := "plain",
+                models.map { m =>
+                    li(
+                      span(m.name),
+                      m.classification.fold(emptyNode)(c => span(cls := "detail", s" — $c")),
+                      " ",
+                      button(
+                        tpe := "button",
+                        cls := "link",
+                        aria.label := s"Edit ${m.name}",
+                        "Edit",
+                        onClick --> (_ => editing.set(Some(Some(m))))
+                      ),
+                      busyButton("Remove", Some("link"))(busy =>
+                          Store.run(ApiClient.deleteTournamentModel(game.gameId, m.tournamentModelId), busy) { _ =>
+                              said.set(s"Removed ${m.name}.")
+                              Store.reloadTournamentModels(game.gameId)
+                          }
+                      ).amend(aria.label := s"Remove ${m.name}")
+                    )
+                }
+              )
+          ),
+          div(
+            cls := "row",
+            button(tpe := "button", "Add a Format", onClick --> (_ => editing.set(Some(None)))),
+            busyButton("Add the Standard Formats")(busy =>
+                Store.run(ApiClient.addStandardModels(game.gameId), busy) { added =>
+                    said.set(
+                      if (added.isEmpty) "Every standard format this game can play is offered already."
+                      else s"Added ${added.size} standard format${if (added.sizeIs == 1) "" else "s"}."
+                    )
+                    Store.reloadTournamentModels(game.gameId)
+                }
+            )
+          ),
+          child <-- editing.signal.map {
+              case None => emptyNode
+              case Some(m) =>
+                  modelForm(
+                    game,
+                    m,
+                    done = message => {
+                        editing.set(None)
+                        said.set(message)
+                        Store.reloadTournamentModels(game.gameId)
+                    },
+                    cancel = () => editing.set(None)
+                  )
+          }
+        )
+    }
+
+    /** The form that creates a model, or edits `existing`: its name, how it is listed, the pool size it suggests, and
+      * its stages.
+      */
+    private def modelForm(
+        game: Game,
+        existing: Option[TournamentModel],
+        done: String => Unit,
+        cancel: () => Unit
+    ): HtmlElement = {
+        val key = existing.fold("new-model")(m => s"model-${m.tournamentModelId.value}")
+        val name = Var(existing.map(_.name).getOrElse(""))
+        val description = Var(existing.map(_.description).getOrElse(""))
+        val classification = Var(existing.flatMap(_.classification).getOrElse(""))
+        val poolSize = Var(existing.flatMap(_.poolSize).fold("")(_.toString))
+        val lateEntries = Var(existing.exists(_.lateEntries))
+        val stages = Var(existing.map(_.design.stages).getOrElse(List(StageDesign())).map(draftOf))
+        val originals = existing.map(_.design.stages).getOrElse(Nil)
+        val problems: Var[List[Problem]] = Var(Nil)
+
+        def int(v: Var[String]) = v.now().trim.toIntOption
+        def design = TournamentDesign(stages.now().zipWithIndex.map((d, i) => stageOf(d, originals.lift(i))))
+        def check(): Unit = problems.set(Validation.designProblems(design, TournamentGame.of(game), int(poolSize)))
+        def text(caption: String, v: Var[String], tip: String) =
+            Views.tipField(freshTipId(s"$key-tip"), caption, tip)(
+              input(controlled(value <-- v.signal, onInput.mapToValue --> v))
+            )
+
+        fieldSet(
+          cls := "card",
+          legend(existing.fold("New Format")(m => s"Editing ${m.name}")),
+          text("Name", name, "What it is called where a tournament is created."),
+          text("Description", description, "A sentence saying how it is played."),
+          text("Kind", classification, "The group it is listed under, such as Elimination. Blank keeps it unlisted."),
+          Views.tipField(
+            freshTipId(s"$key-tip"),
+            "Suggested pool size",
+            "The default pool size a tournament made from it starts with. Blank suggests one match's worth of seats."
+          )(
+            input(
+              tpe := "number",
+              inputMode := "numeric",
+              controlled(value <-- poolSize.signal, onInput.mapToValue --> poolSize)
+            )
+          ),
+          label(
+            input(tpe := "checkbox", controlled(checked <-- lateEntries.signal, onClick.mapToChecked --> lateEntries)),
+            "Takes late entries"
+          ),
+          stageEditor(key, stages),
+          div(
+            cls := "row",
+            button(tpe := "button", "Check", onClick --> (_ => check())),
+            busyButton(if (existing.isDefined) "Save Format" else "Add Format")(busy =>
+                check()
+                val errors = problems.now().filterNot(_.warning)
+                if (name.now().trim.isEmpty) Store.reportProblem("A format needs a name.")
+                else if (errors.nonEmpty) Store.reportProblem(errors.map(_.describe).mkString("; "))
+                else {
+                    val request = TournamentModelRequest(
+                      name.now().trim,
+                      description.now().trim,
+                      Option(classification.now().trim).filter(_.nonEmpty),
+                      int(poolSize),
+                      lateEntries.now(),
+                      design
+                    )
+                    val saving: Future[TournamentModel] = existing match {
+                        case Some(m) => ApiClient.updateTournamentModel(game.gameId, m.tournamentModelId, request)
+                        case None    => ApiClient.createTournamentModel(game.gameId, request)
+                    }
+                    Store.run(saving, busy)(saved => done(s"Saved ${saved.name}."))
+                }
+            ),
+            button(tpe := "button", cls := "link", "Cancel", onClick --> (_ => cancel()))
+          ),
+          ul(
+            aria.live := "polite",
+            children <-- problems.signal.map(
+              _.map(pr =>
+                  li(cls := (if (pr.warning) "notice" else "error"), (if (pr.warning) "Note: " else "") + pr.describe)
+              )
+            )
+          )
+        )
+    }
+
+    /** The stages of a design, each a form of its properties. */
     private def stageEditor(key: String, stages: Var[List[StageDraft]]): HtmlElement =
         div(
           children <-- stages.signal.map(_.zipWithIndex.map { (d, i) =>
@@ -910,6 +1121,9 @@ object Tournaments {
               fieldSet(
                 cls := "card",
                 legend(s"Stage ${i + 1}"),
+                tip("Stage name", "What the stage is called on the tournament's page. Blank numbers it.")(
+                  input(controlled(value <-- d.name.signal, onInput.mapToValue --> d.name))
+                ),
                 div(
                   cls := "row",
                   field(
@@ -939,22 +1153,20 @@ object Tournaments {
                     )
                   )
                 ),
-                num("Pool size", d.poolSize, "How many in each pool. Blank is one match's worth of seats."),
+                num("Pool size", d.poolSize, "How many in each pool. Blank is the tournament's default pool size."),
                 box("Brackets", d.brackets),
                 num("Demote at rank", d.demote, "This rank and worse drop a stratum. Blank for nobody."),
                 num("Promote at rank", d.promote, "This rank and better rise a stratum. Blank for nobody."),
                 num("Lowest stratum", d.minStratum, "Dropping below it eliminates. Blank for no bottom."),
                 num("Highest stratum", d.maxStratum, "Nobody rises above it. Blank for no top."),
-                box("Ties allowed", d.allowTies),
                 num("Points for a place", d.points, "Points for each opponent ranked below."),
                 num("Points for a draw", d.pointsForDraw, "Points for each opponent tied with."),
                 box("50% bonus for first", d.pointsBonus),
                 box("Rotate roles", d.rotateRoles),
-                num(
-                  "Matches at once",
-                  d.concurrent,
-                  "How many of a round robin's matches one participant plays in a round."
-                ),
+                tip(
+                  "All matches in one round",
+                  "A round-robin pool plays all of its matches in one round, rather than each player one match a round."
+                )(box("Concurrent rounds", d.concurrentRounds)),
                 box("Strict strata", d.strictStrata),
                 box("Tie-breaker stage", d.tieBreakerStage),
                 field(
@@ -965,21 +1177,10 @@ object Tournaments {
                     SeedPolicy.values.toSeq.map(s => option(value := s.code, s.label))
                   )
                 ),
-                field(
-                  "Ties broken by",
-                  select(
-                    onChange.mapToValue --> (c => d.tiebreaker.set(Tiebreaker.fromCode(c))),
-                    value <-- d.tiebreaker.signal.map(_.code),
-                    Tiebreaker.values.toSeq.map(t => option(value := t.code, t.label))
-                  )
-                ),
-                tip("Round length (hours)", "Blank to use the tournament's.")(
-                  input(
-                    tpe := "number",
-                    inputMode := "decimal",
-                    controlled(value <-- d.hours.signal, onInput.mapToValue --> d.hours)
-                  )
-                ),
+                tip(
+                  "Rubber match",
+                  "Two players level on points play one more match, in a game of two roles. Otherwise scores decide."
+                )(box("Rubber match breaks ties", d.rubberMatch)),
                 button(
                   tpe := "button",
                   cls := "link",

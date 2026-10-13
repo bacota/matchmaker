@@ -151,19 +151,8 @@ class MatchServiceSpec extends PropertySuite {
             tournament <-
                 if (fromChallenge) IO.pure(None)
                 else
-                    new TournamentRepo(session)
-                        .create(
-                          Tournament(
-                            game.gameId,
-                            TournamentId.unassigned,
-                            "tournament",
-                            "",
-                            creator.getOrElse(player.playerId),
-                            com.vivi.matchmaker.model.tournament.StandardDesigns.eliminationMatch,
-                            None,
-                            TournamentSettings()
-                          )
-                        )
+                    TournamentFixtures
+                        .tournament(session, game, creator.getOrElse(player.playerId))
                         .map(t => Some(t.tournamentId))
             matchId = MatchId(matchIdStr)
             made = Match(

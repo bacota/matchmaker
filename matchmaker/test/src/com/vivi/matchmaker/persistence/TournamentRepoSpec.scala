@@ -7,19 +7,34 @@ import munit.FunSuite
 import skunk.Session
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.{StandardDesigns, Tournament as Progress, Env, TournamentGame}
+import cats.syntax.all._
+import com.vivi.matchmaker.model.tournament.{ModelSeed, StandardDesigns}
 
 /** The tournament tables (V52) through their repositories, against the local database. */
 class TournamentRepoSpec extends FunSuite with QuietTests {
 
-    private case class Fixture(game: Game, owner: Player, other: Player)
+    private case class Fixture(game: Game, owner: Player, other: Player, model: TournamentModel)
+
+    private val singleElimination = StandardDesigns.models(2).find(_.key == "single-elimination").get
+
+    private def requestOf(seed: ModelSeed): TournamentModelRequest =
+        TournamentModelRequest(
+          seed.name,
+          seed.description,
+          Some(seed.classification),
+          seed.poolSize,
+          design = seed.design
+        )
 
     private def fixture(session: Session[IO], gameType: GameType = GameType.Plain): IO[Fixture] =
         for {
             game <- new GameRepo[String](session).create(Generators.genGame(gameType).sample.get)
             owner <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
             other <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
-        } yield Fixture(game, owner, other)
+            models = new TournamentModelRepo(session)
+            id <- models.create(game.gameId, requestOf(singleElimination))
+            model <- models.read(game.gameId, id).map(_.get)
+        } yield Fixture(game, owner, other, model)
 
     private def tournamentIn(f: Fixture): Tournament =
         Tournament(
@@ -28,54 +43,102 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
           "Spring open",
           "description",
           f.owner.playerId,
-          StandardDesigns.build("single-elimination", 2, None).toOption.get,
-          Some("single-elimination"),
+          f.model.tournamentModelId,
+          2,
           TournamentSettings(roundDuration = Some(Duration.ofHours(48)), minRating = Some(1200), maxTurns = Some(5))
         )
 
-    private def run[A](body: Session[IO] => IO[A]): A = TestSession.resource.use(body).unsafeRunSync()
+    /** A tournament made from the fixture's model, as `TournamentService.create` makes one: the row, its stages and its
+      * root pool.
+      */
+    private def made(session: Session[IO], f: Fixture): IO[Tournament] =
+        for {
+            t <- new TournamentRepo(session).create(tournamentIn(f))
+            _ <- new StageRepo(session).copy(f.game.gameId, t.tournamentId, f.model.design)
+            _ <- new PoolRepo(session).createRoot(f.game.gameId, t.tournamentId)
+        } yield t
 
-    test("a tournament's settings and design survive a save, an update and a read") {
-        val (created, read, updated) = run { session =>
+    /** `body` in one transaction, as the services run every change: a model or tournament and its stages are written
+      * before each names the other, which the deferred keys between them allow only within one.
+      */
+    private def run[A](body: Session[IO] => IO[A]): A =
+        TestSession.resource.use(session => session.transaction.use(_ => body(session))).unsafeRunSync()
+
+    test("a model of every standard format is read back as the design it was written with, inner designs and all") {
+        val (written, read, offered) = run { session =>
+            val repo = new TournamentModelRepo(session)
+            val seeds = StandardDesigns.models(2)
+            for {
+                game <- new GameRepo[String](session).create(Generators.genGame().sample.get)
+                ids <- seeds.traverse(seed => repo.create(game.gameId, requestOf(seed)))
+                read <- ids.traverse(id => repo.read(game.gameId, id))
+                offered <- repo.listOffered(game.gameId)
+            } yield (seeds, read.flatten, offered)
+        }
+        assertEquals(read.map(_.design), written.map(_.design))
+        assertEquals(read.map(_.poolSize), written.map(_.poolSize))
+        // Only the formats themselves are offered: their inner designs are models of their own, unlisted.
+        assertEquals(offered.map(_.name).sorted, written.map(_.name).sorted)
+    }
+
+    test("a model is edited whole, and removed with its inner models, but not while a tournament is made from it") {
+        val ladder = StandardDesigns.models(2).find(_.key == "ladder").get
+        val (f, edited) = run { session =>
+            val repo = new TournamentModelRepo(session)
+            for {
+                f <- fixture(session)
+                _ <- repo.update(f.game.gameId, f.model.tournamentModelId, requestOf(ladder))
+                edited <- repo.read(f.game.gameId, f.model.tournamentModelId)
+                _ <- made(session, f)
+            } yield (f, edited)
+        }
+        // In a transaction of its own, since the refusal aborts it.
+        val refused = TestSession.resource
+            .use(session =>
+                session.transaction.use(_ =>
+                    new TournamentModelRepo(session).delete(f.game.gameId, f.model.tournamentModelId)
+                )
+            )
+            .attempt
+            .unsafeRunSync()
+        val removed = run { session =>
+            val repo = new TournamentModelRepo(session)
+            for {
+                lone <- repo.create(f.game.gameId, requestOf(singleElimination))
+                _ <- repo.delete(f.game.gameId, lone)
+                removed <- repo.listOffered(f.game.gameId)
+            } yield removed
+        }
+        assertEquals(edited.map(_.design), Some(ladder.design))
+        assert(refused.isLeft, refused)
+        assertEquals(removed.map(_.name), List("Ladder"))
+    }
+
+    test("a tournament's settings survive a save, an update and a read, and its stages are its model's design") {
+        val (created, read, updated, design, model) = run { session =>
             val repo = new TournamentRepo(session)
             for {
                 f <- fixture(session)
-                created <- repo.create(tournamentIn(f))
+                created <- made(session, f)
                 read <- repo.read(f.game.gameId, created.tournamentId)
                 changed = created.copy(
                   name = "Autumn open",
                   status = TournamentStatus.Running,
+                  defaultPoolSize = 4,
                   settings = created.settings.copy(autoRounds = true, roundDuration = None, maxRating = Some(2000)),
-                  startedAt = Some(Instant.parse("2026-10-10T10:00:00Z")),
-                  roundDeadline = Some(Instant.parse("2026-10-12T10:00:00Z"))
+                  startedAt = Some(Instant.parse("2026-10-10T10:00:00Z"))
                 )
                 _ <- repo.update(changed)
                 updated <- repo.readForUpdate(f.game.gameId, created.tournamentId)
-            } yield (created, read, updated)
+                design <- new StageRepo(session).design(f.game.gameId, created.tournamentId)
+            } yield (created, read, updated, design, f.model.design)
         }
         assertEquals(read, Some(created))
         assertEquals(updated.map(_.name), Some("Autumn open"))
         assertEquals(updated.map(_.status), Some(TournamentStatus.Running))
+        assertEquals(updated.map(_.defaultPoolSize), Some(4))
         assertEquals(updated.map(_.settings.roundDuration), Some(None))
-        assertEquals(updated.flatMap(_.roundDeadline), Some(Instant.parse("2026-10-12T10:00:00Z")))
-        assertEquals(updated.map(_.design), Some(created.design))
-    }
-
-    test("a tournament's state is absent before it starts, and is read back as it was written") {
-        val (before, after, written) = run { session =>
-            val repo = new TournamentRepo(session)
-            for {
-                f <- fixture(session)
-                created <- repo.create(tournamentIn(f))
-                before <- repo.readState(f.game.gameId, created.tournamentId)
-                env = Env(created.design, TournamentGame.of(f.game), Map(1L -> 1600, 2L -> 1500, 3L -> 1400))
-                state = Progress.start(List(1L, 2L, 3L), env)
-                _ <- repo.writeState(f.game.gameId, created.tournamentId, state)
-                after <- repo.readState(f.game.gameId, created.tournamentId)
-            } yield (before, after, state)
-        }
-        assertEquals(before, None)
-        assertEquals(after, Some(written))
+        assertEquals(design, Some(model))
     }
 
     test("entrants are listed in the order they entered, with characters, and can withdraw and come back") {
@@ -83,7 +146,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             val repo = new EntrantRepo(session)
             for {
                 f <- fixture(session, GameType.Character)
-                t <- new TournamentRepo(session).create(tournamentIn(f))
+                t <- made(session, f)
                 character <- new CharacterRepo[String](session).create(
                   Generators.genCharacter(f.game.gameId, Some(f.other.playerId)).sample.get
                 )
@@ -120,7 +183,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             val repo = new TournamentInvitationRepo(session)
             for {
                 f <- fixture(session)
-                t <- new TournamentRepo(session).create(tournamentIn(f))
+                t <- made(session, f)
                 _ <- repo.invite(f.game.gameId, t.tournamentId, f.other.playerId)
                 _ <- repo.invite(f.game.gameId, t.tournamentId, f.other.playerId)
                 invited <- repo.isInvited(f.game.gameId, t.tournamentId, f.other.playerId)
@@ -138,7 +201,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
         val (mine, theirs, stranger) = run { session =>
             for {
                 f <- fixture(session)
-                t <- new TournamentRepo(session).create(tournamentIn(f))
+                t <- made(session, f)
                 _ <- new TournamentInvitationRepo(session).invite(f.game.gameId, t.tournamentId, f.other.playerId)
                 nobody <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
                 mine <- new TournamentRepo(session).listForPlayer(f.owner.playerId)
@@ -150,79 +213,6 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
         assertEquals(mine, theirs)
         assertEquals(mine.size, 1)
         assertEquals(stranger, 0)
-    }
-
-    test("a round's matches and seats are written, claimed, chosen for, and found again by the match they became") {
-        val (round, claimed, chosen, found, choosing) = run { session =>
-            val matches = new TournamentMatchRepo(session)
-            for {
-                f <- fixture(session)
-                t <- new TournamentRepo(session).create(tournamentIn(f))
-                entrants = new EntrantRepo(session)
-                a <- entrants.create(f.game.gameId, GameType.Plain, t.tournamentId, f.owner.playerId, None, 1500)
-                b <- entrants.create(f.game.gameId, GameType.Plain, t.tournamentId, f.other.playerId, None, 1500)
-                at = Instant.parse("2026-10-11T00:00:00Z")
-                _ <- matches.insert(
-                  List(
-                    TournamentMatch(
-                      f.game.gameId,
-                      t.tournamentId,
-                      1,
-                      0,
-                      1,
-                      TournamentMatchStatus.Choosing,
-                      tiesAllowed = false,
-                      None,
-                      List(
-                        TournamentSeat(a.entrantId, None, Some(0), Some(at)),
-                        TournamentSeat(b.entrantId, None, Some(1))
-                      )
-                    )
-                  )
-                )
-                choosing <- matches.choosingFor(f.owner.playerId)
-                round <- matches.listRound(f.game.gameId, t.tournamentId, 1)
-                role = f.game.roles.head.gameRoleId
-                _ <- matches.updateSeat(
-                  f.game.gameId,
-                  t.tournamentId,
-                  1,
-                  0,
-                  round.head.seats.head.copy(gameRoleId = Some(role), chosenAt = Some(at))
-                )
-                chosen <- matches.readForUpdate(f.game.gameId, t.tournamentId, 1, 0)
-                matchId = MatchId(java.util.UUID.randomUUID().toString)
-                _ <- new MatchRepo(session).createForTournament(
-                  Generators
-                      .genMatch(f.game.gameId, matchId, None, f.owner.playerId)
-                      .sample
-                      .get,
-                  t.tournamentId
-                )
-                _ <- matches.setStatus(
-                  f.game.gameId,
-                  t.tournamentId,
-                  1,
-                  0,
-                  TournamentMatchStatus.Started,
-                  Some(matchId)
-                )
-                claimed <- matches.read(f.game.gameId, t.tournamentId, 1, 0)
-                found <- matches.findByMatch(f.game.gameId, matchId)
-            } yield (
-              round,
-              claimed,
-              chosen,
-              found.map(x => (x._1 == t.tournamentId, x._2, x._3)),
-              choosing.map(c => (c._3, c._4))
-            )
-        }
-        assertEquals(round.size, 1)
-        assertEquals(round.head.seats.map(_.chooseOrder), List(Some(0), Some(1)))
-        assertEquals(choosing, List((1, 0)))
-        assert(chosen.exists(_.seats.head.gameRoleId.isDefined))
-        assertEquals(claimed.map(_.status), Some(TournamentMatchStatus.Started))
-        assertEquals(found, Some((true, 1, 0)))
     }
 
     test("a match must come from a challenge or a tournament, and not both".tag(Quiet)) {

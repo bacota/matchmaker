@@ -86,8 +86,9 @@ class SimulatorSpec extends ScalaCheckSuite {
         }
     }
 
-    test("heats need a pool size, and with one they finish") {
-        assert(StandardDesigns.build("heats", 2, None).isLeft)
+    test("heats take their pool size from the tournament where they set none, and with one they finish") {
+        assert(StandardDesigns.build("heats", 2, None).exists(_.stages.head.poolSize.isEmpty))
+        assert(StandardDesigns.build("heats", 2, Some(0)).isLeft)
         val played = play(standard("heats", poolSize = Some(4)), 12, random(7))
         assert(played.state.finished)
         assertEquals(played.ranking.size, 12)
@@ -179,7 +180,7 @@ class SimulatorSpec extends ScalaCheckSuite {
 
     test("a rubber breaks a tie in a two-player round robin, in a round of its own") {
         val design = TournamentDesign(
-          List(StageDesign(brackets = false, poolSize = Some(2), demote = None, tiebreaker = Tiebreaker.Rubber))
+          List(StageDesign(brackets = false, poolSize = Some(2), demote = None, rubberMatch = true))
         )
         // A draw, then whatever the rubber says: here the favourite.
         var calls = 0

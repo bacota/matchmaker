@@ -21,6 +21,9 @@ create table tournament_model(
     name               TEXT   NOT NULL,
     description        TEXT   NOT NULL DEFAULT '',
     classification     TEXT,
+    -- The default pool size the create form suggests, which the creator may change. NULL suggests the
+    -- game's R.
+    pool_size          int CHECK (pool_size > 0),
     first_stage_model_id BIGINT not null,
     late_entries       BOOLEAN NOT NULL DEFAULT false,
     create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -35,8 +38,13 @@ create table stage_model(
     stage_model_id BIGINT  GENERATED ALWAYS AS IDENTITY,
     -- Which subtype it is: 'A' an atomic_stage_model, 'N' a nesting_stage_model.
     kind               CHAR(1) NOT NULL CHECK (kind IN ('A', 'N')),
+    -- How many entrants a pool of this stage holds, its groups' size for a nesting stage. NULL takes the
+    -- tournament's default_pool_size.
+    pool_size          int CHECK (pool_size > 0),
     name               TEXT   NOT NULL,
     description        TEXT   NOT NULL DEFAULT '',
+    -- Copied to stage.concurrent_rounds when a tournament is made from the model.
+    concurrent_rounds  boolean not null default false,
     repetitions       int,
     remaining_participants int,
     bracketed boolean not null default false,
@@ -75,7 +83,6 @@ create table atomic_stage_model(
     tournament_model_id      BIGINT not null,
     stage_model_id BIGINT not null,
     kind               CHAR(1) NOT NULL DEFAULT 'A' CHECK (kind = 'A'),
-    pool_size    int not null,
     rotate_roles boolean not null default false,
     PRIMARY KEY (game_id, tournament_model_id, stage_model_id),
     FOREIGN KEY (game_id, tournament_model_id, stage_model_id, kind)
@@ -120,6 +127,8 @@ create table tournament(
     public        boolean not null default true,
     entries_per_player int not null default 1,
     max_turns int,
+    -- The size of a pool of any stage that does not set its own.
+    default_pool_size  int NOT NULL CHECK (default_pool_size > 0),
     round_duration interval,
     current_round int,
     stop_requested boolean not null default false,
@@ -148,6 +157,9 @@ create table stage(
     stage_id BIGINT  NOT NULL GENERATED ALWAYS AS IDENTITY,
     -- Which subtype it is: 'A' an atomic_stage, 'N' a nesting_stage.
     kind               CHAR(1) NOT NULL CHECK (kind IN ('A', 'N')),
+    -- How many entrants a pool of this stage holds, its groups' size for a nesting stage. NULL takes the
+    -- tournament's default_pool_size.
+    pool_size          int CHECK (pool_size > 0),
     name               TEXT   NOT NULL,
     description        TEXT   NOT NULL DEFAULT '',
     concurrent_rounds  boolean not null default false,     
@@ -190,7 +202,6 @@ create table atomic_stage(
     tournament_id      BIGINT not null,
     stage_id BIGINT not null,
     kind               CHAR(1) NOT NULL DEFAULT 'A' CHECK (kind = 'A'),
-    pool_size    int not null,
     rotate_roles boolean not null default false,
     PRIMARY KEY (game_id, tournament_id, stage_id),
     FOREIGN KEY (game_id, tournament_id, stage_id, kind) references stage (game_id, tournament_id, stage_id, kind)

@@ -1,6 +1,5 @@
 package com.vivi.matchmaker.model.tournament
 
-import java.time.Duration
 import upickle.default.{ReadWriter, macroRW, readwriter}
 
 /** How designs and tournament states are written as JSON: a design as the tournament's creator sends it and the
@@ -12,9 +11,6 @@ import upickle.default.{ReadWriter, macroRW, readwriter}
   * holds only what differs from them.
   */
 object TournamentCodecs {
-
-    /** Seconds, as `Json` writes every duration. */
-    private given durationRW: ReadWriter[Duration] = readwriter[Long].bimap(_.getSeconds, Duration.ofSeconds)
 
     /** `{"until": 1}`, `{"times": 2}` or `"stopped"`: which kind of repetition, by which field is there. */
     given repetitionRW: ReadWriter[Repetition] = readwriter[ujson.Value].bimap(
@@ -32,7 +28,6 @@ object TournamentCodecs {
     )
 
     given seedPolicyRW: ReadWriter[SeedPolicy] = readwriter[String].bimap(_.code, SeedPolicy.fromCode)
-    given tiebreakerRW: ReadWriter[Tiebreaker] = readwriter[String].bimap(_.code, Tiebreaker.fromCode)
 
     // A design nests through its stages, so the two codecs refer to each other; lazy, so neither is
     // needed before both exist.

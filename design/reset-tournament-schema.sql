@@ -41,11 +41,12 @@ DROP TABLE IF EXISTS
 -- match, as V51 left it.
 -- CASCADE: participant's foreign keys to match lean on these, and go with them.
 DROP INDEX IF EXISTS match_game_id_challenge_id_match_id_idx, match_match_id_idx CASCADE;
+-- CASCADE: participant's foreign keys to match name these columns, and go with them.
 ALTER TABLE match
-    DROP COLUMN IF EXISTS tournament_id,
-    DROP COLUMN IF EXISTS pool_id,
-    DROP COLUMN IF EXISTS round,
-    DROP COLUMN IF EXISTS stage_id,
+    DROP COLUMN IF EXISTS tournament_id CASCADE,
+    DROP COLUMN IF EXISTS pool_id CASCADE,
+    DROP COLUMN IF EXISTS round CASCADE,
+    DROP COLUMN IF EXISTS stage_id CASCADE,
     DROP COLUMN IF EXISTS ties_allowed,
     DROP COLUMN IF EXISTS rubber,
     DROP COLUMN IF EXISTS status;
@@ -62,8 +63,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS match_game_id_challenge_id_idx ON match (game_
 -- participant and character_participant, as V51 left them.
 ALTER TABLE participant
     DROP COLUMN IF EXISTS challenge_id,
-    DROP COLUMN IF EXISTS tournament_id,
-    DROP COLUMN IF EXISTS entrant_id,
+    DROP COLUMN IF EXISTS tournament_id CASCADE,
+    DROP COLUMN IF EXISTS entrant_id CASCADE,
     DROP COLUMN IF EXISTS choose_order,
     DROP COLUMN IF EXISTS choose_started_at,
     DROP COLUMN IF EXISTS chosen_at,
@@ -71,8 +72,8 @@ ALTER TABLE participant
 ALTER TABLE participant ALTER COLUMN game_role_id SET NOT NULL;
 ALTER TABLE participant ALTER COLUMN elo_start SET NOT NULL;
 ALTER TABLE character_participant
-    DROP COLUMN IF EXISTS tournament_id,
-    DROP COLUMN IF EXISTS entrant_id;
+    DROP COLUMN IF EXISTS tournament_id CASCADE,
+    DROP COLUMN IF EXISTS entrant_id CASCADE;
 
 -- result: today's V52 adds `manual`.
 ALTER TABLE result DROP COLUMN IF EXISTS manual;

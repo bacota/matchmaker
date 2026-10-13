@@ -2,15 +2,29 @@ package com.vivi.matchmaker.model.tournament
 
 /** A standard tournament format (`tournament-design.md`, "Standard Tournament Designs"), as a design built for a game.
   *
-  * `twoRolesOnly` formats can only be played in a game of two required roles. `needsPoolSize` formats take a pool size
-  * from whoever creates the tournament.
+  * `twoRolesOnly` formats can only be played in a game of two required roles. `needsPoolSize` formats take their first
+  * stage's pool size from the tournament's default pool size, which whoever creates it may change. `classification` is
+  * the group a model of it is listed under where a tournament is created.
   */
 case class StandardDesign(
     key: String,
     name: String,
     description: String,
     twoRolesOnly: Boolean = false,
-    needsPoolSize: Boolean = false
+    needsPoolSize: Boolean = false,
+    classification: String = "Elimination"
+)
+
+/** A model to offer a game (V52): a standard format built for it, with the default pool size to suggest (`None`, the
+  * game's R) and the group it is listed under.
+  */
+case class ModelSeed(
+    key: String,
+    name: String,
+    description: String,
+    classification: String,
+    poolSize: Option[Int],
+    design: TournamentDesign
 )
 
 object StandardDesigns {
@@ -39,25 +53,48 @@ object StandardDesigns {
         "heats",
         "Heats with Single Elimination",
         "Round-robin heats seed a single elimination.",
-        needsPoolSize = true
+        needsPoolSize = true,
+        classification = "Pools, then elimination"
       ),
-      StandardDesign("ladder", "Ladder", "Play repeatedly; win to climb a rung, lose to drop one. Runs until stopped."),
+      StandardDesign(
+        "ladder",
+        "Ladder",
+        "Play repeatedly; win to climb a rung, lose to drop one. Runs until stopped.",
+        classification = "Ladder"
+      ),
       StandardDesign(
         "brazilian-repechage",
         "Brazilian Repechage",
         "Single elimination down to eight, then modified double elimination.",
         twoRolesOnly = true
       ),
-      StandardDesign("world-cup", "Soccer World Cup", "Group round robins, then single elimination."),
-      StandardDesign("fencing", "Fencing", "Pools whose winners go through to single elimination."),
-      StandardDesign("ncaa", "NCAA Football Style", "Large round-robin conferences, then single elimination.")
+      StandardDesign(
+        "world-cup",
+        "Soccer World Cup",
+        "Group round robins, then single elimination.",
+        classification = "Pools, then elimination"
+      ),
+      StandardDesign(
+        "fencing",
+        "Fencing",
+        "Pools whose winners go through to single elimination.",
+        classification = "Pools, then elimination"
+      ),
+      StandardDesign(
+        "ncaa",
+        "NCAA Football Style",
+        "Large round-robin conferences, then single elimination.",
+        classification = "Pools, then elimination"
+      )
     )
 
     def find(key: String): Option[StandardDesign] = all.find(_.key == key)
 
-    /** One match, no draws, and the loser drops a stratum: the building block of the elimination formats. */
+    /** One match, and the loser drops a stratum: the building block of the elimination formats. It is played in a pool
+      * of two, so it may not be drawn ([[Ties]]).
+      */
     val eliminationMatch: TournamentDesign =
-        TournamentDesign(List(StageDesign(allowTies = false, brackets = false, rotateRoles = false, demote = Some(2))))
+        TournamentDesign(List(StageDesign(brackets = false, rotateRoles = false, demote = Some(2))))
 
     private def singleEliminationStage(until: Int): StageDesign =
         StageDesign(repeat = Repetition.UntilRemaining(until), brackets = true, design = Some(eliminationMatch))
@@ -84,7 +121,7 @@ object StandardDesigns {
         minStratum = Some(-1),
         strictStrata = true,
         demote = None,
-        design = Some(TournamentDesign(List(StageDesign(allowTies = false, brackets = false, demote = None))))
+        design = Some(TournamentDesign(List(StageDesign(brackets = false, demote = None))))
       )
     )
 
@@ -92,7 +129,6 @@ object StandardDesigns {
         StageDesign(
           repeat = Repetition.UntilRemaining(2),
           poolSize = Some(2),
-          allowTies = false,
           brackets = true,
           demote = Some(2),
           minStratum = Some(-1),
@@ -103,12 +139,40 @@ object StandardDesigns {
     /** Single elimination as the second half of a format: with a third-place match in a two-role game. */
     private def knockout(r: Int): List[StageDesign] = if (r == 2) withConsolation else singleElimination
 
-    /** The design of a standard format for a game whose R is `r`, or why it cannot be built. */
+    /** `stage`, and every stage nested in it, with an explicit pool size of `r` wherever it set none. */
+    private def sized(stage: StageDesign, r: Int): StageDesign =
+        stage.copy(
+          poolSize = stage.poolSize.orElse(Some(r)),
+          design = stage.design.map(d => TournamentDesign(d.stages.map(sized(_, r))))
+        )
+
+    /** The models a game whose R is `r` is offered to begin with: every standard format that can be played in it. A
+      * format that takes its pool size from the tournament leaves its first stage unsized, and suggests a pool of `r +
+      * 2`; every other format suggests the game's R.
+      */
+    def models(r: Int): List[ModelSeed] =
+        all.flatMap { std =>
+            build(std.key, r, None).toOption.map { design =>
+                ModelSeed(
+                  std.key,
+                  std.name,
+                  std.description,
+                  std.classification,
+                  Option.when(std.needsPoolSize)(r + 2),
+                  design
+                )
+            }
+        }
+
+    /** The design of a standard format for a game whose R is `r`, or why it cannot be built. A format that takes its
+      * pool size from the tournament is built with `poolSize` as its first stage's, `None` for the tournament's
+      * default.
+      */
     def build(key: String, r: Int, poolSize: Option[Int]): Either[String, TournamentDesign] =
         find(key) match {
             case None                                    => Left(s"there is no standard design called '$key'")
             case Some(std) if std.twoRolesOnly && r != 2 => Left(s"${std.name} needs a game of exactly two players")
-            case Some(std) if std.needsPoolSize && poolSize.forall(_ < 1) => Left(s"${std.name} needs a pool size")
+            case Some(std) if std.needsPoolSize && poolSize.exists(_ < 1) => Left(s"${std.name} needs a pool size")
             case Some(_) =>
                 Right(TournamentDesign(key match {
                     case "single-elimination"             => singleElimination
@@ -125,12 +189,13 @@ object StandardDesigns {
                           )
                         )
                     case "heats" =>
-                        // A round robin rather than a bracket: its pools are as many as the field needs.
+                        // A round robin rather than a bracket: its pools are as many as the field needs. The
+                        // knockout after it is sized for the game, since the heats take the tournament's default.
                         StageDesign(
                           poolSize = poolSize,
                           brackets = false,
                           seedPolicy = SeedPolicy.Previous
-                        ) :: knockout(r)
+                        ) :: knockout(r).map(sized(_, r))
                     case "ladder" =>
                         List(
                           StageDesign(

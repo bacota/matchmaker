@@ -107,6 +107,7 @@ object Store {
         myTournaments.set(Seq.empty)
         tournamentChoices.set(Seq.empty)
         tournamentsByGame.set(Map.empty)
+        tournamentModelsByGame.set(Map.empty)
         tournament.set(None)
         // And what was last said about one. The stamp above would keep it from being read anyway;
         // this is so that nothing is held about a player who has gone, which is what the rest of
@@ -167,6 +168,7 @@ object Store {
         case MyTournaments, TournamentChoices
         case Tournaments(gameId: GameId)
         case OneTournament
+        case TournamentModels(gameId: GameId)
     }
 
     /* How each list's *latest* answer went: absent until one has come, `true` for an answer that
@@ -253,6 +255,11 @@ object Store {
 
     /** Each game's tournaments, for its screen, fetched as it is opened. */
     val tournamentsByGame: Var[Map[GameId, Seq[TournamentSummary]]] = Var(Map.empty)
+
+    /** Each game's tournament models (V52), for the form that creates a tournament and for its admins, fetched as its
+      * screen or that form is opened.
+      */
+    val tournamentModelsByGame: Var[Map[GameId, Seq[TournamentModel]]] = Var(Map.empty)
 
     /** The tournament whose page is showing: emptied as another is opened, so one tournament's page never shows
       * another's entries while it loads.
@@ -662,6 +669,7 @@ object Store {
                 reloadTournament(gameId, tournamentId)
             case Page.OneGame(gameId) =>
                 reloadTournaments(gameId)
+                reloadTournamentModels(gameId)
                 refreshChallenges(gameId)
                 refreshCharacters(gameId)
                 refreshGameAdmins(gameId)
@@ -678,6 +686,9 @@ object Store {
                 characterProfile.set(None)
                 publicActive.set(Seq.empty)
                 reloadCharacterMatches(character)
+            // The form chooses one of the game's models, so they are asked for as it opens.
+            case Page.NewTournament(gameId) =>
+                reloadTournamentModels(gameId)
             case _ => ()
         }
     }
@@ -1031,6 +1042,11 @@ object Store {
 
     def reloadTournamentChoices(): Future[Unit] =
         reload(ApiClient.tournamentChoices(), Fetch.TournamentChoices)(tournamentChoices.set)
+
+    def reloadTournamentModels(gameId: GameId): Future[Unit] =
+        reload(ApiClient.tournamentModels(gameId), Fetch.TournamentModels(gameId))(found =>
+            tournamentModelsByGame.update(_.updated(gameId, found))
+        )
 
     def reloadTournaments(gameId: GameId): Future[Unit] =
         reload(ApiClient.tournaments(gameId), Fetch.Tournaments(gameId))(found =>
