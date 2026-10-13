@@ -1,27 +1,33 @@
+-- The models every game's tournaments are made from: the standard formats defined in the code
+-- (StandardModels), written here by a site admin's sync, and shown in a game only where
+-- tournament_model_game says so. Each is named by a descriptive id, 'world-cup' say; an inner design
+-- of a nesting stage is a model of its own, named after the stage, 'world-cup/knockout'.
 create table tournament_model(
-    game_id            INT    NOT NULL REFERENCES game,
-    tournament_model_id      BIGINT GENERATED ALWAYS AS IDENTITY,
+    tournament_model_id      TEXT NOT NULL,
+    -- The version of its definition in the code that was written here last: a sync rewrites a model
+    -- whose version in the code is greater.
+    version            INT NOT NULL DEFAULT 1 CHECK (version > 0),
     name               TEXT   NOT NULL,
     description        TEXT   NOT NULL DEFAULT '',
     classification     TEXT,
     -- The default pool size the create form suggests, which the creator may change. NULL suggests the
     -- game's R.
     pool_size          int CHECK (pool_size > 0),
-    first_stage_model_id BIGINT not null,
+    first_stage_model_id TEXT not null,
     late_entries       BOOLEAN NOT NULL DEFAULT false,
-    -- False once an admin has deactivated it: no longer offered where a tournament is created, kept
-    -- because a tournament made from it has entrants. Its stages and inner models are deactivated with it.
+    -- False once the code no longer defines it: offered no longer, and kept because a tournament made
+    -- from it has entrants. Its stages and inner models are deactivated with it.
     active             BOOLEAN NOT NULL DEFAULT true,
     create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (game_id, tournament_model_id)
+    PRIMARY KEY (tournament_model_id)
 );
 
 
 create table stage_model(
-    game_id            INT    NOT NULL REFERENCES game,
-    tournament_model_id      BIGINT not null,
-    stage_model_id BIGINT  GENERATED ALWAYS AS IDENTITY,
+    tournament_model_id      TEXT not null,
+    -- Descriptive within its model: 'groups', 'knockout', or 'stage-2' for a stage with no name.
+    stage_model_id TEXT not null,
     -- Which subtype it is: 'A' an atomic_stage_model, 'N' a nesting_stage_model.
     kind               CHAR(1) NOT NULL CHECK (kind IN ('A', 'N')),
     -- How many entrants a pool of this stage holds, its groups' size for a nesting stage. NULL takes the
@@ -45,51 +51,61 @@ create table stage_model(
     strict_strata boolean not null default true,
     tie_breaker_stage boolean not null default false,
     seed_policy text not null check (seed_policy in ('CONST', 'ELO', 'PREV', 'WINNER')),
-    current_stage_model_id BIGINT,
+    current_stage_model_id TEXT,
     -- False with its model's active.
     active             BOOLEAN NOT NULL DEFAULT true,
     create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (game_id, tournament_model_id, stage_model_id),
+    PRIMARY KEY (tournament_model_id, stage_model_id),
     -- For the subtypes' foreign keys, which name the kind as well.
-    UNIQUE (game_id, tournament_model_id, stage_model_id, kind),
-    FOREIGN KEY (game_id, tournament_model_id) references tournament_model,
-    FOREIGN KEY (game_id, tournament_model_id, current_stage_model_id) references stage_model,
+    UNIQUE (tournament_model_id, stage_model_id, kind),
+    FOREIGN KEY (tournament_model_id) references tournament_model,
+    FOREIGN KEY (tournament_model_id, current_stage_model_id) references stage_model,
     CHECK (repetitions is null or remaining_participants is null) -- if both are null then stage is repeated until manually stopped by owner of tournament
 );
 
 -- Deferred: a model and its stages reference each other, so they are inserted in one transaction and
 -- checked at its commit.
-alter table tournament_model add foreign key (game_id, tournament_model_id, first_stage_model_id) references stage_model
+alter table tournament_model add foreign key (tournament_model_id, first_stage_model_id) references stage_model
     DEFERRABLE INITIALLY DEFERRED;
-create index on tournament_model (game_id, tournament_model_id, first_stage_model_id);
+create index on tournament_model (tournament_model_id, first_stage_model_id);
 
-create index on stage_model(game_id, tournament_model_id, current_stage_model_id) where current_stage_model_id is not null;
+create index on stage_model(tournament_model_id, current_stage_model_id) where current_stage_model_id is not null;
 
 create table atomic_stage_model(
-    game_id            INT    NOT NULL REFERENCES game,
-    tournament_model_id      BIGINT not null,
-    stage_model_id BIGINT not null,
+    tournament_model_id      TEXT not null,
+    stage_model_id TEXT not null,
     kind               CHAR(1) NOT NULL DEFAULT 'A' CHECK (kind = 'A'),
     rotate_roles boolean not null default false,
-    PRIMARY KEY (game_id, tournament_model_id, stage_model_id),
-    FOREIGN KEY (game_id, tournament_model_id, stage_model_id, kind)
-        references stage_model (game_id, tournament_model_id, stage_model_id, kind)
+    PRIMARY KEY (tournament_model_id, stage_model_id),
+    FOREIGN KEY (tournament_model_id, stage_model_id, kind)
+        references stage_model (tournament_model_id, stage_model_id, kind)
 );
 
 create table nesting_stage_model(
-    game_id            INT    NOT NULL REFERENCES game,
-    tournament_model_id      BIGINT not null,
-    stage_model_id BIGINT not null,
+    tournament_model_id      TEXT not null,
+    stage_model_id TEXT not null,
     kind               CHAR(1) NOT NULL DEFAULT 'N' CHECK (kind = 'N'),
-    inner_tournament_model_id BIGINT NOT NULL,
-    PRIMARY KEY (game_id, tournament_model_id, stage_model_id),
-    FOREIGN KEY (game_id, inner_tournament_model_id) references tournament_model,
-    FOREIGN KEY (game_id, tournament_model_id, stage_model_id, kind)
-        references stage_model (game_id, tournament_model_id, stage_model_id, kind)
+    inner_tournament_model_id TEXT NOT NULL,
+    PRIMARY KEY (tournament_model_id, stage_model_id),
+    FOREIGN KEY (inner_tournament_model_id) references tournament_model,
+    FOREIGN KEY (tournament_model_id, stage_model_id, kind)
+        references stage_model (tournament_model_id, stage_model_id, kind)
 );
 
-create index on nesting_stage_model(game_id, tournament_model_id, inner_tournament_model_id);
+create index on nesting_stage_model(inner_tournament_model_id);
+
+-- Which models a game offers where a tournament is created, as its admins choose. A tournament made
+-- from a model the game stops offering keeps it.
+create table tournament_model_game(
+    game_id            INT    NOT NULL REFERENCES game,
+    tournament_model_id TEXT  NOT NULL REFERENCES tournament_model,
+    create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (game_id, tournament_model_id)
+);
+
+-- For the foreign key: without it, deleting a model would scan every game's choices.
+create index on tournament_model_game (tournament_model_id);
 
 
 create table tournament(
@@ -101,9 +117,9 @@ create table tournament(
     owner              BIGINT NOT NULL REFERENCES player,
     status             TEXT   NOT NULL DEFAULT 'draft'
                        CHECK (status IN ('draft', 'open', 'running', 'finished', 'cancelled')),
-    -- The model it was made from: every tournament is made from one of its game's models, which only
-    -- an admin creates. Its stages are copied, so editing the model later does not change it.
-    tournament_model_id BIGINT NOT NULL,
+    -- The model it was made from: one its game offered then. Its stages are copied, so a sync that
+    -- rewrites the model later does not change it.
+    tournament_model_id TEXT NOT NULL,
     concurrent_rounds  boolean not null default false, 
     first_stage_id BIGINT not null,
     late_entries       BOOLEAN NOT NULL DEFAULT false,
@@ -128,7 +144,7 @@ create table tournament(
     create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, tournament_id),
-    FOREIGN KEY (game_id, tournament_model_id) REFERENCES tournament_model,
+    FOREIGN KEY (tournament_model_id) REFERENCES tournament_model,
     CHECK (min_rating IS NULL OR max_rating IS NULL OR min_rating <= max_rating),
     CHECK (entries_per_player >= 1),
     CHECK (max_turns > 0)
@@ -136,7 +152,7 @@ create table tournament(
 
 CREATE INDEX tournament_owner ON tournament (owner);
 -- For the foreign key: without it, deleting a model would scan every tournament.
-CREATE INDEX tournament_model_used ON tournament (game_id, tournament_model_id);
+CREATE INDEX tournament_model_used ON tournament (tournament_model_id);
 
 
 create table stage(
@@ -544,15 +560,15 @@ create index on character_participant (game_id, tournament_id, entrant_id, chara
 -- reference each other and one has to be inserted first. Deleting a subtype row while its supertype
 -- remains then fails at commit too.
 
-ALTER TABLE atomic_stage_model ADD UNIQUE (game_id, tournament_model_id, stage_model_id, kind);
-ALTER TABLE nesting_stage_model ADD UNIQUE (game_id, tournament_model_id, stage_model_id, kind);
+ALTER TABLE atomic_stage_model ADD UNIQUE (tournament_model_id, stage_model_id, kind);
+ALTER TABLE nesting_stage_model ADD UNIQUE (tournament_model_id, stage_model_id, kind);
 ALTER TABLE stage_model
     ADD COLUMN atomic_kind CHAR(1) GENERATED ALWAYS AS (CASE WHEN kind = 'A' THEN kind END) STORED,
     ADD COLUMN nesting_kind CHAR(1) GENERATED ALWAYS AS (CASE WHEN kind = 'N' THEN kind END) STORED,
-    ADD FOREIGN KEY (game_id, tournament_model_id, stage_model_id, atomic_kind)
-        REFERENCES atomic_stage_model (game_id, tournament_model_id, stage_model_id, kind) DEFERRABLE INITIALLY DEFERRED,
-    ADD FOREIGN KEY (game_id, tournament_model_id, stage_model_id, nesting_kind)
-        REFERENCES nesting_stage_model (game_id, tournament_model_id, stage_model_id, kind) DEFERRABLE INITIALLY DEFERRED;
+    ADD FOREIGN KEY (tournament_model_id, stage_model_id, atomic_kind)
+        REFERENCES atomic_stage_model (tournament_model_id, stage_model_id, kind) DEFERRABLE INITIALLY DEFERRED,
+    ADD FOREIGN KEY (tournament_model_id, stage_model_id, nesting_kind)
+        REFERENCES nesting_stage_model (tournament_model_id, stage_model_id, kind) DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE atomic_stage ADD UNIQUE (game_id, tournament_id, stage_id, kind);
 ALTER TABLE nesting_stage ADD UNIQUE (game_id, tournament_id, stage_id, kind);

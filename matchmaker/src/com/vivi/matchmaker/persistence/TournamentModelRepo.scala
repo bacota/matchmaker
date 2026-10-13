@@ -9,13 +9,14 @@ import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{StageDesign, TournamentDesign}
 
-/** Reads and writes the models a game's admins offer (V52): `tournament_model`, and its stages in `stage_model` with
-  * their atomic and nesting rows.
+/** Reads and writes the models every game's tournaments are made from (V52): `tournament_model`, its stages in
+  * `stage_model` with their atomic and nesting rows, and `tournament_model_game`, the models each game offers.
   *
   * A model's design is its stages, chained from `first_stage_model_id` along each stage's `current_stage_model_id`. A
   * nesting stage's pools play another model, named by `nesting_stage_model.inner_tournament_model_id`: when a design is
-  * written, each inner design becomes a model of its own with no classification, which is what keeps it out of the list
-  * a tournament is created from. Editing, deactivating or deleting a model takes its inner models with it.
+  * written, each inner design becomes a model of its own with no classification, which is what keeps it out of every
+  * list, named after its stage -- `world-cup/stage-2`. Rewriting, deactivating or deleting a model takes its inner
+  * models with it.
   *
   * Opens no transaction of its own; that is the calling service's job. Writing a model writes it and its stages before
   * each points at the other, which the deferred foreign keys between them allow within one transaction.
@@ -24,200 +25,257 @@ class TournamentModelRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val modelId = SkunkIdCodecs.tournamentModelId
 
-    private type ModelRow = (TournamentModelId, String, String, Option[String], Option[Int], Boolean, Long, Boolean)
-    private val modelRow: Decoder[ModelRow] = modelId *: text *: text *: text.opt *: int4.opt *: bool *: int8 *: bool
+    private type ModelRow =
+        (TournamentModelId, Int, String, String, Option[String], Option[Int], Boolean, String, Boolean)
+    private val modelRow: Decoder[ModelRow] =
+        modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool
 
-    private val selectModels: Query[GameId, ModelRow] =
-        sql"""SELECT tournament_model_id, name, description, classification, pool_size, late_entries, first_stage_model_id,
-                 active
-          FROM tournament_model WHERE game_id = $gameId""".query(modelRow)
+    private val modelColumns =
+        "tournament_model_id, version, name, description, classification, pool_size, late_entries, " +
+            "first_stage_model_id, active"
 
-    private val selectModelForUpdate: Query[(GameId, TournamentModelId), ModelRow] =
-        sql"""SELECT tournament_model_id, name, description, classification, pool_size, late_entries, first_stage_model_id,
-                 active
-          FROM tournament_model WHERE game_id = $gameId AND tournament_model_id = $modelId FOR UPDATE""".query(modelRow)
+    private val selectModels: Query[Void, ModelRow] =
+        sql"SELECT #$modelColumns FROM tournament_model".query(modelRow)
 
-    private val selectStages: Query[GameId, (Long, StageRows.Row)] =
+    private val selectStages: Query[Void, (TournamentModelId, StageRows.Row[String])] =
         sql"""SELECT s.tournament_model_id, s.stage_model_id,
                  #${StageRows.columns("current_stage_model_id", "inner_tournament_model_id")}
           FROM stage_model s
-          LEFT JOIN atomic_stage_model a USING (game_id, tournament_model_id, stage_model_id)
-          LEFT JOIN nesting_stage_model n USING (game_id, tournament_model_id, stage_model_id)
-          WHERE s.game_id = $gameId""".query(int8 *: StageRows.row)
+          LEFT JOIN atomic_stage_model a USING (tournament_model_id, stage_model_id)
+          LEFT JOIN nesting_stage_model n USING (tournament_model_id, stage_model_id)""".query(
+          modelId *: StageRows.row(text)
+        )
 
-    /** Every model of the game, with its design, offered or not. One read of the models and one of all their stages,
-      * however many there are.
+    /** Every model, with its design, offered or not, inner ones and deactivated ones included. One read of the models
+      * and one of all their stages, however many there are: they are few, and every game's.
       */
-    private def all(game: GameId): IO[List[TournamentModel]] =
-        (session.execute(selectModels)(game), session.execute(selectStages)(game)).tupled.map { (models, stages) =>
-            val byModel: Map[Long, Map[Long, StageRows.Row]] =
+    private def all: IO[List[TournamentModel]] =
+        (session.execute(selectModels), session.execute(selectStages)).tupled.map { (models, stages) =>
+            val byModel: Map[TournamentModelId, Map[String, StageRows.Row[String]]] =
                 stages.groupBy(_._1).view.mapValues(_.map((_, r) => r.id -> r).toMap).toMap
-            val firstOf = models.map(m => m._1.value -> m._7).toMap
-            def designOf(model: Long, depth: Int): TournamentDesign =
+            val firstOf = models.map(m => m._1 -> m._8).toMap
+            def designOf(model: TournamentModelId, depth: Int): TournamentDesign =
                 if (depth > 8) throw new IllegalStateException(s"model $model nests inside itself")
                 else
                     StageRows.chain(
                       byModel.getOrElse(model, Map.empty),
                       firstOf.getOrElse(model, throw new IllegalStateException(s"model $model is not there")),
-                      inner => designOf(inner, depth + 1)
+                      inner => designOf(TournamentModelId(inner), depth + 1)
                     )
-            models.map { case (id, name, description, classification, poolSize, late, _, active) =>
+            models.map { case (id, version, name, description, classification, poolSize, late, _, active) =>
                 TournamentModel(
-                  game,
                   id,
+                  version,
                   name,
                   description,
                   classification,
                   poolSize,
                   late,
-                  designOf(id.value, 0),
+                  designOf(id, 0),
                   active
                 )
             }
         }
 
-    /** The models offered for creating a tournament of the game -- those with a classification that are active -- by
-      * classification and then name.
+    private def listed(models: List[TournamentModel]): List[TournamentModel] =
+        models.filter(_.classification.isDefined).sortBy(m => (m.classification, m.name.toLowerCase))
+
+    /** Every model a game could offer -- those with a classification that are active -- by classification and then
+      * name.
       */
+    def listActive: IO[List[TournamentModel]] = all.map(ms => listed(ms.filter(_.active)))
+
+    /** Every model with a classification, deactivated or not: what a sync compares with the code. */
+    def listClassified: IO[List[TournamentModel]] = all.map(listed)
+
+    private val selectOffered: Query[GameId, TournamentModelId] =
+        sql"SELECT tournament_model_id FROM tournament_model_game WHERE game_id = $gameId".query(modelId)
+
+    /** The models the game offers for creating a tournament: those its admins chose that are still active. */
     def listOffered(game: GameId): IO[List[TournamentModel]] =
-        listClassified(game).map(_.filter(_.active))
+        (session.execute(selectOffered)(game), listActive).mapN((offered, active) =>
+            active.filter(m => offered.contains(m.tournamentModelId))
+        )
 
-    /** Every model of the game with a classification, deactivated or not, by classification and then name. */
-    def listClassified(game: GameId): IO[List[TournamentModel]] =
-        all(game).map(_.filter(_.classification.isDefined).sortBy(m => (m.classification, m.name.toLowerCase)))
+    private val selectOfferedIn: Query[(GameId, TournamentModelId), TournamentModelId] =
+        sql"""SELECT tournament_model_id FROM tournament_model_game
+          WHERE game_id = $gameId AND tournament_model_id = $modelId""".query(modelId)
 
-    def read(game: GameId, id: TournamentModelId): IO[Option[TournamentModel]] =
-        all(game).map(_.find(_.tournamentModelId == id))
+    /** Whether the game offers the model, active or not. */
+    def offeredIn(game: GameId, id: TournamentModelId): IO[Boolean] =
+        session.option(selectOfferedIn)((game, id)).map(_.isDefined)
 
-    /** Locks the model's row for the rest of the transaction: what an edit or a delete takes first. */
-    def lockForUpdate(game: GameId, id: TournamentModelId): IO[Boolean] =
-        session.option(selectModelForUpdate)((game, id)).map(_.isDefined)
+    def read(id: TournamentModelId): IO[Option[TournamentModel]] =
+        all.map(_.find(_.tournamentModelId == id))
 
-    private val selectModelForShare: Query[(GameId, TournamentModelId), TournamentModelId] =
-        sql"""SELECT tournament_model_id FROM tournament_model
-          WHERE game_id = $gameId AND tournament_model_id = $modelId FOR SHARE""".query(modelId)
+    private val selectForUpdate: Query[TournamentModelId, TournamentModelId] =
+        sql"SELECT tournament_model_id FROM tournament_model WHERE tournament_model_id = $modelId FOR UPDATE"
+            .query(modelId)
 
-    /** Holds the model's row for the rest of the transaction against an admin deactivating or deleting it, without
-      * making two tournaments made from it wait on each other: what making a tournament from it takes first.
+    private val selectForShare: Query[TournamentModelId, TournamentModelId] =
+        sql"SELECT tournament_model_id FROM tournament_model WHERE tournament_model_id = $modelId FOR SHARE"
+            .query(modelId)
+
+    /** Locks the model's row for the rest of the transaction: what a sync rewriting or removing it takes first. */
+    def lockForUpdate(id: TournamentModelId): IO[Boolean] =
+        session.option(selectForUpdate)(id).map(_.isDefined)
+
+    /** Holds the model's row for the rest of the transaction against a sync rewriting or removing it, without making
+      * two tournaments made from it, or two games offering it, wait on each other.
       */
-    def lockForShare(game: GameId, id: TournamentModelId): IO[Boolean] =
-        session.option(selectModelForShare)((game, id)).map(_.isDefined)
+    def lockForShare(id: TournamentModelId): IO[Boolean] =
+        session.option(selectForShare)(id).map(_.isDefined)
 
-    private val insertModel: Query[(GameId, String, String, Option[String], Option[Int], Boolean), TournamentModelId] =
-        sql"""INSERT INTO tournament_model (game_id, name, description, classification, pool_size, late_entries,
-                                            first_stage_model_id)
-          VALUES ($gameId, $text, $text, ${text.opt}, ${int4.opt}, $bool, 0)
-          RETURNING tournament_model_id""".query(modelId)
+    // ---- the models a game offers ----
 
-    private val updateModel
-        : Command[(String, String, Option[String], Option[Int], Boolean, GameId, TournamentModelId)] =
-        sql"""UPDATE tournament_model SET name = $text, description = $text, classification = ${text.opt},
-                 pool_size = ${int4.opt}, late_entries = $bool
-          WHERE game_id = $gameId AND tournament_model_id = $modelId""".command
+    private val insertOffer: Command[(GameId, TournamentModelId)] =
+        sql"""INSERT INTO tournament_model_game (game_id, tournament_model_id) VALUES ($gameId, $modelId)
+          ON CONFLICT DO NOTHING""".command
 
-    private val setFirst: Command[(Long, GameId, TournamentModelId)] =
-        sql"""UPDATE tournament_model SET first_stage_model_id = $int8
-          WHERE game_id = $gameId AND tournament_model_id = $modelId""".command
+    private val deleteOffer: Command[(GameId, TournamentModelId)] =
+        sql"DELETE FROM tournament_model_game WHERE game_id = $gameId AND tournament_model_id = $modelId".command
 
-    private val insertStage: Query[(GameId, TournamentModelId, (StageDesign, Option[Long])), Long] =
-        sql"""INSERT INTO stage_model (game_id, tournament_model_id, #${StageRows.insertColumns(
+    /** Offers the model in the game; nothing if it is offered already. */
+    def offer(game: GameId, id: TournamentModelId): IO[Unit] = session.execute(insertOffer)((game, id)).void
+
+    /** Stops offering the model in the game; nothing if it was not. */
+    def withdraw(game: GameId, id: TournamentModelId): IO[Unit] = session.execute(deleteOffer)((game, id)).void
+
+    // ---- writing a model from the code ----
+
+    private type Properties = (Int, String, String, Option[String], Option[Int], Boolean)
+
+    private def propertiesOf(m: TournamentModel): Properties =
+        (m.version, m.name, m.description, m.classification, m.poolSize, m.lateEntries)
+
+    private val insertModel: Command[TournamentModelId *: Properties] =
+        sql"""INSERT INTO tournament_model (tournament_model_id, version, name, description, classification, pool_size,
+                                            late_entries, first_stage_model_id)
+          VALUES ($modelId, $int4, $text, $text, ${text.opt}, ${int4.opt}, $bool, '')""".command
+
+    private val updateModel: Command[(Int, String, String, Option[String], Option[Int], Boolean, TournamentModelId)] =
+        sql"""UPDATE tournament_model SET version = $int4, name = $text, description = $text,
+                 classification = ${text.opt}, pool_size = ${int4.opt}, late_entries = $bool, active = true
+          WHERE tournament_model_id = $modelId""".command
+
+    private val setFirst: Command[(String, TournamentModelId)] =
+        sql"UPDATE tournament_model SET first_stage_model_id = $text WHERE tournament_model_id = $modelId".command
+
+    private val insertStage: Command[(TournamentModelId, String, (StageDesign, Option[String]))] =
+        sql"""INSERT INTO stage_model (tournament_model_id, stage_model_id, #${StageRows.insertColumns(
               "current_stage_model_id"
             )})
-          VALUES ($gameId, $modelId, ${StageRows.fields})
-          RETURNING stage_model_id""".query(int8)
+          VALUES ($modelId, $text, ${StageRows.fields(text)})""".command
 
-    private val insertAtomic: Command[(GameId, TournamentModelId, Long, Boolean)] =
-        sql"""INSERT INTO atomic_stage_model (game_id, tournament_model_id, stage_model_id, rotate_roles)
-          VALUES ($gameId, $modelId, $int8, $bool)""".command
+    private val insertAtomic: Command[(TournamentModelId, String, Boolean)] =
+        sql"""INSERT INTO atomic_stage_model (tournament_model_id, stage_model_id, rotate_roles)
+          VALUES ($modelId, $text, $bool)""".command
 
-    private val insertNesting: Command[(GameId, TournamentModelId, Long, TournamentModelId)] =
-        sql"""INSERT INTO nesting_stage_model (game_id, tournament_model_id, stage_model_id, inner_tournament_model_id)
-          VALUES ($gameId, $modelId, $int8, $modelId)""".command
+    private val insertNesting: Command[(TournamentModelId, String, TournamentModelId)] =
+        sql"""INSERT INTO nesting_stage_model (tournament_model_id, stage_model_id, inner_tournament_model_id)
+          VALUES ($modelId, $text, $modelId)""".command
 
-    /** Writes a new model, its design's stages, and a model for each inner design. */
-    def create(game: GameId, request: TournamentModelRequest): IO[TournamentModelId] =
-        session
-            .unique(insertModel)(
-              (game, request.name, request.description, request.classification, request.poolSize, request.lateEntries)
-            )
-            .flatTap(id => writeDesign(game, id, request.name, request.design))
+    /** Writes a model -- one the code defines -- its stages, and a model for each inner design, active. */
+    def create(m: TournamentModel): IO[Unit] = {
+        val id = m.tournamentModelId
+        session.execute(insertModel)(id *: propertiesOf(m)) *> writeDesign(id, m.design)
+    }
 
-    /** Replaces a model's properties and design. Its old stages and inner models go; tournaments already made from it
-      * keep the stages they copied.
+    /** Rewrites a stored model as the code now defines it, active again if it was not. Its old stages and inner models
+      * go; tournaments already made from it keep the stages they copied.
       */
-    def update(game: GameId, id: TournamentModelId, request: TournamentModelRequest): IO[Unit] =
-        session.execute(updateModel)(
-          (request.name, request.description, request.classification, request.poolSize, request.lateEntries, game, id)
-        ) *> removeStages(game, id, keep = true) *> writeDesign(game, id, request.name, request.design)
+    def replace(m: TournamentModel): IO[Unit] = {
+        val id = m.tournamentModelId
+        session.execute(updateModel)(propertiesOf(m) :* id) *> removeStages(id, keep = true) *>
+            writeDesign(id, m.design)
+    }
 
-    /** Removes a model with its stages and inner models. Refused by the database, as a foreign key violation, while a
-      * tournament made from it remains.
+    /** Removes a model with its stages, inner models and the games' choices of it. Refused by the database, as a
+      * foreign key violation, while a tournament made from it remains.
       */
-    def delete(game: GameId, id: TournamentModelId): IO[Unit] = removeStages(game, id, keep = false)
+    def delete(id: TournamentModelId): IO[Unit] = removeStages(id, keep = false)
 
-    private val deactivateModel: Command[(GameId, TournamentModelId)] =
-        sql"""UPDATE tournament_model SET active = false
-          WHERE game_id = $gameId AND tournament_model_id = $modelId""".command
-    private val deactivateStages: Command[(GameId, TournamentModelId)] =
-        sql"""UPDATE stage_model SET active = false
-          WHERE game_id = $gameId AND tournament_model_id = $modelId""".command
+    private val deactivateModel: Command[TournamentModelId] =
+        sql"UPDATE tournament_model SET active = false WHERE tournament_model_id = $modelId".command
+    private val deactivateStages: Command[TournamentModelId] =
+        sql"UPDATE stage_model SET active = false WHERE tournament_model_id = $modelId".command
 
     /** Deactivates a model, its stages and, depth first, its inner models: offered no longer, and kept. */
-    def deactivate(game: GameId, id: TournamentModelId): IO[Unit] =
+    def deactivate(id: TournamentModelId): IO[Unit] =
         for {
-            inner <- session.execute(selectInner)((game, id))
-            _ <- inner.traverse_(deactivate(game, _))
-            _ <- session.execute(deactivateStages)((game, id))
-            _ <- session.execute(deactivateModel)((game, id))
+            inner <- session.execute(selectInner)(id)
+            _ <- inner.traverse_(deactivate)
+            _ <- session.execute(deactivateStages)(id)
+            _ <- session.execute(deactivateModel)(id)
         } yield ()
+
+    /** The ids of a design's stages, in order: each named stage by its name, made into an id, and any other by its
+      * place -- `stage-2` -- with a number added where two would be the same.
+      */
+    private[persistence] def stageIds(design: TournamentDesign): List[String] =
+        design.stages.zipWithIndex
+            .foldLeft(List.empty[String]) { case (taken, (stage, i)) =>
+                val slug = stage.name.trim.toLowerCase.replaceAll("[^a-z0-9]+", "-").stripPrefix("-").stripSuffix("-")
+                val base = if (slug.isEmpty) s"stage-${i + 1}" else slug
+                val id = LazyList.from(2).map(n => s"$base-$n").prepended(base).find(!taken.contains(_)).get
+                taken :+ id
+            }
 
     /* The stages of `design` written last first, so that each names the one after it as it is written, and the first
      * set as the model's own. An inner design becomes an unclassified model of its own, named after the stage. */
-    private def writeDesign(game: GameId, model: TournamentModelId, name: String, design: TournamentDesign): IO[Unit] =
-        design.stages.zipWithIndex.reverse
-            .foldLeftM(Option.empty[Long]) { case (next, (stage, i)) =>
+    private def writeDesign(model: TournamentModelId, design: TournamentDesign): IO[Unit] =
+        design.stages
+            .zip(stageIds(design))
+            .reverse
+            .foldLeftM(Option.empty[String]) { case (next, (stage, stageId)) =>
                 stage.design match {
                     case Some(inner) =>
-                        val innerName = s"$name, stage ${i + 1}"
+                        val innerId = TournamentModelId(s"${model.value}/$stageId")
                         for {
-                            innerId <- create(game, TournamentModelRequest(innerName, design = inner))
-                            id <- session.unique(insertStage)((game, model, (stage, next)))
-                            _ <- session.execute(insertNesting)((game, model, id, innerId))
-                        } yield Some(id)
+                            _ <- session.execute(insertModel)(
+                              (innerId, 1, s"${model.value}, $stageId", "", None, None, false)
+                            )
+                            _ <- writeDesign(innerId, inner)
+                            _ <- session.execute(insertStage)((model, stageId, (stage, next)))
+                            _ <- session.execute(insertNesting)((model, stageId, innerId))
+                        } yield Some(stageId)
                     case None =>
                         for {
-                            id <- session.unique(insertStage)((game, model, (stage, next)))
-                            _ <- session.execute(insertAtomic)((game, model, id, stage.rotateRoles))
-                        } yield Some(id)
+                            _ <- session.execute(insertStage)((model, stageId, (stage, next)))
+                            _ <- session.execute(insertAtomic)((model, stageId, stage.rotateRoles))
+                        } yield Some(stageId)
                 }
             }
             .flatMap {
-                case Some(first) => session.execute(setFirst)((first, game, model)).void
+                case Some(first) => session.execute(setFirst)((first, model)).void
                 case None        => IO.raiseError(new IllegalArgumentException("a design needs at least one stage"))
             }
 
-    private val selectInner: Query[(GameId, TournamentModelId), TournamentModelId] =
-        sql"""SELECT inner_tournament_model_id FROM nesting_stage_model
-          WHERE game_id = $gameId AND tournament_model_id = $modelId""".query(modelId)
+    private val selectInner: Query[TournamentModelId, TournamentModelId] =
+        sql"SELECT inner_tournament_model_id FROM nesting_stage_model WHERE tournament_model_id = $modelId"
+            .query(modelId)
 
-    private val deleteAtomic: Command[(GameId, TournamentModelId)] =
-        sql"DELETE FROM atomic_stage_model WHERE game_id = $gameId AND tournament_model_id = $modelId".command
-    private val deleteNesting: Command[(GameId, TournamentModelId)] =
-        sql"DELETE FROM nesting_stage_model WHERE game_id = $gameId AND tournament_model_id = $modelId".command
-    private val deleteStages: Command[(GameId, TournamentModelId)] =
-        sql"DELETE FROM stage_model WHERE game_id = $gameId AND tournament_model_id = $modelId".command
-    private val deleteModel: Command[(GameId, TournamentModelId)] =
-        sql"DELETE FROM tournament_model WHERE game_id = $gameId AND tournament_model_id = $modelId".command
+    private val deleteAtomic: Command[TournamentModelId] =
+        sql"DELETE FROM atomic_stage_model WHERE tournament_model_id = $modelId".command
+    private val deleteNesting: Command[TournamentModelId] =
+        sql"DELETE FROM nesting_stage_model WHERE tournament_model_id = $modelId".command
+    private val deleteStages: Command[TournamentModelId] =
+        sql"DELETE FROM stage_model WHERE tournament_model_id = $modelId".command
+    private val deleteOffers: Command[TournamentModelId] =
+        sql"DELETE FROM tournament_model_game WHERE tournament_model_id = $modelId".command
+    private val deleteModel: Command[TournamentModelId] =
+        sql"DELETE FROM tournament_model WHERE tournament_model_id = $modelId".command
 
-    /* A model's stages and, depth first, its inner models; the model itself too unless `keep`. Its subtype rows go
-     * first, since they name the inner models; the model row last, since the stages are its. */
-    private def removeStages(game: GameId, model: TournamentModelId, keep: Boolean): IO[Unit] =
+    /* A model's stages and, depth first, its inner models; the model itself too, and the games' choices of it, unless
+     * `keep`. Its subtype rows go first, since they name the inner models; the model row last, since the stages are
+     * its. */
+    private def removeStages(model: TournamentModelId, keep: Boolean): IO[Unit] =
         for {
-            inner <- session.execute(selectInner)((game, model))
-            _ <- session.execute(deleteNesting)((game, model))
-            _ <- session.execute(deleteAtomic)((game, model))
-            _ <- inner.traverse_(removeStages(game, _, keep = false))
-            _ <- session.execute(deleteStages)((game, model))
-            _ <- IO.unlessA(keep)(session.execute(deleteModel)((game, model)).void)
+            inner <- session.execute(selectInner)(model)
+            _ <- session.execute(deleteNesting)(model)
+            _ <- session.execute(deleteAtomic)(model)
+            _ <- inner.traverse_(removeStages(_, keep = false))
+            _ <- session.execute(deleteStages)(model)
+            _ <- IO.unlessA(keep)(session.execute(deleteOffers)(model) *> session.execute(deleteModel)(model).void)
         } yield ()
 }

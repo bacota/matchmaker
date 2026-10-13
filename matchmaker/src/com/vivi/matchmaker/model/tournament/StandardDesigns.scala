@@ -15,18 +15,6 @@ case class StandardDesign(
     classification: String = "Elimination"
 )
 
-/** A model to offer a game (V52): a standard format built for it, with the default pool size to suggest (`None`, the
-  * game's R) and the group it is listed under.
-  */
-case class ModelSeed(
-    key: String,
-    name: String,
-    description: String,
-    classification: String,
-    poolSize: Option[Int],
-    design: TournamentDesign
-)
-
 object StandardDesigns {
 
     val all: List[StandardDesign] = List(
@@ -96,12 +84,12 @@ object StandardDesigns {
     val eliminationMatch: TournamentDesign =
         TournamentDesign(List(StageDesign(brackets = false, rotateRoles = false, demote = Some(2))))
 
-    private def singleEliminationStage(until: Int): StageDesign =
+    def singleEliminationStage(until: Int): StageDesign =
         StageDesign(repeat = Repetition.UntilRemaining(until), brackets = true, design = Some(eliminationMatch))
 
     private def singleElimination: List[StageDesign] = List(singleEliminationStage(1))
 
-    private def withConsolation: List[StageDesign] = List(
+    def withConsolation: List[StageDesign] = List(
       StageDesign(
         repeat = Repetition.UntilRemaining(4),
         brackets = true,
@@ -125,7 +113,7 @@ object StandardDesigns {
       )
     )
 
-    private def modifiedDoubleStage: StageDesign =
+    def modifiedDoubleStage: StageDesign =
         StageDesign(
           repeat = Repetition.UntilRemaining(2),
           poolSize = Some(2),
@@ -140,29 +128,11 @@ object StandardDesigns {
     private def knockout(r: Int): List[StageDesign] = if (r == 2) withConsolation else singleElimination
 
     /** `stage`, and every stage nested in it, with an explicit pool size of `r` wherever it set none. */
-    private def sized(stage: StageDesign, r: Int): StageDesign =
+    def sized(stage: StageDesign, r: Int): StageDesign =
         stage.copy(
           poolSize = stage.poolSize.orElse(Some(r)),
           design = stage.design.map(d => TournamentDesign(d.stages.map(sized(_, r))))
         )
-
-    /** The models a game whose R is `r` is offered to begin with: every standard format that can be played in it. A
-      * format that takes its pool size from the tournament leaves its first stage unsized, and suggests a pool of `r +
-      * 2`; every other format suggests the game's R.
-      */
-    def models(r: Int): List[ModelSeed] =
-        all.flatMap { std =>
-            build(std.key, r, None).toOption.map { design =>
-                ModelSeed(
-                  std.key,
-                  std.name,
-                  std.description,
-                  std.classification,
-                  Option.when(std.needsPoolSize)(r + 2),
-                  design
-                )
-            }
-        }
 
     /** The design of a standard format for a game whose R is `r`, or why it cannot be built. A format that takes its
       * pool size from the tournament is built with `poolSize` as its first stage's, `None` for the tournament's

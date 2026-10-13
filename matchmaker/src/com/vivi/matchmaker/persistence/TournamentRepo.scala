@@ -368,25 +368,29 @@ class TournamentRepo(session: Session[IO]) {
                 )
             })
 
-    // ---- the tournaments made from a model, for an admin removing it ----
+    // ---- the tournaments made from a model, for a sync removing it ----
 
-    private val selectMadeFromForUpdate: Query[(GameId, TournamentModelId), TournamentId] =
-        sql"""SELECT tournament_id FROM tournament WHERE game_id = $gameId AND tournament_model_id = $modelId
-          ORDER BY tournament_id FOR UPDATE""".query(tournamentId)
+    private val selectMadeFromForUpdate: Query[TournamentModelId, (GameId, TournamentId)] =
+        sql"""SELECT game_id, tournament_id FROM tournament WHERE tournament_model_id = $modelId
+          ORDER BY game_id, tournament_id FOR UPDATE"""
+            // Decoded as numbers and wrapped: a pair of opaque codecs does not reduce to a pair.
+            .query(int4 *: int8)
+            .map((g, t) => (GameId(g), TournamentId(t)))
 
-    /** Locks every tournament made from the model, for the rest of the transaction, and lists them: what removing the
-      * model takes first, so that nobody enters one -- entering takes the same lock -- while it is decided.
+    /** Locks every tournament made from the model, in any game, for the rest of the transaction, and lists them: what
+      * removing the model takes first, so that nobody enters one -- entering takes the same lock -- while it is
+      * decided.
       */
-    def lockMadeFrom(game: GameId, model: TournamentModelId): IO[List[TournamentId]] =
-        session.execute(selectMadeFromForUpdate)((game, model))
+    def lockMadeFrom(model: TournamentModelId): IO[List[(GameId, TournamentId)]] =
+        session.execute(selectMadeFromForUpdate)(model)
 
-    private val selectAnyEntrantMadeFrom: Query[(GameId, TournamentModelId), Boolean] =
+    private val selectAnyEntrantMadeFrom: Query[TournamentModelId, Boolean] =
         sql"""SELECT EXISTS (SELECT 1 FROM entrant e JOIN tournament t USING (game_id, tournament_id)
-                              WHERE t.game_id = $gameId AND t.tournament_model_id = $modelId)""".query(bool)
+                              WHERE t.tournament_model_id = $modelId)""".query(bool)
 
     /** Whether any tournament made from the model has an entrant, withdrawn or not. One that has a match has some. */
-    def anyEntrantMadeFrom(game: GameId, model: TournamentModelId): IO[Boolean] =
-        session.unique(selectAnyEntrantMadeFrom)((game, model))
+    def anyEntrantMadeFrom(model: TournamentModelId): IO[Boolean] =
+        session.unique(selectAnyEntrantMadeFrom)(model)
 
     private def deleting(table: String): Command[(GameId, TournamentId)] =
         sql"DELETE FROM #$table WHERE game_id = $gameId AND tournament_id = $tournamentId".command

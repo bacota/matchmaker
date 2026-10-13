@@ -43,22 +43,20 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
               s"SELECT challenger FROM challenge WHERE game_id = $g AND challenge_id = ${challengeId.value}"
             )
             role = game.roles.head.gameRoleId.value
-            model <- long(
+            // A model of its own, unclassified so that no spec's sync takes it for one the code dropped.
+            model = s"'test-schema-${java.util.UUID.randomUUID()}'"
+            _ <- exec(
               session,
-              s"INSERT INTO tournament_model (game_id, name, first_stage_model_id) VALUES ($g, 'model', 0) RETURNING tournament_model_id"
-            )
-            stageModel <- long(
-              session,
-              s"""INSERT INTO stage_model (game_id, tournament_model_id, kind, name, seed_policy)
-                  VALUES ($g, $model, 'A', 'only', 'ELO') RETURNING stage_model_id"""
+              s"INSERT INTO tournament_model (tournament_model_id, name, first_stage_model_id) VALUES ($model, 'model', 'only')"
             )
             _ <- exec(
               session,
-              s"INSERT INTO atomic_stage_model (game_id, tournament_model_id, stage_model_id) VALUES ($g, $model, $stageModel)"
+              s"""INSERT INTO stage_model (tournament_model_id, stage_model_id, kind, name, seed_policy)
+                  VALUES ($model, 'only', 'A', 'only', 'ELO')"""
             )
             _ <- exec(
               session,
-              s"UPDATE tournament_model SET first_stage_model_id = $stageModel WHERE game_id = $g AND tournament_model_id = $model"
+              s"INSERT INTO atomic_stage_model (tournament_model_id, stage_model_id) VALUES ($model, 'only')"
             )
             t <- long(
               session,

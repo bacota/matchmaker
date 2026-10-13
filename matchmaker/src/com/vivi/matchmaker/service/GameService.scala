@@ -64,10 +64,9 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
                                             IO.raiseError(NotFoundError(s"no game with id ${trimmed.gameId.value}"))
                                     }
                             }
-                    // A new game is offered the standard tournament formats it can play, as models its admins
-                    // may then edit or remove (V52).
+                    // A new game offers every tournament model it can play, which its admins may then change (V52).
                     _ <- IO.whenA(trimmed.gameId == GameId.unassigned)(
-                      TournamentModelService.seed(session, result).void
+                      TournamentModelService.offerPlayable(session, result).void
                     )
                     // Unique across games (V34). A clash rolls the whole save back, game and all.
                     _ <- newKey.traverse_(key =>

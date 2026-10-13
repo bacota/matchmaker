@@ -470,31 +470,24 @@ object ApiClient {
     def tournamentModels(gameId: GameId): Future[Seq[TournamentModel]] =
         get[Seq[TournamentModel]](s"/games/${gameId.value}/tournament-models")
 
-    def createTournamentModel(gameId: GameId, request: TournamentModelRequest): Future[TournamentModel] =
-        send[TournamentModel](HttpMethod.POST, s"/games/${gameId.value}/tournament-models", Some(write(request)))
+    /** Every model a game could offer (V52). */
+    def allTournamentModels(): Future[Seq[TournamentModel]] =
+        get[Seq[TournamentModel]]("/tournament-models")
 
-    def updateTournamentModel(
-        gameId: GameId,
-        modelId: TournamentModelId,
-        request: TournamentModelRequest
-    ): Future[TournamentModel] =
-        send[TournamentModel](
-          HttpMethod.PUT,
-          s"/games/${gameId.value}/tournament-models/${modelId.value}",
-          Some(write(request))
-        )
+    /** Offers a model in a game: the models the game now offers. */
+    def offerTournamentModel(gameId: GameId, modelId: TournamentModelId): Future[Seq[TournamentModel]] =
+        send[Seq[TournamentModel]](HttpMethod.PUT, modelPath(gameId, modelId), None)
 
-    /** Removes a model: deleted, with its tournaments, while nobody has entered one, else only deactivated. */
-    def removeTournamentModel(gameId: GameId, modelId: TournamentModelId): Future[TournamentModelRemoval] =
-        send[TournamentModelRemoval](
-          HttpMethod.DELETE,
-          s"/games/${gameId.value}/tournament-models/${modelId.value}",
-          None
-        )
+    /** Stops offering a model in a game: the models the game now offers. */
+    def withdrawTournamentModel(gameId: GameId, modelId: TournamentModelId): Future[Seq[TournamentModel]] =
+        send[Seq[TournamentModel]](HttpMethod.DELETE, modelPath(gameId, modelId), None)
 
-    /** The standard formats the game does not offer yet, added as models: the ones added. */
-    def addStandardModels(gameId: GameId): Future[Seq[TournamentModel]] =
-        send[Seq[TournamentModel]](HttpMethod.POST, s"/games/${gameId.value}/tournament-models/standard", None)
+    /** A site admin's sync of the stored models with those the code defines: what it did. */
+    def syncTournamentModels(): Future[TournamentModelSync] =
+        send[TournamentModelSync](HttpMethod.POST, "/tournament-models/sync", None)
+
+    private def modelPath(gameId: GameId, modelId: TournamentModelId): String =
+        s"/games/${gameId.value}/tournament-models/${scalajs.js.URIUtils.encodeURIComponent(modelId.value)}"
 
     private def tournamentPath(gameId: GameId, tournamentId: TournamentId): String =
         s"/games/${gameId.value}/tournaments/${tournamentId.value}"

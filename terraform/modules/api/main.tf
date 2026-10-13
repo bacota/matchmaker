@@ -404,9 +404,9 @@ locals {
     "DELETE /games/{gameId}/tournaments/{tournamentId}/entries/{entrantId}",
     # The models a game's tournaments are made from: listed for anyone, and made, edited, removed and
     # filled in with the standard formats by the game's admins.
+    "GET /tournament-models",
+    "POST /tournament-models/sync",
     "GET /games/{gameId}/tournament-models",
-    "POST /games/{gameId}/tournament-models",
-    "POST /games/{gameId}/tournament-models/standard",
     "PUT /games/{gameId}/tournament-models/{modelId}",
     "DELETE /games/{gameId}/tournament-models/{modelId}",
     # Playing its rounds: the owner beginning, checking and stopping them; a seat choosing its

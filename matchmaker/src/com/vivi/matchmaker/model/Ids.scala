@@ -72,14 +72,13 @@ object TournamentId {
     val unassigned: TournamentId = TournamentId(0)
 }
 
-/** A tournament model (V52): a design a game's admin offers, which a tournament is made from. */
-opaque type TournamentModelId = Long
+/** A tournament model (V52): a design every game may offer, which a tournament is made from. Descriptive text, chosen
+  * where the model is defined: `world-cup`, say.
+  */
+opaque type TournamentModelId = String
 object TournamentModelId {
-    def apply(value: Long): TournamentModelId = value
-    extension (id: TournamentModelId) def value: Long = id
-
-    /** Sentinel for a model that hasn't been persisted yet (its id is DB-generated on create). */
-    val unassigned: TournamentModelId = TournamentModelId(0)
+    def apply(value: String): TournamentModelId = value
+    extension (id: TournamentModelId) def value: String = id
 }
 
 /** An entry in a tournament (V52): what `tournament-design.md` calls a participant, which `ParticipantId` already means

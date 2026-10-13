@@ -6,40 +6,47 @@ import skunk.implicits._
 import skunk.codec.all.{int8, text}
 import natchez.Trace.Implicits.noop
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.{StageDesign, StandardDesigns, TournamentDesign}
+import com.vivi.matchmaker.model.tournament.{StageDesign, StandardModels, TournamentDesign, TournamentGame, Validation}
 import com.vivi.matchmaker.persistence.{PoolRepo, StageRepo, TournamentModelRepo, TournamentRepo}
 
-/** Tournaments for specs (V52): a game's model of a standard format, and a tournament made from one. */
+/** Tournaments for specs (V52): the model of a standard format, offered in a game, and a tournament made from one. */
 object TournamentFixtures {
 
-    /** The game's model of the standard format `key`, adding the standard formats it does not offer yet first. A game
-      * that cannot play the format -- one of a single role, say -- is given a plain round robin by that name instead.
-      * In one transaction, as the services write a model: it and its stages name each other.
+    /** The model of the standard format `key`, offered in `game`: added first if it is not stored yet, as a sync adds
+      * it, under the sync's lock so that specs running at once do not both add it. A game that cannot play the format
+      * -- one of a single role, say -- is given a plain round robin instead, a model of its own with no classification,
+      * so that no spec's sync removes it. In one transaction, as the services write a model: it and its stages name
+      * each other.
       */
     def model(session: Session[IO], game: Game, key: String): IO[TournamentModel] =
         session.transaction.use(_ => found(session, game, key))
 
     private def found(session: Session[IO], game: Game, key: String): IO[TournamentModel] = {
         val repo = new TournamentModelRepo(session)
-        val name = StandardDesigns.find(key).map(_.name).getOrElse(key)
-        for {
-            _ <- TournamentModelService.seed(session, game)
-            offered <- repo.listOffered(game.gameId)
-            model <- offered.find(_.name == name) match {
-                case Some(m) => IO.pure(m)
-                case None =>
-                    repo
-                        .create(
-                          game.gameId,
-                          TournamentModelRequest(
-                            name,
-                            classification = Some("Round robin"),
-                            design = TournamentDesign(List(StageDesign(brackets = false, demote = None)))
-                          )
-                        )
-                        .flatMap(id => repo.read(game.gameId, id).map(_.get))
-            }
-        } yield model
+        val standard = StandardModels.find(key).getOrElse(throw new IllegalArgumentException(s"no standard model $key"))
+        val playable =
+            Validation.designProblems(standard.design, TournamentGame.of(game), standard.poolSize).forall(_.warning)
+        if (playable)
+            for {
+                _ <- TournamentModelService.lockSync(session)
+                stored <- repo.read(TournamentModelId(key))
+                _ <- IO.whenA(stored.isEmpty)(repo.create(standard.model))
+                _ <- repo.offer(game.gameId, TournamentModelId(key))
+                model <- repo.read(TournamentModelId(key)).map(_.get)
+            } yield model
+        else {
+            val roundRobin = TournamentModel(
+              TournamentModelId(s"test-round-robin-${java.util.UUID.randomUUID()}"),
+              1,
+              "Round robin",
+              "",
+              None,
+              None,
+              lateEntries = false,
+              TournamentDesign(List(StageDesign(brackets = false, demote = None)))
+            )
+            repo.create(roundRobin) *> repo.read(roundRobin.tournamentModelId).map(_.get)
+        }
     }
 
     /** A draft tournament of `game`, owned by `owner`, made from its model of `key` as `TournamentService.create` makes

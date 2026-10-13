@@ -98,13 +98,18 @@ The other rules that came with these:
 - **Repetition:** a stage's `repetitions` or `remaining_participants` says how often it is played. With neither set, it
   repeats until the owner stops the tournament (`tournament.stop_requested`).
 - **Renamed:** `next_stage` is now `current_stage`.
-- **Removing a model:** `tournament_model.active` and `stage_model.active` (default true). An admin's remove
-  (`DELETE /games/{g}/tournament-models/{m}`, answering `TournamentModelRemoval`) locks the tournaments made from the
-  model -- entering one takes the same lock. If none has an `entrant`, it deletes them, invitations, stages and root
-  pools included, and then the model. Otherwise it sets `active = false` on the model, its stages and its
-  inner models. A deactivated model isn't offered, can't be chosen for a new or changed tournament, can't be edited,
-  and isn't added back by the standard formats. A tournament already made from it keeps it, edits included. Making a
-  tournament takes the model `FOR SHARE`, so it can't be deleted from under that tournament.
+- **Models are every game's** (Phase 8). `tournament_model` and `stage_model` have no `game_id`; their ids are
+  descriptive text (`world-cup`, `stage-2`, and `world-cup/stage-2` for an inner design). The models are the
+  standard formats the code defines (`StandardModels`, each object with an `id` and a `version`), written by a site
+  admin's sync. `tournament_model_game` says which models each game offers, as its admins choose; a new game offers
+  every model it can play. Nobody makes a model by hand.
+- **Removing a model:** `tournament_model.active` and `stage_model.active` (default true). A sync that finds a stored
+  model the code no longer defines locks the tournaments made from it -- entering one takes the same lock. If none
+  has an `entrant`, it deletes them, invitations, stages and root pools included, and then the model. Otherwise it
+  sets `active = false` on the model, its stages and its inner models. A deactivated model, like one the game no
+  longer offers, can't be chosen for a new or changed tournament. A tournament already made from it keeps it, edits
+  included. Making a tournament, and offering a model in a game, take the model `FOR SHARE`, so a sync can't delete
+  it from under them.
 
 ## Changes the SQL still needs
 
@@ -497,6 +502,43 @@ Every matchmaker suite passes again: 794 tests, with no known failures left.
 - **Cleanup.** `tournament-tables-design.md` is marked superseded.
 - **Tests.** `StandingsSpec` covers provisional standings. `TournamentServiceSpec` checks that a player's standings
   give an open tournament no seed, and a started one their seed among the entrants.
+
+### Phase 8: Models shared by every game, synced from the code (done)
+
+Replaces the admin-made, per-game models of Phase 4.
+
+**Schema (V52, rewritten in place).**
+- `tournament_model` and `stage_model` lose `game_id`. `tournament_model_id` and `stage_model_id` become text.
+- `tournament_model` gains `version`.
+- `tournament_model_game (game_id, tournament_model_id)` is new.
+- `tournament.tournament_model_id` references the model alone.
+
+**Code.**
+- `StandardModels` holds one object per standard format, built for two players from `StandardDesigns`' pieces. Each
+  has an `id` that is never reused and a `version` bumped whenever the object changes. Where a pool size follows the
+  game, the stage leaves it unset, so it takes the tournament's default pool size.
+- `TournamentModelService.sync` adds what is missing, rewrites a model whose code version is newer (or that was
+  deactivated), and deletes or deactivates what the code dropped. It runs under a transaction-scoped advisory lock,
+  since a row lock can't hold a model that isn't there yet.
+- A game's admin offers and withdraws models. `GameService.createOrUpdate` offers a new game every active model with
+  no design errors for it, in place of seeding per-game copies.
+- `TournamentService` takes a model only if the game offers it and it is active, unless it is the model the
+  tournament being edited was made from.
+- The admin create, edit and remove routes, the Add the Standard Formats route, and the model and stage editors in
+  the UI are gone.
+
+**API.** `GET /tournament-models` (every active model), `POST /tournament-models/sync` (site admins), `GET
+/games/{gameId}/tournament-models` (what the game offers), and `PUT` and `DELETE
+/games/{gameId}/tournament-models/{modelId}` (offer and withdraw, for the game's admins). The route count is
+unchanged.
+
+**UI.** A game's screen has a Tournament Formats section for its admins. It lists every format with a checkbox for
+whether the game offers it; a format the game can't play may be unticked but not ticked, and says why. Site admins
+also see Sync Formats, which reports what it did in a live region.
+
+**Tests.** The specs share every game's models with each other, so a model a spec makes up has an id of its own and
+no classification (so a sync never removes it). `TournamentFixtures.model` adds a missing standard model under the
+sync's lock and offers it in the game.
 
 ## How this splits into PRs
 

@@ -22,12 +22,12 @@ class StageRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val tournamentId = SkunkIdCodecs.tournamentId
 
-    private val selectStages: Query[(GameId, TournamentId), StageRows.Row] =
+    private val selectStages: Query[(GameId, TournamentId), StageRows.Row[Long]] =
         sql"""SELECT s.stage_id, #${StageRows.columns("current_stage_id", "inner_first_stage_id")}
           FROM stage s
           LEFT JOIN atomic_stage a USING (game_id, tournament_id, stage_id)
           LEFT JOIN nesting_stage n USING (game_id, tournament_id, stage_id)
-          WHERE s.game_id = $gameId AND s.tournament_id = $tournamentId""".query(StageRows.row)
+          WHERE s.game_id = $gameId AND s.tournament_id = $tournamentId""".query(StageRows.row(int8))
 
     private val selectFirst: Query[(GameId, TournamentId), Long] =
         sql"SELECT first_stage_id FROM tournament WHERE game_id = $gameId AND tournament_id = $tournamentId".query(int8)
@@ -79,7 +79,7 @@ class StageRepo(session: Session[IO]) {
 
     private val insertStage: Query[(GameId, TournamentId, (StageDesign, Option[Long])), Long] =
         sql"""INSERT INTO stage (game_id, tournament_id, #${StageRows.insertColumns("current_stage_id")})
-          VALUES ($gameId, $tournamentId, ${StageRows.fields})
+          VALUES ($gameId, $tournamentId, ${StageRows.fields(int8)})
           RETURNING stage_id""".query(int8)
 
     private val insertAtomic: Command[(GameId, TournamentId, Long, Boolean)] =

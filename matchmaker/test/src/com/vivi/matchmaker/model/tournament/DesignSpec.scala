@@ -48,14 +48,24 @@ class DesignSpec extends FunSuite {
     }
 
     test("every standard model is valid with the pool size it suggests, and only heats leaves a stage unsized") {
-        StandardDesigns.models(2).foreach { m =>
-            assertEquals(Validation.designProblems(m.design, twoPlayer, m.poolSize).filterNot(_.warning), Nil, m.key)
+        StandardModels.all.foreach { m =>
+            assertEquals(Validation.designProblems(m.design, twoPlayer, m.poolSize).filterNot(_.warning), Nil, m.id)
         }
-        val heats = StandardDesigns.models(2).find(_.key == "heats").get
+        val heats = StandardModels.Heats
         assertEquals(heats.poolSize, Some(4))
         assertEquals(heats.design.stages.head.poolSize, None)
         def sized(d: TournamentDesign): Boolean = d.stages.forall(s => s.poolSize.isDefined && s.design.forall(sized))
         assert(sized(TournamentDesign(heats.design.stages.tail)), heats.design.stages.tail)
+    }
+
+    test("each standard model is named once, by a descriptive id, at a version") {
+        val ids = StandardModels.all.map(_.id)
+        assertEquals(ids.distinct, ids)
+        StandardModels.all.foreach { m =>
+            assert(m.version >= 1, m.id)
+            assert(m.id.matches("[a-z0-9-]+"), m.id)
+            assertEquals(StandardModels.find(m.id), Some(m))
+        }
     }
 
     test("a match may not be drawn in a pool of two, nor ever in a rubber; in a larger pool it may") {

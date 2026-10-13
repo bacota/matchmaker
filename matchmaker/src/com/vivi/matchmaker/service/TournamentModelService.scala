@@ -3,115 +3,84 @@ package com.vivi.matchmaker.service
 import cats.effect.IO
 import cats.syntax.all._
 import skunk.Session
+import skunk.implicits._
+import skunk.codec.all.int8
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.{StandardDesigns, TournamentGame, Validation}
+import com.vivi.matchmaker.model.tournament.{StandardModels, TournamentGame, Validation}
 import com.vivi.matchmaker.persistence._
 
-/** The models a game's tournaments are made from (V52): listed for anyone creating a tournament, and created, edited
-  * and removed by the game's admins (`design/new-tournament-plan.md`, Phase 4). Letting any player make one is left for
-  * later.
+/** The models every game's tournaments are made from (V52): the standard formats the code defines ([[StandardModels]]),
+  * which a site admin syncs into the database, and which each game's admins choose to offer. Nobody makes a model of
+  * their own.
   *
-  * Every change is one transaction. The game is read plainly, as everywhere a write lands elsewhere; the model an edit
-  * or a delete changes is locked first.
+  * Every change is one transaction. A sync locks each model it writes or removes; choosing one for a game, as making a
+  * tournament from one, holds it FOR SHARE, so that a sync waits for either to be written and neither waits on another
+  * of its kind. The game is read plainly, as everywhere a write lands elsewhere.
   */
 class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 
-    /** The models the game offers -- not those deactivated -- by classification and then name. Any registered player
-      * may look.
+    /** The models the game offers -- those its admins chose that are still active -- by classification and then name.
+      * Any registered player may look.
       */
     def list(gameId: GameId, callerExternalId: String): IO[List[TournamentModel]] =
         sessionPool.use { session =>
             requireCaller(session, callerExternalId) *> new TournamentModelRepo(session).listOffered(gameId)
         }
 
-    /** A new model, from an admin of the game. */
-    def create(gameId: GameId, request: TournamentModelRequest, callerExternalId: String): IO[TournamentModel] =
+    /** Every model a game could offer, by classification and then name. Any registered player may look. */
+    def listAll(callerExternalId: String): IO[List[TournamentModel]] =
         sessionPool.use { session =>
-            session.transaction.use { _ =>
-                for {
-                    game <- requireAdministered(session, gameId, callerExternalId)
-                    _ <- checkModel(game, request)
-                    id <- new TournamentModelRepo(session).create(gameId, request)
-                    made <- requireModel(session, gameId, id)
-                } yield made
-            }
+            requireCaller(session, callerExternalId) *> new TournamentModelRepo(session).listActive
         }
 
-    /** An admin's edit of a model. Tournaments already made from it keep the stages they copied. A deactivated model is
-      * not edited.
+    /** A game's admin offering a model in the game; nothing if it is offered already. The models the game now offers.
       */
-    def update(
-        gameId: GameId,
-        id: TournamentModelId,
-        request: TournamentModelRequest,
-        callerExternalId: String
-    ): IO[TournamentModel] =
+    def offer(gameId: GameId, id: TournamentModelId, callerExternalId: String): IO[List[TournamentModel]] =
         sessionPool.use { session =>
             session.transaction.use { _ =>
-                for {
-                    game <- requireAdministered(session, gameId, callerExternalId)
-                    _ <- requireLocked(session, gameId, id)
-                    current <- requireModel(session, gameId, id)
-                    _ <- IO.raiseUnless(current.active)(ConflictError("this model has been deactivated"))
-                    _ <- checkModel(game, request)
-                    _ <- new TournamentModelRepo(session).update(gameId, id, request)
-                    updated <- requireModel(session, gameId, id)
-                } yield updated
-            }
-        }
-
-    /** An admin removing a model, so that it is offered no longer. If nobody has entered a tournament made from it, the
-      * model is deleted, and so is every tournament made from it. Otherwise it is only deactivated: kept, with its
-      * stages and inner models, for the tournaments made from it, which carry on as they were.
-      */
-    def remove(gameId: GameId, id: TournamentModelId, callerExternalId: String): IO[TournamentModelRemoval] =
-        sessionPool.use { session =>
-            session.transaction.use { _ =>
-                val tournaments = new TournamentRepo(session)
+                val repo = new TournamentModelRepo(session)
                 for {
                     _ <- requireAdministered(session, gameId, callerExternalId)
-                    _ <- requireLocked(session, gameId, id)
-                    // Locked, so that nobody enters one between the look and the delete.
-                    madeFrom <- tournaments.lockMadeFrom(gameId, id)
-                    entered <- tournaments.anyEntrantMadeFrom(gameId, id)
-                    removal <-
-                        if (entered)
-                            new TournamentModelRepo(session).deactivate(gameId, id).as(TournamentModelRemoval(false, 0))
-                        else
-                            madeFrom.traverse_(tournaments.delete(gameId, _)) *>
-                                new TournamentModelRepo(session)
-                                    .delete(gameId, id)
-                                    .as(TournamentModelRemoval(true, madeFrom.size))
-                } yield removal
+                    // Held against a sync removing it before the choice is written.
+                    found <- repo.lockForShare(id)
+                    model <- if (found) repo.read(id) else IO.pure(None)
+                    _ <- model match {
+                        case Some(m) if m.active && m.classification.isDefined => repo.offer(gameId, id)
+                        case _ => IO.raiseError(NotFoundError(s"there is no tournament model $id to offer"))
+                    }
+                    offered <- repo.listOffered(gameId)
+                } yield offered
             }
         }
 
-    /** The standard formats the game does not offer yet, added as models by an admin: how a game made before models
-      * existed gets them. A model of the same name as a standard format is taken to be it, and left alone.
+    /** A game's admin no longer offering a model in the game; nothing if it was not. Tournaments already made from it
+      * keep it. The models the game now offers.
       */
-    def addStandard(gameId: GameId, callerExternalId: String): IO[List[TournamentModel]] =
+    def withdraw(gameId: GameId, id: TournamentModelId, callerExternalId: String): IO[List[TournamentModel]] =
+        sessionPool.use { session =>
+            session.transaction.use { _ =>
+                val repo = new TournamentModelRepo(session)
+                for {
+                    _ <- requireAdministered(session, gameId, callerExternalId)
+                    _ <- repo.withdraw(gameId, id)
+                    offered <- repo.listOffered(gameId)
+                } yield offered
+            }
+        }
+
+    /** A site admin making the stored models what the code defines ([[TournamentModelService.sync]]). */
+    def sync(callerExternalId: String): IO[TournamentModelSync] =
         sessionPool.use { session =>
             session.transaction.use { _ =>
                 for {
-                    game <- requireAdministered(session, gameId, callerExternalId)
-                    added <- TournamentModelService.seed(session, game)
-                    models <- new TournamentModelRepo(session).listOffered(gameId)
-                } yield models.filter(m => added.contains(m.tournamentModelId))
+                    caller <- requireCaller(session, callerExternalId)
+                    _ <- IO.raiseUnless(caller.isAdmin)(
+                      UnauthorizedError("only a site admin may sync the tournament models")
+                    )
+                    done <- TournamentModelService.sync(session)
+                } yield done
             }
         }
-
-    private def checkModel(game: Game, request: TournamentModelRequest): IO[Unit] = {
-        val problems =
-            List(
-              Option.when(request.name.trim.isEmpty)("a model needs a name"),
-              Option.when(request.poolSize.exists(_ < 1))("a pool must hold at least one participant")
-            ).flatten ++
-                Validation
-                    .designProblems(request.design, TournamentGame.of(game), request.poolSize)
-                    .filterNot(_.warning)
-                    .map(_.describe)
-        IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.mkString("; ")))
-    }
 
     private def requireCaller(session: Session[IO], externalId: String): IO[Player] =
         new PlayerRepo(session).readByExternalId(externalId).flatMap {
@@ -134,52 +103,81 @@ class TournamentModelService[T](sessionPool: SessionPool)(using codec: TextCodec
               s"only an admin of ${game.displayName} may do that"
             )
         } yield game
-
-    private def requireLocked(session: Session[IO], gameId: GameId, id: TournamentModelId): IO[Unit] =
-        new TournamentModelRepo(session).lockForUpdate(gameId, id).flatMap { found =>
-            IO.raiseUnless(found)(NotFoundError(s"game $gameId has no tournament model $id"))
-        }
-
-    private def requireModel(session: Session[IO], gameId: GameId, id: TournamentModelId): IO[TournamentModel] =
-        new TournamentModelRepo(session).read(gameId, id).flatMap {
-            case Some(m) => IO.pure(m)
-            case None    => IO.raiseError(NotFoundError(s"game $gameId has no tournament model $id"))
-        }
 }
 
 object TournamentModelService {
 
-    /** Adds the standard formats `game` can play and does not offer yet, by name, as models: what a new game is given
-      * as it is created, and what an admin's Add standard models does for an older one. Nothing for a game with no role
-      * a match could start with. The new models' ids.
+    /** The transaction-scoped advisory lock every sync takes first, so that two never race to add the same model: a row
+      * lock cannot hold a model that is not there yet.
       */
-    def seed(session: Session[IO], game: Game): IO[List[TournamentModelId]] = {
-        val r = TournamentGame.of(game).poolSeats
+    val SyncLock: Long = 0x746d73796e63L // "tmsync"
+
+    // The function returns void, which skunk cannot decode; as text it is the empty string.
+    private val takeSyncLock: skunk.Query[Long, String] =
+        sql"SELECT pg_advisory_xact_lock($int8)::text".query(skunk.codec.all.text)
+
+    /** Takes [[SyncLock]] for the rest of the transaction. */
+    def lockSync(session: Session[IO]): IO[Unit] = session.unique(takeSyncLock)(SyncLock).void
+
+    /** Makes the stored models what the code defines, within the caller's transaction: each model the code defines is
+      * added if it is not stored, and rewritten if the code's version is newer or it had been deactivated. A stored
+      * model the code no longer defines is deleted, with every tournament made from it, while nobody has entered one;
+      * otherwise it is deactivated, kept for those tournaments, which carry on as they were.
+      */
+    def sync(session: Session[IO]): IO[TournamentModelSync] = {
         val repo = new TournamentModelRepo(session)
-        if (r < 1) IO.pure(Nil)
-        else
-            repo.listClassified(game.gameId).flatMap { existing =>
-                // A deactivated one too, which an admin took away and is not given back.
-                val names = existing.map(_.name.toLowerCase).toSet
-                StandardDesigns
-                    .models(r)
-                    .filterNot(m => names(m.name.toLowerCase))
-                    // Only what the game can play: a ladder needs pools of two or more, for one.
-                    .filter(m =>
-                        Validation.designProblems(m.design, TournamentGame.of(game), m.poolSize).forall(_.warning)
-                    )
-                    .traverse(m =>
-                        repo.create(
-                          game.gameId,
-                          TournamentModelRequest(
-                            m.name,
-                            m.description,
-                            Some(m.classification),
-                            m.poolSize,
-                            design = m.design
-                          )
-                        )
-                    )
+        val tournaments = new TournamentRepo(session)
+        for {
+            _ <- lockSync(session)
+            // Each model is locked before it is looked at, and decided from what is read under the lock.
+            written <- StandardModels.all.traverse { m =>
+                val id = TournamentModelId(m.id)
+                repo.lockForUpdate(id) *> repo.read(id).flatMap {
+                    case None                                          => repo.create(m.model).as(Some(Left(id)))
+                    case Some(s) if !s.active || s.version < m.version => repo.replace(m.model).as(Some(Right(id)))
+                    case Some(_)                                       => IO.pure(None)
+                }
             }
+            stored <- repo.listClassified
+            gone = stored.filterNot(s => StandardModels.find(s.tournamentModelId.value).isDefined)
+            removed <- gone.traverse { s =>
+                val id = s.tournamentModelId
+                for {
+                    _ <- repo.lockForUpdate(id)
+                    // Locked, so that nobody enters one between the look and the delete.
+                    madeFrom <- tournaments.lockMadeFrom(id)
+                    entered <- tournaments.anyEntrantMadeFrom(id)
+                    outcome <-
+                        if (entered)
+                            if (s.active) repo.deactivate(id).as(Some(Left(id))) else IO.pure(None)
+                        else
+                            madeFrom.traverse_((g, t) => tournaments.delete(g, t)) *>
+                                repo.delete(id).as(Some(Right(id)))
+                } yield outcome
+            }
+        } yield TournamentModelSync(
+          added = written.flatten.collect { case Left(id) => id },
+          updated = written.flatten.collect { case Right(id) => id },
+          deactivated = removed.flatten.collect { case Left(id) => id },
+          deleted = removed.flatten.collect { case Right(id) => id }
+        )
+    }
+
+    /** Offers in `game` every active model it can play -- whose design has no problem for it but warnings: what a new
+      * game is given as it is created, for its admins to change. The models offered.
+      */
+    def offerPlayable(session: Session[IO], game: Game): IO[List[TournamentModelId]] = {
+        val repo = new TournamentModelRepo(session)
+        val tg = TournamentGame.of(game)
+        repo.listActive.flatMap { models =>
+            // None for a game with no role a match could start with.
+            val playable =
+                if (tg.requiredSeats == 0) Nil
+                else
+                    models
+                        .filter(m => Validation.designProblems(m.design, tg, m.poolSize).forall(_.warning))
+                        .map(_.tournamentModelId)
+            playable.traverse_(id => repo.lockForShare(id) *> repo.offer(game.gameId, id)).as(playable)
+        }
     }
 }

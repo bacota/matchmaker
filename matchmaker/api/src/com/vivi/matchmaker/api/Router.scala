@@ -565,31 +565,22 @@ object Router {
             case ("GET", "games" :: gameId :: "tournaments" :: tid :: Nil) =>
                 withTournament(gameId, tid)((gid, t) => ok(services.tournaments.detail(gid, t, caller)))
 
-            // The models a game's tournaments are made from: listed for anyone creating one, and made, edited and
-            // removed by the game's admins, who may also add the standard formats the game does not offer yet. Removing
-            // one deletes it, with its tournaments, while nobody has entered one; afterwards it only deactivates it.
+            // The models tournaments are made from: every game's, as the code defines them, synced into the database
+            // by a site admin; each game offers those its admins choose.
+            case ("GET", "tournament-models" :: Nil) =>
+                ok(services.tournamentModels.listAll(caller))
+
+            case ("POST", "tournament-models" :: "sync" :: Nil) =>
+                ok(services.tournamentModels.sync(caller))
+
             case ("GET", "games" :: gameId :: "tournament-models" :: Nil) =>
                 withGameId(gameId)(gid => ok(services.tournamentModels.list(gid, caller)))
 
-            case ("POST", "games" :: gameId :: "tournament-models" :: Nil) =>
-                withGameId(gameId)(gid =>
-                    body[TournamentModelRequest](request).flatMap(r =>
-                        created(services.tournamentModels.create(gid, r, caller))
-                    )
-                )
-
-            case ("POST", "games" :: gameId :: "tournament-models" :: "standard" :: Nil) =>
-                withGameId(gameId)(gid => ok(services.tournamentModels.addStandard(gid, caller)))
-
             case ("PUT", "games" :: gameId :: "tournament-models" :: mid :: Nil) =>
-                withTournamentModel(gameId, mid)((gid, m) =>
-                    body[TournamentModelRequest](request).flatMap(r =>
-                        ok(services.tournamentModels.update(gid, m, r, caller))
-                    )
-                )
+                withTournamentModel(gameId, mid)((gid, m) => ok(services.tournamentModels.offer(gid, m, caller)))
 
             case ("DELETE", "games" :: gameId :: "tournament-models" :: mid :: Nil) =>
-                withTournamentModel(gameId, mid)((gid, m) => ok(services.tournamentModels.remove(gid, m, caller)))
+                withTournamentModel(gameId, mid)((gid, m) => ok(services.tournamentModels.withdraw(gid, m, caller)))
 
             case ("PUT", "games" :: gameId :: "tournaments" :: tid :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
@@ -792,9 +783,8 @@ object Router {
         f: (GameId, TournamentModelId) => IO[Response]
     ): IO[Response] =
         withGameId(rawGame)(gid =>
-            rawModel.toLongOption.fold(IO.pure(Errors.badRequest(s"'$rawModel' is not a tournament model id")))(m =>
-                f(gid, TournamentModelId(m))
-            )
+            if (rawModel.isEmpty) IO.pure(Errors.badRequest("a tournament model id is needed"))
+            else f(gid, TournamentModelId(rawModel))
         )
 
     private def withPlayerId(raw: String)(f: PlayerId => IO[Response]): IO[Response] =

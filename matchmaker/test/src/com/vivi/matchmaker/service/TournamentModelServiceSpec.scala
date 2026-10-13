@@ -5,11 +5,11 @@ import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import scala.concurrent.duration._
 import munit.FunSuite
-import com.vivi.matchmaker.QuietTests
-import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.{StageDesign, StandardDesigns, TournamentDesign}
 import skunk.implicits._
 import skunk.codec.all.int8
+import com.vivi.matchmaker.QuietTests
+import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.model.tournament.{StageDesign, StandardModels, TournamentDesign, TournamentGame, Validation}
 import com.vivi.matchmaker.persistence.{
     EntrantRepo,
     GameAdminRepo,
@@ -18,10 +18,15 @@ import com.vivi.matchmaker.persistence.{
     PlayerRepo,
     TestSession,
     TournamentInvitationRepo,
+    TournamentModelRepo,
     TournamentRepo
 }
 
-/** A game's tournament models (V52), made, edited, removed and deactivated by its admins, against the local database.
+/** The models every game's tournaments are made from (V52): offered and withdrawn by each game's admins, and synced
+  * with the code by a site admin, against the local database.
+  *
+  * The models are every game's, shared with the specs running at the same time, so a model this spec makes up for a
+  * sync to remove has an id of its own, and nothing here changes a standard model another spec plays.
   */
 class TournamentModelServiceSpec extends FunSuite with QuietTests {
 
@@ -32,95 +37,116 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
 
     private def run[A](io: IO[A]): A = io.timeout(60.seconds).unsafeRunSync()
 
-    /** A two-player game with no models, an admin of it, and a player who is not one. */
-    private def fixture: IO[(Game, Player, Player)] = fixtureOf(GameType.Character)
+    private val ladder = TournamentModelId("ladder")
+    private val worldCup = TournamentModelId("world-cup")
 
-    private def fixtureOf(gameType: GameType): IO[(Game, Player, Player)] =
+    /** A two-player game offering World Cup and not Ladder, an admin of it, and a player who is not one. */
+    private def fixture: IO[(Game, Player, Player)] =
         for {
             admin <- services.registration.register(unique("admin"), unique("sub"))
             player <- services.registration.register(unique("player"), unique("sub"))
             game <- TestSession.resource.use { session =>
                 for {
-                    game <- new GameRepo[String](session).create(Generators.genGame(gameType).sample.get)
+                    game <- new GameRepo[String](session).create(Generators.genGame(GameType.Plain).sample.get)
                     _ <- new GameAdminRepo(session).grant(admin.playerId, game.gameId, admin.playerId)
+                    _ <- TournamentFixtures.model(session, game, "world-cup")
+                    _ <- TournamentFixtures.model(session, game, "ladder")
+                    _ <- new TournamentModelRepo(session).withdraw(game.gameId, ladder)
                 } yield game
             }
         } yield (game, admin, player)
 
-    private val roundRobin =
-        TournamentModelRequest(
-          "Round robin",
-          "Everyone plays everyone.",
-          Some("Round robin"),
-          Some(6),
-          design = TournamentDesign(List(StageDesign(brackets = false, poolSize = None, demote = None)))
-        )
+    private def siteAdmin: IO[Player] =
+        for {
+            p <- services.registration.register(unique("overall"), unique("sub"))
+            _ <- TestSession.resource.use(new PlayerRepo(_).update(p.copy(isAdmin = true)))
+        } yield p
 
-    test("a game's admin adds, edits and removes a model, and any player sees it listed") {
-        val (added, listed, edited, after) = run(for {
+    test("a game's admin offers and withdraws a model, and any player sees what the game offers") {
+        val (before, offered, seen, withdrawn) = run(for {
             f <- fixture
             (game, admin, player) = f
-            added <- models.create(game.gameId, roundRobin, admin.externalId)
-            listed <- models.list(game.gameId, player.externalId)
-            edited <- models.update(
-              game.gameId,
-              added.tournamentModelId,
-              roundRobin.copy(name = "Big round robin", poolSize = Some(8)),
-              admin.externalId
-            )
-            _ <- models.remove(game.gameId, added.tournamentModelId, admin.externalId)
-            after <- models.list(game.gameId, player.externalId)
-        } yield (added, listed, edited, after))
-        assertEquals(added.design, roundRobin.design)
-        assertEquals(listed.map(_.name), List("Round robin"))
-        assertEquals((edited.name, edited.poolSize), ("Big round robin", Some(8)))
-        assertEquals(after, Nil)
+            before <- models.list(game.gameId, player.externalId)
+            offered <- models.offer(game.gameId, ladder, admin.externalId)
+            seen <- models.list(game.gameId, player.externalId)
+            withdrawn <- models.withdraw(game.gameId, worldCup, admin.externalId)
+        } yield (before, offered, seen, withdrawn))
+        assertEquals(before.map(_.tournamentModelId), List(worldCup))
+        assertEquals(offered.map(_.tournamentModelId).toSet, Set(ladder, worldCup))
+        assertEquals(seen, offered)
+        assertEquals(withdrawn.map(_.tournamentModelId), List(ladder))
     }
 
-    test("a player who does not administer the game may not add, edit or remove a model") {
+    test("every model a game could offer is listed for its admins to choose from") {
+        val all = run(fixture.flatMap((_, _, player) => models.listAll(player.externalId)))
+        assert(all.exists(_.tournamentModelId == worldCup), all.map(_.tournamentModelId))
+        assert(all.forall(m => m.classification.isDefined && m.active), all)
+    }
+
+    test("a player who does not administer the game may not offer or withdraw a model, nor a game's admin sync them") {
         val outcome = run(for {
             f <- fixture
             (game, admin, player) = f
-            made <- models.create(game.gameId, roundRobin, admin.externalId)
-            create <- models.create(game.gameId, roundRobin, player.externalId).attempt
-            update <- models.update(game.gameId, made.tournamentModelId, roundRobin, player.externalId).attempt
-            delete <- models.remove(game.gameId, made.tournamentModelId, player.externalId).attempt
-            standard <- models.addStandard(game.gameId, player.externalId).attempt
-        } yield List(create, update, delete, standard))
+            offer <- models.offer(game.gameId, ladder, player.externalId).attempt
+            withdraw <- models.withdraw(game.gameId, worldCup, player.externalId).attempt
+            // Administering a game is not enough to change every game's models.
+            sync <- models.sync(admin.externalId).attempt
+        } yield List(offer, withdraw, sync))
         assert(outcome.forall(_.left.exists(_.isInstanceOf[UnauthorizedError])), outcome.toString)
     }
 
-    test("a model whose design cannot be played is refused, naming what is wrong") {
-        val refused = run(for {
+    test("a model that is not there, or is an inner design, is not offered") {
+        val outcome = run(for {
             f <- fixture
             (game, admin, _) = f
-            bad = roundRobin.copy(design = TournamentDesign(List(StageDesign(demote = Some(1)))))
-            attempt <- models.create(game.gameId, bad, admin.externalId).attempt
-        } yield attempt)
-        assert(refused.left.exists(e => e.isInstanceOf[ValidationError] && e.getMessage.contains("demote")), refused)
+            unknown <- models.offer(game.gameId, TournamentModelId("no-such-model"), admin.externalId).attempt
+            inner <- models.offer(game.gameId, TournamentModelId("world-cup/stage-2"), admin.externalId).attempt
+        } yield List(unknown, inner))
+        assert(outcome.forall(_.left.exists(_.isInstanceOf[NotFoundError])), outcome.toString)
     }
 
-    test("the standard formats are added once, and a new game is given them as it is created") {
-        val (first, again, created) = run(for {
-            f <- fixture
-            (game, admin, player) = f
-            first <- models.addStandard(game.gameId, admin.externalId)
-            again <- models.addStandard(game.gameId, admin.externalId)
-            overall <- services.registration.register(unique("overall"), unique("sub"))
-            _ <- TestSession.resource.use(new PlayerRepo(_).update(overall.copy(isAdmin = true)))
-            made <- services.games.createOrUpdate(
-              overall.externalId,
-              Generators.genGame().sample.get.copy(gameId = GameId.unassigned)
+    test("a sync stores every model the code defines, at its version, and brings back one that was deactivated") {
+        val repechage = TournamentModelId("brazilian-repechage")
+        val (synced, stored) = run(for {
+            admin <- siteAdmin
+            _ <- models.sync(admin.externalId)
+            // Brazilian repechage, which no other spec plays: deactivated as though the code had once dropped it.
+            _ <- TestSession.resource.use(session =>
+                session.transaction.use(_ => new TournamentModelRepo(session).deactivate(repechage))
             )
-            created <- models.list(made.gameId, player.externalId)
-        } yield (first, again, created))
-        val expected = StandardDesigns.models(2).map(_.name).sorted
-        assertEquals(first.map(_.name).sorted, expected)
-        assertEquals(again, Nil)
-        assertEquals(created.map(_.name).sorted, expected)
+            synced <- models.sync(admin.externalId)
+            stored <- TestSession.resource.use(new TournamentModelRepo(_).listActive)
+        } yield (synced, stored))
+        assertEquals((synced.added, synced.updated), (Nil, List(repechage)))
+        StandardModels.all.foreach { m =>
+            val found = stored.find(_.tournamentModelId.value == m.id)
+            assertEquals(found.map(s => (s.version, s.design)), Some((m.version, m.design)), m.id)
+        }
     }
 
-    // ---- removing a model that tournaments were made from ----
+    // ---- a sync removing a model the code no longer defines ----
+
+    /** A model the code does not define, with a classification, so that a sync takes it for one the code dropped. */
+    private def dropped: TournamentModel =
+        TournamentModel(
+          TournamentModelId(unique("test-dropped")),
+          1,
+          "Dropped",
+          "",
+          Some("Round robin"),
+          None,
+          lateEntries = false,
+          TournamentDesign(List(StageDesign(brackets = false, demote = None)))
+        )
+
+    /** `model` written and offered in `game`. */
+    private def offering(game: Game, model: TournamentModel): IO[Unit] =
+        TestSession.resource.use { session =>
+            session.transaction.use { _ =>
+                val repo = new TournamentModelRepo(session)
+                repo.create(model) *> repo.offer(game.gameId, model.tournamentModelId)
+            }
+        }
 
     private def tournamentFrom(game: Game, model: TournamentModel, owner: Player): IO[Tournament] =
         services.tournaments.create(
@@ -129,56 +155,53 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
           owner.externalId
         )
 
-    /** Enters `player` in `t`: what makes removing its model only deactivate it. */
-    private def withEntrant(game: Game, t: Tournament, player: Player): IO[Unit] =
-        TestSession.resource.use(
-          new EntrantRepo(_).create(game.gameId, GameType.Plain, t.tournamentId, player.playerId, None, 1500).void
-        )
-
     private def count(table: String, t: Tournament): IO[Long] =
         TestSession.resource.use(
           _.unique(
-            sql"SELECT count(*) FROM #$table WHERE game_id = #${t.gameId.value.toString} AND tournament_id = #${t.tournamentId.value.toString}"
+            sql"""SELECT count(*) FROM #$table
+                  WHERE game_id = #${t.gameId.value.toString} AND tournament_id = #${t.tournamentId.value.toString}"""
                 .query(int8)
           )
         )
 
-    test("removing a model nobody has entered a tournament of deletes those tournaments, and then it") {
-        val (removal, left, listed) = run(for {
-            f <- fixtureOf(GameType.Plain)
+    test("a sync deletes a model the code dropped, with its tournaments, while nobody has entered one") {
+        val model = dropped
+        val (synced, left, gone) = run(for {
+            f <- fixture
             (game, admin, player) = f
-            model <- models.create(game.gameId, roundRobin, admin.externalId)
+            _ <- offering(game, model)
             draft <- tournamentFrom(game, model, admin)
-            other <- tournamentFrom(game, model, player)
             // Invited, but not entered.
             _ <- TestSession.resource.use(
               new TournamentInvitationRepo(_).invite(game.gameId, draft.tournamentId, player.playerId)
             )
-            removal <- models.remove(game.gameId, model.tournamentModelId, admin.externalId)
-            left <- List(draft, other).traverse(t =>
-                TestSession.resource.use(new TournamentRepo(_).read(game.gameId, t.tournamentId))
-            )
+            synced <- siteAdmin.flatMap(a => models.sync(a.externalId))
+            left <- TestSession.resource.use(new TournamentRepo(_).read(game.gameId, draft.tournamentId))
             invited <- count("tournament_invitation", draft)
             stages <- count("stage", draft)
             pools <- count("pool", draft)
             _ = assertEquals((invited, stages, pools), (0L, 0L, 0L))
-            listed <- models.list(game.gameId, player.externalId)
-        } yield (removal, left, listed))
-        assertEquals(removal, TournamentModelRemoval(deleted = true, tournamentsDeleted = 2))
-        assertEquals(left, List(None, None))
-        assertEquals(listed, Nil)
+            gone <- TestSession.resource.use(new TournamentModelRepo(_).read(model.tournamentModelId))
+        } yield (synced, left, gone))
+        assert(synced.deleted.contains(model.tournamentModelId), synced)
+        assertEquals(left, None)
+        assertEquals(gone, None)
     }
 
-    test("removing a model a tournament of which has an entrant only deactivates it, and its tournaments carry on") {
-        val (removal, listed, kept, fresh, edited, editModel) = run(for {
-            f <- fixtureOf(GameType.Plain)
+    test("a sync only deactivates a dropped model a tournament of which has an entrant; its tournaments carry on") {
+        val model = dropped
+        val (synced, offered, stored, kept, fresh, edited) = run(for {
+            f <- fixture
             (game, admin, player) = f
-            model <- models.create(game.gameId, roundRobin, admin.externalId)
+            _ <- offering(game, model)
             entered <- tournamentFrom(game, model, admin)
             draft <- tournamentFrom(game, model, player)
-            _ <- withEntrant(game, entered, player)
-            removal <- models.remove(game.gameId, model.tournamentModelId, admin.externalId)
-            listed <- models.list(game.gameId, player.externalId)
+            _ <- TestSession.resource.use(
+              new EntrantRepo(_).create(game.gameId, GameType.Plain, entered.tournamentId, player.playerId, None, 1500)
+            )
+            synced <- siteAdmin.flatMap(a => models.sync(a.externalId))
+            offered <- models.list(game.gameId, player.externalId)
+            stored <- TestSession.resource.use(new TournamentModelRepo(_).read(model.tournamentModelId))
             kept <- List(entered, draft).traverse(t =>
                 TestSession.resource.use(new TournamentRepo(_).read(game.gameId, t.tournamentId))
             )
@@ -190,27 +213,29 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
               TournamentRequest("renamed", model.tournamentModelId),
               player.externalId
             )
-            editModel <- models.update(game.gameId, model.tournamentModelId, roundRobin, admin.externalId).attempt
-        } yield (removal, listed, kept, fresh, edited, editModel))
-        assertEquals(removal, TournamentModelRemoval(deleted = false, tournamentsDeleted = 0))
-        assertEquals(listed, Nil)
+        } yield (synced, offered, stored, kept, fresh, edited))
+        assert(synced.deactivated.contains(model.tournamentModelId), synced)
+        assert(!offered.exists(_.tournamentModelId == model.tournamentModelId), offered)
+        assertEquals(stored.map(_.active), Some(false))
         assert(kept.forall(_.isDefined), kept)
         assert(fresh.left.exists(_.isInstanceOf[NotFoundError]), fresh)
         assertEquals(edited.name, "renamed")
-        assert(editModel.left.exists(_.isInstanceOf[ConflictError]), editModel)
     }
 
-    test("a standard format an admin deactivated is not added back") {
-        val again = run(for {
-            f <- fixtureOf(GameType.Plain)
-            (game, admin, _) = f
-            added <- models.addStandard(game.gameId, admin.externalId)
-            model = added.head
-            t <- tournamentFrom(game, model, admin)
-            _ <- withEntrant(game, t, admin)
-            _ <- models.remove(game.gameId, model.tournamentModelId, admin.externalId)
-            again <- models.addStandard(game.gameId, admin.externalId)
-        } yield again)
-        assertEquals(again, Nil)
+    test("a new game offers every standard model it can play") {
+        val (offered, game) = run(for {
+            admin <- siteAdmin
+            _ <- models.sync(admin.externalId)
+            made <- services.games.createOrUpdate(
+              admin.externalId,
+              Generators.genGame(GameType.Plain).sample.get.copy(gameId = GameId.unassigned)
+            )
+            offered <- models.list(made.gameId, admin.externalId)
+        } yield (offered, made))
+        val standard = offered.map(_.tournamentModelId.value).filter(id => StandardModels.find(id).isDefined)
+        val expected = StandardModels.all
+            .filter(m => Validation.designProblems(m.design, TournamentGame.of(game), m.poolSize).forall(_.warning))
+            .map(_.id)
+        assertEquals(standard.sorted, expected.sorted)
     }
 }

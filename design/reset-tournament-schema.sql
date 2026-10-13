@@ -35,7 +35,7 @@ DROP TABLE IF EXISTS
     seed, pool_member, atomic_pool, pool_group, pool, round,
     character_entrant, entrant, tournament_character_invitation, tournament_invitation,
     nesting_stage, atomic_stage, stage, tournament,
-    nesting_stage_model, atomic_stage_model, stage_model, tournament_model
+    tournament_model_game, nesting_stage_model, atomic_stage_model, stage_model, tournament_model
     CASCADE;
 
 -- match, as V51 left it.

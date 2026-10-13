@@ -8,7 +8,7 @@ import scala.concurrent.duration._
 import munit.FunSuite
 import com.vivi.matchmaker.QuietTests
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.model.tournament.StandardDesigns
+import com.vivi.matchmaker.model.tournament.StandardModels
 import com.vivi.matchmaker.persistence.{
     CharacterRepo,
     EloRatingRepo,
@@ -36,18 +36,12 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
     /** A plain two-player game offering the standard formats as models, its owner, and `n` other registered players. */
     private def fixture(n: Int = 4, gameType: GameType = GameType.Plain): IO[Fixture] =
         for {
-            // One transaction, as the services run: a model and its stages are written before each names the other.
-            made <- TestSession.resource.use { session =>
-                session.transaction.use(_ =>
-                    for {
-                        game <- new GameRepo[String](session).create(Generators.genGame(gameType).sample.get)
-                        _ <- TournamentModelService.seed(session, game)
-                        offered <- new TournamentModelRepo(session).listOffered(game.gameId)
-                    } yield (game, offered)
-                )
-            }
-            (game, offered) = made
-            byKey = StandardDesigns.all.flatMap(std => offered.find(_.name == std.name).map(std.key -> _)).toMap
+            game <- TestSession.resource.use(new GameRepo[String](_).create(Generators.genGame(gameType).sample.get))
+            // Each in a transaction of its own, as the services write one: a model and its stages name each other.
+            offered <- TestSession.resource.use(session =>
+                StandardModels.all.traverse(m => TournamentFixtures.model(session, game, m.id))
+            )
+            byKey = StandardModels.all.map(_.id).zip(offered).toMap
             owner <- services.registration.register(unique("owner"), unique("sub"))
             players <- (1 to n).toList.traverse(_ => services.registration.register(unique("p"), unique("sub")))
         } yield Fixture(game, owner, players, byKey)
@@ -81,11 +75,17 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         val unknown = refusal(fixture(0).flatMap { f =>
             tournaments.create(
               f.game.gameId,
-              request(f).copy(tournamentModelId = TournamentModelId(Long.MaxValue)),
+              request(f).copy(tournamentModelId = TournamentModelId("no-such-model")),
               f.owner.externalId
             )
         })
         assert(unknown.exists(_.isInstanceOf[NotFoundError]), unknown)
+        // Every game's, but not offered in this one.
+        val withdrawn = refusal(fixture(0).flatMap { f =>
+            TestSession.resource.use(new TournamentModelRepo(_).withdraw(f.game.gameId, TournamentModelId("ladder"))) *>
+                tournaments.create(f.game.gameId, request(f, "ladder"), f.owner.externalId)
+        })
+        assert(withdrawn.exists(_.isInstanceOf[NotFoundError]), withdrawn)
         val empty = refusal(fixture(0).flatMap { f =>
             tournaments.create(f.game.gameId, request(f).copy(defaultPoolSize = Some(0)), f.owner.externalId)
         })

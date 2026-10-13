@@ -5,17 +5,12 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import com.raquo.laminar.api.L.{*, given}
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.model.tournament.{
-    Member,
     Node as TNode,
     Pool,
     PoolMember,
     Problem,
     Repetition,
-    SeedPolicy,
-    StageDesign,
     StageRun,
-    StandardDesigns,
-    TournamentDesign,
     TournamentGame,
     Validation
 }
@@ -48,10 +43,11 @@ object Tournaments {
             "New Tournament",
             onClick --> (_ => Store.show(Store.Page.NewTournament(game.gameId)))
           ),
-          // The game's models, for whoever administers it: nothing at all for anybody else.
+          // The formats the game offers, for whoever administers it: nothing at all for anybody else.
           child <-- Store.currentPlayer.flatMapSwitch {
-              case Some(player) => Store.administers(game.gameId, player).map(if (_) modelsSection(game) else emptyNode)
-              case None         => Val(emptyNode)
+              case Some(player) =>
+                  Store.administers(game.gameId, player).map(if (_) formatsSection(game, player) else emptyNode)
+              case None => Val(emptyNode)
           }
         )
 
@@ -703,102 +699,6 @@ object Tournaments {
           }
         )
 
-    /** A stage as the form edits it: every property as typed, so that a half-typed number is not lost. */
-    private case class StageDraft(
-        name: Var[String],
-        repeatKind: Var[String],
-        repeatCount: Var[String],
-        poolSize: Var[String],
-        brackets: Var[Boolean],
-        demote: Var[String],
-        promote: Var[String],
-        minStratum: Var[String],
-        maxStratum: Var[String],
-        points: Var[String],
-        pointsForDraw: Var[String],
-        pointsBonus: Var[Boolean],
-        rotateRoles: Var[Boolean],
-        concurrentRounds: Var[Boolean],
-        strictStrata: Var[Boolean],
-        tieBreakerStage: Var[Boolean],
-        seedPolicy: Var[SeedPolicy],
-        rubberMatch: Var[Boolean],
-        play: Var[String]
-    )
-
-    private def draftOf(s: StageDesign): StageDraft = {
-        def opt(o: Option[Int]) = o.fold("")(_.toString)
-        StageDraft(
-          Var(s.name),
-          Var(s.repeat match {
-              case Repetition.Fixed(_)          => "times"
-              case Repetition.UntilRemaining(_) => "until"
-              case Repetition.UntilStopped      => "stopped"
-          }),
-          Var(s.repeat match {
-              case Repetition.Fixed(k)          => k.toString
-              case Repetition.UntilRemaining(c) => c.toString
-              case Repetition.UntilStopped      => ""
-          }),
-          Var(opt(s.poolSize)),
-          Var(s.brackets),
-          Var(opt(s.demote)),
-          Var(opt(s.promote)),
-          Var(opt(s.minStratum)),
-          Var(opt(s.maxStratum)),
-          Var(s.points.toString),
-          Var(s.pointsForDraw.toString),
-          Var(s.pointsBonus),
-          Var(s.rotateRoles),
-          Var(s.concurrentRounds),
-          Var(s.strictStrata),
-          Var(s.tieBreakerStage),
-          Var(s.seedPolicy),
-          Var(s.rubberMatch),
-          Var(s.design match {
-              case None => "round-robin"
-              case Some(d)
-                  if d.stages.map(_.copy(name = "", description = "", poolSize = None)) ==
-                      StandardDesigns.eliminationMatch.stages =>
-                  "elimination-match"
-              case Some(_) => "keep"
-          })
-        )
-    }
-
-    /** The design a stage draft says, keeping a nested design it cannot show (`keep`) as it was. */
-    private def stageOf(d: StageDraft, original: Option[StageDesign]): StageDesign = {
-        def int(v: Var[String]) = v.now().trim.toIntOption
-        StageDesign(
-          repeat = d.repeatKind.now() match {
-              case "until"   => Repetition.UntilRemaining(int(d.repeatCount).getOrElse(1))
-              case "stopped" => Repetition.UntilStopped
-              case _         => Repetition.Fixed(int(d.repeatCount).getOrElse(1))
-          },
-          brackets = d.brackets.now(),
-          demote = int(d.demote),
-          promote = int(d.promote),
-          maxStratum = int(d.maxStratum),
-          minStratum = int(d.minStratum),
-          points = int(d.points).getOrElse(2),
-          pointsForDraw = int(d.pointsForDraw).getOrElse(1),
-          pointsBonus = d.pointsBonus.now(),
-          poolSize = int(d.poolSize),
-          concurrentRounds = d.concurrentRounds.now(),
-          rotateRoles = d.rotateRoles.now(),
-          strictStrata = d.strictStrata.now(),
-          design = d.play.now() match {
-              case "round-robin"       => None
-              case "elimination-match" => Some(StandardDesigns.eliminationMatch)
-              case _                   => original.flatMap(_.design)
-          },
-          tieBreakerStage = d.tieBreakerStage.now(),
-          seedPolicy = d.seedPolicy.now(),
-          rubberMatch = d.rubberMatch.now(),
-          name = d.name.now().trim
-        )
-    }
-
     /** The models offered for a game, grouped by classification, as a select's options. */
     private def modelOptions(models: Seq[TournamentModel]): Seq[HtmlElement] =
         models
@@ -816,8 +716,8 @@ object Tournaments {
 
     private val labelAttr = htmlAttr("label", com.raquo.laminar.codecs.StringAsIsCodec)
 
-    /** The form that creates a tournament from one of its game's models, or edits `existing`. A running tournament's
-      * model and default pool size are not offered for editing, since its stages cannot change.
+    /** The form that creates a tournament from one of the models its game offers, or edits `existing`. A running
+      * tournament's model and default pool size are not offered for editing, since its stages cannot change.
       */
     def form(game: Game, existing: Option[Tournament], onSaved: () => Unit): HtmlElement = {
         val key = existing.fold("new-tournament")(t => s"tournament-${t.tournamentId.value}")
@@ -844,8 +744,8 @@ object Tournaments {
         val maxTurns = Var(s0.maxTurns.fold("")(_.toString))
         val problems: Var[List[Problem]] = Var(Nil)
         val chosen: Var[Option[TournamentModel]] = Var(None)
-        // The model an existing tournament was made from, when its admins have since deactivated it: not among those
-        // offered, and kept unless another is chosen.
+        // The model an existing tournament was made from, when the game no longer offers it -- its admins took it off,
+        // or the code no longer defines it: not among those offered, and kept unless another is chosen.
         val kept = existing.map(_.tournamentModelId)
         val keptRetired: Signal[Option[TournamentModelId]] =
             models.map(ms => kept.filter(id => ms.nonEmpty && !ms.exists(_.tournamentModelId == id)))
@@ -932,26 +832,26 @@ object Tournaments {
                 )(
                   select(
                     onChange.mapToValue --> { v =>
-                        v.toLongOption.foreach { id =>
+                        Option(v).filter(_.nonEmpty).foreach { id =>
                             Store.tournamentModelsByGame
                                 .now()
                                 .getOrElse(game.gameId, Seq.empty)
                                 .find(_.tournamentModelId.value == id) match {
                                 case Some(m) => choose(m)
-                                // Back to the deactivated format it was made from.
+                                // Back to the format it was made from, which the game no longer offers.
                                 case None =>
                                     modelId.set(kept)
                                     chosen.set(None)
                             }
                         }
                     },
-                    value <-- modelId.signal.map(_.fold("")(_.value.toString)),
+                    value <-- modelId.signal.map(_.fold("")(_.value)),
                     children <-- models
                         .combineWith(keptRetired)
                         .map((ms, retired) =>
                             modelOptions(ms) ++
                                 retired
-                                    .map(id => option(value := id.value.toString, "Current format (no longer offered)"))
+                                    .map(id => option(value := id.value, "Current format (no longer offered)"))
                         )
                   )
                 ),
@@ -965,7 +865,7 @@ object Tournaments {
                     case (Some(id), Some(current)) if id == current =>
                         p(
                           cls := "detail",
-                          "This game's admins no longer offer the format this tournament was made from. It keeps it " +
+                          "This game no longer offers the format this tournament was made from. It keeps it " +
                               "unless you choose another."
                         )
                     case _ => emptyNode
@@ -1060,269 +960,96 @@ object Tournaments {
         )
     }
 
-    // ---- a game's models, for its admins ----------------------------------------------------
+    // ---- the formats a game offers, for its admins ------------------------------------------
 
-    /** The models a game's tournaments are made from, for an admin of it: each with a way to edit or remove it, a way
-      * to add one, and a way to add the standard formats the game does not offer yet.
+    /** Every format a game could offer, for an admin of it, each with whether the game offers it; and, for a site
+      * admin, the button that makes the formats those the code defines.
       */
-    private def modelsSection(game: Game): HtmlElement = {
-        val editing: Var[Option[Option[TournamentModel]]] = Var(None)
+    private def formatsSection(game: Game, player: Player): HtmlElement = {
         val said = Var("")
+        val tg = TournamentGame.of(game)
+        val offered: Signal[Set[TournamentModelId]] =
+            Store.tournamentModelsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty).map(_.tournamentModelId).toSet)
+        val tipId = freshTipId("formats-tip")
         div(
-          h3("Tournament Formats"),
+          withTip(
+            tipId,
+            "Tournament Formats",
+            "The formats ticked here are the ones offered when a tournament of this game is created. A tournament " +
+                "already made keeps its format whatever you change here."
+          )(h3("Tournament Formats")),
           div(aria.live := "polite", cls := "detail", child.text <-- said.signal),
-          listing(
-            Store.tournamentModelsByGame.signal.map(_.getOrElse(game.gameId, Seq.empty)),
-            Store.loading(Store.Fetch.TournamentModels(game.gameId))
-          )(p(cls := "empty", "No formats yet."))(models =>
+          listing(Store.allTournamentModels.signal, Store.loading(Store.Fetch.AllTournamentModels))(
+            p(cls := "empty", "There are no formats yet.")
+          )(models =>
               ul(
                 cls := "plain",
+                aria.describedBy := tipId,
                 models.map { m =>
+                    val busy = Var(false)
+                    val unplayable =
+                        Validation.designProblems(m.design, tg, m.poolSize).filterNot(_.warning).headOption
+                    def change(on: Boolean): Unit = {
+                        val call =
+                            if (on) ApiClient.offerTournamentModel(game.gameId, m.tournamentModelId)
+                            else ApiClient.withdrawTournamentModel(game.gameId, m.tournamentModelId)
+                        Store.run(call, busy) { _ =>
+                            said.set(if (on) s"${m.name} is offered." else s"${m.name} is no longer offered.")
+                            Store.reloadTournamentModels(game.gameId)
+                        }
+                    }
                     li(
-                      span(m.name),
-                      m.classification.fold(emptyNode)(c => span(cls := "detail", s" — $c")),
-                      " ",
-                      button(
-                        tpe := "button",
-                        cls := "link",
-                        aria.label := s"Edit ${m.name}",
-                        "Edit",
-                        onClick --> (_ => editing.set(Some(Some(m))))
-                      ),
-                      busyButton("Remove", Some("link"))(busy =>
-                          if (
-                            org.scalajs.dom.window.confirm(
-                              s"Remove ${m.name}? If nobody has entered a tournament made from it, those " +
-                                  "tournaments are deleted with it. Otherwise it is only taken off the list of formats."
-                            )
+                      label(
+                        input(
+                          tpe := "checkbox",
+                          // A format this game cannot play may still be unticked, never ticked.
+                          disabled <-- busy.signal
+                              .combineWith(offered)
+                              .map((b, on) => b || (unplayable.isDefined && !on(m.tournamentModelId))),
+                          controlled(
+                            checked <-- offered.map(_.contains(m.tournamentModelId)),
+                            onClick.mapToChecked --> (on => change(on))
                           )
-                              Store.run(ApiClient.removeTournamentModel(game.gameId, m.tournamentModelId), busy) {
-                                  removal =>
-                                      said.set(
-                                        if (!removal.deleted)
-                                            s"${m.name} is no longer offered. Tournaments made from it carry on."
-                                        else if (removal.tournamentsDeleted == 0) s"Removed ${m.name}."
-                                        else
-                                            s"Removed ${m.name} and the ${removal.tournamentsDeleted} " +
-                                                s"tournament${if (removal.tournamentsDeleted == 1) "" else "s"} " +
-                                                "made from it."
-                                      )
-                                      Store.reloadTournamentModels(game.gameId)
-                              }
-                      ).amend(aria.label := s"Remove ${m.name}")
+                        ),
+                        m.name
+                      ),
+                      m.classification.fold(emptyNode)(c => span(cls := "detail", s" — $c")),
+                      unplayable.fold(emptyNode)(problem =>
+                          p(cls := "detail", s"Can't be played in this game: ${problem.describe}")
+                      )
                     )
                 }
               )
           ),
-          div(
-            cls := "row",
-            button(tpe := "button", "Add a Format", onClick --> (_ => editing.set(Some(None)))),
-            busyButton("Add the Standard Formats")(busy =>
-                Store.run(ApiClient.addStandardModels(game.gameId), busy) { added =>
-                    said.set(
-                      if (added.isEmpty) "Every standard format this game can play is offered already."
-                      else s"Added ${added.size} standard format${if (added.sizeIs == 1) "" else "s"}."
-                    )
-                    Store.reloadTournamentModels(game.gameId)
-                }
-            )
-          ),
-          child <-- editing.signal.map {
-              case None => emptyNode
-              case Some(m) =>
-                  modelForm(
-                    game,
-                    m,
-                    done = message => {
-                        editing.set(None)
-                        said.set(message)
+          if (!player.isAdmin) emptyNode
+          else {
+              val syncTip = freshTipId("formats-tip")
+              withTip(
+                syncTip,
+                "Sync Formats",
+                "Makes every game's formats the ones the code defines: adds new ones and updates changed ones. A " +
+                    "format the code no longer has is removed with its tournaments if nobody has entered one, and " +
+                    "otherwise only taken off every list."
+              )(
+                busyButton("Sync Formats")(busy =>
+                    Store.run(ApiClient.syncTournamentModels(), busy) { done =>
+                        def count(n: Int, what: String) = Option.when(n > 0)(s"$n $what")
+                        val parts = List(
+                          count(done.added.size, "added"),
+                          count(done.updated.size, "updated"),
+                          count(done.deactivated.size, "taken off the lists"),
+                          count(done.deleted.size, "removed")
+                        ).flatten
+                        said.set(
+                          if (parts.isEmpty) "The formats were already up to date."
+                          else s"Formats synced: ${parts.mkString(", ")}."
+                        )
+                        Store.reloadAllTournamentModels()
                         Store.reloadTournamentModels(game.gameId)
-                    },
-                    cancel = () => editing.set(None)
-                  )
+                    }
+                ).amend(aria.describedBy := syncTip)
+              )
           }
         )
     }
-
-    /** The form that creates a model, or edits `existing`: its name, how it is listed, the pool size it suggests, and
-      * its stages.
-      */
-    private def modelForm(
-        game: Game,
-        existing: Option[TournamentModel],
-        done: String => Unit,
-        cancel: () => Unit
-    ): HtmlElement = {
-        val key = existing.fold("new-model")(m => s"model-${m.tournamentModelId.value}")
-        val name = Var(existing.map(_.name).getOrElse(""))
-        val description = Var(existing.map(_.description).getOrElse(""))
-        val classification = Var(existing.flatMap(_.classification).getOrElse(""))
-        val poolSize = Var(existing.flatMap(_.poolSize).fold("")(_.toString))
-        val lateEntries = Var(existing.exists(_.lateEntries))
-        val stages = Var(existing.map(_.design.stages).getOrElse(List(StageDesign())).map(draftOf))
-        val originals = existing.map(_.design.stages).getOrElse(Nil)
-        val problems: Var[List[Problem]] = Var(Nil)
-
-        def int(v: Var[String]) = v.now().trim.toIntOption
-        def design = TournamentDesign(stages.now().zipWithIndex.map((d, i) => stageOf(d, originals.lift(i))))
-        def check(): Unit = problems.set(Validation.designProblems(design, TournamentGame.of(game), int(poolSize)))
-        def text(caption: String, v: Var[String], tip: String) =
-            Views.tipField(freshTipId(s"$key-tip"), caption, tip)(
-              input(controlled(value <-- v.signal, onInput.mapToValue --> v))
-            )
-
-        fieldSet(
-          cls := "card",
-          legend(existing.fold("New Format")(m => s"Editing ${m.name}")),
-          text("Name", name, "What it is called where a tournament is created."),
-          text("Description", description, "A sentence saying how it is played."),
-          text("Kind", classification, "The group it is listed under, such as Elimination. Blank keeps it unlisted."),
-          Views.tipField(
-            freshTipId(s"$key-tip"),
-            "Suggested pool size",
-            "The default pool size a tournament made from it starts with. Blank suggests one match's worth of seats."
-          )(
-            input(
-              tpe := "number",
-              inputMode := "numeric",
-              controlled(value <-- poolSize.signal, onInput.mapToValue --> poolSize)
-            )
-          ),
-          label(
-            input(tpe := "checkbox", controlled(checked <-- lateEntries.signal, onClick.mapToChecked --> lateEntries)),
-            "Takes late entries"
-          ),
-          stageEditor(key, stages),
-          div(
-            cls := "row",
-            button(tpe := "button", "Check", onClick --> (_ => check())),
-            busyButton(if (existing.isDefined) "Save Format" else "Add Format")(busy =>
-                check()
-                val errors = problems.now().filterNot(_.warning)
-                if (name.now().trim.isEmpty) Store.reportProblem("A format needs a name.")
-                else if (errors.nonEmpty) Store.reportProblem(errors.map(_.describe).mkString("; "))
-                else {
-                    val request = TournamentModelRequest(
-                      name.now().trim,
-                      description.now().trim,
-                      Option(classification.now().trim).filter(_.nonEmpty),
-                      int(poolSize),
-                      lateEntries.now(),
-                      design
-                    )
-                    val saving: Future[TournamentModel] = existing match {
-                        case Some(m) => ApiClient.updateTournamentModel(game.gameId, m.tournamentModelId, request)
-                        case None    => ApiClient.createTournamentModel(game.gameId, request)
-                    }
-                    Store.run(saving, busy)(saved => done(s"Saved ${saved.name}."))
-                }
-            ),
-            button(tpe := "button", cls := "link", "Cancel", onClick --> (_ => cancel()))
-          ),
-          ul(
-            aria.live := "polite",
-            children <-- problems.signal.map(
-              _.map(pr =>
-                  li(cls := (if (pr.warning) "notice" else "error"), (if (pr.warning) "Note: " else "") + pr.describe)
-              )
-            )
-          )
-        )
-    }
-
-    /** The stages of a design, each a form of its properties. */
-    private def stageEditor(key: String, stages: Var[List[StageDraft]]): HtmlElement =
-        div(
-          children <-- stages.signal.map(_.zipWithIndex.map { (d, i) =>
-              def tip(caption: String, text: String)(control: HtmlElement) =
-                  Views.tipField(freshTipId(s"$key-stage-$i"), caption, text)(control)
-              def num(caption: String, v: Var[String], text: String) =
-                  tip(caption, text)(
-                    input(
-                      tpe := "number",
-                      inputMode := "numeric",
-                      controlled(value <-- v.signal, onInput.mapToValue --> v)
-                    )
-                  )
-              def box(caption: String, v: Var[Boolean]) =
-                  label(input(tpe := "checkbox", controlled(checked <-- v.signal, onClick.mapToChecked --> v)), caption)
-              fieldSet(
-                cls := "card",
-                legend(s"Stage ${i + 1}"),
-                tip("Stage name", "What the stage is called on the tournament's page. Blank numbers it.")(
-                  input(controlled(value <-- d.name.signal, onInput.mapToValue --> d.name))
-                ),
-                div(
-                  cls := "row",
-                  field(
-                    "Played",
-                    select(
-                      onChange.mapToValue --> d.repeatKind,
-                      value <-- d.repeatKind.signal,
-                      option(value := "times", "a number of times"),
-                      option(value := "until", "until this many remain"),
-                      option(value := "stopped", "until you stop it")
-                    )
-                  ),
-                  child <-- d.repeatKind.signal.map(k =>
-                      if (k == "stopped") emptyNode
-                      else num("How many", d.repeatCount, "The number of times, or of participants left.")
-                  )
-                ),
-                field(
-                  "Each pool plays",
-                  select(
-                    onChange.mapToValue --> d.play,
-                    value <-- d.play.signal,
-                    option(value := "round-robin", "a round robin"),
-                    option(value := "elimination-match", "one elimination match"),
-                    child <-- d.play.signal.map(p =>
-                        if (p == "keep") option(value := "keep", "its own design (kept)") else emptyNode
-                    )
-                  )
-                ),
-                num("Pool size", d.poolSize, "How many in each pool. Blank is the tournament's default pool size."),
-                box("Brackets", d.brackets),
-                num("Demote at rank", d.demote, "This rank and worse drop a stratum. Blank for nobody."),
-                num("Promote at rank", d.promote, "This rank and better rise a stratum. Blank for nobody."),
-                num("Lowest stratum", d.minStratum, "Dropping below it eliminates. Blank for no bottom."),
-                num("Highest stratum", d.maxStratum, "Nobody rises above it. Blank for no top."),
-                num("Points for a place", d.points, "Points for each opponent ranked below."),
-                num("Points for a draw", d.pointsForDraw, "Points for each opponent tied with."),
-                box("50% bonus for first", d.pointsBonus),
-                box("Rotate roles", d.rotateRoles),
-                tip(
-                  "All matches in one round",
-                  "A round-robin pool plays all of its matches in one round, rather than each player one match a round."
-                )(box("Concurrent rounds", d.concurrentRounds)),
-                box("Strict strata", d.strictStrata),
-                box("Tie-breaker stage", d.tieBreakerStage),
-                field(
-                  "Seeds after",
-                  select(
-                    onChange.mapToValue --> (c => d.seedPolicy.set(SeedPolicy.fromCode(c))),
-                    value <-- d.seedPolicy.signal.map(_.code),
-                    SeedPolicy.values.toSeq.map(s => option(value := s.code, s.label))
-                  )
-                ),
-                tip(
-                  "Rubber match",
-                  "Two players level on points play one more match, in a game of two roles. Otherwise scores decide."
-                )(box("Rubber match breaks ties", d.rubberMatch)),
-                button(
-                  tpe := "button",
-                  cls := "link",
-                  aria.label := s"Remove stage ${i + 1}",
-                  "Remove",
-                  onClick --> (_ => stages.update(all => if (all.sizeIs > 1) all.filterNot(_ eq d) else all))
-                )
-              )
-          }),
-          button(
-            tpe := "button",
-            cls := "link",
-            "Add a Stage",
-            onClick --> (_ => stages.update(_ :+ draftOf(StageDesign())))
-          )
-        )
 }

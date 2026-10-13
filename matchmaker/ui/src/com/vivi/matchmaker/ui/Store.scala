@@ -109,6 +109,7 @@ object Store {
         tournamentStandings.set(Seq.empty)
         tournamentsByGame.set(Map.empty)
         tournamentModelsByGame.set(Map.empty)
+        allTournamentModels.set(Seq.empty)
         tournament.set(None)
         // And what was last said about one. The stamp above would keep it from being read anyway;
         // this is so that nothing is held about a player who has gone, which is what the rest of
@@ -170,6 +171,7 @@ object Store {
         case Tournaments(gameId: GameId)
         case OneTournament
         case TournamentModels(gameId: GameId)
+        case AllTournamentModels
     }
 
     /* How each list's *latest* answer went: absent until one has come, `true` for an answer that
@@ -264,6 +266,11 @@ object Store {
       * screen or that form is opened.
       */
     val tournamentModelsByGame: Var[Map[GameId, Seq[TournamentModel]]] = Var(Map.empty)
+
+    /** Every model a game could offer, for a game's admins choosing which it does: fetched as a game's screen is opened
+      * by one of them.
+      */
+    val allTournamentModels: Var[Seq[TournamentModel]] = Var(Seq.empty)
 
     /** The tournament whose page is showing: emptied as another is opened, so one tournament's page never shows
       * another's entries while it loads.
@@ -674,6 +681,8 @@ object Store {
             case Page.OneGame(gameId) =>
                 reloadTournaments(gameId)
                 reloadTournamentModels(gameId)
+                // For its admins' choice of the models it offers; small, and anyone may read it.
+                reloadAllTournamentModels()
                 refreshChallenges(gameId)
                 refreshCharacters(gameId)
                 refreshGameAdmins(gameId)
@@ -1055,6 +1064,9 @@ object Store {
         reload(ApiClient.tournamentModels(gameId), Fetch.TournamentModels(gameId))(found =>
             tournamentModelsByGame.update(_.updated(gameId, found))
         )
+
+    def reloadAllTournamentModels(): Future[Unit] =
+        reload(ApiClient.allTournamentModels(), Fetch.AllTournamentModels)(allTournamentModels.set)
 
     def reloadTournaments(gameId: GameId): Future[Unit] =
         reload(ApiClient.tournaments(gameId), Fetch.Tournaments(gameId))(found =>

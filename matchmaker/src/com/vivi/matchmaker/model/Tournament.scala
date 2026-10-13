@@ -46,14 +46,16 @@ case class TournamentSettings(
     isPublic: Boolean = true
 )
 
-/** A design a game's admin offers (V52): a tournament is made from one, copying its stages. `classification` is the
-  * group it is listed under where a tournament is created; a model with none is not offered on its own, being the inner
-  * design of another's nesting stage. `poolSize` is the default pool size to suggest, `None` for the game's R. A model
-  * that is not `active` has been deactivated by an admin, and is offered no longer.
+/** A design every game may offer (V52), which a tournament is made from by copying its stages: one of the standard
+  * formats the code defines ([[com.vivi.matchmaker.model.tournament.StandardModels]]), as a site admin's sync last
+  * wrote it, at `version`. `classification` is the group it is listed under where a tournament is created; a model with
+  * none is never offered on its own, being the inner design of another's nesting stage. `poolSize` is the default pool
+  * size to suggest, `None` for the game's R. A model that is not `active` is one the code no longer defines, kept for
+  * the tournaments made from it.
   */
 case class TournamentModel(
-    gameId: GameId,
     tournamentModelId: TournamentModelId,
+    version: Int,
     name: String,
     description: String,
     classification: Option[String],
@@ -63,19 +65,15 @@ case class TournamentModel(
     active: Boolean = true
 )
 
-/** What became of a model an admin removed: `deleted`, with the `tournamentsDeleted` made from it, when nobody had
-  * entered a tournament made from it; otherwise only deactivated, its tournaments left as they were.
+/** What a site admin's sync of the models with the code did: the models it `added`, those it `updated` to a newer
+  * version (or brought back), those it `deactivated` because the code no longer defines them and a tournament made from
+  * them has entrants, and those it `deleted`, with the tournaments nobody had entered, because nothing needed them.
   */
-case class TournamentModelRemoval(deleted: Boolean, tournamentsDeleted: Int)
-
-/** What an admin creates or edits a model with. */
-case class TournamentModelRequest(
-    name: String,
-    description: String = "",
-    classification: Option[String] = None,
-    poolSize: Option[Int] = None,
-    lateEntries: Boolean = false,
-    design: TournamentDesign
+case class TournamentModelSync(
+    added: List[TournamentModelId],
+    updated: List[TournamentModelId],
+    deactivated: List[TournamentModelId],
+    deleted: List[TournamentModelId]
 )
 
 /** A tournament, without its design or its state (V52): those are rows of their own.

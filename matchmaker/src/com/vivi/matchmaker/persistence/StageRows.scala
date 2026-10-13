@@ -8,12 +8,13 @@ import com.vivi.matchmaker.model.tournament.{Repetition, SeedPolicy, StageDesign
   * it, and its subtype's one column -- `rotate_roles` for an atomic stage, the inner design for a nesting one, which a
   * model names as another model and a tournament as the first stage of a chain of its own.
   *
-  * Shared by [[TournamentModelRepo]] and [[StageRepo]], which read and write the two tables with the same columns.
+  * Shared by [[TournamentModelRepo]] and [[StageRepo]], which read and write the two tables with the same columns. A
+  * model's stages are named by text and a tournament's by number, so the id's type `I` is the caller's.
   */
 private[persistence] object StageRows {
 
-    case class Row(
-        id: Long,
+    case class Row[I](
+        id: I,
         kind: String,
         poolSize: Option[Int],
         name: String,
@@ -33,9 +34,9 @@ private[persistence] object StageRows {
         strictStrata: Boolean,
         tieBreakerStage: Boolean,
         seedPolicy: String,
-        next: Option[Long],
+        next: Option[I],
         rotateRoles: Option[Boolean],
-        inner: Option[Long]
+        inner: Option[I]
     )
 
     /** The columns of a stage row, `s` the stage table, `a` and `n` its subtypes left-joined, and `inner` the nesting
@@ -47,16 +48,16 @@ private[persistence] object StageRows {
             s.points_bonus, s.promote, s.rubber_match, s.strict_strata, s.tie_breaker_stage, s.seed_policy,
             s.$next, a.rotate_roles, n.$inner"""
 
-    /** Decodes the stage's id followed by [[columns]]. */
-    val row: Decoder[Row] =
-        (int8 *: text *: int4.opt *: text *: text *: bool *: bool *: int4.opt *: int4.opt *: int4.opt *: int4.opt *:
-            int4.opt *: int4 *: int4 *: bool *: int4.opt *: bool *: bool *: bool *: text *: int8.opt *: bool.opt *:
-            int8.opt).to[Row]
+    /** Decodes the stage's id, by `id`, followed by [[columns]]. */
+    def row[I](id: Codec[I]): Decoder[Row[I]] =
+        (id *: text *: int4.opt *: text *: text *: bool *: bool *: int4.opt *: int4.opt *: int4.opt *: int4.opt *:
+            int4.opt *: int4 *: int4 *: bool *: int4.opt *: bool *: bool *: bool *: text *: id.opt *: bool.opt *:
+            id.opt).to[Row[I]]
 
     /** What is written of a stage: its properties and the stage after it, in the order of [[insertColumns]]. */
-    val fields: Encoder[(StageDesign, Option[Long])] =
+    def fields[I](id: Codec[I]): Encoder[(StageDesign, Option[I])] =
         (text *: int4.opt *: text *: text *: bool *: bool *: int4.opt *: int4.opt *: int4.opt *: int4.opt *: int4.opt *:
-            int4 *: int4 *: bool *: int4.opt *: bool *: bool *: bool *: text *: int8.opt).contramap { case (s, next) =>
+            int4 *: int4 *: bool *: int4.opt *: bool *: bool *: bool *: text *: id.opt).contramap { case (s, next) =>
             val (repetitions, remaining) = s.repeat match {
                 case Repetition.Fixed(k)          => (Some(k), None)
                 case Repetition.UntilRemaining(c) => (None, Some(c))
@@ -93,7 +94,7 @@ private[persistence] object StageRows {
             strict_strata, tie_breaker_stage, seed_policy, $next"""
 
     /** A stage from its row, with `inner` the design its pools play if it is a nesting stage. */
-    def stageOf(r: Row, inner: Option[TournamentDesign]): StageDesign =
+    def stageOf[I](r: Row[I], inner: Option[TournamentDesign]): StageDesign =
         StageDesign(
           repeat = (r.repetitions, r.remaining) match {
               case (Some(k), _) => Repetition.Fixed(k)
@@ -124,8 +125,8 @@ private[persistence] object StageRows {
       * design a nesting stage's pools play from the row's inner reference. A chain that comes back on itself, or names
       * a stage that is not there, is a broken design rather than one to loop on, which the schema cannot rule out.
       */
-    def chain(rows: Map[Long, Row], first: Long, inner: Long => TournamentDesign): TournamentDesign = {
-        def walk(at: Option[Long], seen: Set[Long]): List[StageDesign] =
+    def chain[I](rows: Map[I, Row[I]], first: I, inner: I => TournamentDesign): TournamentDesign = {
+        def walk(at: Option[I], seen: Set[I]): List[StageDesign] =
             at match {
                 case None => Nil
                 case Some(id) =>
