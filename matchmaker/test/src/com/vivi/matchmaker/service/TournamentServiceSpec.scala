@@ -67,6 +67,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assertEquals(t.owner, f.owner.playerId)
         assertEquals(t.tournamentModelId, f.model("single-elimination").tournamentModelId)
         assertEquals(detail.design, f.model("single-elimination").design)
+        assertEquals(detail.gameType, GameType.Plain)
         // The model suggests no pool size, so the default is the game's R.
         assertEquals(t.defaultPoolSize, f.game.poolSeats)
     }
@@ -267,7 +268,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
     }
 
     test("a character game's entry is one of the caller's characters") {
-        val (none, theirs, mine) = run(for {
+        val (none, theirs, mine, gameType) = run(for {
             f <- fixture(2, GameType.Character)
             t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
             _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
@@ -284,7 +285,10 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                 .enter(f.game.gameId, t.tournamentId, Some(other.characterId), f.players.head.externalId)
                 .attempt
             mine <- tournaments.enter(f.game.gameId, t.tournamentId, Some(own.characterId), f.players.head.externalId)
-        } yield (none, theirs, mine))
+            // The page asks for a character by the game's type, which the detail carries for a client without the game.
+            detail <- tournaments.detail(f.game.gameId, t.tournamentId, f.players.head.externalId)
+        } yield (none, theirs, mine, detail.gameType))
+        assertEquals(gameType, GameType.Character)
         assert(none.left.exists(_.isInstanceOf[ValidationError]))
         assert(theirs.left.exists(_.isInstanceOf[ValidationError]))
         assert(mine.characterId.isDefined)

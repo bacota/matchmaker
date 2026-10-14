@@ -92,17 +92,20 @@ class TournamentService[T](
                     case Some(s) => new TournamentMatchRepo(session).listRound(gameId, tournamentId, s.round)
                     case None    => IO.pure(Nil)
                 }
-                game <- new GameRepo[T](session).read(gameId)
+                game <- new GameRepo[T](session).read(gameId).flatMap {
+                    case Some(g) => IO.pure(g)
+                    case None    => IO.raiseError(NotFoundError(s"no game $gameId"))
+                }
             } yield TournamentDetail(
               summary,
+              game.gameType,
               design,
               entries,
               invited.map((id, name) => PlayerName(id, name)),
               // Pools still being played shown as their finished matches stand.
-              state.map(s => game.fold(s)(g => Standings.provisional(s, design, TournamentGame.of(g)))),
+              state.map(s => Standings.provisional(s, design, TournamentGame.of(game))),
               round.map { m =>
-                  val by =
-                      game.flatMap(g => TournamentRounds.chooseBy(summary.tournament, g, m))
+                  val by = TournamentRounds.chooseBy(summary.tournament, game, m)
                   val v = TournamentService.view(m)
                   v.copy(seats = v.seats.map(s => if (s.choosing) s.copy(chooseBy = by) else s))
               },

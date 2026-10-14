@@ -242,8 +242,8 @@ object Tournaments {
           child <-- editing.signal.map(
             if (_) game.fold(emptyNode)(g => form(g, Some(t), () => editing.set(false))) else emptyNode
           ),
-          entriesSection(d, game, me),
-          if (d.summary.isOwner && t.settings.invitational) invitationsSection(d, game) else emptyNode,
+          entriesSection(d, me),
+          if (d.summary.isOwner && t.settings.invitational) invitationsSection(d) else emptyNode,
           roundSection(d, game, me, names),
           d.state.fold(emptyNode)(s => standings(s.root, names, Some("Standings"))),
           d.state.flatMap(_.root.ranking).fold(emptyNode)(r => finalRanking(r, names))
@@ -341,11 +341,11 @@ object Tournaments {
         )
     }
 
-    private def entriesSection(d: TournamentDetail, game: Option[Game], me: Option[Player]): HtmlElement = {
+    private def entriesSection(d: TournamentDetail, me: Option[Player]): HtmlElement = {
         val t = d.summary.tournament
         val open = t.status == TournamentStatus.Open || (t.status == TournamentStatus.Running && t.settings.lateEntries)
         val mine = d.entries.filter(e => me.exists(m => e.playerId.contains(m.playerId)))
-        val characterGame = game.exists(_.gameType == GameType.Character)
+        val characterGame = d.gameType == GameType.Character
         val chosen: Var[Option[CharacterId]] = Var(None)
         sectionTag(
           h3(s"Entries (${d.entries.count(!_.withdrawn)})"),
@@ -382,7 +382,7 @@ object Tournaments {
                     field(
                       "Enter with",
                       select(
-                        onMountCallback(_ => game.foreach(g => Store.refreshCharacters(g.gameId))),
+                        onMountCallback(_ => Store.refreshCharacters(t.gameId)),
                         onChange.mapToValue --> (v => chosen.set(v.toLongOption.map(CharacterId(_)))),
                         option(value := "", "Choose a character"),
                         // By invitation, only the characters invited may enter, so only they are offered.
@@ -407,10 +407,9 @@ object Tournaments {
     /** Who may enter an invitational tournament, and the owner's means of changing that: players in a plain game, and
       * in a character game characters -- found through their owners, and answered by whoever owns them when they do.
       */
-    private def invitationsSection(d: TournamentDetail, game: Option[Game]): HtmlElement = {
+    private def invitationsSection(d: TournamentDetail): HtmlElement = {
         val t = d.summary.tournament
-        val characterGame =
-            game.map(_.gameType == GameType.Character).getOrElse(d.invitedCharacters.nonEmpty)
+        val characterGame = d.gameType == GameType.Character
         val prefix = Var("")
         val found: Var[Seq[PublicPlayer]] = Var(Seq.empty)
         val invitedCharacters = d.invitedCharacters.map(_.character.characterId).toSet

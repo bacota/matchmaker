@@ -229,6 +229,10 @@ case class TournamentMatchView(
   */
 case class TournamentDetail(
     summary: TournamentSummary,
+    /** Its game's type, which decides whether players or characters enter and are invited: carried here because a
+      * client may not have the game to ask -- a direct link, or a game no longer active.
+      */
+    gameType: GameType,
     design: com.vivi.matchmaker.model.tournament.TournamentDesign,
     entries: List[Entrant],
     invited: List[PlayerName],
