@@ -401,7 +401,7 @@ class MatchNotificationSpec extends PropertySuite {
     }
 
     // Cancelling is somebody in the match's doing, so that somebody is the one person not told.
-    property("cancelling tells everyone but the creator who did it") {
+    property("cancelling tells everyone but the owner who did it") {
         forAll(genUniqueString) { seed =>
             val result = fixture(seed).flatMap { f =>
                 f.services.matches.cancel(f.game.gameId, f.played.matchId, f.challenger.externalId).map { _ =>

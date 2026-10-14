@@ -185,7 +185,7 @@ class GameEngineService[T](
                             // their check was made before the status call, and a cancel committing while
                             // the engine was answering must not be undone by the answer. Writing what the
                             // engine said would restamp the seats this match's cancel had finished and
-                            // could complete a match its creator had called off.
+                            // could complete a match its tournament's owner had called off.
                             outcome <-
                                 if (current.cancelled) IO.pure((current, false))
                                 else
@@ -465,9 +465,9 @@ class GameEngineService[T](
       * Idempotent in the only way that matters for a callback that may be retried: a match already completed is left
       * alone rather than double-writing its results.
       *
-      * A cancelled match is refused rather than ignored. Its creator called it off, so a result arriving afterwards is
-      * a real disagreement between the two systems — the engine let the game finish on a board matchmaker had stopped
-      * following — and saying so is more useful than silently discarding it.
+      * A cancelled match is refused rather than ignored. Its tournament's owner called it off, so a result arriving
+      * afterwards is a real disagreement between the two systems — the engine let the game finish on a board matchmaker
+      * had stopped following — and saying so is more useful than silently discarding it.
       *
       * `turns`, from an engine that sends them, is every turn of the match, recorded in the same transaction that
       * completes it: a turn whose move callback was lost lands with the results or not at all, and there is nothing to

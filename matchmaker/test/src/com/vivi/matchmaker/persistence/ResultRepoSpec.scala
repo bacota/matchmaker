@@ -22,7 +22,7 @@ class ResultRepoSpec extends PropertySuite {
                         createdGame <- gameRepo.create(Generators.genGameWithRole.sample.get)
                         owner <- Generators.ownerIn(session, createdGame)
                         matchId = mid
-                        _ <- TestMatches.writeMatch(session, Generators.matchFrom(createdGame.gameId, matchId, owner))
+                        _ <- TestMatches.writeMatch(session, Generators.matchFrom(createdGame.gameId, matchId), owner)
                         createdPlayer <- playerRepo.create(player)
                         createdCharacter <- characterRepo.create(
                           Generators.genCharacter(createdGame.gameId, None).sample.get

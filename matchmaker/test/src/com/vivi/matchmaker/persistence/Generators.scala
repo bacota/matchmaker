@@ -93,8 +93,8 @@ object Generators {
             state <- genString
         } yield Character(CharacterId(0), gameId, name, description, state, playerId)
 
-    /** A match whose creator is `creator`. Its tournament is the one [[TestMatches.writeMatch]] gives it. */
-    def genMatch(gameId: GameId, matchId: MatchId, creator: PlayerId): Gen[Match] =
+    /** A match. Its tournament, and so whose it is, is the one [[TestMatches.writeMatch]] gives it. */
+    def genMatch(gameId: GameId, matchId: MatchId): Gen[Match] =
         for {
             description <- genString
             completedAt <- Gen.option(genInstant)
@@ -114,7 +114,6 @@ object Generators {
           gameId,
           matchId,
           TournamentId.unassigned,
-          creator,
           description,
           completedAt,
           Some(start),
@@ -194,9 +193,9 @@ object Generators {
             owner <- ownerIn(session, game)
         } yield (game, owner)
 
-    /** A generated match owned by `owner`, ready for [[TestMatches.writeMatch]] to write. */
-    def matchFrom(gameId: GameId, matchId: MatchId, owner: PlayerId): Match =
-        genMatch(gameId, matchId, owner).sample.get
+    /** A generated match, ready for [[TestMatches.writeMatch]] to write. */
+    def matchFrom(gameId: GameId, matchId: MatchId): Match =
+        genMatch(gameId, matchId).sample.get
 
     /** A player to own a match in an existing game, with a character of theirs in it. */
     def ownerIn(session: Session[IO], game: Game): IO[PlayerId] =

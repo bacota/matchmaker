@@ -106,9 +106,9 @@ object TournamentFixtures {
                   s"INSERT INTO atomic_pool (game_id, tournament_id, pool_id, stage_id) VALUES ($g, $id, $pool, $stage)"
                 )
                 _ <- session.execute(
-                  sql"""INSERT INTO match (game_id, match_id, creator, description, completed_at, start, settings, public,
+                  sql"""INSERT INTO match (game_id, match_id, description, completed_at, start, settings, public,
                                            public_url, friendly, status, tournament_id, pool_id, round, stage_id)
-                        VALUES (#${g.toString}, $int8, #${m.creator.value.toString}, $text,
+                        VALUES (#${g.toString}, $int8, $text,
                                 ${com.vivi.matchmaker.persistence.SkunkCodecs.instant.opt}, now(), '{}', #${m.isPublic.toString},
                                 ${text.opt}, #${m.friendly.toString}, #${
                           if (m.completed) "'F'" else "'P'"

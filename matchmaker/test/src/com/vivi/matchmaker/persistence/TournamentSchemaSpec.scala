@@ -127,9 +127,9 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
         val (columns, values) = extra.split(";").filter(_.nonEmpty).map(_.split("=", 2)).map(a => (a(0), a(1))).unzip
         val more = columns.map(", " + _).mkString
         val moreValues = values.map(", " + _).mkString
-        s"""INSERT INTO match (game_id, match_id, creator, description, settings, tournament_id, pool_id, round, stage_id,
+        s"""INSERT INTO match (game_id, match_id, description, settings, tournament_id, pool_id, round, stage_id,
                                status$more)
-            SELECT ${ids.game}, '$id', ${ids.player}, '', '{}', ${ids.tournament}, p.pool_id, 1, p.stage_id, '$status'$moreValues
+            SELECT ${ids.game}, '$id', '', '{}', ${ids.tournament}, p.pool_id, 1, p.stage_id, '$status'$moreValues
             FROM atomic_pool p WHERE p.game_id = ${ids.game} AND p.tournament_id = ${ids.tournament}"""
     }
 
@@ -153,8 +153,8 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
                 refused(
                   session,
                   xa,
-                  s"""INSERT INTO match (game_id, match_id, creator, description, settings, start, status)
-                      VALUES (${ids.game}, ${Generators.newMatchId().value}, ${ids.player}, '', '{}', now(), 'P')"""
+                  s"""INSERT INTO match (game_id, match_id, description, settings, start, status)
+                      VALUES (${ids.game}, ${Generators.newMatchId().value}, '', '{}', now(), 'P')"""
                 )
             }
         })

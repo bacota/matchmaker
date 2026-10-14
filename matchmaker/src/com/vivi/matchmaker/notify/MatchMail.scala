@@ -6,7 +6,7 @@ import com.vivi.matchmaker.model.NotificationType
 /** How a match came to an end.
   *
   * Three cases rather than a boolean, because a match ends in three quite different ways and the difference is the
-  * whole content of the mail: the game finished, its creator called it off, or somebody's clock ran out.
+  * whole content of the mail: the game finished, its tournament's owner called it off, or somebody's clock ran out.
   *
   * Each names the template that says so rather than carrying the sentence itself: what a player is told lives in
   * `mail/messages.properties`, like every other word matchmaker mails.

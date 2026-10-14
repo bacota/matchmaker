@@ -26,9 +26,16 @@ import com.vivi.matchmaker.model.{
 import com.vivi.matchmaker.notify.{MatchEnding, Notifications}
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.util.ChallengeSettings
-import com.vivi.matchmaker.persistence.{GameAdminRepo, MatchRepo, ParticipantRepo, PlayerRepo, ResultRepo}
+import com.vivi.matchmaker.persistence.{
+    GameAdminRepo,
+    MatchRepo,
+    ParticipantRepo,
+    PlayerRepo,
+    ResultRepo,
+    TournamentRepo
+}
 
-/** Lists a player's matches, and lets the creator of one call it off.
+/** Lists a player's matches, and lets the owner of one's tournament call it off.
   *
   * Every list is scoped to the caller's own player id — there is no way to ask for someone else's matches, so no
   * authorization rule beyond identifying the caller is needed. [[cancel]] is the exception: it names a match, so it has
@@ -227,7 +234,7 @@ class MatchService(
                   description = first.description,
                   completedAt = first.completedAt,
                   cancelled = first.cancelled,
-                  isCreator = first.isCreator,
+                  isOwner = first.isOwner,
                   start = first.start,
                   due = first.callerDue,
                   pending = first.callerPending,
@@ -305,10 +312,8 @@ class MatchService(
             }
         }
 
-    /** Calls a match off, at the request of the player who created it.
-      *
-      * The creator is the owner of the challenge or tournament the match is played in, copied onto the match as it is
-      * written. A participant who merely entered cannot cancel: they agreed to play, which is not the same as having
+    /** Calls a match off, at the request of the owner of the tournament it is played in -- a challenge's being its
+      * challenger. A participant who merely entered cannot cancel: they agreed to play, which is not the same as having
       * called the match into being.
       *
       * Cancelling is refused once the match is over, in either sense. A completed match has a result and cancelling it
@@ -321,7 +326,8 @@ class MatchService(
       * for a cancelled match, and refuses to refresh it.
       *
       * Under the match's row lock, so that a cancel racing a result callback resolves one way or the other rather than
-      * both writing.
+      * both writing; and under its tournament's before that, so that the owner who is allowed is the owner still, taken
+      * in the order the rounds take them.
       */
     def cancel(gameId: GameId, matchId: MatchId, callerExternalId: String): IO[Match] =
         sessionPool
@@ -333,16 +339,17 @@ class MatchService(
                     .use { _ =>
                         for {
                             caller <- resolveCaller(session, callerExternalId)
-                            existing <- matchRepo.readForUpdate(gameId, matchId).flatMap {
-                                case Some(m) => IO.pure(m)
-                                case None =>
-                                    IO.raiseError(
-                                      NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
-                                    )
-                            }
-                            _ <- IO.raiseUnless(existing.creator == caller.playerId)(
+                            missing = NotFoundError(s"no match with id ${matchId.value} in game ${gameId.value}")
+                            // Read plainly for its tournament, which a match never changes, so that the tournament
+                            // can be locked before the match is.
+                            found <- matchRepo.read(gameId, matchId).flatMap(IO.fromOption(_)(missing))
+                            tournament <- new TournamentRepo(session)
+                                .readForUpdate(gameId, found.tournamentId)
+                                .flatMap(IO.fromOption(_)(missing))
+                            existing <- matchRepo.readForUpdate(gameId, matchId).flatMap(IO.fromOption(_)(missing))
+                            _ <- IO.raiseUnless(tournament.owner == caller.playerId)(
                               UnauthorizedError(
-                                s"caller '$callerExternalId' did not create match ${matchId.value} and may not cancel it"
+                                s"caller '$callerExternalId' does not own match ${matchId.value}'s tournament and may not cancel it"
                               )
                             )
                             // A tournament's match that has not begun is its tournament's to call off.
@@ -373,7 +380,7 @@ class MatchService(
                     .flatMap { (cancelled, caller) =>
                         /* After the commit and outside the lock, and unable to fail the cancel -- the same
                          * terms every notification in this codebase is sent on. Everyone in the match except
-                         * the creator, who called it off and is looking at the answer. */
+                         * the owner, who called it off and is looking at the answer. */
                         notifications
                             .matchEnded(session, cancelled, MatchEnding.Cancelled, except = Some(caller.playerId))
                             .as(cancelled)
@@ -413,7 +420,7 @@ class MatchService(
         }
 
     /** Says whether the match is friendly: a game admin's to decide, or an overall admin's, and nobody else's — not
-      * even the match's creator. Saying what it already is changes nothing.
+      * even the owner of the match's tournament. Saying what it already is changes nothing.
       *
       * A completed match may change too, and is re-rated when it does — see [[EloRatingService.reclassify]], which
       * refuses a change that would cascade into another match's rating. A match with a player in two of its seats can

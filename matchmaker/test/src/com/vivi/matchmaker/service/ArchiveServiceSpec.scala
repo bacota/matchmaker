@@ -94,7 +94,6 @@ class ArchiveServiceSpec extends FunSuite {
                     game.gameId,
                     matchId,
                     TournamentId.unassigned,
-                    player.playerId,
                     "description",
                     Option.when(completed)(completedAt),
                     Some(Instant.ofEpochSecond(1000)),
@@ -105,7 +104,8 @@ class ArchiveServiceSpec extends FunSuite {
                     playUrl = Some("https://engine.example.com/matches/m/play"),
                     publicUrl = Option.when(isPublic)("https://engine.example.com/matches/m/board?view=1"),
                     friendly = friendly
-                  )
+                  ),
+                  player.playerId
                 )
                 _ <- TestMatches.writeSeat(
                   session,
@@ -136,7 +136,6 @@ class ArchiveServiceSpec extends FunSuite {
                     f.game.gameId,
                     matchId,
                     TournamentId.unassigned,
-                    f.player.playerId,
                     "description",
                     Some(completedAt),
                     Some(Instant.ofEpochSecond(1000)),
@@ -144,7 +143,8 @@ class ArchiveServiceSpec extends FunSuite {
                     "{}",
                     isPublic = true,
                     publicUrl = Some("https://engine.example.com/matches/m/board")
-                  )
+                  ),
+                  f.player.playerId
                 )
                 _ <- TestMatches.writeSeat(
                   session,

@@ -12,10 +12,10 @@ import com.vivi.matchmaker.service.TournamentModelService
 
 /** Matches and seats written straight into the tables, for specs about matches rather than about how they come to be.
   *
-  * Every match is a tournament's, so each one written here is given a tournament of its own -- running, owned by its
-  * creator, made from an unclassified model of one round-robin stage that no spec's sync removes -- and the pool and
-  * round it is played in. A seat is given an entry in that tournament, with its character in a character game, and is
-  * stamped with what its player wants to hear about it, as a round's seat is.
+  * Every match is a tournament's, so each one written here is given a tournament of its own -- running, owned by the
+  * owner given, made from an unclassified model of one round-robin stage that no spec's sync removes -- and the pool
+  * and round it is played in. A seat is given an entry in that tournament, with its character in a character game, and
+  * is stamped with what its player wants to hear about it, as a round's seat is.
   */
 object TestMatches {
 
@@ -56,7 +56,6 @@ object TestMatches {
           GameId,
           MatchId,
           String,
-          PlayerId,
           TournamentId,
           Long,
           Long,
@@ -76,11 +75,10 @@ object TestMatches {
           Option[String]
       )
     ] =
-        sql"""INSERT INTO match (game_id, match_id, status, creator, tournament_id, pool_id, round, stage_id,
+        sql"""INSERT INTO match (game_id, match_id, status, tournament_id, pool_id, round, stage_id,
                                  description, start, completed_at, cancelled, time_limit, time_limit_kind,
                                  time_limit_unit, settings, public, live, friendly, status_url, play_url, public_url)
-              VALUES (${SkunkIdCodecs.gameId}, ${SkunkIdCodecs.matchId}, $text, ${SkunkIdCodecs.playerId},
-                      ${SkunkIdCodecs.tournamentId}, $int8, 1, $int8, $text, ${SkunkCodecs.instant.opt},
+              VALUES (${SkunkIdCodecs.gameId}, ${SkunkIdCodecs.matchId}, $text, ${SkunkIdCodecs.tournamentId}, $int8, 1, $int8, $text, ${SkunkCodecs.instant.opt},
                       ${SkunkCodecs.instant.opt}, $bool, ${float8.opt} * INTERVAL '1 second',
                       ${SkunkCodecs.timeLimitKind}, ${SkunkCodecs.timeLimitUnit}, ${SkunkCodecs.jsonb}, $bool, $bool,
                       $bool, ${text.opt}, ${text.opt}, ${text.opt})""".command
@@ -88,7 +86,7 @@ object TestMatches {
     /** Writes `m` as a match of a tournament of its own, and answers it with that tournament's id. Its status is what
       * it says, unless it is over, which `completedAt` and `cancelled` say -- as `MatchRepo` writes a status.
       */
-    def writeMatch(session: Session[IO], m: Match): IO[Match] =
+    def writeMatch(session: Session[IO], m: Match, owner: PlayerId): IO[Match] =
         ensureHolder(session) *> session.transaction.use { _ =>
             val status =
                 if (m.completedAt.isDefined || m.cancelled) MatchStatus.Finished else m.status
@@ -99,7 +97,7 @@ object TestMatches {
                     TournamentId.unassigned,
                     "match",
                     "",
-                    m.creator,
+                    owner,
                     holder,
                     2,
                     TournamentSettings(),
@@ -130,7 +128,6 @@ object TestMatches {
                     m.gameId,
                     m.matchId,
                     status.code,
-                    m.creator,
                     t.tournamentId,
                     pool,
                     stage,

@@ -18,7 +18,8 @@ class MatchRepoSpec extends PropertySuite {
                         matchId = mid
                         created <- TestMatches.writeMatch(
                           session,
-                          Generators.matchFrom(createdGame.gameId, matchId, owner)
+                          Generators.matchFrom(createdGame.gameId, matchId),
+                          owner
                         )
                         found <- matchRepo.read(createdGame.gameId, matchId)
                     } yield found == Some(created)
@@ -36,7 +37,7 @@ class MatchRepoSpec extends PropertySuite {
                         gameAndOwner <- Generators.gameWithOwner(session)
                         (createdGame, owner) = gameAndOwner
                         matchId = mid
-                        m <- TestMatches.writeMatch(session, Generators.matchFrom(createdGame.gameId, matchId, owner))
+                        m <- TestMatches.writeMatch(session, Generators.matchFrom(createdGame.gameId, matchId), owner)
                         rewritten = m.copy(friendly = !m.friendly, isPublic = !m.isPublic)
                         _ <- matchRepo.update(rewritten)
                         found <- matchRepo.read(createdGame.gameId, matchId)
@@ -52,7 +53,6 @@ class MatchRepoSpec extends PropertySuite {
               GameId(1),
               MatchId(1),
               TournamentId(1),
-              PlayerId(1),
               "",
               None,
               Some(java.time.Instant.EPOCH),

@@ -519,8 +519,8 @@ class MatchStartedNotificationSpec extends PropertySuite {
                   challengerEmail = Some(s"challenger-$seed@example.com"),
                   accepterEmail = Some(s"accepter-$seed@example.com")
                 )
-                // The challenger created the challenge the match was started from, so they are its
-                // creator and the only player who may call it off.
+                // The challenger owns the challenge the match is played in, so is the only player who may call
+                // it off.
                 _ <- services.matches.cancel(started.gameId, started.matchId, s"challenger-$seed")
                 _ <- services.notifications.updateForGame(
                   accepterId,

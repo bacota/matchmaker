@@ -23,7 +23,7 @@ class TurnRepoSpec extends PropertySuite {
                 game <- gameRepo.create(Generators.genGameWithRole.sample.get)
                 owner <- Generators.ownerIn(session, game)
                 matchId = mid
-                _ <- TestMatches.writeMatch(session, Generators.matchFrom(game.gameId, matchId, owner))
+                _ <- TestMatches.writeMatch(session, Generators.matchFrom(game.gameId, matchId), owner)
                 createdPlayer <- playerRepo.create(player)
                 character <- characterRepo.create(Generators.genCharacter(game.gameId, None).sample.get)
                 participant <- TestMatches.writeSeat(

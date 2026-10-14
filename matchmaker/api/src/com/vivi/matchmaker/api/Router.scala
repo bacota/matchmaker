@@ -344,8 +344,7 @@ object Router {
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "refresh" :: Nil) =>
                 withMatch(gameId, matchId)((gid, mid) => ok(services.engine.refresh(gid, mid, caller)))
 
-            // Calls a match off. Only its creator may — the challenger of the challenge it was started
-            // from — which is why the challenge outlives the start.
+            // Calls a match off. Only the owner of its tournament may -- a challenge's challenger.
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "cancel" :: Nil) =>
                 withMatch(gameId, matchId)((gid, mid) => ok(services.matches.cancel(gid, mid, caller)))
 

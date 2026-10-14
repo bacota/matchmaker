@@ -899,9 +899,8 @@ CREATE TABLE match (
     -- 'S' scheduled, 'C' choosing roles, 'D' due, 'P' in progress, 'F' finished. The source of truth for
     -- whether it is over; `completed_at` says when.
     status             TEXT NOT NULL CHECK (status IN ('S', 'C', 'D', 'P', 'F')),
-    -- Whose match it is: may cancel it, and the listings say it is theirs. Its tournament's owner.
-    creator            BIGINT NOT NULL REFERENCES player,
-    -- The tournament, pool, round and atomic stage it is played in.
+    -- The tournament, pool, round and atomic stage it is played in. The tournament's owner is whose match it
+    -- is: who may cancel it, and whom the listings say it belongs to.
     tournament_id      BIGINT NOT NULL,
     pool_id            BIGINT NOT NULL,
     round              INT NOT NULL,
@@ -910,7 +909,7 @@ CREATE TABLE match (
     -- NULL until the engine has made its game.
     start              TIMESTAMPTZ,
     completed_at       TIMESTAMPTZ,
-    -- Called off by its creator: over, but neither completed (nobody won) nor deleted (it is history).
+    -- Called off by its tournament's owner: over, but neither completed (nobody won) nor deleted (it is history).
     cancelled          BOOLEAN NOT NULL DEFAULT false,
     -- The terms it is played under, from its tournament when it is created in the engine: the clock its
     -- round duration gives it, the settings, liveness and friendliness.
@@ -977,8 +976,6 @@ CREATE TABLE match (
 -- For participant's foreign key to its tournament's match.
 CREATE UNIQUE INDEX ON match (game_id, tournament_id, match_id);
 CREATE UNIQUE INDEX ON match (match_id);
--- For the foreign key: without it, deleting a player would scan every match.
-CREATE INDEX match_creator ON match (creator);
 CREATE INDEX ON match (game_id, tournament_id, pool_id);
 CREATE INDEX ON match (game_id, tournament_id, round);
 -- What is still owed something: completed matches never archived, and cancelled matches whose engine has

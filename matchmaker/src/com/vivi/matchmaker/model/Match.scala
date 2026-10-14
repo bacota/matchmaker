@@ -10,13 +10,12 @@ import java.time.{Duration, Instant}
   * empty until the engine has answered, which is the state a match is in for the moment between being written and the
   * create call returning.
   *
-  * Every match is a tournament's (`tournamentId`) — a challenge is the simplest tournament, of one match. `creator` is
-  * the player whose match this is: the one who may cancel it, its tournament's owner, copied onto the match when it is
-  * written so that every listing and the cancel can say whose a match is without joining its tournament.
+  * Every match is a tournament's (`tournamentId`) — a challenge is the simplest tournament, of one match — and is its
+  * tournament's owner's: the one who may cancel it. That is read through the tournament, not copied onto the match.
   *
   * `completedAt` and `cancelled` are separate rather than one status, because they answer different questions. A
-  * completed match was played to an end the engine reported; a cancelled one was called off by its creator and has no
-  * result and never will. Both are over.
+  * completed match was played to an end the engine reported; a cancelled one was called off by its tournament's owner
+  * and has no result and never will. Both are over.
   *
   * `completedAt` is a time rather than a flag so that a finished match can say when it finished — a history in no
   * particular order is not much of a history. `completed` is kept beside it as a derived answer to the question most
@@ -48,7 +47,6 @@ case class Match(
     gameId: GameId,
     matchId: MatchId,
     tournamentId: TournamentId,
-    creator: PlayerId,
     description: String,
     completedAt: Option[Instant],
     /** When play began: set when the match is created in the engine, and `None` until then. */

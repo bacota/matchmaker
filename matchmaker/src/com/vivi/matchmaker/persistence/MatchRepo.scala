@@ -30,7 +30,6 @@ class MatchRepo(session: Session[IO]) {
     private type MatchRow =
         (
             TournamentId,
-            PlayerId,
             String,
             Option[Instant],
             Boolean,
@@ -52,11 +51,11 @@ class MatchRepo(session: Session[IO]) {
 
     // The last two are the archive's, read here and never written: `ArchiveRepo` owns them.
     private val matchRow: Codec[MatchRow] =
-        tournamentId *: playerIdOf *: text *: instant.opt *: bool *: instant.opt *: float8.opt *: settings *: bool *: text.opt *:
+        tournamentId *: text *: instant.opt *: bool *: instant.opt *: float8.opt *: settings *: bool *: text.opt *:
             text.opt *: text.opt *: timeLimitKind *: timeLimitUnit *: bool *: bool *: instant.opt *: bool *: matchStatus
 
     private val selectMatch: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT tournament_id, creator, description, completed_at, cancelled, start,
+        sql"""SELECT tournament_id, description, completed_at, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
                  archived_at, #${ArchiveRepo.expired("match")}, status
@@ -68,7 +67,7 @@ class MatchRepo(session: Session[IO]) {
      * callbacks, which read a match, decide from it, and write it back — a concurrent callback for
      * the same match would otherwise be able to interleave between the two. */
     private val selectMatchForUpdate: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT tournament_id, creator, description, completed_at, cancelled, start,
+        sql"""SELECT tournament_id, description, completed_at, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
                  archived_at, #${ArchiveRepo.expired("match")}, status
@@ -76,7 +75,7 @@ class MatchRepo(session: Session[IO]) {
           WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
             .query(matchRow)
 
-    // tournament_id and creator are not updatable: a match is played in one tournament, and stays its owner's.
+    // tournament_id is not updatable: a match is played in one tournament, and is its owner's.
     private val updateMatch: Command[
       (
           String,
@@ -112,7 +111,6 @@ class MatchRepo(session: Session[IO]) {
     private def toMatch(gameId: GameId, matchId: MatchId, row: MatchRow): Match = {
         val (
           tournament,
-          creator,
           description,
           completedAt,
           cancelled,
@@ -135,7 +133,6 @@ class MatchRepo(session: Session[IO]) {
           gameId,
           matchId,
           tournament,
-          creator,
           description,
           completedAt,
           start,
@@ -201,7 +198,8 @@ class MatchRepo(session: Session[IO]) {
       *
       * Not [[update]], which writes the whole row from the `Match` it is given: the start that calls this holds no lock
       * across the engine call, and its `Match` is the one it wrote before making it. Anything changed meanwhile — a
-      * game's admin saying the match is not friendly, its creator cancelling it — would be written back over.
+      * game's admin saying the match is not friendly, its tournament's owner cancelling it — would be written back
+      * over.
       */
     def setUrls(m: Match, cancelUrl: Option[String] = None): IO[Unit] =
         session.execute(updateUrls)((m.statusUrl, m.playUrl, m.publicUrl, cancelUrl, m.gameId, m.matchId)).void
@@ -306,7 +304,7 @@ class MatchRepo(session: Session[IO]) {
           description,
           completedAt,
           cancelled,
-          isCreator,
+          isOwner,
           start,
           timeLimitSeconds,
           timeLimitKind,
@@ -340,7 +338,7 @@ class MatchRepo(session: Session[IO]) {
           description,
           completedAt,
           cancelled,
-          isCreator,
+          isOwner,
           start,
           fromSeconds(timeLimitSeconds),
           timeLimitKind,
@@ -379,7 +377,7 @@ class MatchRepo(session: Session[IO]) {
      * player can open, and none is listed. */
     private val selectActiveForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
-                 m.creator = p.player_id, m.start,
+                 (tn.owner = p.player_id) IS TRUE, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
@@ -392,6 +390,7 @@ class MatchRepo(session: Session[IO]) {
                  seat_cp.character_id, seat_char.name
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN tournament tn ON tn.game_id = m.game_id AND tn.tournament_id = m.tournament_id
           JOIN game g ON g.game_id = m.game_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           -- Everyone in the match, the caller included. This is what multiplies the rows, and
@@ -426,7 +425,7 @@ class MatchRepo(session: Session[IO]) {
      * Most recently finished first -- a history read from the top. */
     private val selectOverForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
-                 m.creator = p.player_id, m.start,
+                 (tn.owner = p.player_id) IS TRUE, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
@@ -439,6 +438,7 @@ class MatchRepo(session: Session[IO]) {
                  seat_cp.character_id, seat_char.name
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN tournament tn ON tn.game_id = m.game_id AND tn.tournament_id = m.tournament_id
           JOIN game g ON g.game_id = m.game_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
@@ -469,10 +469,10 @@ class MatchRepo(session: Session[IO]) {
      * be called with the wrong argument.
      *
      * The caller-relative columns are still relative to the player being asked about: `p.pending` is
-     * whether it is their turn, and `m.creator = p.player_id` whether the match is theirs. */
+     * whether it is their turn, and `tn.owner = p.player_id` whether the match is theirs. */
     private val selectPublicActiveForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
-                 m.creator = p.player_id, m.start,
+                 (tn.owner = p.player_id) IS TRUE, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
@@ -485,6 +485,7 @@ class MatchRepo(session: Session[IO]) {
                  seat_cp.character_id, seat_char.name
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN tournament tn ON tn.game_id = m.game_id AND tn.tournament_id = m.tournament_id
           JOIN game g ON g.game_id = m.game_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
@@ -513,7 +514,7 @@ class MatchRepo(session: Session[IO]) {
 
     private val selectPublicOverForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
-                 m.creator = p.player_id, m.start,
+                 (tn.owner = p.player_id) IS TRUE, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
@@ -526,6 +527,7 @@ class MatchRepo(session: Session[IO]) {
                  seat_cp.character_id, seat_char.name
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN tournament tn ON tn.game_id = m.game_id AND tn.tournament_id = m.tournament_id
           JOIN game g ON g.game_id = m.game_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
@@ -545,7 +547,7 @@ class MatchRepo(session: Session[IO]) {
 
     private val selectDueForPlayer =
         sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
-                 m.creator = p.player_id, m.start,
+                 (tn.owner = p.player_id) IS TRUE, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
@@ -558,6 +560,7 @@ class MatchRepo(session: Session[IO]) {
                  seat_cp.character_id, seat_char.name
           FROM participant p
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN tournament tn ON tn.game_id = m.game_id AND tn.tournament_id = m.tournament_id
           JOIN game g ON g.game_id = m.game_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
@@ -636,7 +639,7 @@ class MatchRepo(session: Session[IO]) {
      * From `character_participant`, by its index on (game_id, character_id). */
     private val selectPublicActiveForCharacter =
         sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
-                 m.creator = p.player_id, m.start,
+                 (tn.owner = p.player_id) IS TRUE, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
@@ -646,6 +649,7 @@ class MatchRepo(session: Session[IO]) {
           FROM character_participant cp
           JOIN participant p ON p.game_id = cp.game_id AND p.participant_id = cp.participant_id
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN tournament tn ON tn.game_id = m.game_id AND tn.tournament_id = m.tournament_id
           JOIN game g ON g.game_id = m.game_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
@@ -661,7 +665,7 @@ class MatchRepo(session: Session[IO]) {
 
     private val selectPublicOverForCharacter =
         sql"""SELECT m.game_id, m.match_id, g.display_name, m.description, m.completed_at, m.cancelled,
-                 m.creator = p.player_id, m.start,
+                 (tn.owner = p.player_id) IS TRUE, m.start,
                  EXTRACT(EPOCH FROM m.time_limit)::float8, m.time_limit_kind, m.time_limit_unit, m.live,
                  p.participant_id, cp.character_id, p.pending, p.due,
                  seat_player.nickname, seat.pending, seat.completed_at IS NOT NULL, seat.due,
@@ -671,6 +675,7 @@ class MatchRepo(session: Session[IO]) {
           FROM character_participant cp
           JOIN participant p ON p.game_id = cp.game_id AND p.participant_id = cp.participant_id
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
+          JOIN tournament tn ON tn.game_id = m.game_id AND tn.tournament_id = m.tournament_id
           JOIN game g ON g.game_id = m.game_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
           JOIN player seat_player ON seat_player.player_id = seat.player_id
@@ -857,7 +862,7 @@ object MatchRepo {
         description: String,
         completedAt: Option[Instant],
         cancelled: Boolean,
-        isCreator: Boolean,
+        isOwner: Boolean,
         start: Instant,
         timeLimit: Option[Duration],
         timeLimitKind: TimeLimitKind,

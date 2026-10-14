@@ -42,12 +42,12 @@ class TournamentStateRepo(session: Session[IO]) {
 
     // ---- reading ----------------------------------------------------------------------------
 
-    private type ProgressRow = (Option[Int], Boolean, PlayerId, Boolean, Boolean, String)
+    private type ProgressRow = (Option[Int], Boolean, Boolean, Boolean, String)
     private val selectProgress: Query[(GameId, TournamentId), ProgressRow] =
-        sql"""SELECT t.current_round, t.stop_requested, t.owner, t.friendly, t.public, g.game_type::text
+        sql"""SELECT t.current_round, t.stop_requested, t.friendly, t.public, g.game_type::text
           FROM tournament t JOIN game g ON g.game_id = t.game_id
           WHERE t.game_id = $gameId AND t.tournament_id = $tournamentId"""
-            .query(int4.opt *: bool *: SkunkIdCodecs.playerId *: bool *: bool *: text)
+            .query(int4.opt *: bool *: bool *: bool *: text)
 
     private val selectPools: Query[(GameId, TournamentId), PoolRow] =
         sql"""SELECT p.pool_id, p.kind::text, p.parent_pool_id, p.round, p.stratum, p.completed_at IS NOT NULL,
@@ -104,7 +104,7 @@ class TournamentStateRepo(session: Session[IO]) {
     def load(game: GameId, tournament: TournamentId): IO[Option[Loaded]] =
         session.option(selectProgress)((game, tournament)).flatMap {
             case None => IO.pure(None)
-            case Some((currentRound, stopRequested, owner, friendly, isPublic, gameType)) =>
+            case Some((currentRound, stopRequested, friendly, isPublic, gameType)) =>
                 for {
                     designed <- new StageRepo(session).designWithIds(game, tournament)
                     (design, stageIds) = designed.getOrElse((TournamentDesign(Nil), Map.empty[List[Int], Long]))
@@ -130,7 +130,7 @@ class TournamentStateRepo(session: Session[IO]) {
                           design,
                           stageIds,
                           pools.find(_.kind == "R").map(_.id).getOrElse(0L),
-                          Context(owner, friendly, isPublic, gameType, entrants.map(e => e._1 -> (e._2, e._5)).toMap),
+                          Context(friendly, isPublic, gameType, entrants.map(e => e._1 -> (e._2, e._5)).toMap),
                           matchIds.flatMap((key, id) =>
                               roundOf.get(id.value).filter(_.status != "S").map(m => key -> m.round)
                           ),
@@ -181,11 +181,11 @@ class TournamentStateRepo(session: Session[IO]) {
           VALUES ($gameId, $tournamentId, $int8, $int8, $int4, $int4, $int4, ${int4.opt})""".command
 
     private val insertMatch: Command[
-      (GameId, Long, PlayerId, Boolean, Boolean, TournamentId, Long, Int, Long, Boolean, Boolean)
+      (GameId, Long, Boolean, Boolean, TournamentId, Long, Int, Long, Boolean, Boolean)
     ] =
-        sql"""INSERT INTO match (game_id, match_id, creator, description, settings, public, friendly, status,
+        sql"""INSERT INTO match (game_id, match_id, description, settings, public, friendly, status,
                                  tournament_id, pool_id, round, stage_id, ties_allowed, rubber)
-          VALUES ($gameId, $int8, ${SkunkIdCodecs.playerId}, '', '{}', $bool, $bool, 'S',
+          VALUES ($gameId, $int8, '', '{}', $bool, $bool, 'S',
                   $tournamentId, $int8, $int4, $int8, $bool, $bool)""".command
 
     private val beginMatch: Command[(String, Int, GameId, Long)] =
@@ -358,7 +358,6 @@ class TournamentStateRepo(session: Session[IO]) {
                                   (
                                     game,
                                     id,
-                                    ctx.owner,
                                     ctx.isPublic,
                                     ctx.friendly,
                                     tournament,
@@ -458,11 +457,10 @@ object TournamentStateRepo {
       */
     val NewPoolIds: Int = -1_000_000_000
 
-    /** What a save needs to know of the tournament beyond its state: who owns it, how its matches are played, and each
-      * entrant's player and character.
+    /** What a save needs to know of the tournament beyond its state: how its matches are played, and each entrant's
+      * player and character.
       */
     case class Context(
-        owner: PlayerId,
         friendly: Boolean,
         isPublic: Boolean,
         gameType: String,

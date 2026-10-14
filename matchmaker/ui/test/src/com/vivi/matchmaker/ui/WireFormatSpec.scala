@@ -24,7 +24,6 @@ class WireFormatSpec extends FunSuite {
           gameId = GameId(7),
           matchId = MatchId(1),
           tournamentId = TournamentId(3),
-          creator = PlayerId(4),
           description = "a friendly game",
           completedAt = Some(Instant.parse("2030-01-01T10:42:00Z")),
           cancelled = false,
@@ -40,13 +39,12 @@ class WireFormatSpec extends FunSuite {
         assertEquals(read[Match](write(played)), played)
     }
 
-    // Every match is a tournament's, and its creator says whose it is.
-    test("a match round-trips, carrying its tournament and its creator") {
+    // Every match is a tournament's, whose owner's it is; the match carries no owner of its own.
+    test("a match round-trips, carrying its tournament and no creator") {
         val created = Match(
           gameId = GameId(7),
           matchId = MatchId(1),
           tournamentId = TournamentId(3),
-          creator = PlayerId(4),
           description = "round 1",
           completedAt = None,
           start = Some(Instant.parse("2030-01-01T10:00:00Z")),
@@ -56,7 +54,7 @@ class WireFormatSpec extends FunSuite {
 
         val json = ujson.read(write(created))
         assertEquals(json("tournamentId").num.toLong, 3L)
-        assertEquals(json("creator").num.toLong, 4L)
+        assert(!json.obj.contains("creator"))
         assertEquals(read[Match](write(created)), created)
     }
 
@@ -136,7 +134,7 @@ class WireFormatSpec extends FunSuite {
           description = "d",
           completedAt = Some(Instant.parse("2026-08-09T09:30:00Z")),
           cancelled = false,
-          isCreator = true,
+          isOwner = true,
           start = Instant.parse("2026-08-07T12:00:00Z"),
           due = Some(Instant.parse("2026-08-08T12:00:00Z")),
           pending = true,

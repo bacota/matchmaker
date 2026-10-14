@@ -195,7 +195,6 @@ class GameEngineServiceSpec extends PropertySuite {
                     fixture.game.gameId,
                     matchId,
                     TournamentId.unassigned,
-                    fixture.owner.playerId,
                     terms.message,
                     None,
                     Some(terms.start.getOrElse(Instant.now())),
@@ -208,7 +207,8 @@ class GameEngineServiceSpec extends PropertySuite {
                     timeLimitKind = terms.timeLimitKind,
                     timeLimitUnit = terms.timeLimitUnit,
                     live = terms.live
-                  )
+                  ),
+                  fixture.owner.playerId
                 )
                 _ <- seat(fixture.owner, fixture.character, fixture.game.roles(0).gameRoleId)
                 _ <- other.traverse_((player, character) => seat(player, character, fixture.game.roles(1).gameRoleId))

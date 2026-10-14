@@ -15,12 +15,12 @@ import java.time.{Duration, Instant}
   *   when the match was played to an end, if it was — the database's clock, stamped once. `completed` is derived from
   *   it, as on `Match`, so a list can both ask whether a match is finished and say when
   * @param cancelled
-  *   whether the creator called the match off; a cancelled match is over but has no result, and is listed with the
-  *   finished ones rather than the active ones
-  * @param isCreator
-  *   whether this player is the one who created the match — the owner of the tournament it is played in, and the only
-  *   player who may cancel it. A property of the pair, not of the match, which is why it belongs on a read model that
-  *   is already scoped to one player
+  *   whether its tournament's owner called the match off; a cancelled match is over but has no result, and is listed
+  *   with the finished ones rather than the active ones
+  * @param isOwner
+  *   whether this player owns the match — owns the tournament it is played in, and so is the only player who may cancel
+  *   it. A property of the pair, not of the match, which is why it belongs on a read model that is already scoped to
+  *   one player
   * @param characterId
   *   the character playing this participant's seat, if the game requires one
   */
@@ -32,7 +32,7 @@ case class MatchSummary(
     description: String,
     completedAt: Option[Instant],
     cancelled: Boolean,
-    isCreator: Boolean,
+    isOwner: Boolean,
     start: Instant,
     due: Option[Instant],
     pending: Boolean,

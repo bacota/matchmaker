@@ -151,7 +151,7 @@ class JsonSpec extends FunSuite {
           "description",
           completedAt = Some(Instant.ofEpochSecond(3000)),
           cancelled = false,
-          isCreator = true,
+          isOwner = true,
           start = Instant.ofEpochSecond(1000),
           due = Some(Instant.ofEpochSecond(2000)),
           pending = true,

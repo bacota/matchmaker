@@ -87,7 +87,6 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                   game.gameId,
                   matchId,
                   TournamentId.unassigned,
-                  player.playerId,
                   "d",
                   finishedAgo.map(ago => Instant.now().minus(ago)),
                   Some(Instant.ofEpochSecond(1000)),
@@ -95,7 +94,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                   "{}",
                   cancelled = cancelled
                 )
-                _ <- TestMatches.writeMatch(session, m)
+                _ <- TestMatches.writeMatch(session, m, player.playerId)
                 _ <- new MatchRepo(session).setUrls(
                   m.copy(statusUrl = Some(s"https://engine/matches/${matchId.value}/status")),
                   Option.when(cancelled)(s"https://engine/matches/${matchId.value}/cancel")

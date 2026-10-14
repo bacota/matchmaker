@@ -98,7 +98,7 @@ class MatchServiceSpec extends PropertySuite {
         } yield (player, game, character)
 
     /** One more match for a player who already has a game and a character, so that a test about the order of a list can
-      * put two of them in it. The player is its creator unless `creator` says otherwise.
+      * put two of them in it. The player owns its tournament unless `tournamentOwner` says otherwise.
       */
     private def addMatch(
         session: skunk.Session[IO],
@@ -121,8 +121,8 @@ class MatchServiceSpec extends PropertySuite {
         seatCompleted: Option[Boolean] = None,
         /* The parameter choices, carried by the match from its tournament. */
         settings: String = "{}",
-        /* Who created the match, when it is not the player seated in it. */
-        creator: Option[PlayerId] = None
+        /* Who owns the match's tournament, when it is not the player seated in it. */
+        tournamentOwner: Option[PlayerId] = None
     ): IO[MatchId] =
         for {
             matchId <- IO.pure(mid)
@@ -130,7 +130,6 @@ class MatchServiceSpec extends PropertySuite {
               game.gameId,
               matchId,
               TournamentId.unassigned,
-              creator.getOrElse(player.playerId),
               "description",
               completedAt,
               Some(Instant.ofEpochSecond(1000)),
@@ -139,7 +138,7 @@ class MatchServiceSpec extends PropertySuite {
               isPublic = isPublic,
               publicUrl = publicUrl
             )
-            _ <- TestMatches.writeMatch(session, made)
+            _ <- TestMatches.writeMatch(session, made, tournamentOwner.getOrElse(player.playerId))
             _ <- TestMatches
                 .writeSeat(
                   session,
@@ -578,7 +577,7 @@ class MatchServiceSpec extends PropertySuite {
                         over.map(_.matchId) == List(finishedId) &&
                         // The rows describe the player asked about, not the caller: it is their turn in
                         // the running one, and they created both.
-                        running.forall(s => s.pending && s.isCreator)
+                        running.forall(s => s.pending && s.isOwner)
                 }
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -830,10 +829,9 @@ class MatchServiceSpec extends PropertySuite {
     // Cancelling
     // ---------------------------------------------------------------------------
     //
-    // `makeMatch` makes the registered player the challenger of the challenge the match is started
-    // from, so that player is the match's creator.
+    // `makeMatch` makes the registered player the owner of the match's tournament, so the match is theirs.
 
-    property("the creator can cancel their own match") {
+    property("the tournament's owner can cancel its match") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
                 made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
@@ -850,8 +848,8 @@ class MatchServiceSpec extends PropertySuite {
         }
     }
 
-    // A match need not come from a challenge: a tournament's is created by the tournament, for its
-    // owner. Its creator alone says whose it is, on the lists and to the cancel.
+    // A match is its tournament's owner's, whoever is seated in it: that alone says whose it is, on the lists and to
+    // the cancel.
     /** Takes a tournament match back to before it began: `status` with no start or urls, and its seats with no role and
       * no rating, as a match is while its seats choose. `cancelled` is a match called off in that time: over, never
       * begun.
@@ -919,7 +917,7 @@ class MatchServiceSpec extends PropertySuite {
         assert(cancel.left.exists(_.isInstanceOf[ConflictError]), cancel)
     }
 
-    test("a match is its creator's to cancel, and listed as theirs and nobody else's") {
+    test("a match is its tournament owner's to cancel, and listed as theirs and nobody else's") {
         val result = TestSession.resource.use { session =>
             for {
                 prepared <- setup(session, genUniqueString.sample.get, genUniqueString.sample.get)
@@ -947,7 +945,7 @@ class MatchServiceSpec extends PropertySuite {
                   Generators.newMatchId(),
                   None,
                   pending = true,
-                  creator = Some(owner.playerId)
+                  tournamentOwner = Some(owner.playerId)
                 )
             } yield (owner, game, ownerMatch, otherExternalId, seatedMatch)
         }
@@ -959,8 +957,8 @@ class MatchServiceSpec extends PropertySuite {
             cancelled <- matchService.cancel(game.gameId, ownerMatch, owner.externalId)
             cancelledSeated <- matchService.cancel(game.gameId, seatedMatch, owner.externalId)
         } yield {
-            assertEquals(ownersList.map(s => (s.matchId, s.isCreator)), List((ownerMatch, true)))
-            assertEquals(othersList.map(s => (s.matchId, s.isCreator)), List((seatedMatch, false)))
+            assertEquals(ownersList.map(s => (s.matchId, s.isOwner)), List((ownerMatch, true)))
+            assertEquals(othersList.map(s => (s.matchId, s.isOwner)), List((seatedMatch, false)))
             assert(refused.left.exists(_.isInstanceOf[UnauthorizedError]), refused)
             assert(cancelled.cancelled)
             assert(cancelledSeated.cancelled)
@@ -1059,7 +1057,7 @@ class MatchServiceSpec extends PropertySuite {
             _ <- TestSession.resource.use(session => new PlayerRepo(session).update(player.copy(isAdmin = true)))
         } yield player.copy(isAdmin = true)
 
-    /** A match, its creator, and a player made an admin of its game. */
+    /** A match, its owner, and a player made an admin of its game. */
     private def friendlyFixture(completed: Boolean = false): IO[(Player, Game, MatchId, Player)] =
         for {
             made <- makeMatch(
@@ -1069,11 +1067,11 @@ class MatchServiceSpec extends PropertySuite {
               completed = completed,
               pending = true
             )
-            (creator, game, matchId) = made
+            (owner, game, matchId) = made
             overall <- overallAdmin()
             gameAdmin <- registrationService.register(genUniqueString.sample.get, genUniqueString.sample.get)
             _ <- TestServices.services.gameAdmins.grant(game.gameId, gameAdmin.playerId, overall.externalId)
-        } yield (creator, game, matchId, gameAdmin)
+        } yield (owner, game, matchId, gameAdmin)
 
     private def friendlyOf(game: Game, matchId: MatchId): IO[Option[Boolean]] =
         TestSession.resource.use(session => new MatchRepo(session).read(game.gameId, matchId).map(_.map(_.friendly)))
@@ -1105,8 +1103,8 @@ class MatchServiceSpec extends PropertySuite {
     test("a completed match may still be said to be friendly or not, and saying what it already is changes nothing") {
         val result = for {
             f <- friendlyFixture(completed = true)
-            (creator, game, matchId, gameAdmin) = f
-            refused <- matchService.setFriendly(game.gameId, matchId, friendly = false, creator.externalId).attempt
+            (owner, game, matchId, gameAdmin) = f
+            refused <- matchService.setFriendly(game.gameId, matchId, friendly = false, owner.externalId).attempt
             same <- matchService.setFriendly(game.gameId, matchId, friendly = true, gameAdmin.externalId)
             _ <- matchService.setFriendly(game.gameId, matchId, friendly = false, gameAdmin.externalId)
             changed <- friendlyOf(game, matchId)
@@ -1123,21 +1121,21 @@ class MatchServiceSpec extends PropertySuite {
     test("a game's admin lists the game's matches, each with who plays it and whether it is friendly") {
         val result = for {
             f <- friendlyFixture()
-            (creator, game, matchId, gameAdmin) = f
+            (owner, game, matchId, gameAdmin) = f
             _ <- matchService.setFriendly(game.gameId, matchId, friendly = false, gameAdmin.externalId)
             listed <- matchService.listForGame(game.gameId, gameAdmin.externalId)
-            refused <- matchService.listForGame(game.gameId, creator.externalId).attempt
-        } yield (listed, creator, matchId, refused)
-        val (listed, creator, matchId, refused) = result.timeout(30.seconds).unsafeRunSync()
-        assertEquals(listed.map(m => (m.matchId, m.friendly, m.players)), List((matchId, false, Seq(creator.nickname))))
+            refused <- matchService.listForGame(game.gameId, owner.externalId).attempt
+        } yield (listed, owner, matchId, refused)
+        val (listed, owner, matchId, refused) = result.timeout(30.seconds).unsafeRunSync()
+        assertEquals(listed.map(m => (m.matchId, m.friendly, m.players)), List((matchId, false, Seq(owner.nickname))))
         assert(refused.left.exists(_.isInstanceOf[UnauthorizedError]), refused)
     }
 
     test("narrowed to a player, a game's admin lists only the matches that player has a seat in") {
         val result = for {
             f <- friendlyFixture()
-            (creator, game, matchId, gameAdmin) = f
-            theirs <- matchService.listForGame(game.gameId, gameAdmin.externalId, Some(creator.playerId))
+            (owner, game, matchId, gameAdmin) = f
+            theirs <- matchService.listForGame(game.gameId, gameAdmin.externalId, Some(owner.playerId))
             // The admin has no seat in it: narrowed to them, there is nothing.
             nobodys <- matchService.listForGame(game.gameId, gameAdmin.externalId, Some(gameAdmin.playerId))
         } yield (theirs, nobodys, matchId)
@@ -1146,13 +1144,15 @@ class MatchServiceSpec extends PropertySuite {
         assertEquals(nobodys, Nil)
     }
 
-    test("the match's own creator may not, nor an admin of a different game, and a missing match is not found") {
+    test(
+      "the match's own tournament owner may not, nor an admin of a different game, and a missing match is not found"
+    ) {
         val result = for {
             f <- friendlyFixture()
-            (creator, game, matchId, _) = f
+            (owner, game, matchId, _) = f
             other <- friendlyFixture()
             (_, _, _, otherAdmin) = other
-            byCreator <- matchService.setFriendly(game.gameId, matchId, friendly = false, creator.externalId).attempt
+            byOwner <- matchService.setFriendly(game.gameId, matchId, friendly = false, owner.externalId).attempt
             byOther <- matchService.setFriendly(game.gameId, matchId, friendly = false, otherAdmin.externalId).attempt
             stored <- friendlyOf(game, matchId)
             missing <- matchService
@@ -1163,9 +1163,9 @@ class MatchServiceSpec extends PropertySuite {
                   otherAdmin.externalId
                 )
                 .attempt
-        } yield (byCreator, byOther, stored, missing)
-        val (byCreator, byOther, stored, missing) = result.timeout(30.seconds).unsafeRunSync()
-        assert(byCreator.left.exists(_.isInstanceOf[UnauthorizedError]), byCreator)
+        } yield (byOwner, byOther, stored, missing)
+        val (byOwner, byOther, stored, missing) = result.timeout(30.seconds).unsafeRunSync()
+        assert(byOwner.left.exists(_.isInstanceOf[UnauthorizedError]), byOwner)
         assert(byOther.left.exists(_.isInstanceOf[UnauthorizedError]), byOther)
         assertEquals(stored, Some(true))
         assert(missing.left.exists(_.isInstanceOf[NotFoundError]), missing)
@@ -1238,12 +1238,12 @@ class MatchServiceSpec extends PropertySuite {
         }
     }
 
-    property("the creator is told apart from a mere participant on every summary") {
+    property("the owner is told apart from a mere participant on every summary") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
                 made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
                 active <- matchService.active(externalId)
-            } yield active.forall(_.isCreator)
+            } yield active.forall(_.isOwner)
             result.timeout(10.seconds).unsafeRunSync()
         }
     }

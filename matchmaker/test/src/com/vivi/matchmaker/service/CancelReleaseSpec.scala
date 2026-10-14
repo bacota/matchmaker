@@ -65,14 +65,13 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                   game.gameId,
                   matchId,
                   TournamentId.unassigned,
-                  player.playerId,
                   "d",
                   None,
                   Some(Instant.ofEpochSecond(1000)),
                   None,
                   "{}"
                 )
-                _ <- TestMatches.writeMatch(session, m)
+                _ <- TestMatches.writeMatch(session, m, player.playerId)
                 _ <- new MatchRepo(session).setUrls(m.copy(statusUrl = Some("https://engine/status")), cancelUrl)
                 _ <- TestMatches.writeSeat(
                   session,

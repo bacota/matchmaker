@@ -259,7 +259,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
     /** A match is over, however it ended. Told to everyone in it.
       *
       * Everyone, because in two of the three cases nobody in it did this: the engine finished the game, or a clock ran
-      * out. The exception is a cancellation, where `except` names the creator who called it off and is looking at the
+      * out. The exception is a cancellation, where `except` names the owner who called it off and is looking at the
       * answer to their own click.
       *
       * No play link, unlike every other mail about a match. The board may well still be there — a cancel does not tell

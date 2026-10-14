@@ -1945,7 +1945,7 @@ object Views {
           matchNotifications(summary)
         )
 
-    /** The caller's way into a match still being played, and the way out of it for its creator. */
+    /** The caller's way into a match still being played, and the way out of it for its owner. */
     private def playControls(summary: MatchSummary): HtmlElement =
         div(
           cls := "controls",
@@ -1964,9 +1964,9 @@ object Views {
           busyButton("Refresh", classes = Some("link")) { busy =>
               Store.run(ApiClient.refreshMatch(summary.gameId, summary.matchId), busy)(reloadAfterMatchRefresh)
           },
-          // Only the creator's. The engine is not told — its board stays playable — so the
+          // Only the owner's. The engine is not told — its board stays playable — so the
           // confirmation says what actually happens.
-          if (summary.isCreator)
+          if (summary.isOwner)
               busyButton("Cancel", classes = Some("link")) { busy =>
                   if (
                     dom.window.confirm("Cancel this match? It will stop counting here, but the game board stays open.")
