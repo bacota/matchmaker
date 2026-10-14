@@ -113,14 +113,15 @@ case class Tournament(
     checkedAt: Option[Instant] = None
 )
 
-/** An entry in a tournament: who entered, with which character in a character game, the rating they entered at, and
-  * whether they have withdrawn. `nickname` and `characterName` are for showing it by.
+/** An entry in a tournament: a player's in a plain game, a character's in a character game, the rating it entered at,
+  * and whether it has withdrawn. `playerId` is who plays it now -- the player, or the character's current owner, and
+  * `None` for a character nobody owns -- and `nickname` theirs. `characterName` is for showing a character entry by.
   */
 case class Entrant(
     gameId: GameId,
     tournamentId: TournamentId,
     entrantId: EntrantId,
-    playerId: PlayerId,
+    playerId: Option[PlayerId],
     characterId: Option[CharacterId],
     ratingAtEntry: Int,
     enteredAt: Instant,
@@ -222,8 +223,9 @@ case class TournamentMatchView(
     seats: List[TournamentSeatView]
 )
 
-/** Everything a tournament's page shows: the tournament and its design, who has entered and who is invited, its state
-  * once it has started, the matches of the round being played, and what the viewer may do.
+/** Everything a tournament's page shows: the tournament and its design, who has entered and who is invited -- players
+  * in a plain game, characters in a character game -- its state once it has started, the matches of the round being
+  * played, and what the viewer may do.
   */
 case class TournamentDetail(
     summary: TournamentSummary,
@@ -231,8 +233,14 @@ case class TournamentDetail(
     entries: List[Entrant],
     invited: List[PlayerName],
     state: Option[com.vivi.matchmaker.model.tournament.TournamentState],
-    round: List[TournamentMatchView] = Nil
+    round: List[TournamentMatchView] = Nil,
+    invitedCharacters: List[InvitedCharacter] = Nil
 )
+
+/** A character invited to a tournament of a character game, with whoever owns it now: the invitation is the
+  * character's, so it is its owner at the time who may answer it. `owner` is `None` for a character nobody owns.
+  */
+case class InvitedCharacter(character: CharacterName, owner: Option[PlayerName])
 
 /** Where a player stands in a tournament they entered: the entry (by its character, in a character game), its seed and
   * stratum as they stand, whether it is out, how many are still in, and its final place once it is over.
@@ -273,7 +281,8 @@ case class EntrantRank(entrantId: EntrantId, rank: Int)
   * `characterId` is the challenger's character in a character game, and `plays` false a game's admin offering a match
   * they will not play in, who enters nothing. `poolSize` is how many it seats, between the game's required roles and
   * all its roles, the game's R if not given, and also the most entries it takes. `roundDuration` is the match's time
-  * limit (`Clock.forMatch`). `open` false makes it invitational: only `invitations` may enter.
+  * limit (`Clock.forMatch`). `open` false makes it invitational: only those invited may enter -- `invitations`,
+  * players, in a plain game, and `characterInvitations`, characters, in a character game.
   */
 case class ChallengeRequest(
     characterId: Option[CharacterId] = None,
@@ -287,8 +296,16 @@ case class ChallengeRequest(
     start: Option[Instant] = None,
     autoStart: Boolean = false,
     open: Boolean = true,
-    invitations: List[PlayerId] = Nil
+    invitations: List[PlayerId] = Nil,
+    characterInvitations: List[CharacterId] = Nil
 )
 
-/** A challenge as its screens list it: the tournament as a list shows it, who has entered, and who is invited. */
-case class ChallengeSummary(summary: TournamentSummary, entries: List[Entrant], invited: List[PlayerName])
+/** A challenge as its screens list it: the tournament as a list shows it, who has entered, and who is invited --
+  * players in a plain game, characters in a character game.
+  */
+case class ChallengeSummary(
+    summary: TournamentSummary,
+    entries: List[Entrant],
+    invited: List[PlayerName],
+    invitedCharacters: List[InvitedCharacter] = Nil
+)

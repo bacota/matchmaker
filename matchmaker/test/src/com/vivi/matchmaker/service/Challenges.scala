@@ -139,7 +139,7 @@ object Challenges {
                         case Some(m) =>
                             m.seats.find(_.choosing) match {
                                 case Some(chooser) if m.status == TournamentMatchStatus.Choosing =>
-                                    val player = d.entries.find(_.entrantId == chooser.entrantId).map(_.playerId)
+                                    val player = d.entries.find(_.entrantId == chooser.entrantId).flatMap(_.playerId)
                                     val seat = seats.find(s => player.contains(s.player.playerId)).get
                                     services.rounds.chooseRole(
                                       game.gameId,

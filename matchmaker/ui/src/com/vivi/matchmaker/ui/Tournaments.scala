@@ -243,7 +243,7 @@ object Tournaments {
             if (_) game.fold(emptyNode)(g => form(g, Some(t), () => editing.set(false))) else emptyNode
           ),
           entriesSection(d, game, me),
-          if (d.summary.isOwner && t.settings.invitational) invitationsSection(d) else emptyNode,
+          if (d.summary.isOwner && t.settings.invitational) invitationsSection(d, game) else emptyNode,
           roundSection(d, game, me, names),
           d.state.fold(emptyNode)(s => standings(s.root, names, Some("Standings"))),
           d.state.flatMap(_.root.ranking).fold(emptyNode)(r => finalRanking(r, names))
@@ -344,7 +344,7 @@ object Tournaments {
     private def entriesSection(d: TournamentDetail, game: Option[Game], me: Option[Player]): HtmlElement = {
         val t = d.summary.tournament
         val open = t.status == TournamentStatus.Open || (t.status == TournamentStatus.Running && t.settings.lateEntries)
-        val mine = d.entries.filter(e => me.exists(_.playerId == e.playerId))
+        val mine = d.entries.filter(e => me.exists(m => e.playerId.contains(m.playerId)))
         val characterGame = game.exists(_.gameType == GameType.Character)
         val chosen: Var[Option[CharacterId]] = Var(None)
         sectionTag(
@@ -385,10 +385,14 @@ object Tournaments {
                         onMountCallback(_ => game.foreach(g => Store.refreshCharacters(g.gameId))),
                         onChange.mapToValue --> (v => chosen.set(v.toLongOption.map(CharacterId(_)))),
                         option(value := "", "Choose a character"),
+                        // By invitation, only the characters invited may enter, so only they are offered.
                         children <-- Store.charactersByGame.signal.map(
-                          _.getOrElse(t.gameId, Seq.empty).map(c =>
-                              option(value := c.characterId.value.toString, c.name)
-                          )
+                          _.getOrElse(t.gameId, Seq.empty)
+                              .filter(c =>
+                                  !t.settings.invitational || d.summary.isOwner ||
+                                      d.invitedCharacters.exists(_.character.characterId == c.characterId)
+                              )
+                              .map(c => option(value := c.characterId.value.toString, c.name))
                         )
                       )
                     )
@@ -400,13 +404,19 @@ object Tournaments {
         )
     }
 
-    private def invitationsSection(d: TournamentDetail): HtmlElement = {
+    /** Who may enter an invitational tournament, and the owner's means of changing that: players in a plain game, and
+      * in a character game characters -- found through their owners, and answered by whoever owns them when they do.
+      */
+    private def invitationsSection(d: TournamentDetail, game: Option[Game]): HtmlElement = {
         val t = d.summary.tournament
+        val characterGame =
+            game.map(_.gameType == GameType.Character).getOrElse(d.invitedCharacters.nonEmpty)
         val prefix = Var("")
         val found: Var[Seq[PublicPlayer]] = Var(Seq.empty)
+        val invitedCharacters = d.invitedCharacters.map(_.character.characterId).toSet
         sectionTag(
           h3("Invitations"),
-          if (d.invited.isEmpty) p(cls := "empty", "Nobody is invited yet.")
+          if (d.invited.isEmpty && d.invitedCharacters.isEmpty) p(cls := "empty", "Nobody is invited yet.")
           else
               ul(
                 d.invited.map(inv =>
@@ -418,6 +428,23 @@ object Tournaments {
                             _ => reload(d)
                           )
                       ).amend(aria.label := s"Remove the invitation of ${inv.nickname}")
+                    )
+                ) ++ d.invitedCharacters.map(inv =>
+                    li(
+                      cls := "row",
+                      span(inv.character.name),
+                      span(cls := "detail", inv.owner.fold(" · nobody's")(o => s" · ${o.nickname}'s")),
+                      busyButton("Remove")(busy =>
+                          Store.run(
+                            ApiClient
+                                .revokeTournamentCharacterInvitation(
+                                  t.gameId,
+                                  t.tournamentId,
+                                  inv.character.characterId
+                                ),
+                            busy
+                          )(_ => reload(d))
+                      ).amend(aria.label := s"Remove the invitation of ${inv.character.name}")
                     )
                 )
               ),
@@ -431,15 +458,28 @@ object Tournaments {
           ul(
             aria.live := "polite",
             children <-- found.signal.map(_.map { p =>
-                li(
-                  cls := "row",
-                  span(p.nickname),
-                  busyButton("Invite")(busy =>
-                      Store.run(ApiClient.inviteToTournament(t.gameId, t.tournamentId, p.playerId), busy)(_ =>
-                          reload(d)
-                      )
-                  ).amend(aria.label := s"Invite ${p.nickname}")
-                )
+                if (characterGame)
+                    // A character game invites characters, so the player found is a way to theirs.
+                    li(
+                      cls := "row",
+                      span(p.nickname),
+                      Views.characterInviteButtons(t.gameId, p, invitedCharacters) { (c, busy) =>
+                          Store.run(
+                            ApiClient.inviteCharacterToTournament(t.gameId, t.tournamentId, c.characterId),
+                            busy
+                          )(_ => reload(d))
+                      }
+                    )
+                else
+                    li(
+                      cls := "row",
+                      span(p.nickname),
+                      busyButton("Invite")(busy =>
+                          Store.run(ApiClient.inviteToTournament(t.gameId, t.tournamentId, p.playerId), busy)(_ =>
+                              reload(d)
+                          )
+                      ).amend(aria.label := s"Invite ${p.nickname}")
+                    )
             })
           )
         )
@@ -477,7 +517,9 @@ object Tournaments {
               ul(
                 d.round.map { m =>
                     val myTurn = m.seats.find(s =>
-                        s.choosing && entryOf.get(s.entrantId).exists(e => me.exists(_.playerId == e.playerId))
+                        s.choosing && entryOf
+                            .get(s.entrantId)
+                            .exists(e => me.exists(m => e.playerId.contains(m.playerId)))
                     )
                     li(
                       div(

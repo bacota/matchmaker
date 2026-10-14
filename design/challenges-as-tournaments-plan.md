@@ -44,6 +44,11 @@ in a game with optional roles at a pool size above R.
 - `stage_model`, `stage`: `ties_allowed`.
 - `match`: no `challenge_id`. `tournament_id`, `pool_id`, `round` and `stage_id` are NOT NULL.
 - `participant`: no `challenge_id`. `tournament_id` and `entrant_id` are NOT NULL.
+- `entrant`, `participant` and `invitation` are each a supertype with a player subtype and a character subtype
+  (`player_entrant`/`character_entrant`, `player_participant`/`character_participant`,
+  `player_invitation`/`character_invitation`), chosen by the game's type. A character entry names no player:
+  whoever owns the character now plays it, through the `entrant_player` view. A participant keeps `player_id`, the
+  player who actually played the match, and each participant subtype refers to the matching entrant subtype.
 
 ## The challenge flow
 
@@ -66,8 +71,6 @@ Entering, withdrawing, starting, cancelling, inviting and choosing roles use the
 ### What was dropped
 
 - **The match description.** A challenge's match has no description.
-- **Character invitations.** Inviting a particular character went with the old tables. An invitation is now to a
-  player, who enters with any character of theirs. `character_invitation` is kept (renamed) but unused.
 - **A start from a single entry.** Starting needs at least two entries, and enough to fill the required roles,
   as any tournament does.
 

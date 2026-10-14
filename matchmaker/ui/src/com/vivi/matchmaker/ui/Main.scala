@@ -607,47 +607,74 @@ object Views {
 
     /** One invitation: who asked, to what, on what terms — then the two answers.
       *
-      * Accept is offered here only in a game played without characters. A character game's entry names one of the
-      * player's characters, and those are loaded on the game's own screen, so the button goes there instead of
-      * guessing. So does a game this player's list does not hold — an invitation outlives its game being deactivated —
-      * since whether it takes characters is not known here. Declining needs neither, and is offered on every row.
+      * In a character game the invitation is a character's, so the row names it, Accept enters with it, and Decline
+      * turns down its invitation; the character is read from the invitation, whoever owns it now being who may answer.
+      * In a plain game Accept enters the player. Every fact it decides on comes from the response rather than from
+      * `Store.games`, which holds only the active games -- an invitation outlives its game being deactivated.
       */
     private def invitationRow(invited: ChallengeSummary, game: Option[Game]): HtmlElement = {
         val t = invited.summary.tournament
+        def accepted(character: Option[CharacterId])(busy: Var[Boolean]): Unit =
+            Store.run(ApiClient.enterTournament(t.gameId, t.tournamentId, character), busy, invitationGone(t)) { _ =>
+                Store.sayAboutInvitations(s"Invitation to ${invited.summary.gameName} accepted.")
+                // Accepting may have filled one that starts itself: the start's reloads cover both.
+                reloadAfterStart(t.gameId)
+            }
+        def declined(busy: Var[Boolean], decline: Future[Unit]): Unit =
+            Store.run(decline, busy, invitationGone(t)) { _ =>
+                Store.sayAboutInvitations(s"Invitation to ${invited.summary.gameName} declined.")
+                reloadChallengeSections(t.gameId)
+            }
         li(
           cls := "row",
-          div(cls := "title", s"${invited.summary.ownerNickname} invited you to ${invited.summary.gameName}"),
-          div(cls := "detail", challengeTerms(t, invited.entries.size)),
-          game match {
-              case Some(g) if g.gameType == GameType.Plain =>
-                  busyButton("Accept") { busy =>
-                      Store.run(ApiClient.enterTournament(t.gameId, t.tournamentId, None), busy, invitationGone(t)) {
-                          _ =>
-                              Store.sayAboutInvitations(s"Invitation to ${invited.summary.gameName} accepted.")
-                              // Accepting may have filled one that starts itself: the start's reloads cover both.
-                              reloadAfterStart(t.gameId)
-                      }
-                  }
-              case _ =>
-                  button(
-                    tpe := "button",
-                    cls := "link",
-                    "Open the game",
-                    onClick --> (_ => Store.show(Store.Page.OneGame(t.gameId)))
-                  )
-          },
           child <-- currentPlayer.map {
-              case None => emptyNode
+              case None     => emptyNode
               case Some(me) =>
-                  busyButton("Decline", classes = Some("link")) { busy =>
-                      Store.run(
-                        ApiClient.revokeTournamentInvitation(t.gameId, t.tournamentId, me.playerId),
-                        busy,
-                        invitationGone(t)
-                      ) { _ =>
-                          Store.sayAboutInvitations(s"Invitation to ${invited.summary.gameName} declined.")
-                          reloadChallengeSections(t.gameId)
-                      }
+                  // The character of the caller's this invitation is for, in a character game.
+                  invited.invitedCharacters.find(_.owner.exists(_.playerId == me.playerId)) match {
+                      case Some(mine) =>
+                          div(
+                            div(
+                              cls := "title",
+                              s"${invited.summary.ownerNickname} invited ${mine.character.name} to ${invited.summary.gameName}"
+                            ),
+                            div(cls := "detail", challengeTerms(t, invited.entries.size)),
+                            busyButton("Accept")(accepted(Some(mine.character.characterId))),
+                            busyButton("Decline", classes = Some("link"))(busy =>
+                                declined(
+                                  busy,
+                                  ApiClient.revokeTournamentCharacterInvitation(
+                                    t.gameId,
+                                    t.tournamentId,
+                                    mine.character.characterId
+                                  )
+                                )
+                            )
+                          )
+                      case None =>
+                          div(
+                            div(
+                              cls := "title",
+                              s"${invited.summary.ownerNickname} invited you to ${invited.summary.gameName}"
+                            ),
+                            div(cls := "detail", challengeTerms(t, invited.entries.size)),
+                            game match {
+                                case Some(g) if g.gameType == GameType.Plain => busyButton("Accept")(accepted(None))
+                                case _ =>
+                                    button(
+                                      tpe := "button",
+                                      cls := "link",
+                                      "Open the game",
+                                      onClick --> (_ => Store.show(Store.Page.OneGame(t.gameId)))
+                                    )
+                            },
+                            busyButton("Decline", classes = Some("link"))(busy =>
+                                declined(
+                                  busy,
+                                  ApiClient.revokeTournamentInvitation(t.gameId, t.tournamentId, me.playerId)
+                                )
+                            )
+                          )
                   }
           }
         )
@@ -821,7 +848,7 @@ object Views {
 
     private def waitingRow(c: ChallengeSummary, player: Option[Player]): HtmlElement = {
         val t = c.summary.tournament
-        val mine = player.flatMap(me => c.entries.find(_.playerId == me.playerId))
+        val mine = player.flatMap(me => c.entries.find(_.playerId.contains(me.playerId)))
         val full = t.settings.maxEntrants.exists(c.entries.size >= _)
         li(
           cls := "row",
@@ -1344,9 +1371,11 @@ object Views {
           onMountCallback(_ => Store.refreshChallenges(game.gameId)),
           child <-- Store.challengesByGame.signal.map(_.get(game.gameId)).map {
               case Some(challenges) =>
+                  // In a character game it is one of their characters that is invited, so a challenge already asking
+                  // one of them is still one to ask another to; one they are in is not.
                   val mine = challenges.filter(c =>
-                      c.summary.isOwner && !c.invited.exists(_.playerId == invitee.playerId) &&
-                          !c.entries.exists(_.playerId == invitee.playerId)
+                      c.summary.isOwner && !c.entries.exists(_.playerId.contains(invitee.playerId)) &&
+                          (game.gameType == GameType.Character || !c.invited.exists(_.playerId == invitee.playerId))
                   )
                   if (mine.isEmpty) emptyNode
                   else {
@@ -1375,17 +1404,43 @@ object Views {
                             )
                           )
                         ),
-                        busyButton(s"Invite ${invitee.nickname}", disabledWhen = picked.signal.map(_.isEmpty)) { busy =>
-                            picked.now().foreach { id =>
-                                Store.run(
-                                  ApiClient.inviteToTournament(game.gameId, id, invitee.playerId),
-                                  busy,
-                                  challengeStale(
-                                    mine.find(_.summary.tournament.tournamentId == id).get.summary.tournament
-                                  )
-                                )(_ => Store.refreshChallenges(game.gameId))
+                        if (game.gameType == GameType.Character)
+                            // Rebuilt per challenge, leaving out the characters it already asks.
+                            child <-- picked.signal.map(
+                              _.flatMap(id => mine.find(_.summary.tournament.tournamentId == id)) match {
+                                  case Some(c) =>
+                                      val t = c.summary.tournament
+                                      characterInviteButtons(
+                                        game.gameId,
+                                        invitee,
+                                        c.invitedCharacters.map(_.character.characterId).toSet
+                                      ) { (ch, busy) =>
+                                          Store.run(
+                                            ApiClient.inviteCharacterToTournament(
+                                              game.gameId,
+                                              t.tournamentId,
+                                              ch.characterId
+                                            ),
+                                            busy,
+                                            challengeStale(t)
+                                          )(_ => Store.refreshChallenges(game.gameId))
+                                      }
+                                  case None => emptyNode
+                              }
+                            )
+                        else
+                            busyButton(s"Invite ${invitee.nickname}", disabledWhen = picked.signal.map(_.isEmpty)) {
+                                busy =>
+                                    picked.now().foreach { id =>
+                                        Store.run(
+                                          ApiClient.inviteToTournament(game.gameId, id, invitee.playerId),
+                                          busy,
+                                          challengeStale(
+                                            mine.find(_.summary.tournament.tournamentId == id).get.summary.tournament
+                                          )
+                                        )(_ => Store.refreshChallenges(game.gameId))
+                                    }
                             }
-                        }
                       )
                   }
               case None => emptyNode
@@ -1458,7 +1513,8 @@ object Views {
                       val offered = byGame(game.gameId).filter { c =>
                           c.summary.isOwner &&
                           (c.invited.exists(_.playerId == invitee.playerId) ||
-                              c.entries.exists(_.playerId == invitee.playerId))
+                              c.invitedCharacters.exists(_.owner.exists(_.playerId == invitee.playerId)) ||
+                              c.entries.exists(_.playerId.contains(invitee.playerId)))
                       }
                       div(
                         h3(s"Your Challenges to ${invitee.nickname}"),
@@ -1468,6 +1524,95 @@ object Views {
                   case _ => p(cls := "detail", "Loading your challenges…")
               }
         )
+
+    /** Another player's characters in a game, by name only -- which is all another player may see of them -- drawn by
+      * `render` once they have come, for inviting one: in a character game it is a character that is invited.
+      *
+      * The answer is dropped unless this same mount is still the one waiting for it and the session that asked is still
+      * signed in: a late answer about the player shown before would otherwise draw their characters under somebody
+      * else's name. A counter rather than a mounted flag, because a flag reads true again if the same element is
+      * remounted before the answer lands. The status line is announced, because what came back decides whether there is
+      * anything to invite at all.
+      */
+    private[ui] def theirCharacters(gameId: GameId, owner: PublicPlayer, exclude: Set[CharacterId])(
+        render: Seq[CharacterName] => HtmlElement
+    ): HtmlElement = {
+        // None while the request is out; Left when it failed.
+        val loaded = Var(Option.empty[Either[String, Seq[CharacterName]]])
+        var mount = 0
+        div(
+          onMountCallback { _ =>
+              mount += 1
+              val asked = mount
+              val signIn = Store.currentSignIn
+              ApiClient.characterNames(gameId, owner.playerId).onComplete { answer =>
+                  if (asked == mount && Store.stillSignedInAs(signIn)) answer match {
+                      case scala.util.Success(names) =>
+                          loaded.set(Some(Right(names.filterNot(c => exclude.contains(c.characterId)))))
+                      case scala.util.Failure(_) =>
+                          loaded.set(Some(Left(s"Couldn't load ${owner.nickname}'s characters just now.")))
+                  }
+              }
+          },
+          onUnmountCallback(_ => mount += 1),
+          div(
+            role := "status",
+            aria.live := "polite",
+            child <-- loaded.signal.map {
+                case None              => p(cls := "detail", s"Loading ${owner.nickname}'s characters...")
+                case Some(Left(error)) => p(cls := "empty", error)
+                case Some(Right(names)) if names.isEmpty =>
+                    p(cls := "empty", s"${owner.nickname} has no character in this game that could be invited.")
+                case Some(Right(_)) => emptyNode
+            }
+          ),
+          child <-- loaded.signal.map {
+              case Some(Right(names)) if names.nonEmpty => render(names)
+              case _                                    => emptyNode
+          }
+        )
+    }
+
+    /** [[theirCharacters]] as a button per character, each inviting it with `invite`. */
+    private[ui] def characterInviteButtons(gameId: GameId, owner: PublicPlayer, exclude: Set[CharacterId])(
+        invite: (CharacterName, Var[Boolean]) => Unit
+    ): HtmlElement =
+        theirCharacters(gameId, owner, exclude)(names =>
+            ul(
+              names.map(c =>
+                  li(
+                    cls := "row",
+                    div(cls := "title", c.name),
+                    busyButton(s"Invite ${c.name}", classes = Some("link"))(busy => invite(c, busy))
+                  )
+              )
+            )
+        )
+
+    /** [[theirCharacters]] as a picker writing the chosen one into `chosen`, the first of them to begin with. */
+    private def characterChooser(
+        gameId: GameId,
+        owner: PublicPlayer,
+        exclude: Set[CharacterId],
+        chosen: Var[Option[CharacterId]]
+    ): HtmlElement =
+        theirCharacters(gameId, owner, exclude) { names =>
+            field(
+              "Their character",
+              select(
+                onMountCallback(_ =>
+                    if (!chosen.now().exists(id => names.exists(_.characterId == id))) {
+                        chosen.set(names.headOption.map(_.characterId))
+                    }
+                ),
+                onChange.mapToValue --> { raw =>
+                    chosen.set(raw.toLongOption.map(CharacterId.apply).filter(id => names.exists(_.characterId == id)))
+                },
+                value <-- chosen.signal.map(_.map(_.value.toString).getOrElse("")),
+                names.map(c => option(value := c.characterId.value.toString, c.name))
+              )
+            )
+        }
 
     /** Who a match still being played is waiting on, under its row on somebody else's page. Named, and never "your
       * turn": a turn on this page is somebody else's by construction.
@@ -3763,14 +3908,14 @@ object Views {
       */
     private def invitedList(game: Game, c: ChallengeSummary): HtmlElement = {
         val t = c.summary.tournament
-        if (c.invited.isEmpty) div()
+        if (c.invited.isEmpty && c.invitedCharacters.isEmpty) div()
         else
             div(
               cls := "detail-panel",
               h4("Invited"),
               ul(
                 c.invited.map { invitation =>
-                    val entered = c.entries.exists(_.playerId == invitation.playerId)
+                    val entered = c.entries.exists(_.playerId.contains(invitation.playerId))
                     li(
                       cls := "row",
                       div(cls := "title", invitation.nickname),
@@ -3780,6 +3925,27 @@ object Views {
                           busyButton("Revoke", classes = Some("link")) { busy =>
                               Store.run(
                                 ApiClient.revokeTournamentInvitation(game.gameId, t.tournamentId, invitation.playerId),
+                                busy,
+                                challengeStale(t)
+                              )(_ => Store.refreshChallenges(game.gameId))
+                          }
+                    )
+                } ++ c.invitedCharacters.map { invitation =>
+                    val id = invitation.character.characterId
+                    val entered = c.entries.exists(_.characterId.contains(id))
+                    li(
+                      cls := "row",
+                      div(cls := "title", invitation.character.name),
+                      div(
+                        cls := "detail",
+                        invitation.owner.fold("")(o => s"${o.nickname}'s · ") +
+                            (if (entered) "entered" else "not answered yet")
+                      ),
+                      if (entered) emptyNode
+                      else
+                          busyButton("Revoke", classes = Some("link")) { busy =>
+                              Store.run(
+                                ApiClient.revokeTournamentCharacterInvitation(game.gameId, t.tournamentId, id),
                                 busy,
                                 challengeStale(t)
                               )(_ => Store.refreshChallenges(game.gameId))
@@ -3807,9 +3973,14 @@ object Views {
         val prefix = Var("")
         val found = Var(Option.empty[PlayerSearchResult])
         // Nobody already invited or in it, and not its owner: none of them has anything to be asked to, so a name that
-        // cannot be acted on is left out of the results.
+        // cannot be acted on is left out of the results. In a character game it is characters that are asked, so a
+        // player stays findable, and the characters already asked or in it are what is left out.
+        val characterGame = game.gameType == GameType.Character
         val alreadyAsked =
-            c.invited.map(_.playerId).toSet ++ c.entries.map(_.playerId) + t.owner
+            if (characterGame) Set(t.owner)
+            else c.invited.map(_.playerId).toSet ++ c.entries.flatMap(_.playerId) + t.owner
+        val charactersAsked =
+            c.invitedCharacters.map(_.character.characterId).toSet ++ c.entries.flatMap(_.characterId)
 
         div(
           button(
@@ -3870,18 +4041,40 @@ object Views {
                             else
                                 ul(
                                   askable.map(candidate =>
-                                      li(
-                                        cls := "row",
-                                        div(cls := "title", candidate.nickname),
-                                        busyButton(s"Invite ${candidate.nickname}", classes = Some("link")) { busy =>
-                                            Store.run(
-                                              ApiClient
-                                                  .inviteToTournament(game.gameId, t.tournamentId, candidate.playerId),
-                                              busy,
-                                              challengeStale(t)
-                                            )(_ => Store.refreshChallenges(game.gameId))
-                                        }
-                                      )
+                                      if (characterGame)
+                                          li(
+                                            cls := "row",
+                                            div(cls := "title", candidate.nickname),
+                                            characterInviteButtons(game.gameId, candidate, charactersAsked) {
+                                                (ch, busy) =>
+                                                    Store.run(
+                                                      ApiClient.inviteCharacterToTournament(
+                                                        game.gameId,
+                                                        t.tournamentId,
+                                                        ch.characterId
+                                                      ),
+                                                      busy,
+                                                      challengeStale(t)
+                                                    )(_ => Store.refreshChallenges(game.gameId))
+                                            }
+                                          )
+                                      else
+                                          li(
+                                            cls := "row",
+                                            div(cls := "title", candidate.nickname),
+                                            busyButton(s"Invite ${candidate.nickname}", classes = Some("link")) {
+                                                busy =>
+                                                    Store.run(
+                                                      ApiClient.inviteToTournament(
+                                                        game.gameId,
+                                                        t.tournamentId,
+                                                        candidate.playerId
+                                                      ),
+                                                      busy,
+                                                      challengeStale(t)
+                                                    )(_ => Store.refreshChallenges(game.gameId))
+                                            }
+                                          )
                                   )
                                 )
                     }
@@ -3903,8 +4096,14 @@ object Views {
     ): HtmlElement = {
         val t = c.summary.tournament
         val characterGame = game.gameType == GameType.Character
-        val mine = c.entries.find(_.playerId == me.playerId)
-        val eligible = characters.filterNot(ch => c.entries.exists(_.characterId.contains(ch.characterId)))
+        val mine = c.entries.find(_.playerId.contains(me.playerId))
+        // Not already in it, and -- by invitation, in a character game -- invited: it is the character that is.
+        val eligible = characters
+            .filterNot(ch => c.entries.exists(_.characterId.contains(ch.characterId)))
+            .filter(ch =>
+                !t.settings.invitational || c.invitedCharacters.exists(_.character.characterId == ch.characterId) ||
+                    !characterGame
+            )
         val character = Var(eligible.headOption.map(_.characterId))
         val full = t.settings.maxEntrants.exists(c.entries.size >= _)
 
@@ -3931,6 +4130,8 @@ object Views {
               case None if full => div(cls := "detail", "it is full")
               case None if characterGame && characters.isEmpty =>
                   div(cls := "detail", "you need a character in this game to enter")
+              case None if characterGame && eligible.isEmpty && t.settings.invitational =>
+                  div(cls := "detail", "none of your characters is invited")
               case None if characterGame && eligible.isEmpty =>
                   div(cls := "detail", "your characters in this game have all entered it")
               case None =>
@@ -4285,6 +4486,8 @@ object Views {
         invitee: Option[PublicPlayer] = None
     ): HtmlElement = {
         val isPublic = Var(false)
+        // In a character game it is one of the invitee's characters that is invited, chosen here.
+        val inviteeCharacter = Var(Option.empty[CharacterId])
         // Whether it starts by itself once it is full, instead of waiting for this challenger to press Start. On by
         // default: the challenge is an offer to play, and having to come back and press Start once everybody has said
         // yes is a step most challengers do not want. One who would go ahead with fewer turns it off.
@@ -4419,7 +4622,15 @@ object Views {
           else emptyNode,
           // Built once: the game's parameters do not change while the form is open.
           parameterFields(game, parameters),
-          invitee.fold(emptyNode)(asked => p(cls := "detail", s"Inviting ${asked.nickname}: only they may enter.")),
+          invitee.fold(emptyNode)(asked =>
+              if (game.gameType == GameType.Character)
+                  div(
+                    cls := "detail-panel",
+                    p(cls := "detail", s"Inviting ${asked.nickname}: only the character you choose may enter."),
+                    characterChooser(game.gameId, asked, Set.empty, inviteeCharacter)
+                  )
+              else p(cls := "detail", s"Inviting ${asked.nickname}: only they may enter.")
+          ),
           // The number and the unit it is in, in one field: they are one answer, and a caption over each would read as
           // two questions. How the time is spent is the game's: a chess clock shared out among the players of a game
           // of turns, and a limit on each turn in one where everybody moves at once.
@@ -4540,11 +4751,13 @@ object Views {
           busyButton(
             "Create Challenge",
             disabledWhen = timeLimit.signal
-                .combineWith(live.signal, ownCharacter.signal, seated)
-                .map { case (limit, isLive, own, inIt) =>
+                .combineWith(live.signal, ownCharacter.signal, seated, inviteeCharacter.signal)
+                .map { case (limit, isLive, own, inIt, asked) =>
                     most < least || limitProblem(limit, isLive).isDefined ||
                     // A character game's challenger plays as one of their characters.
-                    (characterGame && inIt && own.isEmpty)
+                    (characterGame && inIt && own.isEmpty) ||
+                    // And its invitee is asked through one of theirs: until one is chosen there is nothing to send.
+                    (characterGame && invitee.isDefined && asked.isEmpty)
                 }
           ) { busy =>
               val request = ChallengeRequest(
@@ -4559,7 +4772,8 @@ object Views {
                 start = startOf(plannedStart.now()),
                 autoStart = autoStart.now() || !seatedNow,
                 open = invitee.isEmpty,
-                invitations = invitee.map(_.playerId).toList
+                invitations = if (characterGame) Nil else invitee.map(_.playerId).toList,
+                characterInvitations = if (characterGame) inviteeCharacter.now().toList else Nil
               )
               // Taken before the request, and checked before the store is written: this callback closes the form,
               // clears the invitee and re-reads a game's challenges, and all three of those belong to whoever was on

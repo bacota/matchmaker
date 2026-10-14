@@ -381,6 +381,9 @@ locals {
     "POST /games/{gameId}/tournaments/{tournamentId}/cancel",
     "POST /games/{gameId}/tournaments/{tournamentId}/invitations",
     "DELETE /games/{gameId}/tournaments/{tournamentId}/invitations/{playerId}",
+    # A character game's invitations name characters.
+    "POST /games/{gameId}/tournaments/{tournamentId}/character-invitations",
+    "DELETE /games/{gameId}/tournaments/{tournamentId}/character-invitations/{characterId}",
     "POST /games/{gameId}/tournaments/{tournamentId}/entries",
     "DELETE /games/{gameId}/tournaments/{tournamentId}/entries/{entrantId}",
     # The models a game's tournaments are made from: listed for anyone, and made, edited, removed and

@@ -500,6 +500,25 @@ object Router {
                     withPlayerId(playerId)(p => noContent(services.tournaments.revoke(gid, t, p, caller)))
                 )
 
+            // A character game's invitations, which name characters: inviting one is the owner's, and removing one
+            // is the owner's or the character's owner's, who is declining it.
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "character-invitations" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) =>
+                    body[TournamentJson.TournamentCharacterInvite](request).flatMap(r =>
+                        noContent(services.tournaments.inviteCharacter(gid, t, r.characterId, caller))
+                    )
+                )
+
+            case (
+                  "DELETE",
+                  "games" :: gameId :: "tournaments" :: tid :: "character-invitations" :: characterId :: Nil
+                ) =>
+                withTournament(gameId, tid)((gid, t) =>
+                    withCharacterId(characterId)(c =>
+                        noContent(services.tournaments.revokeCharacter(gid, t, c, caller))
+                    )
+                )
+
             // Entering, with a character in a character game, and withdrawing an entry.
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "entries" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>

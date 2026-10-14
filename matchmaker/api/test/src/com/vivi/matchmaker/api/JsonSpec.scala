@@ -135,7 +135,9 @@ class JsonSpec extends FunSuite {
         )
         val summary = ChallengeSummary(
           TournamentSummary(tournament, "Chess", "ada", 1, isOwner = false, entered = false, invited = true),
-          List(Entrant(GameId(1), TournamentId(2), EntrantId(4), PlayerId(3), None, 1500, Instant.ofEpochSecond(100))),
+          List(
+            Entrant(GameId(1), TournamentId(2), EntrantId(4), Some(PlayerId(3)), None, 1500, Instant.ofEpochSecond(100))
+          ),
           List(PlayerName(PlayerId(5), "grace"))
         )
         assertEquals(read[ChallengeSummary](write(summary)), summary)

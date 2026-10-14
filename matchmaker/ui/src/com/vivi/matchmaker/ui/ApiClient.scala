@@ -313,6 +313,30 @@ object ApiClient {
     def revokeTournamentInvitation(gameId: GameId, tournamentId: TournamentId, playerId: PlayerId): Future[Unit] =
         sendUnit(HttpMethod.DELETE, s"${tournamentPath(gameId, tournamentId)}/invitations/${playerId.value}", None)
 
+    /** Invites a character, in a character game: whoever owns it when they answer may enter with it. */
+    def inviteCharacterToTournament(
+        gameId: GameId,
+        tournamentId: TournamentId,
+        characterId: CharacterId
+    ): Future[Unit] =
+        sendUnit(
+          HttpMethod.POST,
+          s"${tournamentPath(gameId, tournamentId)}/character-invitations",
+          Some(write(TournamentJson.TournamentCharacterInvite(characterId)))
+        )
+
+    /** Takes a character's invitation back, or -- for the character's owner -- turns it down. */
+    def revokeTournamentCharacterInvitation(
+        gameId: GameId,
+        tournamentId: TournamentId,
+        characterId: CharacterId
+    ): Future[Unit] =
+        sendUnit(
+          HttpMethod.DELETE,
+          s"${tournamentPath(gameId, tournamentId)}/character-invitations/${characterId.value}",
+          None
+        )
+
     def enterTournament(gameId: GameId, tournamentId: TournamentId, characterId: Option[CharacterId]): Future[Entrant] =
         send[Entrant](
           HttpMethod.POST,

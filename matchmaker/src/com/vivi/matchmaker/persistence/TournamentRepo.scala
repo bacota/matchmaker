@@ -253,14 +253,20 @@ class TournamentRepo(session: Session[IO]) {
     def listForGame(game: GameId): IO[List[Tournament]] =
         session.execute(selectForGame)(game).map(_.map { case id *: r => tournamentOf(game, id, r) })
 
-    // A player's tournaments: owned, entered (with any entry, withdrawn or not), or invited to.
+    // A player's tournaments: owned, entered (with any entry, withdrawn or not), or invited to -- themselves, or a
+    // character they own now.
     private val selectForPlayer: Query[(PlayerId, PlayerId, PlayerId), GameId *: TournamentId *: Row] =
         sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")} FROM tournament t
           WHERE t.owner = $playerId
-             OR EXISTS (SELECT 1 FROM entrant e
+             OR EXISTS (SELECT 1 FROM entrant_player e
                          WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId)
-             OR EXISTS (SELECT 1 FROM invitation i
-                         WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = $playerId)
+             OR EXISTS (SELECT 1 FROM player me WHERE me.player_id = $playerId AND (
+                         EXISTS (SELECT 1 FROM player_invitation i
+                                  WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = me.player_id)
+                         OR EXISTS (SELECT 1 FROM character_invitation ci
+                                    JOIN "character" c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
+                                    WHERE ci.game_id = t.game_id AND ci.tournament_id = t.tournament_id
+                                      AND c.player_id = me.player_id)))
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(gameId *: tournamentId *: row)
 
     /** The tournaments a player owns, has entered or is invited to, in any game, newest first. */
@@ -276,10 +282,15 @@ class TournamentRepo(session: Session[IO]) {
         sql"""g.display_name, o.nickname,
               (SELECT count(*) FROM entrant e
                 WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.withdrawn_at IS NULL),
-              EXISTS (SELECT 1 FROM entrant e
+              EXISTS (SELECT 1 FROM entrant_player e
                        WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId),
-              EXISTS (SELECT 1 FROM invitation i
-                       WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = $playerId),
+              EXISTS (SELECT 1 FROM player me WHERE me.player_id = $playerId AND (
+                       EXISTS (SELECT 1 FROM player_invitation i
+                                WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = me.player_id)
+                       OR EXISTS (SELECT 1 FROM character_invitation ci
+                                  JOIN "character" c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
+                                  WHERE ci.game_id = t.game_id AND ci.tournament_id = t.tournament_id
+                                    AND c.player_id = me.player_id))),
               t.status = 'running' AND t.current_round IS NOT NULL AND NOT EXISTS (SELECT 1 FROM match m
                        WHERE m.game_id = t.game_id AND m.tournament_id = t.tournament_id
                          AND m.round = t.current_round AND m.status <> 'F')"""
@@ -307,10 +318,15 @@ class TournamentRepo(session: Session[IO]) {
         sql"""SELECT t.game_id, t.tournament_id, ${columnsOf("t")}, $summaryColumns
           FROM tournament t JOIN game g ON g.game_id = t.game_id JOIN player o ON o.player_id = t.owner
           WHERE t.owner = $playerId
-             OR EXISTS (SELECT 1 FROM entrant e
+             OR EXISTS (SELECT 1 FROM entrant_player e
                          WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId)
-             OR EXISTS (SELECT 1 FROM invitation i
-                         WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = $playerId)
+             OR EXISTS (SELECT 1 FROM player me WHERE me.player_id = $playerId AND (
+                         EXISTS (SELECT 1 FROM player_invitation i
+                                  WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = me.player_id)
+                         OR EXISTS (SELECT 1 FROM character_invitation ci
+                                    JOIN "character" c ON c.game_id = ci.game_id AND c.character_id = ci.character_id
+                                    WHERE ci.game_id = t.game_id AND ci.tournament_id = t.tournament_id
+                                      AND c.player_id = me.player_id)))
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(summaryCodec)
 
     private val selectSummary: Query[((PlayerId, PlayerId), GameId, TournamentId), SummaryRow] =
@@ -332,8 +348,8 @@ class TournamentRepo(session: Session[IO]) {
     def summary(game: GameId, id: TournamentId, viewer: PlayerId): IO[Option[TournamentSummary]] =
         session.option(selectSummary)(((viewer, viewer), game, id)).map(_.map(summaryOf(viewer)))
 
-    // Every entry of a player's, with its seed and stratum as its latest SEED row in the tournament's root pool says,
-    // and how many are still in.
+    // Every entry a player plays now -- theirs, or a character's they own -- with its seed and stratum as its latest
+    // SEED row in the tournament's root pool says, and how many are still in.
     private val selectStandings: Query[PlayerId, TournamentStandingRow] =
         sql"""SELECT t.game_id, t.tournament_id, t.name, g.display_name, t.status, e.entrant_id, ch.name,
                  s.seed, s.stratum, s.eliminated IS NOT NULL,
@@ -346,6 +362,8 @@ class TournamentRepo(session: Session[IO]) {
           LEFT JOIN character_entrant ce
                  ON ce.game_id = e.game_id AND ce.tournament_id = e.tournament_id AND ce.entrant_id = e.entrant_id
           LEFT JOIN character ch ON ch.game_id = ce.game_id AND ch.character_id = ce.character_id
+          JOIN entrant_player ep
+            ON ep.game_id = e.game_id AND ep.tournament_id = e.tournament_id AND ep.entrant_id = e.entrant_id
           LEFT JOIN LATERAL (
               SELECT sd.seed, sd.stratum, sd.eliminated FROM seed sd
               JOIN pool p ON p.game_id = sd.game_id AND p.tournament_id = sd.tournament_id AND p.pool_id = sd.pool_id
@@ -353,7 +371,7 @@ class TournamentRepo(session: Session[IO]) {
                 AND p.kind = 'R'
               ORDER BY sd.round DESC LIMIT 1
           ) s ON true
-          WHERE e.player_id = $playerId
+          WHERE ep.player_id = $playerId
           ORDER BY t.status = 'running' DESC, t.create_date DESC, e.entrant_id"""
             .query(
               gameId *: tournamentId *: text *: text *: status *: int8 *: text.opt *: int4.opt *: int4.opt *: bool *:
@@ -439,8 +457,10 @@ class TournamentRepo(session: Session[IO]) {
           "pool",
           "round",
           "character_entrant",
+          "player_entrant",
           "entrant",
           "character_invitation",
+          "player_invitation",
           "invitation",
           "nesting_stage",
           "atomic_stage",

@@ -22,7 +22,7 @@ import com.vivi.matchmaker.model.GameType
 class TournamentSchemaSpec extends FunSuite with QuietTests {
     TestMigration.ensure()
 
-    private case class Ids(game: Int, gameType: String, player: Long, role: Int, tournament: Long)
+    private case class Ids(game: Int, gameType: String, player: Long, role: Int, tournament: Long, character: Long)
 
     private def exec(session: Session[IO], statement: String): IO[Unit] =
         session.execute(sql"#$statement".command).void
@@ -89,13 +89,24 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
               session,
               s"INSERT INTO atomic_pool (game_id, tournament_id, pool_id, stage_id) VALUES ($g, $t, $pool, $stage)"
             )
+            // The player's character, which a character game's entry names.
+            character <- long(session, s"SELECT character_id FROM character WHERE game_id = $g AND player_id = $player")
+            entrant <- long(
+              session,
+              s"""INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
+                  VALUES ($g, $t, '$gameType', 1500) RETURNING entrant_id"""
+            )
             _ <- exec(
               session,
-              s"""INSERT INTO entrant (game_id, tournament_id, game_type, player_id, rating_at_entry)
-                  VALUES ($g, $t, '$gameType', $player, 1500)"""
+              if (gameType == "C")
+                  s"""INSERT INTO character_entrant (game_id, tournament_id, entrant_id, character_id)
+                      VALUES ($g, $t, $entrant, $character)"""
+              else
+                  s"""INSERT INTO player_entrant (game_id, tournament_id, entrant_id, player_id)
+                      VALUES ($g, $t, $entrant, $player)"""
             )
             _ <- exec(session, "SET CONSTRAINTS ALL IMMEDIATE")
-        } yield Ids(g, gameType, player, role, t)
+        } yield Ids(g, gameType, player, role, t, character)
 
     /** Whether `statement` is refused, leaving the transaction as it was either way. */
     private def refused(session: Session[IO], xa: Transaction[IO], statement: String): IO[Boolean] =
@@ -196,17 +207,57 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
                   session,
                   s"SELECT entrant_id FROM entrant WHERE game_id = ${ids.game} AND tournament_id = ${ids.tournament}"
                 )
-                seat = (more: String, values: String) =>
-                    s"""INSERT INTO participant (game_id, game_type, match_id, player_id, tournament_id, notify_match_started,
-                                                notify_turn_taken, notify_your_turn, notify_match_ended$more)
-                        VALUES (${ids.game}, '${ids.gameType}', '$matchId', ${ids.player}, ${ids.tournament}, true, true,
-                                true, true$values)"""
+                // The seat and its subtype in one statement, so that the deferred key between them is satisfied when
+                // `refused` checks every constraint.
+                subtype =
+                    if (ids.gameType == "C")
+                        s"""INSERT INTO character_participant (game_id, participant_id, character_id, tournament_id,
+                                                               entrant_id)
+                            SELECT game_id, participant_id, ${ids.character}, tournament_id, entrant_id FROM seat"""
+                    else
+                        """INSERT INTO player_participant (game_id, participant_id, tournament_id, entrant_id)
+                            SELECT game_id, participant_id, tournament_id, entrant_id FROM seat"""
+                seat = (more: String, values: String) => s"""WITH seat AS (
+                          INSERT INTO participant (game_id, game_type, match_id, player_id, tournament_id,
+                                                   notify_match_started, notify_turn_taken, notify_your_turn,
+                                                   notify_match_ended$more)
+                          VALUES (${ids.game}, '${ids.gameType}', '$matchId', ${ids.player}, ${ids.tournament}, true,
+                                  true, true, true$values)
+                          RETURNING game_id, participant_id, tournament_id, entrant_id)
+                        $subtype"""
                 withoutEntrant <- refused(session, xa, seat("", ""))
                 withoutRole <- refused(session, xa, seat(", entrant_id", s", $entrant"))
             } yield (withoutEntrant, withoutRole)
         }
         assert(withoutEntrant, "a seat with no entrant was accepted")
         assert(!withoutRole, "a seat waiting for its role was refused")
+    }
+
+    test("an entry may not lack the subtype its game's type says, nor have the other kind's") {
+        val (missing, wrong) = inRolledBack { (session, xa) =>
+            for {
+                ids <- tournament(session)
+                // A character game's entry with no character_entrant row.
+                missing <- refused(
+                  session,
+                  xa,
+                  s"""INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
+                      VALUES (${ids.game}, ${ids.tournament}, '${ids.gameType}', 1500)"""
+                )
+                // And one given a player's subtype instead.
+                wrong <- refused(
+                  session,
+                  xa,
+                  s"""WITH e AS (INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
+                                 VALUES (${ids.game}, ${ids.tournament}, '${ids.gameType}', 1500)
+                                 RETURNING game_id, tournament_id, entrant_id)
+                      INSERT INTO player_entrant (game_id, tournament_id, entrant_id, player_id)
+                      SELECT game_id, tournament_id, entrant_id, ${ids.player} FROM e"""
+                )
+            } yield (missing, wrong)
+        }
+        assert(missing, "an entry with no subtype row was accepted")
+        assert(wrong, "an entry with the other kind's subtype was accepted")
     }
 
     test("a stage of one kind may not lack its subtype row, nor have the other kind's") {

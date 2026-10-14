@@ -88,12 +88,15 @@ class TournamentStateRepo(session: Session[IO]) {
             .query(int8 *: int8 *: int8 *: int4.opt *: int4.opt *: int4.opt *: text.opt)
             .to[SeatRow]
 
-    private val selectEntrants: Query[(GameId, TournamentId), (Long, Long, Boolean, Option[Int], Option[Long])] =
-        sql"""SELECT e.entrant_id, e.player_id, e.withdrawn_at IS NOT NULL, e.final_rank, ce.character_id
+    // Each entry with who plays it now -- its player, or its character's owner, if anybody -- and its character.
+    private val selectEntrants
+        : Query[(GameId, TournamentId), (Long, Option[Long], Boolean, Option[Int], Option[Long])] =
+        sql"""SELECT e.entrant_id, ep.player_id, e.withdrawn_at IS NOT NULL, e.final_rank, ce.character_id
           FROM entrant e
+          LEFT JOIN entrant_player ep USING (game_id, tournament_id, entrant_id)
           LEFT JOIN character_entrant ce USING (game_id, tournament_id, entrant_id)
           WHERE e.game_id = $gameId AND e.tournament_id = $tournamentId"""
-            .query(int8 *: int8 *: bool *: int4.opt *: int8.opt)
+            .query(int8 *: int8.opt *: bool *: int4.opt *: int8.opt)
 
     /** The tournament's state as its rows hold it, with what [[save]] needs to know about them. `None` for a tournament
       * that is not there.
@@ -189,27 +192,36 @@ class TournamentStateRepo(session: Session[IO]) {
         sql"""UPDATE match SET status = $text, round = $int4
           WHERE game_id = $gameId AND match_id = $int8 AND status = 'S'""".command
 
+    // Stamped with what its player wants to hear about it -- or everything, for a seat nobody plays, whose character
+    // has no owner: it forfeits before play and is told nothing.
     private val insertSeat: Query[
-      (GameId, Long, String, Option[Int], TournamentId, Long, Option[Int], GameId, Long),
+      (GameId, Long, String, Option[Long], Option[Int], TournamentId, Long, Option[Int], GameId, Option[Long]),
       Long
     ] =
         sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, due, game_role_id,
               tournament_id, entrant_id, choose_order, notify_match_started, notify_turn_taken, notify_your_turn,
               notify_match_ended)
-          SELECT $gameId, $int8, $text, pl.player_id, false, NULL, ${int4.opt}, $tournamentId, $int8, ${int4.opt},
+          SELECT $gameId, $int8, $text, ${int8.opt}, false, NULL, ${int4.opt}, $tournamentId, $int8, ${int4.opt},
                  COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
                  COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
                  COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
                  COALESCE(pg.notify_match_ended, pl.notify_match_ended, TRUE)
-          FROM player pl
+          FROM (SELECT 1) one
+              LEFT JOIN player pl ON pl.player_id = ${int8.opt}
               LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = $gameId
-          WHERE pl.player_id = $int8
-          RETURNING participant_id""".query(int8)
+          RETURNING participant_id"""
+            .query(int8)
+            .contramap { case (game, matchId, gt, player, role, tournament, entrant, order, game2, player2) =>
+                (game, matchId, gt, player, role, tournament, entrant, order, player2, game2)
+            }
+
+    private val insertPlayerSeat: Command[(GameId, Long, TournamentId, Long)] =
+        sql"""INSERT INTO player_participant (game_id, participant_id, tournament_id, entrant_id)
+          VALUES ($gameId, $int8, $tournamentId, $int8)""".command
 
     private val insertCharacterSeat: Command[(GameId, Long, Long, TournamentId, Long)] =
-        sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id, tournament_id,
-                                                 entrant_id)
-          VALUES ($gameId, $int8, 'C', $int8, $tournamentId, $int8)""".command
+        sql"""INSERT INTO character_participant (game_id, participant_id, character_id, tournament_id, entrant_id)
+          VALUES ($gameId, $int8, $int8, $tournamentId, $int8)""".command
 
     private val updateProgress: Command[(Option[Int], Boolean, GameId, TournamentId)] =
         sql"""UPDATE tournament SET current_round = ${int4.opt}, stop_requested = $bool
@@ -383,8 +395,8 @@ class TournamentStateRepo(session: Session[IO]) {
         sql"""DELETE FROM seed WHERE game_id = $gameId AND tournament_id = $tournamentId AND pool_id = $int8
              AND round = $int4 AND entrant_id = $int8""".command
 
-    /* A seat of a new match: who plays it now (a character entry's current owner, else whoever entered), the role it
-     * was given or none while it is to be chosen, and its turn to choose. */
+    /* A seat of a new match: who plays it now (its player, or its character's current owner), the role it was given or
+     * none while it is to be chosen, and its turn to choose -- with its subtype, a player's or a character's seat. */
     private def writeSeat(
         game: GameId,
         tournament: TournamentId,
@@ -392,28 +404,17 @@ class TournamentStateRepo(session: Session[IO]) {
         matchId: Long,
         seat: SeatPlan
     ): IO[Unit] = {
-        val (player, character) = ctx.entrants.getOrElse(seat.entrant, (0L, None))
+        val (player, character) = ctx.entrants.getOrElse(seat.entrant, (None, None))
         for {
-            owner <- character.flatTraverse(c => session.option(selectOwner)((game, c)).map(_.flatten))
             id <- session.unique(insertSeat)(
-              (
-                game,
-                matchId,
-                ctx.gameType,
-                seat.role,
-                tournament,
-                seat.entrant,
-                seat.chooseOrder,
-                game,
-                owner.getOrElse(player)
-              )
+              (game, matchId, ctx.gameType, player, seat.role, tournament, seat.entrant, seat.chooseOrder, game, player)
             )
-            _ <- character.traverse_(c => session.execute(insertCharacterSeat)((game, id, c, tournament, seat.entrant)))
+            _ <- character match {
+                case Some(c) => session.execute(insertCharacterSeat)((game, id, c, tournament, seat.entrant))
+                case None    => session.execute(insertPlayerSeat)((game, id, tournament, seat.entrant))
+            }
         } yield ()
     }
-
-    private val selectOwner: Query[(GameId, Long), Option[Long]] =
-        sql"SELECT player_id FROM character WHERE game_id = $gameId AND character_id = $int8".query(int8.opt)
 
     private val startRound: Command[(Instant, Option[Instant], GameId, TournamentId, Int)] =
         sql"""UPDATE round SET start_date = ${SkunkCodecs.instant}, deadline = ${SkunkCodecs.instant.opt}
@@ -465,7 +466,7 @@ object TournamentStateRepo {
         friendly: Boolean,
         isPublic: Boolean,
         gameType: String,
-        entrants: Map[Long, (Long, Option[Long])]
+        entrants: Map[Long, (Option[Long], Option[Long])]
     )
 
     /** A state as [[TournamentStateRepo.load]] read it: the state, each match's id by its pool and number, the design
@@ -569,7 +570,7 @@ object TournamentStateRepo {
         seeds: List[SeedRow],
         matches: List[MatchRow],
         seats: List[SeatRow],
-        entrants: List[(Long, Long, Boolean, Option[Int], Option[Long])]
+        entrants: List[(Long, Option[Long], Boolean, Option[Int], Option[Long])]
     ) {
         private val keyOf: Map[Long, List[Int]] = stageIds.map(_.swap)
         private val childrenOf: Map[Long, List[PoolRow]] = pools.groupBy(_.parent.getOrElse(-1L))

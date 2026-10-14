@@ -24,6 +24,7 @@ object TournamentJson {
     given ReadWriter[TournamentModelSync] = macroRW
     given ReadWriter[Entrant] = macroRW
     given ReadWriter[PlayerName] = macroRW
+    given ReadWriter[InvitedCharacter] = macroRW
     given ReadWriter[TournamentSummary] = macroRW
     given ReadWriter[TournamentSeatView] = macroRW
     given ReadWriter[TournamentMatchView] = macroRW
@@ -57,8 +58,12 @@ object TournamentJson {
     case class RoundStarted(round: Option[Int])
     given ReadWriter[RoundStarted] = macroRW
 
-    /** Inviting a player to a tournament. */
+    /** Inviting a player to a tournament of a plain game. */
     case class TournamentInvite(playerId: PlayerId)
     given ReadWriter[TournamentInvite] = macroRW
+
+    /** Inviting a character to a tournament of a character game. */
+    case class TournamentCharacterInvite(characterId: CharacterId)
+    given ReadWriter[TournamentCharacterInvite] = macroRW
 
 }

@@ -126,8 +126,8 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                     for {
                         d <- detail(f)
                         entrant = com.vivi.matchmaker.service.TournamentRounds.nextChooser(m.seats).get.entrantId
-                        player = d.entries.find(_.entrantId == entrant).get.playerId
-                        who = f.players.find(_.playerId == player).get
+                        player = d.entries.find(_.entrantId == entrant).flatMap(_.playerId)
+                        who = f.players.find(p => player.contains(p.playerId)).get
                         taken = m.seats.flatMap(_.gameRoleId).toSet
                         role = f.game.roles.map(_.gameRoleId).find(r => !taken(r)).get
                         _ <- f.w.services.rounds.chooseRole(
@@ -268,9 +268,11 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             d <- detail(f)
             chooser = com.vivi.matchmaker.service.TournamentRounds.nextChooser(m.seats).get.entrantId
             other = m.seats.map(_.entrantId).find(_ != chooser).get
-            otherPlayer = f.players.find(p => d.entries.find(_.entrantId == other).exists(_.playerId == p.playerId)).get
+            otherPlayer = f.players
+                .find(p => d.entries.find(_.entrantId == other).exists(_.playerId.contains(p.playerId)))
+                .get
             chooserPlayer = f.players
-                .find(p => d.entries.find(_.entrantId == chooser).exists(_.playerId == p.playerId))
+                .find(p => d.entries.find(_.entrantId == chooser).exists(_.playerId.contains(p.playerId)))
                 .get
             notTheirs <- f.w.services.rounds
                 .chooseRole(

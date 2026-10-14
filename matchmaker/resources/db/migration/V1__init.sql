@@ -617,73 +617,126 @@ CREATE INDEX ON round (game_id, tournament_id, stage_id);
 ALTER TABLE tournament ADD FOREIGN KEY (game_id, tournament_id, current_round) REFERENCES round;
 CREATE INDEX ON tournament (game_id, tournament_id, current_round) WHERE current_round IS NOT NULL;
 
--- Who may enter an invitational tournament. Permission and nothing more: it outlives the entry it leads to,
--- and goes only when declined or revoked.
+-- Who may enter an invitational tournament: a player in a plain game, and in a character game a character,
+-- since there the character plays. Permission and nothing more: an invitation outlives the entry it leads to,
+-- and goes only when declined or revoked. Supertype and subtype, as stages and pools are: a 'P' invitation is a
+-- player_invitation, a 'C' one a character_invitation, as its game's type says.
 CREATE TABLE invitation (
+    game_id        INT NOT NULL,
+    tournament_id  BIGINT NOT NULL,
+    invitation_id  BIGINT GENERATED ALWAYS AS IDENTITY,
+    game_type      CHAR(1) NOT NULL CHECK (game_type IN ('C', 'P')),
+    player_kind    CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'P' THEN game_type END) STORED,
+    character_kind CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'C' THEN game_type END) STORED,
+    create_date    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    update_date    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (game_id, tournament_id, invitation_id),
+    -- For the subtypes' foreign keys, which name the kind as well.
+    UNIQUE (game_id, tournament_id, invitation_id, game_type),
+    FOREIGN KEY (game_id, tournament_id) REFERENCES tournament,
+    FOREIGN KEY (game_type, game_id) REFERENCES game (game_type, game_id)
+);
+
+CREATE TABLE player_invitation (
     game_id       INT NOT NULL,
     tournament_id BIGINT NOT NULL,
+    invitation_id BIGINT NOT NULL,
+    game_type     CHAR(1) NOT NULL DEFAULT 'P' CHECK (game_type = 'P'),
     player_id     BIGINT NOT NULL REFERENCES player,
-    create_date   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    update_date   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (game_id, tournament_id, player_id),
-    FOREIGN KEY (game_id, tournament_id) REFERENCES tournament
+    PRIMARY KEY (game_id, tournament_id, invitation_id),
+    UNIQUE (game_id, tournament_id, invitation_id, game_type),
+    -- A player is invited to a tournament once.
+    UNIQUE (game_id, tournament_id, player_id),
+    FOREIGN KEY (game_id, tournament_id, invitation_id, game_type)
+        REFERENCES invitation (game_id, tournament_id, invitation_id, game_type)
 );
 
 -- "Tournaments I am invited to", for the home page.
-CREATE INDEX invitation_player ON invitation (player_id);
+CREATE INDEX player_invitation_player ON player_invitation (player_id);
 
--- An invitation in a character game, which names the character it is for.
+-- The character's owner is not stored but read through the character when it is used, so whoever owns it when
+-- the invitation is answered is who may answer it, and an invitation follows a character handed on.
 CREATE TABLE character_invitation (
     game_id       INT NOT NULL,
     tournament_id BIGINT NOT NULL,
-    player_id     BIGINT NOT NULL,
-    character_id  BIGINT NOT NULL,
+    invitation_id BIGINT NOT NULL,
     game_type     CHAR(1) NOT NULL DEFAULT 'C' CHECK (game_type = 'C'),
-    create_date   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    update_date   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (game_id, tournament_id, player_id, character_id),
-    FOREIGN KEY (game_id, game_type) REFERENCES game (game_id, game_type),
-    FOREIGN KEY (game_id, tournament_id, player_id) REFERENCES invitation,
+    character_id  BIGINT NOT NULL,
+    PRIMARY KEY (game_id, tournament_id, invitation_id),
+    UNIQUE (game_id, tournament_id, invitation_id, game_type),
+    -- A character is invited to a tournament once.
+    UNIQUE (game_id, tournament_id, character_id),
+    FOREIGN KEY (game_id, tournament_id, invitation_id, game_type)
+        REFERENCES invitation (game_id, tournament_id, invitation_id, game_type),
     FOREIGN KEY (game_id, character_id) REFERENCES "character"
 );
 
 CREATE INDEX ON character_invitation (game_id, character_id);
 
+ALTER TABLE invitation
+    ADD FOREIGN KEY (game_id, tournament_id, invitation_id, player_kind)
+        REFERENCES player_invitation (game_id, tournament_id, invitation_id, game_type) DEFERRABLE INITIALLY DEFERRED,
+    ADD FOREIGN KEY (game_id, tournament_id, invitation_id, character_kind)
+        REFERENCES character_invitation (game_id, tournament_id, invitation_id, game_type) DEFERRABLE INITIALLY DEFERRED;
+
+-- An entry in a tournament: a player's in a plain game, a character's in a character game. Supertype and
+-- subtype, as invitation is. A character entry names no player: whoever owns the character plays it, and
+-- may change -- see entrant_player.
 CREATE TABLE entrant (
     game_id         INT NOT NULL,
     entrant_id      BIGINT GENERATED ALWAYS AS IDENTITY,
     tournament_id   BIGINT NOT NULL,
     game_type       CHAR(1) NOT NULL CHECK (game_type IN ('C', 'P')),
-    player_id       BIGINT NOT NULL REFERENCES player,
-    -- What the rating limits were checked against and, until the tournament starts, what it is seeded by.
+    -- What the rating limits were checked against and, until the tournament starts, what it is seeded by: the
+    -- rating of the player who entered.
     rating_at_entry INT NOT NULL,
     -- Where they finished, once it is over.
     final_rank      INT,
     entered_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- Set by withdrawing, cleared by coming back.
     withdrawn_at    TIMESTAMPTZ,
+    player_kind     CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'P' THEN game_type END) STORED,
+    character_kind  CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'C' THEN game_type END) STORED,
     create_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date     TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, tournament_id, entrant_id),
+    -- For the subtypes' foreign keys, which name the kind as well.
+    UNIQUE (game_id, tournament_id, entrant_id, game_type),
     FOREIGN KEY (game_id, tournament_id) REFERENCES tournament,
     FOREIGN KEY (game_type, game_id) REFERENCES game (game_type, game_id)
 );
 
 CREATE INDEX entrant_tournament ON entrant (game_id, tournament_id);
-CREATE INDEX entrant_player ON entrant (player_id);
 
+-- A player's entry, in a plain game. A player may hold more than one, as the tournament allows.
+CREATE TABLE player_entrant (
+    game_id       INT NOT NULL,
+    tournament_id BIGINT NOT NULL,
+    entrant_id    BIGINT NOT NULL,
+    game_type     CHAR(1) NOT NULL DEFAULT 'P' CHECK (game_type = 'P'),
+    player_id     BIGINT NOT NULL REFERENCES player,
+    PRIMARY KEY (game_id, tournament_id, entrant_id),
+    UNIQUE (game_id, tournament_id, entrant_id, game_type),
+    FOREIGN KEY (game_id, tournament_id, entrant_id, game_type)
+        REFERENCES entrant (game_id, tournament_id, entrant_id, game_type)
+);
+
+CREATE INDEX player_entrant_player ON player_entrant (player_id);
+
+-- A character's entry, in a character game.
 CREATE TABLE character_entrant (
     game_id       INT NOT NULL,
     tournament_id BIGINT NOT NULL,
     entrant_id    BIGINT NOT NULL,
-    game_type     CHAR(1) NOT NULL CHECK (game_type = 'C'),
+    game_type     CHAR(1) NOT NULL DEFAULT 'C' CHECK (game_type = 'C'),
     character_id  BIGINT NOT NULL,
     create_date   TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date   TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, tournament_id, entrant_id),
-    FOREIGN KEY (game_id, tournament_id, entrant_id) REFERENCES entrant,
+    UNIQUE (game_id, tournament_id, entrant_id, game_type),
+    FOREIGN KEY (game_id, tournament_id, entrant_id, game_type)
+        REFERENCES entrant (game_id, tournament_id, entrant_id, game_type),
     FOREIGN KEY (game_id, character_id) REFERENCES "character" (game_id, character_id),
-    FOREIGN KEY (game_type, game_id) REFERENCES game (game_type, game_id),
     -- A character enters a tournament once.
     UNIQUE (game_id, tournament_id, character_id),
     -- For character_participant's foreign key, which names the character as well as the entrant.
@@ -691,6 +744,23 @@ CREATE TABLE character_entrant (
 );
 
 CREATE INDEX character_entrant_character ON character_entrant (game_id, character_id);
+
+ALTER TABLE entrant
+    ADD FOREIGN KEY (game_id, tournament_id, entrant_id, player_kind)
+        REFERENCES player_entrant (game_id, tournament_id, entrant_id, game_type) DEFERRABLE INITIALLY DEFERRED,
+    ADD FOREIGN KEY (game_id, tournament_id, entrant_id, character_kind)
+        REFERENCES character_entrant (game_id, tournament_id, entrant_id, game_type) DEFERRABLE INITIALLY DEFERRED;
+
+-- Who plays each entry now: a player entry's player, or a character entry's character's owner -- absent for a
+-- character nobody owns. What every "has this player entered" asks, so that it is said once.
+CREATE VIEW entrant_player AS
+    SELECT pe.game_id, pe.tournament_id, pe.entrant_id, pe.player_id
+      FROM player_entrant pe
+    UNION ALL
+    SELECT ce.game_id, ce.tournament_id, ce.entrant_id, c.player_id
+      FROM character_entrant ce
+      JOIN "character" c ON c.game_id = ce.game_id AND c.character_id = ce.character_id
+     WHERE c.player_id IS NOT NULL;
 
 -- A set of entrants playing together. A pool is one of:
 --   - a pool_group, a pool of a nesting stage, which plays that stage's inner design: the pools of the
@@ -916,13 +986,17 @@ CREATE INDEX ON match (game_id, tournament_id, round);
 CREATE INDEX match_unarchived ON match (completed_at) WHERE completed_at IS NOT NULL AND archived_at IS NULL;
 CREATE INDEX match_unreleased ON match (game_id) WHERE cancelled AND cancel_url IS NOT NULL AND engine_released IS NULL;
 
--- A seat of a match: a player in it, as a role.
+-- A seat of a match: an entrant in it, as a role. Supertype and subtype, as entrant is: a player_participant
+-- plays for a player_entrant, a character_participant for a character_entrant.
 CREATE TABLE participant (
     game_id              INT NOT NULL,
     participant_id       BIGINT GENERATED ALWAYS AS IDENTITY,
     game_type            CHAR(1) NOT NULL CHECK (game_type IN ('C', 'P')),
     match_id             BIGINT NOT NULL,
-    player_id            BIGINT NOT NULL REFERENCES player,
+    -- Who plays the seat: its entrant's player, or its character's owner, as the seat is written and again
+    -- as its match is created in the engine, which is when it is settled. NULL only for a seat whose
+    -- character nobody owns, which forfeits before play.
+    player_id            BIGINT REFERENCES player,
     -- Every seat names its role, but for one still waiting to choose it.
     game_role_id         INT,
     -- Its tournament, and the entrant it plays for.
@@ -952,13 +1026,18 @@ CREATE TABLE participant (
     notify_turn_taken    BOOLEAN NOT NULL,
     notify_your_turn     BOOLEAN NOT NULL,
     notify_match_ended   BOOLEAN NOT NULL,
+    player_kind          CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'P' THEN game_type END) STORED,
+    character_kind       CHAR(1) GENERATED ALWAYS AS (CASE WHEN game_type = 'C' THEN game_type END) STORED,
     create_date          TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date          TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, participant_id),
+    -- For the subtypes' foreign keys, which name the kind as well.
+    UNIQUE (game_id, participant_id, game_type),
     FOREIGN KEY (game_id, match_id) REFERENCES match,
     FOREIGN KEY (game_type, game_id) REFERENCES game (game_type, game_id),
     FOREIGN KEY (game_id, game_role_id) REFERENCES game_role (game_id, game_role_id),
-    FOREIGN KEY (game_id, tournament_id, entrant_id) REFERENCES entrant,
+    FOREIGN KEY (game_id, tournament_id, entrant_id, game_type)
+        REFERENCES entrant (game_id, tournament_id, entrant_id, game_type),
     -- A seat sits in a match of its own tournament.
     FOREIGN KEY (game_id, tournament_id, match_id) REFERENCES match (game_id, tournament_id, match_id)
 );
@@ -968,19 +1047,37 @@ CREATE INDEX ON participant (game_id, match_id);
 CREATE INDEX participant_pending ON participant (game_id, match_id, player_id) WHERE pending = true;
 -- A player's seats split on whether each is finished, and the completed lists' windows within them.
 CREATE INDEX participant_player_completed_at ON participant (player_id, completed_at);
--- For character_participant's foreign key, which names the entrant as well as the seat.
+-- For the subtypes' foreign keys, which name the entrant as well as the seat.
 CREATE UNIQUE INDEX ON participant (game_id, tournament_id, entrant_id, participant_id);
 
--- The character a seat of a character game plays, and the entrant it plays for.
+-- A seat of a plain game, played for a player's entry.
+CREATE TABLE player_participant (
+    game_id        INT NOT NULL,
+    participant_id BIGINT NOT NULL,
+    game_type      CHAR(1) NOT NULL DEFAULT 'P' CHECK (game_type = 'P'),
+    tournament_id  BIGINT NOT NULL,
+    entrant_id     BIGINT NOT NULL,
+    PRIMARY KEY (game_id, participant_id),
+    UNIQUE (game_id, participant_id, game_type),
+    FOREIGN KEY (game_id, participant_id, game_type) REFERENCES participant (game_id, participant_id, game_type),
+    FOREIGN KEY (game_id, tournament_id, entrant_id, participant_id)
+        REFERENCES participant (game_id, tournament_id, entrant_id, participant_id),
+    FOREIGN KEY (game_id, tournament_id, entrant_id) REFERENCES player_entrant
+);
+
+CREATE INDEX ON player_participant (game_id, tournament_id, entrant_id);
+
+-- A seat of a character game: the character it plays, and the character's entry it plays for.
 CREATE TABLE character_participant (
     game_id        INT NOT NULL,
     participant_id BIGINT NOT NULL,
-    game_type      CHAR(1) NOT NULL CHECK (game_type = 'C'),
+    game_type      CHAR(1) NOT NULL DEFAULT 'C' CHECK (game_type = 'C'),
     character_id   BIGINT NOT NULL,
     tournament_id  BIGINT NOT NULL,
     entrant_id     BIGINT NOT NULL,
     PRIMARY KEY (game_id, participant_id),
-    FOREIGN KEY (game_id, participant_id) REFERENCES participant,
+    UNIQUE (game_id, participant_id, game_type),
+    FOREIGN KEY (game_id, participant_id, game_type) REFERENCES participant (game_id, participant_id, game_type),
     FOREIGN KEY (game_id, character_id) REFERENCES "character" (game_id, character_id),
     FOREIGN KEY (game_id, tournament_id, entrant_id, participant_id)
         REFERENCES participant (game_id, tournament_id, entrant_id, participant_id),
@@ -990,6 +1087,12 @@ CREATE TABLE character_participant (
 
 CREATE INDEX ON character_participant (game_id, character_id);
 CREATE INDEX ON character_participant (game_id, tournament_id, entrant_id, character_id);
+
+ALTER TABLE participant
+    ADD FOREIGN KEY (game_id, participant_id, player_kind)
+        REFERENCES player_participant (game_id, participant_id, game_type) DEFERRABLE INITIALLY DEFERRED,
+    ADD FOREIGN KEY (game_id, participant_id, character_kind)
+        REFERENCES character_participant (game_id, participant_id, game_type) DEFERRABLE INITIALLY DEFERRED;
 
 -- How a seat came out.
 CREATE TABLE result (
@@ -1123,7 +1226,7 @@ BEGIN
     FOREACH t IN ARRAY ARRAY[
         'player', 'game', 'game_role', 'game_parameter', 'game_parameter_value', 'game_api_key', 'player_game',
         'character', 'tournament_model', 'stage_model', 'tournament', 'stage', 'invitation',
-        'character_invitation', 'entrant', 'character_entrant', 'pool', 'pool_member', 'seed',
+        'entrant', 'character_entrant', 'pool', 'pool_member', 'seed',
         'match', 'participant', 'result', 'turn', 'elo_rating', 'elo_role_rating'
     ]
     LOOP

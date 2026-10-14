@@ -158,14 +158,18 @@ object TestMatches {
               WHERE m.game_id = ${SkunkIdCodecs.gameId} AND m.match_id = ${SkunkIdCodecs.matchId}"""
             .query(SkunkIdCodecs.tournamentId *: SkunkCodecs.gameType)
 
-    // The entry a seat plays for: the player's with this character, or with none, if they have one already.
-    private val selectEntrant: Query[(GameId, TournamentId, PlayerId, Option[Long]), Long] =
-        sql"""SELECT e.entrant_id FROM entrant e
-              LEFT JOIN character_entrant ce
-                     ON ce.game_id = e.game_id AND ce.tournament_id = e.tournament_id AND ce.entrant_id = e.entrant_id
-              WHERE e.game_id = ${SkunkIdCodecs.gameId} AND e.tournament_id = ${SkunkIdCodecs.tournamentId}
-                AND e.player_id = ${SkunkIdCodecs.playerId} AND ce.character_id IS NOT DISTINCT FROM ${int8.opt}
-              LIMIT 1""".query(int8)
+    // The entry a seat plays for, if there is one already: the character's in a character game, the player's in a plain
+    // one.
+    private val selectCharacterEntrant: Query[(GameId, TournamentId, Long), Long] =
+        sql"""SELECT entrant_id FROM character_entrant
+              WHERE game_id = ${SkunkIdCodecs.gameId} AND tournament_id = ${SkunkIdCodecs.tournamentId}
+                AND character_id = $int8""".query(int8)
+
+    private val selectPlayerEntrant: Query[(GameId, TournamentId, PlayerId), Long] =
+        sql"""SELECT entrant_id FROM player_entrant
+              WHERE game_id = ${SkunkIdCodecs.gameId} AND tournament_id = ${SkunkIdCodecs.tournamentId}
+                AND player_id = ${SkunkIdCodecs.playerId}
+              ORDER BY entrant_id LIMIT 1""".query(int8)
 
     private val insertParticipant: Query[
       (
@@ -202,8 +206,8 @@ object TestMatches {
               RETURNING participant_id""".query(SkunkIdCodecs.participantId)
 
     /** Seats `p` in its match, rated `eloStart` overall and `eloRoleStart` in its role as the match began: with an
-      * entry in the match's tournament -- the one the player already has with this character, if any -- and stamped
-      * with what its player wants to hear about it.
+      * entry in the match's tournament -- the one its character, or in a plain game its player, already has, if any --
+      * and its subtype, and stamped with what its player wants to hear about it.
       */
     def writeSeat(
         session: Session[IO],
@@ -219,7 +223,10 @@ object TestMatches {
             for {
                 found <- session.unique(selectTournament)((p.gameId, p.matchId))
                 (tournament, gameType) = found
-                existing <- session.option(selectEntrant)((p.gameId, tournament, p.playerId, character.map(_.value)))
+                existing <- character match {
+                    case Some(c) => session.option(selectCharacterEntrant)((p.gameId, tournament, c.value))
+                    case None    => session.option(selectPlayerEntrant)((p.gameId, tournament, p.playerId))
+                }
                 entrant <- existing match {
                     case Some(e) => IO.pure(e)
                     case None =>
@@ -245,13 +252,17 @@ object TestMatches {
                     p.playerId
                   )
                 )
-                _ <- character.traverse_(c =>
-                    exec(
-                      session,
-                      s"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id,
-                                                             tournament_id, entrant_id)
-                          VALUES (${p.gameId.value}, ${id.value}, 'C', ${c.value}, ${tournament.value}, $entrant)"""
-                    )
+                _ <- exec(
+                  session,
+                  character match {
+                      case Some(c) =>
+                          s"""INSERT INTO character_participant (game_id, participant_id, character_id, tournament_id,
+                                                                entrant_id)
+                              VALUES (${p.gameId.value}, ${id.value}, ${c.value}, ${tournament.value}, $entrant)"""
+                      case None =>
+                          s"""INSERT INTO player_participant (game_id, participant_id, tournament_id, entrant_id)
+                              VALUES (${p.gameId.value}, ${id.value}, ${tournament.value}, $entrant)"""
+                  }
                 )
             } yield p match {
                 case cp: CharacterParticipant => cp.copy(participantId = id)

@@ -165,15 +165,24 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
     }
 
     test("entrants are listed in the order they entered, with characters, and can withdraw and come back") {
-        val (listed, counted, withdrawn, back, players) = run { session =>
+        val (listed, withdrawn, back, players, handedOn) = run { session =>
             val repo = new EntrantRepo(session)
+            val characters = new CharacterRepo[String](session)
             for {
                 f <- fixture(session, GameType.Character)
                 t <- made(session, f)
-                character <- new CharacterRepo[String](session).create(
+                own <- characters.create(Generators.genCharacter(f.game.gameId, Some(f.owner.playerId)).sample.get)
+                character <- characters.create(
                   Generators.genCharacter(f.game.gameId, Some(f.other.playerId)).sample.get
                 )
-                first <- repo.create(f.game.gameId, GameType.Character, t.tournamentId, f.owner.playerId, None, 1500)
+                first <- repo.create(
+                  f.game.gameId,
+                  GameType.Character,
+                  t.tournamentId,
+                  f.owner.playerId,
+                  Some(own.characterId),
+                  1500
+                )
                 second <- repo.create(
                   f.game.gameId,
                   GameType.Character,
@@ -182,23 +191,25 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
                   Some(character.characterId),
                   1700
                 )
-                counted <- repo.count(f.game.gameId, t.tournamentId, f.other.playerId)
                 _ <- repo.setWithdrawnAt(f.game.gameId, first.entrantId, Some(Instant.parse("2026-10-11T00:00:00Z")))
                 withdrawn <- repo.readForUpdate(f.game.gameId, first.entrantId)
                 _ <- repo.setWithdrawnAt(f.game.gameId, first.entrantId, None)
                 listed <- repo.list(f.game.gameId, t.tournamentId)
                 back <- repo.readForUpdate(f.game.gameId, first.entrantId)
                 players <- repo.players(f.game.gameId, t.tournamentId)
-            } yield (listed, counted, withdrawn, back, players)
+                // The character changes hands: its entry is played by whoever owns it now.
+                _ <- characters.update(character.copy(playerId = Some(f.owner.playerId)))
+                handedOn <- repo.players(f.game.gameId, t.tournamentId)
+            } yield (listed, withdrawn, back, players, handedOn(second.entrantId))
         }
         assertEquals(listed.map(_.ratingAtEntry), List(1500, 1700))
-        assert(listed(1).characterId.isDefined && listed(1).characterName.isDefined)
+        assert(listed.forall(e => e.characterId.isDefined && e.characterName.isDefined))
         assertEquals(listed.head.nickname.nonEmpty, true)
-        assertEquals(counted, 1L)
         assert(withdrawn.exists(_._3.isDefined))
         assert(back.exists(_._3.isEmpty))
         // A character entry is played by its character's owner.
-        assertEquals(players(listed(1).entrantId), Some(listed(1).playerId))
+        assertEquals(players(listed(1).entrantId), listed(1).playerId)
+        assertEquals(handedOn, listed.head.playerId)
     }
 
     test("invitations are kept once, listed by nickname, and revoked") {

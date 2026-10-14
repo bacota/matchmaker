@@ -148,9 +148,9 @@ object TournamentFixtures {
                         RETURNING participant_id""".query(int8)
                 )((matchId.value, due))
                 _ <- session.execute(
-                  sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id,
-                                                           tournament_id, entrant_id)
-                        VALUES (#${t.gameId.value.toString}, #${participant.toString}, 'C',
+                  sql"""INSERT INTO character_participant (game_id, participant_id, character_id, tournament_id,
+                                                           entrant_id)
+                        VALUES (#${t.gameId.value.toString}, #${participant.toString},
                                 #${character.value.toString}, #${t.tournamentId.value.toString},
                                 #${entrant.entrantId.value.toString})""".command
                 )

@@ -83,6 +83,7 @@ class TournamentService[T](
                 design <- new StageRepo(session).design(gameId, tournamentId).map(_.getOrElse(TournamentDesign(Nil)))
                 entries <- new EntrantRepo(session).list(gameId, tournamentId)
                 invited <- new InvitationRepo(session).list(gameId, tournamentId)
+                invitedCharacters <- new CharacterInvitationRepo(session).list(gameId, tournamentId)
                 // Only a tournament that has started has any progress to read.
                 state <-
                     if (summary.tournament.startedAt.isEmpty) IO.pure(None)
@@ -104,7 +105,8 @@ class TournamentService[T](
                       game.flatMap(g => TournamentRounds.chooseBy(summary.tournament, g, m))
                   val v = TournamentService.view(m)
                   v.copy(seats = v.seats.map(s => if (s.choosing) s.copy(chooseBy = by) else s))
-              }
+              },
+              invitedCharacters
             )
         }
 
@@ -148,13 +150,17 @@ class TournamentService[T](
             val t = s.tournament
             (
               new EntrantRepo(session).list(t.gameId, t.tournamentId).map(_.filterNot(_.withdrawn)),
-              new InvitationRepo(session).list(t.gameId, t.tournamentId)
-            ).mapN((entries, invited) => ChallengeSummary(s, entries, invited.map((id, name) => PlayerName(id, name))))
+              new InvitationRepo(session).list(t.gameId, t.tournamentId),
+              new CharacterInvitationRepo(session).list(t.gameId, t.tournamentId)
+            ).mapN((entries, invited, characters) =>
+                ChallengeSummary(s, entries, invited.map((id, name) => PlayerName(id, name)), characters)
+            )
         }
 
     /** A new challenge: a tournament of the challenge model, opened at once, with the caller's entry in it — unless a
       * game's admin is offering a match they will not play in — and its invitations, all in one transaction, because
-      * they are one act. A challenge that is not open must invite somebody, or nobody could ever enter it.
+      * they are one act. A challenge that is not open must invite somebody, or nobody could ever enter it: players in a
+      * plain game, characters in a character game, whoever owns them when they answer.
       *
       * Its pool size is how many it seats and the most entries it takes; it starts itself when they are reached if
       * `autoStart`, and is otherwise started by its owner like any tournament. Its rounds are automatic, so starting it
@@ -178,8 +184,12 @@ class TournamentService[T](
                         )
                         _ <- IO.whenA(!request.plays || !request.friendly)(requireGameAdmin(session, caller, game))
                         invited = request.invitations.distinct
-                        _ <- IO.raiseWhen(!request.open && invited.isEmpty)(
-                          ValidationError("a challenge that is not open must invite at least one player")
+                        invitedCharacters = request.characterInvitations.distinct
+                        _ <- requireInvitationKind(game, invited.size, invitedCharacters.size)
+                        _ <- IO.raiseWhen(!request.open && invited.isEmpty && invitedCharacters.isEmpty)(
+                          ValidationError(
+                            s"a challenge that is not open must invite at least one ${inviteeNoun(game)}"
+                          )
                         )
                         _ <- IO.raiseWhen(request.plays && invited.contains(caller.playerId))(
                           ValidationError("a challenger cannot be invited to their own challenge")
@@ -189,6 +199,10 @@ class TournamentService[T](
                                 case Some(p) => IO.pure(p)
                                 case None    => IO.raiseError(NotFoundError(s"no player $id"))
                             }
+                        )
+                        owners <- invitedCharacters.traverse(id => invitableOwner(session, game, id))
+                        _ <- IO.raiseWhen(request.plays && owners.exists(_.playerId == caller.playerId))(
+                          ValidationError("a challenger cannot invite their own characters to their own challenge")
                         )
                         poolSize = request.poolSize.getOrElse(game.poolSeats)
                         made <- createIn(
@@ -217,10 +231,13 @@ class TournamentService[T](
                         _ <- invitees.traverse_(p =>
                             new InvitationRepo(session).invite(gameId, made.tournamentId, p.playerId)
                         )
+                        _ <- invitedCharacters.traverse_(c =>
+                            new CharacterInvitationRepo(session).invite(gameId, made.tournamentId, c)
+                        )
                         entered <-
                             if (request.plays) enterIn(session, made, game, caller, request.characterId).map(_._2)
                             else IO.pure(None)
-                    } yield (entered.getOrElse(made), invitees)
+                    } yield (entered.getOrElse(made), invitees ++ owners)
                 }
                 .flatMap { (made, invitees) =>
                     invitees.traverse_(notifications.invitationMade(session, made, _)) *>
@@ -380,8 +397,8 @@ class TournamentService[T](
 
     // ---- invitations -----------------------------------------------------------------------
 
-    /** The owner inviting a player to an invitational tournament. Inviting somebody already invited changes nothing,
-      * and is not mailed a second time.
+    /** The owner inviting a player to an invitational tournament of a plain game. Inviting somebody already invited
+      * changes nothing, and is not mailed a second time. A character game invites characters: see [[inviteCharacter]].
       */
     def invite(gameId: GameId, tournamentId: TournamentId, playerId: PlayerId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
@@ -396,6 +413,8 @@ class TournamentService[T](
                         )(
                           ConflictError("this tournament is over")
                         )
+                        game <- requireGame(session, gameId)
+                        _ <- requireInvitationKind(game, players = 1, characters = 0)
                         invitee <- new PlayerRepo(session).readForShare(playerId).flatMap {
                             case Some(p) => IO.pure(p)
                             case None    => IO.raiseError(NotFoundError(s"no player $playerId"))
@@ -430,15 +449,82 @@ class TournamentService[T](
                 .flatMap(_.traverse_((t, declined) => notifications.invitationRejected(session, t, declined)))
         }
 
+    /** The owner inviting a character to an invitational tournament of a character game, where it is the character that
+      * plays. Whoever owns it when they answer may enter with it, so the invitation follows the character if it is
+      * handed on; it is mailed to its owner now. Inviting a character already invited changes nothing, and is not
+      * mailed a second time.
+      */
+    def inviteCharacter(
+        gameId: GameId,
+        tournamentId: TournamentId,
+        characterId: CharacterId,
+        callerExternalId: String
+    ): IO[Unit] =
+        sessionPool.use { session =>
+            session.transaction
+                .use { _ =>
+                    val invitations = new CharacterInvitationRepo(session)
+                    for {
+                        caller <- requireCaller(session, callerExternalId)
+                        t <- requireOwned(session, gameId, tournamentId, caller)
+                        _ <- IO.raiseWhen(
+                          t.status == TournamentStatus.Finished || t.status == TournamentStatus.Cancelled
+                        )(
+                          ConflictError("this tournament is over")
+                        )
+                        game <- requireGame(session, gameId)
+                        _ <- requireInvitationKind(game, players = 0, characters = 1)
+                        owner <- invitableOwner(session, game, characterId)
+                        already <- invitations.isInvited(gameId, tournamentId, characterId)
+                        _ <- invitations.invite(gameId, tournamentId, characterId)
+                    } yield Option.unless(already)((t, owner))
+                }
+                .flatMap(_.traverse_((t, owner) => notifications.invitationMade(session, t, owner)))
+        }
+
+    /** Takes a character's invitation back: the owner of the tournament revoking it, or the character's owner now
+      * turning it down — which is mailed to the tournament's owner, since nothing else would tell them.
+      */
+    def revokeCharacter(
+        gameId: GameId,
+        tournamentId: TournamentId,
+        characterId: CharacterId,
+        callerExternalId: String
+    ): IO[Unit] =
+        sessionPool.use { session =>
+            session.transaction
+                .use { _ =>
+                    val invitations = new CharacterInvitationRepo(session)
+                    for {
+                        caller <- requireCaller(session, callerExternalId)
+                        t <- requireTournamentForUpdate(session, gameId, tournamentId)
+                        // Held, so that its owner -- who may answer for it -- cannot change before the delete.
+                        character <- new CharacterRepo[T](session).readForShare(characterId)
+                        characterOwner = character.filter(_.gameId == gameId).flatMap(_.playerId)
+                        _ <- IO.raiseUnless(t.owner == caller.playerId || characterOwner.contains(caller.playerId))(
+                          UnauthorizedError(
+                            "only the tournament's owner, or the owner of the character invited, may remove an invitation"
+                          )
+                        )
+                        was <- invitations.isInvited(gameId, tournamentId, characterId)
+                        _ <- invitations.revoke(gameId, tournamentId, characterId)
+                    } yield Option.when(was && characterOwner.contains(caller.playerId) && t.owner != caller.playerId)(
+                      (t, caller)
+                    )
+                }
+                .flatMap(_.traverse_((t, declined) => notifications.invitationRejected(session, t, declined)))
+        }
+
     // ---- entries ---------------------------------------------------------------------------
 
     /** The caller entering a tournament — with a character of theirs, in a character game — or coming back to one they
       * withdrew from.
       *
-      * The tournament must be open, or running with late entries allowed; an invitational one must have invited them
-      * (its owner needs no invitation); their rating must be within its limits; they may not hold more entries than it
-      * allows; and it must not be full. A late entry joins the tournament's stratum 0 straight away, to play from its
-      * next stage run. The entry that fills a tournament that starts itself starts it.
+      * The tournament must be open, or running with late entries allowed; an invitational one must have invited them --
+      * in a character game, the character they enter with (its owner needs no invitation); their rating must be within
+      * its limits; they may not hold more entries than it allows; and it must not be full. A late entry joins the
+      * tournament's stratum 0 straight away, to play from its next stage run. The entry that fills a tournament that
+      * starts itself starts it.
       */
     def enter(
         gameId: GameId,
@@ -453,7 +539,7 @@ class TournamentService[T](
                         caller <- requireCaller(session, callerExternalId)
                         t <- requireTournamentForUpdate(session, gameId, tournamentId)
                         game <- requireGame(session, gameId)
-                        invited <- new InvitationRepo(session).isInvited(gameId, tournamentId, caller.playerId)
+                        invited <- isInvitedAs(session, game, tournamentId, caller, characterId)
                         entered <- enterIn(session, t, game, caller, characterId)
                         (entrant, startedNow) = entered
                     } yield (t, caller, entrant, invited && t.owner != caller.playerId, startedNow)
@@ -487,17 +573,22 @@ class TournamentService[T](
                 else s"this tournament is not open for entries; it is ${t.status.label.toLowerCase}"
               )
             )
-            invited <- new InvitationRepo(session).isInvited(gameId, tournamentId, caller.playerId)
-            _ <- IO.raiseUnless(!t.settings.invitational || invited || t.owner == caller.playerId)(
-              UnauthorizedError("this tournament is by invitation, and you have not been invited")
-            )
             _ <- checkCharacter(session, game, characterId, caller)
+            invited <- isInvitedAs(session, game, tournamentId, caller, characterId)
+            _ <- IO.raiseUnless(!t.settings.invitational || invited || t.owner == caller.playerId)(
+              UnauthorizedError(
+                if (game.gameType == GameType.Character)
+                    "this tournament is by invitation, and that character has not been invited"
+                else "this tournament is by invitation, and you have not been invited"
+              )
+            )
             existing <- entrants.list(gameId, tournamentId)
             active = existing.count(!_.withdrawn)
             _ <- IO.raiseWhen(t.settings.maxEntrants.exists(active >= _))(
               ConflictError(s"this ${TournamentService.noun(t)} is full")
             )
-            mine = existing.filter(_.playerId == caller.playerId)
+            // The entries the caller plays now, which in a character game are their characters' as they stand.
+            mine = existing.filter(_.playerId.contains(caller.playerId))
             // Coming back: the withdrawn entry with this character, or with none in a plain game.
             returning = mine.find(e => e.withdrawn && e.characterId == characterId)
             entrant <- returning match {
@@ -562,9 +653,9 @@ class TournamentService[T](
         } yield (entrant, startedNow)
     }
 
-    /** Withdraws an entry: its player's to do, or the owner's. Before the tournament starts the entry is simply
-      * removed; once it is running, the entrant is put in no pool from then on, and a match they are already seated in
-      * is theirs to forfeit.
+    /** Withdraws an entry: its player's to do -- in a character game, its character's owner's -- or the owner's. Before
+      * the tournament starts the entry is simply removed; once it is running, the entrant is put in no pool from then
+      * on, and a match they are already seated in is theirs to forfeit.
       */
     def withdraw(gameId: GameId, tournamentId: TournamentId, entrantId: EntrantId, callerExternalId: String): IO[Unit] =
         sessionPool.use { session =>
@@ -580,9 +671,10 @@ class TournamentService[T](
                             case _ => IO.raiseError(NotFoundError(s"no entry $entrantId in tournament $tournamentId"))
                         }
                         (player, withdrawnAt) = found
-                        _ <- IO.raiseUnless(player == caller.playerId || t.owner == caller.playerId)(
+                        // Whoever plays the entry now -- its player, or its character's owner -- or the owner.
+                        _ <- IO.raiseUnless(player.contains(caller.playerId) || t.owner == caller.playerId)(
                           UnauthorizedError(
-                            "only the player who entered, or the tournament's owner, may withdraw an entry"
+                            "only the player of an entry, or the tournament's owner, may withdraw it"
                           )
                         )
                         _ <- t.status match {
@@ -597,7 +689,7 @@ class TournamentService[T](
                             case _ => IO.raiseError(ConflictError("this tournament is over"))
                         }
                         // Carried out of the transaction because the entry that knew them may be gone.
-                        entrant <- new PlayerRepo(session).read(player)
+                        entrant <- player.flatTraverse(new PlayerRepo(session).read)
                     } yield (t, entrant, caller)
                 }
                 .flatMap { (t, entrant, caller) =>
@@ -770,6 +862,56 @@ class TournamentService[T](
                     .map(_.describe)
         IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.mkString("; ")))
     }
+
+    /* Whether an entry by `caller` -- with `characterId`, in a character game -- answers an invitation: theirs in a plain
+     * game, the character's in a character game. */
+    private def isInvitedAs(
+        session: skunk.Session[IO],
+        game: Game,
+        tournamentId: TournamentId,
+        caller: Player,
+        characterId: Option[CharacterId]
+    ): IO[Boolean] =
+        game.gameType match {
+            case GameType.Plain => new InvitationRepo(session).isInvited(game.gameId, tournamentId, caller.playerId)
+            case GameType.Character =>
+                characterId.fold(IO.pure(false))(
+                  new CharacterInvitationRepo(session).isInvited(game.gameId, tournamentId, _)
+                )
+        }
+
+    /* Which kind of invitation a game takes: a plain game invites players and a character game invites characters, and
+     * a request carrying the other kind is refused rather than half-honoured. */
+    private def requireInvitationKind(game: Game, players: Int, characters: Int): IO[Unit] =
+        game.gameType match {
+            case GameType.Character =>
+                IO.raiseWhen(players > 0)(
+                  ValidationError(s"${game.displayName} is played by characters: invite a character, not a player")
+                )
+            case GameType.Plain =>
+                IO.raiseWhen(characters > 0)(
+                  ValidationError(s"${game.displayName} has no characters to invite: invite a player")
+                )
+        }
+
+    private def inviteeNoun(game: Game): String = if (game.gameType == GameType.Character) "character" else "player"
+
+    /* The owner a character to be invited has now: a character of this game, held FOR SHARE so that it cannot go
+     * before the invitation naming it is written, and owned by somebody, since nobody could answer for it otherwise. */
+    private def invitableOwner(session: skunk.Session[IO], game: Game, characterId: CharacterId): IO[Player] =
+        for {
+            character <- new CharacterRepo[T](session).readForShare(characterId).flatMap {
+                case Some(c) if c.gameId == game.gameId => IO.pure(c)
+                case _ => IO.raiseError(NotFoundError(s"${game.displayName} has no character $characterId"))
+            }
+            ownerId <- IO.fromOption(character.playerId)(
+              ValidationError(s"${character.name} has nobody to answer an invitation for it")
+            )
+            owner <- new PlayerRepo(session).readForShare(ownerId).flatMap {
+                case Some(p) => IO.pure(p)
+                case None    => IO.raiseError(NotFoundError(s"no player $ownerId"))
+            }
+        } yield owner
 
     /* Each of the game's parameters by name, with the values a tournament may choose for it. */
     private def parameterValues(game: Game): Map[String, Seq[String]] =

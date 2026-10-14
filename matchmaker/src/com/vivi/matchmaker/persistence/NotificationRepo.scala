@@ -190,8 +190,10 @@ class NotificationRepo(session: Session[IO]) {
                  pl.notify_accepted_challenge_ready, pl.notify_invitation_received, pl.notify_invitation_accepted,
                  pl.notify_invitation_rejected, pl.notify_match_started, pl.notify_turn_taken,
                  pl.notify_your_turn, pl.notify_match_ended, pl.notify_tournament_round_done
-          FROM (SELECT e.game_id, e.player_id
+          FROM (SELECT e.game_id, ep.player_id
                   FROM entrant e
+                  JOIN entrant_player ep
+                    ON ep.game_id = e.game_id AND ep.tournament_id = e.tournament_id AND ep.entrant_id = e.entrant_id
                  WHERE e.game_id = $gameId AND e.tournament_id = $tournamentId AND e.withdrawn_at IS NULL
                 UNION
                 SELECT t.game_id, t.owner

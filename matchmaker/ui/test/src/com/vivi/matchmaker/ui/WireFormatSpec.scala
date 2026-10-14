@@ -191,7 +191,9 @@ class WireFormatSpec extends FunSuite {
             entered = true,
             invited = false
           ),
-          List(Entrant(GameId(1), TournamentId(2), EntrantId(4), PlayerId(3), None, 1500, Instant.ofEpochSecond(100))),
+          List(
+            Entrant(GameId(1), TournamentId(2), EntrantId(4), Some(PlayerId(3)), None, 1500, Instant.ofEpochSecond(100))
+          ),
           List(PlayerName(PlayerId(5), "grace"))
         )
         assertEquals(read[Seq[ChallengeSummary]](write(Seq(summary))), Seq(summary))
