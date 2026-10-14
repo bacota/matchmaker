@@ -24,7 +24,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 readonly TERRAFORM_DIR="terraform"
-readonly ENGINES=(tictactoe rps boxing stratego)
+readonly ENGINES=(tictactoe rps boxing stratego wavinghands)
 
 usage() {
   cat >&2 <<EOF

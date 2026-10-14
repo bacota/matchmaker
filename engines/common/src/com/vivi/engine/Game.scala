@@ -111,6 +111,11 @@ trait Game[M <: MatchLike, S <: SeatLike, T <: TurnLike] {
       */
     def outcome(m: M, seat: S): Outcome
 
+    /** Where a seat finished, 1 the best, for a game of more than two seats that ranks its losers: `None` for the rank
+      * the outcome gives — 1 for a win or a draw, 2 for a loss. Only meaningful once the match is over.
+      */
+    def rank(m: M, seat: S): Option[Int] = None
+
     /** What the game records about a seat beside its outcome. Matchmaker stores the map without reading it. */
     def scores(m: M, seat: S): Map[String, ujson.Value]
 

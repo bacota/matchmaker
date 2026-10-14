@@ -67,6 +67,13 @@ resource "random_password" "stratego_api_key" {
   special = false
 }
 
+resource "random_password" "wavinghands_api_key" {
+  count = var.deploy_wavinghands ? 1 : 0
+
+  length  = 48
+  special = false
+}
+
 # One root for every environment. Everything that differs between them is a variable: account
 # facts come from environments/<env>.tfvars, policy from environments/<env>.settings.tfvars, and
 # `tf.sh` passes both. Nothing in this file names an environment.
@@ -103,6 +110,7 @@ module "api" {
     var.deploy_rps ? [module.rps[0].auth_callback_url] : [],
     var.deploy_boxing ? [module.boxing[0].auth_callback_url] : [],
     var.deploy_stratego ? [module.stratego[0].auth_callback_url] : [],
+    var.deploy_wavinghands ? [module.wavinghands[0].auth_callback_url] : [],
     var.callback_urls
   )
   logout_urls          = concat([module.ui.url], var.logout_urls)
@@ -208,10 +216,11 @@ module "ui" {
  * stays on its execute-api host. */
 locals {
   engine_subdomains = {
-    tictactoe = var.tictactoe_subdomain
-    rps       = var.rps_subdomain
-    boxing    = var.boxing_subdomain
-    stratego  = var.stratego_subdomain
+    tictactoe   = var.tictactoe_subdomain
+    rps         = var.rps_subdomain
+    boxing      = var.boxing_subdomain
+    stratego    = var.stratego_subdomain
+    wavinghands = var.wavinghands_subdomain
   }
   engine_domains = {
     for name, subdomain in local.engine_subdomains :
@@ -374,6 +383,39 @@ module "stratego" {
   lambda_jar_path = var.stratego_jar_path
 
   matchmaker_api_key = random_password.stratego_api_key[0].result
+
+  # Where the engine archives a finished match through, and reads it back from once its live
+  # copy is gone (ArchivingMatchStore). Without it the engine archives nothing.
+  matchmaker_url = module.api.api_endpoint
+
+  cognito_issuer    = module.api.jwt_issuer
+  cognito_client_id = module.api.user_pool_client_id
+  hosted_login_url  = module.api.hosted_login_url
+
+  lambda_snap_start  = var.lambda_snap_start
+  log_retention_days = var.log_retention_days
+}
+
+/* The fifth bundled engine: Waving Hands, a duel of wizards for two or more players, with no roles.
+ * Every wizard's orders are given at once, so every turn is simultaneous. Like stratego it has no
+ * routes beyond the ones every engine serves.
+ *
+ * A `game` row still has to be created by hand, as a game without roles: its `url` is this module's
+ * create_game_url and its `external_id` is "wavinghands". See engines/wavinghands/README.md.
+ */
+module "wavinghands" {
+  count  = var.deploy_wavinghands ? 1 : 0
+  source = "./modules/engine"
+
+  name    = "wavinghands"
+  handler = "com.vivi.wavinghands.Handler::handleRequest"
+
+  environment     = var.environment
+  domain_name     = local.engine_domains["wavinghands"]
+  hosted_zone_id  = var.hosted_zone_id
+  lambda_jar_path = var.wavinghands_jar_path
+
+  matchmaker_api_key = random_password.wavinghands_api_key[0].result
 
   # Where the engine archives a finished match through, and reads it back from once its live
   # copy is gone (ArchivingMatchStore). Without it the engine archives nothing.

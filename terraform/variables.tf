@@ -362,6 +362,21 @@ variable "stratego_jar_path" {
   default     = "../out/engines/stratego/assembly.dest/out.jar"
 }
 
+variable "deploy_wavinghands" {
+  description = <<-EOT
+    Deploy the bundled Waving Hands engine (modules/engine) alongside matchmaker, and wire the keys
+    between them. Independent of the other engines — any combination may be deployed.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "wavinghands_jar_path" {
+  description = "Path to the assembled wavinghands jar. Only read when deploy_wavinghands is true."
+  type        = string
+  default     = "../out/engines/wavinghands/assembly.dest/out.jar"
+}
+
 # ---------------------------------------------------------------------------
 # Mail
 # ---------------------------------------------------------------------------
@@ -431,4 +446,10 @@ variable "stratego_subdomain" {
   description = "Capture the flag's friendly url, under ui_domain_name: capture-the-flag.<ui_domain_name>. Empty for none."
   type        = string
   default     = "capture-the-flag"
+}
+
+variable "wavinghands_subdomain" {
+  description = "Waving Hands' friendly url, under ui_domain_name: waving-hands.<ui_domain_name>. Empty for none."
+  type        = string
+  default     = "waving-hands"
 }

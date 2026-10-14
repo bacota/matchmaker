@@ -388,4 +388,18 @@ object engines extends Module {
       def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
     }
   }
+
+  /** Waving Hands, Richard Bartle's duel of wizards: spells made of hand gestures, every wizard's orders given in
+    * secret and carried out at once. A game without roles, for two or more wizards.
+    *
+    * `mill -j 4 --ticker false engines.wavinghands.runMain com.vivi.wavinghands.LocalServer` runs it locally;
+    * `mill -j 4 --ticker false engines.wavinghands.assembly` builds the Lambda jar, whose handler is
+    * `com.vivi.wavinghands.Handler::handleRequest`.
+    */
+  object wavinghands extends EngineModule {
+    def moduleDeps = Seq(common)
+    object test extends EngineTests {
+      def moduleDeps = super.moduleDeps ++ Seq(common.testkit)
+    }
+  }
 }
