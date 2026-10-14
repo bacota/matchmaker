@@ -967,8 +967,8 @@ object Tournaments {
           Views.tipField(
             freshTipId(s"$key-tip"),
             "When to play (optional)",
-            "When you mean it to be played, shown to anyone deciding whether to enter. It starts it no sooner and " +
-                "no later."
+            "When you mean it to be played, shown to anyone deciding whether to enter. It does not schedule or start " +
+                "the tournament."
           )(
             input(
               tpe := "datetime-local",
