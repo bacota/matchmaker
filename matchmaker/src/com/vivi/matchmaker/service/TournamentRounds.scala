@@ -17,6 +17,7 @@ import com.vivi.matchmaker.model.tournament.{
     TournamentGame,
     TournamentState
 }
+import com.vivi.matchmaker.model.tournament.standard.Challenge
 import com.vivi.matchmaker.persistence._
 import com.vivi.matchmaker.persistence.TournamentStateRepo.Loaded
 
@@ -364,11 +365,15 @@ class TournamentRounds[T](
               t.gameId,
               tm.matchId,
               at,
-              s"${t.name}, round ${tm.round}",
+              // A challenge is one match, which its tournament's name and round would only describe as such.
+              if (t.tournamentModelId == Challenge.modelId) "" else s"${t.name}, round ${tm.round}",
               clock.map(_.limit),
               clock.map(_.kind).getOrElse(TimeLimitKind.PerTurn),
               TournamentRounds.unitFor(clock.map(_.limit)),
-              t.settings.friendly
+              t.settings.friendly,
+              t.settings.gameSettings,
+              // Live only with a clock for the engine to run, which a live tournament always has.
+              t.settings.live && clock.isDefined
             )
             seatsOf = active.map(s => (players(s.entrantId).get, s.gameRoleId.get))
             starting <- EloRatingService.startingRatings(session, t.gameId, seatsOf, byRole = !game.unimportantRoles)
@@ -416,8 +421,8 @@ class TournamentRounds[T](
         } yield Prepared.Launch(saved, game, enginePlayers, tm.tiesAllowed)
     }
 
-    /** Puts back a match whose engine would not create it, so that it is due again under the same id. Swallowed, as a
-      * challenge's undo is: the engine's failure is the news.
+    /** Puts back a match whose engine would not create it, so that it is due again under the same id. Swallowed: the
+      * engine's failure is the news.
       */
     private def undo(session: Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] =
         session.transaction
@@ -710,7 +715,7 @@ class TournamentRounds[T](
             }
         } yield Env(
           design,
-          TournamentGame.of(game),
+          TournamentGame.of(game).copy(chooseRoles = t.settings.chooseRoles),
           ratings.toMap,
           Some(t.defaultPoolSize),
           t.settings.concurrentRounds

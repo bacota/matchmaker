@@ -16,7 +16,7 @@ import com.vivi.matchmaker.model.{NotificationType, Player}
   *
   * @tparam News
   *   what happened, as that template's kinds need it. One type per template rather than one shared one, because the
-  *   facts behind "somebody accepted your challenge" and "it is your turn" have nothing in common but the game's name —
+  *   facts behind "somebody entered your challenge" and "it is your turn" have nothing in common but the game's name —
   *   and a single case class holding the union of them would be mostly empty at every call site.
   */
 trait NotificationMail[News] {
@@ -46,13 +46,13 @@ trait NotificationMail[News] {
 
     /** The subject and the body's own paragraphs for one kind, or `None` for a kind this template does not cover.
       *
-      * Pure, and the whole of what a template is: no database, no match, no challenge — which is what lets what the
+      * Pure, and the whole of what a template is: no database, no match, no tournament — which is what lets what the
       * mail says be tested directly.
       */
     protected def lines(kind: NotificationType, news: News): Option[(String, String)]
 
     /** Where the game itself is played, when this news is about a game there is one for. Nothing by default: most
-      * notifications are about a challenge that is not a match yet, or a match that is over.
+      * notifications are about entries that are not a match yet, or a match that is over.
       */
     protected def playUrl(news: News): Option[String] = None
 }

@@ -9,12 +9,14 @@ import natchez.Trace.Implicits.noop
 import java.time.Instant
 import com.vivi.matchmaker.model._
 
-/** Reads and writes `entrant` and `character_entrant`: who has entered a tournament, and with what.
+/** Reads and writes `entrant` and its subtypes: `player_entrant` in a plain game, `character_entrant` in a character
+  * game.
   *
-  * A character entry is read with its character's owner as it stands now — `character.player_id` — beside the player
-  * who entered it: the owner is who plays it, and may have changed since.
+  * A character entry names no player. It is read with its character's owner as it stands now -- the `entrant_player`
+  * view -- since the owner is who plays it, and may have changed since it entered.
   *
-  * Opens no transaction of its own; that is the calling service's job.
+  * Opens no transaction of its own; that is the calling service's job. An entry and its subtype name each other, and
+  * each is written or removed with the other in one statement.
   */
 class EntrantRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
@@ -25,17 +27,29 @@ class EntrantRepo(session: Session[IO]) {
     private val gameType = SkunkCodecs.gameType
     private val instant = SkunkCodecs.instant
 
-    private val insertEntrant
-        : Query[(GameId, TournamentId, GameType, PlayerId, Int), EntrantId *: Instant *: EmptyTuple] =
-        sql"""INSERT INTO entrant (game_id, tournament_id, game_type, player_id, rating_at_entry)
-          VALUES ($gameId, $tournamentId, $gameType, $playerId, $int4)
-          RETURNING entrant_id, entered_at""".query(entrantId *: instant)
+    // The entry and its subtype in one statement, so the deferred key between them holds however the caller holds its
+    // transaction.
+    private val insertPlayer: Query[(GameId, TournamentId, Int, PlayerId), EntrantId *: Instant *: EmptyTuple] =
+        sql"""WITH e AS (
+                 INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
+                 VALUES ($gameId, $tournamentId, 'P', $int4)
+                 RETURNING game_id, tournament_id, entrant_id, entered_at),
+               p AS (
+                 INSERT INTO player_entrant (game_id, tournament_id, entrant_id, player_id)
+                 SELECT game_id, tournament_id, entrant_id, $playerId FROM e)
+          SELECT entrant_id, entered_at FROM e""".query(entrantId *: instant)
 
-    private val insertCharacter: Command[(GameId, EntrantId, TournamentId, CharacterId)] =
-        sql"""INSERT INTO character_entrant (game_id, entrant_id, tournament_id, game_type, character_id)
-          VALUES ($gameId, $entrantId, $tournamentId, 'C', $characterId)""".command
+    private val insertCharacter: Query[(GameId, TournamentId, Int, CharacterId), EntrantId *: Instant *: EmptyTuple] =
+        sql"""WITH e AS (
+                 INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
+                 VALUES ($gameId, $tournamentId, 'C', $int4)
+                 RETURNING game_id, tournament_id, entrant_id, entered_at),
+               c AS (
+                 INSERT INTO character_entrant (game_id, tournament_id, entrant_id, character_id)
+                 SELECT game_id, tournament_id, entrant_id, $characterId FROM e)
+          SELECT entrant_id, entered_at FROM e""".query(entrantId *: instant)
 
-    /** Enters a player, or in a character game a player's character, at the rating they have now. */
+    /** Enters `player` in a plain game, or in a character game their `character`, at the rating `player` has now. */
     def create(
         game: GameId,
         gt: GameType,
@@ -44,43 +58,46 @@ class EntrantRepo(session: Session[IO]) {
         character: Option[CharacterId],
         rating: Int
     ): IO[Entrant] =
-        for {
-            made <- session.unique(insertEntrant)((game, tournament, gt, player, rating))
-            (id, at) = (made.head, made.tail.head)
-            _ <- character.traverse_(c => session.execute(insertCharacter)((game, id, tournament, c)))
-        } yield Entrant(game, tournament, id, player, character, rating, at)
+        ((gt, character) match {
+            case (GameType.Character, Some(c)) => session.unique(insertCharacter)((game, tournament, rating, c))
+            case (GameType.Plain, None)        => session.unique(insertPlayer)((game, tournament, rating, player))
+            case _ => IO.raiseError(IllegalArgumentException(s"a ${gt} game's entry with character $character"))
+        }).map(made => Entrant(game, tournament, made.head, Some(player), character, rating, made.tail.head))
 
-    // The entering player's nickname and, for a character entry, the character's name and its owner now.
+    // Who plays each entry now, with their nickname, and for a character entry the character and its name.
     private val selectAll: Query[
       (GameId, TournamentId),
-      (EntrantId, PlayerId, Option[Long], Int, Instant, Option[Instant], String, Option[String], Option[Long])
+      (EntrantId, Option[Long], Option[Long], Int, Instant, Option[Instant], Option[String], Option[String])
     ] =
-        sql"""SELECT e.entrant_id, e.player_id, ce.character_id, e.rating_at_entry, e.entered_at, e.withdrawn_at,
-                 p.nickname, c.name, c.player_id
+        sql"""SELECT e.entrant_id, ep.player_id, ce.character_id, e.rating_at_entry, e.entered_at, e.withdrawn_at,
+                 p.nickname, c.name
           FROM entrant e
-          JOIN player p ON p.player_id = e.player_id
-          LEFT JOIN character_entrant ce ON ce.game_id = e.game_id AND ce.entrant_id = e.entrant_id
-          LEFT JOIN character c ON c.game_id = ce.game_id AND c.character_id = ce.character_id
+          LEFT JOIN entrant_player ep
+                 ON ep.game_id = e.game_id AND ep.tournament_id = e.tournament_id AND ep.entrant_id = e.entrant_id
+          LEFT JOIN player p ON p.player_id = ep.player_id
+          LEFT JOIN character_entrant ce
+                 ON ce.game_id = e.game_id AND ce.tournament_id = e.tournament_id AND ce.entrant_id = e.entrant_id
+          LEFT JOIN "character" c ON c.game_id = ce.game_id AND c.character_id = ce.character_id
           WHERE e.game_id = $gameId AND e.tournament_id = $tournamentId
           ORDER BY e.entered_at, e.entrant_id""".query(
-          entrantId *: playerId *: int8.opt *: int4 *: instant *: instant.opt *: text *: text.opt *: int8.opt
+          entrantId *: int8.opt *: int8.opt *: int4 *: instant *: instant.opt *: text.opt *: text.opt
         )
 
     /** Every entry in a tournament, withdrawn ones included, in the order they were made. */
     def list(game: GameId, tournament: TournamentId): IO[List[Entrant]] =
         session
             .execute(selectAll)((game, tournament))
-            .map(_.map { case (id, player, character, rating, at, withdrawn, nickname, characterName, _) =>
+            .map(_.map { case (id, player, character, rating, at, withdrawn, nickname, characterName) =>
                 Entrant(
                   game,
                   tournament,
                   id,
-                  player,
+                  player.map(PlayerId(_)),
                   character.map(CharacterId(_)),
                   rating,
                   at,
                   withdrawn,
-                  nickname,
+                  nickname.getOrElse(""),
                   characterName
                 )
             })
@@ -89,21 +106,19 @@ class EntrantRepo(session: Session[IO]) {
       * nobody, for a character that has none.
       */
     def players(game: GameId, tournament: TournamentId): IO[Map[EntrantId, Option[PlayerId]]] =
-        session
-            .execute(selectAll)((game, tournament))
-            .map(_.map { case (id, player, character, _, _, _, _, _, owner) =>
-                id -> (if (character.isDefined) owner.map(PlayerId(_)) else Some(player))
-            }.toMap)
+        list(game, tournament).map(_.map(e => e.entrantId -> e.playerId).toMap)
 
-    private val lockOne: Query[(GameId, EntrantId), (TournamentId, PlayerId, Option[Instant])] =
-        sql"""SELECT tournament_id, player_id, withdrawn_at FROM entrant
-          WHERE game_id = $gameId AND entrant_id = $entrantId FOR UPDATE""".query(
-          tournamentId *: playerId *: instant.opt
+    private val lockOne: Query[(GameId, EntrantId), (TournamentId, Option[Long], Option[Instant])] =
+        sql"""SELECT e.tournament_id, ep.player_id, e.withdrawn_at FROM entrant e
+          LEFT JOIN entrant_player ep
+                 ON ep.game_id = e.game_id AND ep.tournament_id = e.tournament_id AND ep.entrant_id = e.entrant_id
+          WHERE e.game_id = $gameId AND e.entrant_id = $entrantId FOR UPDATE OF e""".query(
+          tournamentId *: int8.opt *: instant.opt
         )
 
-    /** An entry's tournament, who entered it, and when it was withdrawn, locked for the rest of the transaction. */
-    def readForUpdate(game: GameId, id: EntrantId): IO[Option[(TournamentId, PlayerId, Option[Instant])]] =
-        session.option(lockOne)((game, id))
+    /** An entry's tournament, who plays it now, and when it was withdrawn, locked for the rest of the transaction. */
+    def readForUpdate(game: GameId, id: EntrantId): IO[Option[(TournamentId, Option[PlayerId], Option[Instant])]] =
+        session.option(lockOne)((game, id)).map(_.map((t, p, w) => (t, p.map(PlayerId(_)), w)))
 
     private val setWithdrawn: Command[(Option[Instant], GameId, EntrantId)] =
         sql"UPDATE entrant SET withdrawn_at = ${instant.opt} WHERE game_id = $gameId AND entrant_id = $entrantId".command
@@ -112,21 +127,12 @@ class EntrantRepo(session: Session[IO]) {
     def setWithdrawnAt(game: GameId, id: EntrantId, at: Option[Instant]): IO[Unit] =
         session.execute(setWithdrawn)((at, game, id)).void
 
-    private val countForPlayer: Query[(GameId, TournamentId, PlayerId), Long] =
-        sql"""SELECT count(*) FROM entrant
-          WHERE game_id = $gameId AND tournament_id = $tournamentId AND player_id = $playerId""".query(int8)
+    private val deleteOne: Command[(GameId, EntrantId, GameId, EntrantId, GameId, EntrantId)] =
+        sql"""WITH c AS (DELETE FROM character_entrant WHERE game_id = $gameId AND entrant_id = $entrantId),
+               p AS (DELETE FROM player_entrant WHERE game_id = $gameId AND entrant_id = $entrantId)
+          DELETE FROM entrant WHERE game_id = $gameId AND entrant_id = $entrantId""".command
 
-    /** How many entries a player has made in a tournament, withdrawn ones included. */
-    def count(game: GameId, tournament: TournamentId, player: PlayerId): IO[Long] =
-        session.unique(countForPlayer)((game, tournament, player))
-
-    private val deleteCharacter: Command[(GameId, EntrantId)] =
-        sql"DELETE FROM character_entrant WHERE game_id = $gameId AND entrant_id = $entrantId".command
-
-    private val deleteOne: Command[(GameId, EntrantId)] =
-        sql"DELETE FROM entrant WHERE game_id = $gameId AND entrant_id = $entrantId".command
-
-    /** Removes an entry outright: only before the tournament starts, when nothing refers to it. */
+    /** Removes an entry outright, with its subtype: only before the tournament starts, when nothing refers to it. */
     def delete(game: GameId, id: EntrantId): IO[Unit] =
-        session.execute(deleteCharacter)((game, id)) *> session.execute(deleteOne)((game, id)).void
+        session.execute(deleteOne)((game, id, game, id, game, id)).void
 }

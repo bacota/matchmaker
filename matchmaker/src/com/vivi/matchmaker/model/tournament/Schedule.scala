@@ -16,14 +16,15 @@ object Schedule {
     private def choose(n: Int, k: Int): Long =
         if (k < 0 || k > n) 0L else (1 to k).foldLeft(1L)((acc, i) => acc * (n - k + i) / i)
 
-    /** How many matches a round robin of `n` plays in this game: every `R`-member subset once, `R` times over when
-      * roles are rotated — or one match of everyone, when the pool is short of `R` but can fill the required roles, or
-      * none when it cannot.
+    /** How many matches a round robin of `n` plays in this game: one match of everyone, when the pool can fill the
+      * required roles and is no bigger than the game has roles (`n` times over when roles are rotated); every
+      * `R`-member subset once, `R` times over when roles are rotated, in a bigger pool; and none when it cannot fill
+      * the required roles.
       */
     def matchCount(n: Int, game: TournamentGame, rotateRoles: Boolean): Long = {
         val r = game.poolSeats
         if (n < game.requiredSeats || n < 1) 0L
-        else if (n < r) (if (rotateRoles && game.significantRoles) n.toLong else 1L)
+        else if (n <= game.roles.size) (if (rotateRoles && game.significantRoles) n.toLong else 1L)
         else choose(n, r) * (if (rotateRoles && game.significantRoles) r else 1)
     }
 
@@ -47,7 +48,8 @@ object Schedule {
         val seating = game.seatingRoles
         if (n < game.requiredSeats || n < 1) Nil
         else {
-            val size = math.min(n, r)
+            // Everyone in one match, if the game has a seat for each of them; otherwise every R-member subset.
+            val size = if (n <= game.roles.size) n else math.min(n, r)
             val rotate = rotateRoles && game.significantRoles
             // Each subset's seats, members in seed order, with the roles of each pass.
             val subsets: List[List[Long]] =
@@ -65,12 +67,14 @@ object Schedule {
         }
     }
 
-    /** The roles of a match whose roles are not rotated: in seat order where they do not matter; by preference where
-      * any role has a preference level, the most preferred to the strongest seed; and otherwise chosen, the strongest
-      * seed choosing first (`tournament-design.md`, "Choice of Roles"). `subset` is in seed order.
+    /** The roles of a match whose roles are not rotated: chosen, the strongest seed choosing first, in a tournament
+      * whose seats always choose; in seat order where they do not matter; by preference where any role has a preference
+      * level, the most preferred to the strongest seed; and otherwise chosen (`tournament-design.md`, "Choice of
+      * Roles"). `subset` is in seed order. A match of one seat has nothing to choose between.
       */
     def roles(subset: List[Long], seating: List[TournamentRole], game: TournamentGame): List[SeatPlan] =
-        if (!game.significantRoles) subset.zip(seating).map((e, role) => SeatPlan(e, Some(role.id)))
+        if (game.chooseRoles && subset.sizeIs > 1) subset.zipWithIndex.map((e, i) => SeatPlan(e, None, Some(i)))
+        else if (!game.significantRoles) subset.zip(seating).map((e, role) => SeatPlan(e, Some(role.id)))
         else if (seating.exists(_.preferenceLevel.isDefined)) {
             val preferred = seating.zipWithIndex.sortBy((role, i) => (-role.preferenceLevel.getOrElse(Int.MinValue), i))
             subset.zip(preferred).map { case (e, (role, _)) => SeatPlan(e, Some(role.id)) }

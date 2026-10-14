@@ -109,13 +109,13 @@ object ApiClient {
         parts.mkString("?", "&", "")
     }
 
-    /** Everything the caller has said yes to and that has not yet become a match. Takes no player id: the server scopes
-      * it to whoever the token says is calling.
+    /** The open challenges the caller owns, has entered or is invited to, across every game. Takes no player id: the
+      * server scopes it to whoever the token says is calling.
       */
-    def acceptances(): Future[Seq[PendingAcceptance]] = get[Seq[PendingAcceptance]]("/me/acceptances")
+    def myChallenges(): Future[Seq[ChallengeSummary]] = get[Seq[ChallengeSummary]]("/me/challenges")
 
     /** What the caller wants to be told about: their answers in general, and the games they have answered differently
-      * for. Takes no player id for the same reason `acceptances` does not.
+      * for. Takes no player id for the same reason `myChallenges` does not.
       */
     def notifications(): Future[NotificationSettings] = get[NotificationSettings]("/me/notifications")
 
@@ -249,103 +249,12 @@ object ApiClient {
     def challenges(gameId: GameId): Future[Seq[ChallengeSummary]] =
         get[Seq[ChallengeSummary]](s"/games/${gameId.value}/challenges")
 
-    /** Creates a challenge, and invites the players named with it in the same call.
-      *
-      * `invitations` is defaulted, so an open challenge nobody was asked to is the call without it. Sent together
-      * rather than as a create followed by an invite apiece because the server validates the set as a whole — and
-      * because a closed challenge created alone would exist, briefly, as one nobody could accept.
+    /** Offers a challenge: a tournament of the challenge model, opened and entered, with its invitations sent, in one
+      * call — a challenge that is not open, made alone, would exist briefly as one nobody could enter. Everything after
+      * that is a tournament call: entering, withdrawing, starting, cancelling, inviting and choosing a role.
       */
-    def createChallenge(
-        challenge: Challenge,
-        invitations: Seq[Invite] = Seq.empty,
-        characterInvitations: Seq[CharacterInvite] = Seq.empty
-    ): Future[Challenge] =
-        send[Challenge](
-          HttpMethod.POST,
-          "/challenges",
-          Some(write(Json.CreateChallenge(challenge, invitations, characterInvitations)))
-        )
-
-    /** Everything the signed-in player has been invited to and could still accept, across every game. */
-    def invitations(): Future[Seq[ChallengeInvitation]] =
-        get[Seq[ChallengeInvitation]]("/me/invitations")
-
-    /** Asks one player to a challenge the caller has already made, optionally holding a seat for them. The server
-      * refuses anyone but the challenger.
-      */
-    def invite(gameId: GameId, challengeId: ChallengeId, invite: Invite): Future[Invitation] =
-        send[Invitation](
-          HttpMethod.POST,
-          s"/challenges/${gameId.value}/${challengeId.value}/invitations",
-          Some(write(invite))
-        )
-
-    /** Asks one character to a challenge in a character game. Its owner, whoever that is when they answer, is who may
-      * accept.
-      */
-    def inviteCharacter(
-        gameId: GameId,
-        challengeId: ChallengeId,
-        invite: CharacterInvite
-    ): Future[CharacterInvitation] =
-        send[CharacterInvitation](
-          HttpMethod.POST,
-          s"/challenges/${gameId.value}/${challengeId.value}/character-invitations",
-          Some(write(invite))
-        )
-
-    /** Turns down an invitation addressed to one of the caller's characters. */
-    def rejectCharacterInvitation(gameId: GameId, challengeId: ChallengeId, characterId: CharacterId): Future[Unit] =
-        sendUnit(
-          HttpMethod.DELETE,
-          s"/me/character-invitations/${gameId.value}/${challengeId.value}/${characterId.value}",
-          None
-        )
-
-    /** Takes a character's invitation back. Refused once that character has accepted. */
-    def revokeCharacterInvitation(gameId: GameId, challengeId: ChallengeId, characterId: CharacterId): Future[Unit] =
-        sendUnit(
-          HttpMethod.DELETE,
-          s"/challenges/${gameId.value}/${challengeId.value}/character-invitations/${characterId.value}",
-          None
-        )
-
-    /** Turns down an invitation the caller was sent. Under `/me` because the invitation being declined is the caller's
-      * own — see the route's comment. Refused once they have accepted, where backing out is the way out.
-      */
-    def rejectInvitation(gameId: GameId, challengeId: ChallengeId): Future[Unit] =
-        sendUnit(HttpMethod.DELETE, s"/me/invitations/${gameId.value}/${challengeId.value}", None)
-
-    /** Takes an invitation back. Refused once that player has accepted — the challenger removes the acceptance instead,
-      * which `withdraw` below is the same route for.
-      */
-    def revokeInvitation(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId): Future[Unit] =
-        sendUnit(
-          HttpMethod.DELETE,
-          s"/challenges/${gameId.value}/${challengeId.value}/invitations/${playerId.value}",
-          None
-        )
-
-    def deleteChallenge(gameId: GameId, challengeId: ChallengeId): Future[Unit] =
-        sendUnit(HttpMethod.DELETE, s"/challenges/${gameId.value}/${challengeId.value}", None)
-
-    def accept(
-        gameId: GameId,
-        challengeId: ChallengeId,
-        characterId: Option[CharacterId],
-        gameRoleId: GameRoleId
-    ): Future[Acceptance] =
-        send[Acceptance](
-          HttpMethod.POST,
-          s"/challenges/${gameId.value}/${challengeId.value}/acceptances",
-          Some(write(Json.AcceptRequest(characterId, gameRoleId)))
-        )
-
-    /** Turns the caller's own challenge into a match: the server asks the game engine to create the game and answers
-      * with the match, including the url the player plays it at.
-      */
-    def startChallenge(gameId: GameId, challengeId: ChallengeId): Future[Match] =
-        send[Match](HttpMethod.POST, s"/challenges/${gameId.value}/${challengeId.value}/start", None)
+    def createChallenge(gameId: GameId, request: ChallengeRequest): Future[Tournament] =
+        send[Tournament](HttpMethod.POST, s"/games/${gameId.value}/challenges", Some(write(request)))
 
     /** How every finished match turned out, in one call — see `MatchService.results`. */
     def results(): Future[Seq[Json.ParticipantResultView]] =
@@ -360,21 +269,11 @@ object ApiClient {
     def refreshMatch(gameId: GameId, matchId: MatchId): Future[Match] =
         send[Match](HttpMethod.POST, s"/games/${gameId.value}/matches/${matchId.value}/refresh", None)
 
-    /** Calls a match off. Only its creator may, which the server checks — the button that leads here is shown only to
-      * them, but that is a courtesy, not the rule.
+    /** Calls a match off. Only its tournament's owner may, which the server checks — the button that leads here is
+      * shown only to them, but that is a courtesy, not the rule.
       */
     def cancelMatch(gameId: GameId, matchId: MatchId): Future[Match] =
         send[Match](HttpMethod.POST, s"/games/${gameId.value}/matches/${matchId.value}/cancel", None)
-
-    /** Backs out of a challenge already accepted. The player id is in the path because the route also serves a
-      * challenger removing someone else's acceptance; the server still checks that the caller is entitled to either.
-      */
-    def withdraw(gameId: GameId, challengeId: ChallengeId, playerId: PlayerId): Future[Unit] =
-        sendUnit(
-          HttpMethod.DELETE,
-          s"/challenges/${gameId.value}/${challengeId.value}/acceptances/${playerId.value}",
-          None
-        )
 
     // ---- tournaments ------------------------------------------------------------------------
 
@@ -413,6 +312,30 @@ object ApiClient {
 
     def revokeTournamentInvitation(gameId: GameId, tournamentId: TournamentId, playerId: PlayerId): Future[Unit] =
         sendUnit(HttpMethod.DELETE, s"${tournamentPath(gameId, tournamentId)}/invitations/${playerId.value}", None)
+
+    /** Invites a character, in a character game: whoever owns it when they answer may enter with it. */
+    def inviteCharacterToTournament(
+        gameId: GameId,
+        tournamentId: TournamentId,
+        characterId: CharacterId
+    ): Future[Unit] =
+        sendUnit(
+          HttpMethod.POST,
+          s"${tournamentPath(gameId, tournamentId)}/character-invitations",
+          Some(write(TournamentJson.TournamentCharacterInvite(characterId)))
+        )
+
+    /** Takes a character's invitation back, or -- for the character's owner -- turns it down. */
+    def revokeTournamentCharacterInvitation(
+        gameId: GameId,
+        tournamentId: TournamentId,
+        characterId: CharacterId
+    ): Future[Unit] =
+        sendUnit(
+          HttpMethod.DELETE,
+          s"${tournamentPath(gameId, tournamentId)}/character-invitations/${characterId.value}",
+          None
+        )
 
     def enterTournament(gameId: GameId, tournamentId: TournamentId, characterId: Option[CharacterId]): Future[Entrant] =
         send[Entrant](

@@ -18,7 +18,8 @@ import com.vivi.matchmaker.engine.{
 }
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
-import com.vivi.matchmaker.persistence.{ChallengeRepo, GameRepo, MatchRepo, ParticipantRepo, TestSession}
+import com.vivi.matchmaker.persistence.TestMatches
+import com.vivi.matchmaker.persistence.{GameRepo, MatchRepo, ParticipantRepo, TestSession}
 
 /** A cancelled match's engine is told, so that it can drop the match — and a cancel stands whether or not it hears. */
 class CancelReleaseSpec extends FunSuite with QuietTests {
@@ -59,34 +60,21 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                     unique("engine")
                   )
                 )
-                challenge <- new ChallengeRepo(session).create(
-                  PlainChallenge(
-                    ChallengeId(0),
-                    player.playerId,
-                    "challenge",
-                    None,
-                    None,
-                    "{}",
-                    game.gameId,
-                    isPublic = false,
-                    Some(game.roles.head.gameRoleId)
-                  )
-                )
                 matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
                 m = Match(
                   game.gameId,
                   matchId,
-                  Some(challenge.challengeId),
-                  challenge.challenger,
+                  TournamentId.unassigned,
                   "d",
                   None,
                   Some(Instant.ofEpochSecond(1000)),
                   None,
                   "{}"
                 )
-                _ <- new MatchRepo(session).create(m)
+                _ <- TestMatches.writeMatch(session, m, player.playerId)
                 _ <- new MatchRepo(session).setUrls(m.copy(statusUrl = Some("https://engine/status")), cancelUrl)
-                _ <- new ParticipantRepo(session).create(
+                _ <- TestMatches.writeSeat(
+                  session,
                   PlainParticipant(
                     ParticipantId(0),
                     game.gameId,

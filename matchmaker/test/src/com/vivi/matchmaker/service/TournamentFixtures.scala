@@ -106,16 +106,16 @@ object TournamentFixtures {
                   s"INSERT INTO atomic_pool (game_id, tournament_id, pool_id, stage_id) VALUES ($g, $id, $pool, $stage)"
                 )
                 _ <- session.execute(
-                  sql"""INSERT INTO match (game_id, match_id, creator, description, completed_at, start, settings, public,
+                  sql"""INSERT INTO match (game_id, match_id, description, completed_at, start, settings, public,
                                            public_url, friendly, status, tournament_id, pool_id, round, stage_id)
-                        VALUES (#${g.toString}, $int8, #${m.creator.value.toString}, $text,
+                        VALUES (#${g.toString}, $int8, $text,
                                 ${com.vivi.matchmaker.persistence.SkunkCodecs.instant.opt}, now(), '{}', #${m.isPublic.toString},
                                 ${text.opt}, #${m.friendly.toString}, #${
                           if (m.completed) "'F'" else "'P'"
                       }, #${id.toString},
                                 #${pool.toString}, 1, #${stage.toString})""".command
                 )((m.matchId.value, m.description, m.completedAt, m.publicUrl))
-            } yield m.copy(challengeId = None)
+            } yield m.copy(tournamentId = t.tournamentId)
         }
 
     /** A seat of a begun tournament match ([[begunMatch]]), as a tournament's seat is once it is played: entered by
@@ -148,9 +148,9 @@ object TournamentFixtures {
                         RETURNING participant_id""".query(int8)
                 )((matchId.value, due))
                 _ <- session.execute(
-                  sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id,
-                                                           tournament_id, entrant_id)
-                        VALUES (#${t.gameId.value.toString}, #${participant.toString}, 'C',
+                  sql"""INSERT INTO character_participant (game_id, participant_id, character_id, tournament_id,
+                                                           entrant_id)
+                        VALUES (#${t.gameId.value.toString}, #${participant.toString},
                                 #${character.value.toString}, #${t.tournamentId.value.toString},
                                 #${entrant.entrantId.value.toString})""".command
                 )

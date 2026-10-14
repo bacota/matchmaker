@@ -20,16 +20,15 @@ class ResultRepoSpec extends PropertySuite {
 
                     for {
                         createdGame <- gameRepo.create(Generators.genGameWithRole.sample.get)
-                        challengeId <- Generators.challengeIn(session, createdGame)
+                        owner <- Generators.ownerIn(session, createdGame)
                         matchId = mid
-                        _ <- Generators
-                            .matchFrom(session, createdGame.gameId, matchId, challengeId)
-                            .flatMap(matchRepo.create)
+                        _ <- TestMatches.writeMatch(session, Generators.matchFrom(createdGame.gameId, matchId), owner)
                         createdPlayer <- playerRepo.create(player)
                         createdCharacter <- characterRepo.create(
                           Generators.genCharacter(createdGame.gameId, None).sample.get
                         )
-                        createdParticipant <- participantRepo.create(
+                        createdParticipant <- TestMatches.writeSeat(
+                          session,
                           Generators
                               .genParticipant(
                                 createdGame.gameId,

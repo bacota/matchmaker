@@ -6,7 +6,7 @@ import com.vivi.matchmaker.model.NotificationType
 /** How a match came to an end.
   *
   * Three cases rather than a boolean, because a match ends in three quite different ways and the difference is the
-  * whole content of the mail: the game finished, its creator called it off, or somebody's clock ran out.
+  * whole content of the mail: the game finished, its tournament's owner called it off, or somebody's clock ran out.
   *
   * Each names the template that says so rather than carrying the sentence itself: what a player is told lives in
   * `mail/messages.properties`, like every other word matchmaker mails.
@@ -35,11 +35,6 @@ enum MatchEnding(val template: String) {
   * @param yourTurn
   *   whether it is the recipient's turn. Also for a match beginning, where whose turn it is comes as part of the
   *   introduction rather than as the news: the `YourTurn` kind *is* that news, and needs no flag to say so.
-  * @param acceptedBy
-  *   the nickname of whoever's acceptance started the match, for a challenge that was offered as starting itself. The
-  *   one mail that is about two things at once, because on that path they happened as one: somebody accepted, and by
-  *   accepting they began the match. `None` for a match somebody pressed Start on, where the acceptance was news of its
-  *   own and has already been mailed as such.
   * @param ending
   *   how the match ended, when it has
   */
@@ -52,7 +47,6 @@ case class MatchNews(
     others: Seq[String] = Seq.empty,
     yourTurn: Boolean = false,
     playUrl: Option[String] = None,
-    acceptedBy: Option[String] = None,
     ending: Option[MatchEnding] = None
 )
 
@@ -78,8 +72,8 @@ object MatchMail extends NotificationMail[MatchNews] {
      * now has to answer it. */
     protected def lines(kind: NotificationType, news: MatchNews): Option[(String, String)] = {
         val name = news.gameName
-        // How every mail after the first refers back to the match: the challenger's own description
-        // when there is one, which is what a player recognises it by.
+        // How every mail after the first refers back to the match: its description -- a tournament's
+        // name and round -- when there is one, which is what a player recognises it by.
         val quoted = MailText.quoted(news.description)
         val which = MailTemplates.render("mail.match.which", "game" -> name, "quoted" -> quoted)
 
@@ -87,33 +81,10 @@ object MatchMail extends NotificationMail[MatchNews] {
             // The mail that introduces a match: what started, who is in it, whether the recipient is
             // the one everybody is waiting for, and by when.
             case NotificationType.MatchStarted =>
-                /* Two openings, and which one depends on why there is a match at all.
-                 *
-                 * A match that started itself began *because* somebody accepted, so its mail says
-                 * who -- that acceptance is not mailed separately on this path, and a mail that
-                 * announced a match without saying what brought it about would leave the player to
-                 * work out who they are suddenly playing. Everything after the first sentence is the
-                 * same in both: the same roster and the same answer to "is it my turn".
-                 *
-                 * Deliberately "the challenge" rather than "your challenge": one mail goes to the
-                 * challenger and one to each of the other acceptors, and this template is composed
-                 * without knowing which is reading. */
-                val opening = news.acceptedBy match {
-                    case Some(actor) if quoted.isEmpty =>
-                        MailTemplates.render("mail.match.started.accepted", "actor" -> actor, "game" -> name)
-                    case Some(actor) =>
-                        MailTemplates.render(
-                          "mail.match.started.accepted.described",
-                          "actor" -> actor,
-                          "game" -> name,
-                          "quoted" -> quoted
-                        )
-                    case None if quoted.isEmpty =>
-                        MailTemplates.render("mail.match.started.opening", "game" -> name)
-                    case None =>
-                        MailTemplates
-                            .render("mail.match.started.opening.described", "game" -> name, "quoted" -> quoted)
-                }
+                val opening =
+                    if (quoted.isEmpty) MailTemplates.render("mail.match.started.opening", "game" -> name)
+                    else
+                        MailTemplates.render("mail.match.started.opening.described", "game" -> name, "quoted" -> quoted)
 
                 val opponents =
                     if (news.others.isEmpty) MailTemplates.render("mail.match.started.alone")
@@ -126,13 +97,7 @@ object MatchMail extends NotificationMail[MatchNews] {
                             MailTemplates.render("mail.match.started.turn.due", "due" -> MailText.at(by))
                         )
 
-                // And a subject to match it, for the same reason: the first thing this mail says is
-                // that somebody accepted, so the line a player reads in their inbox says it too.
-                val subject = news.acceptedBy match {
-                    case Some(actor) =>
-                        MailTemplates.render("mail.match.started.accepted.subject", "actor" -> actor, "game" -> name)
-                    case None => MailTemplates.render("mail.match.started.subject", "game" -> name)
-                }
+                val subject = MailTemplates.render("mail.match.started.subject", "game" -> name)
 
                 Some(
                   (

@@ -54,9 +54,9 @@ object Generators {
             externalId <- genUniqueString
             characterUrl <- Gen.option(genString)
             unimportantRoles <- Gen.oneOf(true, false)
-            // Two roles, always: every acceptance names one, so a game with no roles is a
-            // game nothing can be offered or accepted for. Two rather than one because two players in
-            // the same challenge may not share a role.
+            // Two roles, always: every seat names one, so a game with no roles is a game nothing
+            // can be played in. Two rather than one because two players in one match may not share a
+            // role.
         } yield Game(
           GameId.unassigned,
           gameType,
@@ -93,8 +93,8 @@ object Generators {
             state <- genString
         } yield Character(CharacterId(0), gameId, name, description, state, playerId)
 
-    /** A match whose creator is `creator`, started from `challengeId` where there is one. */
-    def genMatch(gameId: GameId, matchId: MatchId, challengeId: Option[ChallengeId], creator: PlayerId): Gen[Match] =
+    /** A match. Its tournament, and so whose it is, is the one [[TestMatches.writeMatch]] gives it. */
+    def genMatch(gameId: GameId, matchId: MatchId): Gen[Match] =
         for {
             description <- genString
             completedAt <- Gen.option(genInstant)
@@ -113,8 +113,7 @@ object Generators {
         } yield Match(
           gameId,
           matchId,
-          challengeId,
-          creator,
+          TournamentId.unassigned,
           description,
           completedAt,
           Some(start),
@@ -128,7 +127,7 @@ object Generators {
           timeLimitKind,
           timeLimitUnit,
           friendly = friendly,
-          // A challenge's match, begun as it is written: over once it is completed or cancelled.
+          // Begun, as a match is once it is created in its engine: over once it is completed or cancelled.
           status = if (completedAt.isDefined || cancelled) MatchStatus.Finished else MatchStatus.InProgress
         )
 
@@ -187,70 +186,21 @@ object Generators {
           } yield key -> value
         )
 
-    def genChallenge(
-        challenger: PlayerId,
-        gameId: GameId,
-        characterId: CharacterId,
-        gameRoleId: GameRoleId
-    ): Gen[Challenge] =
-        for {
-            message <- genString
-            start <- Gen.option(genInstant)
-            timeLimit <- Gen.option(genDuration)
-            isPublic <- Gen.oneOf(true, false)
-            timeLimitKind <- Gen.oneOf(TimeLimitKind.values.toSeq)
-            timeLimitUnit <- Gen.oneOf(TimeLimitUnit.values.toSeq)
-            friendly <- Gen.oneOf(true, false)
-        } yield CharacterChallenge(
-          ChallengeId(0),
-          challenger,
-          message,
-          start,
-          timeLimit,
-          "{}",
-          gameId,
-          Some(characterId),
-          isPublic,
-          Some(gameRoleId),
-          timeLimitKind,
-          timeLimitUnit,
-          friendly = friendly
-        )
-
-    /** A game, and a challenge in it, ready for a match to be started from.
-      *
-      * A match now has a mandatory foreign key to the challenge it came from, so a test that wants a match needs the
-      * whole chain — player, character, challenge — before it can write one. This builds the shortest one that
-      * satisfies the constraints, and hands back the two ids a match is made of.
-      */
-    def gameWithChallenge(session: Session[IO]): IO[(Game, ChallengeId)] =
+    /** A game, and a player to own a match in it. */
+    def gameWithOwner(session: Session[IO]): IO[(Game, PlayerId)] =
         for {
             game <- new GameRepo[String](session).create(genGame().sample.get)
-            challengeId <- challengeIn(session, game)
-        } yield (game, challengeId)
+            owner <- ownerIn(session, game)
+        } yield (game, owner)
 
-    /** A generated match started from an existing challenge, created by its challenger as a started one would be. */
-    def matchFrom(session: Session[IO], gameId: GameId, matchId: MatchId, challengeId: ChallengeId): IO[Match] =
-        new ChallengeRepo(session).read(gameId, challengeId).map { found =>
-            genMatch(gameId, matchId, Some(challengeId), found.get.challenger).sample.get
-        }
+    /** A generated match, ready for [[TestMatches.writeMatch]] to write. */
+    def matchFrom(gameId: GameId, matchId: MatchId): Match =
+        genMatch(gameId, matchId).sample.get
 
-    /** A challenge in an existing game, with the player and character it needs. */
-    def challengeIn(session: Session[IO], game: Game): IO[ChallengeId] = {
-        val playerRepo = new PlayerRepo(session)
-        val characterRepo = new CharacterRepo[String](session)
-        val challengeRepo = new ChallengeRepo(session)
+    /** A player to own a match in an existing game, with a character of theirs in it. */
+    def ownerIn(session: Session[IO], game: Game): IO[PlayerId] =
         for {
-            player <- playerRepo.create(genPlayer.sample.get)
-            character <- characterRepo.create(genCharacter(game.gameId, Some(player.playerId)).sample.get)
-            challenge <- challengeRepo.create(
-              genChallenge(
-                player.playerId,
-                game.gameId,
-                character.characterId,
-                game.roles.head.gameRoleId
-              ).sample.get
-            )
-        } yield challenge.challengeId
-    }
+            player <- new PlayerRepo(session).create(genPlayer.sample.get)
+            _ <- new CharacterRepo[String](session).create(genCharacter(game.gameId, Some(player.playerId)).sample.get)
+        } yield player.playerId
 }

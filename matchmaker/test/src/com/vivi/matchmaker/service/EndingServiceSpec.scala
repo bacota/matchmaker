@@ -11,8 +11,9 @@ import com.vivi.matchmaker.archive.{ArchiveStore, LocalArchiveStore}
 import com.vivi.matchmaker.engine.{CreateGameRequest, CreateGameResponse, GameEngineClient, GameStatusResponse}
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.persistence.TestMatches
 import com.vivi.matchmaker.persistence.TextCodec.given
-import com.vivi.matchmaker.persistence.{ArchiveRepo, ChallengeRepo, GameRepo, MatchRepo, TestSession}
+import com.vivi.matchmaker.persistence.{ArchiveRepo, GameRepo, MatchRepo, TestSession}
 
 /** Settling a match's end, as the listener its ending is queued to does: a completed match not yet archived is prompted
   * through its engine's status, once its engine has had time to archive it itself; a cancel the engine has not
@@ -81,25 +82,11 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                     unique("engine")
                   )
                 )
-                challenge <- new ChallengeRepo(session).create(
-                  PlainChallenge(
-                    ChallengeId(0),
-                    player.playerId,
-                    "c",
-                    None,
-                    None,
-                    "{}",
-                    game.gameId,
-                    isPublic = false,
-                    Some(game.roles.head.gameRoleId)
-                  )
-                )
                 matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
                 m = Match(
                   game.gameId,
                   matchId,
-                  Some(challenge.challengeId),
-                  challenge.challenger,
+                  TournamentId.unassigned,
                   "d",
                   finishedAgo.map(ago => Instant.now().minus(ago)),
                   Some(Instant.ofEpochSecond(1000)),
@@ -107,7 +94,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                   "{}",
                   cancelled = cancelled
                 )
-                _ <- new MatchRepo(session).create(m)
+                _ <- TestMatches.writeMatch(session, m, player.playerId)
                 _ <- new MatchRepo(session).setUrls(
                   m.copy(statusUrl = Some(s"https://engine/matches/${matchId.value}/status")),
                   Option.when(cancelled)(s"https://engine/matches/${matchId.value}/cancel")

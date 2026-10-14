@@ -6,11 +6,11 @@ case class GameParameterValue[T](
     value: T
 )
 
-/** A setting a challenger picks for the game's engine — how many rounds a bout is, say.
+/** A setting a challenge or tournament picks for the game's engine — how many rounds a bout is, say.
   *
-  * `name` is what the engine is sent: the key in a challenge's `settings`, and so in what the engine receives at a
-  * start. `displayName` is what a player is shown for it — "Rounds" for `rounds`, "Board size" for `board_size`. Often
-  * the two are the same, but both are always there.
+  * `name` is what the engine is sent: the key in a tournament's `settings`, and so in what the engine receives as a
+  * match is created. `displayName` is what a player is shown for it — "Rounds" for `rounds`, "Board size" for
+  * `board_size`. Often the two are the same, but both are always there.
   */
 case class GameParameter[T](
     gameId: GameId,
@@ -71,9 +71,8 @@ case class GameRole(
     def optional: Boolean = roleType != RoleType.Required
 }
 
-/** Whether a game's challenges/acceptances/participants require an attached character. Mirrors the `game_type`
-  * discriminator column (`'C'`/`'P'`) that `game` and every table split into a `character_*` sibling (`challenge`,
-  * `acceptance`, `participant`) carry.
+/** Whether a game's entries and seats require an attached character. Mirrors the `game_type` discriminator column
+  * (`'C'`/`'P'`) that `game` and every table split into a `character_*` sibling (`entrant`, `participant`) carry.
   */
 enum GameType(val code: Char) {
     case Character extends GameType('C')
@@ -86,7 +85,7 @@ object GameType {
 
 /** What matchmaker does when a player's turn runs out.
   *
-  * A property of the game, set by the admin who registers it: the challenge decides how long a turn may take, and the
+  * A property of the game, set by the admin who registers it: the tournament decides how long a turn may take, and the
   * game decides what happens when one takes longer. Stored as the `code` in `game.timeout_action`.
   *
   * `Forfeit` is the only action so far, and the only one the enforcement in `GameEngineService` knows how to carry out

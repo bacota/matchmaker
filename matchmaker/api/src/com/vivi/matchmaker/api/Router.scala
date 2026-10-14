@@ -125,8 +125,10 @@ object Router {
                     }
                 }
 
-            case ("GET", "me" :: "acceptances" :: Nil) =>
-                ok(services.acceptances.mine(caller))
+            // The open challenges the caller owns, has entered or is invited to, in every game: what the home
+            // page lists as invitations, challenges to start, and challenges waiting on somebody else.
+            case ("GET", "me" :: "challenges" :: Nil) =>
+                ok(services.tournaments.challengesFor(caller))
 
             case ("GET", "me" :: "matches" :: Nil) =>
                 ok(services.matches.active(caller))
@@ -222,7 +224,18 @@ object Router {
                 )
 
             case ("GET", "games" :: gameId :: "challenges" :: Nil) =>
-                withGameId(gameId)(id => ok(services.challenges.listByGame(id, caller)))
+                withGameId(gameId)(id => ok(services.tournaments.challengesForGame(id, caller)))
+
+            /* Making a challenge: a tournament of the challenge model, opened and entered, and its invitations
+             * sent, in one call -- a challenge that is not open with nobody invited yet is one nobody could enter.
+             * Everything after this is the tournament routes': entering, withdrawing, starting, cancelling,
+             * inviting and choosing a role. */
+            case ("POST", "games" :: gameId :: "challenges" :: Nil) =>
+                withGameId(gameId)(id =>
+                    body[ChallengeRequest](request).flatMap(r =>
+                        created(services.tournaments.createChallenge(id, r, caller))
+                    )
+                )
 
             case ("GET", "games" :: gameId :: "characters" :: Nil) =>
                 withGameId(gameId)(id => ok(services.characters.listForGame(id, caller)))
@@ -299,129 +312,6 @@ object Router {
                     )
                 }
 
-            /* Making a challenge, and asking particular players to it in the same call.
-             *
-             * One call rather than a create followed by a POST per invitation: a closed challenge
-             * with nobody invited yet is a challenge nobody can accept, and the service validates
-             * the whole set against each other — two invitations cannot hold one role — which it
-             * can only do if it is given them together. The body wraps the challenge for the
-             * reason `Json.CreateChallenge` says.
-             */
-            case ("POST", "challenges" :: Nil) =>
-                body[Json.CreateChallenge](request).flatMap(r =>
-                    created(services.challenges.create(r.challenge, caller, r.invitations, r.characterInvitations))
-                )
-
-            // What the caller has been asked to play, across every game: the home page's question,
-            // and the one invitation route that is not about a challenge the caller already holds.
-            case ("GET", "me" :: "invitations" :: Nil) =>
-                ok(services.challenges.invitationsFor(caller))
-
-            /* Turning one down. Under `/me` rather than beside the revoke below, because the caller
-             * is the invitation: `reject` reads the caller's own player row and deletes that row, so
-             * there is no player id for a path to carry and none a caller could name instead.
-             *
-             * That is the difference from the acceptance routes, where one path serves the player
-             * backing out and the challenger removing them: there the row is named by a player id
-             * either way, and the service decides which of the two the caller is. An invitation's
-             * two sides are two questions -- "I decline" and "I withdraw my offer to them" -- and
-             * they differ in what they notify as well as in who may ask.
-             */
-            case ("DELETE", "me" :: "invitations" :: gameId :: challengeId :: Nil) =>
-                withGameId(gameId) { gid =>
-                    withChallengeId(challengeId)(id => noContent(services.challenges.reject(gid, id, caller)))
-                }
-
-            // A character game's invitation is to a character, and one player may own several
-            // characters invited to the same challenge, so the character is in the path.
-            case ("DELETE", "me" :: "character-invitations" :: gameId :: challengeId :: characterId :: Nil) =>
-                withGameId(gameId) { gid =>
-                    withChallengeId(challengeId) { id =>
-                        withCharacterId(characterId)(cid =>
-                            noContent(services.challenges.rejectCharacter(gid, id, cid, caller))
-                        )
-                    }
-                }
-
-            /* Inviting somebody to a challenge that already exists, and taking it back. Only the
-             * challenger may either — the service checks that, since the challenge is what says who
-             * they are.
-             *
-             * The body is an `Invite` rather than a request type of its own: who, and as what, is
-             * the whole of what a caller decides here, and it is the same value `POST /challenges`
-             * carries. The player is in the path on the revoke because the invitation is the
-             * resource being removed, which is how the acceptance routes above read too.
-             */
-            case ("POST", "challenges" :: gameId :: challengeId :: "invitations" :: Nil) =>
-                withGameId(gameId) { gid =>
-                    withChallengeId(challengeId) { id =>
-                        body[Invite](request).flatMap(invite =>
-                            created(services.challenges.invite(gid, id, invite, caller))
-                        )
-                    }
-                }
-
-            case ("DELETE", "challenges" :: gameId :: challengeId :: "invitations" :: playerId :: Nil) =>
-                withGameId(gameId) { gid =>
-                    withChallengeId(challengeId) { challenge =>
-                        withPlayerId(playerId)(player =>
-                            noContent(services.challenges.revoke(gid, challenge, player, caller))
-                        )
-                    }
-                }
-
-            // The same pair for a character game, where the invitation names a character.
-            case ("POST", "challenges" :: gameId :: challengeId :: "character-invitations" :: Nil) =>
-                withGameId(gameId) { gid =>
-                    withChallengeId(challengeId) { id =>
-                        body[CharacterInvite](request).flatMap(invite =>
-                            created(services.challenges.inviteCharacter(gid, id, invite, caller))
-                        )
-                    }
-                }
-
-            case (
-                  "DELETE",
-                  "challenges" :: gameId :: challengeId :: "character-invitations" :: characterId :: Nil
-                ) =>
-                withGameId(gameId) { gid =>
-                    withChallengeId(challengeId) { challenge =>
-                        withCharacterId(characterId)(cid =>
-                            noContent(services.challenges.revokeCharacter(gid, challenge, cid, caller))
-                        )
-                    }
-                }
-
-            // Turns a challenge into a match: matchmaker creates the game in the engine and records
-            // the urls it returns. Only the challenger may do it — the service checks that.
-            case ("POST", "challenges" :: gameId :: challengeId :: "start" :: Nil) =>
-                withGameId(gameId) { gid =>
-                    withChallengeId(challengeId)(id => created(services.engine.start(gid, id, caller)))
-                }
-
-            case ("DELETE", "challenges" :: gameId :: challengeId :: Nil) =>
-                withGameId(gameId) { gid =>
-                    withChallengeId(challengeId)(id => noContent(services.challenges.delete(gid, id, caller)))
-                }
-
-            case ("POST", "challenges" :: gameId :: challengeId :: "acceptances" :: Nil) =>
-                withGameId(gameId) { gid =>
-                    withChallengeId(challengeId) { id =>
-                        body[Json.AcceptRequest](request).flatMap { r =>
-                            created(services.challenges.accept(gid, id, r.characterId, r.gameRoleId, caller))
-                        }
-                    }
-                }
-
-            case ("DELETE", "challenges" :: gameId :: challengeId :: "acceptances" :: playerId :: Nil) =>
-                withGameId(gameId) { gid =>
-                    withChallengeId(challengeId) { challenge =>
-                        withPlayerId(playerId)(player =>
-                            noContent(services.acceptances.delete(gid, challenge, player, caller))
-                        )
-                    }
-                }
-
             case ("GET", "games" :: gameId :: "matches" :: matchId :: Nil) =>
                 withMatch(gameId, matchId)((gid, mid) => ok(services.engine.read(gid, mid, caller)))
 
@@ -454,8 +344,7 @@ object Router {
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "refresh" :: Nil) =>
                 withMatch(gameId, matchId)((gid, mid) => ok(services.engine.refresh(gid, mid, caller)))
 
-            // Calls a match off. Only its creator may — the challenger of the challenge it was started
-            // from — which is why the challenge outlives the start.
+            // Calls a match off. Only the owner of its tournament may -- a challenge's challenger.
             case ("POST", "games" :: gameId :: "matches" :: matchId :: "cancel" :: Nil) =>
                 withMatch(gameId, matchId)((gid, mid) => ok(services.matches.cancel(gid, mid, caller)))
 
@@ -610,6 +499,25 @@ object Router {
                     withPlayerId(playerId)(p => noContent(services.tournaments.revoke(gid, t, p, caller)))
                 )
 
+            // A character game's invitations, which name characters: inviting one is the owner's, and removing one
+            // is the owner's or the character's owner's, who is declining it.
+            case ("POST", "games" :: gameId :: "tournaments" :: tid :: "character-invitations" :: Nil) =>
+                withTournament(gameId, tid)((gid, t) =>
+                    body[TournamentJson.TournamentCharacterInvite](request).flatMap(r =>
+                        noContent(services.tournaments.inviteCharacter(gid, t, r.characterId, caller))
+                    )
+                )
+
+            case (
+                  "DELETE",
+                  "games" :: gameId :: "tournaments" :: tid :: "character-invitations" :: characterId :: Nil
+                ) =>
+                withTournament(gameId, tid)((gid, t) =>
+                    withCharacterId(characterId)(c =>
+                        noContent(services.tournaments.revokeCharacter(gid, t, c, caller))
+                    )
+                )
+
             // Entering, with a character in a character game, and withdrawing an entry.
             case ("POST", "games" :: gameId :: "tournaments" :: tid :: "entries" :: Nil) =>
                 withTournament(gameId, tid)((gid, t) =>
@@ -748,9 +656,6 @@ object Router {
 
     private def withCharacterId(raw: String)(f: CharacterId => IO[Response]): IO[Response] =
         raw.toLongOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a character id")))(id => f(CharacterId(id)))
-
-    private def withChallengeId(raw: String)(f: ChallengeId => IO[Response]): IO[Response] =
-        raw.toLongOption.fold(IO.pure(Errors.badRequest(s"'$raw' is not a challenge id")))(id => f(ChallengeId(id)))
 
     /* The window a completed list is asked for: every parameter optional, each one that is given
      * well formed, and the window they name one that can be computed and stored -- or the request is

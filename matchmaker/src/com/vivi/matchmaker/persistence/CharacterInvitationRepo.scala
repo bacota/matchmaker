@@ -5,186 +5,73 @@ import skunk._
 import skunk.implicits._
 import skunk.codec.all._
 import natchez.Trace.Implicits.noop
-import java.time.Instant
 import com.vivi.matchmaker.model._
 
-/** Reads and writes `character_invitation`: which characters may accept a character game's challenge, and as what.
-  * [[InvitationRepo]]'s counterpart, and shaped like it.
+/** Reads and writes a character game's invitations -- `character_invitation`, with its `invitation` row -- which
+  * characters may enter an invitational tournament.
   *
-  * Nothing here stores or trusts an owner. Where a question is about a player — what has this player been invited to —
-  * the answer is joined through `character.player_id` as it stands now, which is what makes an invitation follow its
-  * character to a new owner.
+  * The owner is never stored. It is read through the character whenever it matters, so whoever owns an invited
+  * character when the invitation is answered is who may answer it, and an invitation follows a character handed on.
   *
   * Opens no transaction of its own; that is the calling service's job.
   */
 class CharacterInvitationRepo(session: Session[IO]) {
-    private val challengeId = SkunkIdCodecs.challengeId
-    private val playerId = SkunkIdCodecs.playerId
     private val gameId = SkunkIdCodecs.gameId
-    private val gameRoleId = SkunkIdCodecs.gameRoleId
+    private val tournamentId = SkunkIdCodecs.tournamentId
     private val characterId = SkunkIdCodecs.characterId
-    private val gameType = SkunkCodecs.gameType
-    private val instant = SkunkCodecs.instant
 
-    private val insertInvitation: Command[(GameId, ChallengeId, CharacterId, Option[GameRoleId])] =
-        sql"""INSERT INTO character_invitation (game_id, challenge_id, character_id, game_role_id)
-          VALUES ($gameId, $challengeId, $characterId, ${gameRoleId.opt})""".command
+    // The invitation and its subtype in one statement, and nothing if the character is invited already.
+    private val insertOne: Command[(GameId, TournamentId, GameId, TournamentId, CharacterId, CharacterId)] =
+        sql"""WITH made AS (
+                 INSERT INTO invitation (game_id, tournament_id, game_type)
+                 SELECT $gameId, $tournamentId, 'C'
+                  WHERE NOT EXISTS (SELECT 1 FROM character_invitation
+                                     WHERE game_id = $gameId AND tournament_id = $tournamentId
+                                       AND character_id = $characterId)
+                 RETURNING game_id, tournament_id, invitation_id)
+          INSERT INTO character_invitation (game_id, tournament_id, invitation_id, character_id)
+          SELECT game_id, tournament_id, invitation_id, $characterId FROM made""".command
 
-    def create(invitation: CharacterInvitation): IO[CharacterInvitation] =
+    /** Invites a character; inviting one already invited changes nothing. */
+    def invite(game: GameId, tournament: TournamentId, character: CharacterId): IO[Unit] =
+        session.execute(insertOne)((game, tournament, game, tournament, character, character)).void
+
+    // The subtype and the invitation it belongs to, in one statement: the key between them is checked at its end.
+    private val deleteOne: Command[(GameId, TournamentId, CharacterId)] =
+        sql"""WITH gone AS (
+                 DELETE FROM character_invitation
+                  WHERE game_id = $gameId AND tournament_id = $tournamentId AND character_id = $characterId
+                 RETURNING game_id, tournament_id, invitation_id)
+          DELETE FROM invitation i USING gone
+           WHERE i.game_id = gone.game_id AND i.tournament_id = gone.tournament_id
+             AND i.invitation_id = gone.invitation_id""".command
+
+    def revoke(game: GameId, tournament: TournamentId, character: CharacterId): IO[Unit] =
+        session.execute(deleteOne)((game, tournament, character)).void
+
+    private val selectOne: Query[(GameId, TournamentId, CharacterId), Long] =
+        sql"""SELECT count(*) FROM character_invitation
+          WHERE game_id = $gameId AND tournament_id = $tournamentId AND character_id = $characterId""".query(int8)
+
+    def isInvited(game: GameId, tournament: TournamentId, character: CharacterId): IO[Boolean] =
+        session.unique(selectOne)((game, tournament, character)).map(_ > 0)
+
+    // Each invited character with its owner now, if it has one.
+    private val selectAll: Query[(GameId, TournamentId), (Long, String, Option[Long], Option[String])] =
+        sql"""SELECT c.character_id, c.name, p.player_id, p.nickname FROM character_invitation i
+          JOIN "character" c ON c.game_id = i.game_id AND c.character_id = i.character_id
+          LEFT JOIN player p ON p.player_id = c.player_id
+          WHERE i.game_id = $gameId AND i.tournament_id = $tournamentId
+          ORDER BY c.name, c.character_id""".query(int8 *: text *: int8.opt *: text.opt)
+
+    /** Every character invited, by name, with whoever owns it now. */
+    def list(game: GameId, tournament: TournamentId): IO[List[InvitedCharacter]] =
         session
-            .execute(insertInvitation)(
-              (invitation.gameId, invitation.challengeId, invitation.characterId, invitation.gameRoleId)
-            )
-            .as(invitation)
-
-    private val selectInvitation: Query[(GameId, ChallengeId, CharacterId), Option[GameRoleId]] =
-        sql"""SELECT game_role_id FROM character_invitation
-          WHERE game_id = $gameId AND challenge_id = $challengeId AND character_id = $characterId"""
-            .query(gameRoleId.opt)
-
-    /** One character's invitation to one challenge, or `None` if it has not been invited. */
-    def read(gameId: GameId, challengeId: ChallengeId, character: CharacterId): IO[Option[CharacterInvitation]] =
-        session
-            .option(selectInvitation)((gameId, challengeId, character))
-            .map(_.map(role => CharacterInvitation(gameId, challengeId, character, role)))
-
-    // character_id decoded as a raw int8 and wrapped below, for the reason InvitationRepo gives for
-    // its player_id: a trailing opaque-typed codec defeats skunk's twiddle resolution from here.
-    private val selectReservedRoles: Query[(GameId, ChallengeId), (GameRoleId, Long)] =
-        sql"""SELECT game_role_id, character_id FROM character_invitation
-          WHERE game_id = $gameId AND challenge_id = $challengeId AND game_role_id IS NOT NULL
-          ORDER BY game_role_id""".query(gameRoleId *: int8)
-
-    /** The seats held for a particular character, and which. `InvitationRepo.reservedRoles` asked of characters. */
-    def reservedRoles(gameId: GameId, challengeId: ChallengeId): IO[List[(GameRoleId, CharacterId)]] =
-        session
-            .execute(selectReservedRoles)((gameId, challengeId))
-            .map(_.map((role, character) => (role, CharacterId(character))))
-
-    // Addressed to this player through whichever characters they own right now. A started challenge
-    // is left out for InvitationRepo.listForPlayer's reason.
-    //
-    // So is one the character has already accepted. A plain game's list can leave that to the screen,
-    // which filters against the caller's own acceptances -- but a character's acceptance names the
-    // player who made it, and the invitation follows the character: once an accepted character is
-    // transferred, its new owner holds no acceptance to filter by, and would be offered an Accept
-    // (refused, the seat is taken) and a Decline (refused, "already accepted") for a seat somebody
-    // else is sitting in. The invitation row stays; it reappears here if that acceptance is removed.
-    //
-    // And one whose current owner already holds a seat in the challenge, through another character
-    // or as its challenger: `accept` allows one seat per player, so there is nothing for them to
-    // accept either. The same "stays, and reappears" holds.
-    private val selectByOwner: Query[
-      PlayerId,
-      (
-          GameId,
-          ChallengeId,
-          CharacterId,
-          String,
-          Option[GameRoleId],
-          String,
-          GameType,
-          String,
-          String,
-          Option[String],
-          Instant
-      )
-    ] =
-        sql"""SELECT i.game_id, i.challenge_id, i.character_id, c.name, i.game_role_id,
-                 g.display_name, g.game_type, challenger.nickname, ch.message, r.display_name, i.create_date
-          FROM character_invitation i
-          JOIN character c ON c.game_id = i.game_id AND c.character_id = i.character_id
-          JOIN challenge ch ON ch.game_id = i.game_id AND ch.challenge_id = i.challenge_id
-          JOIN game g ON g.game_id = i.game_id
-          JOIN player challenger ON challenger.player_id = ch.challenger
-          LEFT JOIN game_role r ON r.game_id = i.game_id AND r.game_role_id = i.game_role_id
-          WHERE c.player_id = $playerId AND ch.started_match_id IS NULL
-            AND NOT EXISTS (SELECT 1 FROM character_acceptance ca
-                             WHERE ca.game_id = i.game_id
-                               AND ca.challenge_id = i.challenge_id
-                               AND ca.character_id = i.character_id)
-            AND NOT EXISTS (SELECT 1 FROM acceptance a
-                             WHERE a.game_id = i.game_id
-                               AND a.challenge_id = i.challenge_id
-                               AND a.player_id = c.player_id)
-          ORDER BY i.create_date DESC, i.challenge_id, i.character_id"""
-            .query(
-              gameId *: challengeId *: characterId *: text *: gameRoleId.opt *: text *: gameType *: text *: text *:
-                  text.opt *: instant
-            )
-
-    /** Everything this player's characters have been invited to and could still accept, newest first.
-      *
-      * Returned as [[ChallengeInvitation]]s addressed to `player` — the characters' current owner — carrying the
-      * character, so the home page lists them beside a plain game's invitations and accepts with the right character.
-      */
-    def listForOwner(player: PlayerId): IO[List[ChallengeInvitation]] =
-        session
-            .execute(selectByOwner)(player)
-            .map(_.map {
-                case (
-                      game,
-                      challenge,
-                      character,
-                      characterName,
-                      role,
-                      gameName,
-                      kind,
-                      challenger,
-                      message,
-                      roleName,
-                      invitedAt
-                    ) =>
-                    ChallengeInvitation(
-                      Invitation(game, challenge, player, role),
-                      gameName,
-                      kind,
-                      challenger,
-                      message,
-                      roleName,
-                      invitedAt,
-                      Some(CharacterName(character, game, characterName))
-                    )
+            .execute(selectAll)((game, tournament))
+            .map(_.map { (id, name, owner, nickname) =>
+                InvitedCharacter(
+                  CharacterName(CharacterId(id), game, name),
+                  owner.zip(nickname).map((o, n) => PlayerName(PlayerId(o), n))
+                )
             })
-
-    // The accepting player is read through character_acceptance to the acceptance it extends, which
-    // is the row that names a player.
-    private val selectByGame: Query[GameId, (ChallengeId, CharacterId, String, Option[GameRoleId], Option[PlayerId])] =
-        sql"""SELECT i.challenge_id, i.character_id, c.name, i.game_role_id,
-                 (SELECT a.player_id FROM character_acceptance ca
-                    JOIN acceptance a ON a.game_id = ca.game_id AND a.challenge_id = ca.challenge_id
-                                     AND a.game_role_id = ca.game_role_id
-                   WHERE ca.game_id = i.game_id
-                     AND ca.challenge_id = i.challenge_id
-                     AND ca.character_id = i.character_id) AS accepted_by
-          FROM character_invitation i
-          JOIN character c ON c.game_id = i.game_id AND c.character_id = i.character_id
-          WHERE i.game_id = $gameId
-          ORDER BY i.challenge_id, c.name, i.character_id"""
-            .query(challengeId *: characterId *: text *: gameRoleId.opt *: playerId.opt)
-
-    /** Every character invitation in one game, grouped by challenge — `InvitationRepo.listForGame` for characters. */
-    def listForGame(gameId: GameId): IO[Map[ChallengeId, List[InvitedCharacter]]] =
-        session
-            .execute(selectByGame)(gameId)
-            .map(
-              _.map((challenge, character, name, role, accepted) =>
-                  InvitedCharacter(CharacterInvitation(gameId, challenge, character, role), name, accepted)
-              ).groupBy(_.invitation.challengeId)
-            )
-
-    private val deleteOne: Command[(GameId, ChallengeId, CharacterId)] =
-        sql"""DELETE FROM character_invitation
-          WHERE game_id = $gameId AND challenge_id = $challengeId AND character_id = $characterId""".command
-
-    /** Withdraws one invitation — a reject by the character's owner, or a revoke by the challenger. */
-    def delete(gameId: GameId, challengeId: ChallengeId, character: CharacterId): IO[Unit] =
-        session.execute(deleteOne)((gameId, challengeId, character)).void
-
-    private val deleteByChallenge: Command[(GameId, ChallengeId)] =
-        sql"DELETE FROM character_invitation WHERE game_id = $gameId AND challenge_id = $challengeId".command
-
-    /** Every character invitation to one challenge, before the challenge itself is deleted. */
-    def deleteAllForChallenge(gameId: GameId, challengeId: ChallengeId): IO[Unit] =
-        session.execute(deleteByChallenge)((gameId, challengeId)).void
 }

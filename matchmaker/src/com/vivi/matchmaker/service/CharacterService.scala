@@ -7,11 +7,11 @@ import com.vivi.matchmaker.persistence.{CharacterRepo, GameRepo, PlayerRepo, Tex
 /** Records and updates characters, on behalf of the game engines they belong to.
   *
   * A character is made and edited in its game engine, not here: the engine is what knows what a character of its game
-  * is. It builds one with the player and tells matchmaker it exists, so that it can be offered in challenges and seated
-  * in matches, and tells it again whenever the player changes it — its name and description, or who owns it. So every
-  * write here (`create`, `edit`, `transfer`, `updateState`) and the engine's listing (`listForOwner`) is authorized on
-  * behalf of the game: `callerExternalId` must be the externalId of the game the character belongs to. Players only
-  * read here.
+  * is. It builds one with the player and tells matchmaker it exists, so that it can enter challenges and tournaments
+  * and be seated in matches, and tells it again whenever the player changes it — its name and description, or who owns
+  * it. So every write here (`create`, `edit`, `transfer`, `updateState`) and the engine's listing (`listForOwner`) is
+  * authorized on behalf of the game: `callerExternalId` must be the externalId of the game the character belongs to.
+  * Players only read here.
   */
 class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 
@@ -39,9 +39,9 @@ class CharacterService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
 
     /** Another player's characters in one game, by name only.
       *
-      * What a challenger needs in order to invite one of them, and deliberately no more: [[listForGame]]'s reason for
-      * not enumerating another player's characters is their state, which [[CharacterName]] leaves out. The caller must
-      * be registered, as for every other read.
+      * What a player's page shows of them, and deliberately no more: [[listForGame]]'s reason for not enumerating
+      * another player's characters is their state, which [[CharacterName]] leaves out. The caller must be registered,
+      * as for every other read.
       */
     def namesFor(gameId: GameId, playerId: PlayerId, callerExternalId: String): IO[List[CharacterName]] =
         sessionPool.use { session =>

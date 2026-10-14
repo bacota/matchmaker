@@ -15,7 +15,7 @@ to connect means the local server is not up, not that the code is wrong.
 ## Test timeouts are ceilings, not budgets
 
 A DB-backed property spec builds its whole fixture per case — register players, make a game,
-create and accept a challenge, start a match — with four test workers running at once on a JVM
+offer and enter a challenge, start it and choose its roles — with four test workers running at once on a JVM
 that may be cold. Several seconds per case is ordinary, and the first run after a full recompile
 is slower still.
 
@@ -50,7 +50,7 @@ decides what the write does is a read of state that may already be gone by the t
 
 Within that transaction, any `SELECT` whose answer influences an update takes `FOR UPDATE` — see
 `requireMatchForUpdate` and its counterparts in `MatchRepo`, `GameRepo`, `CharacterRepo` and
-`OpenChallengeRepo`. Locking the row is not enough on its own: the decision has to be re-derived
+`TournamentRepo`. Locking the row is not enough on its own: the decision has to be re-derived
 from what was read under the lock. Two things are exempt, and only these two.
 
 ### The exception: a reference table read on the way to a write elsewhere
@@ -64,7 +64,7 @@ whole game's traffic behind one row for no race anybody has.
 
 What this does not excuse is a read of such a table on the way to writing *it* —
 `GameService.createOrUpdate` takes `lockForUpdate` on the game it is about to rewrite — or a read
-of a contended table (`match`, `participant`, `open_challenge`, `acceptance`, `result`) merely
+of a contended table (`match`, `participant`, `tournament`, `entrant`, `result`) merely
 because the write lands on a different one. The exception is about the asymmetry: slow read, fast
 write. Where an existence check has to outlive the insert that relies on it, `FOR SHARE` is the
 middle course — `GameRepo.lockForShare` and `PlayerRepo.readForShare` exist for it, and
@@ -73,7 +73,7 @@ making two inserts against it queue behind each other.
 
 Say so at the read. An unlocked `SELECT` inside a transaction that writes looks like the mistake
 this rule is about, so the exception is written down where it is being taken — the comments on
-`requireGame` in `GameEngineService` and `OpenChallengeService` are that note.
+`requireGame` in `TournamentService` and `TournamentRounds` are that note.
 
 ### The exception: a call to an external service
 
@@ -85,8 +85,10 @@ So a call that writes both before and after an engine request is two transaction
 the middle, and **nothing read before the gap may be assumed still true after it**. Start a fresh
 transaction for the second half and re-read, `FOR UPDATE`, anything the writes there depend on —
 including the row the first half wrote, whose state somebody else may have changed while the
-engine was answering. `GameEngineService.start` is the worked example: transaction A claims the
-challenge, the engine creates its game, and transaction B re-reads under lock to finish.
+engine was answering. `TournamentRounds.createMatch` is the worked example: transaction A claims the
+due match under its tournament's and its own locks, the engine creates its game
+(`GameEngineService.launchTournamentMatch`), and what follows writes only the urls the engine answered
+with, since anything else on the row may have changed meanwhile.
 
 The other half of that gap is that the second half cannot be undone by rolling back the first —
 once the engine has made its game, the only way out is forward. Repairing rather than unwinding

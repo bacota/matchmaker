@@ -1,10 +1,12 @@
 package com.vivi.matchmaker.service
 
+import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.TestMigration
 import com.vivi.matchmaker.archive.ArchiveStore
 import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.engine.GameEngineClient
+import com.vivi.matchmaker.model.{GameId, MatchId, TournamentId}
 import com.vivi.matchmaker.notify.{MailSettings, Notifier}
 import com.vivi.matchmaker.persistence.TextCodec.given
 
@@ -56,6 +58,38 @@ object TestServices {
         matchEndings: Option[MatchEndings] = None
     ): Services[String] =
         Services.fromPool[String](pool, engine, callbackBaseUrl, notifier, mail, archiveStore, matchEndings)
+
+    /** As [[servicesWith]], with every ending, round and match the queue would settle settled in the call that says it,
+      * rather than on a fiber of its own that nothing waits for.
+      *
+      * For a spec about what those send: a match created from a round mails its players as it is created, and a spec
+      * that went on as soon as the round was begun would be looking at the mail before it was written. Safe on the test
+      * pool, which is large enough that a settlement borrowing a connection while its caller holds one finds one free
+      * -- the reason the real inline queue does not do this.
+      */
+    def servicesInline(
+        engine: GameEngineClient,
+        callbackBaseUrl: Option[String] = None,
+        notifier: Notifier = Notifier.disabled,
+        mail: MailSettings = MailSettings.none
+    ): Services[String] = {
+        lazy val built: Services[String] =
+            servicesWith(engine, callbackBaseUrl, notifier, mail, matchEndings = Some(inline))
+        lazy val inline: MatchEndings = new MatchEndings {
+            def ended(gameId: GameId, matchId: MatchId): IO[Unit] = built.ending.settle(gameId, matchId).void
+            def ratingsChanged(gameId: GameId): IO[Unit] = built.ending.rank(gameId).void
+            override def tournamentMatchDue(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Unit] =
+                built.rounds.createMatch(gameId, tournamentId, matchId).void
+            override def tournamentRoundDue(gameId: GameId, tournamentId: TournamentId): IO[Unit] =
+                built.rounds.autoStart(gameId, tournamentId).void
+            override def tournamentRoundCheck(
+                gameId: GameId,
+                tournamentId: TournamentId,
+                checkedAt: java.time.Instant
+            ): IO[Unit] = built.rounds.runCheck(gameId, tournamentId).void
+        }
+        built
+    }
 
     /** What a deployment that can send mail is configured with. `MailSettings.none` is the default above, so a test
       * says nothing about notifications unless it is about them.

@@ -313,16 +313,8 @@ locals {
     # rather than deleted, so this is a POST and not a DELETE.
     "POST /me/notifications/retry",
     "PUT /me/notifications/games/{gameId}",
-    "GET /me/acceptances",
-    # What the caller has been asked to play, across every game — the invitations half of the list
-    # above, and the one invitation route that is not about a challenge the caller already holds.
-    "GET /me/invitations",
-    # Turning one down, which is the invitee's side. Under /me because the caller is the
-    # invitation -- there is no player id for the path to carry. The challenger's side is the
-    # revoke below, on the challenge itself.
-    "DELETE /me/invitations/{gameId}/{challengeId}",
-    # The same for a character game's invitation, which names a character.
-    "DELETE /me/character-invitations/{gameId}/{challengeId}/{characterId}",
+    # The open challenges the caller owns, has entered or is invited to, in every game.
+    "GET /me/challenges",
     "GET /me/matches",
     "GET /me/matches/due",
     "GET /me/matches/completed",
@@ -347,7 +339,10 @@ locals {
     "GET /games/{gameId}/ratings",
     "GET /games/{gameId}/ratings/{playerId}",
     "PUT /games/{gameId}/ratings/{playerId}",
+    # A game's open challenges, and offering one: a tournament of the challenge model, opened and
+    # entered in one call. Everything after that is the tournament routes below.
     "GET /games/{gameId}/challenges",
+    "POST /games/{gameId}/challenges",
     "GET /games/{gameId}/characters",
     # Another player's characters by name, for inviting one. No state.
     "GET /games/{gameId}/players/{playerId}/characters",
@@ -361,21 +356,7 @@ locals {
     # No route that changes a character either: every edit — name, description, owner, state — is
     # made in the character's game engine, and is among the engine's routes below.
 
-    "POST /challenges",
-    "DELETE /challenges/{gameId}/{challengeId}",
-    "POST /challenges/{gameId}/{challengeId}/acceptances",
-    "DELETE /challenges/{gameId}/{challengeId}/acceptances/{playerId}",
-    # Asking particular players to a challenge, and then removing an invitation. The POST is
-    # the challenger's alone; DELETE lets the invitee reject their own invitation or the challenger
-    # revoke it. The create route above carries the invitations a challenge starts with.
-    "POST /challenges/{gameId}/{challengeId}/invitations",
-    "DELETE /challenges/{gameId}/{challengeId}/invitations/{playerId}",
-    # A character game's invitations name characters, not players.
-    "POST /challenges/{gameId}/{challengeId}/character-invitations",
-    "DELETE /challenges/{gameId}/{challengeId}/character-invitations/{characterId}",
-    # Turning a challenge into a match, and the two match routes that go with it. All three are
-    # player actions: the challenger starts, and a participant reads or refreshes.
-    "POST /challenges/{gameId}/{challengeId}/start",
+    # A match, read or refreshed by a participant.
     "GET /games/{gameId}/matches/{matchId}",
     "POST /games/{gameId}/matches/{matchId}/refresh",
     # Calling a match off, which only its creator may do.
@@ -400,6 +381,9 @@ locals {
     "POST /games/{gameId}/tournaments/{tournamentId}/cancel",
     "POST /games/{gameId}/tournaments/{tournamentId}/invitations",
     "DELETE /games/{gameId}/tournaments/{tournamentId}/invitations/{playerId}",
+    # A character game's invitations name characters.
+    "POST /games/{gameId}/tournaments/{tournamentId}/character-invitations",
+    "DELETE /games/{gameId}/tournaments/{tournamentId}/character-invitations/{characterId}",
     "POST /games/{gameId}/tournaments/{tournamentId}/entries",
     "DELETE /games/{gameId}/tournaments/{tournamentId}/entries/{entrantId}",
     # The models a game's tournaments are made from: listed for anyone, and made, edited, removed and

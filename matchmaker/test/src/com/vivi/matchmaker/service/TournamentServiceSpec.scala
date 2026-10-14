@@ -67,6 +67,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assertEquals(t.owner, f.owner.playerId)
         assertEquals(t.tournamentModelId, f.model("single-elimination").tournamentModelId)
         assertEquals(detail.design, f.model("single-elimination").design)
+        assertEquals(detail.gameType, GameType.Plain)
         // The model suggests no pool size, so the default is the game's R.
         assertEquals(t.defaultPoolSize, f.game.poolSeats)
     }
@@ -138,6 +139,113 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         assert(invited.isRight && owner.isRight)
     }
 
+    private def characterOf(f: Fixture, owner: Player): IO[Character[String]] =
+        TestSession.resource.use(
+          new CharacterRepo[String](_).create(Generators.genCharacter(f.game.gameId, Some(owner.playerId)).sample.get)
+        )
+
+    private def invitational(f: Fixture): IO[Tournament] =
+        for {
+            t <- tournaments.create(
+              f.game.gameId,
+              request(f, settings = TournamentSettings(roundDuration = Some(Duration.ofDays(1)))),
+              f.owner.externalId
+            )
+            _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
+        } yield t
+
+    // In a character game the character plays, so it is the character that is invited -- and whoever owns it when the
+    // invitation is answered may enter with it, which is how an invitation follows a character handed on.
+    test("in a character game an invitation is a character's, and follows it to a new owner") {
+        val (asPlayer, otherCharacter, formerOwner, newOwner, listed) = run(for {
+            f <- fixture(2, GameType.Character)
+            t <- invitational(f)
+            invited <- characterOf(f, f.players.head)
+            other <- characterOf(f, f.players.head)
+            asPlayer <- tournaments
+                .invite(f.game.gameId, t.tournamentId, f.players.head.playerId, f.owner.externalId)
+                .attempt
+            _ <- tournaments.inviteCharacter(f.game.gameId, t.tournamentId, invited.characterId, f.owner.externalId)
+            otherCharacter <- tournaments
+                .enter(f.game.gameId, t.tournamentId, Some(other.characterId), f.players.head.externalId)
+                .attempt
+            // Handed on before the invitation is answered.
+            _ <- TestSession.resource.use(
+              new CharacterRepo[String](_).update(invited.copy(playerId = Some(f.players(1).playerId)))
+            )
+            formerOwner <- tournaments
+                .enter(f.game.gameId, t.tournamentId, Some(invited.characterId), f.players.head.externalId)
+                .attempt
+            d <- tournaments.detail(f.game.gameId, t.tournamentId, f.owner.externalId)
+            newOwner <- tournaments
+                .enter(f.game.gameId, t.tournamentId, Some(invited.characterId), f.players(1).externalId)
+                .attempt
+        } yield (asPlayer, otherCharacter, formerOwner, newOwner, d.invitedCharacters))
+        assert(asPlayer.left.exists(_.isInstanceOf[ValidationError]), asPlayer)
+        assert(otherCharacter.left.exists(_.isInstanceOf[UnauthorizedError]), otherCharacter)
+        assert(formerOwner.isLeft, formerOwner)
+        assert(newOwner.isRight, newOwner)
+        assertEquals(listed.size, 1)
+        assert(listed.head.owner.nonEmpty)
+    }
+
+    test("a character's invitation is turned down by its owner, or revoked by the tournament's, and by nobody else") {
+        val (stranger, declined, afterDecline, revoked) = run(for {
+            f <- fixture(2, GameType.Character)
+            t <- invitational(f)
+            first <- characterOf(f, f.players.head)
+            second <- characterOf(f, f.players.head)
+            _ <- tournaments.inviteCharacter(f.game.gameId, t.tournamentId, first.characterId, f.owner.externalId)
+            _ <- tournaments.inviteCharacter(f.game.gameId, t.tournamentId, second.characterId, f.owner.externalId)
+            stranger <- tournaments
+                .revokeCharacter(f.game.gameId, t.tournamentId, first.characterId, f.players(1).externalId)
+                .attempt
+            declined <- tournaments
+                .revokeCharacter(f.game.gameId, t.tournamentId, first.characterId, f.players.head.externalId)
+                .attempt
+            d <- tournaments.detail(f.game.gameId, t.tournamentId, f.owner.externalId)
+            revoked <- tournaments
+                .revokeCharacter(f.game.gameId, t.tournamentId, second.characterId, f.owner.externalId)
+                .attempt
+        } yield (stranger, declined, d.invitedCharacters.map(_.character.characterId), revoked))
+        assert(stranger.left.exists(_.isInstanceOf[UnauthorizedError]), stranger)
+        assert(declined.isRight && revoked.isRight)
+        assertEquals(afterDecline.size, 1)
+    }
+
+    test("a closed challenge of a character game invites characters, and its invitee sees it as theirs to answer") {
+        val (asPlayer, mine, theirs) = run(for {
+            f <- fixture(2, GameType.Character)
+            own <- characterOf(f, f.owner)
+            invited <- characterOf(f, f.players.head)
+            asPlayer <- tournaments
+                .createChallenge(
+                  f.game.gameId,
+                  ChallengeRequest(
+                    characterId = Some(own.characterId),
+                    open = false,
+                    invitations = List(f.players.head.playerId)
+                  ),
+                  f.owner.externalId
+                )
+                .attempt
+            made <- tournaments.createChallenge(
+              f.game.gameId,
+              ChallengeRequest(
+                characterId = Some(own.characterId),
+                open = false,
+                characterInvitations = List(invited.characterId)
+              ),
+              f.owner.externalId
+            )
+            mine <- tournaments.challengesFor(f.players.head.externalId)
+            theirs <- tournaments.challengesFor(f.players(1).externalId)
+        } yield (asPlayer, mine.find(_.summary.tournament.tournamentId == made.tournamentId), theirs))
+        assert(asPlayer.left.exists(_.isInstanceOf[ValidationError]), asPlayer)
+        assert(mine.exists(c => c.summary.invited && c.invitedCharacters.nonEmpty), mine)
+        assert(theirs.isEmpty, theirs)
+    }
+
     test("a rating outside the tournament's limits is refused") {
         val refused = refusal(for {
             f <- fixture(1)
@@ -160,7 +268,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
     }
 
     test("a character game's entry is one of the caller's characters") {
-        val (none, theirs, mine) = run(for {
+        val (none, theirs, mine, gameType) = run(for {
             f <- fixture(2, GameType.Character)
             t <- tournaments.create(f.game.gameId, request(f), f.owner.externalId)
             _ <- tournaments.open(f.game.gameId, t.tournamentId, f.owner.externalId)
@@ -177,7 +285,10 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                 .enter(f.game.gameId, t.tournamentId, Some(other.characterId), f.players.head.externalId)
                 .attempt
             mine <- tournaments.enter(f.game.gameId, t.tournamentId, Some(own.characterId), f.players.head.externalId)
-        } yield (none, theirs, mine))
+            // The page asks for a character by the game's type, which the detail carries for a client without the game.
+            detail <- tournaments.detail(f.game.gameId, t.tournamentId, f.players.head.externalId)
+        } yield (none, theirs, mine, detail.gameType))
+        assertEquals(gameType, GameType.Character)
         assert(none.left.exists(_.isInstanceOf[ValidationError]))
         assert(theirs.left.exists(_.isInstanceOf[ValidationError]))
         assert(mine.characterId.isDefined)

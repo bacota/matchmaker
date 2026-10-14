@@ -22,26 +22,23 @@ import com.vivi.matchmaker.model.GameType
 class TournamentSchemaSpec extends FunSuite with QuietTests {
     TestMigration.ensure()
 
-    private case class Ids(game: Int, gameType: String, player: Long, challenge: Long, role: Int, tournament: Long)
+    private case class Ids(game: Int, gameType: String, player: Long, role: Int, tournament: Long, character: Long)
 
     private def exec(session: Session[IO], statement: String): IO[Unit] =
         session.execute(sql"#$statement".command).void
 
     private def long(session: Session[IO], query: String): IO[Long] = session.unique(sql"#$query".query(int8))
 
-    /** A game, a player in it with a challenge, and a tournament copied from a one-stage model: its atomic stage, root
-      * pool, first round and one atomic pool, and the player entered.
+    /** A game, a player in it, and a tournament copied from a one-stage model: its atomic stage, root pool, first round
+      * and one atomic pool, and the player entered.
       */
     private def tournament(session: Session[IO]): IO[Ids] =
         for {
-            made <- Generators.gameWithChallenge(session)
-            (game, challengeId) = made
+            made <- Generators.gameWithOwner(session)
+            (game, owner) = made
             g = game.gameId.value
             gameType = if (game.gameType == GameType.Character) "C" else "P"
-            player <- long(
-              session,
-              s"SELECT challenger FROM challenge WHERE game_id = $g AND challenge_id = ${challengeId.value}"
-            )
+            player = owner.value
             role = game.roles.head.gameRoleId.value
             // A model of its own, unclassified so that no spec's sync takes it for one the code dropped.
             model = s"'test-schema-${java.util.UUID.randomUUID()}'"
@@ -92,13 +89,24 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
               session,
               s"INSERT INTO atomic_pool (game_id, tournament_id, pool_id, stage_id) VALUES ($g, $t, $pool, $stage)"
             )
+            // The player's character, which a character game's entry names.
+            character <- long(session, s"SELECT character_id FROM character WHERE game_id = $g AND player_id = $player")
+            entrant <- long(
+              session,
+              s"""INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
+                  VALUES ($g, $t, '$gameType', 1500) RETURNING entrant_id"""
+            )
             _ <- exec(
               session,
-              s"""INSERT INTO entrant (game_id, tournament_id, game_type, player_id, rating_at_entry)
-                  VALUES ($g, $t, '$gameType', $player, 1500)"""
+              if (gameType == "C")
+                  s"""INSERT INTO character_entrant (game_id, tournament_id, entrant_id, character_id)
+                      VALUES ($g, $t, $entrant, $character)"""
+              else
+                  s"""INSERT INTO player_entrant (game_id, tournament_id, entrant_id, player_id)
+                      VALUES ($g, $t, $entrant, $player)"""
             )
             _ <- exec(session, "SET CONSTRAINTS ALL IMMEDIATE")
-        } yield Ids(g, gameType, player, challengeId.value, role, t)
+        } yield Ids(g, gameType, player, role, t, character)
 
     /** Whether `statement` is refused, leaving the transaction as it was either way. */
     private def refused(session: Session[IO], xa: Transaction[IO], statement: String): IO[Boolean] =
@@ -119,9 +127,9 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
         val (columns, values) = extra.split(";").filter(_.nonEmpty).map(_.split("=", 2)).map(a => (a(0), a(1))).unzip
         val more = columns.map(", " + _).mkString
         val moreValues = values.map(", " + _).mkString
-        s"""INSERT INTO match (game_id, match_id, creator, description, settings, tournament_id, pool_id, round, stage_id,
+        s"""INSERT INTO match (game_id, match_id, description, settings, tournament_id, pool_id, round, stage_id,
                                status$more)
-            SELECT ${ids.game}, '$id', ${ids.player}, '', '{}', ${ids.tournament}, p.pool_id, 1, p.stage_id, '$status'$moreValues
+            SELECT ${ids.game}, '$id', '', '{}', ${ids.tournament}, p.pool_id, 1, p.stage_id, '$status'$moreValues
             FROM atomic_pool p WHERE p.game_id = ${ids.game} AND p.tournament_id = ${ids.tournament}"""
     }
 
@@ -139,13 +147,14 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
         assert(!ok, "a scheduled tournament match was refused")
     }
 
-    test("a match from both a challenge and a tournament is refused") {
+    test("a match outside any tournament is refused") {
         assert(inRolledBack { (session, xa) =>
             tournament(session).flatMap { ids =>
                 refused(
                   session,
                   xa,
-                  tournamentMatch(ids, Generators.newMatchId().value.toString, "S", s"challenge_id=${ids.challenge}")
+                  s"""INSERT INTO match (game_id, match_id, description, settings, start, status)
+                      VALUES (${ids.game}, ${Generators.newMatchId().value}, '', '{}', now(), 'P')"""
                 )
             }
         })
@@ -188,8 +197,8 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
         })
     }
 
-    test("a challenge's seat must have a role, while a tournament's may wait for one") {
-        val (challengeSeat, tournamentSeat) = inRolledBack { (session, xa) =>
+    test("a seat may wait for its role, and must name the entrant it plays for") {
+        val (withoutEntrant, withoutRole) = inRolledBack { (session, xa) =>
             for {
                 ids <- tournament(session)
                 matchId = Generators.newMatchId().value.toString
@@ -198,32 +207,57 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
                   session,
                   s"SELECT entrant_id FROM entrant WHERE game_id = ${ids.game} AND tournament_id = ${ids.tournament}"
                 )
-                seat = (origin: String, value: Long, more: String) =>
-                    s"""INSERT INTO participant (game_id, game_type, match_id, player_id, $origin, notify_match_started,
-                                                notify_turn_taken, notify_your_turn, notify_match_ended$more)
-                        VALUES (${ids.game}, '${ids.gameType}', '$matchId', ${ids.player}, $value, true, true, true, true"""
-                // A challenge seat in the challenge's own match, rated but with no role: the role is what is refused.
-                challengeMatch = Generators.newMatchId().value.toString
-                _ <- exec(
-                  session,
-                  s"""INSERT INTO match (game_id, match_id, challenge_id, creator, description, settings, start, status)
-                      VALUES (${ids.game}, '$challengeMatch', ${ids.challenge}, ${ids.player}, '', '{}', now(), 'P')"""
-                )
-                challengeSeat <- refused(
-                  session,
-                  xa,
-                  seat("challenge_id", ids.challenge, ", elo_start")
-                      .replace(s"'$matchId'", s"'$challengeMatch'") + ", 1500)"
-                )
-                tournamentSeat <- refused(
-                  session,
-                  xa,
-                  seat("tournament_id", ids.tournament, ", entrant_id") + s", $entrant)"
-                )
-            } yield (challengeSeat, tournamentSeat)
+                // The seat and its subtype in one statement, so that the deferred key between them is satisfied when
+                // `refused` checks every constraint.
+                subtype =
+                    if (ids.gameType == "C")
+                        s"""INSERT INTO character_participant (game_id, participant_id, character_id, tournament_id,
+                                                               entrant_id)
+                            SELECT game_id, participant_id, ${ids.character}, tournament_id, entrant_id FROM seat"""
+                    else
+                        """INSERT INTO player_participant (game_id, participant_id, tournament_id, entrant_id)
+                            SELECT game_id, participant_id, tournament_id, entrant_id FROM seat"""
+                seat = (more: String, values: String) => s"""WITH seat AS (
+                          INSERT INTO participant (game_id, game_type, match_id, player_id, tournament_id,
+                                                   notify_match_started, notify_turn_taken, notify_your_turn,
+                                                   notify_match_ended$more)
+                          VALUES (${ids.game}, '${ids.gameType}', '$matchId', ${ids.player}, ${ids.tournament}, true,
+                                  true, true, true$values)
+                          RETURNING game_id, participant_id, tournament_id, entrant_id)
+                        $subtype"""
+                withoutEntrant <- refused(session, xa, seat("", ""))
+                withoutRole <- refused(session, xa, seat(", entrant_id", s", $entrant"))
+            } yield (withoutEntrant, withoutRole)
         }
-        assert(challengeSeat, "a challenge seat with no role was accepted")
-        assert(!tournamentSeat, "a tournament seat with no role was refused")
+        assert(withoutEntrant, "a seat with no entrant was accepted")
+        assert(!withoutRole, "a seat waiting for its role was refused")
+    }
+
+    test("an entry may not lack the subtype its game's type says, nor have the other kind's") {
+        val (missing, wrong) = inRolledBack { (session, xa) =>
+            for {
+                ids <- tournament(session)
+                // A character game's entry with no character_entrant row.
+                missing <- refused(
+                  session,
+                  xa,
+                  s"""INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
+                      VALUES (${ids.game}, ${ids.tournament}, '${ids.gameType}', 1500)"""
+                )
+                // And one given a player's subtype instead.
+                wrong <- refused(
+                  session,
+                  xa,
+                  s"""WITH e AS (INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
+                                 VALUES (${ids.game}, ${ids.tournament}, '${ids.gameType}', 1500)
+                                 RETURNING game_id, tournament_id, entrant_id)
+                      INSERT INTO player_entrant (game_id, tournament_id, entrant_id, player_id)
+                      SELECT game_id, tournament_id, entrant_id, ${ids.player} FROM e"""
+                )
+            } yield (missing, wrong)
+        }
+        assert(missing, "an entry with no subtype row was accepted")
+        assert(wrong, "an entry with the other kind's subtype was accepted")
     }
 
     test("a stage of one kind may not lack its subtype row, nor have the other kind's") {

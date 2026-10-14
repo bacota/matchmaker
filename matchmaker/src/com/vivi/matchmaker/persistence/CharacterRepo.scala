@@ -71,9 +71,9 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
 
     /** As `read`, holding the row against deletion until the transaction ends without queuing other readers behind it.
       *
-      * For an existence check that has to outlive the insert relying on it — a `character_invitation` references the
-      * character it names (see `ChallengeService.inviteCharacter`). `FOR SHARE` rather than `FOR UPDATE` because the
-      * row is not written here, and two invitations to one character need not wait on each other.
+      * For an existence check that has to outlive the insert relying on it — an entry with a character references it
+      * (see `TournamentService.enter`). `FOR SHARE` rather than `FOR UPDATE` because the row is not written here, and
+      * two entries naming one character need not wait on each other.
       */
     def readForShare(id: CharacterId): IO[Option[Character[T]]] =
         session

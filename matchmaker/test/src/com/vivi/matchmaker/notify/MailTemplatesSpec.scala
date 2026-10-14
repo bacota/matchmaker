@@ -31,22 +31,22 @@ class MailTemplatesSpec extends FunSuite {
 
     /* A value may begin with a space, written "\ " in the file, because some clauses are spliced
      * straight after a word. Properties would otherwise drop it, and the mail would read
-     * "your Chess challenge"best of three"". */
+     * "your Chess tournament"Spring Open"". */
     test("a clause that must begin with a space does") {
         assertEquals(MailTemplates.render("mail.quoted", "description" -> "best of three"), " \"best of three\"")
     }
 
     // How an optional clause disappears: the sentence is one template, and the clause is empty.
     test("an empty variable leaves the sentence reading correctly") {
-        val withoutEither = MailTemplates.render(
+        val unquoted = MailTemplates.render(
           "mail.challenge.accepted.body",
           "actor" -> "bob",
           "game" -> "Chess",
+          "what" -> "challenge",
           "quoted" -> "",
-          "role" -> "",
-          "roster" -> "Every role is now taken."
+          "roster" -> "It is now full."
         )
-        assertEquals(withoutEither, "bob has accepted your Chess challenge.\nEvery role is now taken.")
+        assertEquals(unquoted, "bob has entered your Chess challenge.\nIt is now full.")
     }
 
     // A player's own text is not a template. A nickname with a dollar in it used to be a

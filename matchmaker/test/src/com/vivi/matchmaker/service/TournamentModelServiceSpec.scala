@@ -18,7 +18,7 @@ import com.vivi.matchmaker.persistence.{
     Generators,
     PlayerRepo,
     TestSession,
-    TournamentInvitationRepo,
+    InvitationRepo,
     TournamentModelRepo,
     TournamentRepo
 }
@@ -174,11 +174,11 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
             draft <- tournamentFrom(game, model, admin)
             // Invited, but not entered.
             _ <- TestSession.resource.use(
-              new TournamentInvitationRepo(_).invite(game.gameId, draft.tournamentId, player.playerId)
+              new InvitationRepo(_).invite(game.gameId, draft.tournamentId, player.playerId)
             )
             synced <- siteAdmin.flatMap(a => models.sync(a.externalId))
             left <- TestSession.resource.use(new TournamentRepo(_).read(game.gameId, draft.tournamentId))
-            invited <- count("tournament_invitation", draft)
+            invited <- count("invitation", draft)
             stages <- count("stage", draft)
             pools <- count("pool", draft)
             _ = assertEquals((invited, stages, pools), (0L, 0L, 0L))

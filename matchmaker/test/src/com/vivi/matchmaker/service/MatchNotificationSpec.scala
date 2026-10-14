@@ -99,7 +99,7 @@ class MatchNotificationSpec extends PropertySuite {
         // say; everything else wants the plain recorder.
         notifier: RecordingNotifier = new RecordingNotifier
     ): IO[Fixture] = {
-        val services = TestServices.servicesWith(
+        val services = TestServices.servicesInline(
           engine,
           callbackBaseUrl = Some("https://matchmaker.example.com"),
           notifier = notifier,
@@ -112,35 +112,24 @@ class MatchNotificationSpec extends PropertySuite {
                 .register(s"challenger-$seed", s"challenger-$seed", Some(s"challenger-$seed@example.com"))
             accepter <- services.registration
                 .register(s"accepter-$seed", s"accepter-$seed", Some(s"accepter-$seed@example.com"))
-            challenge <- services.challenges.create(
-              PlainChallenge(
-                ChallengeId(0),
-                challenger.playerId,
-                "friendly game",
-                start = None,
-                timeLimit = timeLimit,
-                settings = "{}",
-                gameId = game.gameId,
-                isPublic = true,
-                gameRoleId = Some(game.roles.head.gameRoleId),
-                timeLimitKind = TimeLimitKind.PerTurn,
-                timeLimitUnit = TimeLimitUnit.Minutes
+            made <- Challenges.startedMatch(
+              services,
+              game,
+              List(
+                Challenges.Seat(challenger, game.roles(0).gameRoleId),
+                Challenges.Seat(accepter, game.roles(1).gameRoleId)
               ),
-              s"challenger-$seed"
+              roundDuration = timeLimit,
+              isPublic = true
             )
-            _ <- services.challenges.accept(
-              game.gameId,
-              challenge.challengeId,
-              None,
-              game.roles(1).gameRoleId,
-              s"accepter-$seed"
+            played <- TestSession.resource.use(session =>
+                new com.vivi.matchmaker.persistence.MatchRepo(session).read(game.gameId, made._2).map(_.get)
             )
-            played <- services.engine.start(game.gameId, challenge.challengeId, s"challenger-$seed")
             seats <- TestSession.resource.use { session =>
                 new ParticipantRepo(session).listForMatch(game.gameId, played.matchId).map(_.map((p, _, _) => p))
             }
-            // The accept and the start have both sent mail of their own. Every property below is
-            // about what happens next.
+            // The entry and the start have both sent mail of their own. Every property below is about
+            // what happens next.
             _ <- IO(notifier.clear())
         } yield Fixture(services, notifier, game, played, challenger, accepter, seats)
     }
@@ -412,7 +401,7 @@ class MatchNotificationSpec extends PropertySuite {
     }
 
     // Cancelling is somebody in the match's doing, so that somebody is the one person not told.
-    property("cancelling tells everyone but the creator who did it") {
+    property("cancelling tells everyone but the owner who did it") {
         forAll(genUniqueString) { seed =>
             val result = fixture(seed).flatMap { f =>
                 f.services.matches.cancel(f.game.gameId, f.played.matchId, f.challenger.externalId).map { _ =>

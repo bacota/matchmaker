@@ -12,7 +12,8 @@ package standard
   *
   * The designs are built for a game of two players. Where a format's pool size follows the game, a stage leaves it
   * unset, to be the tournament's default pool size -- the game's R unless whoever creates it says otherwise -- and a
-  * game whose R does not suit a format's fixed sizes is one whose admins leave it unoffered.
+  * game whose R does not suit a format's fixed sizes is one whose admins leave it unoffered. `chooseRoles` is what a
+  * tournament made from it starts with: every match's seats choose their roles.
   */
 abstract class StandardModel(
     val id: String,
@@ -21,7 +22,8 @@ abstract class StandardModel(
     val description: String,
     val classification: String,
     val poolSize: Option[Int] = None,
-    val lateEntries: Boolean = false
+    val lateEntries: Boolean = false,
+    val chooseRoles: Boolean = false
 ) {
     def design: TournamentDesign
 
@@ -35,7 +37,8 @@ abstract class StandardModel(
           Some(classification),
           poolSize,
           lateEntries,
-          design
+          design,
+          chooseRoles = chooseRoles
         )
 }
 
@@ -43,6 +46,7 @@ object StandardModels {
 
     /** Every model the code defines: what the sync makes the stored models. A new model's object is added here. */
     val all: List[StandardModel] = List(
+      Challenge,
       SingleElimination,
       SingleEliminationConsolation,
       ModifiedDoubleElimination,

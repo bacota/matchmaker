@@ -10,14 +10,12 @@ import java.time.{Duration, Instant}
   * empty until the engine has answered, which is the state a match is in for the moment between being written and the
   * create call returning.
   *
-  * `creator` is the player whose match this is: the one who may cancel it. For a match started from a challenge
-  * (`challengeId`) that is the challenger, copied onto the match when it is started. A match need not come from a
-  * challenge at all — a tournament's are created by the tournament — and holding the creator on the match itself is
-  * what lets every listing and the cancel say whose a match is without joining a challenge that may not exist.
+  * Every match is a tournament's (`tournamentId`) — a challenge is the simplest tournament, of one match — and is its
+  * tournament's owner's: the one who may cancel it. That is read through the tournament, not copied onto the match.
   *
   * `completedAt` and `cancelled` are separate rather than one status, because they answer different questions. A
-  * completed match was played to an end the engine reported; a cancelled one was called off by its creator and has no
-  * result and never will. Both are over.
+  * completed match was played to an end the engine reported; a cancelled one was called off by its tournament's owner
+  * and has no result and never will. Both are over.
   *
   * `completedAt` is a time rather than a flag so that a finished match can say when it finished — a history in no
   * particular order is not much of a history. `completed` is kept beside it as a derived answer to the question most
@@ -25,9 +23,9 @@ import java.time.{Duration, Instant}
   *
   * `status` says where the match is in its life, and is the source of truth: a tournament's match is written when its
   * pool is formed, long before the engine has a game for it, and spends that time [[MatchStatus.Scheduled]],
-  * [[MatchStatus.Choosing]] and [[MatchStatus.Due]], with no urls and no `start`. A challenge's match is created in the
-  * engine as it is written, so it begins [[MatchStatus.InProgress]]. [[MatchStatus.Finished]] is completed or
-  * cancelled, which the database holds in step with `completedAt` and `cancelled`.
+  * [[MatchStatus.Choosing]] and [[MatchStatus.Due]], with no urls and no `start`, until it is created in the engine and
+  * is [[MatchStatus.InProgress]]. [[MatchStatus.Finished]] is completed or cancelled, which the database holds in step
+  * with `completedAt` and `cancelled`.
   */
 enum MatchStatus(val code: String) {
     case Scheduled extends MatchStatus("S")
@@ -48,8 +46,7 @@ object MatchStatus {
 case class Match(
     gameId: GameId,
     matchId: MatchId,
-    challengeId: Option[ChallengeId],
-    creator: PlayerId,
+    tournamentId: TournamentId,
     description: String,
     completedAt: Option[Instant],
     /** When play began: set when the match is created in the engine, and `None` until then. */
@@ -61,15 +58,15 @@ case class Match(
     statusUrl: Option[String] = None,
     playUrl: Option[String] = None,
     publicUrl: Option[String] = None,
-    /** What `timeLimit` is a limit on: each turn separately, or the player's whole match. Copied from the challenge
-      * along with the limit itself, so that editing the challenge afterwards cannot change the terms of a match already
-      * being played under it.
+    /** What `timeLimit` is a limit on: each turn separately, or the player's whole match. Set from its tournament's
+      * round duration when it is created in the engine (`Clock.forMatch`), so that editing the tournament afterwards
+      * cannot change the terms of a match already being played.
       */
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
-    /** The unit the challenger offered `timeLimit` in, carried forward with it. */
+    /** The unit `timeLimit` is shown in. */
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
-    /** Whether this match is played live — see `Challenge.live`, which it is copied from. A live match's seats are
-      * never pending here and never due: the engine runs its turns and their clock, and reports only the result.
+    /** Whether this match is played live, as its tournament is. A live match's seats are never pending here and never
+      * due: the engine runs its turns and their clock, and reports only the result.
       */
     live: Boolean = false,
     /** Whether this is a friendly match. Every match is, unless it is classified otherwise. */

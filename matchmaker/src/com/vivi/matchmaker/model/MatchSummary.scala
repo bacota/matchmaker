@@ -15,12 +15,12 @@ import java.time.{Duration, Instant}
   *   when the match was played to an end, if it was — the database's clock, stamped once. `completed` is derived from
   *   it, as on `Match`, so a list can both ask whether a match is finished and say when
   * @param cancelled
-  *   whether the creator called the match off; a cancelled match is over but has no result, and is listed with the
-  *   finished ones rather than the active ones
-  * @param isCreator
-  *   whether this player is the one who created the match — the challenger of the challenge it was started from, and
-  *   the only player who may cancel it. A property of the pair, not of the match, which is why it belongs on a read
-  *   model that is already scoped to one player
+  *   whether its tournament's owner called the match off; a cancelled match is over but has no result, and is listed
+  *   with the finished ones rather than the active ones
+  * @param isOwner
+  *   whether this player owns the match — owns the tournament it is played in, and so is the only player who may cancel
+  *   it. A property of the pair, not of the match, which is why it belongs on a read model that is already scoped to
+  *   one player
   * @param characterId
   *   the character playing this participant's seat, if the game requires one
   */
@@ -32,16 +32,15 @@ case class MatchSummary(
     description: String,
     completedAt: Option[Instant],
     cancelled: Boolean,
-    isCreator: Boolean,
+    isOwner: Boolean,
     start: Instant,
     due: Option[Instant],
     pending: Boolean,
     participantId: ParticipantId,
     characterId: Option[CharacterId],
-    // The clock this match is being played under, carried from the challenge it was started
-    // from. `due` says when this player's current turn runs out; these say what rule produced
-    // it, which is not recoverable from the deadline alone — and they are the only statement of
-    // the terms once the challenge that set them is no longer on screen.
+    // The clock this match is being played under, set from its tournament's round duration when
+    // it was created in the engine. `due` says when this player's current turn runs out; these say
+    // what rule produced it, which is not recoverable from the deadline alone.
     timeLimit: Option[Duration] = None,
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
@@ -105,8 +104,9 @@ case class MatchSummary(
 
 /** One of the other seats in a match: the player in it -- in a character game, the one who owned the character when the
   * match was played, which is not necessarily who owns it now -- and the character they played, where there was one.
+  * `player` is `None` for a character seat nobody played, its character having had no owner.
   */
-case class Opponent(player: PublicPlayer, character: Option[CharacterName] = None)
+case class Opponent(player: Option[PublicPlayer], character: Option[CharacterName] = None)
 
 /** How a finished match came out for one player in it: what it added to their win-loss-draw record ([[MatchRecord]]),
   * so that a match marked won here is one counted as a win in the rankings.

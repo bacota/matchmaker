@@ -165,11 +165,12 @@ class TournamentMatchRepo(session: Session[IO]) {
         session.execute(updateStatus)((to, game, id)).void
 
     private val launchMatch: Command[
-      (Instant, String, Option[Double], TimeLimitKind, TimeLimitUnit, Boolean, GameId, MatchId)
+      (Instant, String, Option[Double], TimeLimitKind, TimeLimitUnit, Boolean, String, Boolean, GameId, MatchId)
     ] =
         sql"""UPDATE match SET status = 'P', start = $instant, description = $text,
                  time_limit = ${float8.opt} * INTERVAL '1 second', time_limit_kind = ${SkunkCodecs.timeLimitKind},
-                 time_limit_unit = ${SkunkCodecs.timeLimitUnit}, friendly = $bool
+                 time_limit_unit = ${SkunkCodecs.timeLimitUnit}, friendly = $bool, settings = ${SkunkCodecs.jsonb},
+                 live = $bool
           WHERE game_id = $gameId AND match_id = $matchId AND status = 'D'""".command
 
     /** A due match beginning: in progress from `at`, played under `clock`. Its engine's game is made next, after the
@@ -183,11 +184,13 @@ class TournamentMatchRepo(session: Session[IO]) {
         limit: Option[java.time.Duration],
         kind: TimeLimitKind,
         unit: TimeLimitUnit,
-        friendly: Boolean
+        friendly: Boolean,
+        settings: String,
+        live: Boolean
     ): IO[Unit] =
         session
             .execute(launchMatch)(
-              (at, description, limit.map(_.getSeconds.toDouble), kind, unit, friendly, game, id)
+              (at, description, limit.map(_.getSeconds.toDouble), kind, unit, friendly, settings, live, game, id)
             )
             .void
 
@@ -229,7 +232,7 @@ class TournamentMatchRepo(session: Session[IO]) {
         sql"SELECT tournament_id FROM match WHERE game_id = $gameId AND match_id = $matchId AND tournament_id IS NOT NULL"
             .query(tournamentId)
 
-    /** The tournament a match is played in, or `None` for a challenge's. */
+    /** The tournament a match is played in, or `None` for a match that is not there. */
     def tournamentOf(game: GameId, id: MatchId): IO[Option[TournamentId]] =
         session.option(selectTournamentOf)((game, id))
 

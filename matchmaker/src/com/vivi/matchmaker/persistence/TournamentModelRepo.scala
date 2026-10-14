@@ -26,13 +26,13 @@ class TournamentModelRepo(session: Session[IO]) {
     private val modelId = SkunkIdCodecs.tournamentModelId
 
     private type ModelRow =
-        (TournamentModelId, Int, String, String, Option[String], Option[Int], Boolean, String, Boolean)
+        (TournamentModelId, Int, String, String, Option[String], Option[Int], Boolean, String, Boolean, Boolean)
     private val modelRow: Decoder[ModelRow] =
-        modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool
+        modelId *: int4 *: text *: text *: text.opt *: int4.opt *: bool *: text *: bool *: bool
 
     private val modelColumns =
         "tournament_model_id, version, name, description, classification, pool_size, late_entries, " +
-            "first_stage_model_id, active"
+            "first_stage_model_id, active, choose_roles"
 
     private val selectModels: Query[Void, ModelRow] =
         sql"SELECT #$modelColumns FROM tournament_model".query(modelRow)
@@ -62,7 +62,7 @@ class TournamentModelRepo(session: Session[IO]) {
                       firstOf.getOrElse(model, throw new IllegalStateException(s"model $model is not there")),
                       inner => designOf(TournamentModelId(inner), depth + 1)
                     )
-            models.map { case (id, version, name, description, classification, poolSize, late, _, active) =>
+            models.map { case (id, version, name, description, classification, poolSize, late, _, active, choose) =>
                 TournamentModel(
                   id,
                   version,
@@ -72,7 +72,8 @@ class TournamentModelRepo(session: Session[IO]) {
                   poolSize,
                   late,
                   designOf(id, 0),
-                  active
+                  active,
+                  choose
                 )
             }
         }
@@ -143,19 +144,20 @@ class TournamentModelRepo(session: Session[IO]) {
 
     // ---- writing a model from the code ----
 
-    private type Properties = (Int, String, String, Option[String], Option[Int], Boolean)
+    private type Properties = (Int, String, String, Option[String], Option[Int], Boolean, Boolean)
 
     private def propertiesOf(m: TournamentModel): Properties =
-        (m.version, m.name, m.description, m.classification, m.poolSize, m.lateEntries)
+        (m.version, m.name, m.description, m.classification, m.poolSize, m.lateEntries, m.chooseRoles)
 
     private val insertModel: Command[TournamentModelId *: Properties] =
         sql"""INSERT INTO tournament_model (tournament_model_id, version, name, description, classification, pool_size,
-                                            late_entries, first_stage_model_id)
-          VALUES ($modelId, $int4, $text, $text, ${text.opt}, ${int4.opt}, $bool, '')""".command
+                                            late_entries, choose_roles, first_stage_model_id)
+          VALUES ($modelId, $int4, $text, $text, ${text.opt}, ${int4.opt}, $bool, $bool, '')""".command
 
-    private val updateModel: Command[(Int, String, String, Option[String], Option[Int], Boolean, TournamentModelId)] =
+    private val updateModel: Command[Tuple.Concat[Properties, TournamentModelId *: EmptyTuple]] =
         sql"""UPDATE tournament_model SET version = $int4, name = $text, description = $text,
-                 classification = ${text.opt}, pool_size = ${int4.opt}, late_entries = $bool, active = true
+                 classification = ${text.opt}, pool_size = ${int4.opt}, late_entries = $bool, choose_roles = $bool,
+                 active = true
           WHERE tournament_model_id = $modelId""".command
 
     private val setFirst: Command[(String, TournamentModelId)] =
@@ -233,7 +235,7 @@ class TournamentModelRepo(session: Session[IO]) {
                         val innerId = TournamentModelId(s"${model.value}/$stageId")
                         for {
                             _ <- session.execute(insertModel)(
-                              (innerId, 1, s"${model.value}, $stageId", "", None, None, false)
+                              (innerId, 1, s"${model.value}, $stageId", "", None, None, false, false)
                             )
                             _ <- writeDesign(innerId, inner)
                             _ <- session.execute(insertStage)((model, stageId, (stage, next)))
