@@ -65,6 +65,16 @@ def call(method, url, body=None, headers=None):
             return e.code, text
 
 
+def eventually(read, what, tries=120):
+    # Polls `read` until it answers something other than None, for what the API does after it has answered.
+    for _ in range(tries):
+        found = read()
+        if found is not None:
+            return found
+        time.sleep(0.25)
+    sys.exit(f"{what} did not happen")
+
+
 def as_player(sub):
     return {"x-external-id": sub}
 
@@ -108,8 +118,8 @@ try:
     game_id = psql(f"""WITH game AS (
         INSERT INTO game (game_type, name, display_name, description, url, active, external_id)
         VALUES ('P', '{game_name}', 'E2E', 'e2e', '{ENGINE}/games', true, '{EXTERNAL_ID}') RETURNING game_id)
-      INSERT INTO game_role (game_id, name, optional, display_name)
-      SELECT game_id, role, false, role FROM game, (VALUES ('X'), ('O')) AS roles(role) RETURNING game_id""").splitlines()[0]
+      INSERT INTO game_role (game_id, name, display_name)
+      SELECT game_id, role, role FROM game, (VALUES ('X'), ('O')) AS roles(role) RETURNING game_id""").splitlines()[0]
     roles = dict(line.split("|") for line in psql(f"SELECT name, game_role_id FROM game_role WHERE game_id = {game_id}").splitlines())
 
     alice, bob = f"sub-a-{RUN}", f"sub-b-{RUN}"
@@ -128,14 +138,21 @@ try:
         tournament = made["tournamentId"]
         status, entered = call("POST", f"{MM}/games/{game_id}/tournaments/{tournament}/entries", {}, as_player(bob))
         assert status in (200, 201), (status, entered)
+        # Starting is done after the entry has answered, so its round is waited for.
+        def first_match():
+            detail = call("GET", f"{MM}/games/{game_id}/tournaments/{tournament}", headers=as_player(alice))[1]
+            return detail["round"][0]["matchId"] if detail.get("round") else None
+        match_id = eventually(first_match, "the challenge's round")
         # Then its players choose their roles, the strongest seed first: alice, who entered first, takes X,
         # and bob is given the O that is left.
-        detail = call("GET", f"{MM}/games/{game_id}/tournaments/{tournament}", headers=as_player(alice))[1]
-        match_id = detail["round"][0]["matchId"]
         status, chosen = call("POST", f"{MM}/games/{game_id}/tournaments/{tournament}/matches/{match_id}/role",
                               {"gameRoleId": int(roles["X"])}, as_player(alice))
         assert status in (200, 201), (status, chosen)
-        return match_id
+        # And the engine's game is made after the last role is chosen: a match is listed as active once it has.
+        def listed():
+            active = call("GET", MM + "/me/matches", headers=as_player(alice))[1]
+            return match_id if any(m["matchId"] == match_id for m in active) else None
+        return eventually(listed, "the engine's game for the challenge")
 
     def play_to_the_end(match_id):
         for sub, cell in ((alice, 0), (bob, 3), (alice, 1), (bob, 4), (alice, 2)):
@@ -144,7 +161,7 @@ try:
 
     def archive_row(match_id):
         return psql(f"SELECT coalesce(archive_key,''), archived_at IS NOT NULL, archive_expired_at IS NOT NULL, "
-                    f"completed IS NOT NULL FROM match WHERE match_id = '{match_id}'").split("|")
+                    f"completed_at IS NOT NULL FROM match WHERE match_id = '{match_id}'").split("|")
 
     print("1. a finished friendly match is archived, and the engine drops its live copy")
     m1 = new_match()
@@ -158,7 +175,7 @@ try:
     check(not s3.list_objects_v2(Bucket=PERMANENT).get("Contents"), "and nothing is in the permanent one")
     stored = s3.get_object(Bucket=FRIENDLY, Key=key)
     body = json.loads(stored["Body"].read())
-    check(body.get("matchId") == m1, "the archive is the engine's stored match")
+    check(str(body.get("matchId")) == str(m1), "the archive is the engine's stored match")
     check(stored["Metadata"].get("format-version") == "stored-match-1", f"format version kept: {stored['Metadata']}")
     check(stored.get("VersionId") not in (None, "null"), "the bucket is versioned")
 
@@ -179,7 +196,7 @@ try:
     psql(f"UPDATE match SET archived_at = archived_at - interval '31 days' WHERE match_id = '{m2}'")
     # What the friendly bucket's lifecycle rule does at 30 days: a delete marker over the object.
     s3.delete_object(Bucket=FRIENDLY, Key=key2)
-    completed_list = call("GET", MM + "/me/matches/completed", headers=as_player(alice))[1]
+    completed_list = call("GET", MM + "/me/matches/completed", headers=as_player(alice))[1]["matches"]
     row = next(m for m in completed_list if m["matchId"] == m2)
     check(row["archiveExpired"] is True and row.get("publicUrl") is None, "the finished list says it has expired")
     check(archive_row(m2)[2] == "t", "matchmaker recorded the expiry")
@@ -204,8 +221,10 @@ try:
     check(status == 200, "the engine has the running match")
     status, cancelled = call("POST", f"{MM}/games/{game_id}/matches/{m4}/cancel", {}, as_player(alice))
     check(status == 200 and cancelled["cancelled"], "matchmaker cancelled it")
-    status, _ = call("GET", f"{ENGINE}/matches/{m4}/status")
-    check(status == 404, f"the engine no longer has it: {status}")
+    # The engine is told after the cancel has answered, by the match's ending.
+    gone = eventually(lambda: True if call("GET", f"{ENGINE}/matches/{m4}/status")[0] == 404 else None,
+                      "the engine dropping the cancelled match", tries=40)
+    check(gone, "the engine no longer has it")
     check(psql(f"SELECT engine_released IS NOT NULL FROM match WHERE match_id = '{m4}'") == "t",
           "matchmaker recorded that the engine heard")
 
