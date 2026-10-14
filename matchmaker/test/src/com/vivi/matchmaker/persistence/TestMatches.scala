@@ -28,15 +28,15 @@ object TestMatches {
       "",
       None,
       None,
-      lateEntries = false,
-      TournamentDesign(List(StageDesign(brackets = false, demote = None)))
+      hasLateEntries = false,
+      TournamentDesign(List(StageDesign(hasBrackets = false, demote = None)))
     )
 
-    @volatile private var holderReady = false
+    @volatile private var isHolderReady = false
 
     /* The holder model, written once, under the sync's lock so that specs running at once do not both write it. */
     private def ensureHolder(session: Session[IO]): IO[Unit] =
-        if (holderReady) IO.unit
+        if (isHolderReady) IO.unit
         else
             session.transaction
                 .use { _ =>
@@ -46,7 +46,7 @@ object TestMatches {
                         case None    => repo.create(holderModel)
                     }
                 }
-                .flatTap(_ => IO { holderReady = true })
+                .flatTap(_ => IO { isHolderReady = true })
 
     private def long(session: Session[IO], q: String): IO[Long] = session.unique(sql"#$q".query(int8))
     private def exec(session: Session[IO], q: String): IO[Unit] = session.execute(sql"#$q".command).void
@@ -76,20 +76,20 @@ object TestMatches {
       )
     ] =
         sql"""INSERT INTO match (game_id, match_id, status, tournament_id, pool_id, round, stage_id,
-                                 description, start, completed_at, cancelled, time_limit, time_limit_kind,
-                                 time_limit_unit, settings, public, live, friendly, status_url, play_url, public_url)
+                                 description, start, completed_at, is_cancelled, time_limit, time_limit_kind,
+                                 time_limit_unit, settings, is_public, is_live, is_friendly, status_url, play_url, public_url)
               VALUES (${SkunkIdCodecs.gameId}, ${SkunkIdCodecs.matchId}, $text, ${SkunkIdCodecs.tournamentId}, $int8, 1, $int8, $text, ${SkunkCodecs.instant.opt},
                       ${SkunkCodecs.instant.opt}, $bool, ${float8.opt} * INTERVAL '1 second',
                       ${SkunkCodecs.timeLimitKind}, ${SkunkCodecs.timeLimitUnit}, ${SkunkCodecs.jsonb}, $bool, $bool,
                       $bool, ${text.opt}, ${text.opt}, ${text.opt})""".command
 
     /** Writes `m` as a match of a tournament of its own, and answers it with that tournament's id. Its status is what
-      * it says, unless it is over, which `completedAt` and `cancelled` say -- as `MatchRepo` writes a status.
+      * it says, unless it is over, which `completedAt` and `isCancelled` say -- as `MatchRepo` writes a status.
       */
     def writeMatch(session: Session[IO], m: Match, owner: PlayerId): IO[Match] =
         ensureHolder(session) *> session.transaction.use { _ =>
             val status =
-                if (m.completedAt.isDefined || m.cancelled) MatchStatus.Finished else m.status
+                if (m.completedAt.isDefined || m.isCancelled) MatchStatus.Finished else m.status
             for {
                 t <- new TournamentRepo(session).create(
                   Tournament(
@@ -134,14 +134,14 @@ object TestMatches {
                     m.description,
                     m.start,
                     m.completedAt,
-                    m.cancelled,
+                    m.isCancelled,
                     m.timeLimit.map(_.getSeconds.toDouble),
                     m.timeLimitKind,
                     m.timeLimitUnit,
                     m.settings,
                     m.isPublic,
-                    m.live,
-                    m.friendly,
+                    m.isLive,
+                    m.isFriendly,
                     m.statusUrl,
                     m.playUrl,
                     m.publicUrl
@@ -187,16 +187,16 @@ object TestMatches {
       ),
       ParticipantId
     ] =
-        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed_at, due, game_role_id,
-                  elo_start, elo_role_start, tournament_id, entrant_id, notify_match_started, notify_turn_taken,
-                  notify_your_turn, notify_match_ended)
+        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, is_pending, completed_at, due, game_role_id,
+                  elo_start, elo_role_start, tournament_id, entrant_id, is_notified_of_match_started, is_notified_of_turn_taken,
+                  is_notified_of_your_turn, is_notified_of_match_ended)
               SELECT ${SkunkIdCodecs.gameId}, ${SkunkIdCodecs.matchId}, ${SkunkCodecs.gameType},
                      ${SkunkIdCodecs.playerId}, $bool, CASE WHEN $bool THEN now() END, ${SkunkCodecs.instant.opt},
                      ${SkunkIdCodecs.gameRoleId}, $int4, ${int4.opt}, ${SkunkIdCodecs.tournamentId}, $int8,
-                     COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
-                     COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
-                     COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
-                     COALESCE(pg.notify_match_ended, pl.notify_match_ended, TRUE)
+                     COALESCE(pg.is_notified_of_match_started, pl.is_notified_of_match_started, TRUE),
+                     COALESCE(pg.is_notified_of_turn_taken, pl.is_notified_of_turn_taken, TRUE),
+                     COALESCE(pg.is_notified_of_your_turn, pl.is_notified_of_your_turn, TRUE),
+                     COALESCE(pg.is_notified_of_match_ended, pl.is_notified_of_match_ended, TRUE)
               FROM player pl
               LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = ${SkunkIdCodecs.gameId}
               WHERE pl.player_id = ${SkunkIdCodecs.playerId}
@@ -237,8 +237,8 @@ object TestMatches {
                     p.matchId,
                     gameType,
                     p.playerId,
-                    p.pending,
-                    p.completed,
+                    p.isPending,
+                    p.isCompleted,
                     p.due,
                     p.gameRoleId,
                     eloStart,

@@ -25,7 +25,7 @@ class StoredMatchSpec extends FunSuite {
           |"startedAt":"2026-01-01T00:00:00Z"},{"participantId":22,"round":1,"allocation":{"offense":0,"defense":5,
           |"power":0},"takenAt":"2026-01-01T00:00:02Z","startedAt":"2026-01-01T00:00:00Z"},{"participantId":11,
           |"round":2,"allocation":{"offense":2,"defense":2,"power":1},"takenAt":"2026-01-01T00:00:03Z",
-          |"startedAt":"2026-01-01T00:00:02Z"}],"isPublic":true,"completed":false,
+          |"startedAt":"2026-01-01T00:00:02Z"}],"isPublic":true,"isCompleted":false,
           |"createdAt":"2026-01-01T00:00:00Z","moveCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/moves",
           |"resultsCallbackUrl":"http://matchmaker.test/games/1/matches/m-1/results"}""".stripMargin.replace("\n", "")
 

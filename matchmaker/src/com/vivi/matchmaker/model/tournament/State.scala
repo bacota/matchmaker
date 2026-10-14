@@ -3,7 +3,7 @@ package com.vivi.matchmaker.model.tournament
 /** A participant's place in a (sub)tournament as it stands: their seed, their stratum, and whether they are out of it.
   * `initialSeed` is the seed they started it with, for the `Constant` seed policy.
   */
-case class Member(entrant: Long, seed: Int, stratum: Int, initialSeed: Int, eliminated: Boolean = false)
+case class Member(entrant: Long, seed: Int, stratum: Int, initialSeed: Int, isEliminated: Boolean = false)
 
 /** A member of a pool: the seed and stratum they entered it with, and once it is complete, how they came out of it.
   * `played` is false for a pool that could play nothing, whose members neither rise nor fall.
@@ -17,7 +17,7 @@ case class PoolMember(
     scoreDiff: Option[Double] = None,
     totalScore: Option[Double] = None,
     stratumOut: Option[Int] = None,
-    eliminated: Boolean = false
+    isEliminated: Boolean = false
 )
 
 /** A match of a round-robin pool: what was planned, whether it may be drawn, the round it was played in once it has
@@ -25,11 +25,11 @@ case class PoolMember(
   */
 case class PoolMatch(
     planned: PlannedMatch,
-    tiesAllowed: Boolean,
+    canTie: Boolean,
     round: Option[Int] = None,
     outcome: Option[List[Placing]] = None
 ) {
-    def finished: Boolean = outcome.isDefined
+    def isFinished: Boolean = outcome.isDefined
 }
 
 /** One pool of a stage run. A round-robin pool has `matches`; a pool that plays a design has `sub`, the tournament it
@@ -42,11 +42,11 @@ case class Pool(
     members: List[PoolMember],
     matches: List[PoolMatch] = Nil,
     sub: Option[Node] = None,
-    completed: Boolean = false
+    isCompleted: Boolean = false
 ) {
 
     /** Whether anything was or will be played in this pool. */
-    def plays: Boolean = matches.nonEmpty || sub.isDefined
+    def hasPlay: Boolean = matches.nonEmpty || sub.isDefined
 }
 
 /** One playing of a stage: its pools, and the members it left out — those of a stratum too small to fill a match. */
@@ -55,7 +55,7 @@ case class StageRun(
     repetition: Int,
     pools: List[Pool],
     sittingOut: List[Long] = Nil,
-    completed: Boolean = false
+    isCompleted: Boolean = false
 )
 
 /** A (sub)tournament being played. `path` is the stage indices, from the root design, of the stages whose pools it is
@@ -69,38 +69,38 @@ case class Node(
     runs: List[StageRun] = Nil,
     ranking: Option[Map[Long, Int]] = None
 ) {
-    def finished: Boolean = ranking.isDefined
-    def active: List[Member] = members.filterNot(_.eliminated)
+    def isFinished: Boolean = ranking.isDefined
+    def active: List[Member] = members.filterNot(_.isEliminated)
 }
 
 /** A whole tournament's state: the root of its tree of (sub)tournaments, the round being played, and the few things
   * that are the tournament's rather than any one part's.
   *
   * `withdrawn` are entrants who have left: they are put in no new pool, and a match they are still seated in is theirs
-  * to forfeit. `stopRequested` is the owner having asked a stage that repeats until stopped to stop.
+  * to forfeit. `isStopRequested` is the owner having asked a stage that repeats until stopped to stop.
   */
 case class TournamentState(
     root: Node,
     round: Int = 0,
     nextPoolId: Int = 1,
-    stopRequested: Boolean = false,
+    isStopRequested: Boolean = false,
     withdrawn: Set[Long] = Set.empty
 ) {
-    def finished: Boolean = root.finished
+    def isFinished: Boolean = root.isFinished
 }
 
 /** What advancing a tournament needs that is not in its state: the design, the game, and everyone's rating now.
   *
   * `defaultPoolSize` is the tournament's, for a stage that sets no pool size; `None`, as in a test that has no
-  * tournament, is the game's R. `concurrentRounds` is the tournament's: set, every round-robin pool may play all of its
-  * matches in one round, as a stage that says so itself may.
+  * tournament, is the game's R. `hasConcurrentRounds` is the tournament's: set, every round-robin pool may play all of
+  * its matches in one round, as a stage that says so itself may.
   */
 case class Env(
     design: TournamentDesign,
     game: TournamentGame,
     ratings: Map[Long, Int],
     defaultPoolSize: Option[Int] = None,
-    concurrentRounds: Boolean = false
+    hasConcurrentRounds: Boolean = false
 ) {
     def rating(entrant: Long): Int = ratings.getOrElse(entrant, 0)
 
@@ -108,11 +108,11 @@ case class Env(
     def poolSize(stage: StageDesign): Int = stage.poolSizeOr(defaultPoolSize.getOrElse(game.poolSeats))
 
     /** The most matches a member of one of `stage`'s pools plays in a round. */
-    def concurrent(stage: StageDesign): Int = if (concurrentRounds) Int.MaxValue else stage.concurrent
+    def concurrent(stage: StageDesign): Int = if (hasConcurrentRounds) Int.MaxValue else stage.concurrent
 }
 
 /** A match of the round being played, with what creating it needs to know. */
-case class RoundMatch(poolId: Int, nodePath: List[Int], stage: Int, planned: PlannedMatch, tiesAllowed: Boolean)
+case class RoundMatch(poolId: Int, nodePath: List[Int], stage: Int, planned: PlannedMatch, canTie: Boolean)
 
 /** A tournament's progress, as pure functions of its state: starting it, starting each round, recording results, and
   * advancing past what they finish. Matchmaker persists the state between calls and does what it says — creating the
@@ -144,8 +144,8 @@ object Tournament {
     def roundMatches(state: TournamentState): List[RoundMatch] = matchesWhere(state, _.round.contains(state.round))
 
     /** Whether every match of the round being played has finished. True of a tournament that has played no round. */
-    def roundComplete(state: TournamentState): Boolean =
-        allPools(state.root).forall(_.matches.forall(m => !m.round.contains(state.round) || m.finished))
+    def isRoundComplete(state: TournamentState): Boolean =
+        allPools(state.root).forall(_.matches.forall(m => !m.round.contains(state.round) || m.isFinished))
 
     /** Starts the next round: advances past everything the last one finished, then puts the next slot of every
       * round-robin pool still playing into the new round. The matches are what matchmaker is to create. None, for a
@@ -153,12 +153,13 @@ object Tournament {
       */
     def nextRound(state: TournamentState, env: Env): (TournamentState, List[RoundMatch]) = {
         val advanced = advance(state, env)
-        if (advanced.finished) (advanced, Nil)
+        if (advanced.isFinished) (advanced, Nil)
         else {
             val round = advanced.round + 1
             val root = mapPools(advanced.root) { (pool, _, _) =>
                 if (
-                  pool.completed || pool.matches.isEmpty || pool.matches.exists(m => m.round.isDefined && !m.finished)
+                  pool.isCompleted || pool.matches.isEmpty || pool.matches
+                      .exists(m => m.round.isDefined && !m.isFinished)
                 )
                     pool
                 else {
@@ -197,7 +198,9 @@ object Tournament {
 
     /** Whether a match has been recorded. */
     def isRecorded(state: TournamentState, poolId: Int, matchNo: Int): Boolean =
-        allPools(state.root).exists(p => p.id == poolId && p.matches.exists(m => m.planned.no == matchNo && m.finished))
+        allPools(state.root).exists(p =>
+            p.id == poolId && p.matches.exists(m => m.planned.no == matchNo && m.isFinished)
+        )
 
     // ---- entrants ----------------------------------------------------------------------------
 
@@ -217,7 +220,7 @@ object Tournament {
         if (state.root.members.exists(_.entrant == entrant)) reenter(state, entrant)
         else {
             val root = state.root
-            val active = root.members.filterNot(_.eliminated).sortBy(_.seed)
+            val active = root.members.filterNot(_.isEliminated).sortBy(_.seed)
             // The first member of stratum 0 the newcomer outrates, or the end: they go just before it.
             val at = active.indexWhere(m => m.stratum == 0 && env.rating(m.entrant) < env.rating(entrant)) match {
                 case -1 => active.size
@@ -226,7 +229,7 @@ object Tournament {
             // Those eliminated are numbered after everyone still in it, so that seeds stay one number per member.
             val placed =
                 (active.take(at) :+ Member(entrant, 0, 0, 0)) ++ active.drop(at) ++
-                    root.members.filter(_.eliminated).sortBy(m => (m.seed, m.entrant))
+                    root.members.filter(_.isEliminated).sortBy(m => (m.seed, m.entrant))
             val renumbered = placed.zipWithIndex.map((m, i) =>
                 if (m.entrant == entrant) m.copy(seed = i + 1, initialSeed = root.members.size + 1)
                 else m.copy(seed = i + 1)
@@ -235,7 +238,7 @@ object Tournament {
         }
 
     /** The owner asking a stage that repeats until stopped to stop, after the run being played. */
-    def requestStop(state: TournamentState): TournamentState = state.copy(stopRequested = true)
+    def requestStop(state: TournamentState): TournamentState = state.copy(isStopRequested = true)
 
     // ---- advancing ---------------------------------------------------------------------------
 
@@ -256,10 +259,10 @@ object Tournament {
     }
 
     private def step(node: Node, env: Env, state: TournamentState, nextId: Int): (Node, Int) =
-        if (node.finished) (node, nextId)
+        if (node.isFinished) (node, nextId)
         else {
             val design = designAt(env.design, node.path)
-            node.runs.lastOption.filterNot(_.completed) match {
+            node.runs.lastOption.filterNot(_.isCompleted) match {
                 case Some(run) =>
                     // Advance the run's pools: each sub-tournament, then each pool whose play is done.
                     val (pools, afterSubs) = run.pools.foldLeft((List.empty[Pool], nextId)) { case ((acc, id), pool) =>
@@ -272,7 +275,7 @@ object Tournament {
                         (acc :+ completePool(stepped, design.stages(run.stage), env), id2)
                     }
                     val updated = run.copy(pools = pools)
-                    if (pools.forall(_.completed)) (finishRun(node, updated, design, env, state), afterSubs)
+                    if (pools.forall(_.isCompleted)) (finishRun(node, updated, design, env, state), afterSubs)
                     else (node.copy(runs = node.runs.init :+ updated), afterSubs)
                 case None =>
                     if (node.stage >= design.stages.size) (finishNode(node, design), nextId)
@@ -297,8 +300,8 @@ object Tournament {
           n,
           env.game.requiredSeats,
           stage.advancing,
-          stage.brackets,
-          stage.strictStrata
+          stage.hasBrackets,
+          stage.hasStrictStrata
         )
         val pooled = formed.flatMap(_.members.map(_.entrant)).toSet
         val pools = formed.zipWithIndex.map { (f, i) =>
@@ -315,11 +318,11 @@ object Tournament {
                             Schedule.roundRobin(
                               f.members.map(_.entrant),
                               env.game,
-                              stage.rotateRoles,
+                              stage.isRotatingRoles,
                               env.concurrent(stage)
                             )
                         // Ties as the stage says, or by the pool's size: none in a pool of two, an elimination match.
-                        val ties = Ties.allowed(f.members.size, stage = stage.tiesAllowed)
+                        val ties = Ties.isAllowed(f.members.size, stage = stage.canTie)
                         Pool(id, f.stratum, members, matches = planned.map(PoolMatch(_, ties)))
                 }
         }
@@ -331,20 +334,20 @@ object Tournament {
       * and leaves the pool open. A pool that is still playing, or already complete, is returned as it is.
       */
     private def completePool(pool: Pool, stage: StageDesign, env: Env): Pool =
-        if (pool.completed) pool
-        else if (!pool.plays)
+        if (pool.isCompleted) pool
+        else if (!pool.hasPlay)
             // Nothing could be played: everyone ranks first, and nobody rises or falls.
-            pool.copy(completed = true, members = pool.members.map(_.copy(rank = Some(1))))
+            pool.copy(isCompleted = true, members = pool.members.map(_.copy(rank = Some(1))))
         else
             pool.sub match {
-                case Some(sub) if sub.finished =>
+                case Some(sub) if sub.isFinished =>
                     val ranks = sub.ranking.get
-                    pool.copy(completed = true, members = pool.members.map(m => m.copy(rank = ranks.get(m.entrant))))
+                    pool.copy(isCompleted = true, members = pool.members.map(m => m.copy(rank = ranks.get(m.entrant))))
                 case Some(_) => pool
-                case None if pool.matches.forall(_.finished) =>
-                    val regular = pool.matches.filterNot(_.planned.rubber).flatMap(_.outcome)
+                case None if pool.matches.forall(_.isFinished) =>
+                    val regular = pool.matches.filterNot(_.planned.isRubber).flatMap(_.outcome)
                     val rubbers = pool.matches
-                        .filter(_.planned.rubber)
+                        .filter(_.planned.isRubber)
                         .flatMap(m => m.outcome.map(o => m.planned.seats.map(_.entrant).toSet -> o))
                         .toMap
                     val seedIn = pool.members.map(m => m.entrant -> m.seedIn).toMap
@@ -354,12 +357,12 @@ object Tournament {
                         val first = pool.matches.map(_.planned.no).max + 1
                         val added = ranking.rubbers.zipWithIndex.map { case ((a, b), i) =>
                             val seats = Schedule.roles(List(a, b), env.game.seatingRoles.take(2), env.game)
-                            PoolMatch(PlannedMatch(first + i, slot, seats, rubber = true), tiesAllowed = false)
+                            PoolMatch(PlannedMatch(first + i, slot, seats, isRubber = true), canTie = false)
                         }
                         pool.copy(matches = pool.matches ++ added)
                     } else
                         pool.copy(
-                          completed = true,
+                          isCompleted = true,
                           members = pool.members.map { m =>
                               val s = ranking.standings(m.entrant)
                               m.copy(
@@ -388,8 +391,8 @@ object Tournament {
         val moved: Map[Long, (Int, Boolean)] = run.pools.flatMap { pool =>
             pool.members.map { m =>
                 val rank = m.rank.getOrElse(Int.MaxValue)
-                val up = pool.plays && stage.promote.exists(rank <= _)
-                val down = pool.plays && !up && stage.demote.exists(rank >= _)
+                val up = pool.hasPlay && stage.promote.exists(rank <= _)
+                val down = pool.hasPlay && !up && stage.demote.exists(rank >= _)
                 val stratum =
                     if (up)
                         stage.maxStratum.fold(m.stratumIn + 1)(max =>
@@ -405,30 +408,30 @@ object Tournament {
         val pools = run.pools.map(p =>
             p.copy(members =
                 p.members.map(m =>
-                    moved.get(m.entrant).fold(m)((s, out) => m.copy(stratumOut = Some(s), eliminated = out))
+                    moved.get(m.entrant).fold(m)((s, out) => m.copy(stratumOut = Some(s), isEliminated = out))
                 )
             )
         )
-        val finished = run.copy(pools = pools, completed = true)
+        val finished = run.copy(pools = pools, isCompleted = true)
         val members = node.members.map(m =>
-            moved.get(m.entrant).fold(m)((s, out) => m.copy(stratum = s, eliminated = m.eliminated || out))
+            moved.get(m.entrant).fold(m)((s, out) => m.copy(stratum = s, isEliminated = m.isEliminated || out))
         )
         val reseeded = reseed(members, finished, stage, env)
         val after = node.copy(members = reseeded, runs = node.runs.init :+ finished)
 
         val active = after.active.filterNot(m => state.withdrawn(m.entrant))
         // A run that played nothing and moved nobody would only be played again the same way.
-        val stuck = !runPlayed(finished) && members == node.members
+        val stuck = !isRunPlayed(finished) && members == node.members
         val again = !stuck && (stage.repeat match {
             case Repetition.Fixed(k)          => run.repetition + 1 < k
             case Repetition.UntilRemaining(c) => active.sizeIs > c
-            case Repetition.UntilStopped      => !state.stopRequested
+            case Repetition.UntilStopped      => !state.isStopRequested
         })
         if (again) after.copy(repetition = run.repetition + 1)
         else after.copy(stage = run.stage + 1, repetition = 0)
     }
 
-    private def runPlayed(run: StageRun): Boolean = run.pools.exists(_.plays)
+    private def isRunPlayed(run: StageRun): Boolean = run.pools.exists(_.hasPlay)
 
     /** New seeds for a node's members after a run, by the stage's policy (`tournament-design.md`, "Seed Policy"). */
     private def reseed(members: List[Member], run: StageRun, stage: StageDesign, env: Env): List[Member] = {
@@ -436,11 +439,11 @@ object Tournament {
         // The active members in `order`, then those eliminated, by the seed they had: seeds stay one number per member,
         // as a node's seeds are kept.
         def renumber(order: List[Member]): List[Member] = {
-            val all = order ++ members.filter(_.eliminated).sortBy(m => (m.seed, m.entrant))
+            val all = order ++ members.filter(_.isEliminated).sortBy(m => (m.seed, m.entrant))
             val seeds = all.zipWithIndex.map((m, i) => m.entrant -> (i + 1)).toMap
             members.map(m => seeds.get(m.entrant).fold(m)(s => m.copy(seed = s)))
         }
-        val active = members.filterNot(_.eliminated)
+        val active = members.filterNot(_.isEliminated)
         stage.seedPolicy match {
             case SeedPolicy.Constant     => members.map(m => m.copy(seed = m.initialSeed))
             case SeedPolicy.Reinitialize => renumber(active.sortBy(m => (-env.rating(m.entrant), m.initialSeed)))
@@ -470,7 +473,7 @@ object Tournament {
 
     /** Ends a (sub)tournament whose stages have all been played, ranking it from its runs. */
     private def finishNode(node: Node, design: TournamentDesign): Node = {
-        val runs = node.runs.filter(_.completed)
+        val runs = node.runs.filter(_.isCompleted)
         val completed = runs.map { run =>
             val pooled = run.pools.flatMap(pool =>
                 pool.members.map(m =>
@@ -478,7 +481,7 @@ object Tournament {
                       pool.stratum,
                       m.rank.getOrElse(Int.MaxValue),
                       m.stratumOut.getOrElse(m.stratumIn),
-                      m.eliminated
+                      m.isEliminated
                     )
                 )
             )
@@ -489,7 +492,7 @@ object Tournament {
             CompletedRun((pooled ++ sat).toMap)
         }
         val breakers = runs.zipWithIndex.collect {
-            case (run, i) if design.stages(run.stage).tieBreakerStage => i
+            case (run, i) if design.stages(run.stage).hasTieBreakerStage => i
         }.toSet
         val ranked = Ranking.rankNode(completed, breakers)
         // Anyone who never played a run — a tournament that ended before it began — ranks level, last.
@@ -506,7 +509,7 @@ object Tournament {
     /** The tree with `f` applied to every pool of every run not yet completed, with the node and stage it is in. */
     private def mapPools(node: Node)(f: (Pool, Node, Int) => Pool): Node =
         node.copy(runs = node.runs.map { run =>
-            if (run.completed) run
+            if (run.isCompleted) run
             else
                 run.copy(pools = run.pools.map { pool =>
                     val inner = pool.copy(sub = pool.sub.map(mapPools(_)(f)))
@@ -520,7 +523,7 @@ object Tournament {
                 run.pools.flatMap { pool =>
                     pool.matches
                         .filter(wanted)
-                        .map(m => RoundMatch(pool.id, node.path, run.stage, m.planned, m.tiesAllowed)) ++
+                        .map(m => RoundMatch(pool.id, node.path, run.stage, m.planned, m.canTie)) ++
                         pool.sub.toList.flatMap(walk)
                 }
             }

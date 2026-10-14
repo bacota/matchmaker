@@ -41,7 +41,7 @@ class TournamentMatchRepo(session: Session[IO]) {
         matchId *: int8 *: int8 *: int4.opt *: int4.opt *: instant.opt *: instant.opt *: bool
 
     private val seatColumns =
-        "p.match_id, p.participant_id, p.entrant_id, p.game_role_id, p.choose_order, p.choose_started_at, p.chosen_at, p.forfeit"
+        "p.match_id, p.participant_id, p.entrant_id, p.game_role_id, p.choose_order, p.choose_started_at, p.chosen_at, p.is_forfeit"
 
     private def seatOf(r: SeatRow): TournamentSeat = {
         val (_, participant, entrant, role, order, started, chosen, forfeit) = r
@@ -64,12 +64,12 @@ class TournamentMatchRepo(session: Session[IO]) {
     }
 
     private val selectRound: Query[(GameId, TournamentId, Int), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, ties_allowed FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
           WHERE game_id = $gameId AND tournament_id = $tournamentId AND round = $int4 AND status <> 'S'
           ORDER BY pool_id, create_date, match_id""".query(matchRow)
 
     private val selectOpen: Query[(GameId, TournamentId), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, ties_allowed FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
           WHERE game_id = $gameId AND tournament_id = $tournamentId AND status IN ('C', 'D', 'P')
           ORDER BY pool_id, create_date, match_id""".query(matchRow)
 
@@ -92,12 +92,12 @@ class TournamentMatchRepo(session: Session[IO]) {
             .mapN(assemble)
 
     private val selectOne: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, ties_allowed FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
           WHERE game_id = $gameId AND match_id = $matchId AND tournament_id IS NOT NULL AND status <> 'S'"""
             .query(matchRow)
 
     private val selectOneForUpdate: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, ties_allowed FROM match
+        sql"""SELECT game_id, tournament_id, match_id, pool_id, round, status, can_tie FROM match
           WHERE game_id = $gameId AND match_id = $matchId AND tournament_id IS NOT NULL AND status <> 'S'
           FOR UPDATE""".query(matchRow)
 
@@ -137,7 +137,7 @@ class TournamentMatchRepo(session: Session[IO]) {
       (Option[Int], Option[Int], Option[Instant], Option[Instant], Boolean, GameId, ParticipantId)
     ] =
         sql"""UPDATE participant SET game_role_id = ${int4.opt}, choose_order = ${int4.opt},
-                 choose_started_at = ${instant.opt}, chosen_at = ${instant.opt}, forfeit = $bool
+                 choose_started_at = ${instant.opt}, chosen_at = ${instant.opt}, is_forfeit = $bool
           WHERE game_id = $gameId AND participant_id = ${SkunkIdCodecs.participantId}""".command
 
     /** Rewrites what a seat has chosen, and when, and whether it forfeits. */
@@ -149,7 +149,7 @@ class TournamentMatchRepo(session: Session[IO]) {
                 seat.chooseOrder,
                 seat.chooseStartedAt,
                 seat.chosenAt,
-                seat.forfeit,
+                seat.isForfeit,
                 game,
                 seat.participantId
               )
@@ -169,8 +169,8 @@ class TournamentMatchRepo(session: Session[IO]) {
     ] =
         sql"""UPDATE match SET status = 'P', start = $instant, description = $text,
                  time_limit = ${float8.opt} * INTERVAL '1 second', time_limit_kind = ${SkunkCodecs.timeLimitKind},
-                 time_limit_unit = ${SkunkCodecs.timeLimitUnit}, friendly = $bool, settings = ${SkunkCodecs.jsonb},
-                 live = $bool
+                 time_limit_unit = ${SkunkCodecs.timeLimitUnit}, is_friendly = $bool, settings = ${SkunkCodecs.jsonb},
+                 is_live = $bool
           WHERE game_id = $gameId AND match_id = $matchId AND status = 'D'""".command
 
     /** A due match beginning: in progress from `at`, played under `clock`. Its engine's game is made next, after the
@@ -219,7 +219,7 @@ class TournamentMatchRepo(session: Session[IO]) {
 
     private val retireSeatCommand: Command[(Option[Int], GameId, ParticipantId)] =
         sql"""UPDATE participant SET game_role_id = COALESCE(game_role_id, ${int4.opt}), completed_at = now(),
-                 pending = false, due = NULL
+                 is_pending = false, due = NULL
           WHERE game_id = $gameId AND participant_id = ${SkunkIdCodecs.participantId}""".command
 
     /** A seat that forfeits as its match begins: given a role nobody plays, if it had none, so that no seat of a match
@@ -242,10 +242,10 @@ class TournamentMatchRepo(session: Session[IO]) {
         sql"""SELECT m.game_id, m.tournament_id, m.match_id
           FROM match m
           JOIN participant s ON s.game_id = m.game_id AND s.match_id = m.match_id
-          WHERE m.status = 'C' AND s.game_role_id IS NULL AND NOT s.forfeit AND s.player_id = ${SkunkIdCodecs.playerId}
+          WHERE m.status = 'C' AND s.game_role_id IS NULL AND NOT s.is_forfeit AND s.player_id = ${SkunkIdCodecs.playerId}
             AND s.choose_order = (SELECT min(o.choose_order) FROM participant o
                                    WHERE o.game_id = s.game_id AND o.match_id = s.match_id
-                                     AND o.game_role_id IS NULL AND NOT o.forfeit)
+                                     AND o.game_role_id IS NULL AND NOT o.is_forfeit)
           ORDER BY m.create_date""".query(gameId *: tournamentId *: int8)
 
     /** The tournament matches waiting on this player to choose a role. */

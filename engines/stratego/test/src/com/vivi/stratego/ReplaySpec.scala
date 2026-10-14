@@ -95,7 +95,7 @@ class ReplaySpec extends FunSuite with QuietTests {
         def check(when: String) =
             for (viewer <- List(Some(Side.Red), Some(Side.Blue), None)) {
                 val unseen =
-                    p.m.board.cells.flatten.filter(q => !q.revealed && !viewer.contains(q.side)).map(_.id).toSet
+                    p.m.board.cells.flatten.filter(q => !q.isRevealed && !viewer.contains(q.side)).map(_.id).toSet
                 val opening = p.m.opening.get
                 val hidden =
                     p.state(viewer).replay.get.opening.filter(_.rank.isEmpty).map(v => opening(v.square).get.id)
@@ -140,15 +140,15 @@ console.log(JSON.stringify(out));
                   p("square").num.toInt,
                   p("side").str,
                   p("rank").strOpt,
-                  p("revealed").bool,
-                  p("moved").bool
+                  p("isRevealed").bool,
+                  p("isMoved").bool
                 )
             )
             .sortBy(_.square)
 
     private def viewOf(board: Board): List[Protocol.PieceView] =
         board.cells.indices.toList.flatMap(sq =>
-            board(sq).map(q => Protocol.PieceView(sq, q.side.toString, Some(q.rank.toString), q.revealed, q.moved))
+            board(sq).map(q => Protocol.PieceView(sq, q.side.toString, Some(q.rank.toString), q.isRevealed, q.isMoved))
         )
 
     test("every move made again on the opening arrives at the board the engine had after it") {

@@ -7,7 +7,7 @@ enum Shape {
     /** Whether this shape beats that one. The relation is a cycle, so each shape beats exactly one other and loses to
       * exactly one; equal shapes beat nothing, which is the draw.
       */
-    def beats(other: Shape): Boolean = (this, other) match {
+    def canBeat(other: Shape): Boolean = (this, other) match {
         case (Rock, Scissors)  => true
         case (Scissors, Paper) => true
         case (Paper, Rock)     => true

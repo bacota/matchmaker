@@ -76,7 +76,7 @@ object Tournaments {
                   )
           },
           child <-- Store.myTournaments.signal.map { mine =>
-              val waiting = mine.filter(waitsOnMe)
+              val waiting = mine.filter(isWaitingOnMe)
               if (waiting.isEmpty) emptyNode
               else
                   Views.refreshableSection("Rounds to Start", () => Store.reloadMyTournaments(), subsection = false)(
@@ -142,8 +142,8 @@ object Tournaments {
             ),
             tbody(rows.map { r =>
                 val standing = r.finalRank match {
-                    case Some(rank)           => s"finished ${ordinal(rank)}"
-                    case None if r.eliminated => "out"
+                    case Some(rank)             => s"finished ${ordinal(rank)}"
+                    case None if r.isEliminated => "out"
                     case None if r.seed.isDefined =>
                         s"seed ${r.seed.get} of ${r.entrants}" + r.stratum.filter(_ != 0).fold("")(s => s", stratum $s")
                     case None => r.status.label
@@ -179,8 +179,8 @@ object Tournaments {
     }
 
     /** A tournament of the viewer's own whose round is over and that waits on them to start the next. */
-    private def waitsOnMe(s: TournamentSummary): Boolean =
-        s.isOwner && s.roundOver && !s.tournament.settings.autoRounds
+    private def isWaitingOnMe(s: TournamentSummary): Boolean =
+        s.isOwner && s.isRoundOver && !s.tournament.settings.hasAutomaticRounds
 
     private def summaryList(rows: Seq[TournamentSummary], showGame: Boolean): HtmlElement =
         ul(
@@ -197,9 +197,9 @@ object Tournaments {
                 span(
                   cls := "detail",
                   (Option.when(showGame)(s.gameName).toList ++ List(t.status.label, s"${s.entrants} entered") ++
-                      Option.when(waitsOnMe(s))("round over") ++
-                      Option.when(s.isOwner)("yours") ++ Option.when(s.entered)("entered") ++
-                      Option.when(s.invited && !s.entered)("invited")).mkString(" · ", " · ", "")
+                      Option.when(isWaitingOnMe(s))("round over") ++
+                      Option.when(s.isOwner)("yours") ++ Option.when(s.isEntered)("entered") ++
+                      Option.when(s.isInvited && !s.isEntered)("invited")).mkString(" · ", " · ", "")
                 )
               )
           }
@@ -243,7 +243,7 @@ object Tournaments {
             if (_) game.fold(emptyNode)(g => form(g, Some(t), () => editing.set(false))) else emptyNode
           ),
           entriesSection(d, me),
-          if (d.summary.isOwner && t.settings.invitational) invitationsSection(d) else emptyNode,
+          if (d.summary.isOwner && t.settings.isInvitational) invitationsSection(d) else emptyNode,
           roundSection(d, game, me, names),
           d.state.fold(emptyNode)(s => standings(s.root, names, Some("Standings"))),
           d.state.flatMap(_.root.ranking).fold(emptyNode)(r => finalRanking(r, names))
@@ -343,12 +343,13 @@ object Tournaments {
 
     private def entriesSection(d: TournamentDetail, me: Option[Player]): HtmlElement = {
         val t = d.summary.tournament
-        val open = t.status == TournamentStatus.Open || (t.status == TournamentStatus.Running && t.settings.lateEntries)
+        val open =
+            t.status == TournamentStatus.Open || (t.status == TournamentStatus.Running && t.settings.hasLateEntries)
         val mine = d.entries.filter(e => me.exists(m => e.playerId.contains(m.playerId)))
         val characterGame = d.gameType == GameType.Character
         val chosen: Var[Option[CharacterId]] = Var(None)
         sectionTag(
-          h3(s"Entries (${d.entries.count(!_.withdrawn)})"),
+          h3(s"Entries (${d.entries.count(!_.isWithdrawn)})"),
           if (d.entries.isEmpty) p(cls := "empty", "Nobody has entered yet.")
           else
               ul(
@@ -356,9 +357,13 @@ object Tournaments {
                     li(
                       cls := "row",
                       span(nameOf(d)(e.entrantId.value)),
-                      span(cls := "detail", (if (e.withdrawn) " · withdrawn" else "") + s" · rated ${e.ratingAtEntry}"),
+                      span(
+                        cls := "detail",
+                        (if (e.isWithdrawn) " · withdrawn" else "") + s" · rated ${e.ratingAtEntry}"
+                      ),
                       if (
-                        !e.withdrawn && (mine.contains(e) || d.summary.isOwner) && t.status != TournamentStatus.Finished
+                        !e.isWithdrawn && (mine
+                            .contains(e) || d.summary.isOwner) && t.status != TournamentStatus.Finished
                       )
                           busyButton("Withdraw")(busy =>
                               Store.run(ApiClient.withdrawFromTournament(t.gameId, t.tournamentId, e.entrantId), busy)(
@@ -371,8 +376,8 @@ object Tournaments {
               ),
           // Offered while the caller has an entry left to make, or one withdrawn to take back up.
           if (
-            !open || me.isEmpty || (mine.count(!_.withdrawn) >= t.settings.entriesPerPlayer && !mine
-                .exists(_.withdrawn))
+            !open || me.isEmpty || (mine.count(!_.isWithdrawn) >= t.settings.entriesPerPlayer && !mine
+                .exists(_.isWithdrawn))
           )
               emptyNode
           else
@@ -389,7 +394,7 @@ object Tournaments {
                         children <-- Store.charactersByGame.signal.map(
                           _.getOrElse(t.gameId, Seq.empty)
                               .filter(c =>
-                                  !t.settings.invitational || d.summary.isOwner ||
+                                  !t.settings.isInvitational || d.summary.isOwner ||
                                       d.invitedCharacters.exists(_.character.characterId == c.characterId)
                               )
                               .map(c => option(value := c.characterId.value.toString, c.name))
@@ -397,7 +402,7 @@ object Tournaments {
                       )
                     )
                 else emptyNode,
-                busyButton(if (mine.exists(_.withdrawn)) "Enter Again" else "Enter")(busy =>
+                busyButton(if (mine.exists(_.isWithdrawn)) "Enter Again" else "Enter")(busy =>
                     Store.run(ApiClient.enterTournament(t.gameId, t.tournamentId, chosen.now()), busy)(_ => reload(d))
                 )
               )
@@ -501,11 +506,11 @@ object Tournaments {
             sectionTag(
               aria.live := "polite",
               h3(s"Round ${d.state.map(_.round).getOrElse(0)}"),
-              if (d.summary.roundOver)
+              if (d.summary.isRoundOver)
                   p(
                     cls := "detail",
                     "Every match of this round is over." +
-                        (if (t.settings.autoRounds) ""
+                        (if (t.settings.hasAutomaticRounds) ""
                          else if (d.summary.isOwner) " Start the next round when you are ready."
                          else s" The next starts when ${d.summary.ownerNickname} starts it.")
                   )
@@ -516,7 +521,7 @@ object Tournaments {
               ul(
                 d.round.map { m =>
                     val myTurn = m.seats.find(s =>
-                        s.choosing && entryOf
+                        s.isChoosing && entryOf
                             .get(s.entrantId)
                             .exists(e => me.exists(m => e.playerId.contains(m.playerId)))
                     )
@@ -533,7 +538,7 @@ object Tournaments {
                         span(
                           cls := "detail",
                           s" · ${statusText(m)}" +
-                              m.seats.find(_.choosing).flatMap(_.chooseBy).fold("")(by => s" · choose by ${when(by)}")
+                              m.seats.find(_.isChoosing).flatMap(_.chooseBy).fold("")(by => s" · choose by ${when(by)}")
                         )
                       ),
                       myTurn.fold(emptyNode)(_ => chooser(t, m, game)),
@@ -651,7 +656,7 @@ object Tournaments {
         div(
           h4(
             s"Stage ${run.stage + 1}" + (if (run.repetition > 0) s", play ${run.repetition + 1}" else "") +
-                (if (run.completed) "" else " (being played)")
+                (if (run.isCompleted) "" else " (being played)")
           ),
           run.pools.zipWithIndex.map((pool, i) => poolView(pool, poolName(i), names)),
           if (run.sittingOut.isEmpty) emptyNode
@@ -702,8 +707,8 @@ object Tournaments {
     }
 
     private def outcomeOf(pool: Pool, m: PoolMember): String =
-        if (!pool.completed) ""
-        else if (m.eliminated) "out"
+        if (!pool.isCompleted) ""
+        else if (m.isEliminated) "out"
         else
             m.stratumOut match {
                 case Some(s) if s > m.stratumIn => "up"
@@ -772,21 +777,21 @@ object Tournaments {
         // The model chosen, by id; none until the models have come, for a new tournament.
         val modelId: Var[Option[TournamentModelId]] = Var(existing.map(_.tournamentModelId))
         val poolSize = Var(existing.fold("")(_.defaultPoolSize.toString))
-        val invitational = Var(s0.invitational)
-        val autoRounds = Var(s0.autoRounds)
-        val friendly = Var(s0.friendly)
-        val lateEntries = Var(s0.lateEntries)
-        val concurrentRounds = Var(s0.concurrentRounds)
+        val invitational = Var(s0.isInvitational)
+        val autoRounds = Var(s0.hasAutomaticRounds)
+        val friendly = Var(s0.isFriendly)
+        val lateEntries = Var(s0.hasLateEntries)
+        val concurrentRounds = Var(s0.hasConcurrentRounds)
         val isPublic = Var(s0.isPublic)
         val minRating = Var(s0.minRating.fold("")(_.toString))
         val maxRating = Var(s0.maxRating.fold("")(_.toString))
         val entries = Var(s0.entriesPerPlayer.toString)
         val hours = Var(s0.roundDuration.fold("48")(d => (d.toMinutes / 60.0).toString.stripSuffix(".0")))
         val maxTurns = Var(s0.maxTurns.fold("")(_.toString))
-        val chooseRoles = Var(s0.chooseRoles)
-        val live = Var(s0.live)
+        val chooseRoles = Var(s0.hasRoleChoice)
+        val live = Var(s0.isLive)
         val maxEntrants = Var(s0.maxEntrants.fold("")(_.toString))
-        val autoStart = Var(s0.autoStart)
+        val autoStart = Var(s0.isAutoStarted)
         val plannedStart = Var(s0.start.fold("")(Views.localInputOf))
         val parameters = Var(Views.startingChoices(game, s0.gameSettings))
         val problems: Var[List[Problem]] = Var(Nil)
@@ -796,7 +801,7 @@ object Tournaments {
         val kept = existing.map(_.tournamentModelId)
         val keptRetired: Signal[Option[TournamentModelId]] =
             models.map(ms => kept.filter(id => ms.nonEmpty && !ms.exists(_.tournamentModelId == id)))
-        def keeping: Boolean = chosen.now().isEmpty && modelId.now().exists(kept.contains)
+        def isKeeping: Boolean = chosen.now().isEmpty && modelId.now().exists(kept.contains)
 
         /* Choosing a model fills in the pool size it suggests -- the game's R where it suggests none -- whether it
          * takes late entries, and whether its players choose their roles; all stay the creator's to change, but for a
@@ -805,36 +810,36 @@ object Tournaments {
             modelId.set(Some(m.tournamentModelId))
             chosen.set(Some(m))
             poolSize.set(m.poolSize.getOrElse(r).toString)
-            lateEntries.set(m.lateEntries)
-            chooseRoles.set(m.chooseRoles)
+            lateEntries.set(m.hasLateEntries)
+            chooseRoles.set(m.hasRoleChoice)
         }
 
         def int(v: Var[String]) = v.now().trim.toIntOption
         def settings = TournamentSettings(
-          autoRounds = autoRounds.now(),
-          friendly = friendly.now(),
-          invitational = invitational.now(),
-          lateEntries = lateEntries.now(),
+          hasAutomaticRounds = autoRounds.now(),
+          isFriendly = friendly.now(),
+          isInvitational = invitational.now(),
+          hasLateEntries = lateEntries.now(),
           minRating = int(minRating),
           maxRating = int(maxRating),
           entriesPerPlayer = int(entries).getOrElse(1),
           roundDuration =
               hours.now().trim.toDoubleOption.filter(_ > 0).map(h => java.time.Duration.ofMinutes((h * 60).round)),
           maxTurns = int(maxTurns),
-          concurrentRounds = concurrentRounds.now(),
+          hasConcurrentRounds = concurrentRounds.now(),
           isPublic = isPublic.now(),
           gameSettings = Views.settingsOf(parameters.now()),
-          live = live.now(),
+          isLive = live.now(),
           start = Views.startOf(plannedStart.now()),
-          chooseRoles = chooseRoles.now(),
+          hasRoleChoice = chooseRoles.now(),
           maxEntrants = int(maxEntrants),
-          autoStart = autoStart.now() && int(maxEntrants).isDefined
+          isAutoStarted = autoStart.now() && int(maxEntrants).isDefined
         )
         def check(): Unit =
             problems.set(chosen.now() match {
                 // The format it was made from, checked again as it is saved.
-                case None if keeping => Nil
-                case None            => List(Problem("", "choose a format"))
+                case None if isKeeping => Nil
+                case None              => List(Problem("", "choose a format"))
                 case Some(m) =>
                     Validation.validate(
                       m.design,
@@ -1005,7 +1010,7 @@ object Tournaments {
             button(tpe := "button", "Check", onClick --> (_ => check())),
             busyButton(if (existing.isDefined) "Save Changes" else "Create Tournament")(busy =>
                 check()
-                val errors = problems.now().filterNot(_.warning)
+                val errors = problems.now().filterNot(_.isWarning)
                 if (name.now().trim.isEmpty) Store.reportProblem("A tournament needs a name.")
                 else if (errors.nonEmpty) Store.reportProblem(errors.map(_.describe).mkString("; "))
                 else
@@ -1035,7 +1040,10 @@ object Tournaments {
             aria.live := "polite",
             children <-- problems.signal.map(
               _.map(pr =>
-                  li(cls := (if (pr.warning) "notice" else "error"), (if (pr.warning) "Note: " else "") + pr.describe)
+                  li(
+                    cls := (if (pr.isWarning) "notice" else "error"),
+                    (if (pr.isWarning) "Note: " else "") + pr.describe
+                  )
               )
             )
           )
@@ -1070,7 +1078,7 @@ object Tournaments {
                 models.map { m =>
                     val busy = Var(false)
                     val unplayable =
-                        Validation.designProblems(m.design, tg, m.poolSize).filterNot(_.warning).headOption
+                        Validation.designProblems(m.design, tg, m.poolSize).filterNot(_.isWarning).headOption
                     def change(on: Boolean): Unit = {
                         val call =
                             if (on) ApiClient.offerTournamentModel(game.gameId, m.tournamentModelId)

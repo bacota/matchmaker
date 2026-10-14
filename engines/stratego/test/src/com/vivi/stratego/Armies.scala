@@ -11,8 +11,8 @@ object Armies {
         require(fixed.keySet.subsetOf(home.toSet), s"$fixed is not all on $side's home squares")
         val left = fixed.values.foldLeft(Rank.army)((army, r) => army.updated(r, army(r) - 1))
         require(left.values.forall(_ >= 0), s"$fixed places more of some rank than an army has")
-        val pool = Rank.values.toList.filterNot(_.movable).flatMap(r => List.fill(left(r))(r)) ++
-            Rank.values.toList.filter(_.movable).reverse.flatMap(r => List.fill(left(r))(r))
+        val pool = Rank.values.toList.filterNot(_.isMovable).flatMap(r => List.fill(left(r))(r)) ++
+            Rank.values.toList.filter(_.isMovable).reverse.flatMap(r => List.fill(left(r))(r))
         val backFirst = if (side == Side.Red) home else home.reverse
         val filled = backFirst.filterNot(fixed.contains).zip(pool).toMap ++ fixed
         home.map(filled)

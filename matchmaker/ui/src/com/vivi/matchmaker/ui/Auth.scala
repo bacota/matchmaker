@@ -48,7 +48,7 @@ object Auth {
       * request that is certain to come back 401.
       */
     def idToken: Option[String] =
-        Option(dom.window.sessionStorage.getItem(TokenKey)).filter(unexpired)
+        Option(dom.window.sessionStorage.getItem(TokenKey)).filter(isUnexpired)
 
     /** The signed-in player's email address, from the ID token's `email` claim.
       *
@@ -82,7 +82,7 @@ object Auth {
       * predates that key simply has none — which is what `freshAccessToken` refreshes to obtain.
       */
     private def accessToken: Option[String] =
-        Option(dom.window.sessionStorage.getItem(AccessKey)).filter(unexpired)
+        Option(dom.window.sessionStorage.getItem(AccessKey)).filter(isUnexpired)
 
     /** At most one refresh is in flight: several requests hitting an expired token at once must redeem the refresh
       * token once between them, not race to redeem it each.
@@ -153,7 +153,7 @@ object Auth {
       * obtained from the hosted sign-up flow *would* refresh at either, so using the IdP call for both is what keeps
       * one code path here.
       *
-      * `None`, with the stored session cleared, means the session is genuinely over (see `endsSession`). A failed
+      * `None`, with the stored session cleared, means the session is genuinely over (see `isSessionEnding`). A failed
       * future means this attempt did not get through and the session is still intact. Cognito does not return a new
       * refresh token here; one is stored if it does.
       */
@@ -165,7 +165,7 @@ object Auth {
                 Some(tokens.idToken)
             }
             .recoverWith {
-                case error if endsSession(error) =>
+                case error if isSessionEnding(error) =>
                     clearSession()
                     Future.successful(None)
             }
@@ -176,7 +176,7 @@ object Auth {
       * mid-game over something that would have worked a second later. Those failures are left to propagate, so the call
       * that triggered the refresh fails and can be retried with the session intact.
       */
-    private def endsSession(error: Throwable): Boolean = error match {
+    private def isSessionEnding(error: Throwable): Boolean = error match {
         // The refresh token is expired, revoked, or signed out elsewhere. Nothing to retry with.
         // Cognito answers all three with NotAuthorizedException, and the user pool client has
         // `prevent_user_existence_errors`, so it is also what a deleted user comes back as.
@@ -415,7 +415,7 @@ object Auth {
     /** True when the token's `exp` is still in the future, with a small margin so that a token about to expire is not
       * sent on a request that will outlive it.
       */
-    private def unexpired(token: String): Boolean =
+    private def isUnexpired(token: String): Boolean =
         claimsOf(token).map(_("exp").num) match {
             case Success(expiry) => expiry - 30 > js.Date.now() / 1000
             case Failure(_)      => false
@@ -433,9 +433,9 @@ object Auth {
 
     /** The payload of a JWT, unverified.
       *
-      * The signature is deliberately not checked, here or in `unexpired`. Nothing on this page could act on the result
-      * — the gateway is what decides whether a token is good, and it does verify the signature. This only decides
-      * whether to bother asking, and what to call the player while it does.
+      * The signature is deliberately not checked, here or in `isUnexpired`. Nothing on this page could act on the
+      * result — the gateway is what decides whether a token is good, and it does verify the signature. This only
+      * decides whether to bother asking, and what to call the player while it does.
       */
     private def claimsOf(token: String): Try[ujson.Value] = Try {
         // Matched rather than indexed. A string with no dot in it has no element 1, and an

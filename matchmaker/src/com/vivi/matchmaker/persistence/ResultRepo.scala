@@ -20,7 +20,7 @@ class ResultRepo(session: Session[IO]) {
     private val insertResult: Command[
       (GameId, ParticipantId, Int, Map[String, Any], Boolean, Boolean, Option[Int], Option[Int])
     ] =
-        sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, forfeit, elo_delta, elo_role_delta)
+        sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, is_forfeit, elo_delta, elo_role_delta)
           VALUES ($gameId, $participantId, $int4, $scores, $bool, $bool, ${int4.opt}, ${int4.opt})""".command
 
     // result's primary key is the composite (game_id, participant_id) — participant_id alone is
@@ -30,7 +30,7 @@ class ResultRepo(session: Session[IO]) {
       (GameId, ParticipantId),
       (Int, Map[String, Any], Boolean, Boolean, Option[Int], Option[Int])
     ] =
-        sql"""SELECT rank, scores, is_winner, forfeit, elo_delta, elo_role_delta FROM result
+        sql"""SELECT rank, scores, is_winner, is_forfeit, elo_delta, elo_role_delta FROM result
           WHERE game_id = $gameId AND participant_id = $participantId""".query(
           int4 *: scores *: bool *: bool *: int4.opt *: int4.opt
         )
@@ -38,7 +38,7 @@ class ResultRepo(session: Session[IO]) {
     private val updateResult: Command[
       (Int, Map[String, Any], Boolean, Boolean, Option[Int], Option[Int], GameId, ParticipantId)
     ] =
-        sql"""UPDATE result SET rank = $int4, scores = $scores, is_winner = $bool, forfeit = $bool,
+        sql"""UPDATE result SET rank = $int4, scores = $scores, is_winner = $bool, is_forfeit = $bool,
           elo_delta = ${int4.opt}, elo_role_delta = ${int4.opt}
           WHERE game_id = $gameId AND participant_id = $participantId""".command
 
@@ -67,7 +67,7 @@ class ResultRepo(session: Session[IO]) {
           Option[Int]
       )
     ] =
-        sql"""SELECT p.game_id, p.match_id, p.participant_id, COALESCE(pl.nickname, ch.name), gr.display_name, r.rank, r.scores, r.is_winner, r.forfeit,
+        sql"""SELECT p.game_id, p.match_id, p.participant_id, COALESCE(pl.nickname, ch.name), gr.display_name, r.rank, r.scores, r.is_winner, r.is_forfeit,
                  p.elo_start, r.elo_delta
           FROM participant mine
           JOIN match m ON m.game_id = mine.game_id AND m.match_id = mine.match_id
@@ -78,9 +78,9 @@ class ResultRepo(session: Session[IO]) {
           LEFT JOIN character ch ON ch.game_id = cp.game_id AND ch.character_id = cp.character_id
           JOIN game_role gr ON gr.game_id = p.game_id AND gr.game_role_id = p.game_role_id
           LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
-          -- Begun: a tournament's match cancelled before it began has seats with no ratings and no results.
+          -- Begun: a tournament's match is_cancelled before it began has seats with no ratings and no results.
           WHERE mine.player_id = ${SkunkIdCodecs.playerId} AND m.start IS NOT NULL
-            AND ((m.completed_at IS NOT NULL) OR m.cancelled)
+            AND ((m.completed_at IS NOT NULL) OR m.is_cancelled)
           ORDER BY p.match_id, r.rank ASC NULLS LAST, p.participant_id"""
             .query(
               gameId *: SkunkIdCodecs.matchId *: participantId *: text *: text *: int4.opt *: scores.opt *: bool.opt *:
@@ -131,7 +131,7 @@ class ResultRepo(session: Session[IO]) {
           FROM turn t
           JOIN participant p ON p.game_id = t.game_id AND p.participant_id = t.participant_id
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
-          WHERE ((m.completed_at IS NOT NULL) OR m.cancelled)
+          WHERE ((m.completed_at IS NOT NULL) OR m.is_cancelled)
             AND EXISTS (SELECT 1 FROM participant mine
                          WHERE mine.game_id = m.game_id AND mine.match_id = m.match_id
                            AND mine.player_id = ${SkunkIdCodecs.playerId})
@@ -156,7 +156,7 @@ class ResultRepo(session: Session[IO]) {
         session.unique(selectExistsForMatch)((gameId, matchId))
 
     private val selectForMatch: Query[(GameId, MatchId), ResultRepo.RatedResultRow] =
-        sql"""SELECT r.participant_id, r.rank, r.elo_delta, r.forfeit, r.elo_role_delta FROM result r
+        sql"""SELECT r.participant_id, r.rank, r.elo_delta, r.is_forfeit, r.elo_role_delta FROM result r
           JOIN participant p ON p.game_id = r.game_id AND p.participant_id = r.participant_id
           WHERE p.game_id = $gameId AND p.match_id = ${SkunkIdCodecs.matchId}
           ORDER BY r.participant_id"""
@@ -180,7 +180,7 @@ class ResultRepo(session: Session[IO]) {
         session.execute(updateEloDelta)((delta, roleDelta, gameId, id)).void
 
     private val insertManual: Command[(GameId, ParticipantId, Int, Boolean)] =
-        sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, forfeit, manual)
+        sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, is_forfeit, is_manual)
           VALUES ($gameId, $participantId, $int4, '{}'::jsonb, $bool, false, true)""".command
 
     /** A rank a tournament's owner gave a seat of a match they called off: no scores, no rating change, marked as given
@@ -198,7 +198,7 @@ class ResultRepo(session: Session[IO]) {
                 result.rank,
                 result.scores,
                 result.isWinner,
-                result.forfeit,
+                result.isForfeit,
                 result.eloDelta,
                 result.eloRoleDelta
               )
@@ -219,7 +219,7 @@ class ResultRepo(session: Session[IO]) {
                 result.rank,
                 result.scores,
                 result.isWinner,
-                result.forfeit,
+                result.isForfeit,
                 result.eloDelta,
                 result.eloRoleDelta,
                 result.gameId,
@@ -245,7 +245,7 @@ object ResultRepo {
         rank: Option[Int],
         scores: Map[String, Any],
         isWinner: Boolean,
-        forfeit: Boolean,
+        isForfeit: Boolean,
         // Its player's rating as the match began, from the seat, and the match's change to it, from the
         // result.
         eloStart: Int,
@@ -259,7 +259,7 @@ object ResultRepo {
         participantId: ParticipantId,
         rank: Int,
         eloDelta: Option[Int],
-        forfeit: Boolean = false,
+        isForfeit: Boolean = false,
         eloRoleDelta: Option[Int] = None
     )
 

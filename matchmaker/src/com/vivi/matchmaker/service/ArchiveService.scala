@@ -78,7 +78,7 @@ class ArchiveService(
                 session.transaction.use { _ =>
                     for {
                         row <- requireForUpdate(repo, matchId, callerExternalId)
-                        _ <- IO.raiseWhen(row.cancelled)(
+                        _ <- IO.raiseWhen(row.isCancelled)(
                           ConflictError(s"match ${matchId.value} was cancelled, and a cancelled match is not archived")
                         )
                         completedAt <- IO.fromOption(row.completedAt)(
@@ -93,7 +93,7 @@ class ArchiveService(
                                 // The bucket the url is signed for, recorded with it: the match's as
                                 // it stands now, and where `confirm` will look.
                                 repo
-                                    .recordRequest(row.gameId, matchId, key, sha256, row.friendly)
+                                    .recordRequest(row.gameId, matchId, key, sha256, row.isFriendly)
                                     .as(Right((row, key)))
                         }
                     } yield answer
@@ -105,7 +105,7 @@ class ArchiveService(
                 // database belongs inside one of its transactions.
                 case Right((row, key)) =>
                     store
-                        .signUpload(ArchiveBucket.of(row.friendly), key, size, sha256, formatVersion)
+                        .signUpload(ArchiveBucket.of(row.isFriendly), key, size, sha256, formatVersion)
                         .map(UploadAnswer.Upload(_))
             }
         } yield answer
@@ -188,7 +188,7 @@ class ArchiveService(
                     _ <- IO.raiseWhen(row.expiredAt.isDefined)(expired(matchId))
                     bucket = bucketOf(row)
                     _ <-
-                        if (mayHaveExpired(bucket.isFriendly, archivedAt, now()))
+                        if (canHaveExpired(bucket.isFriendly, archivedAt, now()))
                             store.head(bucket, key).flatMap {
                                 case Some(_) => IO.unit
                                 case None    => recordExpired(row) *> IO.raiseError(expired(matchId))
@@ -240,7 +240,7 @@ class ArchiveService(
       */
     def settle(summaries: List[MatchSummary]): IO[List[MatchSummary]] = {
         val at = now()
-        val due = summaries.filter(s => !s.archiveExpired && s.archivedAt.exists(mayHaveExpired(s.friendly, _, at)))
+        val due = summaries.filter(s => !s.isArchiveExpired && s.archivedAt.exists(canHaveExpired(s.isFriendly, _, at)))
         if (due.isEmpty) IO.pure(summaries)
         else
             IO.parTraverseN(CheckParallelism)(due.take(ChecksPerRequest))(s =>
@@ -253,7 +253,7 @@ class ArchiveService(
 
     /** [[settle]], for the one match a player is about to open. */
     def settle(m: Match): IO[Match] =
-        if (m.archiveExpired || !m.archivedAt.exists(mayHaveExpired(m.friendly, _, now()))) IO.pure(m)
+        if (m.isArchiveExpired || !m.archivedAt.exists(canHaveExpired(m.isFriendly, _, now()))) IO.pure(m)
         else expiredNow(m.gameId, m.matchId).map(gone => if (gone) markExpired(m) else m)
 
     /* Whether the archive is gone, recording it if so. False for anything that cannot be decided --
@@ -372,7 +372,7 @@ object ArchiveService {
     /** The bucket the archive is in, or for a row from before that was recorded, the one its friendliness says — which
       * is where every such archive went, since a match could not change it then.
       */
-    def bucketOf(row: ArchiveRow): ArchiveBucket = ArchiveBucket.of(row.archiveFriendly.getOrElse(row.friendly))
+    def bucketOf(row: ArchiveRow): ArchiveBucket = ArchiveBucket.of(row.isInFriendlyBucket.getOrElse(row.isFriendly))
 
     /** How long a friendly match's archive is kept: the friendly bucket's lifecycle rule. */
     val FriendlyRetention: Duration = Duration.ofDays(30)
@@ -390,7 +390,7 @@ object ArchiveService {
     val MaxSize: Long = 16L * 1024 * 1024
 
     /** Whether an archive this old may have been expired by its bucket — which only a friendly one ever is. */
-    def mayHaveExpired(friendly: Boolean, archivedAt: Instant, at: Instant): Boolean =
+    def canHaveExpired(friendly: Boolean, archivedAt: Instant, at: Instant): Boolean =
         friendly && archivedAt.plus(FriendlyRetention).isBefore(at)
 
     /** Where a match's archive goes: a folder per game, a subfolder per day it completed (UTC), and a file named by the
@@ -439,9 +439,9 @@ object ArchiveService {
         catch { case _: IllegalArgumentException => false }
 
     /** A summary whose archive has expired: no link to it any more. */
-    def markExpired(s: MatchSummary): MatchSummary = s.copy(archiveExpired = true, publicUrl = None)
+    def markExpired(s: MatchSummary): MatchSummary = s.copy(isArchiveExpired = true, publicUrl = None)
 
-    def markExpired(m: Match): Match = m.copy(archiveExpired = true, playUrl = None, publicUrl = None)
+    def markExpired(m: Match): Match = m.copy(isArchiveExpired = true, playUrl = None, publicUrl = None)
 
     /** `url` with `archived=1` added to its query, before any fragment: tells the engine at once that the match is
       * archived and its live copy gone, so it reads the archive without missing in its own store first. A hint only —
@@ -463,12 +463,12 @@ object ArchiveService {
       * one.
       */
     def forViewer(s: MatchSummary): MatchSummary =
-        if (s.archiveExpired) markExpired(s)
+        if (s.isArchiveExpired) markExpired(s)
         else if (s.archivedAt.isDefined) s.copy(publicUrl = s.publicUrl.map(markArchived))
         else s
 
     def forViewer(m: Match): Match =
-        if (m.archiveExpired) markExpired(m)
+        if (m.isArchiveExpired) markExpired(m)
         else if (m.archivedAt.isDefined)
             m.copy(playUrl = m.playUrl.map(markArchived), publicUrl = m.publicUrl.map(markArchived))
         else m

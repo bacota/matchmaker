@@ -111,14 +111,14 @@ object TurnTimer {
       }
       chess = clock.kind === "TOTAL";
       const now = Date.now();
-      const running = clock.seats.filter(s => s.running);
+      const running = clock.seats.filter(s => s.isRunning);
       expiry = running.length ? now + Math.min(...running.map(s => s.remainingMillis)) : null;
       // The face shows the viewer's own clock when it is running; otherwise whichever runs out
       // first, since that is the next thing that can happen.
       const mine = running.find(s => s.participantId === me);
       const shown = mine || running.slice().sort((a, b) => a.remainingMillis - b.remainingMillis)[0];
       const own = clock.seats.find(s => s.participantId === me);
-      banked = chess && own && !own.running && own.remainingMillis != null ? own.remainingMillis : null;
+      banked = chess && own && !own.isRunning && own.remainingMillis != null ? own.remainingMillis : null;
       if (!shown) {
         // Everyone being waited on has yet to open the board, and nobody's clock has started.
         stop();

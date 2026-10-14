@@ -12,18 +12,18 @@ object BrazilianRepechage
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */
     private val eliminationMatch: TournamentDesign =
-        TournamentDesign(List(StageDesign(brackets = false, rotateRoles = false, demote = Some(2))))
+        TournamentDesign(List(StageDesign(hasBrackets = false, isRotatingRoles = false, demote = Some(2))))
 
     val design: TournamentDesign = TournamentDesign(
       List(
-        StageDesign(repeat = Repetition.UntilRemaining(8), brackets = true, design = Some(eliminationMatch)),
+        StageDesign(repeat = Repetition.UntilRemaining(8), hasBrackets = true, design = Some(eliminationMatch)),
         StageDesign(
           repeat = Repetition.UntilRemaining(2),
           poolSize = Some(2),
-          brackets = true,
+          hasBrackets = true,
           demote = Some(2),
           minStratum = Some(-1),
-          strictStrata = true,
+          hasStrictStrata = true,
           design = Some(eliminationMatch)
         )
       )

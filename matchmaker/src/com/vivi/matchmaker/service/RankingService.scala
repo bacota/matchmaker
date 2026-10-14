@@ -62,8 +62,8 @@ class RankingService(
     private def placeRetrying(gameId: GameId, key: RatingKey): IO[Unit] = {
         def attempt(n: Int): IO[Unit] =
             placeOnce(gameId, key).handleErrorWith {
-                case e if RankingService.lockFailure(e) && n < attempts => pause(n) *> attempt(n + 1)
-                case e                                                  => IO.raiseError(e)
+                case e if RankingService.isLockFailure(e) && n < attempts => pause(n) *> attempt(n + 1)
+                case e                                                    => IO.raiseError(e)
             }
         attempt(1)
     }
@@ -89,7 +89,7 @@ object RankingService {
     case object Busy extends Exception("another placing of this game is running")
 
     /** Whether `e` is a lock that could not be had — and so worth trying again — rather than a failure. */
-    def lockFailure(e: Throwable): Boolean = e match {
+    def isLockFailure(e: Throwable): Boolean = e match {
         case Busy                                                                => true
         case p: PostgresErrorException if p.code == "55P03" || p.code == "40P01" => true
         case _                                                                   => false
@@ -122,8 +122,8 @@ object RankingService {
       */
     def place(repo: EloRatingRepo, game: Board, player: PlayerId): IO[Unit] =
         repo.lockForPlacing(game, player).flatMap {
-            case None                    => IO.unit
-            case Some(row) if !row.rated => row.placed.traverse_(takeOff(repo, game, player, _))
+            case None                      => IO.unit
+            case Some(row) if !row.isRated => row.placed.traverse_(takeOff(repo, game, player, _))
             case Some(row) =>
                 row.placed match {
                     case None                              => placeNew(repo, game, player, row.standing)

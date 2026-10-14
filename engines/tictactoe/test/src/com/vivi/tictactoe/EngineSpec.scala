@@ -182,7 +182,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
         val finished = store.get("m-1").get
         assertEquals(finished.winner, Some(Mark.X))
-        assert(finished.completed)
+        assert(finished.isCompleted)
 
         assertEquals(recorder.moves.size, 5)
         // The last move names nobody as next: there is no next.
@@ -237,20 +237,20 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, _, _, _, m) = fixture()
 
         val opening = engine.status("m-1").toOption.get
-        assertEquals(opening.completed, false)
-        assertEquals(opening.participants.filter(_.pending).map(_.participantId), List(11L))
+        assertEquals(opening.isCompleted, false)
+        assertEquals(opening.participants.filter(_.isPending).map(_.participantId), List(11L))
         // Nobody has moved, so the first player's clock started when the match was created.
         assertEquals(opening.participants.head.prevMoveAt, Some(Instant.parse("2026-01-01T00:00:00Z")))
 
         engine.move("m-1", playerOf(m, Mark.X), 4)
-        assertEquals(engine.status("m-1").toOption.get.participants.filter(_.pending).map(_.participantId), List(22L))
+        assertEquals(engine.status("m-1").toOption.get.participants.filter(_.isPending).map(_.participantId), List(22L))
 
         List((playerOf(m, Mark.O), 0), (playerOf(m, Mark.X), 1), (playerOf(m, Mark.O), 2), (playerOf(m, Mark.X), 7))
             .foreach((token, cell) => engine.move("m-1", token, cell))
 
         val over = engine.status("m-1").toOption.get
-        assert(over.completed)
-        assert(over.participants.forall(p => p.completed && !p.pending))
+        assert(over.isCompleted)
+        assert(over.participants.forall(p => p.isCompleted && !p.isPending))
     }
 
     test("status reports the turns taken, with what each one cost, and only those after `since`") {
@@ -328,13 +328,13 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, recorder, store, _, m) = fixture()
         val x = m.seatOf(Mark.X).get.cognitoId
         val o = m.seatOf(Mark.O).get.cognitoId
-        recorder.failCallbacks = true
+        recorder.isFailingCallbacks = true
 
         // X takes the top row.
         List(x -> 0, o -> 3, x -> 1, o -> 4).foreach((who, cell) => assert(engine.move("m-1", who, cell).isRight))
         val winning = engine.move("m-1", x, 2)
         assert(winning.isRight, s"the move was committed, so it must not be reported as failing: $winning")
-        assert(store.get("m-1").get.completed)
+        assert(store.get("m-1").get.isCompleted)
         assertEquals(recorder.moves.size, 5)
         assertEquals(recorder.results.size, 1)
     }

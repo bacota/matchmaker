@@ -10,7 +10,7 @@ case class GameMatch(
     description: String,
     start: Instant,
     completedAt: Option[Instant],
-    cancelled: Boolean,
-    friendly: Boolean,
+    isCancelled: Boolean,
+    isFriendly: Boolean,
     players: Seq[String]
 )

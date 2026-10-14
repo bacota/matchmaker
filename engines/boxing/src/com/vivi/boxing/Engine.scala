@@ -179,14 +179,14 @@ class Engine(
           matchId = m.matchId,
           scheduledRounds = m.scheduledRounds,
           round = if (over) m.rounds.size else m.currentRound,
-          extraRound = (if (over) m.rounds.size else m.currentRound) > m.scheduledRounds,
+          hasExtraRound = (if (over) m.rounds.size else m.currentRound) > m.scheduledRounds,
           waitingFor = m.pending.map(_.side.toString),
           you = corner.map(_.side.toString),
           yourPlan =
               corner.flatMap(c => m.planOf(c, m.currentRound)).filterNot(_ => over).map(p => planView(p.allocation)),
-          completed = over,
+          isCompleted = over,
           winner = m.winner.map(_.side.toString),
-          draw = m.isDraw,
+          isDrawn = m.isDrawn,
           method = m.method,
           corners = m.corners.map(c =>
               CornerView(
@@ -196,7 +196,7 @@ class Engine(
                 characterId = c.characterId,
                 fighter = c.fighter.filter(_ => yours(c)).map(view),
                 impression = if (yours(c)) Nil else c.fighter.map(_.impression).getOrElse(Nil),
-                planned = !over && m.planOf(c, m.currentRound).isDefined,
+                isPlanned = !over && m.planOf(c, m.currentRound).isDefined,
                 points = m.points(c.side),
                 nickname = c.nickname,
                 fighterName = c.fighterName

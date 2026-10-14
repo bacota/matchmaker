@@ -26,7 +26,7 @@ object TournamentFixtures {
         val repo = new TournamentModelRepo(session)
         val standard = StandardModels.find(key).getOrElse(throw new IllegalArgumentException(s"no standard model $key"))
         val playable =
-            Validation.designProblems(standard.design, TournamentGame.of(game), standard.poolSize).forall(_.warning)
+            Validation.designProblems(standard.design, TournamentGame.of(game), standard.poolSize).forall(_.isWarning)
         if (playable)
             for {
                 _ <- TournamentModelService.lockSync(session)
@@ -43,8 +43,8 @@ object TournamentFixtures {
               "",
               None,
               None,
-              lateEntries = false,
-              TournamentDesign(List(StageDesign(brackets = false, demote = None)))
+              hasLateEntries = false,
+              TournamentDesign(List(StageDesign(hasBrackets = false, demote = None)))
             )
             repo.create(roundRobin) *> repo.read(roundRobin.tournamentModelId).map(_.get)
         }
@@ -106,12 +106,12 @@ object TournamentFixtures {
                   s"INSERT INTO atomic_pool (game_id, tournament_id, pool_id, stage_id) VALUES ($g, $id, $pool, $stage)"
                 )
                 _ <- session.execute(
-                  sql"""INSERT INTO match (game_id, match_id, description, completed_at, start, settings, public,
-                                           public_url, friendly, status, tournament_id, pool_id, round, stage_id)
+                  sql"""INSERT INTO match (game_id, match_id, description, completed_at, start, settings, is_public,
+                                           public_url, is_friendly, status, tournament_id, pool_id, round, stage_id)
                         VALUES (#${g.toString}, $int8, $text,
                                 ${com.vivi.matchmaker.persistence.SkunkCodecs.instant.opt}, now(), '{}', #${m.isPublic.toString},
-                                ${text.opt}, #${m.friendly.toString}, #${
-                          if (m.completed) "'F'" else "'P'"
+                                ${text.opt}, #${m.isFriendly.toString}, #${
+                          if (m.isCompleted) "'F'" else "'P'"
                       }, #${id.toString},
                                 #${pool.toString}, 1, #${stage.toString})""".command
                 )((m.matchId.value, m.description, m.completedAt, m.publicUrl))
@@ -137,9 +137,9 @@ object TournamentFixtures {
                 entrant <- new com.vivi.matchmaker.persistence.EntrantRepo(session)
                     .create(t.gameId, GameType.Character, t.tournamentId, player, Some(character), EloRating.initial)
                 participant <- session.unique(
-                  sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed_at, due,
-                            game_role_id, elo_start, tournament_id, entrant_id, notify_match_started, notify_turn_taken,
-                            notify_your_turn, notify_match_ended)
+                  sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, is_pending, completed_at, due,
+                            game_role_id, elo_start, tournament_id, entrant_id, is_notified_of_match_started, is_notified_of_turn_taken,
+                            is_notified_of_your_turn, is_notified_of_match_ended)
                         VALUES (#${t.gameId.value.toString}, $int8, 'C', #${player.value.toString},
                                 #${pending.toString}, #${if (completed) "now()" else "NULL"},
                                 ${com.vivi.matchmaker.persistence.SkunkCodecs.instant.opt}, #${role.value.toString},

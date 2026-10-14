@@ -30,41 +30,42 @@ object TournamentStatus {
   *
   * `roundDuration` is how long a round lasts, which its owner may change for a round started by hand, and which is also
   * every match's time limit (`Clock.forMatch`); `maxTurns` is for a game whose players move at once and that has no
-  * maximum of its own. `concurrentRounds` lets every round-robin pool play all of its matches in one round. `isPublic`
-  * is whether anybody may see it listed, and its matches watched.
+  * maximum of its own. `hasConcurrentRounds` lets every round-robin pool play all of its matches in one round.
+  * `isPublic` is whether anybody may see it listed, and its matches watched.
   *
   * `gameSettings` is the owner's choice of each game parameter, as JSON, copied to every match and so to the engine;
-  * `live` makes every match live, its turns and clock the engine's to run. `start` is when it is meant to be played,
-  * shown and nothing more. `chooseRoles` has every match's seats choose their roles, whatever the game's preference
-  * levels. `maxEntrants` is the most entries it takes, and with `autoStart` it starts by itself when they are reached.
+  * `isLive` makes every match live, its turns and clock the engine's to run. `start` is when it is meant to be played,
+  * shown and nothing more. `hasRoleChoice` has every match's seats choose their roles, whatever the game's preference
+  * levels. `maxEntrants` is the most entries it takes, and with `isAutoStarted` it starts by itself when they are
+  * reached.
   */
 case class TournamentSettings(
-    autoRounds: Boolean = false,
-    friendly: Boolean = false,
-    invitational: Boolean = true,
-    lateEntries: Boolean = false,
+    hasAutomaticRounds: Boolean = false,
+    isFriendly: Boolean = false,
+    isInvitational: Boolean = true,
+    hasLateEntries: Boolean = false,
     minRating: Option[Int] = None,
     maxRating: Option[Int] = None,
     entriesPerPlayer: Int = 1,
     roundDuration: Option[Duration] = None,
     maxTurns: Option[Int] = None,
-    concurrentRounds: Boolean = false,
+    hasConcurrentRounds: Boolean = false,
     isPublic: Boolean = true,
     gameSettings: String = "{}",
-    live: Boolean = false,
+    isLive: Boolean = false,
     start: Option[Instant] = None,
-    chooseRoles: Boolean = false,
+    hasRoleChoice: Boolean = false,
     maxEntrants: Option[Int] = None,
-    autoStart: Boolean = false
+    isAutoStarted: Boolean = false
 )
 
 /** A design every game may offer, which a tournament is made from by copying its stages: one of the standard formats
   * the code defines ([[com.vivi.matchmaker.model.tournament.standard.StandardModels]]), as a site admin's sync last
   * wrote it, at `version`. `classification` is the group it is listed under where a tournament is created; a model with
   * none is never offered on its own, being the inner design of another's nesting stage. `poolSize` is the default pool
-  * size to suggest, `None` for the game's R. `chooseRoles` is what a tournament made from it starts with: every match's
-  * seats choose their roles. A model that is not `active` is one the code no longer defines, kept for the tournaments
-  * made from it.
+  * size to suggest, `None` for the game's R. `hasRoleChoice` is what a tournament made from it starts with: every
+  * match's seats choose their roles. A model that is not `isActive` is one the code no longer defines, kept for the
+  * tournaments made from it.
   */
 case class TournamentModel(
     tournamentModelId: TournamentModelId,
@@ -73,10 +74,10 @@ case class TournamentModel(
     description: String,
     classification: Option[String],
     poolSize: Option[Int],
-    lateEntries: Boolean,
+    hasLateEntries: Boolean,
     design: TournamentDesign,
-    active: Boolean = true,
-    chooseRoles: Boolean = false
+    isActive: Boolean = true,
+    hasRoleChoice: Boolean = false
 )
 
 /** What a site admin's sync of the models with the code did: the models it `added`, those it `updated` to a newer
@@ -129,7 +130,7 @@ case class Entrant(
     nickname: String = "",
     characterName: Option[String] = None
 ) {
-    def withdrawn: Boolean = withdrawnAt.isDefined
+    def isWithdrawn: Boolean = withdrawnAt.isDefined
 }
 
 /** Where a tournament match is: its seats choosing roles, due to be created, created, or over -- `match.status` `C`,
@@ -160,7 +161,7 @@ case class TournamentSeat(
     chooseOrder: Option[Int],
     chooseStartedAt: Option[Instant] = None,
     chosenAt: Option[Instant] = None,
-    forfeit: Boolean = false
+    isForfeit: Boolean = false
 )
 
 /** A match of a tournament's round: a `match` row of one of its atomic pools, from the round it is played in until it
@@ -173,7 +174,7 @@ case class TournamentMatch(
     poolId: Int,
     round: Int,
     status: TournamentMatchStatus,
-    tiesAllowed: Boolean,
+    canTie: Boolean,
     seats: List[TournamentSeat]
 )
 
@@ -200,9 +201,9 @@ case class TournamentSummary(
     ownerNickname: String,
     entrants: Int,
     isOwner: Boolean,
-    entered: Boolean,
-    invited: Boolean,
-    roundOver: Boolean = false
+    isEntered: Boolean,
+    isInvited: Boolean,
+    isRoundOver: Boolean = false
 )
 
 /** A seat of a match being played in a tournament's round, as its page shows it: the entrant, the role (once chosen),
@@ -211,7 +212,7 @@ case class TournamentSummary(
 case class TournamentSeatView(
     entrantId: EntrantId,
     role: Option[GameRoleId],
-    choosing: Boolean,
+    isChoosing: Boolean,
     chooseBy: Option[Instant]
 )
 
@@ -259,7 +260,7 @@ case class TournamentStanding(
     characterName: Option[String],
     seed: Option[Int],
     stratum: Option[Int],
-    eliminated: Boolean,
+    isEliminated: Boolean,
     entrants: Int,
     finalRank: Option[Int]
 )
@@ -282,24 +283,24 @@ case class EntrantRank(entrantId: EntrantId, rank: Int)
 
 /** What a challenge is offered with: a tournament of the challenge model, made, opened and entered in one go.
   *
-  * `characterId` is the challenger's character in a character game, and `plays` false a game's admin offering a match
-  * they will not play in, who enters nothing. `poolSize` is how many it seats, between the game's required roles and
-  * all its roles, the game's R if not given, and also the most entries it takes. `roundDuration` is the match's time
-  * limit (`Clock.forMatch`). `open` false makes it invitational: only those invited may enter -- `invitations`,
+  * `characterId` is the challenger's character in a character game, and `isPlaying` false a game's admin offering a
+  * match they will not play in, who enters nothing. `poolSize` is how many it seats, between the game's required roles
+  * and all its roles, the game's R if not given, and also the most entries it takes. `roundDuration` is the match's
+  * time limit (`Clock.forMatch`). `isOpen` false makes it invitational: only those invited may enter -- `invitations`,
   * players, in a plain game, and `characterInvitations`, characters, in a character game.
   */
 case class ChallengeRequest(
     characterId: Option[CharacterId] = None,
-    plays: Boolean = true,
+    isPlaying: Boolean = true,
     poolSize: Option[Int] = None,
     roundDuration: Option[Duration] = None,
     gameSettings: String = "{}",
-    live: Boolean = false,
-    friendly: Boolean = true,
+    isLive: Boolean = false,
+    isFriendly: Boolean = true,
     isPublic: Boolean = false,
     start: Option[Instant] = None,
-    autoStart: Boolean = false,
-    open: Boolean = true,
+    isAutoStarted: Boolean = false,
+    isOpen: Boolean = true,
     invitations: List[PlayerId] = Nil,
     characterInvitations: List[CharacterId] = Nil
 )

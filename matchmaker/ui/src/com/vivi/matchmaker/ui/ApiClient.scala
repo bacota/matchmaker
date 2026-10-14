@@ -154,7 +154,7 @@ object ApiClient {
         sendUnit(
           HttpMethod.PUT,
           s"/me/notifications/games/${gameId.value}",
-          Some(write(Json.PreferencesRequest(preferences, applyToMatches = applyToMatches)))
+          Some(write(Json.PreferencesRequest(preferences, isAppliedToMatches = applyToMatches)))
         )
 
     /** The caller's answers for one match. Every kind answered, because a seat's own columns are what decides and they
@@ -209,7 +209,7 @@ object ApiClient {
         get[Leaderboard](s"/games/${gameId.value}/ratings?page=$page${roleQuery(role, first = false)}")
 
     /** A game's rated players, overall or in a role, whose nickname begins with `prefix`, with their places: at most
-      * the player search's limit, and `more` when there were others.
+      * the player search's limit, and `hasMore` when there were others.
       */
     def findInRankings(gameId: GameId, prefix: String, role: Option[GameRoleId] = None): Future[Leaderboard] =
         get[Leaderboard](
@@ -442,7 +442,7 @@ object ApiClient {
         // the header; the gateway reads the token and verifies it before the function is reached.
         // Asking for the token before every call is what lets an expired one be refreshed here,
         // rather than becoming a 401 the player has to sign in again to clear.
-        if (Config.current.headerAuth) send(method, path, body, None)
+        if (Config.current.isHeaderAuth) send(method, path, body, None)
         else Auth.freshIdToken().flatMap(token => send(method, path, body, token))
 
     private def send(
@@ -456,7 +456,7 @@ object ApiClient {
 
         val headers = js.Dictionary("accept" -> "application/json")
 
-        if (Config.current.headerAuth) headers("x-external-id") = Config.current.localExternalId
+        if (Config.current.isHeaderAuth) headers("x-external-id") = Config.current.localExternalId
         else idToken.foreach(token => headers("authorization") = s"Bearer $token")
         body.foreach { payload =>
             headers("content-type") = "application/json"
@@ -475,7 +475,7 @@ object ApiClient {
                     // the sign-in button instead of repeating a request that cannot succeed.
                     // In header mode there is no session to expire, and clearing one would only wipe the
                     // screen; a 401 there means the server is not in header mode, which the message says.
-                    if (status == 401 && !Config.current.headerAuth) Store.sessionExpired()
+                    if (status == 401 && !Config.current.isHeaderAuth) Store.sessionExpired()
                     Future.failed(ApiError(status, messageOf(text)))
             }
     }

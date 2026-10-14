@@ -49,7 +49,7 @@ class RoutesSpec extends FunSuite {
     test("GET /matches/:id/status answers matchmaker's status call") {
         val (routes, _, _) = fixture()
         val status = read[Protocol.GameStatusResponse](get(routes, "/matches/m-9/status").body)
-        assertEquals(status.completed, false)
+        assertEquals(status.isCompleted, false)
         assertEquals(status.participants.map(_.participantId).toSet, Set(1L, 2L))
     }
 

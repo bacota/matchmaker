@@ -30,9 +30,9 @@ object Protocol {
         board: String,
         turn: Option[String],
         you: Option[String],
-        completed: Boolean,
+        isCompleted: Boolean,
         winner: Option[String],
-        draw: Boolean,
+        isDrawn: Boolean,
         winningLine: Option[Seq[Int]],
         players: List[SeatView],
         clock: Option[ClockView] = None

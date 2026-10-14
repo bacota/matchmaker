@@ -31,7 +31,7 @@ SELECT :'HOST' LIKE '/%' OR :'HOST' IN ('localhost', '127.0.0.1', '::1') AS is_l
 
 BEGIN;
 
-INSERT INTO game (game_type, name, display_name, description, url, character_url, active, external_id,
+INSERT INTO game (game_type, name, display_name, description, url, character_url, is_active, external_id,
                   move_type)
 VALUES (
   -- 'C' — a character game: every corner is a character, which this game calls a fighter. Its

@@ -23,15 +23,15 @@ case class SeatClock(participantId: ParticipantId, since: Instant)
   */
 case class MoveState(sequence: Long, pending: List[SeatClock])
 
-/** One participant's outcome as the game engine reports it at the end of a match. `forfeit` is a live match the engine
-  * ended because a turn ran out — the engine's own forfeit, recorded as matchmaker records its own.
+/** One participant's outcome as the game engine reports it at the end of a match. `isForfeit` is a live match the
+  * engine ended because a turn ran out — the engine's own forfeit, recorded as matchmaker records its own.
   */
 case class ReportedResult(
     participantId: ParticipantId,
     rank: Int,
     scores: Map[String, Any],
     isWinner: Boolean,
-    forfeit: Boolean = false
+    isForfeit: Boolean = false
 )
 
 /** The four exchanges between matchmaker and a game engine, as described in `interaction-design.txt`:
@@ -103,7 +103,7 @@ class GameEngineService[T](
               // The limit again, with its kind, as the clock the engine itself enforces. A live tournament always
               // has one; `filter` rather than `get`, so that a match that somehow has none starts as an ordinary one.
               live = saved.timeLimit
-                  .filter(_ => saved.live)
+                  .filter(_ => saved.isLive)
                   .map(limit => LiveTerms(limit.getSeconds, saved.timeLimitKind.code)),
               gameDisplayName = Some(game.displayName),
               description = Some(saved.description.trim).filter(_.nonEmpty),
@@ -112,7 +112,7 @@ class GameEngineService[T](
               resultsCallbackUrl = callbackBaseUrl.map(base =>
                   s"$base/games/${game.gameId.value}/matches/${saved.matchId.value}/results"
               ),
-              tiesAllowed = Option.when(!tiesAllowed)(false)
+              canTie = Option.when(!tiesAllowed)(false)
             )
             response <- engine.createGame(game.url, apiKey, request).onError(_ => undo)
             withUrls = saved.copy(
@@ -187,7 +187,7 @@ class GameEngineService[T](
                             // engine said would restamp the seats this match's cancel had finished and
                             // could complete a match its tournament's owner had called off.
                             outcome <-
-                                if (current.cancelled) IO.pure((current, false))
+                                if (current.isCancelled) IO.pure((current, false))
                                 else
                                     for {
                                         participants <- participantRepo.listForMatch(gameId, matchId)
@@ -217,14 +217,14 @@ class GameEngineService[T](
                                         // engine's to run, nothing tells matchmaker when they change, and a
                                         // seat marked pending here would stay pending -- and due -- long after
                                         // the engine had moved on. Only its ending is news; see `liveEnded`.
-                                        seatsCurrent = !current.completed && !current.live &&
+                                        seatsCurrent = !current.isCompleted && !current.isLive &&
                                             status.sequence.forall(seq => applied.forall(_ <= seq))
                                         // A live match the engine says is over, and matchmaker had not heard
                                         // was: its results callback went astray. Every seat is retired here,
                                         // as `recordResults` would have retired them, or the finished match
                                         // stays in everybody's active lists -- and no later refresh asks
                                         // again, since the match itself is now complete.
-                                        liveEnded = current.live && status.completed && current.completedAt.isEmpty
+                                        liveEnded = current.isLive && status.isCompleted && current.completedAt.isEmpty
                                         _ <- participants.filter(_ => liveEnded).traverse_ { (p, _, _) =>
                                             participantRepo
                                                 .update(withTurn(p, pending = false, due = None, completed = true))
@@ -238,9 +238,9 @@ class GameEngineService[T](
                                                     participantRepo.update(
                                                       withTurn(
                                                         p,
-                                                        reported.pending,
+                                                        reported.isPending,
                                                         dueFor(current, used)(p.participantId, reported.prevMoveAt),
-                                                        reported.completed
+                                                        reported.isCompleted
                                                       )
                                                     )
                                                 // The engine reporting a seat matchmaker does not have is the engine's
@@ -257,7 +257,7 @@ class GameEngineService[T](
                                         // is one from before it ended (see `seatsCurrent`), and reopening it would undo a
                                         // result or a forfeit that has already been recorded and mailed.
                                         completedAt <-
-                                            if (status.completed && current.completedAt.isEmpty)
+                                            if (status.isCompleted && current.completedAt.isEmpty)
                                                 matchRepo.complete(gameId, matchId).map(Some(_))
                                             else IO.pure(current.completedAt)
                                         updated = current.copy(completedAt = completedAt)
@@ -265,7 +265,7 @@ class GameEngineService[T](
                                         // the match: the engine says it is over and matchmaker had not heard. It happens
                                         // when the results callback went astray and somebody pressed Refresh, and it is
                                         // the only way a player would ever learn their match had finished.
-                                        endedHere = status.completed && current.completedAt.isEmpty
+                                        endedHere = status.isCompleted && current.completedAt.isEmpty
                                     } yield (updated, endedHere)
                         } yield outcome
                     }
@@ -386,13 +386,13 @@ class GameEngineService[T](
                         // not locked on the way to writing `match` and `participant`.
                         _ <- authorizeGame(gameRepo, gameId, callerExternalId)
                         existing <- requireMatchForUpdate(matchRepo, gameId, matchId)
-                        _ <- IO.raiseWhen(existing.completed)(
+                        _ <- IO.raiseWhen(existing.isCompleted)(
                           ValidationError(s"match ${matchId.value} is already completed")
                         )
                         // The engine has not been told the match was called off — there is no exchange that
                         // would tell it — so it will go on reporting moves made on a board matchmaker no
                         // longer recognises. Refusing them is what makes a cancel stick.
-                        _ <- IO.raiseWhen(existing.cancelled)(
+                        _ <- IO.raiseWhen(existing.isCancelled)(
                           ConflictError(s"match ${matchId.value} was cancelled and is no longer accepting moves")
                         )
                         mover <- requireParticipant(participantRepo, gameId, matchId, moved)
@@ -409,7 +409,7 @@ class GameEngineService[T](
                         // A live match's engine sends no move callbacks, so one arriving is an engine that
                         // does not know the match is live. Its turn is recorded, since the time was spent,
                         // and its seats are left as `applyEngineStatus` leaves them: never pending.
-                        current = !existing.live && state.forall(st => applied.forall(_ < st.sequence))
+                        current = !existing.isLive && state.forall(st => applied.forall(_ < st.sequence))
                         _ <- (state, current) match {
                             case (_, false) => IO.unit
                             case (Some(st), true) =>
@@ -494,7 +494,7 @@ class GameEngineService[T](
                         // not locked on the way to writing `match` and `participant`.
                         _ <- authorizeGame(gameRepo, gameId, callerExternalId)
                         existing <- requireMatchForUpdate(matchRepo, gameId, matchId)
-                        _ <- IO.raiseWhen(existing.cancelled)(
+                        _ <- IO.raiseWhen(existing.isCancelled)(
                           ConflictError(s"match ${matchId.value} was cancelled and can have no result")
                         )
                         _ <- turns.traverse_ { reported =>
@@ -519,7 +519,7 @@ class GameEngineService[T](
                          * itself, and the news of it, are already done. Under the match's lock, so two
                          * deliveries of it cannot both find nothing recorded. */
                         recorded <-
-                            if (existing.completed) resultRepo.existsForMatch(gameId, matchId) else IO.pure(false)
+                            if (existing.isCompleted) resultRepo.existsForMatch(gameId, matchId) else IO.pure(false)
                         // Whether this call is what ended the match, rather than a late or repeated
                         // callback: only the first ending is news.
                         ended <-
@@ -534,7 +534,7 @@ class GameEngineService[T](
                                         s"participant(s) ${unknown.map(_.value).mkString(", ")} are not in match ${matchId.value}"
                                       )
                                     )
-                                    _ <- IO.unlessA(existing.completed)(
+                                    _ <- IO.unlessA(existing.isCompleted)(
                                       participants.traverse_((participant, _, _) =>
                                           participantRepo.update(
                                             withTurn(participant, pending = false, due = None, completed = true)
@@ -546,7 +546,7 @@ class GameEngineService[T](
                                     // recorded, does not move them again. A friendly match does not move them.
                                     // Before the results, which carry what the match did to each rating.
                                     deltas <-
-                                        if (existing.friendly) IO.pure(EloRatingService.EloDeltas.none)
+                                        if (existing.isFriendly) IO.pure(EloRatingService.EloDeltas.none)
                                         else
                                             EloRatingService.rate(
                                               session,
@@ -554,7 +554,7 @@ class GameEngineService[T](
                                               matchId,
                                               results.map(r => r.participantId -> r.rank).toMap,
                                               // An engine's own forfeit: a live match it ended on a clock.
-                                              forfeit = results.exists(_.forfeit)
+                                              forfeit = results.exists(_.isForfeit)
                                             )
                                     _ <- results.traverse(r =>
                                         resultRepo.create(
@@ -564,7 +564,7 @@ class GameEngineService[T](
                                             r.rank,
                                             r.scores,
                                             r.isWinner,
-                                            r.forfeit,
+                                            r.isForfeit,
                                             deltas.overall.get(r.participantId),
                                             deltas.inRole.get(r.participantId)
                                           )
@@ -572,14 +572,14 @@ class GameEngineService[T](
                                     )
                                     // Once, under the lock — with the database's clock, not the lambda's. A
                                     // match `applyEngineStatus` completed keeps the time it did so.
-                                    _ <- IO.unlessA(existing.completed)(matchRepo.complete(gameId, matchId).void)
+                                    _ <- IO.unlessA(existing.isCompleted)(matchRepo.complete(gameId, matchId).void)
                                     // Cleaned rather than refused: a summary that is unsafe or too long is the
                                     // engine's mistake, and the results it came with are still the results. What
                                     // is left of it is stored; nothing at all, and the table is shown instead.
                                     _ <- SummaryHtml
                                         .accept(summary)
                                         .traverse_(matchRepo.setResultSummary(gameId, matchId, _))
-                                } yield !existing.completed
+                                } yield !existing.isCompleted
                     } yield (existing, ended)
                 }
                 .flatMap { (played, ended) =>
@@ -588,7 +588,7 @@ class GameEngineService[T](
                     val reconciled = if (ended && turns.isEmpty) recoverTurns(session, played) else IO.unit
                     // Everyone in it, because nobody in it did this: the engine finished the game -- or,
                     // in a live match, ended it on a clock, which is told as a forfeit is.
-                    val ending = if (results.exists(_.forfeit)) MatchEnding.Forfeited else MatchEnding.Finished
+                    val ending = if (results.exists(_.isForfeit)) MatchEnding.Forfeited else MatchEnding.Finished
                     reconciled *> (if (ended) notifications.matchEnded(session, played, ending) else IO.unit) *>
                         /* Every time, and not only when this call ended the match: settling is idempotent, so
                          * a repeated callback saying it again costs nothing, and is the one way a match whose
@@ -678,7 +678,7 @@ class GameEngineService[T](
                 // Already over: the engine has nothing left to tell us that matchmaker would act on, and
                 // asking would be a network call per page view.
                 result <-
-                    if (existing.completed || existing.cancelled) IO.pure(existing)
+                    if (existing.isCompleted || existing.isCancelled) IO.pure(existing)
                     else
                         // The engine's answer first, then the clock: a turn that looks overdue in
                         // matchmaker's copy may have been taken since, and the status call is what says so.
@@ -741,7 +741,7 @@ class GameEngineService[T](
         current: Match,
         recheck: Boolean = true
     ): IO[Match] =
-        if (current.completed || current.cancelled || current.timeLimit.isEmpty || current.live) IO.pure(current)
+        if (current.isCompleted || current.isCancelled || current.timeLimit.isEmpty || current.isLive) IO.pure(current)
         else
             overdueIn(session, gameId, matchId).flatMap {
                 case Nil => IO.pure(current)
@@ -763,7 +763,7 @@ class GameEngineService[T](
                     verified.flatMap {
                         case None => IO.pure(current)
                         case Some(checked) =>
-                            if (checked.completed || checked.cancelled) IO.pure(checked)
+                            if (checked.isCompleted || checked.isCancelled) IO.pure(checked)
                             else
                                 overdueIn(session, gameId, matchId).flatMap {
                                     // Taken since: the status call moved the turn on, and there is nobody left to
@@ -796,7 +796,7 @@ class GameEngineService[T](
      *
      * The result rows are matchmaker's own, not the engine's — the engine has not reported a
      * result and, having no notion of matchmaker's time limit, is not going to. They carry
-     * `forfeit`, which is how a completed-match list can say "won by forfeit" rather than merely
+     * `isForfeit`, which is how a completed-match list can say "won by forfeit" rather than merely
      * naming a winner, and no scores: nothing was scored.
      *
      * Everything it acts on is read under the match's row lock, including *who* is out of time:
@@ -824,7 +824,7 @@ class GameEngineService[T](
                     // ordinary outcome (the move landed first), and a match that was already finished
                     // was not finished here. Only the transition is news.
                     outcome <-
-                        if (locked.completed || locked.cancelled || overdue.isEmpty) IO.pure((locked, false))
+                        if (locked.isCompleted || locked.isCancelled || overdue.isEmpty) IO.pure((locked, false))
                         else
                             for {
                                 participants <- participantRepo.listForMatch(gameId, matchId)
@@ -838,7 +838,7 @@ class GameEngineService[T](
                                 // of time lost. Rated as the engine's results are, in this transaction, and
                                 // before the results that carry what it did to each rating.
                                 deltas <-
-                                    if (locked.friendly) IO.pure(EloRatingService.EloDeltas.none)
+                                    if (locked.isFriendly) IO.pure(EloRatingService.EloDeltas.none)
                                     else EloRatingService.rate(session, gameId, matchId, ranks, forfeit = true)
                                 _ <- participants.traverse { (p, _, _) =>
                                     val lost = overdue.contains(p.participantId)
@@ -849,7 +849,7 @@ class GameEngineService[T](
                                         rank = ranks(p.participantId),
                                         scores = Map.empty,
                                         isWinner = !lost,
-                                        forfeit = true,
+                                        isForfeit = true,
                                         eloDelta = deltas.overall.get(p.participantId),
                                         eloRoleDelta = deltas.inRole.get(p.participantId)
                                       )
@@ -906,8 +906,9 @@ class GameEngineService[T](
     ): Participant =
         p match {
             case cp: CharacterParticipant =>
-                cp.copy(pending = pending, due = due, completed = completed || cp.completed)
-            case pp: PlainParticipant => pp.copy(pending = pending, due = due, completed = completed || pp.completed)
+                cp.copy(isPending = pending, due = due, isCompleted = completed || cp.isCompleted)
+            case pp: PlainParticipant =>
+                pp.copy(isPending = pending, due = due, isCompleted = completed || pp.isCompleted)
         }
 
     private def authorizeGame(gameRepo: GameRepo[T], gameId: GameId, callerExternalId: String): IO[Game] =
@@ -949,7 +950,7 @@ class GameEngineService[T](
      * no board to send anyone to, and no listing names it. */
     private def requireBegunMatch(repo: MatchRepo, gameId: GameId, matchId: MatchId): IO[Match] =
         requireMatch(repo, gameId, matchId).flatMap { m =>
-            if (m.status.begun) IO.pure(m)
+            if (m.status.hasBegun) IO.pure(m)
             else IO.raiseError(NotFoundError(s"match '${matchId.value}' in game ${gameId.value} has not begun"))
         }
 

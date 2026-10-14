@@ -75,7 +75,7 @@ class Engine(
             for {
                 _ <- Either.cond(!current.isOver, (), Refusal.Invalid("this match is already over"))
                 _ <- Either.cond(
-                  current.inPlay,
+                  current.isInPlay,
                   (),
                   Refusal.Invalid(
                     if (current.hasDeployed(seat.side)) s"${seat.side.other} has not deployed yet"
@@ -92,7 +92,7 @@ class Engine(
                 _ <- current.board.cells.lift(from).flatten.filter(_.side == seat.side) match {
                     case Some(p)
                         if current.board.targets(seat.side, from).contains(to) &&
-                            Rules.shuttles(current.history(seat.side), Step(p.id, from, to)) =>
+                            Rules.isShuttling(current.history(seat.side), Step(p.id, from, to)) =>
                         Left(
                           Refusal.Invalid(
                             s"that would be a fourth move in a row between ${Board.name(from)} and ${Board.name(to)}"
@@ -120,7 +120,7 @@ class Engine(
         core.applyMove(matchId, cognitoId) { (current, seat, at) =>
             Either.cond(
               !current.isOver, {
-                  val record = MoveRecord(seat.participantId, seat.side, at, at, concession = true)
+                  val record = MoveRecord(seat.participantId, seat.side, at, at, isConcession = true)
                   (current.copy(turns = current.turns :+ record), record)
               },
               Refusal.Invalid("this match is already over")
@@ -144,34 +144,34 @@ class Engine(
             m.board.cells.indices.toList.flatMap(square =>
                 m.board(square).flatMap { p =>
                     val own = viewer.contains(p.side)
-                    Option.when(m.inPlay || own)(
+                    Option.when(m.isInPlay || own)(
                       PieceView(
                         square,
                         p.side.toString,
-                        Option.when(own || p.revealed)(p.rank.toString),
-                        p.revealed,
-                        p.moved
+                        Option.when(own || p.isRevealed)(p.rank.toString),
+                        p.isRevealed,
+                        p.isMoved
                       )
                     )
                 }
             )
         StateResponse(
           matchId = m.matchId,
-          phase = if (over) "over" else if (m.inPlay) "play" else "setup",
+          phase = if (over) "over" else if (m.isInPlay) "play" else "setup",
           you = viewer.map(_.toString),
           deployed = Side.values.toList.filter(m.hasDeployed).map(_.toString),
-          turn = Option.when(m.inPlay && !over)(m.toMove.toString),
+          turn = Option.when(m.isInPlay && !over)(m.toMove.toString),
           pieces = pieces,
           legalMoves = viewer
-              .filter(v => m.inPlay && !over && v == m.toMove)
+              .filter(v => m.isInPlay && !over && v == m.toMove)
               .toList
               .flatMap(m.legalMoves)
               .map((from, to) => List(from, to)),
           lastMove = m.moves.lastOption.flatMap(moveView),
           lost = Side.values.toList.map(s => LostView(s.toString, m.lost(s).map(_.toString))),
-          completed = over,
+          isCompleted = over,
           winner = m.winner.map(_.toString),
-          draw = m.isDraw,
+          isDrawn = m.isDrawn,
           ending = m.ending.map(_.label),
           moveCount = m.moves.size,
           maxMoves = m.maxMoves,
@@ -204,7 +204,7 @@ class Engine(
       * unseen by `viewer` now, whether or not the match is over.
       */
     private def replayOf(m: StrategoMatch, viewer: Option[Side]): Option[Protocol.ReplayView] = {
-        val unseen = m.board.cells.flatten.filter(p => !p.revealed && !viewer.contains(p.side)).map(_.id).toSet
+        val unseen = m.board.cells.flatten.filter(p => !p.isRevealed && !viewer.contains(p.side)).map(_.id).toSet
         m.opening.map(opening =>
             Protocol.ReplayView(
               opening.cells.indices.toList.flatMap(square =>

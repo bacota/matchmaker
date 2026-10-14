@@ -17,7 +17,7 @@ class FinaleSpec extends FunSuite {
       * and the `tabindex` it carried.
       */
     private case class Seen(
-        hidden: Boolean,
+        isHidden: Boolean,
         cls: String,
         art: String,
         caption: String,
@@ -78,11 +78,11 @@ console.log(JSON.stringify(seen));
 
     test("nothing is shown until there is a result, and then the winner's picture or the loser's") {
         val seen = run("show(null)", """show("win")""")
-        assert(seen(0).hidden)
+        assert(seen(0).isHidden)
         assertEquals(seen(1), Seen(false, "finale win", win.svg, win.caption, 1))
 
         val lost = run("""show("lose")""").head
-        assertEquals((lost.hidden, lost.cls, lost.art, lost.caption), (false, "finale lose", lose.svg, lose.caption))
+        assertEquals((lost.isHidden, lost.cls, lost.art, lost.caption), (false, "finale lose", lose.svg, lose.caption))
     }
 
     test("the same result rendered again is not drawn again, which would restart its animation") {
@@ -92,8 +92,8 @@ console.log(JSON.stringify(seen));
 
     test("once closed it stays closed, whatever the page renders after") {
         val seen = run("""show("win")""", "close()", """show("win")""", "show(null)", """show("lose")""")
-        assert(!seen(0).hidden)
-        assert(seen.drop(1).forall(_.hidden))
+        assert(!seen(0).isHidden)
+        assert(seen.drop(1).forall(_.isHidden))
     }
 
     test("closing hands the focus to the status line, which is made focusable to take it, rather than dropping it") {

@@ -29,7 +29,7 @@ class ChallengeMailSpec extends FunSuite {
           what = what,
           title = title,
           actor = "bob",
-          joined = joined,
+          isJoined = joined,
           challenger = "carol",
           room = room
         )

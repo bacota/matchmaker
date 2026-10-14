@@ -44,7 +44,7 @@ case class CompletedQuery(
       * ends no later than a day after now and begins no earlier than 1970. Outside that, the arithmetic is not
       * guaranteed to give an instant at all, let alone one the database can hold.
       */
-    def inRange(now: Instant): Boolean =
+    def isInRange(now: Instant): Boolean =
         try {
             val base = asOf.getOrElse(now)
             !base.isAfter(now.plus(Duration.ofDays(1))) && !from(base).isBefore(Instant.EPOCH)

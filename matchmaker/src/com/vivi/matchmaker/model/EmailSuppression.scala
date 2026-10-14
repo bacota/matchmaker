@@ -41,13 +41,13 @@ object SuppressionReason {
 /** One address we have stopped writing to, or are counting failures against.
   *
   * A row exists as soon as anything goes wrong, which is not the same as the address being suppressed — see
-  * [[EmailSuppression.active]]. That split is deliberate: a single transient failure is worth recording and not worth
+  * [[EmailSuppression.isActive]]. That split is deliberate: a single transient failure is worth recording and not worth
   * acting on, and a table that only held the acted-on ones could not count to three.
   */
 case class EmailSuppression(
     email: String,
     reason: SuppressionReason,
-    permanent: Boolean,
+    isPermanent: Boolean,
     diagnostic: Option[String],
     firstSeenAt: Instant,
     lastSeenAt: Instant,
@@ -62,8 +62,8 @@ case class EmailSuppression(
       * ago counts), while the screens and the tests ask a value they are already holding. Both are
       * `SuppressionRepoSpec`'s to keep honest, and that spec asserts the two agree rather than trusting that they do.
       */
-    def active(now: Instant): Boolean =
-        releasedAt.isEmpty && (permanent || (
+    def isActive(now: Instant): Boolean =
+        releasedAt.isEmpty && (isPermanent || (
           occurrences >= EmailSuppression.transientThreshold &&
               lastSeenAt.isAfter(now.minus(EmailSuppression.transientWindow))
         ))
@@ -105,8 +105,8 @@ object EmailSuppression {
             Notice(row.email, row.reason, row.lastSeenAt, canRetry = row.reason != SuppressionReason.Complaint)
     }
 
-    /** What one SES event says, as the bounce handler hands it over. `permanent` is the handler's reading of the event,
-      * not a property of the reason: a bounce is permanent or transient depending on what SES called it.
+    /** What one SES event says, as the bounce handler hands it over. `isPermanent` is the handler's reading of the
+      * event, not a property of the reason: a bounce is permanent or transient depending on what SES called it.
       *
       * `eventId` is what makes the count safe against the queue. SQS is at-least-once — a visibility timeout that
       * expires mid-write, a function that times out, a batch that fails partway — so the same notification arrives more
@@ -123,7 +123,7 @@ object EmailSuppression {
         eventId: String,
         email: String,
         reason: SuppressionReason,
-        permanent: Boolean,
+        isPermanent: Boolean,
         diagnostic: Option[String]
     )
 }

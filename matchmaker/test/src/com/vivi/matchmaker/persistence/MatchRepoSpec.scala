@@ -38,7 +38,7 @@ class MatchRepoSpec extends PropertySuite {
                         (createdGame, owner) = gameAndOwner
                         matchId = mid
                         m <- TestMatches.writeMatch(session, Generators.matchFrom(createdGame.gameId, matchId), owner)
-                        rewritten = m.copy(friendly = !m.friendly, isPublic = !m.isPublic)
+                        rewritten = m.copy(isFriendly = !m.isFriendly, isPublic = !m.isPublic)
                         _ <- matchRepo.update(rewritten)
                         found <- matchRepo.read(createdGame.gameId, matchId)
                     } yield found == Some(rewritten)
@@ -59,6 +59,6 @@ class MatchRepoSpec extends PropertySuite {
               None,
               "{}"
             )
-        assert(unsaid.friendly)
+        assert(unsaid.isFriendly)
     }
 }

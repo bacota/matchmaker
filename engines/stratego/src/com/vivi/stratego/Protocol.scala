@@ -23,7 +23,7 @@ object Protocol {
         setup: Option[List[String]] = None,
         from: Option[Int] = None,
         to: Option[Int] = None,
-        concede: Option[Boolean] = None
+        isConcession: Option[Boolean] = None
     )
 
     /** The state the play page renders, and what a scripted client polls.
@@ -48,9 +48,9 @@ object Protocol {
         legalMoves: List[List[Int]],
         lastMove: Option[LastMove],
         lost: List[LostView],
-        completed: Boolean,
+        isCompleted: Boolean,
         winner: Option[String],
-        draw: Boolean,
+        isDrawn: Boolean,
         ending: Option[String],
         moveCount: Int,
         maxMoves: Int,
@@ -67,7 +67,13 @@ object Protocol {
       */
     case class ReplayView(opening: List[PieceView], moves: List[LastMove])
 
-    case class PieceView(square: Int, side: String, rank: Option[String], revealed: Boolean, moved: Boolean)
+    case class PieceView(
+        square: Int,
+        side: String,
+        rank: Option[String],
+        isRevealed: Boolean,
+        isMoved: Boolean
+    )
 
     case class BattleView(attacker: String, defender: String, result: String)
 

@@ -72,9 +72,9 @@ object Protocol {
         waitingFor: List[String],
         you: Option[String],
         yourPlan: Option[PlanRequest],
-        completed: Boolean,
+        isCompleted: Boolean,
         winner: Option[String],
-        draw: Boolean,
+        isDrawn: Boolean,
         /** "knockout", "points", "lot" or "forfeit", once the bout is over. */
         method: Option[String],
         corners: List[CornerView],
@@ -83,11 +83,11 @@ object Protocol {
         /** Whether the bout is past its schedule: an extra round, fought because the bout may not be drawn and was
           * level after the rounds it was scheduled for.
           */
-        extraRound: Boolean = false
+        hasExtraRound: Boolean = false
     )
 
     /** One corner as a viewer may see it. `fighter` is the fighter's characteristics, and only in the viewer's own
-      * corner: nobody sees an opponent's numbers, on the public board least of all, only its `impression`. `planned`
+      * corner: nobody sees an opponent's numbers, on the public board least of all, only its `impression`. `isPlanned`
       * says only that the corner has planned the current round, not how.
       */
     case class CornerView(
@@ -96,7 +96,7 @@ object Protocol {
         participantId: Long,
         characterId: Long,
         fighter: Option[FighterView],
-        planned: Boolean,
+        isPlanned: Boolean,
         points: Int,
         // What can be seen of a fighter whose characteristics are not the viewer's to know: see
         // `Fighter.impression`. Empty for the viewer's own corner, whose `fighter` says it all.

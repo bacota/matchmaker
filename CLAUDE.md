@@ -101,7 +101,7 @@ their token expired — `sessionExpired()` has already cleared everything by the
 answer writes one player's data into a store the next player is about to read.
 
 So `Store` counts sign-ins. Anything that holds onto an answer takes `currentSignIn` before the
-request and checks `stillSignedInAs` before committing; `Store.load` and `Store.reload` do it for
+request and checks `isStillSignedInAs` before committing; `Store.load` and `Store.reload` do it for
 you, and every fetch in `Store` goes through one of them. Use those rather than a bare
 `onComplete` or `run` for anything that writes into the store — `run` is for a button, where the
 answer is about a click somebody is waiting on, and it deliberately does not drop anything.

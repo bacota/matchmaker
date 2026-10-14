@@ -50,7 +50,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
         f: Fixture,
         standard: String = "single-elimination",
         settings: TournamentSettings =
-            TournamentSettings(invitational = false, roundDuration = Some(Duration.ofDays(2)))
+            TournamentSettings(isInvitational = false, roundDuration = Some(Duration.ofDays(2)))
     ) = TournamentRequest("Open", f.model(standard).tournamentModelId, "an open", settings = settings)
 
     private def run[A](io: IO[A]): A = io.timeout(60.seconds).unsafeRunSync()
@@ -246,7 +246,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
                   f.game.gameId,
                   ChallengeRequest(
                     characterId = Some(own.characterId),
-                    open = false,
+                    isOpen = false,
                     invitations = List(f.players.head.playerId)
                   ),
                   f.owner.externalId
@@ -256,7 +256,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
               f.game.gameId,
               ChallengeRequest(
                 characterId = Some(own.characterId),
-                open = false,
+                isOpen = false,
                 characterInvitations = List(invited.characterId)
               ),
               f.owner.externalId
@@ -265,7 +265,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             theirs <- tournaments.challengesFor(f.players(1).externalId)
         } yield (asPlayer, mine.find(_.summary.tournament.tournamentId == made.tournamentId), theirs))
         assert(asPlayer.left.exists(_.isInstanceOf[ValidationError]), asPlayer)
-        assert(mine.exists(c => c.summary.invited && c.invitedCharacters.nonEmpty), mine)
+        assert(mine.exists(c => c.summary.isInvited && c.invitedCharacters.nonEmpty), mine)
         assert(theirs.isEmpty, theirs)
     }
 
@@ -277,7 +277,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
               request(
                 f,
                 settings = TournamentSettings(
-                  invitational = false,
+                  isInvitational = false,
                   minRating = Some(1600),
                   roundDuration = Some(Duration.ofDays(1))
                 )
@@ -356,7 +356,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             after <- tournaments.detail(f.game.gameId, t.tournamentId, f.owner.externalId)
         } yield (before, after))
         assertEquals(before.entries.size, 2)
-        assert(after.entries.exists(e => e.withdrawn))
+        assert(after.entries.exists(e => e.isWithdrawn))
         assert(after.state.exists(_.withdrawn.nonEmpty))
     }
 
@@ -371,7 +371,10 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             _ <- tournaments.update(
               f.game.gameId,
               t.tournamentId,
-              request(f, settings = TournamentSettings(lateEntries = true, roundDuration = Some(Duration.ofDays(2)))),
+              request(
+                f,
+                settings = TournamentSettings(hasLateEntries = true, roundDuration = Some(Duration.ofDays(2)))
+              ),
               f.owner.externalId
             )
             entry <- tournaments.enter(f.game.gameId, t.tournamentId, None, f.players(2).externalId)
@@ -415,7 +418,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
           )
         )
         assert(mine.exists(_.isOwner))
-        assert(theirs.exists(s => s.invited && !s.isOwner))
+        assert(theirs.exists(s => s.isInvited && !s.isOwner))
     }
 
     test("a player's standings say where they stand in each tournament they entered, by their seed while it runs") {

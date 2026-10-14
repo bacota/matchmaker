@@ -25,7 +25,7 @@ import com.vivi.matchmaker.persistence.{GameRepo, MatchRepo, ParticipantRepo, Te
 class CancelReleaseSpec extends FunSuite with QuietTests {
     TestMigration.ensure()
 
-    private class RecordingEngine(fail: Boolean = false) extends GameEngineClient {
+    private class RecordingEngine(isFailing: Boolean = false) extends GameEngineClient {
         @volatile var cancelled: List[(String, Option[String])] = Nil
 
         def createGame(url: String, key: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
@@ -33,7 +33,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
         def status(url: String, key: Option[String], since: Option[Instant]): IO[GameStatusResponse] =
             IO.raiseError(new IllegalStateException("not in these tests"))
         override def cancel(cancelUrl: String, apiKey: Option[String]): IO[Unit] =
-            if (fail) IO.raiseError(GameEngineError("engine is down"))
+            if (isFailing) IO.raiseError(GameEngineError("engine is down"))
             else IO { cancelled = cancelled :+ (cancelUrl -> apiKey) }
     }
 
@@ -52,7 +52,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                     "Tic-tac-toe",
                     "description",
                     "url",
-                    active = true,
+                    isActive = true,
                     Seq(
                       GameRole(GameRoleId(0), GameId.unassigned, "X", roleType = RoleType.Required, displayName = "X")
                     ),
@@ -80,8 +80,8 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                     game.gameId,
                     matchId,
                     player.playerId,
-                    pending = true,
-                    completed = false,
+                    isPending = true,
+                    isCompleted = false,
                     None,
                     game.roles.head.gameRoleId
                   ),
@@ -123,7 +123,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
         val (player, game, matchId) = run(runningMatch(services, Some("https://engine/matches/m/cancel")))
 
         val cancelled = run(services.matches.cancel(game.gameId, matchId, player.externalId))
-        assert(cancelled.cancelled)
+        assert(cancelled.isCancelled)
         assertEquals(queueing.ended, List(matchId))
         // Not told by the cancel itself: that is the listener's.
         assertEquals(engine.cancelled, Nil)
@@ -137,11 +137,11 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
     }
 
     test("an engine that does not answer leaves the cancel standing, and the match owed a retry") {
-        val queueing = Queueing(RecordingEngine(fail = true))
+        val queueing = Queueing(RecordingEngine(isFailing = true))
         val services = queueing.services
         val (player, game, matchId) = run(runningMatch(services, Some("https://engine/matches/m/cancel")))
 
-        assert(run(services.matches.cancel(game.gameId, matchId, player.externalId)).cancelled)
+        assert(run(services.matches.cancel(game.gameId, matchId, player.externalId)).isCancelled)
         assert(run(services.ending.settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
         assertEquals(run(released(game.gameId, matchId)), None)
     }

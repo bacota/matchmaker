@@ -22,5 +22,5 @@ case class PlayerClock(
 ) {
 
     /** Whether this is the player the clock is running against. */
-    def running: Boolean = deadline.isDefined
+    def isRunning: Boolean = deadline.isDefined
 }

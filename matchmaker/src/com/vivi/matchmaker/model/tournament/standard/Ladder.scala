@@ -13,13 +13,13 @@ object Ladder
       List(
         StageDesign(
           repeat = Repetition.UntilStopped,
-          brackets = false,
+          hasBrackets = false,
           maxStratum = None,
           minStratum = None,
           poolSize = Some(2),
           promote = Some(1),
           demote = Some(2),
-          strictStrata = false,
+          hasStrictStrata = false,
           seedPolicy = SeedPolicy.Reinitialize
         )
       )

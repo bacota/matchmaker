@@ -32,7 +32,7 @@ class EloRatingServiceSpec extends PropertySuite {
     /* `status` is what the engine says of a running match when asked, which the forfeit case sets
      * to confirm that a turn has run out. */
     private class StubEngine extends GameEngineClient {
-        @volatile var status: GameStatusResponse = GameStatusResponse(completed = false, participants = Nil)
+        @volatile var status: GameStatusResponse = GameStatusResponse(isCompleted = false, participants = Nil)
 
         def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
             IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
@@ -58,7 +58,7 @@ class EloRatingServiceSpec extends PropertySuite {
                 "Duel",
                 "description",
                 "https://engine.example.com/games",
-                active = true,
+                isActive = true,
                 Seq(
                   GameRole(
                     GameRoleId(0),
@@ -77,7 +77,7 @@ class EloRatingServiceSpec extends PropertySuite {
                 ),
                 Seq.empty,
                 unique("duel"),
-                unimportantRoles = unimportantRoles
+                hasUnimportantRoles = unimportantRoles
               )
             )
         }
@@ -116,7 +116,7 @@ class EloRatingServiceSpec extends PropertySuite {
     private def openChallenge(f: Fixture, friendly: Boolean): IO[Tournament] =
         Challenges.offeredIn(f.game) *> services.tournaments.createChallenge(
           f.game.gameId,
-          ChallengeRequest(plays = false, poolSize = Some(2), friendly = friendly, autoStart = true),
+          ChallengeRequest(isPlaying = false, poolSize = Some(2), isFriendly = friendly, isAutoStarted = true),
           f.host.externalId
         )
 
@@ -160,7 +160,7 @@ class EloRatingServiceSpec extends PropertySuite {
                   rank = if (won) 1 else 2,
                   scores = Map.empty,
                   isWinner = won,
-                  forfeit = forfeitOnLoser && !won
+                  isForfeit = forfeitOnLoser && !won
                 )
             }
             _ <- through.engine.recordResults(f.game.gameId, matchId, results, f.game.externalId)
@@ -342,8 +342,8 @@ class EloRatingServiceSpec extends PropertySuite {
           first.ratings.map(r => (r.player.playerId, r.rank, r.rating)),
           List((f.first.playerId, Some(1), 1516))
         )
-        assert(!first.more)
-        assertEquals(host, Leaderboard(Nil, more = false))
+        assert(!first.hasMore)
+        assertEquals(host, Leaderboard(Nil, hasMore = false))
         assert(blank.isInstanceOf[ValidationError], blank)
         assert(noGame.isInstanceOf[NotFoundError], noGame)
     }
@@ -450,7 +450,7 @@ class EloRatingServiceSpec extends PropertySuite {
             )
             _ <- IO {
                 engine.status = GameStatusResponse(
-                  completed = false,
+                  isCompleted = false,
                   participants = List(
                     EngineParticipantStatus(first.participantId.value, true, false, Some(anHourAgo)),
                     EngineParticipantStatus(second.participantId.value, false, false, None)
@@ -471,7 +471,7 @@ class EloRatingServiceSpec extends PropertySuite {
           (records._1.map(_.record), records._2.map(_.record)),
           (Some(MatchRecord(losses = 1, forfeitLosses = 1)), Some(MatchRecord(wins = 1, forfeitWins = 1)))
         )
-        assert(refreshed.completed, refreshed)
+        assert(refreshed.isCompleted, refreshed)
         assertEquals(now, Map(f.first.playerId -> (1484, 1), f.second.playerId -> (1516, 1)))
         assertEquals(
           recorded.view.mapValues(_._2).toMap,
@@ -484,7 +484,7 @@ class EloRatingServiceSpec extends PropertySuite {
             f <- fixture()
             matchId <- started(f, friendly = false)
             // The results callback went astray, and a refresh found the game over.
-            _ <- IO { engine.status = GameStatusResponse(completed = true, participants = Nil) }
+            _ <- IO { engine.status = GameStatusResponse(isCompleted = true, participants = Nil) }
             refreshed <- services.engine.refresh(f.game.gameId, matchId, f.first.externalId)
             before <- ratings(f)
             _ <- finish(f, matchId, f.first)
@@ -492,9 +492,9 @@ class EloRatingServiceSpec extends PropertySuite {
             after <- ratings(f)
         } yield (f, refreshed, before, after))
             // The engine is shared with the cases after this one, which start matches of their own.
-            .guarantee(IO { engine.status = GameStatusResponse(completed = false, participants = Nil) })
+            .guarantee(IO { engine.status = GameStatusResponse(isCompleted = false, participants = Nil) })
         val (f, refreshed, before, after) = result.timeout(caseTimeout).unsafeRunSync()
-        assert(refreshed.completed, refreshed)
+        assert(refreshed.isCompleted, refreshed)
         assertEquals(before, Map.empty[PlayerId, (Int, Int)])
         assertEquals(after, Map(f.first.playerId -> (1516, 1), f.second.playerId -> (1484, 1)))
     }
@@ -523,7 +523,7 @@ class EloRatingServiceSpec extends PropertySuite {
         } yield (refused, stored)
         val (refused, stored) = result.timeout(caseTimeout).unsafeRunSync()
         assert(refused.isInstanceOf[ConflictError], refused)
-        assertEquals(stored.map(_.friendly), Some(true))
+        assertEquals(stored.map(_.isFriendly), Some(true))
     }
 
     test("a match that is not friendly but has a player in two seats completes, and is not rated".tag(Quiet)) {
@@ -533,7 +533,7 @@ class EloRatingServiceSpec extends PropertySuite {
             // Past every check that would have refused it: written straight to the table.
             _ <- TestSession.resource.use { session =>
                 val repo = new MatchRepo(session)
-                repo.read(f.game.gameId, matchId).flatMap(m => repo.update(m.get.copy(friendly = false)))
+                repo.read(f.game.gameId, matchId).flatMap(m => repo.update(m.get.copy(isFriendly = false)))
             }
             _ <- finish(f, matchId, f.first)
             stored <- TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, matchId))
@@ -541,7 +541,7 @@ class EloRatingServiceSpec extends PropertySuite {
             recorded <- eloSeats(f, matchId)
         } yield (stored, now, recorded)
         val (stored, now, recorded) = result.timeout(caseTimeout).unsafeRunSync()
-        assert(stored.exists(_.completed), stored)
+        assert(stored.exists(_.isCompleted), stored)
         assertEquals(now, Map.empty[PlayerId, (Int, Int)])
         assertEquals(recorded.values.map(_._2).toSet, Set(Option.empty[Int]))
     }
@@ -601,7 +601,7 @@ class EloRatingServiceSpec extends PropertySuite {
         val (refused, before, after, stored) = result.timeout(caseTimeout).unsafeRunSync()
         assert(refused.isInstanceOf[ConflictError], refused)
         assertEquals(after, before)
-        assertEquals(stored.map(_.friendly), Some(false))
+        assertEquals(stored.map(_.isFriendly), Some(false))
     }
 
     test("a match still being played that began after the changed one has its starting ratings moved with it") {
@@ -670,7 +670,7 @@ class EloRatingServiceSpec extends PropertySuite {
           listed.ratings.map(r => (r.player.playerId, r.rating, r.matches, r.rank)),
           List((f.second.playerId, 2000, 1, Some(1)), (f.first.playerId, 1516, 1, Some(2)))
         )
-        assert(!listed.more)
+        assert(!listed.hasMore)
     }
 
     test("only an admin may set a rating, within the range, of a player and game that exist") {

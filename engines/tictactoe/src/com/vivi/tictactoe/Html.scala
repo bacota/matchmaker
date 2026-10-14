@@ -32,9 +32,9 @@ object Html {
         publicView: Boolean = false
     ): String = {
         val heading = state match {
-            case Some(s) if s.completed => outcome(s)
-            case Some(s)                => s"${s.turn.getOrElse("")} to move"
-            case None                   => "sign in to play"
+            case Some(s) if s.isCompleted => outcome(s)
+            case Some(s)                  => s"${s.turn.getOrElse("")} to move"
+            case None                     => "sign in to play"
         }
 
         s"""<!doctype html>
@@ -137,19 +137,19 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
       // server checks all of it again; this only keeps the page from asking for a refusal.
       // `aria-disabled` rather than `disabled`: a square that went disabled as it was played took
       // the keyboard's focus off the board with it.
-      const off = !state || !state.you || mark !== "" || state.completed || state.turn !== state.you;
+      const off = !state || !state.you || mark !== "" || state.isCompleted || state.turn !== state.you;
       cells[i].setAttribute("aria-disabled", String(off));
       cells[i].classList.toggle("win", line.includes(i));
     }
 
     const status = document.getElementById("status");
     if (!state) status.textContent = login ? "sign in to play" : "not your match";
-    else if (state.completed && ranOut().length) {
+    else if (state.isCompleted && ranOut().length) {
       const late = ranOut();
       status.textContent = !state.you ? late.join(" and ") + " ran out of time"
         : late.includes(state.you) ? "your time ran out — you lose" : "their time ran out — you win";
     }
-    else if (state.completed) status.textContent = state.draw ? "drawn" : state.winner + " wins";
+    else if (state.isCompleted) status.textContent = state.isDrawn ? "drawn" : state.winner + " wins";
     else if (state.you) status.textContent = state.turn === state.you ? "your move (" + state.you + ")" : state.turn + " to move";
     else status.textContent = state.turn + " to move";
 
@@ -171,10 +171,10 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
    * still being played, or the public board. Decided as the status line decides it: by whoever ran
    * out of time where somebody did, otherwise by the winner. */
   function result() {
-    if (!state || !state.completed || !state.you || publicView) return null;
+    if (!state || !state.isCompleted || !state.you || publicView) return null;
     const late = ranOut();
     if (late.length) return late.includes(state.you) ? "lose" : "win";
-    if (state.draw || !state.winner) return null;
+    if (state.isDrawn || !state.winner) return null;
     return state.winner === state.you ? "win" : "lose";
   }
 
@@ -262,7 +262,7 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
 
   render();
   if (!state && mayFetch()) refresh();
-  keepCurrent(refresh, () => mayFetch() && (!state || !state.completed));
+  keepCurrent(refresh, () => mayFetch() && (!state || !state.isCompleted));
 </script>
 </body>
 </html>
@@ -271,6 +271,6 @@ ${Finale.script(Finale.trophy, Finale.brighterDays)}
 
     private def outcome(state: Protocol.StateResponse): String =
         if (state.clock.exists(_.timedOut.nonEmpty)) "time ran out"
-        else if (state.draw) "drawn"
+        else if (state.isDrawn) "drawn"
         else state.winner.map(w => s"$w wins").getOrElse("over")
 }

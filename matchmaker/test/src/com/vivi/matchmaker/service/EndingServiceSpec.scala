@@ -27,7 +27,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
     /** An engine that answers a status call by archiving the match, as a real one does for a finished match it still
       * holds — through matchmaker's own archive service, so what it does is recorded where settling reads it back.
       */
-    private class Engine(archiveOnStatus: Boolean = true) extends GameEngineClient {
+    private class Engine(isArchivingOnStatus: Boolean = true) extends GameEngineClient {
         @volatile var asked: List[String] = Nil
         @volatile var cancelled: List[String] = Nil
         @volatile var services: Option[Services[String]] = None
@@ -39,7 +39,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
         def status(url: String, key: Option[String], since: Option[Instant]): IO[GameStatusResponse] =
             IO { asked = asked :+ url } *> {
                 (archiving, services) match {
-                    case (Some((matchId, externalId)), Some(s)) if archiveOnStatus =>
+                    case (Some((matchId, externalId)), Some(s)) if isArchivingOnStatus =>
                         val body = """{"matchId":"m"}""".getBytes
                         s.archives
                             .requestUpload(matchId, body.length.toLong, ArchiveStore.sha256(body), None, externalId)
@@ -50,7 +50,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                             } *> s.archives.confirm(matchId, externalId).void
                     case _ => IO.unit
                 }
-            }.as(GameStatusResponse(completed = true, participants = Nil))
+            }.as(GameStatusResponse(isCompleted = true, participants = Nil))
 
         override def cancel(url: String, key: Option[String]): IO[Unit] = IO { cancelled = cancelled :+ url }
     }
@@ -74,7 +74,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                     "Tic-tac-toe",
                     "description",
                     "url",
-                    active = true,
+                    isActive = true,
                     Seq(
                       GameRole(GameRoleId(0), GameId.unassigned, "X", roleType = RoleType.Required, displayName = "X")
                     ),
@@ -92,7 +92,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
                   Some(Instant.ofEpochSecond(1000)),
                   None,
                   "{}",
-                  cancelled = cancelled
+                  isCancelled = cancelled
                 )
                 _ <- TestMatches.writeMatch(session, m, player.playerId)
                 _ <- new MatchRepo(session).setUrls(
@@ -128,7 +128,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
     }
 
     test("one the engine does not archive is still owed, and asked about again each time") {
-        val engine = Engine(archiveOnStatus = false)
+        val engine = Engine(isArchivingOnStatus = false)
         val services = TestServices.servicesWith(engine, archiveStore = store)
         val (game, matchId) = run(matchOf(services, Some(Duration.ofHours(2))))
 
@@ -185,7 +185,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
         // One connection, which the results callback holds while it says the match has ended. Settling it there and
         // then would wait for that connection forever.
         val pool = TestServices.poolOf(1)
-        val engine = Engine(archiveOnStatus = false)
+        val engine = Engine(isArchivingOnStatus = false)
         val ending = EndingService(pool, engine)
         @volatile var settled = List.empty[Settlement]
         val services = Services.fromPool[String](
@@ -204,7 +204,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
         run(services.engine.recordResults(game.gameId, matchId, Nil, game.externalId))
         assert(
           run(TestSession.resource.use(session => new MatchRepo(session).read(game.gameId, matchId)))
-              .exists(_.completed)
+              .exists(_.isCompleted)
         )
         // And it is settled once the connection is given back: just finished, so owed its archive.
         run(IO.sleep(50.millis).iterateUntil(_ => settled.nonEmpty))

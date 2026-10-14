@@ -54,7 +54,7 @@ case class CreateGameRequest(
       * so that an engine that predates it, or a match that allows ties, is sent exactly what it always was. Whether the
       * engine acts on it is up to the game.
       */
-    tiesAllowed: Option[Boolean] = None
+    canTie: Option[Boolean] = None
 )
 
 /** What makes a match live, as the engine is told it: the engine runs the turns and their clock, sends no move
@@ -87,8 +87,8 @@ case class CreateGameResponse(
   */
 case class EngineParticipantStatus(
     participantId: Long,
-    pending: Boolean,
-    completed: Boolean,
+    isPending: Boolean,
+    isCompleted: Boolean,
     prevMoveAt: Option[Instant]
 )
 
@@ -107,7 +107,7 @@ case class EngineTurn(participantId: Long, takenAt: Instant, startedAt: Option[I
   * and their durations are what a total (chess clock) time limit is spent against.
   */
 case class GameStatusResponse(
-    completed: Boolean,
+    isCompleted: Boolean,
     participants: List[EngineParticipantStatus],
     turns: List[EngineTurn] = Nil,
     /** The number of the latest move this answer reflects, from an engine that numbers its moves — the same numbering

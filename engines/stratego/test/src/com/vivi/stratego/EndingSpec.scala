@@ -20,7 +20,7 @@ class EndingSpec extends FunSuite {
           board = board,
           turns = List(MoveRecord(11L, Side.Red, at, at), MoveRecord(22L, Side.Blue, at, at)),
           isPublic = false,
-          completed = false,
+          isCompleted = false,
           createdAt = at,
           moveCallbackUrl = None,
           resultsCallbackUrl = None,
@@ -37,7 +37,7 @@ class EndingSpec extends FunSuite {
         )
         assertEquals(m.ending, Some(Ending.NoMoves))
         assertEquals(m.winner, Some(Side.Blue))
-        assert(!m.isDraw)
+        assert(!m.isDrawn)
         assertEquals(StrategoMatch.pending(m), Nil)
     }
 
@@ -45,7 +45,7 @@ class EndingSpec extends FunSuite {
         val m = inPlay(0 -> (Side.Red, Rank.Flag), 99 -> (Side.Blue, Rank.Flag))
         assertEquals(m.ending, Some(Ending.NoMoves))
         assertEquals(m.winner, None)
-        assert(m.isDraw)
+        assert(m.isDrawn)
     }
 
     test("a match is not over while both sides can move and both flags stand") {
@@ -68,7 +68,7 @@ class EndingSpec extends FunSuite {
     /** Neither side can move — only the flags are left — after `battles`. Three of them leave Blue to move. */
     private def stuckAfter(battles: List[MoveRecord], tiesAllowed: Boolean): StrategoMatch =
         inPlay(0 -> (Side.Red, Rank.Flag), 99 -> (Side.Blue, Rank.Flag))
-            .copy(tiesAllowed = tiesAllowed)
+            .copy(canTie = tiesAllowed)
             .pipe(m => m.copy(turns = m.turns ++ battles))
 
     extension [A](a: A) private def pipe[B](f: A => B): B = f(a)
@@ -89,7 +89,7 @@ class EndingSpec extends FunSuite {
         assertEquals(StrategoMatch.pointsFor(Rank.Spy), 1)
         assertEquals(StrategoMatch.pointsFor(Rank.Marshal), 10)
         // A match that allows ties is drawn when neither side can move, whatever the captures.
-        assert(m.isDraw)
+        assert(m.isDrawn)
         assertEquals(StrategoMatch.scores(m, m.seats.head)("score").num, 7.0)
     }
 
@@ -97,8 +97,8 @@ class EndingSpec extends FunSuite {
         val m = stuckAfter(battles, tiesAllowed = false)
         assertEquals(m.ending, Some(Ending.NoMoves))
         assertEquals(m.winner, Some(Side.Red))
-        assert(!m.isDraw)
-        assert(m.decidedOnPoints)
+        assert(!m.isDrawn)
+        assert(m.isDecidedOnPoints)
         assertEquals(
           StrategoMatch.summary(m),
           Some("Neither side could move. <strong>Red</strong> wins on captures, 7–2.")
@@ -113,7 +113,7 @@ class EndingSpec extends FunSuite {
           99 -> (Side.Blue, Rank.Flag),
           50 -> (Side.Blue, Rank.Scout)
         )
-            .copy(tiesAllowed = false, maxMoves = 1)
+            .copy(canTie = false, maxMoves = 1)
         val ahead = capped.copy(turns = capped.turns :+ battles(2))
         assertEquals(ahead.ending, Some(Ending.MoveCap))
         assertEquals(ahead.winner, Some(Side.Blue))
@@ -121,7 +121,7 @@ class EndingSpec extends FunSuite {
         val level =
             capped.copy(turns = capped.turns :+ fight(Side.Red, Battle(Rank.Miner, Rank.Miner, Result.BothLost)))
         assertEquals(level.capturePoints(Side.Red), level.capturePoints(Side.Blue))
-        assert(level.isDraw)
+        assert(level.isDrawn)
     }
 
     test("a side that cannot move still simply loses when ties are not allowed: points decide only a draw") {
@@ -130,8 +130,8 @@ class EndingSpec extends FunSuite {
           1 -> (Side.Red, Rank.Bomb),
           99 -> (Side.Blue, Rank.Flag),
           50 -> (Side.Blue, Rank.Scout)
-        ).copy(tiesAllowed = false)
+        ).copy(canTie = false)
         assertEquals(m.winner, Some(Side.Blue))
-        assert(!m.decidedOnPoints)
+        assert(!m.isDecidedOnPoints)
     }
 }

@@ -40,7 +40,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
                 }
             }
         def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
-            IO.pure(GameStatusResponse(completed = false, participants = Nil))
+            IO.pure(GameStatusResponse(isCompleted = false, participants = Nil))
     }
 
     /** The queue, run in the caller's fiber, so that by the time a call returns everything it queued has been done. */
@@ -81,14 +81,14 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         design: String = "single-elimination",
         roles: Boolean = true,
         settings: TournamentSettings =
-            TournamentSettings(invitational = false, roundDuration = Some(Duration.ofDays(2)))
+            TournamentSettings(isInvitational = false, roundDuration = Some(Duration.ofDays(2)))
     ): IO[Fixture] = {
         val w = world()
         val s = w.services
         for {
             game <- TestSession.resource.use(
               new GameRepo[String](_)
-                  .create(Generators.genGame(GameType.Plain).sample.get.copy(unimportantRoles = !roles))
+                  .create(Generators.genGame(GameType.Plain).sample.get.copy(hasUnimportantRoles = !roles))
             )
             // Only the owner has an address, so the only mail sent is to them.
             owner <- s.registration.register(unique("owner"), unique("sub"), Some(s"${unique("owner")}@example.com"))
@@ -188,7 +188,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         assertEquals(ranking.values.toList.sorted, List(1, 2, 3, 3))
         assert(last.left.exists(_.isInstanceOf[ConflictError]))
         // The elimination matches are not to be drawn, and each seat has a chess clock of half the round.
-        assertEquals(request.flatMap(_.tiesAllowed), Some(false))
+        assertEquals(request.flatMap(_.canTie), Some(false))
         assertEquals(request.flatMap(_.timeLimitSeconds), Some(Duration.ofDays(1).getSeconds))
     }
 
@@ -206,7 +206,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         } yield (afterFirst, d.summary, f.w.mail.messages, f.owner.email))
         assertEquals(afterFirst.map(_.recipient), ownerAddress.toList)
         assertEquals(afterFirst.map(_.subject), List("Round 1 of Cup is over"))
-        assert(summaryAfterFirst.roundOver)
+        assert(summaryAfterFirst.isRoundOver)
         // The last round finished the tournament, which waits on nobody.
         assertEquals(afterLast, afterFirst)
     }
@@ -216,7 +216,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             f <- started(4, roles = false)
             _ <- f.w.services.notifications.updateMine(
               f.owner.externalId,
-              NotificationPreferences(tournamentRoundDone = Some(false))
+              NotificationPreferences(isNotifiedOfTournamentRoundDone = Some(false))
             )
             _ <- f.w.services.rounds.startRound(f.game.gameId, f.t.tournamentId, f.owner.externalId)
             _ <- reportAll(f)
@@ -243,8 +243,11 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             f <- started(
               4,
               roles = false,
-              settings =
-                  TournamentSettings(invitational = false, autoRounds = true, roundDuration = Some(Duration.ofHours(6)))
+              settings = TournamentSettings(
+                isInvitational = false,
+                hasAutomaticRounds = true,
+                roundDuration = Some(Duration.ofHours(6))
+              )
             )
             // Automatic: starting the tournament began its first round.
             first <- round(f)
@@ -313,7 +316,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             )
             played <- TestSession.resource.use(new MatchRepo(_).read(f.game.gameId, m.matchId))
             d <- detail(f)
-        } yield (played.exists(_.cancelled), (d, winner)))
+        } yield (played.exists(_.isCancelled), (d, winner)))
         assert(cancelled)
         val (detailNow, winner) = d
         assertEquals(detailNow.summary.tournament.status, TournamentStatus.Finished)
@@ -356,7 +359,7 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
         } yield matches)
         assertEquals(after.size, 2)
         assert(after.forall(_.status == TournamentMatchStatus.Choosing), after.map(_.status).toString)
-        assert(after.flatMap(_.seats).forall(!_.forfeit))
+        assert(after.flatMap(_.seats).forall(!_.isForfeit))
     }
 
     test("only a tournament's owner may check its round") {

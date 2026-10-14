@@ -131,7 +131,7 @@ object Json {
         displayName: String,
         description: String,
         url: String,
-        active: Boolean,
+        isActive: Boolean,
         roles: Seq[GameRole],
         parameters: Seq[GameParameter[String]],
         externalId: String,
@@ -144,7 +144,7 @@ object Json {
         hasApiKey: Boolean = false,
         // No role of the game has any advantage in winning it. Defaulted so that a client
         // written before it existed still parses, and keeps ratings by role.
-        unimportantRoles: Boolean = false,
+        hasUnimportantRoles: Boolean = false,
         // How players take turns, and how many a simultaneous game lasts. Defaulted as above.
         moveType: MoveType = MoveType.Sequential,
         maxTurns: Option[Int] = None
@@ -161,14 +161,14 @@ object Json {
             game.displayName,
             game.description,
             game.url,
-            game.active,
+            game.isActive,
             game.roles,
             game.parameters.map(_.asInstanceOf[GameParameter[String]]),
             game.externalId,
             game.timeoutAction,
             game.characterUrl,
             game.hasApiKey,
-            game.unimportantRoles,
+            game.hasUnimportantRoles,
             game.moveType,
             game.maxTurns
           ),
@@ -180,14 +180,14 @@ object Json {
             dto.displayName,
             dto.description,
             dto.url,
-            dto.active,
+            dto.isActive,
             dto.roles,
             dto.parameters,
             dto.externalId,
             dto.timeoutAction,
             dto.characterUrl,
             dto.hasApiKey,
-            dto.unimportantRoles,
+            dto.hasUnimportantRoles,
             dto.moveType,
             dto.maxTurns
           )
@@ -223,7 +223,7 @@ object Json {
     /** Whether a match is friendly, as a game's admin says it is: `PUT /games/{gameId}/matches/{matchId}/friendly`. The
       * value rather than a toggle, so that sending it twice means the same as sending it once.
       */
-    case class FriendlyRequest(friendly: Boolean)
+    case class FriendlyRequest(isFriendly: Boolean)
 
     /** A player's Elo rating in a game, as a game's admin sets it: `PUT /games/{gameId}/ratings/{playerId}`. The rating
       * itself rather than an adjustment, so that sending it twice means the same as sending it once.
@@ -312,22 +312,22 @@ object Json {
       */
     case class PreferencesRequest(
         preferences: NotificationPreferences,
-        applyToGames: Boolean = false,
-        applyToMatches: Boolean = false
+        isAppliedToGames: Boolean = false,
+        isAppliedToMatches: Boolean = false
     )
 
     /** One participant's outcome. `scores` is an open map because what a game scores on is the game's business: it is
       * stored as-is in `result.scores`.
       *
-      * `forfeit` is a live match the engine ended because a turn ran out, and is recorded as matchmaker's own forfeits
-      * are. Defaulted, so an engine that predates live matches is read as it always was.
+      * `isForfeit` is a live match the engine ended because a turn ran out, and is recorded as matchmaker's own
+      * forfeits are. Defaulted, so an engine that predates live matches is read as it always was.
       */
     case class ResultEntry(
         participantId: ParticipantId,
         rank: Int,
         scores: Map[String, ujson.Value],
         isWinner: Boolean,
-        forfeit: Boolean = false
+        isForfeit: Boolean = false
     )
 
     /** `turns` is every turn the match had, from an engine that sends them: what lets matchmaker complete the match and
@@ -366,7 +366,7 @@ object Json {
         // Whether the match ended on a clock rather than on the board. With `isWinner` this is the
         // difference between "won by forfeit" and "forfeited"; defaulted for the same reason the
         // game's action is.
-        forfeit: Boolean = false,
+        isForfeit: Boolean = false,
         // How long this player spent over their turns across the whole match. Seconds on the wire,
         // like every other Duration here; zero for a match played before turns were recorded.
         timeTaken: Duration = Duration.ZERO,

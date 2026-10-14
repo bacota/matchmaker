@@ -44,35 +44,36 @@ case class TournamentDesign(stages: List[StageDesign])
   *
   * `design` is the tournament each pool plays: set, the stage is a nesting stage; unset, an atomic one, whose pools
   * play a round robin: every `R`-member subset of the pool plays one match, `R` times over with the roles turned when
-  * `rotateRoles` is set. A pool of `R` therefore plays a single match, which is all an *Elimination Match* is. Whether
-  * a match may end in a draw follows from its pool: not in a pool of two, which is an elimination match; otherwise yes.
+  * `isRotatingRoles` is set. A pool of `R` therefore plays a single match, which is all an *Elimination Match* is.
+  * Whether a match may end in a draw follows from its pool: not in a pool of two, which is an elimination match;
+  * otherwise yes.
   *
   * `poolSize` is how many a pool holds, `None` for the tournament's default pool size. `maxStratum` and `minStratum`
   * are `None` for no bound. `demote` and `promote` are ranks: at or below `demote` a participant moves down a stratum,
-  * at or above `promote` up one. `concurrentRounds` lets a round-robin pool play all of its matches in one round,
-  * rather than each member one match a round. `rubberMatch` breaks a tie on points with one more match, in a game of
-  * two roles; otherwise ties go to scores. `tiesAllowed` says whether a match of an atomic stage may be drawn, `None`
-  * for the rule by pool size ([[Ties]]).
+  * at or above `promote` up one. `hasConcurrentRounds` lets a round-robin pool play all of its matches in one round,
+  * rather than each member one match a round. `hasRubberMatch` breaks a tie on points with one more match, in a game of
+  * two roles; otherwise ties go to scores. `canTie` says whether a match of an atomic stage may be drawn, `None` for
+  * the rule by pool size ([[Ties]]).
   */
 case class StageDesign(
     repeat: Repetition = Repetition.Fixed(1),
-    brackets: Boolean = true,
+    hasBrackets: Boolean = true,
     demote: Option[Int] = Some(2),
     promote: Option[Int] = None,
     maxStratum: Option[Int] = Some(0),
     minStratum: Option[Int] = Some(0),
     points: Int = 2,
     pointsForDraw: Int = 1,
-    pointsBonus: Boolean = false,
+    hasPointsBonus: Boolean = false,
     poolSize: Option[Int] = None,
-    concurrentRounds: Boolean = false,
-    rotateRoles: Boolean = false,
-    strictStrata: Boolean = true,
+    hasConcurrentRounds: Boolean = false,
+    isRotatingRoles: Boolean = false,
+    hasStrictStrata: Boolean = true,
     design: Option[TournamentDesign] = None,
-    tieBreakerStage: Boolean = false,
+    hasTieBreakerStage: Boolean = false,
     seedPolicy: SeedPolicy = SeedPolicy.WinnerTakesSeed,
-    rubberMatch: Boolean = false,
-    tiesAllowed: Option[Boolean] = None,
+    hasRubberMatch: Boolean = false,
+    canTie: Option[Boolean] = None,
     name: String = "",
     description: String = ""
 ) {
@@ -84,7 +85,7 @@ case class StageDesign(
     def poolSizeOr(default: Int): Int = poolSize.getOrElse(default)
 
     /** The most matches a member of one of this stage's pools plays in a round. */
-    def concurrent: Int = if (concurrentRounds) Int.MaxValue else 1
+    def concurrent: Int = if (hasConcurrentRounds) Int.MaxValue else 1
 }
 
 /** Whether a match in a pool of `members` may end in a draw: as its stage says, if it says (`stage`); otherwise not in
@@ -92,7 +93,7 @@ case class StageDesign(
   * never may, whatever its pool or stage: it exists to break a tie.
   */
 object Ties {
-    def allowed(members: Int, rubber: Boolean = false, stage: Option[Boolean] = None): Boolean =
+    def isAllowed(members: Int, rubber: Boolean = false, stage: Option[Boolean] = None): Boolean =
         !rubber && stage.getOrElse(members > 2)
 }
 
@@ -101,16 +102,16 @@ case class TournamentRole(id: Int, roleType: com.vivi.matchmaker.model.RoleType,
 
 /** What a tournament needs to know about its game.
   *
-  * `roles` are all the game's roles in the order the game lists them. `significantRoles` is the negation of the game's
-  * `unimportant_roles`: whether it matters who plays which. `chooseRoles` is the tournament's, not the game's: every
-  * match's seats choose their roles, whatever the game says about them.
+  * `roles` are all the game's roles in the order the game lists them. `hasSignificantRoles` is the negation of the
+  * game's `has_unimportant_roles`: whether it matters who plays which. `hasRoleChoice` is the tournament's, not the
+  * game's: every match's seats choose their roles, whatever the game says about them.
   */
 case class TournamentGame(
     roles: List[TournamentRole],
-    significantRoles: Boolean,
+    hasSignificantRoles: Boolean,
     moveType: com.vivi.matchmaker.model.MoveType,
     maxTurns: Option[Int],
-    chooseRoles: Boolean = false
+    hasRoleChoice: Boolean = false
 ) {
     import com.vivi.matchmaker.model.RoleType
 
@@ -128,7 +129,7 @@ case class TournamentGame(
             roles.filter(_.roleType == RoleType.Optional)
 
     /** Whether a rubber match can break a tie: only in a game of exactly two roles (Q7). */
-    def rubberApplies: Boolean = roles.sizeIs == 2
+    def isRubberApplicable: Boolean = roles.sizeIs == 2
 }
 
 object TournamentGame {
@@ -137,7 +138,7 @@ object TournamentGame {
           game.roles.toList
               .sortBy(_.gameRoleId.value)
               .map(r => TournamentRole(r.gameRoleId.value, r.roleType, r.preferenceLevel)),
-          significantRoles = !game.unimportantRoles,
+          hasSignificantRoles = !game.hasUnimportantRoles,
           moveType = game.moveType,
           maxTurns = game.maxTurns
         )
@@ -146,7 +147,7 @@ object TournamentGame {
 /** Something wrong with a design, found before a tournament is created from it. A warning is something the creator
   * should know but may go ahead with.
   */
-case class Problem(where: String, message: String, warning: Boolean = false) {
+case class Problem(where: String, message: String, isWarning: Boolean = false) {
     def describe: String = if (where.isEmpty) message else s"$where: $message"
 }
 
@@ -223,7 +224,7 @@ object Validation {
     ): List[Problem] = {
         val n = stage.poolSizeOr(defaultPoolSize)
         def p(message: String) = Problem(where, message)
-        def w(message: String) = Problem(where, message, warning = true)
+        def w(message: String) = Problem(where, message, isWarning = true)
         List(
           stage.repeat match {
               case Repetition.Fixed(k) if k < 1 => Some(p("a stage must be played at least once"))
@@ -242,7 +243,7 @@ object Validation {
           ),
           Option.when(stage.points < 0 || stage.pointsForDraw < 0)(p("points cannot be negative")),
           // Brackets: the pools are a power of n/a, which has to be a whole number above 1.
-          if (!stage.brackets) None
+          if (!stage.hasBrackets) None
           else
               stage.advancing.filter(_ > 0) match {
                   case None => None // Brackets without demote: the pools are counted as without brackets.
@@ -254,7 +255,7 @@ object Validation {
                       else None
               },
           if (stage.design.isEmpty) {
-              val matches = Schedule.matchCount(n, game, stage.rotateRoles)
+              val matches = Schedule.matchCount(n, game, stage.isRotatingRoles)
               Option.when(matches > MaxMatchesPerPool)(
                 p(s"a pool of $n would play $matches matches; the most a pool may play is $MaxMatchesPerPool")
               )
@@ -264,13 +265,15 @@ object Validation {
               s"a pool of $n cannot fill the game's ${game.requiredSeats} required roles, so it could never play a match"
             )
           ),
-          Option.when(stage.design.isDefined && (stage.pointsBonus || stage.rotateRoles || stage.concurrentRounds))(
+          Option.when(
+            stage.design.isDefined && (stage.hasPointsBonus || stage.isRotatingRoles || stage.hasConcurrentRounds)
+          )(
             w("points, rotation and concurrent rounds are set, but this stage's pools play a design, which ranks them")
           ),
-          Option.when(stage.rubberMatch && !game.rubberApplies)(
+          Option.when(stage.hasRubberMatch && !game.isRubberApplicable)(
             w("a rubber match only breaks ties in a game of two roles; scores will be used instead")
           ),
-          Option.when(stage.brackets && stage.advancing.isDefined && stage.seedPolicy != SeedPolicy.WinnerTakesSeed)(
+          Option.when(stage.hasBrackets && stage.advancing.isDefined && stage.seedPolicy != SeedPolicy.WinnerTakesSeed)(
             w("brackets keep their shape only when the winner takes the seed")
           )
         ).flatten

@@ -26,7 +26,7 @@ case class Config(
     /** True in the local development mode, where there is no Cognito and the caller's identity is asserted rather than
       * proved. See `Config.HeaderAuth`.
       */
-    def headerAuth: Boolean = authMode == Config.HeaderAuth
+    def isHeaderAuth: Boolean = authMode == Config.HeaderAuth
 }
 
 object Config {

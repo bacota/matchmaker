@@ -18,7 +18,7 @@ case class Result(
     // Whether the match was ended by a turn running out rather than by being played to an end.
     // Recorded on every row of such a match, so that a row can say "won by forfeit" or
     // "forfeited" — `isWinner` says which — without reading the rest of the table.
-    forfeit: Boolean = false,
+    isForfeit: Boolean = false,
     // What the match did to this player's Elo rating, worked out from what they began it rated.
     // Only a match that is not friendly has one.
     eloDelta: Option[Int] = None,
@@ -46,7 +46,7 @@ case class ParticipantResult(
     rank: Option[Int],
     scores: Map[String, Any],
     isWinner: Boolean,
-    forfeit: Boolean = false,
+    isForfeit: Boolean = false,
     // How long this player spent over their turns, added up across the whole match. Zero both
     // for a player who never moved and for a match played before turns were recorded — the two
     // are not worth distinguishing to a reader, and a table of zeroes is one nothing is drawn

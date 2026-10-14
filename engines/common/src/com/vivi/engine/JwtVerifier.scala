@@ -64,7 +64,7 @@ class JwtVerifier(
                     )
                     kid <- header.obj.get("kid").map(_.str).toRight("token names no key")
                     key <- keyFor(kid).toRight("token names an unknown key")
-                    _ <- Either.cond(verified(key, parts(0), parts(1), signature), (), "bad token signature")
+                    _ <- Either.cond(isVerified(key, parts(0), parts(1), signature), (), "bad token signature")
                     _ <- Either.cond(
                       claims.obj.get("iss").map(_.str).contains(issuer),
                       (),
@@ -89,7 +89,7 @@ class JwtVerifier(
             case _                     => Set.empty
         }
 
-    private def verified(
+    private def isVerified(
         key: java.security.PublicKey,
         header: String,
         payload: String,

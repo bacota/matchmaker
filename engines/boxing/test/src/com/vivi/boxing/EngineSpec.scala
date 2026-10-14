@@ -179,7 +179,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val (engine, _, _, clock, _) = fixture()
 
         val opening = engine.status("m-1").toOption.get
-        assertEquals(opening.participants.filter(_.pending).map(_.participantId), List(11L, 22L))
+        assertEquals(opening.participants.filter(_.isPending).map(_.participantId), List(11L, 22L))
         assert(opening.participants.forall(_.prevMoveAt.contains(created)))
 
         clock.advance(60)
@@ -188,7 +188,7 @@ class EngineSpec extends FunSuite with QuietTests {
         engine.plan("m-1", bob, Allocation(0, 5, 0))
 
         val second = engine.status("m-1").toOption.get
-        assertEquals(second.participants.filter(_.pending).map(_.participantId), List(11L, 22L))
+        assertEquals(second.participants.filter(_.isPending).map(_.participantId), List(11L, 22L))
         assert(second.participants.forall(_.prevMoveAt.contains(roundOver)))
     }
 
@@ -236,7 +236,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(asBob.yourPlan, None)
         assertEquals(asPublic.yourPlan, None)
         // What everyone may know is that Red has planned.
-        assertEquals(asBob.corners.map(_.planned), List(true, false))
+        assertEquals(asBob.corners.map(_.isPlanned), List(true, false))
         assertEquals(asBob.waitingFor, List("Blue"))
         assert(List(asAlice, asBob, asPublic).forall(_.rounds.isEmpty))
         assert(!upickle.default.write(asBob)(using Protocol.given_ReadWriter_StateResponse).contains("\"offense\":5"))
@@ -337,7 +337,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
         val m = bout(store)
         assert(m.isOver)
-        assert(m.completed)
+        assert(m.isCompleted)
         assertEquals(m.rounds.map(_.outcome.decision), List.fill(3)(Decision.Activity))
         assertEquals((m.points(Side.Red), m.points(Side.Blue)), (30, 27))
         assertEquals(m.winner.map(_.side), Some(Side.Red))
@@ -389,7 +389,7 @@ class EngineSpec extends FunSuite with QuietTests {
           recorder.results.head._2.summary,
           Some("<strong>Iron Mike</strong> knocked out <strong>Sugar Ray</strong> in round 1.")
         )
-        assertEquals(engine.status("m-1").toOption.get.completed, true)
+        assertEquals(engine.status("m-1").toOption.get.isCompleted, true)
     }
 
     test("a bout level on points after the last round is a draw, and both corners rank first") {
@@ -400,7 +400,7 @@ class EngineSpec extends FunSuite with QuietTests {
         }
 
         val m = bout(store)
-        assert(m.isDraw)
+        assert(m.isDrawn)
         assertEquals((m.points(Side.Red), m.points(Side.Blue)), (30, 30))
         val results = recorder.results.head._2.results
         assertEquals(results.map(_.rank), List(1, 1))
@@ -414,7 +414,7 @@ class EngineSpec extends FunSuite with QuietTests {
     test(
       "when ties are not allowed, a bout level after its schedule fights an extra round, and that round decides it"
     ) {
-        val (engine, recorder, store, _, _) = fixture(createRequest().copy(tiesAllowed = Some(false)))
+        val (engine, recorder, store, _, _) = fixture(createRequest().copy(canTie = Some(false)))
         (1 to 3).foreach { _ =>
             engine.plan("m-1", alice, Allocation(2, 2, 1))
             engine.plan("m-1", bob, Allocation(2, 2, 1))
@@ -423,7 +423,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assert(!level.isOver, "a bout that may not be drawn goes on when the cards are level")
         assertEquals(level.roundLimit, 4)
         assertEquals(level.pending.map(_.participantId).toSet, Set(11L, 22L))
-        assert(engine.stateOf(level, None).extraRound)
+        assert(engine.stateOf(level, None).hasExtraRound)
         assertEquals(recorder.results, Nil)
 
         // Red outworks Blue in the extra round, 10-9.
@@ -445,7 +445,7 @@ class EngineSpec extends FunSuite with QuietTests {
     }
 
     test("an extra round that is level too is decided by lot, the same way every time the bout is read") {
-        val (engine, recorder, store, _, _) = fixture(createRequest().copy(tiesAllowed = Some(false)))
+        val (engine, recorder, store, _, _) = fixture(createRequest().copy(canTie = Some(false)))
         (1 to 4).foreach { _ =>
             engine.plan("m-1", alice, Allocation(2, 2, 1))
             engine.plan("m-1", bob, Allocation(2, 2, 1))
@@ -453,8 +453,8 @@ class EngineSpec extends FunSuite with QuietTests {
         val m = bout(store)
         assert(m.isOver)
         assertEquals(m.rounds.size, 4)
-        assert(m.decidedByLot)
-        assert(!m.isDraw)
+        assert(m.isDecidedByLot)
+        assert(!m.isDrawn)
         assertEquals(m.method, Some("lot"))
         // The lot is the match id's, so reading the bout again cannot change it.
         assertEquals(bout(store).winner, m.winner)
@@ -473,7 +473,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(results.find(_.participantId == 11L).map(_.scores("score").num), Some(25.0))
         assertEquals(results.find(_.participantId == 22L).map(_.scores("score").num), Some(0.0))
         val stored = upickle.default.write(bout(store))(using Bout.given_ReadWriter_Bout)
-        assert(!stored.contains("tiesAllowed"))
+        assert(!stored.contains("canTie"))
     }
 
     test("a bout stored before fighters' names were kept is summed up by the players' nicknames") {
@@ -548,7 +548,7 @@ class EngineSpec extends FunSuite with QuietTests {
 
     test("a callback that fails does not fail the plan, which stands, and the results are still sent".tag(Quiet)) {
         val (engine, recorder, store, _, _) = fixture(createRequest(red = Some(slugger)))
-        recorder.failCallbacks = true
+        recorder.isFailingCallbacks = true
 
         assert(engine.plan("m-1", alice, Allocation(0, 0, 10)).isRight)
         // The knockout: its move callback fails, and the results are attempted all the same.

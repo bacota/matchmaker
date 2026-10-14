@@ -126,7 +126,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                 notificationRepo.levelsForPlayer(recipient.playerId, tournament.gameId).map { levels =>
                                     val news = newsOf(notice, tournament, subject, joined = true, offeredBy, room)
                                     Option
-                                        .when(NotificationPolicy.wants(kind, levels.apply))(())
+                                        .when(NotificationPolicy.isWanted(kind, levels.apply))(())
                                         .flatMap(_ => ChallengeMail.compose(from, uiBaseUrl, recipient, kind, news))
                                 }
                             }
@@ -150,7 +150,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
           what = if (challenge) "challenge" else "tournament",
           title = if (challenge) "" else tournament.name,
           actor = actor,
-          joined = joined,
+          isJoined = joined,
           challenger = owner.nickname,
           room = room
         )
@@ -161,7 +161,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         tournament.settings.maxEntrants.traverse { most =>
             new EntrantRepo(session)
                 .list(tournament.gameId, tournament.tournamentId)
-                .map(entries => math.max(0, most - entries.count(!_.withdrawn)))
+                .map(entries => math.max(0, most - entries.count(!_.isWithdrawn)))
         }
 
     // -------------------------------------------------------------------------
@@ -200,7 +200,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                 // Whose turn it is first is the engine's to say, and the launch has already
                                 // asked and written the answer down. Read back rather than worked out
                                 // again, which is how the mail comes to disagree with the screen.
-                                yourTurn = participant.exists(_.pending),
+                                isYourTurn = participant.exists(_.isPending),
                                 playUrl = started.playUrl
                               )
                             )
@@ -221,7 +221,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         aboutMatch(session, played, s"move in match ${played.matchId.value}") {
             (from, uiBaseUrl, notice, seats, participants) =>
                 val mover = seats.find(_.participantId == moved).map(_.player.nickname)
-                val pending = participants.filter(_.pending).map(_.participantId).toSet
+                val pending = participants.filter(_.isPending).map(_.participantId).toSet
                 val nextUp = seats.filter(seat => pending.contains(seat.participantId)).map(_.player.nickname)
 
                 seats.filter(_.participantId != moved).flatMap { seat =>
@@ -315,7 +315,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                         levels <- notificationRepo.levelsForPlayer(tournament.owner, tournament.gameId)
                     } yield owner.toSeq.flatMap { recipient =>
                         Option
-                            .when(NotificationPolicy.wants(NotificationType.TournamentRoundDone, levels.apply))(())
+                            .when(NotificationPolicy.isWanted(NotificationType.TournamentRoundDone, levels.apply))(())
                             .flatMap(_ =>
                                 TournamentMail.compose(
                                   from,
@@ -369,7 +369,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                     } yield owner.toSeq.flatMap { offeredBy =>
                         val news = newsOf(notice, tournament, actor.nickname, joined, offeredBy, room)
                         // Full now, and waiting on its owner: one that starts itself is starting, not waiting.
-                        val ready = joined && room.contains(0) && !tournament.settings.autoStart
+                        val ready = joined && room.contains(0) && !tournament.settings.isAutoStarted
                         audience
                             .filter(recipient =>
                                 recipient.player.playerId != actor.playerId &&

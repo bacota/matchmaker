@@ -82,13 +82,13 @@ case class TurnClock(
         startedFor(participantId, turnStartedAt).map(_.plus(allowance(participantId, turns)))
 
     /** Whether the match has been ended by this clock. */
-    def ranOut: Boolean = timedOut.nonEmpty
+    def hasRunOut: Boolean = timedOut.nonEmpty
 
     /** How the match came out for a seat because of this clock, if it was the clock that ended it. Every seat that ran
       * out loses — two that ran out together both lose, with nobody winning — and every other seat wins.
       */
     def outcomeOf(participantId: Long): Option[Outcome] =
-        Option.when(ranOut)(if (timedOut.contains(participantId)) Outcome.Loss else Outcome.Win)
+        Option.when(hasRunOut)(if (timedOut.contains(participantId)) Outcome.Loss else Outcome.Win)
 
     private def later(a: Instant, b: Instant): Instant = if (a.isAfter(b)) a else b
 }
@@ -158,16 +158,16 @@ case class ClockView(limitSeconds: Long, kind: String, seats: List[SeatClock], t
 
 /** One seat's clock.
   *
-  * `waiting` is whether the match is waiting on this seat, and `running` whether its clock is counting down — a seat
-  * waited on whose player has not opened the board is not. `remainingMillis` is what it has left, measured by the
+  * `isWaiting` is whether the match is waiting on this seat, and `isRunning` whether its clock is counting down — a
+  * seat waited on whose player has not opened the board is not. `remainingMillis` is what it has left, measured by the
   * engine at the moment it answered: a duration rather than a deadline, so that a page whose own clock is wrong still
   * counts down the right amount. Under a per-turn clock it is absent until the clock runs. `startedAt` is when a
   * running clock started, which is how a page tells a new turn from the same one read again.
   */
 case class SeatClock(
     participantId: Long,
-    waiting: Boolean,
-    running: Boolean,
+    isWaiting: Boolean,
+    isRunning: Boolean,
     startedAt: Option[Instant],
     remainingMillis: Option[Long]
 )

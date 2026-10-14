@@ -16,7 +16,7 @@ class NotificationPolicySpec extends FunSuite {
 
     private val kind = NotificationType.MatchStarted
 
-    private def resolved(playerGame: Option[Boolean] = None, player: Option[Boolean] = None): Boolean =
+    private def isResolved(playerGame: Option[Boolean] = None, player: Option[Boolean] = None): Boolean =
         NotificationLevels(
           playerGame = NotificationPreferences.unset.updated(kind, playerGame),
           player = NotificationPreferences.unset.updated(kind, player)
@@ -26,25 +26,25 @@ class NotificationPolicySpec extends FunSuite {
     private def refusing(refused: NotificationType*): NotificationType => Boolean = kind => !refused.contains(kind)
 
     test("with nothing said anywhere, it is sent") {
-        assert(resolved())
+        assert(isResolved())
     }
 
     test("the player's setting decides when they have one") {
-        assert(!resolved(player = Some(false)))
-        assert(resolved(player = Some(true)))
+        assert(!isResolved(player = Some(false)))
+        assert(isResolved(player = Some(true)))
     }
 
     test("the player's setting for the game overrides their setting in general") {
-        assert(!resolved(playerGame = Some(false), player = Some(true)))
-        assert(resolved(playerGame = Some(true), player = Some(false)))
+        assert(!isResolved(playerGame = Some(false), player = Some(true)))
+        assert(isResolved(playerGame = Some(true), player = Some(false)))
     }
 
     // The reason the levels are nullable rather than defaulted: "no" and "I have not said" are
     // different answers, and only the second one falls through.
     test("false at a level is an answer, not an absence") {
-        assert(!resolved(playerGame = Some(false)))
+        assert(!isResolved(playerGame = Some(false)))
         // Where a level that says nothing lets the one below it through.
-        assert(!resolved(playerGame = None, player = Some(false)))
+        assert(!isResolved(playerGame = None, player = Some(false)))
     }
 
     // One kind's answer must not be read from another's column, which is the mistake a positional
@@ -53,9 +53,9 @@ class NotificationPolicySpec extends FunSuite {
         NotificationType.values.foreach { asked =>
             val said = NotificationPreferences.unset.updated(asked, Some(false))
             val answers = NotificationLevels(player = said)
-            assert(!NotificationPolicy.wants(asked, answers.apply), s"$asked should be refused by its own setting")
+            assert(!NotificationPolicy.isWanted(asked, answers.apply), s"$asked should be refused by its own setting")
             NotificationType.values.filter(_ != asked).foreach { other =>
-                assert(NotificationPolicy.wants(other, answers.apply), s"$other should be unaffected by $asked")
+                assert(NotificationPolicy.isWanted(other, answers.apply), s"$other should be unaffected by $asked")
             }
         }
     }
@@ -129,7 +129,7 @@ class NotificationPolicySpec extends FunSuite {
           Seq(NotificationType.TurnTaken, NotificationType.YourTurn, NotificationType.MatchEnded)
         )
         assert(
-          NotificationType.values.toSeq.filterNot(_.inProgress) == Seq(
+          NotificationType.values.toSeq.filterNot(_.isInProgress) == Seq(
             NotificationType.ChallengeAccepted,
             NotificationType.ChallengeReady,
             NotificationType.AcceptanceChanged,
@@ -173,7 +173,7 @@ class NotificationPolicySpec extends FunSuite {
     }
 
     test("a column name per kind, all distinct, all derived from the code") {
-        assertEquals(NotificationType.MatchStarted.column, "notify_match_started")
+        assertEquals(NotificationType.MatchStarted.column, "is_notified_of_match_started")
         assertEquals(NotificationType.values.map(_.column).distinct.length, NotificationType.values.length)
     }
 

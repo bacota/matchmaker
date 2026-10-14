@@ -60,7 +60,7 @@ object Store {
      * be over: the player signed out, or the token expired, while it was in flight. The answer then
      * belongs to whoever was signed in when it was sent, and to nobody who is signed in now -- so
      * anything that holds onto an answer takes this number before the request and checks it before
-     * committing, through `stillSignedInAs`.
+     * committing, through `isStillSignedInAs`.
      *
      * A counter rather than the player's id, because two sign-ins are two sessions even when they
      * are the same player: what went stale is the request, not the identity. */
@@ -75,7 +75,7 @@ object Store {
     private[ui] def currentSignIn: Int = signIns
 
     /** Whether the session that asked is still the session that is here. */
-    private[ui] def stillSignedInAs(signIn: Int): Boolean = signIn == signIns
+    private[ui] def isStillSignedInAs(signIn: Int): Boolean = signIn == signIns
 
     /** The token has gone — expired, revoked, or signed out elsewhere. Everything derived from it is dropped, so no
       * stale list is left on screen behind the sign-in prompt.
@@ -231,7 +231,7 @@ object Store {
       * Every fetch in this store goes through it, so there is nothing left for which this is vacuously true. Two
       * requests that answer one question share a stamp rather than taking one each — see `reloadAs`.
       */
-    private def newest(stamp: Int, fetches: Seq[Fetch]): Boolean =
+    private def isNewest(stamp: Int, fetches: Seq[Fetch]): Boolean =
         fetches.forall(what => latestAsk.get(what).contains(stamp))
 
     /** Whether a list is still on its way, which is to say nothing has answered for it yet this session. */
@@ -443,8 +443,8 @@ object Store {
       * stands there always and it is the words that come and go.
       */
     val invitationsSaid: Signal[String] = invitationStatus.signal.map {
-        case Some((signIn, said)) if stillSignedInAs(signIn) => said
-        case _                                               => ""
+        case Some((signIn, said)) if isStillSignedInAs(signIn) => said
+        case _                                                 => ""
     }
 
     /** What is in the player search box, kept in the store rather than in the screen so that leaving the search for a
@@ -455,7 +455,7 @@ object Store {
     /** What the last search answered, or `None` when nothing has been searched for in this session.
       *
       * `None` rather than an empty result, because "no search yet" and "no player by that name" are the two things the
-      * screen has to say differently, and an empty list cannot tell them apart. The `more` flag inside it is the
+      * screen has to say differently, and an empty list cannot tell them apart. The `hasMore` flag inside it is the
       * server's word for "there were others" -- the list's own length cannot say so, since a full page may be the last
       * one.
       */
@@ -542,7 +542,7 @@ object Store {
             // outcome, which is what stops a failed fetch from leaving the page loading for ever. Guarded
             // like the commit is, and by the same stamp: a newer fetch has already set the flag for
             // itself, and this one clearing it would say that fetch had finished.
-            running.map(_ => if (newest(stamp, lists)) publicMatchesLoading.set(false))
+            running.map(_ => if (isNewest(stamp, lists)) publicMatchesLoading.set(false))
         }
     }
 
@@ -564,7 +564,7 @@ object Store {
                 reloadAs(ApiClient.characterProfile(character), stamp, lists)(p => characterProfile.set(Some(p)))
             val running = reloadAs(ApiClient.characterMatches(character), stamp, lists)(publicActive.set)
             showCompleted(CompletedList.OfCharacter(character))
-            profile.zip(running).map(_ => if (newest(stamp, lists)) publicMatchesLoading.set(false))
+            profile.zip(running).map(_ => if (isNewest(stamp, lists)) publicMatchesLoading.set(false))
         }
     }
 
@@ -794,7 +794,7 @@ object Store {
       * An untagged fetch — one that speaks for no `Fetch` at all, like `reloadChallenges` — carries the empty set,
       * which is a subset of every other, so it may clear another untagged fetch's banner and nothing else's.
       */
-    private def mayClear(owner: Banner): Boolean = (owner, bannerOwner) match {
+    private def canClear(owner: Banner): Boolean = (owner, bannerOwner) match {
         case (_, Banner.Nobody)                                    => true
         case (Banner.Action, _)                                    => true
         case (Banner.Background(mine), Banner.Background(showing)) => showing.subsetOf(mine)
@@ -834,7 +834,7 @@ object Store {
         busy.set(true)
         action.onComplete { outcome =>
             busy.set(false)
-            if (stillSignedInAs(signIn)) settle(outcome, Banner.Action)(onSuccess)
+            if (isStillSignedInAs(signIn)) settle(outcome, Banner.Action)(onSuccess)
         }
     }
 
@@ -875,9 +875,9 @@ object Store {
         gated(fetches) { () =>
             action.transform { outcome =>
                 // Superseded as well as signed out: an answer to a question since asked again is not this
-                // list's current answer, and committing it would undo the newer one. See `newest`.
+                // list's current answer, and committing it would undo the newer one. See `isNewest`.
                 try
-                    if (stillSignedInAs(signIn) && newest(stamp, fetches)) {
+                    if (isStillSignedInAs(signIn) && isNewest(stamp, fetches)) {
                         settle(outcome, Banner.Background(fetches.toSet))(commit)
                         // However it ended: what the section shows next is decided by which of the two it was.
                         // See `outcomes`.
@@ -912,7 +912,7 @@ object Store {
 
     private def gated(fetches: Seq[Fetch])(start: () => Future[Unit]): Future[Unit] = {
         val signIn = currentSignIn
-        coalescer(fetches.toSet)(() => if (stillSignedInAs(signIn)) start() else Future.unit)
+        coalescer(fetches.toSet)(() => if (isStillSignedInAs(signIn)) start() else Future.unit)
     }
 
     /* `owner` says what this outcome belongs to, which decides both whose banner may be cleared on a
@@ -920,7 +920,7 @@ object Store {
      * -- what the distinction protects is the explanation, not the list. */
     private def settle[A](outcome: Try[A], owner: Banner)(onSuccess: A => Unit): Unit = outcome match {
         case Success(value) =>
-            if (mayClear(owner)) {
+            if (canClear(owner)) {
                 error.set(None)
                 bannerOwner = Banner.Nobody
             }
@@ -942,7 +942,7 @@ object Store {
         ApiClient.me().onComplete {
             // Signed out while this was in flight. Every branch below writes `player`, and the one
             // that succeeds goes on to fetch five more lists — all of it for a session that is over.
-            case _ if !stillSignedInAs(signIn) => ()
+            case _ if !isStillSignedInAs(signIn) => ()
 
             case Success(p) =>
                 error.set(None)
@@ -1026,7 +1026,7 @@ object Store {
                     // Only if this is still the session that asked. A sign-out while the call was in
                     // flight has already put something else on screen, and the answer to a request
                     // about the previous session must not overwrite it.
-                    if (stillSignedInAs(signIn)) player.set(PlayerState.Registered(updated))
+                    if (isStillSignedInAs(signIn)) player.set(PlayerState.Registered(updated))
                     Success(())
                 case Failure(_) => Success(())
             }
@@ -1103,7 +1103,7 @@ object Store {
             // as reloading has been unmounted by the sign-out, but it must not be left hanging if it
             // has not, and a superseded reload is still a reload that has finished.
             try
-                if (stillSignedInAs(signIn) && newest(stamp, fetches)) {
+                if (isStillSignedInAs(signIn) && isNewest(stamp, fetches)) {
                     settle(outcome, Banner.Background(fetches.toSet))(onSuccess)
                     outcomes.update(_ ++ fetches.map(_ -> outcome.isSuccess))
                 }
@@ -1181,7 +1181,7 @@ object Store {
             // one settling is about a list or a window nobody is waiting for -- and only in the session
             // that asked: after a sign-out the request is skipped unanswered, which is not a failure,
             // and the next player is not to be told a list of theirs could not be loaded.
-            if (thisAsk == completedAsks && stillSignedInAs(signIn)) {
+            if (thisAsk == completedAsks && isStillSignedInAs(signIn)) {
                 completedLoading.set(None)
                 if (!answered) completedFailed.set(Some(list))
             }
@@ -1212,21 +1212,21 @@ object Store {
       * game had *before* the save — and if it failed they showed them for the rest of the session, over a save that had
       * actually succeeded, with the form ready to submit the stale copy again.
       *
-      * Which copy it belongs in is what `active` decides, so a save that flips it moves the game between them: into
+      * Which copy it belongs in is what `isActive` decides, so a save that flips it moves the game between them: into
       * `games` and out of `unlistedGames` when it is active, and the other way when it is not. `refreshGames` reaches
       * neither case on its own — it fetches the active games, so it cannot say what became of one that is no longer
       * among them.
       */
     def gameSaved(saved: Game): Unit = {
         games.update { held =>
-            if (!saved.active) held.filterNot(_.gameId == saved.gameId)
+            if (!saved.isActive) held.filterNot(_.gameId == saved.gameId)
             else if (held.exists(_.gameId == saved.gameId))
                 held.map(game => if (game.gameId == saved.gameId) saved else game)
             // Appended rather than placed: a game just created is not in the list at all, and where the
             // server would sort it is exactly what the re-read below is for.
             else held :+ saved
         }
-        unlistedGames.update(held => if (saved.active) held - saved.gameId else held.updated(saved.gameId, saved))
+        unlistedGames.update(held => if (saved.isActive) held - saved.gameId else held.updated(saved.gameId, saved))
         refreshGames()
     }
 
@@ -1258,7 +1258,7 @@ object Store {
              * exactly the case it catches. */
             val answered = ApiClient.games(activeOnly = false).transform {
                 case failure @ Failure(_) =>
-                    if (stillSignedInAs(signIn)) lookingForGames.update(_ - gameId)
+                    if (isStillSignedInAs(signIn)) lookingForGames.update(_ - gameId)
                     failure
                 case success => success
             }

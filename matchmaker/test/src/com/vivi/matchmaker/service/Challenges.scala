@@ -57,15 +57,15 @@ object Challenges {
                     t <- services.tournaments.createChallenge(
                       game.gameId,
                       ChallengeRequest(
-                        plays = false,
+                        isPlaying = false,
                         poolSize = Some(seats.size),
                         roundDuration = roundDuration,
                         gameSettings = settings,
-                        live = live,
-                        friendly = friendly,
+                        isLive = live,
+                        isFriendly = friendly,
                         isPublic = isPublic,
-                        autoStart = true,
-                        open = false,
+                        isAutoStarted = true,
+                        isOpen = false,
                         invitations = seats.map(_.player.playerId)
                       ),
                       host.externalId
@@ -103,8 +103,8 @@ object Challenges {
                 poolSize = Some(seats.size),
                 roundDuration = roundDuration,
                 gameSettings = settings,
-                live = live,
-                friendly = friendly,
+                isLive = live,
+                isFriendly = friendly,
                 isPublic = isPublic
               ),
               host.player.externalId
@@ -146,7 +146,7 @@ object Challenges {
                         // Its round has not begun yet.
                         case None => IO.sleep(50.millis) *> step(remaining - 1)
                         case Some(m) =>
-                            m.seats.find(_.choosing) match {
+                            m.seats.find(_.isChoosing) match {
                                 case Some(chooser) if m.status == TournamentMatchStatus.Choosing =>
                                     val player = d.entries.find(_.entrantId == chooser.entrantId).flatMap(_.playerId)
                                     val seat = seats.find(s => player.contains(s.player.playerId)).get

@@ -70,10 +70,10 @@ class RulesSpec extends ScalaCheckSuite {
     test("a scout that moves more than one square is revealed; one that moves one square is not") {
         val board = boardOf(0 -> (Side.Red, Rank.Scout), 9 -> (Side.Red, Rank.Scout))
         val far = board.move(Side.Red, 0, 30).toOption.get.board
-        assert(far(30).get.revealed)
+        assert(far(30).get.isRevealed)
         val near = board.move(Side.Red, 9, 19).toOption.get.board
-        assert(!near(19).get.revealed)
-        assert(near(19).get.moved)
+        assert(!near(19).get.isRevealed)
+        assert(near(19).get.isMoved)
     }
 
     test("a battle reveals the survivor, and removes the loser — or both") {
@@ -81,7 +81,7 @@ class RulesSpec extends ScalaCheckSuite {
         val won = board.move(Side.Red, 30, 40).toOption.get
         assertEquals(won.battle, Some(Battle(Rank.Major, Rank.Captain, Result.AttackerWins)))
         assertEquals(won.board(30), None)
-        assertEquals(won.board(40).map(p => (p.rank, p.revealed)), Some((Rank.Major, true)))
+        assertEquals(won.board(40).map(p => (p.rank, p.isRevealed)), Some((Rank.Major, true)))
 
         val lost = board.move(Side.Red, 31, 41).toOption.get.board.move(Side.Blue, 40, 41).toOption.get
         assertEquals(lost.battle.map(_.result), Some(Result.AttackerWins))
@@ -124,11 +124,11 @@ class RulesSpec extends ScalaCheckSuite {
 
     test("a piece may not make a fourth consecutive move between the same two squares") {
         val history = List(Step(5, 40, 50), Step(5, 50, 40), Step(5, 40, 50))
-        assert(Rules.shuttles(history, Step(5, 50, 40)))
+        assert(Rules.isShuttling(history, Step(5, 50, 40)))
         // A different piece, a different square, or a break in the run are all fine.
-        assert(!Rules.shuttles(history, Step(6, 50, 40)))
-        assert(!Rules.shuttles(history, Step(5, 50, 60)))
-        assert(!Rules.shuttles(Step(7, 0, 10) :: history.tail, Step(5, 50, 40)))
+        assert(!Rules.isShuttling(history, Step(6, 50, 40)))
+        assert(!Rules.isShuttling(history, Step(5, 50, 60)))
+        assert(!Rules.isShuttling(Step(7, 0, 10) :: history.tail, Step(5, 50, 40)))
 
         val board = boardOf(50 -> (Side.Red, Rank.Captain))
         val shuttled = List(Step(0, 40, 50), Step(0, 50, 40), Step(0, 40, 50))

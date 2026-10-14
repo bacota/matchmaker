@@ -41,7 +41,7 @@ enum Rank(val strength: Int, val count: Int) {
     case Marshal extends Rank(10, 1)
     case Bomb extends Rank(11, 6)
 
-    def movable: Boolean = this != Bomb && this != Flag
+    def isMovable: Boolean = this != Bomb && this != Flag
 }
 
 object Rank {
@@ -75,11 +75,11 @@ enum Result {
 /** One piece on the board.
   *
   * `id` follows the piece as it moves, which is what the two-square rule needs to recognise a piece shuttling back and
-  * forth. `revealed` is whether the opponent has seen its rank — it fought, or it is a scout that moved more than one
-  * square — and once true it stays true. `moved` is whether it has ever moved, which tells the opponent it is neither a
-  * bomb nor the flag.
+  * forth. `isRevealed` is whether the opponent has seen its rank — it fought, or it is a scout that moved more than one
+  * square — and once true it stays true. `isMoved` is whether it has ever moved, which tells the opponent it is neither
+  * a bomb nor the flag.
   */
-case class Piece(id: Int, side: Side, rank: Rank, revealed: Boolean = false, moved: Boolean = false)
+case class Piece(id: Int, side: Side, rank: Rank, isRevealed: Boolean = false, isMoved: Boolean = false)
 
 /** A fight that a move started, with both ranks as they were — what both players are told, since a battle reveals both
   * pieces.
@@ -117,7 +117,7 @@ case class Board(cells: Vector[Option[Piece]]) {
       */
     def targets(side: Side, from: Int): List[Int] =
         cells(from) match {
-            case Some(p) if p.side == side && p.rank.movable =>
+            case Some(p) if p.side == side && p.rank.isMovable =>
                 Board.directions.flatMap { (dr, dc) =>
                     def walk(at: Int, acc: List[Int]): List[Int] =
                         Board.step(at, dr, dc) match {
@@ -142,28 +142,28 @@ case class Board(cells: Vector[Option[Piece]]) {
       * tapped the wrong square — that is a 400, not a failure of the engine.
       */
     def move(side: Side, from: Int, to: Int): Either[String, Moved] =
-        if (!Board.onBoard(from)) Left(s"square $from is not on the board; squares are numbered 0 to 99")
-        else if (!Board.onBoard(to)) Left(s"square $to is not on the board; squares are numbered 0 to 99")
+        if (!Board.isOnBoard(from)) Left(s"square $from is not on the board; squares are numbered 0 to 99")
+        else if (!Board.isOnBoard(to)) Left(s"square $to is not on the board; squares are numbered 0 to 99")
         else
             cells(from) match {
-                case None                       => Left(s"there is no piece on ${Board.name(from)}")
-                case Some(p) if p.side != side  => Left(s"the piece on ${Board.name(from)} is not yours")
-                case Some(p) if !p.rank.movable => Left(s"a ${p.rank.toString.toLowerCase} cannot move")
+                case None                         => Left(s"there is no piece on ${Board.name(from)}")
+                case Some(p) if p.side != side    => Left(s"the piece on ${Board.name(from)} is not yours")
+                case Some(p) if !p.rank.isMovable => Left(s"a ${p.rank.toString.toLowerCase} cannot move")
                 case Some(p) if !targets(side, from).contains(to) =>
                     Left(
                       s"your ${p.rank.toString.toLowerCase} cannot move from ${Board.name(from)} to ${Board.name(to)}"
                     )
                 case Some(p) =>
                     // A scout that crossed more than one square has shown what it is.
-                    val mover = p.copy(moved = true, revealed = p.revealed || Board.distance(from, to) > 1)
+                    val mover = p.copy(isMoved = true, isRevealed = p.isRevealed || Board.distance(from, to) > 1)
                     val cleared = cells.updated(from, None)
                     cells(to) match {
                         case None => Right(Moved(Board(cleared.updated(to, Some(mover))), None))
                         case Some(defender) =>
                             val result = Rank.attack(mover.rank, defender.rank)
                             val after = result match {
-                                case Result.AttackerWins => cleared.updated(to, Some(mover.copy(revealed = true)))
-                                case Result.DefenderWins => cleared.updated(to, Some(defender.copy(revealed = true)))
+                                case Result.AttackerWins => cleared.updated(to, Some(mover.copy(isRevealed = true)))
+                                case Result.DefenderWins => cleared.updated(to, Some(defender.copy(isRevealed = true)))
                                 case Result.BothLost     => cleared.updated(to, None)
                             }
                             Right(Moved(Board(after), Some(Battle(mover.rank, defender.rank, result))))
@@ -191,7 +191,7 @@ object Board {
 
     private val directions: List[(Int, Int)] = List((1, 0), (-1, 0), (0, 1), (0, -1))
 
-    def onBoard(square: Int): Boolean = square >= 0 && square < 100
+    def isOnBoard(square: Int): Boolean = square >= 0 && square < 100
 
     def row(square: Int): Int = square / 10
 

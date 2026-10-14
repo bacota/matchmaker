@@ -54,8 +54,8 @@ class ParticipantRepoSpec extends PropertySuite {
      * not a second ending. */
     test("finishing a seat stamps when, and later writes to the finished seat keep that time") {
         def finished(p: Participant, done: Boolean): Participant = p match {
-            case cp: CharacterParticipant => cp.copy(completed = done, pending = false)
-            case pp: PlainParticipant     => pp.copy(completed = done, pending = false)
+            case cp: CharacterParticipant => cp.copy(isCompleted = done, isPending = false)
+            case pp: PlainParticipant     => pp.copy(isCompleted = done, isPending = false)
         }
         val (before, first, again, read) = TestSession.resource
             .use { session =>
@@ -102,6 +102,6 @@ class ParticipantRepoSpec extends PropertySuite {
         assertEquals(before, None)
         assert(first.isDefined)
         assertEquals(again, first)
-        assertEquals(read.map(_.completed), Some(true))
+        assertEquals(read.map(_.isCompleted), Some(true))
     }
 }

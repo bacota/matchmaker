@@ -64,9 +64,9 @@ class Engine(
           board = m.board.encoded,
           turn = Option.unless(m.isOver)(m.turn.toString),
           you = seat.map(_.mark.toString),
-          completed = m.isOver,
+          isCompleted = m.isOver,
           winner = m.winner.map(_.toString),
-          draw = m.isDraw,
+          isDrawn = m.isDrawn,
           winningLine = m.board.winningLine,
           players = m.seats.map(s => SeatView(s.mark.toString, s.cognitoId, s.participantId, m.moveCount(s.mark))),
           clock = core.clockView(m)

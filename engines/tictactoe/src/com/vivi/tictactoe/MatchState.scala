@@ -36,7 +36,7 @@ case class TicTacToeMatch(
     turn: Mark,
     seats: List[Seat],
     isPublic: Boolean,
-    completed: Boolean,
+    isCompleted: Boolean,
     createdAt: Instant,
     lastMoveAt: Option[Instant],
     moveCallbackUrl: Option[String],
@@ -59,19 +59,19 @@ case class TicTacToeMatch(
 
     /** Whoever has three in a row — or, in a live match the clock ended, whoever did not run out. */
     def winner: Option[Mark] =
-        if (ranOut)
+        if (hasRunOut)
             seats.find(s => clock.flatMap(_.outcomeOf(s.participantId)).contains(Outcome.Win)).map(_.mark)
         else board.winner
 
     /** A finished match is one that is won or has no empty cell left, or one whose clock ran out. Kept derived rather
       * than stored so a board and a completion flag cannot disagree.
       */
-    def isOver: Boolean = ranOut || winner.isDefined || board.isFull
+    def isOver: Boolean = hasRunOut || winner.isDefined || board.isFull
 
-    def isDraw: Boolean = !ranOut && winner.isEmpty && board.isFull
+    def isDrawn: Boolean = !hasRunOut && winner.isEmpty && board.isFull
 
     /** Whether a live match's clock ended this one. */
-    def ranOut: Boolean = clock.exists(_.ranOut)
+    def hasRunOut: Boolean = clock.exists(_.hasRunOut)
 
     /** How many marks a seat has placed — the one thing worth scoring in a game this small, and enough to show that an
       * open `scores` map survives the round trip into matchmaker.
@@ -112,7 +112,7 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
 
     def isOver(m: TicTacToeMatch): Boolean = m.isOver
 
-    def markCompleted(m: TicTacToeMatch): TicTacToeMatch = m.copy(completed = true)
+    def markCompleted(m: TicTacToeMatch): TicTacToeMatch = m.copy(isCompleted = true)
 
     def pending(m: TicTacToeMatch): List[Seat] = if (m.isOver) Nil else m.seatOf(m.turn).toList
 
@@ -128,7 +128,7 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
         m.clock
             .flatMap(_.outcomeOf(seat.participantId))
             .getOrElse(
-              if (m.winner.contains(seat.mark)) Outcome.Win else if (m.isDraw) Outcome.Draw else Outcome.Loss
+              if (m.winner.contains(seat.mark)) Outcome.Win else if (m.isDrawn) Outcome.Draw else Outcome.Loss
             )
 
     def clock(m: TicTacToeMatch): Option[TurnClock] = m.clock
@@ -146,10 +146,10 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
                     case None           => ResultText.name(None, mark.toString)
                 }
             m.winner match {
-                case Some(w) if m.ranOut => s"${who(w)} won by forfeit: ${who(w.other)} ran out of time."
-                case None if m.ranOut    => "Both players ran out of time. Nobody wins."
-                case Some(w)             => s"${who(w)} got three in a row against ${who(w.other)}."
-                case None                => s"${who(Mark.X)} and ${who(Mark.O)} filled the board. A draw."
+                case Some(w) if m.hasRunOut => s"${who(w)} won by forfeit: ${who(w.other)} ran out of time."
+                case None if m.hasRunOut    => "Both players ran out of time. Nobody wins."
+                case Some(w)                => s"${who(w)} got three in a row against ${who(w.other)}."
+                case None                   => s"${who(Mark.X)} and ${who(Mark.O)} filled the board. A draw."
             }
         }
 
@@ -164,7 +164,7 @@ object TicTacToeMatch extends Game[TicTacToeMatch, Seat, TurnRecord] {
               turn = Mark.X,
               seats = seats,
               isPublic = request.isPublic,
-              completed = false,
+              isCompleted = false,
               createdAt = now,
               lastMoveAt = None,
               moveCallbackUrl = request.moveCallbackUrl,

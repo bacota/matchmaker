@@ -12,8 +12,8 @@ case class PublicPlayer(playerId: PlayerId, nickname: String)
 
 /** The answer to a nickname search: who was found, and whether that is all of them.
   *
-  * `more` is true when the search matched more players than the page it is showing. It is the answer to a question the
-  * list itself cannot settle -- a full page might be the last one -- and without it the only honest caption would be
-  * "possibly more", on every search that filled up.
+  * `hasMore` is true when the search matched more players than the page it is showing. It is the answer to a question
+  * the list itself cannot settle -- a full page might be the last one -- and without it the only honest caption would
+  * be "possibly more", on every search that filled up.
   */
-case class PlayerSearchResult(players: List[PublicPlayer], more: Boolean)
+case class PlayerSearchResult(players: List[PublicPlayer], hasMore: Boolean)

@@ -7,15 +7,15 @@ import Protocol._
 /** What a successful move produced, for the caller to answer with and for the callbacks that report it.
   *
   * `turn` is the record the move just wrote — when it was made and when the mover's clock started for it. `next` is who
-  * the move callback names, and `finished` means this move ended the match.
+  * the move callback names, and `isFinished` means this move ended the match.
   */
-case class MoveApplied[M, S, T](state: M, moved: S, turn: T, next: List[S], finished: Boolean)
+case class MoveApplied[M, S, T](state: M, moved: S, turn: T, next: List[S], isFinished: Boolean)
 
 /** A match as it stands once a read has recorded what it found — a turn that had run out ([[GameEngine.current]]), or a
-  * player opening the board ([[GameEngine.opened]]). `changed` is whether this read is what recorded it, which is what
-  * decides whether anybody watching is told.
+  * player opening the board ([[GameEngine.opened]]). `isChanged` is whether this read is what recorded it, which is
+  * what decides whether anybody watching is told.
   */
-case class Settled[M](state: M, changed: Boolean)
+case class Settled[M](state: M, isChanged: Boolean)
 
 /** The four exchanges of `interaction-design.txt` from an engine's side, for any [[Game]].
   *
@@ -75,7 +75,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                 } catch {
                     case _: ConcurrentModification =>
                         store.get(created.matchId) match {
-                            case Some(stored) if sameSeats(stored, request) => Right(responseFor(stored))
+                            case Some(stored) if hasSameSeats(stored, request) => Right(responseFor(stored))
                             case Some(_) =>
                                 Left(Refusal.Conflict(s"match '${created.matchId}' already exists with other players"))
                             // Gone between the failed create and this read: cancelled in the meantime.
@@ -93,7 +93,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         )
 
     /** Whether a stored match seats exactly the players `request` names: the same create sent again. */
-    private def sameSeats(stored: M, request: CreateGameRequest): Boolean =
+    private def hasSameSeats(stored: M, request: CreateGameRequest): Boolean =
         game.seats(stored).map(s => (s.participantId, s.cognitoId)).toSet ==
             request.players.map(p => (p.participantId, p.cognitoId)).toSet
 
@@ -121,20 +121,20 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         lazy val at = now()
         (if (archived) store.getArchived(matchId) else store.get(matchId)) match {
             case None => Left(Refusal.NotFound(s"no match '$matchId'"))
-            case Some(m) if game.clock(m).isEmpty || timedOut(m, at).isEmpty => Right(Settled(m, changed = false))
+            case Some(m) if game.clock(m).isEmpty || timedOut(m, at).isEmpty => Right(Settled(m, isChanged = false))
             case Some(_) =>
                 store
                     .modify(matchId) { latest =>
                         // Decided again against the stored match: a move may have landed since the read above,
                         // and a request racing this one may have recorded the same forfeit already.
                         timedOut(latest, at) match {
-                            case Some(ended) => (Some(ended), Settled(ended, changed = true))
-                            case None        => (None, Settled(latest, changed = false))
+                            case Some(ended) => (Some(ended), Settled(ended, isChanged = true))
+                            case None        => (None, Settled(latest, isChanged = false))
                         }
                     }
                     .toRight(Refusal.NotFound(s"no match '$matchId'"))
                     .map { settled =>
-                        if (settled.changed) reportResults(settled.state)
+                        if (settled.isChanged) reportResults(settled.state)
                         settled
                     }
         }
@@ -177,13 +177,13 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
 
         store.get(matchId) match {
             case None                          => Left(Refusal.NotFound(s"no match '$matchId'"))
-            case Some(m) if opening(m).isEmpty => Right(Settled(m, changed = false))
+            case Some(m) if opening(m).isEmpty => Right(Settled(m, isChanged = false))
             case Some(_) =>
                 store
                     .modify(matchId) { latest =>
                         opening(latest) match {
-                            case Some(seen) => (Some(seen), Settled(seen, changed = true))
-                            case None       => (None, Settled(latest, changed = false))
+                            case Some(seen) => (Some(seen), Settled(seen, isChanged = true))
+                            case None       => (None, Settled(latest, isChanged = false))
                         }
                     }
                     .toRight(Refusal.NotFound(s"no match '$matchId'"))
@@ -212,8 +212,8 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                   val deadline = Option.when(waiting(id))(deadlineOf(m, clock, seat)).flatten
                   SeatClock(
                     participantId = id,
-                    waiting = waiting(id),
-                    running = deadline.isDefined,
+                    isWaiting = waiting(id),
+                    isRunning = deadline.isDefined,
                     startedAt = started,
                     remainingMillis = deadline
                         .map(d => millis(java.time.Duration.between(at, d)))
@@ -255,12 +255,12 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         val over = game.isOver(m)
         val pending = game.pending(m).map(_.participantId).toSet
         GameStatusResponse(
-          completed = over,
+          isCompleted = over,
           participants = game.seats(m).map { seat =>
               EngineParticipantStatus(
                 participantId = seat.participantId,
-                pending = pending.contains(seat.participantId),
-                completed = over,
+                isPending = pending.contains(seat.participantId),
+                isCompleted = over,
                 prevMoveAt = Some(game.clockStartedAt(m))
               )
           },
@@ -394,7 +394,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
             )
         }
 
-        if (applied.finished) reportResults(m)
+        if (applied.isFinished) reportResults(m)
     }
 
     /** Step 3, for a match that has just ended — by a move, or by its clock — and then its archive.
@@ -428,7 +428,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
       * ended by its clock is a forfeit on every seat, as matchmaker records its own.
       */
     def resultsOf(m: M): MatchResults = {
-        val forfeit = game.clock(m).exists(_.ranOut)
+        val forfeit = game.clock(m).exists(_.hasRunOut)
         MatchResults(
           game.seats(m).map { seat =>
               val outcome = game.outcome(m, seat)
@@ -437,7 +437,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                 rank = if (outcome == Outcome.Loss) 2 else 1,
                 scores = Map("outcome" -> ujson.Str(outcome.label)) ++ game.scores(m, seat),
                 isWinner = outcome == Outcome.Win,
-                forfeit = forfeit
+                isForfeit = forfeit
               )
           },
           // Every turn, so that matchmaker records them with the results rather than relying on each

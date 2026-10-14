@@ -81,7 +81,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
     test("every model a game could offer is listed for its admins to choose from") {
         val all = run(fixture.flatMap((_, _, player) => models.listAll(player.externalId)))
         assert(all.exists(_.tournamentModelId == worldCup), all.map(_.tournamentModelId))
-        assert(all.forall(m => m.classification.isDefined && m.active), all)
+        assert(all.forall(m => m.classification.isDefined && m.isActive), all)
     }
 
     test("a player who does not administer the game may not offer or withdraw a model, nor a game's admin sync them") {
@@ -136,8 +136,8 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
           "",
           Some("Round robin"),
           None,
-          lateEntries = false,
-          TournamentDesign(List(StageDesign(brackets = false, demote = None)))
+          hasLateEntries = false,
+          TournamentDesign(List(StageDesign(hasBrackets = false, demote = None)))
         )
 
     /** `model` written and offered in `game`. */
@@ -217,7 +217,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         } yield (synced, offered, stored, kept, fresh, edited))
         assert(synced.deactivated.contains(model.tournamentModelId), synced)
         assert(!offered.exists(_.tournamentModelId == model.tournamentModelId), offered)
-        assertEquals(stored.map(_.active), Some(false))
+        assertEquals(stored.map(_.isActive), Some(false))
         assert(kept.forall(_.isDefined), kept)
         assert(fresh.left.exists(_.isInstanceOf[NotFoundError]), fresh)
         assertEquals(edited.name, "renamed")
@@ -265,7 +265,7 @@ class TournamentModelServiceSpec extends FunSuite with QuietTests {
         } yield (offered, made))
         val standard = offered.map(_.tournamentModelId.value).filter(id => StandardModels.find(id).isDefined)
         val expected = StandardModels.all
-            .filter(m => Validation.designProblems(m.design, TournamentGame.of(game), m.poolSize).forall(_.warning))
+            .filter(m => Validation.designProblems(m.design, TournamentGame.of(game), m.poolSize).forall(_.isWarning))
             .map(_.id)
         assertEquals(standard.sorted, expected.sorted)
     }

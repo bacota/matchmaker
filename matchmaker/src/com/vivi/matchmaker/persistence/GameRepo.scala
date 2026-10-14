@@ -38,8 +38,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       ),
       GameId
     ] =
-        sql"""INSERT INTO game (game_type, name, display_name, description, url, character_url, active, external_id,
-                                timeout_action, unimportant_roles, move_type, max_turns)
+        sql"""INSERT INTO game (game_type, name, display_name, description, url, character_url, is_active, external_id,
+                                timeout_action, has_unimportant_roles, move_type, max_turns)
           VALUES ($gameType, $text, $text, $text, $text, ${text.opt}, $bool, $text, $timeoutAction, $bool, $moveType,
                   ${int4.opt})
           RETURNING game_id""".query(gameId)
@@ -62,8 +62,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       )
     ] =
         sql"""UPDATE game SET game_type = $gameType, name = $text, display_name = $text, description = $text, url = $text,
-          character_url = ${text.opt}, active = $bool,
-          external_id = $text, timeout_action = $timeoutAction, unimportant_roles = $bool,
+          character_url = ${text.opt}, is_active = $bool,
+          external_id = $text, timeout_action = $timeoutAction, has_unimportant_roles = $bool,
           move_type = $moveType, max_turns = ${int4.opt}
           WHERE game_id = $gameId""".command
 
@@ -86,8 +86,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       )
     ] =
         // Whether a key is stored, never the key: no read of a game carries it.
-        sql"""SELECT game_type, name, display_name, description, url, character_url, active, external_id, timeout_action,
-                 EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = game.game_id), unimportant_roles,
+        sql"""SELECT game_type, name, display_name, description, url, character_url, is_active, external_id, timeout_action,
+                 EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = game.game_id), has_unimportant_roles,
                  move_type, max_turns
           FROM game
           WHERE game_id = $gameId"""
@@ -171,10 +171,10 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                 game.description,
                 game.url,
                 game.characterUrl,
-                game.active,
+                game.isActive,
                 game.externalId,
                 game.timeoutAction,
-                game.unimportantRoles,
+                game.hasUnimportantRoles,
                 game.moveType,
                 game.maxTurns
               )
@@ -263,10 +263,10 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                 game.description,
                 game.url,
                 game.characterUrl,
-                game.active,
+                game.isActive,
                 game.externalId,
                 game.timeoutAction,
-                game.unimportantRoles,
+                game.hasUnimportantRoles,
                 game.moveType,
                 game.maxTurns,
                 game.gameId
@@ -356,11 +356,11 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         description: String,
         url: String,
         characterUrl: Option[String],
-        active: Boolean,
+        isActive: Boolean,
         externalId: String,
         timeoutAction: TimeoutAction,
         hasApiKey: Boolean,
-        unimportantRoles: Boolean,
+        hasUnimportantRoles: Boolean,
         moveType: MoveType,
         maxTurns: Option[Int],
         roleId: Option[Int],
@@ -381,8 +381,8 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     // collections stay small — which the schema encourages, since both describe a game's rules
     // rather than its activity — but it is the reason to revisit this if they ever grow.
     private val selectGameAggregate =
-        sql"""SELECT g.game_id, g.game_type, g.name, g.display_name, g.description, g.url, g.character_url, g.active, g.external_id,
-                 g.timeout_action, EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = g.game_id), g.unimportant_roles,
+        sql"""SELECT g.game_id, g.game_type, g.name, g.display_name, g.description, g.url, g.character_url, g.is_active, g.external_id,
+                 g.timeout_action, EXISTS (SELECT 1 FROM game_api_key k WHERE k.game_id = g.game_id), g.has_unimportant_roles,
                  g.move_type, g.max_turns,
                  r.game_role_id, r.name, r.type, r.display_name, r.preference_level,
                  p.game_parameter_id, p.name, p.default_value, p.display_name,
@@ -392,7 +392,7 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           LEFT JOIN game_parameter p ON p.game_id = g.game_id
           LEFT JOIN game_parameter_value v
                  ON v.game_id = p.game_id AND v.game_parameter_id = p.game_parameter_id
-          WHERE (NOT $bool OR g.active)
+          WHERE (NOT $bool OR g.is_active)
           ORDER BY g.game_id"""
             .query(
               gameId *: gameType *: text *: text *: text *: text *: text.opt *: bool *: text *: timeoutAction *: bool *:
@@ -473,14 +473,14 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                       head.displayName,
                       head.description,
                       head.url,
-                      head.active,
+                      head.isActive,
                       roles,
                       parameters,
                       head.externalId,
                       head.timeoutAction,
                       head.characterUrl,
                       head.hasApiKey,
-                      head.unimportantRoles,
+                      head.hasUnimportantRoles,
                       head.moveType,
                       head.maxTurns
                     )

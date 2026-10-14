@@ -43,7 +43,7 @@ class SuppressionService(sessionPool: SessionPool) {
     /** Whether mail to the caller is being held back, and why. `None` means nothing has gone wrong with it.
       *
       * Returns the row rather than a boolean: what the screen says differs between a bounce and a complaint, and one of
-      * them has a button. A row that exists but is not [[EmailSuppression.active]] — one transient delay, a released
+      * them has a button. A row that exists but is not [[EmailSuppression.isActive]] — one transient delay, a released
       * row — is not news, and is answered as `None` so that nothing is shown for it.
       *
       * The notifications screen gets the same fact from `NotificationService.mine`, in the same fetch as the form. This
@@ -54,7 +54,7 @@ class SuppressionService(sessionPool: SessionPool) {
             callerAddress(session, callerExternalId).flatMap {
                 case None => IO.pure(None)
                 case Some(address) =>
-                    new SuppressionRepo(session).read(address).map(_.filter(_.active(Instant.now())))
+                    new SuppressionRepo(session).read(address).map(_.filter(_.isActive(Instant.now())))
             }
         }
 

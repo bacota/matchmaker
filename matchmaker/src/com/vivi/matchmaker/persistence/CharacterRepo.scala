@@ -124,7 +124,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
      * or a draw from. Rated means not friendly, and never a match called off. Private matches count:
      * a record is a total, as a player's in the rankings is, and lists no match. */
     private val selectRatedPlacings: Query[(GameId, CharacterId), (Int, Boolean, Arr[Int])] =
-        sql"""SELECT r.rank, r.forfeit,
+        sql"""SELECT r.rank, r.is_forfeit,
                  (SELECT array_agg(other.rank)
                     FROM participant seat
                     JOIN result other ON other.game_id = seat.game_id AND other.participant_id = seat.participant_id
@@ -134,7 +134,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
           JOIN match m ON m.game_id = p.game_id AND m.match_id = p.match_id
           JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
           WHERE cp.game_id = $gameId AND cp.character_id = $characterId
-            AND NOT m.friendly AND NOT m.cancelled""".query(int4 *: bool *: _int4)
+            AND NOT m.is_friendly AND NOT m.is_cancelled""".query(int4 *: bool *: _int4)
 
     /** The character's win-loss-draw record over its rated matches, worked out afresh from their results. */
     def ratedRecord(game: GameId, id: CharacterId): IO[MatchRecord] =
@@ -191,7 +191,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     ] =
         sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
                  p.nickname, p.is_admin, p.external_id, p.email,
-                 g.game_type, g.name, g.display_name, g.description, g.url, g.active, g.external_id
+                 g.game_type, g.name, g.display_name, g.description, g.url, g.is_active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           JOIN player p ON p.player_id = c.player_id
@@ -225,7 +225,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     ] =
         sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
                  p.nickname, p.is_admin, p.external_id, p.email,
-                 g.game_type, g.name, g.display_name, g.description, g.url, g.active, g.external_id
+                 g.game_type, g.name, g.display_name, g.description, g.url, g.is_active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           JOIN player p ON p.player_id = c.player_id
@@ -311,7 +311,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, String, Boolean, String)
     ] =
         sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
-                 g.game_type, g.name, g.display_name, g.description, g.url, g.active, g.external_id
+                 g.game_type, g.name, g.display_name, g.description, g.url, g.is_active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           WHERE c.character_id = $characterId"""
@@ -324,7 +324,7 @@ class CharacterRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
       (GameId, String, String, T, Option[PlayerId], GameType, String, String, String, String, Boolean, String)
     ] =
         sql"""SELECT c.game_id, c.name, c.description, c.state, c.player_id,
-                 g.game_type, g.name, g.display_name, g.description, g.url, g.active, g.external_id
+                 g.game_type, g.name, g.display_name, g.description, g.url, g.is_active, g.external_id
           FROM character c
           JOIN game g ON g.game_id = c.game_id
           WHERE c.character_id = $characterId

@@ -5,7 +5,7 @@ package com.vivi.matchmaker.model
   * One case per event that is worth an email, and the list is closed on purpose: each case is a column on the three
   * levels a player states an opinion at — `player` and `player_game` — and a paragraph in somebody's inbox, so adding
   * one is a migration and a decision, not a string a caller can invent. The `code` is what travels on the wire and,
-  * with `notify_` in front of it in lower case, names the column.
+  * with `is_notified_of_` in front of it in lower case, names the column.
   *
   * `participant` is the exception, and holds only [[onSeat]]: a seat is asked about the match it is in, and the first
   * seven kinds are about the entries of a challenge or tournament before it starts.
@@ -113,7 +113,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
       * kinds, which are the only ones it has a column for. Derived from the code rather than stated twice, so the two
       * cannot drift.
       */
-    def column: String = s"notify_${code.toLowerCase}"
+    def column: String = s"is_notified_of_${code.toLowerCase}"
 
     /** Whether this kind of news can still arrive about a match that has already started.
       *
@@ -127,7 +127,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
       * the per-match form uses — `MatchStarted` is stored but not offered, since a match that has started cannot start
       * again.
       */
-    def inProgress: Boolean = this match {
+    def isInProgress: Boolean = this match {
         case NotificationType.TurnTaken | NotificationType.YourTurn | NotificationType.MatchEnded => true
         case _                                                                                    => false
     }
@@ -137,10 +137,10 @@ object NotificationType {
 
     /** The kinds a match already under way can still produce, in the order [[NotificationType.values]] gives them.
       *
-      * What the per-match form asks about. Derived from [[NotificationType.inProgress]] rather than written out, so a
+      * What the per-match form asks about. Derived from [[NotificationType.isInProgress]] rather than written out, so a
       * kind added to the enum has to say for itself which side of the start it falls on.
       */
-    val duringMatch: Seq[NotificationType] = values.toSeq.filter(_.inProgress)
+    val duringMatch: Seq[NotificationType] = values.toSeq.filter(_.isInProgress)
 
     /** The kinds a seat in a match can answer at all, which is what `participant` stores.
       *
@@ -152,7 +152,7 @@ object NotificationType {
       * Derived rather than written out, so that a kind added to the enum joins this list only if it says it belongs
       * there.
       */
-    val onSeat: Seq[NotificationType] = values.toSeq.filter(kind => kind.inProgress || kind == MatchStarted)
+    val onSeat: Seq[NotificationType] = values.toSeq.filter(kind => kind.isInProgress || kind == MatchStarted)
 }
 
 /** What a player has said about each kind of notification, at one level of the chain.
@@ -163,49 +163,49 @@ object NotificationType {
   * ever looks up.
   */
 case class NotificationPreferences(
-    challengeAccepted: Option[Boolean] = None,
-    challengeReady: Option[Boolean] = None,
-    acceptanceChanged: Option[Boolean] = None,
-    acceptedChallengeReady: Option[Boolean] = None,
-    invitationReceived: Option[Boolean] = None,
-    invitationAccepted: Option[Boolean] = None,
-    invitationRejected: Option[Boolean] = None,
-    matchStarted: Option[Boolean] = None,
-    turnTaken: Option[Boolean] = None,
-    yourTurn: Option[Boolean] = None,
-    matchEnded: Option[Boolean] = None,
-    tournamentRoundDone: Option[Boolean] = None
+    isNotifiedOfChallengeAccepted: Option[Boolean] = None,
+    isNotifiedOfChallengeReady: Option[Boolean] = None,
+    isNotifiedOfAcceptanceChanged: Option[Boolean] = None,
+    isNotifiedOfAcceptedChallengeReady: Option[Boolean] = None,
+    isNotifiedOfInvitationReceived: Option[Boolean] = None,
+    isNotifiedOfInvitationAccepted: Option[Boolean] = None,
+    isNotifiedOfInvitationRejected: Option[Boolean] = None,
+    isNotifiedOfMatchStarted: Option[Boolean] = None,
+    isNotifiedOfTurnTaken: Option[Boolean] = None,
+    isNotifiedOfYourTurn: Option[Boolean] = None,
+    isNotifiedOfMatchEnded: Option[Boolean] = None,
+    isNotifiedOfTournamentRoundDone: Option[Boolean] = None
 ) {
 
     def apply(kind: NotificationType): Option[Boolean] = kind match {
-        case NotificationType.ChallengeAccepted      => challengeAccepted
-        case NotificationType.ChallengeReady         => challengeReady
-        case NotificationType.AcceptanceChanged      => acceptanceChanged
-        case NotificationType.AcceptedChallengeReady => acceptedChallengeReady
-        case NotificationType.InvitationReceived     => invitationReceived
-        case NotificationType.InvitationAccepted     => invitationAccepted
-        case NotificationType.InvitationRejected     => invitationRejected
-        case NotificationType.MatchStarted           => matchStarted
-        case NotificationType.TurnTaken              => turnTaken
-        case NotificationType.YourTurn               => yourTurn
-        case NotificationType.MatchEnded             => matchEnded
-        case NotificationType.TournamentRoundDone    => tournamentRoundDone
+        case NotificationType.ChallengeAccepted      => isNotifiedOfChallengeAccepted
+        case NotificationType.ChallengeReady         => isNotifiedOfChallengeReady
+        case NotificationType.AcceptanceChanged      => isNotifiedOfAcceptanceChanged
+        case NotificationType.AcceptedChallengeReady => isNotifiedOfAcceptedChallengeReady
+        case NotificationType.InvitationReceived     => isNotifiedOfInvitationReceived
+        case NotificationType.InvitationAccepted     => isNotifiedOfInvitationAccepted
+        case NotificationType.InvitationRejected     => isNotifiedOfInvitationRejected
+        case NotificationType.MatchStarted           => isNotifiedOfMatchStarted
+        case NotificationType.TurnTaken              => isNotifiedOfTurnTaken
+        case NotificationType.YourTurn               => isNotifiedOfYourTurn
+        case NotificationType.MatchEnded             => isNotifiedOfMatchEnded
+        case NotificationType.TournamentRoundDone    => isNotifiedOfTournamentRoundDone
     }
 
     /** This, with one kind answered differently. `None` for `choice` is the "Use Default" the forms offer. */
     def updated(kind: NotificationType, choice: Option[Boolean]): NotificationPreferences = kind match {
-        case NotificationType.ChallengeAccepted      => copy(challengeAccepted = choice)
-        case NotificationType.ChallengeReady         => copy(challengeReady = choice)
-        case NotificationType.AcceptanceChanged      => copy(acceptanceChanged = choice)
-        case NotificationType.AcceptedChallengeReady => copy(acceptedChallengeReady = choice)
-        case NotificationType.InvitationReceived     => copy(invitationReceived = choice)
-        case NotificationType.InvitationAccepted     => copy(invitationAccepted = choice)
-        case NotificationType.InvitationRejected     => copy(invitationRejected = choice)
-        case NotificationType.MatchStarted           => copy(matchStarted = choice)
-        case NotificationType.TurnTaken              => copy(turnTaken = choice)
-        case NotificationType.YourTurn               => copy(yourTurn = choice)
-        case NotificationType.MatchEnded             => copy(matchEnded = choice)
-        case NotificationType.TournamentRoundDone    => copy(tournamentRoundDone = choice)
+        case NotificationType.ChallengeAccepted      => copy(isNotifiedOfChallengeAccepted = choice)
+        case NotificationType.ChallengeReady         => copy(isNotifiedOfChallengeReady = choice)
+        case NotificationType.AcceptanceChanged      => copy(isNotifiedOfAcceptanceChanged = choice)
+        case NotificationType.AcceptedChallengeReady => copy(isNotifiedOfAcceptedChallengeReady = choice)
+        case NotificationType.InvitationReceived     => copy(isNotifiedOfInvitationReceived = choice)
+        case NotificationType.InvitationAccepted     => copy(isNotifiedOfInvitationAccepted = choice)
+        case NotificationType.InvitationRejected     => copy(isNotifiedOfInvitationRejected = choice)
+        case NotificationType.MatchStarted           => copy(isNotifiedOfMatchStarted = choice)
+        case NotificationType.TurnTaken              => copy(isNotifiedOfTurnTaken = choice)
+        case NotificationType.YourTurn               => copy(isNotifiedOfYourTurn = choice)
+        case NotificationType.MatchEnded             => copy(isNotifiedOfMatchEnded = choice)
+        case NotificationType.TournamentRoundDone    => copy(isNotifiedOfTournamentRoundDone = choice)
     }
 
     /** The kinds this and `other` answer differently: what a save actually changed.
@@ -228,10 +228,10 @@ case class NotificationPreferences(
       */
     def completeForSeat: Option[SeatNotifications] =
         for {
-            started <- matchStarted
-            taken <- turnTaken
-            yours <- yourTurn
-            ended <- matchEnded
+            started <- isNotifiedOfMatchStarted
+            taken <- isNotifiedOfTurnTaken
+            yours <- isNotifiedOfYourTurn
+            ended <- isNotifiedOfMatchEnded
         } yield SeatNotifications(started, taken, yours, ended)
 }
 
@@ -250,16 +250,21 @@ object NotificationPreferences {
   * No chain behind it: a seat's row is the answer, so a player who mutes one match stays muted there however they later
   * change the game's settings or their own.
   */
-case class SeatNotifications(matchStarted: Boolean, turnTaken: Boolean, yourTurn: Boolean, matchEnded: Boolean) {
+case class SeatNotifications(
+    isNotifiedOfMatchStarted: Boolean,
+    isNotifiedOfTurnTaken: Boolean,
+    isNotifiedOfYourTurn: Boolean,
+    isNotifiedOfMatchEnded: Boolean
+) {
 
     /** `false` for every kind a seat does not answer. Not "they said no" — a seat is never asked about entries, and a
       * caller that asks is asking about an event that cannot happen to a match.
       */
     def apply(kind: NotificationType): Boolean = kind match {
-        case NotificationType.MatchStarted => matchStarted
-        case NotificationType.TurnTaken    => turnTaken
-        case NotificationType.YourTurn     => yourTurn
-        case NotificationType.MatchEnded   => matchEnded
+        case NotificationType.MatchStarted => isNotifiedOfMatchStarted
+        case NotificationType.TurnTaken    => isNotifiedOfTurnTaken
+        case NotificationType.YourTurn     => isNotifiedOfYourTurn
+        case NotificationType.MatchEnded   => isNotifiedOfMatchEnded
         case _                             => false
     }
 
@@ -355,7 +360,7 @@ case class NotificationSettings(
   */
 object NotificationPolicy {
 
-    def wants(kind: NotificationType, answers: NotificationType => Boolean): Boolean = answers(kind)
+    def isWanted(kind: NotificationType, answers: NotificationType => Boolean): Boolean = answers(kind)
 
     /** The one notification a recipient gets for an event that is several kinds of news at once.
       *
@@ -371,5 +376,5 @@ object NotificationPolicy {
       * `None` when they have refused all of them, which is the only case that sends nothing.
       */
     def choose(kinds: Seq[NotificationType], answers: NotificationType => Boolean): Option[NotificationType] =
-        kinds.find(wants(_, answers))
+        kinds.find(isWanted(_, answers))
 }

@@ -30,8 +30,8 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
 
     private case class NMatch(
         seats: List[Long],
-        rubber: Boolean,
-        tiesAllowed: Boolean,
+        isRubber: Boolean,
+        canTie: Boolean,
         round: Option[Int],
         outcome: Option[List[Placing]]
     )
@@ -40,9 +40,15 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
         members: List[PoolMember],
         matches: List[NMatch],
         sub: Option[NNode],
-        completed: Boolean
+        isCompleted: Boolean
     )
-    private case class NRun(stage: Int, repetition: Int, pools: List[NPool], sittingOut: List[Long], completed: Boolean)
+    private case class NRun(
+        stage: Int,
+        repetition: Int,
+        pools: List[NPool],
+        sittingOut: List[Long],
+        isCompleted: Boolean
+    )
     private case class NNode(
         path: List[Int],
         members: List[Member],
@@ -56,8 +62,8 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
         NNode(
           n.path,
           n.members.sortBy(_.entrant),
-          if (n.finished) -1 else n.stage,
-          if (n.finished) -1 else n.repetition,
+          if (n.isFinished) -1 else n.stage,
+          if (n.isFinished) -1 else n.repetition,
           n.runs.map(r =>
               NRun(
                 r.stage,
@@ -70,19 +76,19 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                           .map(m =>
                               NMatch(
                                 m.planned.seats.map(_.entrant).sorted,
-                                m.planned.rubber,
-                                m.tiesAllowed,
+                                m.planned.isRubber,
+                                m.canTie,
                                 m.round,
                                 m.outcome.map(_.sortBy(_.entrant))
                               )
                           )
-                          .sortBy(m => (m.round.getOrElse(Int.MaxValue), m.seats.mkString(","), m.rubber)),
+                          .sortBy(m => (m.round.getOrElse(Int.MaxValue), m.seats.mkString(","), m.isRubber)),
                       p.sub.map(normal),
-                      p.completed
+                      p.isCompleted
                     )
                 ),
                 r.sittingOut.sorted,
-                r.completed
+                r.isCompleted
               )
           ),
           n.ranking
@@ -145,7 +151,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
             )((s.game.gameId.value, matchId.value))
             _ <- seats.zipWithIndex.traverse_ { case ((participant, _), i) =>
                 session.execute(
-                  sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, forfeit)
+                  sql"""INSERT INTO result (game_id, participant_id, rank, scores, is_winner, is_forfeit)
                         VALUES ($int4, $int8, $int4, '{}', ${skunk.codec.all.bool}, false)""".command
                 )((s.game.gameId.value, participant, i + 1, i == 0))
             }
@@ -170,9 +176,9 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
             check(started, saved(s, started))
         }
         var steps = 0
-        while (!state.finished && steps < 200) {
+        while (!state.isFinished && steps < 200) {
             steps += 1
-            if (Progress.roundComplete(state)) {
+            if (Progress.isRoundComplete(state)) {
                 val (next, _) = Progress.nextRound(state, s.env)
                 state = check(next, saved(s, next))
             } else {
@@ -191,7 +197,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                 state = check(next, saved(s, next))
             }
         }
-        assert(state.finished, s"$key did not finish in 200 steps")
+        assert(state.isFinished, s"$key did not finish in 200 steps")
         state
     }
 

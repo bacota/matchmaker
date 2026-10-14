@@ -70,7 +70,7 @@ class ArchiveServiceSpec extends FunSuite {
                     "Stratego",
                     "description",
                     "url",
-                    active = true,
+                    isActive = true,
                     Seq(
                       GameRole(
                         GameRoleId(0),
@@ -100,10 +100,10 @@ class ArchiveServiceSpec extends FunSuite {
                     None,
                     "{}",
                     isPublic = isPublic,
-                    cancelled = cancelled,
+                    isCancelled = cancelled,
                     playUrl = Some("https://engine.example.com/matches/m/play"),
                     publicUrl = Option.when(isPublic)("https://engine.example.com/matches/m/board?view=1"),
-                    friendly = friendly
+                    isFriendly = friendly
                   ),
                   player.playerId
                 )
@@ -114,8 +114,8 @@ class ArchiveServiceSpec extends FunSuite {
                     game.gameId,
                     matchId,
                     player.playerId,
-                    pending = false,
-                    completed = completed || cancelled,
+                    isPending = false,
+                    isCompleted = completed || cancelled,
                     None,
                     character.characterId,
                     game.roles.head.gameRoleId
@@ -153,8 +153,8 @@ class ArchiveServiceSpec extends FunSuite {
                     f.game.gameId,
                     matchId,
                     f.player.playerId,
-                    pending = false,
-                    completed = true,
+                    isPending = false,
+                    isCompleted = true,
                     None,
                     f.character.characterId,
                     f.game.roles.head.gameRoleId
@@ -293,7 +293,7 @@ class ArchiveServiceSpec extends FunSuite {
         val f = run(fixture(friendly = true).flatMap(archived))
         makeAdmin(f)
         run(notFriendly(f))
-        assertEquals(run(row(f)).flatMap(_.archiveFriendly), Some(false))
+        assertEquals(run(row(f)).flatMap(_.isInFriendlyBucket), Some(false))
         assertEquals(where(f), (false, true))
         val download = run(archives.download(f.matchId, f.game.externalId))
         assertEquals(store.get(download.url.split("/local-archive/")(1)).map(_.toSeq), Some(content.toSeq))
@@ -303,7 +303,7 @@ class ArchiveServiceSpec extends FunSuite {
         val f = run(fixture(friendly = false).flatMap(archived))
         makeAdmin(f)
         run(services.matches.setFriendly(f.game.gameId, f.matchId, friendly = true, f.player.externalId))
-        assertEquals(run(row(f)).flatMap(_.archiveFriendly), Some(false))
+        assertEquals(run(row(f)).flatMap(_.isInFriendlyBucket), Some(false))
         assertEquals(where(f), (false, true))
         // And it does not expire: past a friendly archive's 30 days, it is read without a check.
         run(age(f, 31))
@@ -330,8 +330,8 @@ class ArchiveServiceSpec extends FunSuite {
                 f.game.gameId,
                 f.matchId,
                 f.player.playerId,
-                pending = false,
-                completed = true,
+                isPending = false,
+                isCompleted = true,
                 None,
                 f.character.characterId,
                 f.game.roles.head.gameRoleId
@@ -341,7 +341,7 @@ class ArchiveServiceSpec extends FunSuite {
         })
         assert(refusal(notFriendly(f)).isInstanceOf[ConflictError])
         val stored = run(row(f)).get
-        assertEquals((stored.friendly, stored.archiveFriendly), (true, Some(true)))
+        assertEquals((stored.isFriendly, stored.isInFriendlyBucket), (true, Some(true)))
         // The copy is left in the permanent bucket, unrecorded; the original is untouched and still read.
         assertEquals(where(f), (true, true))
         val download = run(archives.download(f.matchId, f.game.externalId))
@@ -352,7 +352,7 @@ class ArchiveServiceSpec extends FunSuite {
         val f = run(fixture(friendly = true).flatMap(archived))
         makeAdmin(f)
         store.delete(ArchiveBucket.Friendly, run(row(f)).flatMap(_.key).get)
-        assertEquals(run(notFriendly(f)).friendly, false)
+        assertEquals(run(notFriendly(f)).isFriendly, false)
         assert(run(row(f)).flatMap(_.expiredAt).isDefined)
         assertEquals(where(f), (false, false))
     }
@@ -370,7 +370,7 @@ class ArchiveServiceSpec extends FunSuite {
           )
         )
         run(notFriendly(f))
-        assertEquals(run(row(f)).flatMap(_.archiveFriendly), Some(false))
+        assertEquals(run(row(f)).flatMap(_.isInFriendlyBucket), Some(false))
         val UploadAnswer.Upload(signed) = run(
           archives.requestUpload(
             f.matchId,
@@ -416,7 +416,7 @@ class ArchiveServiceSpec extends FunSuite {
         assertEquals(run(row(f)).flatMap(_.expiredAt), None)
         assertEquals(
           run(TestSession.resource.use(session => new MatchRepo(session).read(f.game.gameId, f.matchId)))
-              .map(_.archiveExpired),
+              .map(_.isArchiveExpired),
           Some(false)
         )
         val download = run(archives.download(f.matchId, f.game.externalId))
@@ -470,13 +470,13 @@ class ArchiveServiceSpec extends FunSuite {
           listed.map(_.publicUrl),
           List(Some("https://engine.example.com/matches/m/board?view=1&archived=1"))
         )
-        assertEquals(listed.map(_.archiveExpired), List(false))
+        assertEquals(listed.map(_.isArchiveExpired), List(false))
 
         val lost = run(fixture(isPublic = true).flatMap(archived))
         run(age(lost, 31))
         store.delete(ArchiveBucket.Friendly, run(row(lost)).flatMap(_.key).get)
         val after = run(services.matches.completed(lost.player.externalId).map(_.matches.toList))
-        assertEquals(after.map(s => (s.archiveExpired, s.publicUrl)), List((true, None)))
+        assertEquals(after.map(s => (s.isArchiveExpired, s.publicUrl)), List((true, None)))
         // Recorded, so the next list answers from the database without asking the store.
         assert(run(row(lost)).flatMap(_.expiredAt).isDefined)
     }
@@ -489,7 +489,7 @@ class ArchiveServiceSpec extends FunSuite {
         run(age(f, 31))
         store.delete(ArchiveBucket.Friendly, run(row(f)).flatMap(_.key).get)
         val expired = run(services.engine.read(f.game.gameId, f.matchId, f.player.externalId))
-        assertEquals((expired.archiveExpired, expired.playUrl, expired.publicUrl), (true, None, None))
+        assertEquals((expired.isArchiveExpired, expired.playUrl, expired.publicUrl), (true, None, None))
     }
 
     test("archived=1 goes into the query, before any fragment") {
@@ -540,16 +540,16 @@ class ArchiveServiceSpec extends FunSuite {
             store.delete(ArchiveBucket.Friendly, run(row(g)).flatMap(_.key).get)
         }
         val first = run(services.matches.completed(f.player.externalId).map(_.matches.toList))
-        assertEquals(first.count(_.archiveExpired), ArchiveService.ChecksPerRequest)
+        assertEquals(first.count(_.isArchiveExpired), ArchiveService.ChecksPerRequest)
         val second = run(services.matches.completed(f.player.externalId).map(_.matches.toList))
-        assertEquals(second.count(_.archiveExpired), all.size)
+        assertEquals(second.count(_.isArchiveExpired), all.size)
     }
 
     test("only a friendly archive older than its retention may have expired") {
         val now = Instant.parse("2026-10-03T00:00:00Z")
         val old = now.minus(Duration.ofDays(31))
-        assert(ArchiveService.mayHaveExpired(friendly = true, old, now))
-        assert(!ArchiveService.mayHaveExpired(friendly = false, old, now))
-        assert(!ArchiveService.mayHaveExpired(friendly = true, now.minus(Duration.ofDays(29)), now))
+        assert(ArchiveService.canHaveExpired(friendly = true, old, now))
+        assert(!ArchiveService.canHaveExpired(friendly = false, old, now))
+        assert(!ArchiveService.canHaveExpired(friendly = true, now.minus(Duration.ofDays(29)), now))
     }
 }

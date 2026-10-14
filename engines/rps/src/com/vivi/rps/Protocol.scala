@@ -26,7 +26,7 @@ object Protocol {
       * absent on the public view, which belongs to nobody.
       *
       * What is deliberately *not* here is the other player's throw, until the match is over. A seat view carries
-      * `thrown` — whether that seat has moved, which both players and any watcher may know — and `shape` only once
+      * `isThrown` — whether that seat has moved, which both players and any watcher may know — and `shape` only once
       * there is nothing left to decide. Hiding it in the page rather than in the answer would be no hiding at all: the
       * page is served to the player, and the player can read the response.
       *
@@ -44,9 +44,9 @@ object Protocol {
         waitingFor: List[String],
         you: Option[String],
         yourThrow: Option[String],
-        completed: Boolean,
+        isCompleted: Boolean,
         winner: Option[String],
-        draw: Boolean,
+        isDrawn: Boolean,
         players: List[SeatView],
         clock: Option[ClockView] = None,
         tiedRounds: List[String] = Nil
@@ -55,7 +55,13 @@ object Protocol {
     /** One seat as a viewer may see it. `shape` is `None` until the match is over, whoever is asking — including of the
       * viewer's own seat, which is what `yourThrow` is for.
       */
-    case class SeatView(side: String, cognitoId: String, participantId: Long, thrown: Boolean, shape: Option[String])
+    case class SeatView(
+        side: String,
+        cognitoId: String,
+        participantId: Long,
+        isThrown: Boolean,
+        shape: Option[String]
+    )
 
     given ReadWriter[MoveRequest] = macroRW
     given ReadWriter[SeatView] = macroRW

@@ -68,7 +68,7 @@ class EloRatingService[T](sessionPool: SessionPool, endings: MatchEndings = Matc
 
     /** The game's rated players, overall or in `role`, whose nickname begins with `prefix`, compared as the player
       * search compares — case and spacing aside — with their places and ratings: at most [[PlayerService.searchLimit]]
-      * of them, and `more` when there were others. For any registered player, as the leaderboard is.
+      * of them, and `hasMore` when there were others. For any registered player, as the leaderboard is.
       */
     def findInRankings(
         gameId: GameId,
@@ -265,7 +265,7 @@ object EloRatingService {
              * this is the last word rather than the only one: a match like that is left unrated, and
              * said so, rather than refused -- its results are still its results, and failing the
              * callback that brought them would leave it unfinished as well. */
-            if (!EloRating.playersOnce(rows.map(_.playerId)))
+            if (!EloRating.hasDistinctPlayers(rows.map(_.playerId)))
                 IO(
                   System.err.println(
                     s"match ${matchId.value} of game ${gameId.value} is rated but has a player in two seats; " +
@@ -278,7 +278,7 @@ object EloRatingService {
                       EloRating.Seat(row.participantId, row.playerId, row.eloStart, ranks(row.participantId))
                   )
                 )
-                // Over every seat, as `playersOnce` is: a seat with no result has no rank, and no delta.
+                // Over every seat, as `hasDistinctPlayers` is: a seat with no result has no rank, and no delta.
                 val inRole = roleDeltas(rows, ranks.get)
                 // Each rating to move, overall and in a role: one seat per player, so a seat's delta is its
                 // player's. And each player's record, from where they finished among the seats with a
@@ -353,7 +353,7 @@ object EloRatingService {
             deltas <-
                 if (friendly) IO.pure(Map.empty[ParticipantId, Int])
                 else
-                    IO.raiseUnless(EloRating.playersOnce(seats.map(_.playerId)))(
+                    IO.raiseUnless(EloRating.hasDistinctPlayers(seats.map(_.playerId)))(
                       ConflictError("a player holds more than one seat in this match, so it can only be friendly")
                     ) *> IO.pure(
                       EloRating.deltas(
@@ -381,7 +381,7 @@ object EloRatingService {
             // Whether a turn running out ended it, for the whole match, as `rate` decided when it completed: one
             // row's flag is enough. Read row by row instead, a match an engine flagged on the loser's row alone
             // would give its winner a forfeit win and never take it back.
-            forfeit = results.exists(_.forfeit)
+            forfeit = results.exists(_.isForfeit)
             // Each rating the match moved or now moves: what it took from it, and what it now gives, with what
             // the match is to the player's record, as it was when it was rated -- taken back with the rating it
             // moved, and given again with the one it now moves.
@@ -421,7 +421,7 @@ object EloRatingService {
                         ConflictError("another match of a player in this one is finishing right now; try again")
                 }
             _ <- refuseIfCascading(players)
-            _ <- later.filter(_.afterCompletion).traverse_ { seat =>
+            _ <- later.filter(_.isAfterCompleted).traverse_ { seat =>
                 change
                     .get(seat.playerId)
                     .filter(_ != 0)

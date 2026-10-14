@@ -83,7 +83,7 @@ class MatchServiceSpec extends PropertySuite {
                 "game",
                 "description",
                 "url",
-                active = true,
+                isActive = true,
                 // One role, because every participant names one.
                 Seq(
                   GameRole(GameRoleId(0), GameId.unassigned, "only", roleType = RoleType.Required, displayName = "only")
@@ -199,7 +199,7 @@ class MatchServiceSpec extends PropertySuite {
         for {
             id <- addMatch(session, player, game, character, Generators.newMatchId(), None, true, isPublic)
             m <- new MatchRepo(session).read(game.gameId, id).map(_.get)
-            _ <- new MatchRepo(session).update(m.copy(cancelled = true))
+            _ <- new MatchRepo(session).update(m.copy(isCancelled = true))
             _ <- new ParticipantRepo(session).completeForMatch(game.gameId, id)
             _ <- finishedAt(session, game.gameId, id, at)
         } yield id
@@ -215,7 +215,7 @@ class MatchServiceSpec extends PropertySuite {
                 "other",
                 "description",
                 "url",
-                active = true,
+                isActive = true,
                 Seq(
                   GameRole(GameRoleId(0), GameId.unassigned, "only", roleType = RoleType.Required, displayName = "only")
                 ),
@@ -491,7 +491,7 @@ class MatchServiceSpec extends PropertySuite {
                         rank = if (won) 1 else 2,
                         Map.empty,
                         isWinner = won,
-                        forfeit = true
+                        isForfeit = true
                       )
                     )
                 })
@@ -499,7 +499,7 @@ class MatchServiceSpec extends PropertySuite {
         assertEquals(record(character.characterId), MatchRecord())
         run(TestSession.resource.use { session =>
             session
-                .execute(sql"UPDATE match SET friendly = false WHERE game_id = $int4 AND match_id = $int8".command)(
+                .execute(sql"UPDATE match SET is_friendly = false WHERE game_id = $int4 AND match_id = $int8".command)(
                   (game.gameId.value, done.value)
                 )
                 .void
@@ -617,7 +617,7 @@ class MatchServiceSpec extends PropertySuite {
                         over.map(_.matchId) == List(finishedId) &&
                         // The rows describe the player asked about, not the caller: it is their turn in
                         // the running one, and they created both.
-                        running.forall(s => s.pending && s.isOwner)
+                        running.forall(s => s.isPending && s.isOwner)
                 }
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -739,7 +739,7 @@ class MatchServiceSpec extends PropertySuite {
                             .map(_.matches.toList)
                     } yield running.isEmpty && over.map(_.matchId) == List(mid) &&
                         // Still an unfinished match, which is why the row cannot say it completed.
-                        over.forall(s => !s.completed && !s.cancelled)
+                        over.forall(s => !s.isCompleted && !s.isCancelled)
                 }
                 result.timeout(15.seconds).unsafeRunSync()
         }
@@ -821,7 +821,7 @@ class MatchServiceSpec extends PropertySuite {
                         )
                         cancelled <- addMatch(session, player, game, character, cancelledId, None, pending = false)
                         _ <- new MatchRepo(session).read(game.gameId, cancelled).flatMap {
-                            case Some(m) => new MatchRepo(session).update(m.copy(cancelled = true))
+                            case Some(m) => new MatchRepo(session).update(m.copy(isCancelled = true))
                             case None => IO.raiseError(new IllegalStateException("the match just written is not there"))
                         }
                         over <- matchService.completed(externalId).map(_.matches.toList)
@@ -880,7 +880,7 @@ class MatchServiceSpec extends PropertySuite {
                 due <- matchService.due(externalId)
                 active <- matchService.active(externalId)
                 over <- matchService.completed(externalId).map(_.matches.toList)
-            } yield cancelled.cancelled &&
+            } yield cancelled.isCancelled &&
                 // Gone from the lists of things still to play, and not among the finished ones either: a
                 // match called off was never finished, and completed lists leave it out.
                 due.isEmpty && active.isEmpty && over.isEmpty
@@ -891,12 +891,12 @@ class MatchServiceSpec extends PropertySuite {
     // A match is its tournament's owner's, whoever is seated in it: that alone says whose it is, on the lists and to
     // the cancel.
     /** Takes a tournament match back to before it began: `status` with no start or urls, and its seats with no role and
-      * no rating, as a match is while its seats choose. `cancelled` is a match called off in that time: over, never
+      * no rating, as a match is while its seats choose. `isCancelled` is a match called off in that time: over, never
       * begun.
       */
     private def unbegin(session: skunk.Session[IO], gameId: GameId, matchId: MatchId, cancelled: Boolean): IO[Unit] =
         session.execute(
-          sql"""UPDATE match SET status = $text, cancelled = ${skunk.codec.all.bool}, start = NULL,
+          sql"""UPDATE match SET status = $text, is_cancelled = ${skunk.codec.all.bool}, start = NULL,
                    status_url = NULL, play_url = NULL, public_url = NULL
             WHERE game_id = $int4 AND match_id = $int8""".command
         )((if (cancelled) "F" else "D", cancelled, gameId.value, matchId.value)) *>
@@ -1000,8 +1000,8 @@ class MatchServiceSpec extends PropertySuite {
             assertEquals(ownersList.map(s => (s.matchId, s.isOwner)), List((ownerMatch, true)))
             assertEquals(othersList.map(s => (s.matchId, s.isOwner)), List((seatedMatch, false)))
             assert(refused.left.exists(_.isInstanceOf[UnauthorizedError]), refused)
-            assert(cancelled.cancelled)
-            assert(cancelledSeated.cancelled)
+            assert(cancelled.isCancelled)
+            assert(cancelledSeated.isCancelled)
         }
         outcome.timeout(30.seconds).unsafeRunSync()
     }
@@ -1017,8 +1017,8 @@ class MatchServiceSpec extends PropertySuite {
                 before <- TestSession.resource.use(new ParticipantRepo(_).listForMatch(game.gameId, matchId))
                 _ <- matchService.cancel(game.gameId, matchId, externalId)
                 after <- TestSession.resource.use(new ParticipantRepo(_).listForMatch(game.gameId, matchId))
-            } yield before.nonEmpty && before.forall((p, _, _) => p.pending && !p.completed) &&
-                after.forall((p, _, _) => !p.pending && p.completed && p.due.isEmpty)
+            } yield before.nonEmpty && before.forall((p, _, _) => p.isPending && !p.isCompleted) &&
+                after.forall((p, _, _) => !p.isPending && p.isCompleted && p.due.isEmpty)
             result.timeout(10.seconds).unsafeRunSync()
         }
     }
@@ -1114,7 +1114,7 @@ class MatchServiceSpec extends PropertySuite {
         } yield (owner, game, matchId, gameAdmin)
 
     private def friendlyOf(game: Game, matchId: MatchId): IO[Option[Boolean]] =
-        TestSession.resource.use(session => new MatchRepo(session).read(game.gameId, matchId).map(_.map(_.friendly)))
+        TestSession.resource.use(session => new MatchRepo(session).read(game.gameId, matchId).map(_.map(_.isFriendly)))
 
     test("a game's admin says a match of the game is not friendly, and then that it is") {
         val result = for {
@@ -1124,7 +1124,7 @@ class MatchServiceSpec extends PropertySuite {
             stored <- friendlyOf(game, matchId)
             _ <- matchService.setFriendly(game.gameId, matchId, friendly = true, gameAdmin.externalId)
             restored <- friendlyOf(game, matchId)
-        } yield (answered.friendly, stored, restored)
+        } yield (answered.isFriendly, stored, restored)
         assertEquals(result.timeout(30.seconds).unsafeRunSync(), (false, Some(false), Some(true)))
     }
 
@@ -1150,7 +1150,7 @@ class MatchServiceSpec extends PropertySuite {
             changed <- friendlyOf(game, matchId)
             _ <- matchService.setFriendly(game.gameId, matchId, friendly = true, gameAdmin.externalId)
             back <- friendlyOf(game, matchId)
-        } yield (refused, same.friendly, changed, back)
+        } yield (refused, same.isFriendly, changed, back)
         val (refused, same, changed, back) = result.timeout(30.seconds).unsafeRunSync()
         assert(refused.left.exists(_.isInstanceOf[UnauthorizedError]), refused)
         assertEquals(same, true)
@@ -1167,7 +1167,7 @@ class MatchServiceSpec extends PropertySuite {
             refused <- matchService.listForGame(game.gameId, owner.externalId).attempt
         } yield (listed, owner, matchId, refused)
         val (listed, owner, matchId, refused) = result.timeout(30.seconds).unsafeRunSync()
-        assertEquals(listed.map(m => (m.matchId, m.friendly, m.players)), List((matchId, false, Seq(owner.nickname))))
+        assertEquals(listed.map(m => (m.matchId, m.isFriendly, m.players)), List((matchId, false, Seq(owner.nickname))))
         assert(refused.left.exists(_.isInstanceOf[UnauthorizedError]), refused)
     }
 

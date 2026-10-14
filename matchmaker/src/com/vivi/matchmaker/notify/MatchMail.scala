@@ -45,7 +45,7 @@ case class MatchNews(
     nextUp: Seq[String] = Seq.empty,
     due: Option[Instant] = None,
     others: Seq[String] = Seq.empty,
-    yourTurn: Boolean = false,
+    isYourTurn: Boolean = false,
     playUrl: Option[String] = None,
     ending: Option[MatchEnding] = None
 )
@@ -91,7 +91,7 @@ object MatchMail extends NotificationMail[MatchNews] {
                     else MailTemplates.render("mail.match.started.opponents", "others" -> news.others.mkString(", "))
 
                 val turn =
-                    if (!news.yourTurn) MailTemplates.render("mail.match.started.turn.later")
+                    if (!news.isYourTurn) MailTemplates.render("mail.match.started.turn.later")
                     else
                         news.due.fold(MailTemplates.render("mail.match.started.turn.now"))(by =>
                             MailTemplates.render("mail.match.started.turn.due", "due" -> MailText.at(by))

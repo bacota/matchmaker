@@ -13,7 +13,7 @@ object Fixtures {
         TournamentGame(
           (1 to roles).toList.map(i => TournamentRole(i, RoleType.Required, None)) ++
               (1 to recommended).toList.map(i => TournamentRole(roles + i, RoleType.Recommended, None)),
-          significantRoles = significant,
+          hasSignificantRoles = significant,
           moveType = MoveType.Sequential,
           maxTurns = None
         )
@@ -47,7 +47,7 @@ object Fixtures {
         val rng = new Random(seed)
         m => {
             val order = rng.shuffle(m.planned.seats.map(_.entrant))
-            if (m.tiesAllowed && rng.nextInt(5) == 0) order.map(Placing(_, Some(1), Some(1.0)))
+            if (m.canTie && rng.nextInt(5) == 0) order.map(Placing(_, Some(1), Some(1.0)))
             else order.zipWithIndex.map((e, i) => Placing(e, Some(i + 1), Some((10 - i).toDouble)))
         }
     }
@@ -74,13 +74,13 @@ object Fixtures {
         var state = Tournament.start(ids, env)
         var rounds = List.empty[List[RoundMatch]]
         var guard = 0
-        while (!state.finished && guard < maxRounds) {
+        while (!state.isFinished && guard < maxRounds) {
             val (next, matches) = Tournament.nextRound(state, env)
             state = next
-            if (!state.finished) {
+            if (!state.isFinished) {
                 rounds = rounds :+ matches
                 matches.foreach(m => state = Tournament.record(state, m.poolId, m.planned.no, oracle(m)))
-                assert(Tournament.roundComplete(state), "every match of the round was recorded")
+                assert(Tournament.isRoundComplete(state), "every match of the round was recorded")
                 state = between(state, state.round)
             }
             guard += 1
