@@ -102,8 +102,7 @@ object Store {
         challengesByGame.set(Map.empty)
         charactersByGame.set(Map.empty)
         gameAdminsByGame.set(Map.empty)
-        acceptances.set(Seq.empty)
-        invitations.set(Seq.empty)
+        myChallenges.set(Seq.empty)
         myTournaments.set(Seq.empty)
         tournamentChoices.set(Seq.empty)
         tournamentStandings.set(Seq.empty)
@@ -158,7 +157,7 @@ object Store {
       * be tellable from the other. See `latestAsk`.
       */
     enum Fetch {
-        case Due, Active, Completed, Results, Games, Acceptances, Invitations
+        case Due, Active, Completed, Results, Games, MyChallenges
         case Challenges(gameId: GameId)
         case Characters(gameId: GameId)
         case Game(gameId: GameId)
@@ -379,19 +378,12 @@ object Store {
             .map(byGame => player.isAdmin || byGame.get(gameId).exists(_.exists(_.player.playerId == player.playerId)))
             .distinct
 
-    /** What the caller has accepted and that has not yet become a match — what `ui.txt` calls the pending acceptances,
-      * and the list "back out" acts on.
+    /** The open challenges the caller owns, has entered or is invited to, newest first and across every game: what the
+      * home screen's invitations, ready-to-start and waiting sections are each drawn from, by which of the three the
+      * caller is to it. Each carries its game's name and its owner's nickname, because those sections span every game
+      * and have nothing to look either up from.
       */
-    val acceptances: Var[Seq[PendingAcceptance]] = Var(Seq.empty)
-
-    /** What the caller has been invited to and could still accept, newest first and across every game.
-      *
-      * Beside `acceptances` rather than inside it: an invitation is a challenge the caller has *not* answered, where a
-      * pending acceptance is one they have, and the two sections ask different things of them. It carries the game's
-      * name and the challenger's nickname with each row, because the section that draws it spans every game and has
-      * nothing to look either up from — see `ChallengeInvitation`.
-      */
-    val invitations: Var[Seq[ChallengeInvitation]] = Var(Seq.empty)
+    val myChallenges: Var[Seq[ChallengeSummary]] = Var(Seq.empty)
 
     /** The player a challenge is about to be offered to, carried from their page to a game's.
       *
@@ -1044,8 +1036,7 @@ object Store {
         load(ApiClient.dueMatches(), Fetch.Due)(due.set)
         load(ApiClient.activeMatches(), Fetch.Active)(active.set)
         completedFor(page.now()).foreach(showCompleted(_))
-        load(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
-        load(ApiClient.invitations(), Fetch.Invitations)(invitations.set)
+        load(ApiClient.myChallenges(), Fetch.MyChallenges)(myChallenges.set)
         load(ApiClient.results(), Fetch.Results)(rows => resultsByMatch.set(rows.groupBy(_.matchId)))
         load(ApiClient.myTournaments(), Fetch.MyTournaments)(myTournaments.set)
         load(ApiClient.tournamentChoices(), Fetch.TournamentChoices)(tournamentChoices.set)
@@ -1131,18 +1122,7 @@ object Store {
 
     def reloadActive(): Future[Unit] = reload(ApiClient.activeMatches(), Fetch.Active)(active.set)
 
-    def reloadAcceptances(): Future[Unit] = reload(ApiClient.acceptances(), Fetch.Acceptances)(acceptances.set)
-
-    /** The invitations and the acceptances together, which is what the invitations section is drawn from.
-      *
-      * Its own reload rather than `reloadInvitations` alone: which invitations are still to answer is a question about
-      * both lists, and the section is the only place on the page from which a failed acceptances fetch can be retried —
-      * the sections drawn from the acceptances are absent when that list is empty, refresh button and all.
-      */
-    def reloadInvitationsWithAcceptances(): Future[Unit] =
-        reloadInvitations().zip(reloadAcceptances()).map(_ => ())
-
-    def reloadInvitations(): Future[Unit] = reload(ApiClient.invitations(), Fetch.Invitations)(invitations.set)
+    def reloadMyChallenges(): Future[Unit] = reload(ApiClient.myChallenges(), Fetch.MyChallenges)(myChallenges.set)
 
     /** The finished matches and their results together: the completed lists show the result table under each row, so
       * reloading one without the other would leave a match beside somebody else's outcome.

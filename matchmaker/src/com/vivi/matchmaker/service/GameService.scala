@@ -108,9 +108,9 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
     /** What an update may do to a game's roles: rename them, make them optional or not, and add new ones. Not remove
       * one.
       *
-      * `acceptance` and `participant` both carry a `game_role_id`, so a role that is deleted is a player with no seat
-      * and a played match with no record of who played what. A role that has outlived its usefulness is made optional
-      * instead, which stops a start waiting for it while leaving every match that used it intact.
+      * `participant` carries a `game_role_id`, so a role that is deleted is a played match with no record of who played
+      * what. A role that has outlived its usefulness is made optional instead, which stops a challenge needing it while
+      * leaving every match that used it intact.
       *
       * A role is recognised by its id: one carrying [[GameRoleId.unassigned]] is being added, and an existing id
       * missing from the update is a deletion asked for by omission.
@@ -129,7 +129,7 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
             _ <- IO.raiseUnless(removed.isEmpty)(
               ValidationError(
                 s"role(s) ${removed.map(r => s"'${r.name}'").mkString(", ")} cannot be deleted from game " +
-                    s"${existing.gameId.value}: acceptances and past matches name them. Make a role optional instead."
+                    s"${existing.gameId.value}: past matches name them. Make a role optional instead."
               )
             )
         } yield ()
@@ -180,15 +180,15 @@ class GameService[T](sessionPool: SessionPool)(using codec: TextCodec[T]) {
     /** What the schema would refuse anyway, refused here first so that it is a 400 explaining itself rather than a
       * constraint violation surfacing as a 500.
       *
-      * The one rule that is not the schema's: a game must define at least one role. Every acceptance names a role, so a
-      * game with none is a game nothing can be offered or accepted for — it would take challenges no further than the
-      * form that tried to create one.
+      * The one rule that is not the schema's: a game must define at least one role. Every seat of a match names a role,
+      * so a game with none is a game nothing can be played in — it would take challenges no further than the form that
+      * tried to create one.
       */
     private def validate(game: Game): IO[Unit] =
         for {
             _ <- IO.raiseWhen(game.roles.isEmpty)(
               ValidationError(
-                s"game '${game.name}' defines no roles; every acceptance names one, so a game needs at least one"
+                s"game '${game.name}' defines no roles; every seat names one, so a game needs at least one"
               )
             )
             // Its display name falls back to it, and a blank one is a constraint violation rather

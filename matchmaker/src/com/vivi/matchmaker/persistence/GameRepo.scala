@@ -291,9 +291,9 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     /** Writes a game's roles without ever deleting one.
       *
       * A role that carries a real id already exists and is updated in place; one carrying [[GameRoleId.unassigned]] is
-      * new and is inserted. Nothing is removed, and that is the point: `acceptance` and `participant` both point at
-      * `game_role`, so a deleted role is either a foreign-key violation or, worse, a match whose players have no seats.
-      * Refusing the deletion is `GameService`'s job — this simply has no way to do one.
+      * new and is inserted. Nothing is removed, and that is the point: `participant` and a tournament's invitations
+      * point at `game_role`, so a deleted role is either a foreign-key violation or, worse, a match whose players have
+      * no seats. Refusing the deletion is `GameService`'s job — this simply has no way to do one.
       */
     private def upsertRoles(gameId: GameId, roles: Seq[GameRole]): IO[Unit] =
         roles.toList.traverse_ { role =>

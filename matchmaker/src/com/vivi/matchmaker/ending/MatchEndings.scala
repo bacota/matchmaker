@@ -173,7 +173,7 @@ object MatchEndings {
       *
       * On a fiber of its own, which the request does not wait for, as it does not wait for the queue's listener. Not
       * merely for speed: the ending is said by a caller still holding its session — `GameEngineService` says it from
-      * inside one, and an automatic start from inside `ChallengeService`'s — and settling borrows a connection of its
+      * inside one, and a tournament's round from inside `TournamentRounds`' — and settling borrows a connection of its
       * own. Run in the request, it would wait for a connection while holding one, which with a pool of one is a
       * deadlock and with more is a way to exhaust it. On its own fiber it simply waits until one is given back.
       */

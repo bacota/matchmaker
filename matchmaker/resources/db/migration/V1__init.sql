@@ -7,7 +7,7 @@
 -- Conventions throughout:
 --
 --   * Rows that belong to a game are keyed by (game_id, ...), and a reference to one carries game_id as
---     part of a composite foreign key: an object can only reference a character, a role, a challenge or a
+--     part of a composite foreign key: an object can only reference a character, a role, a tournament or a
 --     match of its own game. A row's own id is generated globally unique all the same, so it identifies the
 --     row on its own everywhere but in a foreign key.
 --   * game_type ('C' a game of characters, 'P' a game of players) is carried by the rows whose shape depends
@@ -40,12 +40,12 @@ $$ LANGUAGE plpgsql;
 -- columns positionally (`SkunkCodecs.notificationPreferences`) in `NotificationType` order, so the order
 -- they are named in a statement matters, though their order in the table does not.
 --
---   challenge_accepted        somebody accepted, or backed out of, a challenge you offered
---   challenge_ready           every role in a challenge you offered is filled: you can start it
---   acceptance_changed        somebody else accepted, or backed out of, a challenge you accepted
---   accepted_challenge_ready  every role in a challenge you accepted is filled
---   invitation_received       somebody has invited you to a challenge of theirs
---   invitation_accepted       somebody you invited has joined your challenge
+--   challenge_accepted        somebody entered, or withdrew from, a challenge or tournament you own
+--   challenge_ready           a challenge or tournament you own is full: you can start it
+--   acceptance_changed        somebody else entered, or withdrew from, one you have entered
+--   accepted_challenge_ready  one you have entered is full, and waits on its owner to start it
+--   invitation_received       somebody has invited you to a challenge or tournament of theirs
+--   invitation_accepted       somebody you invited has entered
 --   invitation_rejected       somebody you invited has turned it down
 --   match_started             a match you are in has begun
 --   turn_taken                somebody moved in a match you are in
@@ -158,7 +158,7 @@ CREATE TABLE game (
     active            BOOLEAN NOT NULL,
     external_id       TEXT NOT NULL,
     -- What happens when a turn runs out: a rule of the game, set by its admin, where the time limit is
-    -- the challenger's.
+    -- the tournament's.
     timeout_action    TEXT NOT NULL DEFAULT 'FORFEIT' CHECK (timeout_action IN ('FORFEIT')),
     -- The admin saying no role has an advantage in winning. Otherwise a rated match moves each player's
     -- rating in their role as well as overall (elo_role_rating).
@@ -198,7 +198,7 @@ CREATE TABLE game_role (
 CREATE TABLE game_parameter (
     game_id           INT NOT NULL REFERENCES game,
     game_parameter_id INT GENERATED ALWAYS AS IDENTITY,
-    -- The key of a challenge's settings and of what the engine is handed; `display_name` only captions it.
+    -- The key of a tournament's settings and of what the engine is handed; `display_name` only captions it.
     name              TEXT NOT NULL,
     display_name      TEXT NOT NULL CHECK (btrim(display_name) <> ''),
     default_value     TEXT,
@@ -289,146 +289,6 @@ CREATE INDEX ON "character" (player_id);
 
 
 -- =====================================================================
--- Challenges
--- =====================================================================
-
--- An offer of a match. Its terms -- time limit, settings, publicity, liveness, friendliness -- are the
--- challenger's, and are copied to the match when it starts, so that editing a challenge cannot change a
--- match already played under it. Starting a challenge does not delete it: a match keeps the challenge it
--- came from.
-CREATE TABLE challenge (
-    game_id          INT NOT NULL REFERENCES game,
-    challenge_id     BIGINT GENERATED ALWAYS AS IDENTITY,
-    game_type        CHAR(1) NOT NULL CHECK (game_type IN ('C', 'P')),
-    challenger       BIGINT NOT NULL REFERENCES player,
-    message          TEXT DEFAULT '',
-    start            TIMESTAMPTZ,
-    -- How long a player has: per turn, or across the whole match (TOTAL, a chess clock). `time_limit_unit`
-    -- is the unit it was offered in, kept so that "48 hours" is not read back as "2 days".
-    time_limit       INTERVAL,
-    time_limit_kind  TEXT NOT NULL DEFAULT 'PER_TURN' CHECK (time_limit_kind IN ('PER_TURN', 'TOTAL')),
-    time_limit_unit  TEXT NOT NULL DEFAULT 'MINUTES'
-                     CONSTRAINT challenge_time_limit_unit_check CHECK (time_limit_unit IN ('SECONDS', 'MINUTES', 'HOURS', 'DAYS')),
-    settings         JSONB NOT NULL DEFAULT '{}'::jsonb,
-    -- Whether the match it becomes is public. There is no role here: the challenger's role is on their own
-    -- acceptance, which creating a challenge makes, like everybody else's.
-    public           BOOLEAN NOT NULL DEFAULT false,
-    -- The match a start is making: written under the challenge's lock by the first start, so that a second
-    -- one, arriving while the first waits on the engine, is refused; cleared if the engine call fails. Not
-    -- a foreign key, since that undo deletes the match.
-    started_match_id BIGINT,
-    -- Whether it starts itself as soon as every required role is taken.
-    auto_start       BOOLEAN NOT NULL DEFAULT false,
-    -- Whether a stranger may accept it. Who has been asked is `invitation`, a separate fact: an open
-    -- challenge may hold a seat for an invitee, and a closed one may be reopened without touching who
-    -- was asked.
-    is_open          BOOLEAN NOT NULL DEFAULT true,
-    -- A live match's turns and clock are run by the engine itself (see match).
-    live             BOOLEAN NOT NULL DEFAULT false,
-    -- Only a game's admin may offer one that is not (ChallengeService.create).
-    friendly         BOOLEAN NOT NULL DEFAULT true,
-    create_date      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    update_date      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (game_id, challenge_id),
-    FOREIGN KEY (game_id, game_type) REFERENCES game (game_id, game_type),
-    -- A live match is played against a clock of at least a second.
-    CONSTRAINT challenge_live_time_limit
-        CHECK (NOT live OR (time_limit IS NOT NULL AND time_limit >= INTERVAL '1 second'))
-);
-
-CREATE INDEX ON challenge (challenger);
--- Every listing of challenges starts from a game and whether each is open. Not partial, so that it serves
--- a lookup by game alone too.
-CREATE INDEX challenge_game_open ON challenge (game_id, is_open);
-
--- The character a character game's challenge is offered on behalf of.
-CREATE TABLE character_challenge (
-    game_id      INT NOT NULL REFERENCES game,
-    challenge_id BIGINT NOT NULL,
-    game_type    CHAR(1) NOT NULL CHECK (game_type = 'C'),
-    character_id BIGINT NOT NULL,
-    PRIMARY KEY (game_id, challenge_id),
-    FOREIGN KEY (game_id, challenge_id) REFERENCES challenge,
-    FOREIGN KEY (game_id, game_type) REFERENCES game (game_id, game_type),
-    FOREIGN KEY (game_id, character_id) REFERENCES "character" (game_id, character_id)
-);
-
-CREATE INDEX ON character_challenge (game_id, character_id);
-
--- A seat taken in a challenge. Keyed by the role, since a challenge is made of seats: one acceptance per
--- role, which is what lets a start wait for every required role. One seat per player is a policy, checked
--- in ChallengeService.accept under the challenge's lock, rather than a key, so that it can be relaxed.
-CREATE TABLE acceptance (
-    game_id      INT NOT NULL REFERENCES game,
-    challenge_id BIGINT NOT NULL,
-    game_role_id INT NOT NULL,
-    game_type    CHAR(1) NOT NULL CHECK (game_type IN ('C', 'P')),
-    player_id    BIGINT NOT NULL REFERENCES player,
-    create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    update_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (game_id, challenge_id, game_role_id),
-    FOREIGN KEY (game_id, challenge_id) REFERENCES challenge,
-    FOREIGN KEY (game_id, game_type) REFERENCES game (game_id, game_type),
-    FOREIGN KEY (game_id, game_role_id) REFERENCES game_role (game_id, game_role_id)
-);
-
--- "What has this player accepted?", and "has this player already accepted this challenge?" on every accept.
-CREATE INDEX ON acceptance (player_id, game_id, challenge_id);
-
--- The character an acceptance of a character game seats.
-CREATE TABLE character_acceptance (
-    game_id      INT NOT NULL REFERENCES game,
-    challenge_id BIGINT NOT NULL,
-    game_role_id INT NOT NULL,
-    game_type    CHAR(1) NOT NULL CHECK (game_type = 'C'),
-    character_id BIGINT NOT NULL,
-    PRIMARY KEY (game_id, challenge_id, game_role_id),
-    FOREIGN KEY (game_id, challenge_id, game_role_id) REFERENCES acceptance,
-    FOREIGN KEY (game_type, game_id) REFERENCES game (game_type, game_id),
-    FOREIGN KEY (game_id, character_id) REFERENCES "character"
-);
-
-CREATE INDEX ON character_acceptance (game_id, character_id);
-
--- Who has been asked to accept a challenge of a plain game. Permission and nothing more: it outlives the
--- acceptance it leads to, and goes only when rejected, revoked, or with its challenge. `game_role_id`
--- names a seat held for the invitee -- nobody else may take it (ChallengeService.accept) -- or is NULL for
--- any free seat.
-CREATE TABLE invitation (
-    game_id      INT NOT NULL REFERENCES game,
-    challenge_id BIGINT NOT NULL,
-    player_id    BIGINT NOT NULL REFERENCES player,
-    game_role_id INT,
-    create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    update_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (game_id, challenge_id, player_id),
-    FOREIGN KEY (game_id, challenge_id) REFERENCES challenge,
-    FOREIGN KEY (game_id, game_role_id) REFERENCES game_role (game_id, game_role_id)
-);
-
--- "Every invitation addressed to me", on every sign-in.
-CREATE INDEX invitation_player ON invitation (player_id);
-
--- An invitation in a character game, which names the character: whoever owns it when they answer may
--- answer, so it follows a transfer. Otherwise as `invitation`; the two never hold rows for the same game
--- type, which ChallengeService enforces.
-CREATE TABLE character_invitation (
-    game_id      INT NOT NULL REFERENCES game,
-    challenge_id BIGINT NOT NULL,
-    character_id BIGINT NOT NULL,
-    game_role_id INT,
-    create_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    update_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (game_id, challenge_id, character_id),
-    FOREIGN KEY (game_id, challenge_id) REFERENCES challenge,
-    FOREIGN KEY (game_id, character_id) REFERENCES "character" (game_id, character_id),
-    FOREIGN KEY (game_id, game_role_id) REFERENCES game_role (game_id, game_role_id)
-);
-
-CREATE INDEX character_invitation_character ON character_invitation (character_id);
-
-
--- =====================================================================
 -- Tournament models
 -- =====================================================================
 --
@@ -460,6 +320,9 @@ CREATE TABLE tournament_model (
     pool_size            INT CHECK (pool_size > 0),
     first_stage_model_id TEXT NOT NULL,
     late_entries         BOOLEAN NOT NULL DEFAULT false,
+    -- Whether every match's seats choose their roles, in seed order, whatever the game's preference levels
+    -- and whether its roles matter. A challenge's do.
+    choose_roles         BOOLEAN NOT NULL DEFAULT false,
     -- False once the code no longer defines it and a tournament made from it has entrants: offered no
     -- longer, and kept for them. Its stages and inner models are deactivated with it.
     active               BOOLEAN NOT NULL DEFAULT true,
@@ -492,6 +355,9 @@ CREATE TABLE stage_model (
     promote                INT DEFAULT 1 CHECK (promote IS NULL OR demote IS NULL OR promote < demote),
     -- A rubber match breaks ties in a pool; otherwise the total score differential does.
     rubber_match           BOOLEAN NOT NULL DEFAULT false,
+    -- Whether a match of an atomic stage may be drawn. NULL for the rule by pool size: not in a pool of
+    -- two, which is an elimination match. A rubber match never may.
+    ties_allowed           BOOLEAN,
     strict_strata          BOOLEAN NOT NULL DEFAULT true,
     tie_breaker_stage      BOOLEAN NOT NULL DEFAULT false,
     seed_policy            TEXT NOT NULL CHECK (seed_policy IN ('CONST', 'ELO', 'PREV', 'WINNER')),
@@ -557,6 +423,24 @@ CREATE TABLE tournament_model_game (
 -- For the foreign key: without it, deleting a model would scan every game's choices.
 CREATE INDEX ON tournament_model_game (tournament_model_id);
 
+-- The challenge model (`standard.Challenge`), written here as a sync would write version 1 of it, because
+-- every game's challenges are made from it whether or not a site admin has synced the models yet, and
+-- whether or not the game offers it among its tournaments' formats. A sync leaves it as it is until the code
+-- gives it a later version.
+INSERT INTO tournament_model (tournament_model_id, version, name, description, classification, pool_size,
+                              late_entries, choose_roles, first_stage_model_id)
+VALUES ('challenge', 1, 'Challenge',
+        'One match, of everyone who enters. The players choose their roles once it starts.', 'Challenge',
+        NULL, false, true, 'stage-1');
+INSERT INTO stage_model (tournament_model_id, stage_model_id, kind, pool_size, name, description,
+                         concurrent_rounds, bracketed, repetitions, remaining_participants, demote, max_stratum,
+                         min_stratum, points_for_win, points_for_draw, points_bonus, promote, rubber_match,
+                         ties_allowed, strict_strata, tie_breaker_stage, seed_policy, current_stage_model_id)
+VALUES ('challenge', 'stage-1', 'A', NULL, '', '', false, false, 1, NULL, NULL, 0, 0, 2, 1, false, NULL, false,
+        true, true, false, 'CONST', NULL);
+INSERT INTO atomic_stage_model (tournament_model_id, stage_model_id, rotate_roles)
+VALUES ('challenge', 'stage-1', false);
+
 
 -- =====================================================================
 -- Tournaments
@@ -593,7 +477,21 @@ CREATE TABLE tournament (
     max_turns           INT CHECK (max_turns > 0),
     -- The size of a pool of any stage that does not set its own.
     default_pool_size   INT NOT NULL CHECK (default_pool_size > 0),
+    -- How long a round lasts, which is also every match's time limit: spent as the game spends time
+    -- (`Clock.forMatch`), a chess clock in a game of turns and a limit per turn in one of simultaneous moves.
     round_duration      INTERVAL,
+    -- The owner's choice of each game parameter, copied to every match and so to the engine.
+    settings            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Its matches are live (see match): the engine runs their turns and clocks.
+    live                BOOLEAN NOT NULL DEFAULT false,
+    -- When it is meant to be played. Shown, and nothing more.
+    start               TIMESTAMPTZ,
+    -- Copied from its model (see tournament_model).
+    choose_roles        BOOLEAN NOT NULL DEFAULT false,
+    -- The most entries it takes, NULL for no limit: a challenge's is its pool size.
+    max_entrants        INT CHECK (max_entrants > 0),
+    -- Whether it starts by itself as soon as its entries reach max_entrants.
+    auto_start          BOOLEAN NOT NULL DEFAULT false,
     current_round       INT,
     stop_requested      BOOLEAN NOT NULL DEFAULT false,
     -- When the owner last asked for the round's overdue matches to be checked, so that a burst of presses
@@ -604,7 +502,11 @@ CREATE TABLE tournament (
     create_date         TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date         TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, tournament_id),
-    CHECK (min_rating IS NULL OR max_rating IS NULL OR min_rating <= max_rating)
+    CHECK (min_rating IS NULL OR max_rating IS NULL OR min_rating <= max_rating),
+    CONSTRAINT tournament_auto_start_full CHECK (NOT auto_start OR max_entrants IS NOT NULL),
+    -- A live match is played against a clock of at least a second.
+    CONSTRAINT tournament_live_time_limit
+        CHECK (NOT live OR (round_duration IS NOT NULL AND round_duration >= INTERVAL '1 second'))
 );
 
 CREATE INDEX tournament_owner ON tournament (owner);
@@ -636,6 +538,9 @@ CREATE TABLE stage (
     promote                INT DEFAULT 1 CHECK (promote IS NULL OR demote IS NULL OR promote < demote),
     -- A rubber match breaks ties in a pool; otherwise the total score differential does.
     rubber_match           BOOLEAN NOT NULL DEFAULT false,
+    -- Whether a match of an atomic stage may be drawn. NULL for the rule by pool size: not in a pool of
+    -- two, which is an elimination match. A rubber match never may.
+    ties_allowed           BOOLEAN,
     strict_strata          BOOLEAN NOT NULL DEFAULT true,
     tie_breaker_stage      BOOLEAN NOT NULL DEFAULT false,
     seed_policy            TEXT NOT NULL CHECK (seed_policy IN ('CONST', 'ELO', 'PREV', 'WINNER')),
@@ -712,8 +617,9 @@ CREATE INDEX ON round (game_id, tournament_id, stage_id);
 ALTER TABLE tournament ADD FOREIGN KEY (game_id, tournament_id, current_round) REFERENCES round;
 CREATE INDEX ON tournament (game_id, tournament_id, current_round) WHERE current_round IS NOT NULL;
 
--- Who may enter an invitational tournament.
-CREATE TABLE tournament_invitation (
+-- Who may enter an invitational tournament. Permission and nothing more: it outlives the entry it leads to,
+-- and goes only when declined or revoked.
+CREATE TABLE invitation (
     game_id       INT NOT NULL,
     tournament_id BIGINT NOT NULL,
     player_id     BIGINT NOT NULL REFERENCES player,
@@ -724,9 +630,10 @@ CREATE TABLE tournament_invitation (
 );
 
 -- "Tournaments I am invited to", for the home page.
-CREATE INDEX tournament_invitation_player ON tournament_invitation (player_id);
+CREATE INDEX invitation_player ON invitation (player_id);
 
-CREATE TABLE tournament_character_invitation (
+-- An invitation in a character game, which names the character it is for.
+CREATE TABLE character_invitation (
     game_id       INT NOT NULL,
     tournament_id BIGINT NOT NULL,
     player_id     BIGINT NOT NULL,
@@ -736,11 +643,11 @@ CREATE TABLE tournament_character_invitation (
     update_date   TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, tournament_id, player_id, character_id),
     FOREIGN KEY (game_id, game_type) REFERENCES game (game_id, game_type),
-    FOREIGN KEY (game_id, tournament_id, player_id) REFERENCES tournament_invitation,
+    FOREIGN KEY (game_id, tournament_id, player_id) REFERENCES invitation,
     FOREIGN KEY (game_id, character_id) REFERENCES "character"
 );
 
-CREATE INDEX ON tournament_character_invitation (game_id, character_id);
+CREATE INDEX ON character_invitation (game_id, character_id);
 
 CREATE TABLE entrant (
     game_id         INT NOT NULL,
@@ -915,29 +822,28 @@ CREATE INDEX ON seed (game_id, tournament_id, eliminated) WHERE eliminated IS NO
 -- told the id when it makes its game, and the row follows its answer. So an id alone picks one match.
 CREATE SEQUENCE match_id_seq;
 
--- A match, from a challenge or in a tournament.
+-- A match of a tournament: a challenge's one match, or one of a bigger tournament's.
 CREATE TABLE match (
     game_id            INT NOT NULL REFERENCES game,
     match_id           BIGINT NOT NULL,
     -- 'S' scheduled, 'C' choosing roles, 'D' due, 'P' in progress, 'F' finished. The source of truth for
     -- whether it is over; `completed_at` says when.
     status             TEXT NOT NULL CHECK (status IN ('S', 'C', 'D', 'P', 'F')),
-    -- Whose match it is: may cancel it, and the listings say it is theirs. A challenge's challenger, a
-    -- tournament's owner.
+    -- Whose match it is: may cancel it, and the listings say it is theirs. Its tournament's owner.
     creator            BIGINT NOT NULL REFERENCES player,
-    -- The challenge it came from, or the tournament, pool, round and atomic stage it is played in.
-    challenge_id       BIGINT,
-    tournament_id      BIGINT,
-    pool_id            BIGINT,
-    round              INT,
-    stage_id           BIGINT,
+    -- The tournament, pool, round and atomic stage it is played in.
+    tournament_id      BIGINT NOT NULL,
+    pool_id            BIGINT NOT NULL,
+    round              INT NOT NULL,
+    stage_id           BIGINT NOT NULL,
     description        TEXT NOT NULL DEFAULT '',
     -- NULL until the engine has made its game.
     start              TIMESTAMPTZ,
     completed_at       TIMESTAMPTZ,
     -- Called off by its creator: over, but neither completed (nobody won) nor deleted (it is history).
     cancelled          BOOLEAN NOT NULL DEFAULT false,
-    -- The terms it is played under, copied from its challenge (see challenge).
+    -- The terms it is played under, from its tournament when it is created in the engine: the clock its
+    -- round duration gives it, the settings, liveness and friendliness.
     time_limit         INTERVAL,
     time_limit_kind    TEXT NOT NULL DEFAULT 'PER_TURN' CHECK (time_limit_kind IN ('PER_TURN', 'TOTAL')),
     time_limit_unit    TEXT NOT NULL DEFAULT 'MINUTES' CHECK (time_limit_unit IN ('SECONDS', 'MINUTES', 'HOURS', 'DAYS')),
@@ -984,22 +890,12 @@ CREATE TABLE match (
     create_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     update_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_id, match_id),
-    FOREIGN KEY (game_id, challenge_id) REFERENCES challenge,
     -- Played in a pool of its atomic stage, and in a round of the same stage.
     FOREIGN KEY (game_id, tournament_id, pool_id, stage_id)
         REFERENCES atomic_pool (game_id, tournament_id, pool_id, stage_id),
     FOREIGN KEY (game_id, tournament_id, round, stage_id)
         REFERENCES round (game_id, tournament_id, round, stage_id),
-    -- From a challenge or a tournament, never both; a tournament match has its pool, round and stage.
-    CHECK (
-        ((challenge_id IS NULL) <> (tournament_id IS NULL))
-        AND ((tournament_id IS NULL) = (pool_id IS NULL))
-        AND ((tournament_id IS NULL) = (round IS NULL))
-        AND ((tournament_id IS NULL) = (stage_id IS NULL))
-    ),
     CONSTRAINT match_finished CHECK ((status = 'F') = (completed_at IS NOT NULL OR cancelled)),
-    -- Only a tournament match waits before it is played: a challenge's starts at once.
-    CONSTRAINT match_waits_in_tournament CHECK (status NOT IN ('S', 'C', 'D') OR tournament_id IS NOT NULL),
     -- A match not yet made in the engine has no urls and no start.
     CONSTRAINT match_not_yet_created
         CHECK (status NOT IN ('S', 'C', 'D') OR (status_url IS NULL AND play_url IS NULL AND start IS NULL)),
@@ -1008,16 +904,13 @@ CREATE TABLE match (
         CHECK (NOT live OR (time_limit IS NOT NULL AND time_limit >= INTERVAL '1 second'))
 );
 
--- One match per challenge; NULLs are distinct, so any number of tournament matches.
-CREATE UNIQUE INDEX ON match (game_id, challenge_id);
--- For participant's foreign keys to its challenge's or its tournament's match.
-CREATE UNIQUE INDEX ON match (game_id, challenge_id, match_id);
+-- For participant's foreign key to its tournament's match.
 CREATE UNIQUE INDEX ON match (game_id, tournament_id, match_id);
 CREATE UNIQUE INDEX ON match (match_id);
 -- For the foreign key: without it, deleting a player would scan every match.
 CREATE INDEX match_creator ON match (creator);
-CREATE INDEX ON match (game_id, tournament_id, pool_id) WHERE tournament_id IS NOT NULL;
-CREATE INDEX ON match (game_id, tournament_id, round) WHERE round IS NOT NULL AND tournament_id IS NOT NULL;
+CREATE INDEX ON match (game_id, tournament_id, pool_id);
+CREATE INDEX ON match (game_id, tournament_id, round);
 -- What is still owed something: completed matches never archived, and cancelled matches whose engine has
 -- not acknowledged the cancel. Partial, so they hold almost nothing in steady state.
 CREATE INDEX match_unarchived ON match (completed_at) WHERE completed_at IS NOT NULL AND archived_at IS NULL;
@@ -1030,12 +923,11 @@ CREATE TABLE participant (
     game_type            CHAR(1) NOT NULL CHECK (game_type IN ('C', 'P')),
     match_id             BIGINT NOT NULL,
     player_id            BIGINT NOT NULL REFERENCES player,
-    -- Every seat names its role, but for a tournament seat still waiting to choose one.
+    -- Every seat names its role, but for one still waiting to choose it.
     game_role_id         INT,
-    -- Its match's challenge, or its tournament and entrant.
-    challenge_id         BIGINT,
-    tournament_id        BIGINT,
-    entrant_id           BIGINT,
+    -- Its tournament, and the entrant it plays for.
+    tournament_id        BIGINT NOT NULL,
+    entrant_id           BIGINT NOT NULL,
     -- Whether it is this seat's turn, and when that turn runs out.
     pending              BOOLEAN NOT NULL DEFAULT false,
     due                  TIMESTAMPTZ,
@@ -1043,13 +935,14 @@ CREATE TABLE participant (
     -- it -- which is what the completed lists' windows are ranges of. NULL while it is still in play.
     completed_at         TIMESTAMPTZ,
     forfeit              BOOLEAN NOT NULL DEFAULT false,
-    -- A tournament seat's turn to choose its role, and when that began and ended.
+    -- The seat's turn to choose its role, and when that began and ended.
     choose_order         INT,
     choose_started_at    TIMESTAMPTZ,
     chosen_at            TIMESTAMPTZ,
     -- The player's ratings, overall and in the seat's role, as the match began (elo_rating,
-    -- elo_role_rating). A challenge seat is rated as it sits down; a tournament seat may exist before.
-    -- The role's is NULL in a game whose roles are unimportant, and such a match is rated overall only.
+    -- elo_role_rating). A seat exists from when its round begins, and is rated when its match is created
+    -- in the engine. The role's is NULL in a game whose roles are unimportant, and such a match is rated
+    -- overall only.
     elo_start            INT,
     elo_role_start       INT,
     -- The seat's notifications, resolved when it is created (see player) and changed only by the player
@@ -1065,14 +958,9 @@ CREATE TABLE participant (
     FOREIGN KEY (game_id, match_id) REFERENCES match,
     FOREIGN KEY (game_type, game_id) REFERENCES game (game_type, game_id),
     FOREIGN KEY (game_id, game_role_id) REFERENCES game_role (game_id, game_role_id),
-    FOREIGN KEY (game_id, challenge_id) REFERENCES challenge,
     FOREIGN KEY (game_id, tournament_id, entrant_id) REFERENCES entrant,
-    -- A seat sits in a match of its own challenge or tournament.
-    FOREIGN KEY (game_id, challenge_id, match_id) REFERENCES match (game_id, challenge_id, match_id),
-    FOREIGN KEY (game_id, tournament_id, match_id) REFERENCES match (game_id, tournament_id, match_id),
-    CHECK (((tournament_id IS NULL) = (entrant_id IS NULL)) AND ((tournament_id IS NULL) <> (challenge_id IS NULL))),
-    CONSTRAINT participant_role_or_tournament CHECK (game_role_id IS NOT NULL OR tournament_id IS NOT NULL),
-    CONSTRAINT participant_rated_or_tournament CHECK (elo_start IS NOT NULL OR tournament_id IS NOT NULL)
+    -- A seat sits in a match of its own tournament.
+    FOREIGN KEY (game_id, tournament_id, match_id) REFERENCES match (game_id, tournament_id, match_id)
 );
 
 CREATE INDEX ON participant (player_id);
@@ -1080,19 +968,17 @@ CREATE INDEX ON participant (game_id, match_id);
 CREATE INDEX participant_pending ON participant (game_id, match_id, player_id) WHERE pending = true;
 -- A player's seats split on whether each is finished, and the completed lists' windows within them.
 CREATE INDEX participant_player_completed_at ON participant (player_id, completed_at);
-CREATE INDEX ON participant (game_id, challenge_id) WHERE challenge_id IS NOT NULL;
--- For character_participant's foreign key. Not partial, since a foreign key cannot reference a partial
--- index; challenge seats, whose tournament_id is NULL, never conflict in it.
+-- For character_participant's foreign key, which names the entrant as well as the seat.
 CREATE UNIQUE INDEX ON participant (game_id, tournament_id, entrant_id, participant_id);
 
--- The character a seat of a character game plays, and for a tournament seat the entrant it plays for.
+-- The character a seat of a character game plays, and the entrant it plays for.
 CREATE TABLE character_participant (
     game_id        INT NOT NULL,
     participant_id BIGINT NOT NULL,
     game_type      CHAR(1) NOT NULL CHECK (game_type = 'C'),
     character_id   BIGINT NOT NULL,
-    tournament_id  BIGINT,
-    entrant_id     BIGINT,
+    tournament_id  BIGINT NOT NULL,
+    entrant_id     BIGINT NOT NULL,
     PRIMARY KEY (game_id, participant_id),
     FOREIGN KEY (game_id, participant_id) REFERENCES participant,
     FOREIGN KEY (game_id, character_id) REFERENCES "character" (game_id, character_id),
@@ -1103,7 +989,7 @@ CREATE TABLE character_participant (
 );
 
 CREATE INDEX ON character_participant (game_id, character_id);
-CREATE INDEX ON character_participant (game_id, tournament_id, entrant_id, character_id) WHERE tournament_id IS NOT NULL;
+CREATE INDEX ON character_participant (game_id, tournament_id, entrant_id, character_id);
 
 -- How a seat came out.
 CREATE TABLE result (
@@ -1236,9 +1122,8 @@ DECLARE
 BEGIN
     FOREACH t IN ARRAY ARRAY[
         'player', 'game', 'game_role', 'game_parameter', 'game_parameter_value', 'game_api_key', 'player_game',
-        'character', 'challenge', 'acceptance', 'invitation', 'character_invitation',
-        'tournament_model', 'stage_model', 'tournament', 'stage', 'tournament_invitation',
-        'tournament_character_invitation', 'entrant', 'character_entrant', 'pool', 'pool_member', 'seed',
+        'character', 'tournament_model', 'stage_model', 'tournament', 'stage', 'invitation',
+        'character_invitation', 'entrant', 'character_entrant', 'pool', 'pool_member', 'seed',
         'match', 'participant', 'result', 'turn', 'elo_rating', 'elo_role_rating'
     ]
     LOOP

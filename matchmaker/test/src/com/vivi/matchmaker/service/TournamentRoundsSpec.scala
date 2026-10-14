@@ -101,6 +101,9 @@ class TournamentRoundsSpec extends FunSuite with QuietTests {
             )
             _ <- s.tournaments.open(game.gameId, t.tournamentId, owner.externalId)
             _ <- players.traverse(p => s.tournaments.enter(game.gameId, t.tournamentId, None, p.externalId))
+            // Each entry was mailed to the owner. What these specs read is what the rounds send, so the record
+            // starts again here.
+            _ <- IO(w.mail.clear())
             running <- s.tournaments.start(game.gameId, t.tournamentId, owner.externalId)
         } yield Fixture(w, game, owner, players, running)
     }

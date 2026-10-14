@@ -9,8 +9,8 @@ import com.vivi.matchmaker.persistence.{NotificationRepo, PlayerRepo, Suppressio
   *
   * Three levels are writable here, and every one of them is the caller's own: their settings in general, their settings
   * for one game, and their settings for one match. There is deliberately no route to anyone else's — a preference is
-  * not something another player, or an admin, has any business changing — so, like `AcceptanceService.mine`, most of
-  * these take no player id and there is nothing to refuse.
+  * not something another player, or an admin, has any business changing — so, like `TournamentService.challengesFor`,
+  * most of these take no player id and there is nothing to refuse.
   *
   * There is no fourth level: a game has no defaults of its own, and the chain ends at "send it"
   * (`NotificationLevels.unsaid`), the same for every game.
@@ -206,7 +206,7 @@ class NotificationService(sessionPool: SessionPool) {
     /* Every route here acts on the caller's own settings, so every one of them starts by turning the
      * token's identity into a player -- and a caller with no player has nothing here to read or
      * write, which is Unauthorized rather than NotFound for the same reason it is in
-     * `AcceptanceService.mine`: the identity is real, it is simply not a player yet. */
+     * `TournamentService`: the identity is real, it is simply not a player yet. */
     private def callerPlayer(session: skunk.Session[IO], callerExternalId: String): IO[Player] =
         new PlayerRepo(session).readByExternalId(callerExternalId).flatMap {
             case Some(player) => IO.pure(player)

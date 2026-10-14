@@ -7,72 +7,73 @@ package com.vivi.matchmaker.model
   * one is a migration and a decision, not a string a caller can invent. The `code` is what travels on the wire and,
   * with `notify_` in front of it in lower case, names the column.
   *
-  * `participant` is the exception, and holds only [[onSeat]]: a seat is asked about the match it is in, and every other
-  * kind is about a challenge that has already become one.
+  * `participant` is the exception, and holds only [[onSeat]]: a seat is asked about the match it is in, and the first
+  * seven kinds are about the entries of a challenge or tournament before it starts.
   *
   * The order of `values` is the order the columns are bound in (`SkunkCodecs.notificationPreferences`) and the order
   * the forms list them in, which is why it is the order a player meets these events in rather than alphabetical:
-  * offering a challenge, filling it, accepting someone else's, playing, finishing.
+  * offering a challenge, filling it, entering someone else's, playing, finishing. The codes, and so the columns, keep
+  * the names they had when a challenge was accepted rather than entered.
   */
 enum NotificationType(val code: String, val label: String, val detail: String) {
 
-    /** (1) Somebody accepted a challenge you offered, or backed out of one. */
+    /** (1) Somebody entered a challenge or tournament you own, or withdrew from one. */
     case ChallengeAccepted
         extends NotificationType(
           "CHALLENGE_ACCEPTED",
-          "My challenge is accepted",
-          "Also when someone backs out of one."
+          "Someone enters my challenge",
+          "Or my tournament. Also when someone withdraws."
         )
 
-    /** (2) Every role in a challenge you offered is filled, so you can start the match. */
+    /** (2) A challenge or tournament you own is full, so you can start it. */
     case ChallengeReady
         extends NotificationType(
           "CHALLENGE_READY",
           "My challenge can start",
-          "Every role in it has been taken."
+          "Or my tournament: it is full."
         )
 
-    /** (3) Somebody else accepted a challenge you had accepted, or backed out of one. */
+    /** (3) Somebody else entered a challenge or tournament you had entered, or withdrew from one. */
     case AcceptanceChanged
         extends NotificationType(
           "ACCEPTANCE_CHANGED",
           "Someone joins a challenge",
-          "Also when one of them backs out."
+          "Or a tournament you entered. Also when one of them withdraws."
         )
 
-    /** (4) Every role in a challenge you accepted is filled, so its challenger can start it. */
+    /** (4) A challenge or tournament you entered is full, so its owner can start it. */
     case AcceptedChallengeReady
         extends NotificationType(
           "ACCEPTED_CHALLENGE_READY",
           "A challenge can start",
-          "You are waiting on whoever offered it."
+          "Or a tournament you entered: you are waiting on its owner."
         )
 
-    /** (5) Somebody has invited you to a challenge of theirs.
+    /** (5) Somebody has invited you to a challenge or tournament of theirs.
       *
       * The only notification here that is the first a player hears of the thing it is about: every other kind is news
-      * about a challenge or a match they are already in. So it is also the only one whose recipient may have nothing on
-      * screen to act on yet, which is why its mail links to the home page rather than to a challenge.
+      * about a challenge, tournament or match they are already in. So it is also the only one whose recipient may have
+      * nothing on screen to act on yet, which is why its mail links to the home page.
       */
     case InvitationReceived
         extends NotificationType(
           "INVITATION_RECEIVED",
           "Someone invites me to a challenge",
-          "A challenge offered to you in particular."
+          "Or to a tournament, offered to you in particular."
         )
 
-    /** (6) Somebody has accepted an invitation you sent. */
+    /** (6) Somebody has accepted an invitation you sent, by entering. */
     case InvitationAccepted
         extends NotificationType(
           "INVITATION_ACCEPTED",
           "My invitation is accepted",
-          "Someone you invited has joined your challenge."
+          "Someone you invited has entered."
         )
 
     /** (7) Somebody has turned down an invitation you sent.
       *
-      * Worth its own kind rather than silence: the challenge stays as it was, so nothing else would tell the challenger
-      * that a seat they were holding is not going to be taken.
+      * Worth its own kind rather than silence: the challenge or tournament stays as it was, so nothing else would tell
+      * its owner that a player they were waiting on is not going to enter.
       */
     case InvitationRejected
         extends NotificationType(
@@ -116,7 +117,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
 
     /** Whether this kind of news can still arrive about a match that has already started.
       *
-      * The first five are all about a challenge, or about the start itself: by the time there is a match to have an
+      * The first eight are all about entries, or about the start itself: by the time there is a match to have an
       * opinion about, every one of them has either happened or can no longer happen. Only playing and finishing are
       * still ahead.
       *
@@ -144,9 +145,9 @@ object NotificationType {
     /** The kinds a seat in a match can answer at all, which is what `participant` stores.
       *
       * [[duringMatch]] plus [[MatchStarted]]: a seat exists by the time a match starts, and the mail announcing the
-      * start reads the seat's own answer. Everything else here is about a challenge — an acceptance, an invitation, a
-      * roster filling up — and none of it can happen once the match exists, so a seat has nothing to say about them and
-      * no column to say it in.
+      * start reads the seat's own answer. Everything else here is about entries — an entry, an invitation, a challenge
+      * filling up — or a tournament's round, and none of it is about the match a seat is in, so a seat has nothing to
+      * say about them and no column to say it in.
       *
       * Derived rather than written out, so that a kind added to the enum joins this list only if it says it belongs
       * there.
@@ -242,9 +243,8 @@ object NotificationPreferences {
 
 /** What one seat in one match says it wants to hear about that match.
   *
-  * Four kinds, not eleven. A seat used to carry a column per kind for uniformity with the three levels behind it, and
-  * seven of them could never fire: by the time there is a seat there is a match, and a challenge that has become a
-  * match cannot be accepted, filled or invited to again. The columns were written at creation, re-stamped by every
+  * Four kinds, not twelve. A seat used to carry a column per kind for uniformity with the three levels behind it, and
+  * the rest could never fire about the match a seat is in. The columns were written at creation, re-stamped by every
   * cascade, and read by nothing.
   *
   * No chain behind it: a seat's row is the answer, so a player who mutes one match stays muted there however they later
@@ -252,8 +252,8 @@ object NotificationPreferences {
   */
 case class SeatNotifications(matchStarted: Boolean, turnTaken: Boolean, yourTurn: Boolean, matchEnded: Boolean) {
 
-    /** `false` for every kind a seat does not answer. Not "they said no" — a seat is never asked about a challenge, and
-      * a caller that asks is asking about an event that cannot happen to a match.
+    /** `false` for every kind a seat does not answer. Not "they said no" — a seat is never asked about entries, and a
+      * caller that asks is asking about an event that cannot happen to a match.
       */
     def apply(kind: NotificationType): Boolean = kind match {
         case NotificationType.MatchStarted => matchStarted
@@ -285,10 +285,10 @@ object SeatNotifications {
   *
   * Note what is *not* here: the participant level. A seat's own answers are NOT NULL and are the whole answer for
   * anything about a match, so a chain is only ever walked in the two places one still has to be — creating a seat, and
-  * writing to somebody about a challenge, which nobody is a participant in yet.
+  * writing to somebody about entries, which nobody has a seat in yet.
   *
   * Nor the game: the chain ends at "send it", the same for every game. [[apply]] still answers every kind, and has to:
-  * the second of those places is an audience of acceptors, who are asked about challenge kinds. Only the seat-shaped
+  * the second of those places is an audience of entrants, who are asked about the entry kinds. Only the seat-shaped
   * subset of it is ever written to `participant`.
   */
 case class NotificationLevels(
@@ -359,10 +359,10 @@ object NotificationPolicy {
 
     /** The one notification a recipient gets for an event that is several kinds of news at once.
       *
-      * One thing that happens is often two reasons to write: the acceptance that fills the last role is both "somebody
-      * accepted" and "you can start it now", and a move is both "somebody moved" and "it is your turn". A player is
-      * owed one email about one event, so `kinds` is those reasons in the order of how much they say — the fullest
-      * first — and this takes the first one the player actually wants to hear.
+      * One thing that happens is often two reasons to write: the entry that fills a challenge is both "somebody
+      * entered" and "you can start it now", and a move is both "somebody moved" and "it is your turn". A player is owed
+      * one email about one event, so `kinds` is those reasons in the order of how much they say — the fullest first —
+      * and this takes the first one the player actually wants to hear.
       *
       * Which means a player who has turned off "it is my turn" but left "someone takes a turn" on still hears that the
       * move happened, in the plainer mail. That is the point of asking in order rather than of picking the most

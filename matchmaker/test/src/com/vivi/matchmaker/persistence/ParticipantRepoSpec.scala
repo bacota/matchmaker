@@ -22,10 +22,9 @@ class ParticipantRepoSpec extends PropertySuite {
 
                     for {
                         createdGame <- gameRepo.create(Generators.genGameWithRole.sample.get)
-                        challengeId <- Generators.challengeIn(session, createdGame)
+                        owner <- Generators.ownerIn(session, createdGame)
                         matchId = mid
-                        m <- Generators.matchFrom(session, createdGame.gameId, matchId, challengeId)
-                        _ <- matchRepo.create(m)
+                        m <- TestMatches.writeMatch(session, Generators.matchFrom(createdGame.gameId, matchId, owner))
                         createdPlayer <- playerRepo.create(player)
                         createdCharacter <- characterRepo.create(
                           Generators.genCharacter(createdGame.gameId, None).sample.get
@@ -42,7 +41,7 @@ class ParticipantRepoSpec extends PropertySuite {
                               .sample
                               .get
                         )
-                        created <- participantRepo.create(participant, EloRating.initial)
+                        created <- TestMatches.writeSeat(session, participant, EloRating.initial)
                         found <- participantRepo.read(created.gameId, created.participantId)
                     } yield found == Some(created)
                 }
@@ -67,16 +66,15 @@ class ParticipantRepoSpec extends PropertySuite {
                 def stamp(p: Participant) = session.unique(completedAt)(p.participantId.value)
                 for {
                     game <- new GameRepo[String](session).create(Generators.genGameWithRole.sample.get)
-                    challengeId <- Generators.challengeIn(session, game)
+                    owner <- Generators.ownerIn(session, game)
                     matchId = Generators.newMatchId()
-                    _ <- Generators
-                        .matchFrom(session, game.gameId, matchId, challengeId)
-                        .flatMap(new MatchRepo(session).create)
+                    _ <- TestMatches.writeMatch(session, Generators.matchFrom(game.gameId, matchId, owner))
                     player <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
                     character <- new CharacterRepo[String](session).create(
                       Generators.genCharacter(game.gameId, None).sample.get
                     )
-                    seat <- participantRepo.create(
+                    seat <- TestMatches.writeSeat(
+                      session,
                       finished(
                         Generators
                             .genParticipant(

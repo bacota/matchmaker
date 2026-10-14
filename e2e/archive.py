@@ -120,19 +120,22 @@ try:
     alice_id = call("GET", MM + "/me", headers=as_player(alice))[1]["playerId"]
 
     def new_match():
-        challenge = {"$type": "com.vivi.matchmaker.model.PlainChallenge", "challengeId": 0, "challenger": alice_id,
-                     "message": "e2e", "start": None, "timeLimit": None, "settings": "{}", "gameId": int(game_id),
-                     "gameRoleId": int(roles["X"]), "autoStart": True}
-        status, made = call("POST", MM + "/challenges",
-                            {"challenge": challenge, "invitations": [{"playerId": bob_id, "gameRoleId": int(roles["O"])}]},
+        # A challenge for the two of them: alice offers it, closed to all but bob, and it starts as bob enters.
+        status, made = call("POST", f"{MM}/games/{game_id}/challenges",
+                            {"poolSize": 2, "autoStart": True, "open": False, "invitations": [bob_id]},
                             as_player(alice))
         assert status in (200, 201), (status, made)
-        status, accepted = call("POST", f"{MM}/challenges/{game_id}/{made['challengeId']}/acceptances",
-                                {"characterId": None, "gameRoleId": int(roles["O"])}, as_player(bob))
-        assert status in (200, 201), (status, accepted)
-        matches = call("GET", MM + "/me/matches", headers=as_player(alice))[1]
-        mine = [m for m in matches if m["gameId"] == int(game_id)]
-        return sorted(mine, key=lambda m: m["start"])[-1]["matchId"]
+        tournament = made["tournamentId"]
+        status, entered = call("POST", f"{MM}/games/{game_id}/tournaments/{tournament}/entries", {}, as_player(bob))
+        assert status in (200, 201), (status, entered)
+        # Then its players choose their roles, the strongest seed first: alice, who entered first, takes X,
+        # and bob is given the O that is left.
+        detail = call("GET", f"{MM}/games/{game_id}/tournaments/{tournament}", headers=as_player(alice))[1]
+        match_id = detail["round"][0]["matchId"]
+        status, chosen = call("POST", f"{MM}/games/{game_id}/tournaments/{tournament}/matches/{match_id}/role",
+                              {"gameRoleId": int(roles["X"])}, as_player(alice))
+        assert status in (200, 201), (status, chosen)
+        return match_id
 
     def play_to_the_end(match_id):
         for sub, cell in ((alice, 0), (bob, 3), (alice, 1), (bob, 4), (alice, 2)):

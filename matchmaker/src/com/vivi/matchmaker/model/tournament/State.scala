@@ -318,8 +318,9 @@ object Tournament {
                               stage.rotateRoles,
                               env.concurrent(stage)
                             )
-                        // Ties by the pool's size: none in a pool of two, an elimination match.
-                        Pool(id, f.stratum, members, matches = planned.map(PoolMatch(_, Ties.allowed(f.members.size))))
+                        // Ties as the stage says, or by the pool's size: none in a pool of two, an elimination match.
+                        val ties = Ties.allowed(f.members.size, stage = stage.tiesAllowed)
+                        Pool(id, f.stratum, members, matches = planned.map(PoolMatch(_, ties)))
                 }
         }
         val run = StageRun(node.stage, node.repetition, pools, active.map(_.entrant).filterNot(pooled))

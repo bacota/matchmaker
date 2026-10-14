@@ -51,7 +51,8 @@ case class TournamentDesign(stages: List[StageDesign])
   * are `None` for no bound. `demote` and `promote` are ranks: at or below `demote` a participant moves down a stratum,
   * at or above `promote` up one. `concurrentRounds` lets a round-robin pool play all of its matches in one round,
   * rather than each member one match a round. `rubberMatch` breaks a tie on points with one more match, in a game of
-  * two roles; otherwise ties go to scores.
+  * two roles; otherwise ties go to scores. `tiesAllowed` says whether a match of an atomic stage may be drawn, `None`
+  * for the rule by pool size ([[Ties]]).
   */
 case class StageDesign(
     repeat: Repetition = Repetition.Fixed(1),
@@ -71,6 +72,7 @@ case class StageDesign(
     tieBreakerStage: Boolean = false,
     seedPolicy: SeedPolicy = SeedPolicy.WinnerTakesSeed,
     rubberMatch: Boolean = false,
+    tiesAllowed: Option[Boolean] = None,
     name: String = "",
     description: String = ""
 ) {
@@ -85,11 +87,13 @@ case class StageDesign(
     def concurrent: Int = if (concurrentRounds) Int.MaxValue else 1
 }
 
-/** Whether a match in a pool of `members` may end in a draw: not in a pool of two, which is an elimination match that
-  * must send one of them on; otherwise yes. A rubber match never may, whatever its pool: it exists to break a tie.
+/** Whether a match in a pool of `members` may end in a draw: as its stage says, if it says (`stage`); otherwise not in
+  * a pool of two, which is an elimination match that must send one of them on, and yes in a bigger one. A rubber match
+  * never may, whatever its pool or stage: it exists to break a tie.
   */
 object Ties {
-    def allowed(members: Int, rubber: Boolean = false): Boolean = !rubber && members > 2
+    def allowed(members: Int, rubber: Boolean = false, stage: Option[Boolean] = None): Boolean =
+        !rubber && stage.getOrElse(members > 2)
 }
 
 /** One of a game's roles, as a tournament needs to know it. */
@@ -98,13 +102,15 @@ case class TournamentRole(id: Int, roleType: com.vivi.matchmaker.model.RoleType,
 /** What a tournament needs to know about its game.
   *
   * `roles` are all the game's roles in the order the game lists them. `significantRoles` is the negation of the game's
-  * `unimportant_roles`: whether it matters who plays which.
+  * `unimportant_roles`: whether it matters who plays which. `chooseRoles` is the tournament's, not the game's: every
+  * match's seats choose their roles, whatever the game says about them.
   */
 case class TournamentGame(
     roles: List[TournamentRole],
     significantRoles: Boolean,
     moveType: com.vivi.matchmaker.model.MoveType,
-    maxTurns: Option[Int]
+    maxTurns: Option[Int],
+    chooseRoles: Boolean = false
 ) {
     import com.vivi.matchmaker.model.RoleType
 
@@ -114,9 +120,12 @@ case class TournamentGame(
     /** How many members a match needs. */
     def requiredSeats: Int = roles.count(_.roleType == RoleType.Required)
 
-    /** The roles a match seats, required first and then recommended, each in the game's own order. */
+    /** The roles a match seats, required first, then recommended, then optional, each in the game's own order. A match
+      * of `n` seats plays the first `n`, so it has the optional roles only when it has more seats than the game's R.
+      */
     def seatingRoles: List[TournamentRole] =
-        roles.filter(_.roleType == RoleType.Required) ++ roles.filter(_.roleType == RoleType.Recommended)
+        roles.filter(_.roleType == RoleType.Required) ++ roles.filter(_.roleType == RoleType.Recommended) ++
+            roles.filter(_.roleType == RoleType.Optional)
 
     /** Whether a rubber match can break a tie: only in a game of exactly two roles (Q7). */
     def rubberApplies: Boolean = roles.sizeIs == 2

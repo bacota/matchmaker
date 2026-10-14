@@ -4,20 +4,22 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.vivi.matchmaker.PropertySuite
 import org.scalacheck.Prop._
-import com.vivi.matchmaker.model.{ChallengeId, GameId, Match, MatchId, PlayerId}
+import com.vivi.matchmaker.model.{GameId, Match, MatchId, PlayerId, TournamentId}
 
 class MatchRepoSpec extends PropertySuite {
-    property("create then read returns the match just created") {
+    property("a match written then read is the match just written") {
         forAll(Generators.genMatchId) { mid =>
             TestSession.resource
                 .use { session =>
                     val matchRepo = new MatchRepo(session)
                     for {
-                        gameAndChallenge <- Generators.gameWithChallenge(session)
-                        (createdGame, challengeId) = gameAndChallenge
+                        gameAndOwner <- Generators.gameWithOwner(session)
+                        (createdGame, owner) = gameAndOwner
                         matchId = mid
-                        m <- Generators.matchFrom(session, createdGame.gameId, matchId, challengeId)
-                        created <- matchRepo.create(m)
+                        created <- TestMatches.writeMatch(
+                          session,
+                          Generators.matchFrom(createdGame.gameId, matchId, owner)
+                        )
                         found <- matchRepo.read(createdGame.gameId, matchId)
                     } yield found == Some(created)
                 }
@@ -31,11 +33,10 @@ class MatchRepoSpec extends PropertySuite {
                 .use { session =>
                     val matchRepo = new MatchRepo(session)
                     for {
-                        gameAndChallenge <- Generators.gameWithChallenge(session)
-                        (createdGame, challengeId) = gameAndChallenge
+                        gameAndOwner <- Generators.gameWithOwner(session)
+                        (createdGame, owner) = gameAndOwner
                         matchId = mid
-                        m <- Generators.matchFrom(session, createdGame.gameId, matchId, challengeId)
-                        _ <- matchRepo.create(m)
+                        m <- TestMatches.writeMatch(session, Generators.matchFrom(createdGame.gameId, matchId, owner))
                         rewritten = m.copy(friendly = !m.friendly, isPublic = !m.isPublic)
                         _ <- matchRepo.update(rewritten)
                         found <- matchRepo.read(createdGame.gameId, matchId)
@@ -50,7 +51,7 @@ class MatchRepoSpec extends PropertySuite {
             Match(
               GameId(1),
               MatchId(1),
-              Some(ChallengeId(1)),
+              TournamentId(1),
               PlayerId(1),
               "",
               None,

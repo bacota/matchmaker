@@ -21,7 +21,6 @@ object Json {
     given ReadWriter[GameRoleId] = readwriter[Int].bimap(_.value, GameRoleId.apply)
     given ReadWriter[GameParameterId] = readwriter[Int].bimap(_.value, GameParameterId.apply)
     given ReadWriter[ParticipantId] = readwriter[Long].bimap(_.value, ParticipantId.apply)
-    given ReadWriter[ChallengeId] = readwriter[Long].bimap(_.value, ChallengeId.apply)
     given ReadWriter[TournamentId] = readwriter[Long].bimap(_.value, TournamentId.apply)
     given ReadWriter[TournamentModelId] = readwriter[String].bimap(_.value, TournamentModelId.apply)
     given ReadWriter[EntrantId] = readwriter[Long].bimap(_.value, EntrantId.apply)
@@ -90,28 +89,8 @@ object Json {
     given ReadWriter[GameParameter[String]] = macroRW
     given ReadWriter[Character[String]] = macroRW
 
-    // Sealed-trait wire format: each concrete case gets its own macro-derived ReadWriter, merged
-    // into one for the trait. upickle tags the JSON with a discriminator field so a reader can
-    // tell a PlainChallenge from a CharacterChallenge (etc.) apart on the way back in.
-    given ReadWriter[PlainChallenge] = macroRW
-    given ReadWriter[CharacterChallenge] = macroRW
-    given ReadWriter[Challenge] =
-        ReadWriter.merge(summon[ReadWriter[PlainChallenge]], summon[ReadWriter[CharacterChallenge]])
-    given ReadWriter[Invitation] = macroRW
-    given ReadWriter[Invite] = macroRW
-    given ReadWriter[CharacterInvitation] = macroRW
-    given ReadWriter[InvitedCharacter] = macroRW
-    given ReadWriter[CharacterInvite] = macroRW
     given ReadWriter[CharacterName] = macroRW
     given ReadWriter[CharacterProfile] = macroRW
-    given ReadWriter[ChallengeInvitation] = macroRW
-    given ReadWriter[ChallengeSummary] = macroRW
-
-    given ReadWriter[PlainAcceptance] = macroRW
-    given ReadWriter[CharacterAcceptance] = macroRW
-    given ReadWriter[Acceptance] =
-        ReadWriter.merge(summon[ReadWriter[PlainAcceptance]], summon[ReadWriter[CharacterAcceptance]])
-    given ReadWriter[PendingAcceptance] = macroRW
 
     given ReadWriter[PlayerClock] = macroRW
     given ReadWriter[MatchParameter] = macroRW
@@ -270,34 +249,6 @@ object Json {
       * `toNickname` is who it goes to; `ownerExternalId` is who asked, and must own it.
       */
     case class TransferCharacterRequest(toNickname: String, ownerExternalId: String)
-
-    // characterId is present iff the challenge being accepted belongs to a 'C'-type game; the
-    // service layer checks that correspondence rather than trusting the caller to get it right.
-    // gameRoleId is the role the accepting player will play. Required: every acceptance names a
-    // role, and a challenge cannot be started until each of its game's required roles is taken.
-    case class AcceptRequest(characterId: Option[CharacterId], gameRoleId: GameRoleId)
-
-    /** A challenge and the invitations to send with it.
-      *
-      * A wrapper rather than an `invitations` field on `Challenge`, because an invitation is not part of what a
-      * challenge *is*: the rows live in their own table, `ChallengeSummary` already carries `Invitation`s for reading,
-      * and a `Challenge` that sometimes holds `Invite`s on the way in and never on the way out is a field that means
-      * one thing in one direction. Here it is plainly what the caller is asking for — make this challenge, and ask
-      * these players.
-      *
-      * `invitations` is defaulted, so a body that is just `{"challenge": ...}` creates an uninvited challenge. The
-      * nesting is what a client written before invitations existed does not have, which is why the route takes this
-      * shape rather than accepting both: a bare challenge would parse as a `CreateChallenge` with no `challenge` field
-      * and fail, loudly, instead of silently creating something.
-      *
-      * `characterInvitations` is the character game's list, and the service refuses whichever of the two does not suit
-      * the game: a plain game invites players, a character game invites characters.
-      */
-    case class CreateChallenge(
-        challenge: Challenge,
-        invitations: Seq[Invite] = Seq.empty,
-        characterInvitations: Seq[CharacterInvite] = Seq.empty
-    )
 
     /** The game engine's callbacks, from `interaction-design.txt`.
       *
@@ -462,8 +413,6 @@ object Json {
     given ReadWriter[RegisterCharacterRequest] = macroRW
     given ReadWriter[EditCharacterRequest] = macroRW
     given ReadWriter[TransferCharacterRequest] = macroRW
-    given ReadWriter[AcceptRequest] = macroRW
-    given ReadWriter[CreateChallenge] = macroRW
     given ReadWriter[PreferencesRequest] = macroRW
     given ReadWriter[PendingSeat] = macroRW
     given ReadWriter[MoveState] = macroRW

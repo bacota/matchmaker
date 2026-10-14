@@ -1,7 +1,7 @@
 package com.vivi.matchmaker.service
 
 import scala.concurrent.duration._
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{IO, Ref}
 import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import java.time.{Duration, Instant}
@@ -13,15 +13,14 @@ import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{
-    AcceptanceRepo,
     CharacterRepo,
     GameApiKeyRepo,
     GameRepo,
     MatchRepo,
-    ChallengeRepo,
     ParticipantRepo,
     PlayerRepo,
     ResultRepo,
+    TestMatches,
     TestSession,
     TurnRepo
 }
@@ -29,9 +28,9 @@ import com.vivi.matchmaker.persistence.{
 /** The game-engine interaction, end to end against the real database with a stubbed engine.
   *
   * The engine is the one thing that cannot be stood up here — it is another system entirely — so it is a stub that
-  * records what it was asked and answers with fixed urls. Everything on matchmaker's side of the exchange is real: the
-  * challenge, its acceptances, the match and participants written from them, and the result rows the completion
-  * callback produces.
+  * records what it was asked and answers with fixed urls. Everything on matchmaker's side of the exchange is real: a
+  * challenge played up to its match being created, or a match written as one is once created, and the result rows the
+  * completion callback produces.
   */
 class GameEngineServiceSpec extends PropertySuite {
     TestMigration.ensure()
@@ -65,9 +64,9 @@ class GameEngineServiceSpec extends PropertySuite {
     }
 
     /** An engine that answers a status call by naming the seat it was given first as the one to move, which is what a
-      * real engine says about a match that has only just begun. The stub above cannot do this: the participant ids do
-      * not exist until `start` has written them, so the answer has to be built from the create request rather than set
-      * up in advance.
+      * real engine says about a match that has only just begun. The stub above cannot do this: the participant ids are
+      * not known until the match's round has written them, so the answer has to be built from the create request rather
+      * than set up in advance.
       */
     private class FirstTurnEngine extends GameEngineClient {
         @volatile private var firstSeat: Option[Long] = None
@@ -85,27 +84,6 @@ class GameEngineServiceSpec extends PropertySuite {
                 )
               )
             )
-    }
-
-    /** An engine whose *first* createGame parks until it is released, so a test can hold a start in the window between
-      * its first transaction committing and its last one running — which is exactly the window a second Start used to
-      * slip through.
-      *
-      * Only the first call parks. A later one answers at once, so that a regression shows up as an assertion about how
-      * many matches exist rather than as a test that deadlocks against its own gate and has to be timed out.
-      */
-    private class GatedEngine(entered: Deferred[IO, Unit], release: Deferred[IO, Unit]) extends GameEngineClient {
-        private val response = CreateGameResponse("https://engine/status/1", "https://engine/play/1", None)
-        @volatile var calls: Int = 0
-
-        def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
-            IO { calls += 1; calls == 1 }.flatMap { first =>
-                if (first) entered.complete(()).attempt *> release.get.as(response)
-                else IO.pure(response)
-            }
-
-        def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
-            IO.pure(GameStatusResponse(completed = false, participants = Nil))
     }
 
     private def genUniqueString: Gen[String] =
@@ -155,6 +133,18 @@ class GameEngineServiceSpec extends PropertySuite {
             } yield Fixture(owner, game, character)
         }
 
+    /** The terms a match is played under, as a spec writes one directly: see [[begin]]. */
+    private case class Terms(
+        isPublic: Boolean = false,
+        timeLimit: Option[Duration] = None,
+        message: String = "message",
+        timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
+        timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,
+        start: Option[Instant] = None,
+        settings: String = "{}",
+        live: Boolean = false
+    )
+
     private def challengeFor(
         fixture: Fixture,
         isPublic: Boolean = false,
@@ -165,22 +155,107 @@ class GameEngineServiceSpec extends PropertySuite {
         start: Option[Instant] = None,
         settings: String = "{}",
         live: Boolean = false
-    ): Challenge =
-        CharacterChallenge(
-          ChallengeId(0),
-          fixture.owner.playerId,
-          message,
-          start = start,
-          timeLimit = timeLimit,
-          settings = settings,
-          gameId = fixture.game.gameId,
-          characterId = Some(fixture.character.characterId),
-          isPublic = isPublic,
-          gameRoleId = Some(fixture.game.roles.head.gameRoleId),
-          timeLimitKind = timeLimitKind,
-          timeLimitUnit = timeLimitUnit,
-          live = live
-        )
+    ): Terms = Terms(isPublic, timeLimit, message, timeLimitKind, timeLimitUnit, start, settings, live)
+
+    /** A match of `fixture`'s game begun as its engine has made it -- urls and a start -- written straight into the
+      * tables (`TestMatches`), with the owner seated as the game's first role and `other`, if given, as its second.
+      *
+      * For the specs about what happens once a match exists: moves, results, clocks and refreshes do not care how it
+      * came to be, and this gives them a clock of exactly the kind they ask about. How a match comes to be is the
+      * challenge specs' further up, which go through the services.
+      */
+    private def begin(
+        fixture: Fixture,
+        terms: Terms,
+        other: Option[(Player, Character[String])] = None
+    ): IO[Match] =
+        TestSession.resource.use { session =>
+            val matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
+            def seat(player: Player, character: Character[String], role: GameRoleId) =
+                TestMatches.writeSeat(
+                  session,
+                  CharacterParticipant(
+                    ParticipantId(0),
+                    fixture.game.gameId,
+                    matchId,
+                    player.playerId,
+                    pending = false,
+                    completed = false,
+                    due = None,
+                    character.characterId,
+                    role
+                  ),
+                  EloRating.initial,
+                  Some(EloRating.initial)
+                )
+            for {
+                written <- TestMatches.writeMatch(
+                  session,
+                  Match(
+                    fixture.game.gameId,
+                    matchId,
+                    TournamentId.unassigned,
+                    fixture.owner.playerId,
+                    terms.message,
+                    None,
+                    Some(terms.start.getOrElse(Instant.now())),
+                    terms.timeLimit,
+                    terms.settings,
+                    terms.isPublic,
+                    statusUrl = Some("https://engine/status/1"),
+                    playUrl = Some("https://engine/play/1"),
+                    publicUrl = Option.when(terms.isPublic)("https://engine/public/1"),
+                    timeLimitKind = terms.timeLimitKind,
+                    timeLimitUnit = terms.timeLimitUnit,
+                    live = terms.live
+                  )
+                )
+                _ <- seat(fixture.owner, fixture.character, fixture.game.roles(0).gameRoleId)
+                _ <- other.traverse_((player, character) => seat(player, character, fixture.game.roles(1).gameRoleId))
+            } yield written
+        }
+
+    /** Another player with a character in `fixture`'s game. */
+    private def opponent(services: Services[String], fixture: Fixture, nickname: String, externalId: String) =
+        for {
+            other <- services.registration.register(nickname, externalId)
+            character <- TestSession.resource.use { session =>
+                new CharacterRepo[String](session)
+                    .create(
+                      Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId))
+                    )
+            }
+        } yield (other, character)
+
+    /** A challenge of `fixture`'s game between its owner, as the attacker, and another player, as the defender, played
+      * through the services up to its match being created in the engine.
+      */
+    private def challenged(
+        services: Services[String],
+        fixture: Fixture,
+        otherExternalId: String,
+        roundDuration: Option[Duration] = None,
+        live: Boolean = false,
+        isPublic: Boolean = false,
+        settings: String = "{}"
+    ): IO[(Match, Player)] =
+        for {
+            found <- opponent(services, fixture, s"other-$otherExternalId", otherExternalId)
+            (other, otherCharacter) = found
+            made <- Challenges.startedMatch(
+              services,
+              fixture.game,
+              List(
+                Challenges.Seat(fixture.owner, fixture.game.roles(0).gameRoleId, Some(fixture.character.characterId)),
+                Challenges.Seat(other, fixture.game.roles(1).gameRoleId, Some(otherCharacter.characterId))
+              ),
+              roundDuration = roundDuration,
+              live = live,
+              isPublic = isPublic,
+              settings = settings
+            )
+            started <- matchOf(fixture.game.gameId, made._2).map(_.get)
+        } yield (started, other)
 
     private def participantsOf(m: Match): IO[List[Participant]] =
         TestSession.resource.use(session =>
@@ -190,41 +265,42 @@ class GameEngineServiceSpec extends PropertySuite {
     private def matchOf(gameId: GameId, matchId: MatchId): IO[Option[Match]] =
         TestSession.resource.use(session => new MatchRepo(session).read(gameId, matchId))
 
-    property("start creates the match from the engine's answer, with one participant per acceptance") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val engine = StubEngine()
-            val services = TestServices.servicesWith(engine, callbackBaseUrl = Some("https://matchmaker.example.com"))
-            val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(challengeFor(fixture, isPublic = true), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
-                participants <- participantsOf(started)
-                // The challenge is retired by starting it, so it can never become a second match.
-                remaining <- services.challenges.listByGame(fixture.game.gameId, externalId)
-            } yield {
-                val request = engine.lastRequest.get
-                started.statusUrl.contains("https://engine/status/1") &&
-                started.playUrl.contains("https://engine/play/1") &&
-                started.isPublic &&
-                engine.lastUrl.contains(fixture.game.url) &&
-                request.isPublic &&
-                request.matchId == started.matchId.value.toString &&
-                // The engine is told the participant ids it will quote back in its callbacks, the
-                // player's Cognito id, and the role they are playing -- by its name, not the display
-                // name players see.
-                request.players.map(_.participantId).toSet == participants.map(_.participantId.value).toSet &&
-                request.players.map(_.cognitoId) == List(externalId) &&
-                request.players.flatMap(_.role) == List("attacker") &&
-                // And the nickname, for the engine to show the player by.
-                request.players.flatMap(_.nickname) == List(nickname) &&
-                // And the character's name, for the engine to show it by.
-                request.players.flatMap(_.characterName) == List("character") &&
-                request.moveCallbackUrl.exists(_.endsWith(s"/matches/${started.matchId.value}/moves")) &&
-                participants.size == 1 &&
-                participants.head.playerId == fixture.owner.playerId &&
-                remaining.forall(_.challenge.challengeId != challenge.challengeId)
-            }
-            result.timeout(15.seconds).unsafeRunSync()
+    property("a challenge's match is created from the engine's answer, with one seat per entry") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services =
+                    TestServices.servicesWith(engine, callbackBaseUrl = Some("https://matchmaker.example.com"))
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId, gameExternalId)
+                    made <- challenged(services, fixture, otherExternalId, isPublic = true)
+                    (started, other) = made
+                    participants <- participantsOf(started)
+                    // Started, so it is no longer open to enter.
+                    remaining <- services.tournaments.challengesForGame(fixture.game.gameId, externalId)
+                } yield {
+                    val request = engine.lastRequest.get
+                    started.statusUrl.contains("https://engine/status/1") &&
+                    started.playUrl.contains("https://engine/play/1") &&
+                    started.isPublic &&
+                    engine.lastUrl.contains(fixture.game.url) &&
+                    request.isPublic &&
+                    request.matchId == started.matchId.value.toString &&
+                    // The engine is told the participant ids it will quote back in its callbacks, the
+                    // players' Cognito ids, and the roles they chose -- by their names, not the display
+                    // names players see.
+                    request.players.map(_.participantId).toSet == participants.map(_.participantId.value).toSet &&
+                    request.players.map(_.cognitoId).toSet == Set(externalId, otherExternalId) &&
+                    request.players.flatMap(_.role).toSet == Set("attacker", "defender") &&
+                    request.players.find(_.cognitoId == externalId).flatMap(_.role).contains("attacker") &&
+                    // And the nickname and character name, for the engine to show each player by.
+                    request.players.flatMap(_.nickname).contains(nickname) &&
+                    request.players.flatMap(_.characterName).toSet == Set("character", "other") &&
+                    request.moveCallbackUrl.exists(_.endsWith(s"/matches/${started.matchId.value}/moves")) &&
+                    participants.map(_.playerId).toSet == Set(fixture.owner.playerId, other.playerId) &&
+                    remaining.forall(_.summary.tournament.tournamentId != started.tournamentId)
+                }
+                result.timeout(30.seconds).unsafeRunSync()
         }
     }
 
@@ -241,350 +317,145 @@ class GameEngineServiceSpec extends PropertySuite {
 
     // Every fixture's game is on the same engine host, which is the case a key filed by host could
     // not tell apart: each game has to present its own key, not whichever was stored first.
-    property("start presents the starting game's own API key, though another game shares its engine host") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val engine = StubEngine()
-            val services = TestServices.servicesWith(engine)
-            // Fresh for each case: keys are unique across games, and the database outlives a run.
-            val (otherKey, thisKey) = (s"other-$gameExternalId", s"this-$gameExternalId")
-            val result = for {
-                other <- makeFixture(s"$nickname-o", s"$externalId-o", s"$gameExternalId-o")
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                _ <- TestSession.resource.use { session =>
-                    val keys = new GameApiKeyRepo(session)
-                    keys.set(other.game.gameId, otherKey) *> keys.set(fixture.game.gameId, thisKey)
-                }
-                challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                _ <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
-            } yield (engine.lastCreateKey, engine.lastStatusKey)
+    property("a match is created with its own game's API key, though another game shares its engine host") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine)
+                // Fresh for each case: keys are unique across games, and the database outlives a run.
+                val (otherKey, thisKey) = (s"other-$gameExternalId", s"this-$gameExternalId")
+                val result = for {
+                    other <- makeFixture(s"$nickname-o", s"$externalId-o", s"$gameExternalId-o")
+                    fixture <- makeFixture(nickname, externalId, gameExternalId)
+                    _ <- TestSession.resource.use { session =>
+                        val keys = new GameApiKeyRepo(session)
+                        keys.set(other.game.gameId, otherKey) *> keys.set(fixture.game.gameId, thisKey)
+                    }
+                    _ <- challenged(services, fixture, otherExternalId)
+                } yield (engine.lastCreateKey, engine.lastStatusKey)
 
-            result.timeout(15.seconds).unsafeRunSync() == (Some(thisKey), Some(thisKey))
+                result.timeout(30.seconds).unsafeRunSync() == (Some(thisKey), Some(thisKey))
         }
     }
 
-    property("start sends the engine the parameter value the challenger chose, in place of the default") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val engine = StubEngine()
-            val services = TestServices.servicesWith(engine)
-            val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId, Seq(roundsParameter))
-                chosen <- services.challenges.create(challengeFor(fixture, settings = """{"rounds":"5"}"""), externalId)
-                _ <- services.engine.start(fixture.game.gameId, chosen.challengeId, externalId)
-                withChoice = engine.lastRequest.get
-                plain <- services.challenges.create(challengeFor(fixture), externalId)
-                _ <- services.engine.start(fixture.game.gameId, plain.challengeId, externalId)
-                withoutChoice = engine.lastRequest.get
-            } yield withChoice.parameters == Map("rounds" -> "5") &&
-                withChoice.settings.contains("\"rounds\"") &&
-                withoutChoice.parameters == Map("rounds" -> "4")
-            result.timeout(60.seconds).unsafeRunSync()
+    property("a match is created with the parameter value its challenge chose, in place of the default") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine)
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId, gameExternalId, Seq(roundsParameter))
+                    _ <- challenged(services, fixture, otherExternalId, settings = """{"rounds":"5"}""")
+                    withChoice = engine.lastRequest.get
+                    _ <- challenged(services, fixture, s"$otherExternalId-2")
+                    withoutChoice = engine.lastRequest.get
+                } yield withChoice.parameters == Map("rounds" -> "5") &&
+                    withChoice.settings.contains("\"rounds\"") &&
+                    withoutChoice.parameters == Map("rounds" -> "4")
+                result.timeout(60.seconds).unsafeRunSync()
         }
     }
 
     property("a challenge choosing a value its game does not allow is refused when it is made") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val services = TestServices.servicesWith(StubEngine())
+            def offer(fixture: Fixture, settings: String) =
+                services.tournaments
+                    .createChallenge(
+                      fixture.game.gameId,
+                      ChallengeRequest(characterId = Some(fixture.character.characterId), gameSettings = settings),
+                      externalId
+                    )
+                    .attempt
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId, Seq(roundsParameter))
-                refused <- services.challenges
-                    .create(challengeFor(fixture, settings = """{"rounds":"9"}"""), externalId)
-                    .attempt
-                notObject <- services.challenges.create(challengeFor(fixture, settings = "[]"), externalId).attempt
+                refused <- offer(fixture, """{"rounds":"9"}""")
+                notObject <- offer(fixture, "[]")
             } yield refused.left.toOption.exists {
-                case ValidationError(msg) => msg == "'9' is not a value of rounds; expected one of 3, 4, 5"
+                case ValidationError(msg) => msg.contains("'9' is not a value of rounds; expected one of 3, 4, 5")
                 case _                    => false
             } && notObject.left.toOption.exists(_.isInstanceOf[ValidationError])
             result.timeout(15.seconds).unsafeRunSync()
         }
     }
 
-    property("start refuses a challenge with a required role nobody has taken") {
+    property("a challenge cannot start until it has enough entries to fill the game's required roles") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val services = TestServices.servicesWith(StubEngine())
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                // The challenger takes 'defender', which is recommended, leaving the required 'attacker'
-                // with nobody playing it — the only thing standing between this challenge and a match.
-                // The refusal is read by a player, so it names the seat the way they see it.
-                challenge <- services.challenges.create(
-                  challengeFor(fixture) match {
-                      case c: CharacterChallenge => c.copy(gameRoleId = Some(fixture.game.roles(1).gameRoleId))
-                      case other                 => other
-                  },
+                offered <- services.tournaments.createChallenge(
+                  fixture.game.gameId,
+                  ChallengeRequest(characterId = Some(fixture.character.characterId)),
                   externalId
                 )
-                attempt <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
-            } yield attempt.left.exists {
-                case e: ValidationError => e.getMessage.contains("Attacker side")
-                case _                  => false
-            }
+                attempt <- services.tournaments.start(fixture.game.gameId, offered.tournamentId, externalId).attempt
+            } yield attempt.left.exists(_.isInstanceOf[ConflictError])
             result.timeout(15.seconds).unsafeRunSync()
         }
     }
 
-    property("accept refuses a role another acceptance has already taken") {
+    property("a challenge is started by its owner and nobody else") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val services = TestServices.servicesWith(StubEngine())
                 val result = for {
                     fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    other <- services.registration.register(s"other-$nickname", otherExternalId)
-                    otherCharacter <- TestSession.resource.use { session =>
-                        new CharacterRepo[String](session)
-                            .create(
-                              Character(
-                                CharacterId(0),
-                                fixture.game.gameId,
-                                "other",
-                                "description",
-                                "",
-                                Some(other.playerId)
-                              )
-                            )
-                    }
-                    // challengeFor puts the challenger on the first role, so asking for it again is asking
-                    // for a seat that is taken.
-                    challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                    attempt <- services.challenges
-                        .accept(
-                          fixture.game.gameId,
-                          challenge.challengeId,
-                          Some(otherCharacter.characterId),
-                          fixture.game.roles.head.gameRoleId,
-                          otherExternalId
-                        )
-                        .attempt
-                } yield attempt.left.exists(_.isInstanceOf[ConflictError])
-                result.timeout(15.seconds).unsafeRunSync()
-        }
-    }
-
-    property("start refuses a caller who is not the challenger") {
-        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
-            (nickname, externalId, gameExternalId, otherExternalId) =>
-                val services = TestServices.servicesWith(StubEngine())
-                val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    _ <- services.registration.register(s"other-$nickname", otherExternalId)
-                    challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                    attempt <- services.engine
-                        .start(fixture.game.gameId, challenge.challengeId, otherExternalId)
-                        .attempt
+                    found <- opponent(services, fixture, s"other-$nickname", otherExternalId)
+                    (other, otherCharacter) = found
+                    t <- Challenges.offered(
+                      services,
+                      fixture.game,
+                      List(
+                        Challenges
+                            .Seat(fixture.owner, fixture.game.roles(0).gameRoleId, Some(fixture.character.characterId)),
+                        Challenges.Seat(other, fixture.game.roles(1).gameRoleId, Some(otherCharacter.characterId))
+                      )
+                    )
+                    attempt <- services.tournaments.start(fixture.game.gameId, t, otherExternalId).attempt
                 } yield attempt.left.exists(_.isInstanceOf[UnauthorizedError])
-                result.timeout(15.seconds).unsafeRunSync()
+                result.timeout(30.seconds).unsafeRunSync()
         }
     }
 
-    // A game the engine never created must not leave a match behind: the challenge stays open and
-    // the challenger can try again once the engine is back.
-    property("a failed engine call leaves no match and keeps the challenge") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val services = TestServices.servicesWith(new StubEngine(fail = true))
-            val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                attempt <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
-                remaining <- services.challenges.listByGame(fixture.game.gameId, externalId)
-                matches <- services.matches.active(externalId)
-            } yield attempt.isLeft &&
-                remaining.exists(_.challenge.challengeId == challenge.challengeId) &&
-                matches.isEmpty
-            result.timeout(15.seconds).unsafeRunSync()
-        }
-    }
-
-    // The bug these guard: start cannot hold one transaction across the engine call, so the
-    // challenge's FOR UPDATE lock is released long before the challenge is deleted. A second Start
-    // arriving in that window used to re-read a challenge that still looked startable, pass every
-    // check again, and produce a second match and a second engine game.
-    //
-    // Split in two on purpose. This one pins down *when* the claim exists — it parks the engine to
-    // hold a start open and looks at the row underneath it — and deliberately makes no second
-    // service call while parked, so it cannot deadlock against its own gate. The next one covers
-    // what the claim then refuses.
-    property("a start in flight leaves the challenge claimed for the whole engine call") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val result = for {
-                entered <- Deferred[IO, Unit]
-                release <- Deferred[IO, Unit]
-                engine = new GatedEngine(entered, release)
-                services = TestServices.servicesWith(engine)
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                first <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).start
-                // The first start has committed its claim and is now inside the engine call — the window
-                // a second Start used to slip through. A connection of its own, not the services' pool,
-                // so this read cannot be waiting on the session the parked start is holding.
-                claimed <- entered.get *> TestSession.resource.use { session =>
-                    new ChallengeRepo(session).readForUpdate(fixture.game.gameId, challenge.challengeId)
-                }
-                _ <- release.complete(())
-                started <- first.joinWithNever
-                matches <- services.matches.active(externalId)
-            } yield claimed.flatMap(_.startedMatchId).contains(started.matchId) &&
-                matches.size == 1 &&
-                engine.calls == 1
-            result.timeout(15.seconds).unsafeRunSync()
-        }
-    }
-
-    property("a match said not to be friendly while its engine is still answering the start stays so") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val result = for {
-                entered <- Deferred[IO, Unit]
-                release <- Deferred[IO, Unit]
-                engine = new GatedEngine(entered, release)
-                services = TestServices.servicesWith(engine)
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                admin <- services.registration.register(s"admin-$nickname", s"admin-$externalId")
-                _ <- TestSession.resource.use(session => new PlayerRepo(session).update(admin.copy(isAdmin = true)))
-                challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                starting <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).start
-                // The match row is written and committed, and the start is parked in the engine call.
-                matchId <- entered.get *> TestSession.resource.use { session =>
-                    new ChallengeRepo(session).startedMatch(fixture.game.gameId, challenge.challengeId)
-                }
-                _ <- services.matches.setFriendly(fixture.game.gameId, matchId.get, friendly = false, admin.externalId)
-                _ <- release.complete(())
-                started <- starting.joinWithNever
-                stored <- TestSession.resource.use(session =>
-                    new MatchRepo(session).read(fixture.game.gameId, started.matchId)
-                )
-            } yield stored.exists(m => !m.friendly && m.statusUrl.contains("https://engine/status/1"))
-            result.timeout(15.seconds).unsafeRunSync()
-        }
-    }
-
-    // What the claim refuses. Set directly rather than by parking a real start: the three
-    // operations are guarded by the presence of the claim, so that is what the test establishes.
-    property(
-      "while a challenge is claimed by a start, it can be neither started, accepted, deleted nor backed out of"
-    ) {
+    // A game the engine never created must not leave a match behind it pretending otherwise: the match goes back to
+    // being due, to be created again once the engine is back.
+    property("a failed engine call leaves the match due, and a later attempt creates it") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
-                val services = TestServices.servicesWith(StubEngine())
+                // Settled in the call, so that the failed attempt has been made and undone by the time the last role is
+                // chosen, rather than racing the reads below on a fiber of its own.
+                val failing = TestServices.servicesInline(new StubEngine(fail = true))
+                val working = TestServices.servicesWith(StubEngine())
                 val result = for {
                     fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    other <- services.registration.register(s"other-$nickname", otherExternalId)
-                    otherCharacter <- TestSession.resource.use { session =>
-                        new CharacterRepo[String](session)
-                            .create(
-                              Character(
-                                CharacterId(0),
-                                fixture.game.gameId,
-                                "other",
-                                "description",
-                                "",
-                                Some(other.playerId)
-                              )
-                            )
-                    }
-                    challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                    // Accepted before the claim, so that backing out is something that would otherwise
-                    // succeed — the point is that the claim is what stops it, not a missing acceptance.
-                    _ <- services.challenges
-                        .accept(
-                          fixture.game.gameId,
-                          challenge.challengeId,
-                          Some(otherCharacter.characterId),
-                          fixture.game.roles(1).gameRoleId,
-                          otherExternalId
-                        )
-                    _ <- TestSession.resource.use { session =>
-                        new ChallengeRepo(session)
-                            .claimForStart(fixture.game.gameId, challenge.challengeId, MatchId(1))
-                    }
-                    restarted <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
-                    accepted <- services.challenges
-                        .accept(
-                          fixture.game.gameId,
-                          challenge.challengeId,
-                          Some(fixture.character.characterId),
-                          fixture.game.roles(1).gameRoleId,
-                          externalId
-                        )
-                        .attempt
-                    deleted <- services.challenges
-                        .delete(fixture.game.gameId, challenge.challengeId, externalId)
-                        .attempt
-                    backedOut <- services.acceptances
-                        .delete(fixture.game.gameId, challenge.challengeId, other.playerId, otherExternalId)
-                        .attempt
-                    // Nothing the claim refused may have taken effect. Read from the repository rather than
-                    // from `mine`, which now hides a claimed challenge's acceptances: they are kept, but
-                    // they are no longer anything the player can act on, so the question here is only
-                    // whether the row survived the refused back-out.
-                    roster <- TestSession.resource.use { session =>
-                        new AcceptanceRepo(session).listForChallenge(fixture.game.gameId, challenge.challengeId)
-                    }
-                } yield restarted.left.exists(_.isInstanceOf[ConflictError]) &&
-                    accepted.left.exists(_.isInstanceOf[ConflictError]) &&
-                    deleted.left.exists(_.isInstanceOf[ConflictError]) &&
-                    backedOut.left.exists(_.isInstanceOf[ConflictError]) &&
-                    roster.exists(_.acceptance.playerId == other.playerId)
-                result.timeout(15.seconds).unsafeRunSync()
-        }
-    }
-
-    // The claim must not outlive a failed start, or the engine being briefly down would strand the
-    // challenge as permanently unstartable.
-    property("a start after a failed engine call succeeds, because the failure released the claim") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val failing = TestServices.servicesWith(new StubEngine(fail = true))
-            val working = TestServices.servicesWith(StubEngine())
-            val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- failing.challenges.create(challengeFor(fixture), externalId)
-                attempt <- failing.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
-                retried <- working.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
-                matches <- working.matches.active(externalId)
-            } yield attempt.isLeft &&
-                retried.playUrl.contains("https://engine/play/1") &&
-                matches.size == 1
-            result.timeout(15.seconds).unsafeRunSync()
-        }
-    }
-
-    /** A trigger that refuses to update the match whose description is `explode`, so that a test can fail the database
-      * work that happens *after* the engine has created its game — the one step of a start that cannot simply be rolled
-      * back.
-      */
-    // The engine's game exists by then, so the start cannot be undone, and the claim stays: a
-    // challenge whose game exists must never be startable again, and the claim is now the permanent
-    // mark of that rather than something to be cleaned up. What is left is the documented
-    // recoverable state — a match with no urls, which `refresh` can fill in.
-    property("a database failure after the engine call leaves the challenge spent, not startable again".tag(Quiet)) {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val services = TestServices.servicesWith(StubEngine())
-            // The trigger this leans on is installed once by `TestMigration`, not created here: DDL on
-            // `match` locks the table against every other suite sharing the pool. It fires only on a
-            // match described as 'explode', which is what the challenge below is for.
-            val result = {
-                for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    // The message becomes the match's description, which is what the trigger keys on.
-                    challenge <- services.challenges.create(challengeFor(fixture, message = "explode"), externalId)
-                    attempt <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
-                    // Claimed, so no longer offered as an open challenge and no longer startable.
-                    remaining <- services.challenges.listByGame(fixture.game.gameId, externalId)
-                    restart <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId).attempt
-                    acceptances <- services.acceptances.mine(externalId)
-                    matches <- services.matches.active(externalId)
-                    // What is left behind is the documented recoverable state: a match with no urls.
-                    stranded <- matches.headOption match {
-                        case Some(m) => services.engine.read(fixture.game.gameId, m.matchId, externalId).map(Some(_))
-                        case None    => IO.pure(None)
-                    }
-                } yield attempt.isLeft &&
-                    restart.isLeft &&
-                    remaining.forall(_.challenge.challengeId != challenge.challengeId) &&
-                    // The acceptances are kept with the challenge, but stop being things the player can
-                    // act on — nothing is left in their list to back out of.
-                    acceptances.forall(_.acceptance.challengeId != challenge.challengeId) &&
-                    matches.size == 1 &&
-                    stranded.exists(_.playUrl.isEmpty)
-            }
-            result.timeout(30.seconds).unsafeRunSync()
+                    found <- opponent(failing, fixture, s"other-$nickname", otherExternalId)
+                    (other, otherCharacter) = found
+                    seats = List(
+                      Challenges
+                          .Seat(fixture.owner, fixture.game.roles(0).gameRoleId, Some(fixture.character.characterId)),
+                      Challenges.Seat(other, fixture.game.roles(1).gameRoleId, Some(otherCharacter.characterId))
+                    )
+                    t <- Challenges.offered(failing, fixture.game, seats)
+                    _ <- failing.tournaments.start(fixture.game.gameId, t, externalId)
+                    matchId <- Challenges.choose(
+                      failing,
+                      fixture.game,
+                      t,
+                      seats,
+                      fixture.owner,
+                      settled = _ == TournamentMatchStatus.Due
+                    )
+                    stranded <- matchOf(fixture.game.gameId, matchId)
+                    before <- failing.matches.active(externalId)
+                    _ <- working.rounds.createMatch(fixture.game.gameId, t, matchId)
+                    created <- matchOf(fixture.game.gameId, matchId)
+                    after <- working.matches.active(externalId)
+                } yield stranded.exists(m => m.status == MatchStatus.Due && m.playUrl.isEmpty) &&
+                    before.isEmpty &&
+                    created.exists(_.playUrl.contains("https://engine/play/1")) &&
+                    after.map(_.matchId) == List(matchId)
+                result.timeout(30.seconds).unsafeRunSync()
         }
     }
 
@@ -597,11 +468,7 @@ class GameEngineServiceSpec extends PropertySuite {
             val due = prevMoveAt.plusSeconds(300)
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(
-                  challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(5))),
-                  externalId
-                )
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                started <- begin(fixture, challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(5))))
                 participants <- participantsOf(started)
                 seat = participants.head.participantId
                 // A player's own token is not a game's secret, and the callback is the game's route.
@@ -975,8 +842,7 @@ class GameEngineServiceSpec extends PropertySuite {
             val services = TestServices.servicesWith(StubEngine())
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                started <- begin(fixture, challengeFor(fixture))
                 seat <- participantsOf(started).map(_.head.participantId)
                 refused <- services.engine
                     .recordResults(
@@ -1003,8 +869,7 @@ class GameEngineServiceSpec extends PropertySuite {
             )
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                started <- begin(fixture, challengeFor(fixture))
                 seat <- participantsOf(started).map(_.head.participantId)
                 _ <- services.engine.recordResults(
                   fixture.game.gameId,
@@ -1111,8 +976,7 @@ class GameEngineServiceSpec extends PropertySuite {
             val services = TestServices.servicesWith(StubEngine())
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                started <- begin(fixture, challengeFor(fixture))
                 participants <- participantsOf(started)
                 seat = participants.head.participantId
                 reported = ReportedResult(seat, rank = 1, scores = Map("points" -> 42.0), isWinner = true)
@@ -1144,11 +1008,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 val result = for {
                     fixture <- makeFixture(nickname, externalId, gameExternalId)
                     _ <- services.registration.register(s"other-$nickname", otherExternalId)
-                    challenge <- services.challenges.create(
-                      challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(10))),
-                      externalId
-                    )
-                    started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                    started <- begin(fixture, challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(10))))
                     participants <- participantsOf(started)
                     seat = participants.head.participantId
                     _ <- IO {
@@ -1187,8 +1047,7 @@ class GameEngineServiceSpec extends PropertySuite {
             val services = TestServices.servicesWith(engine)
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                started <- begin(fixture, challengeFor(fixture))
                 // The engine will claim the match is over, which is the answer that would do the most
                 // damage if it were applied: it completes the match and writes it a finish time.
                 _ <- IO {
@@ -1213,8 +1072,7 @@ class GameEngineServiceSpec extends PropertySuite {
             val services = TestServices.servicesWith(engine)
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(challengeFor(fixture, timeLimit = None), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                started <- begin(fixture, challengeFor(fixture, timeLimit = None))
                 participants <- participantsOf(started)
                 seat = participants.head.participantId
                 _ <- IO {
@@ -1256,25 +1114,9 @@ class GameEngineServiceSpec extends PropertySuite {
     ): IO[(Fixture, Match, Participant, Participant)] =
         for {
             fixture <- makeFixture(nickname, externalId, gameExternalId)
-            other <- services.registration.register(s"other-$nickname", otherExternalId)
-            otherCharacter <- TestSession.resource.use { session =>
-                new CharacterRepo[String](session)
-                    .create(
-                      Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId))
-                    )
-            }
-            challenge <- services.challenges.create(
-              challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(10))),
-              externalId
-            )
-            _ <- services.challenges.accept(
-              fixture.game.gameId,
-              challenge.challengeId,
-              Some(otherCharacter.characterId),
-              fixture.game.roles(1).gameRoleId,
-              otherExternalId
-            )
-            started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+            found <- opponent(services, fixture, s"other-$nickname", otherExternalId)
+            (other, otherCharacter) = found
+            started <- begin(fixture, challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(10))), Some(found))
             participants <- participantsOf(started)
             mine = participants.find(_.playerId == fixture.owner.playerId).get
             theirs = participants.find(_.playerId == other.playerId).get
@@ -1319,33 +1161,20 @@ class GameEngineServiceSpec extends PropertySuite {
     private def turnsOf(m: Match): IO[List[Turn]] =
         TestSession.resource.use(session => new TurnRepo(session).listForMatch(m.gameId, m.matchId))
 
-    /** A started match with two seats: the challenger's, and another player's accepting into the second role. */
+    /** A begun match with two seats: the owner's, and another player's in the second role. */
     private def twoSeats(
         services: Services[String],
         nickname: String,
         externalId: String,
         gameExternalId: String,
         otherExternalId: String,
-        challenge: Fixture => Challenge = challengeFor(_)
+        challenge: Fixture => Terms = challengeFor(_)
     ): IO[(Fixture, Match, Participant, Participant)] =
         for {
             fixture <- makeFixture(nickname, externalId, gameExternalId)
-            other <- services.registration.register(s"other-$nickname", otherExternalId)
-            otherCharacter <- TestSession.resource.use { session =>
-                new CharacterRepo[String](session)
-                    .create(
-                      Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId))
-                    )
-            }
-            offered <- services.challenges.create(challenge(fixture), externalId)
-            _ <- services.challenges.accept(
-              fixture.game.gameId,
-              offered.challengeId,
-              Some(otherCharacter.characterId),
-              fixture.game.roles(1).gameRoleId,
-              otherExternalId
-            )
-            started <- services.engine.start(fixture.game.gameId, offered.challengeId, externalId)
+            found <- opponent(services, fixture, s"other-$nickname", otherExternalId)
+            (other, _) = found
+            started <- begin(fixture, challenge(fixture), Some(found))
             participants <- participantsOf(started)
             mine = participants.find(_.playerId == fixture.owner.playerId).get
             theirs = participants.find(_.playerId == other.playerId).get
@@ -2034,119 +1863,79 @@ class GameEngineServiceSpec extends PropertySuite {
         }
     }
 
-    /* Every term of the clock the challenge was offered under, on the match it becomes.
-     *
-     * All three travel together and each has been forgotten at least once: the limit is what is
-     * enforced, the kind is how it is spent, and the unit is how it is said back — a challenge
-     * offered in hours whose match says "120 minutes" is quoting terms nobody agreed to. Checked
-     * on the match row and on the summary the lists are drawn from, since they are read back by
-     * different queries.
-     */
-    property("a match is started under the clock its challenge was offered with, unit and all") {
+    /* The clock a challenge's match is created under: its round duration, spent as the game spends
+     * time. This game is one of turns, so each of the two players has a chess clock of half of it. Read
+     * both on the match row and on the summary the lists are drawn from, since they are read back by
+     * different queries. */
+    property("a challenge's match is created under the clock its round duration gives it") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
-                val engine = StubEngine()
+                val services = TestServices.servicesWith(StubEngine())
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId, gameExternalId)
+                    made <- challenged(services, fixture, otherExternalId, roundDuration = Some(Duration.ofHours(2)))
+                    (started, _) = made
+                    listed <- services.matches.active(externalId)
+                    row = listed.find(_.matchId == started.matchId).get
+                } yield started.timeLimit.contains(Duration.ofHours(1)) &&
+                    started.timeLimitKind == TimeLimitKind.Total &&
+                    row.timeLimit.contains(Duration.ofHours(1)) &&
+                    row.timeLimitKind == TimeLimitKind.Total
+                result.timeout(30.seconds).unsafeRunSync()
+        }
+    }
+
+    property("a match records its first turn as it is created, so the player who moves first is told straight away") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = new FirstTurnEngine
                 val services = TestServices.servicesWith(engine)
                 val result = for {
                     fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    other <- services.registration.register(s"other-$nickname", otherExternalId)
-                    otherCharacter <- TestSession.resource.use { session =>
-                        new CharacterRepo[String](session)
-                            .create(
-                              Character(
-                                CharacterId(0),
-                                fixture.game.gameId,
-                                "other",
-                                "description",
-                                "",
-                                Some(other.playerId)
-                              )
-                            )
-                    }
-                    challenge <- services.challenges.create(
-                      challengeFor(
-                        fixture,
-                        timeLimit = Some(Duration.ofHours(2)),
-                        timeLimitKind = TimeLimitKind.Total,
-                        timeLimitUnit = TimeLimitUnit.Hours
-                      ),
-                      externalId
-                    )
-                    _ <- services.challenges.accept(
-                      fixture.game.gameId,
-                      challenge.challengeId,
-                      Some(otherCharacter.characterId),
-                      fixture.game.roles(1).gameRoleId,
-                      otherExternalId
-                    )
-                    started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
-                    // Read back rather than taken from what `start` returned, so this is what was stored.
-                    stored <- TestSession.resource.use(session =>
-                        new MatchRepo(session).read(started.gameId, started.matchId)
-                    )
-                    listed <- services.matches.active(externalId)
-                    row = listed.find(_.matchId == started.matchId).get
-                } yield stored.exists(m =>
-                    m.timeLimit.contains(Duration.ofHours(2)) &&
-                        m.timeLimitKind == TimeLimitKind.Total &&
-                        m.timeLimitUnit == TimeLimitUnit.Hours
-                ) &&
-                    row.timeLimit.contains(Duration.ofHours(2)) &&
-                    row.timeLimitKind == TimeLimitKind.Total &&
-                    row.timeLimitUnit == TimeLimitUnit.Hours
-                result.timeout(15.seconds).unsafeRunSync()
+                    made <- challenged(services, fixture, otherExternalId)
+                    (started, other) = made
+                    participants <- participantsOf(started)
+                    // The lists the main page's "waiting on you" is drawn from, asked for with no refresh in
+                    // between — this is the state a player finds when the page loads after a start.
+                    mine <- services.matches.due(externalId)
+                    theirs <- services.matches.due(otherExternalId)
+                } yield participants.count(_.pending) == 1 &&
+                    (mine ++ theirs).map(_.matchId) == List(started.matchId)
+                result.timeout(30.seconds).unsafeRunSync()
         }
     }
 
-    property("start records the first turn, so the player who moves first is told straight away") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val engine = new FirstTurnEngine
-            val services = TestServices.servicesWith(engine)
-            val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
-                participants <- participantsOf(started)
-                // The list the main page's "waiting on you" is drawn from, asked for with no refresh in
-                // between — this is the state a player finds when the page loads after a start.
-                due <- services.matches.due(externalId)
-            } yield participants.exists(_.pending) &&
-                due.map(_.matchId) == List(started.matchId)
-            result.timeout(15.seconds).unsafeRunSync()
+    // The match is created by the time the engine is asked whose turn it is, so an engine that cannot answer must
+    // not turn a created match into a failure: it leaves the seats as they were written, which `refresh` corrects.
+    property("a match is still created when the engine will not say whose turn it is") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = new GameEngineClient {
+                    def createGame(
+                        gameUrl: String,
+                        apiKey: Option[String],
+                        request: CreateGameRequest
+                    ): IO[CreateGameResponse] =
+                        IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+                    def status(
+                        statusUrl: String,
+                        apiKey: Option[String],
+                        since: Option[Instant] = None
+                    ): IO[GameStatusResponse] =
+                        IO.raiseError(GameEngineError("status is down"))
+                }
+                val services = TestServices.servicesWith(engine)
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId, gameExternalId)
+                    made <- challenged(services, fixture, otherExternalId)
+                    (started, _) = made
+                    participants <- participantsOf(started)
+                } yield started.playUrl.contains("https://engine/play/1") && participants.forall(!_.pending)
+                result.timeout(30.seconds).unsafeRunSync()
         }
     }
 
-    // The start has already succeeded by the time the engine is asked, and the match exists either
-    // way, so an engine that cannot answer must not turn a completed start into a failure. It
-    // leaves precisely the state every start used to leave, which `refresh` still corrects.
-    property("a start still succeeds when the engine will not say whose turn it is") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val engine = new GameEngineClient {
-                def createGame(
-                    gameUrl: String,
-                    apiKey: Option[String],
-                    request: CreateGameRequest
-                ): IO[CreateGameResponse] =
-                    IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
-                def status(
-                    statusUrl: String,
-                    apiKey: Option[String],
-                    since: Option[Instant] = None
-                ): IO[GameStatusResponse] =
-                    IO.raiseError(GameEngineError("status is down"))
-            }
-            val services = TestServices.servicesWith(engine)
-            val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(challengeFor(fixture), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
-                participants <- participantsOf(started)
-            } yield started.playUrl.contains("https://engine/play/1") && participants.forall(!_.pending)
-            result.timeout(15.seconds).unsafeRunSync()
-        }
-    }
-
-    private def liveChallenge(fixture: Fixture): Challenge =
+    private def liveChallenge(fixture: Fixture): Terms =
         challengeFor(
           fixture,
           timeLimit = Some(Duration.ofSeconds(30)),
@@ -2154,62 +1943,61 @@ class GameEngineServiceSpec extends PropertySuite {
           live = true
         )
 
-    property("a live challenge starts a live match, and the engine is told so with the turn timeout") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val engine = StubEngine()
-            val services = TestServices.servicesWith(engine, callbackBaseUrl = Some("https://matchmaker.example.com"))
-            val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(liveChallenge(fixture), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
-                reread <- matchOf(fixture.game.gameId, started.matchId)
-            } yield {
-                val request = engine.lastRequest.get
-                challenge.live && started.live && reread.exists(_.live) &&
-                request.live.contains(LiveTerms(30L, "PER_TURN")) &&
-                // Still sent: the engine sends no moves to it, but boxing finds matchmaker by it.
-                request.moveCallbackUrl.isDefined && request.resultsCallbackUrl.isDefined
-            }
-            result.timeout(15.seconds).unsafeRunSync()
+    property("a live challenge's match is live, and the engine is told so with its clock") {
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services =
+                    TestServices.servicesWith(engine, callbackBaseUrl = Some("https://matchmaker.example.com"))
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId, gameExternalId)
+                    made <- challenged(
+                      services,
+                      fixture,
+                      otherExternalId,
+                      roundDuration = Some(Duration.ofMinutes(1)),
+                      live = true
+                    )
+                    (started, _) = made
+                } yield {
+                    val request = engine.lastRequest.get
+                    // A game of turns: each of the two players has half the minute, as a chess clock.
+                    started.live &&
+                    request.live.contains(LiveTerms(30L, "TOTAL")) &&
+                    // Still sent: the engine sends no moves to it, but boxing finds matchmaker by it.
+                    request.moveCallbackUrl.isDefined && request.resultsCallbackUrl.isDefined
+                }
+                result.timeout(30.seconds).unsafeRunSync()
         }
     }
 
     property("a match that is not live does not tell the engine it is") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val engine = StubEngine()
-            val services = TestServices.servicesWith(engine)
-            val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(
-                  challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(10))),
-                  externalId
-                )
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
-            } yield !started.live && engine.lastRequest.exists(_.live.isEmpty)
-            result.timeout(15.seconds).unsafeRunSync()
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                val engine = StubEngine()
+                val services = TestServices.servicesWith(engine)
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId, gameExternalId)
+                    made <- challenged(services, fixture, otherExternalId, roundDuration = Some(Duration.ofMinutes(10)))
+                    (started, _) = made
+                } yield !started.live && engine.lastRequest.exists(_.live.isEmpty)
+                result.timeout(30.seconds).unsafeRunSync()
         }
     }
 
-    property("a live challenge needs a time limit, and may make it a chess clock") {
+    property("a live challenge needs a time to play") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val engine = StubEngine()
-            val services = TestServices.servicesWith(engine)
+            val services = TestServices.servicesWith(StubEngine())
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                noLimit <- services.challenges.create(challengeFor(fixture, live = true), externalId).attempt
-                chess <- services.challenges.create(
-                  challengeFor(
-                    fixture,
-                    timeLimit = Some(Duration.ofMinutes(10)),
-                    timeLimitKind = TimeLimitKind.Total,
-                    live = true
-                  ),
-                  externalId
-                )
-                started <- services.engine.start(fixture.game.gameId, chess.challengeId, externalId)
-            } yield noLimit.left.exists(_.isInstanceOf[ValidationError]) &&
-                started.live && started.timeLimitKind == TimeLimitKind.Total &&
-                engine.lastRequest.exists(_.live.contains(LiveTerms(600L, "TOTAL")))
+                noLimit <- services.tournaments
+                    .createChallenge(
+                      fixture.game.gameId,
+                      ChallengeRequest(characterId = Some(fixture.character.characterId), live = true),
+                      externalId
+                    )
+                    .attempt
+            } yield noLimit.left.exists(_.isInstanceOf[ValidationError])
             result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -2217,23 +2005,30 @@ class GameEngineServiceSpec extends PropertySuite {
     // The engine runs a live match's turns and says nothing about them, so a seat matchmaker marked
     // pending would stay pending -- and on the "waiting on you" list -- for the rest of the match.
     property("matchmaker keeps no turn of a live match, and enforces no clock on it") {
-        forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            // Names the first seat as the one to move, which an ordinary match would record.
-            val engine = new FirstTurnEngine
-            val services = TestServices.servicesWith(engine)
-            val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(liveChallenge(fixture), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
-                refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
-                participants <- participantsOf(started)
-                due <- services.matches.due(externalId)
-                active <- services.matches.active(externalId)
-            } yield !refreshed.completed &&
-                participants.forall(p => !p.pending && p.due.isEmpty) &&
-                due.isEmpty &&
-                active.find(_.matchId == started.matchId).exists(_.live)
-            result.timeout(15.seconds).unsafeRunSync()
+        forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
+            (nickname, externalId, gameExternalId, otherExternalId) =>
+                // Names the first seat as the one to move, which an ordinary match would record.
+                val engine = new FirstTurnEngine
+                val services = TestServices.servicesWith(engine)
+                val result = for {
+                    fixture <- makeFixture(nickname, externalId, gameExternalId)
+                    made <- challenged(
+                      services,
+                      fixture,
+                      otherExternalId,
+                      roundDuration = Some(Duration.ofMinutes(1)),
+                      live = true
+                    )
+                    (started, _) = made
+                    refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                    participants <- participantsOf(started)
+                    due <- services.matches.due(externalId)
+                    active <- services.matches.active(externalId)
+                } yield !refreshed.completed &&
+                    participants.forall(p => !p.pending && p.due.isEmpty) &&
+                    due.isEmpty &&
+                    active.find(_.matchId == started.matchId).exists(_.live)
+                result.timeout(30.seconds).unsafeRunSync()
         }
     }
 
@@ -2242,8 +2037,7 @@ class GameEngineServiceSpec extends PropertySuite {
             val services = TestServices.servicesWith(StubEngine())
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(liveChallenge(fixture), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                started <- begin(fixture, liveChallenge(fixture))
                 participants <- participantsOf(started)
                 seat = participants.head.participantId
                 reported = ReportedResult(seat, rank = 2, scores = Map.empty, isWinner = false, forfeit = true)
@@ -2264,8 +2058,7 @@ class GameEngineServiceSpec extends PropertySuite {
             val services = TestServices.servicesWith(engine)
             val result = for {
                 fixture <- makeFixture(nickname, externalId, gameExternalId)
-                challenge <- services.challenges.create(liveChallenge(fixture), externalId)
-                started <- services.engine.start(fixture.game.gameId, challenge.challengeId, externalId)
+                started <- begin(fixture, liveChallenge(fixture))
                 _ <- IO { engine.status = GameStatusResponse(completed = true, participants = Nil) }
                 refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
                 participants <- participantsOf(started)

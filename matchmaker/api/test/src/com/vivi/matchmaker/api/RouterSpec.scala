@@ -12,6 +12,7 @@ import com.vivi.matchmaker.persistence.TextCodec.given
 import com.vivi.matchmaker.service._
 import ApiGateway.Request
 import Json.given
+import TournamentJson.given
 
 /** Routing, authentication and error mapping, none of which need a database.
   *
@@ -182,22 +183,6 @@ class RouterSpec extends FunSuite {
         assertEquals(dispatch(request("PUT", "/characters/abc")).statusCode, 400)
     }
 
-    test("a non-numeric player id in an acceptance path is a bad request") {
-        assertEquals(dispatch(request("DELETE", "/challenges/1/1/acceptances/abc")).statusCode, 400)
-    }
-
-    test("a non-numeric player id in an invitation path is a bad request") {
-        assertEquals(dispatch(request("DELETE", "/challenges/1/1/invitations/abc")).statusCode, 400)
-    }
-
-    // The one deliberate break in the wire format when invitations came: `POST /challenges` takes the challenge
-    // nested now, so a client sending the bare challenge it used to send is refused rather than
-    // creating something. Answered at parsing, before the service -- a 500 here would mean the
-    // body had been understood.
-    test("a bare challenge body is no longer accepted by the create route") {
-        assertEquals(dispatch(request("POST", "/challenges", body = write(challenge))).statusCode, 400)
-    }
-
     /** Bodies are serialized from real model values rather than hand-written JSON, so that a body is never accidentally
       * invalid — which would fail the request at parsing with 400 and hide whether the route matched at all.
       */
@@ -216,23 +201,10 @@ class RouterSpec extends FunSuite {
       )
     )
 
-    private val challenge =
-        CharacterChallenge(
-          ChallengeId(0),
-          PlayerId(1),
-          "message",
-          None,
-          None,
-          "{}",
-          GameId(1),
-          Some(CharacterId(1)),
-          gameRoleId = Some(GameRoleId(1))
-        )
-
-    // Wrapped, and with an invitation in it: the nested challenge still has to go through the
-    // merged `Challenge` reader, which is the part of this body that could break on its own.
+    // Offered with a time to play and an invitation: the request's Option and list fields are the ones a client can get
+    // wrong, written here as upickle writes them.
     private val challengeBody =
-        write(Json.CreateChallenge(challenge, Seq(Invite(PlayerId(2), Some(GameRoleId(2))))))
+        write(ChallengeRequest(characterId = Some(CharacterId(1)), poolSize = Some(2), invitations = List(PlayerId(2))))
 
     private val resultsBody = write(
       Json.MatchResults(List(Json.ResultEntry(ParticipantId(1), 1, Map("points" -> ujson.Num(3)), isWinner = true)))
@@ -257,10 +229,6 @@ class RouterSpec extends FunSuite {
         "/me/notifications/games/1",
         """{"preferences":{"matchStarted":true,"yourTurn":false},"applyToMatches":true}"""
       ),
-      ("GET", "/me/acceptances", "{}"),
-      ("GET", "/me/invitations", "{}"),
-      ("DELETE", "/me/invitations/1/1", "{}"),
-      ("DELETE", "/me/character-invitations/1/1/3", "{}"),
       ("GET", "/me/matches", "{}"),
       ("GET", "/me/matches/due", "{}"),
       ("GET", "/me/matches/completed", "{}"),
@@ -279,6 +247,8 @@ class RouterSpec extends FunSuite {
       ("GET", "/games/1/ratings/2", "{}"),
       ("PUT", "/games/1/ratings/2", """{"rating":1600}"""),
       ("GET", "/games/1/challenges", "{}"),
+      ("POST", "/games/1/challenges", challengeBody),
+      ("GET", "/me/challenges", "{}"),
       ("GET", "/games/1/characters", "{}"),
       ("GET", "/games/1/players/2/characters", "{}"),
       ("GET", "/games/1/characters/2", "{}"),
@@ -290,17 +260,6 @@ class RouterSpec extends FunSuite {
       ("PUT", "/characters/1/owner", """{"toNickname":"bob","ownerExternalId":"sub-1"}"""),
       ("GET", "/characters?owner=sub-1", "{}"),
       ("PUT", "/characters/1/state", """{"state":"s"}"""),
-      ("POST", "/challenges", challengeBody),
-      ("DELETE", "/challenges/1/1", "{}"),
-      ("POST", "/challenges/1/1/acceptances", """{"characterId":1,"gameRoleId":1}"""),
-      ("DELETE", "/challenges/1/1/acceptances/2", "{}"),
-      // Inviting somebody to an existing challenge, and taking it back. The body is an `Invite`,
-      // whose `gameRoleId` is optional -- so "anybody's free seat" is the field left out.
-      ("POST", "/challenges/1/1/invitations", """{"playerId":2,"gameRoleId":2}"""),
-      ("DELETE", "/challenges/1/1/invitations/2", "{}"),
-      ("POST", "/challenges/1/1/character-invitations", """{"characterId":3,"gameRoleId":2}"""),
-      ("DELETE", "/challenges/1/1/character-invitations/3", "{}"),
-      ("POST", "/challenges/1/1/start", "{}"),
       ("GET", "/games/1/matches/11", "{}"),
       ("POST", "/games/1/matches/11/refresh", "{}"),
       ("POST", "/games/1/matches/11/cancel", "{}"),
@@ -308,7 +267,7 @@ class RouterSpec extends FunSuite {
       ("PUT", "/games/1/matches/11/friendly", """{"friendly":false}"""),
       ("GET", "/games/1/matches/11/notifications", "{}"),
       // The four a seat holds, and not optional: a seat answers every kind it can be asked
-      // about, so there is nothing here to leave out. The seven kinds about a challenge are not a
+      // about, so there is nothing here to leave out. The seven kinds about entries are not a
       // seat's to answer and are not accepted here.
       (
         "PUT",
@@ -373,7 +332,7 @@ class RouterSpec extends FunSuite {
     test("the routed list covers every route Router declares") {
         // A count, because the route table cannot be enumerated from Router itself. It fails loudly
         // when a route is added there without a corresponding entry above.
-        assertEquals(routed.size, 84)
+        assertEquals(routed.size, 73)
         assertEquals(routed.distinct.size, routed.size)
     }
 

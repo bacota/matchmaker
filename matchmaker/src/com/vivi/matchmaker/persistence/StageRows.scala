@@ -31,6 +31,7 @@ private[persistence] object StageRows {
         pointsBonus: Boolean,
         promote: Option[Int],
         rubberMatch: Boolean,
+        tiesAllowed: Option[Boolean],
         strictStrata: Boolean,
         tieBreakerStage: Boolean,
         seedPolicy: String,
@@ -45,53 +46,55 @@ private[persistence] object StageRows {
     def columns(next: String, inner: String): String =
         s"""s.kind::text, s.pool_size, s.name, s.description, s.concurrent_rounds, s.bracketed, s.repetitions,
             s.remaining_participants, s.demote, s.max_stratum, s.min_stratum, s.points_for_win, s.points_for_draw,
-            s.points_bonus, s.promote, s.rubber_match, s.strict_strata, s.tie_breaker_stage, s.seed_policy,
+            s.points_bonus, s.promote, s.rubber_match, s.ties_allowed, s.strict_strata, s.tie_breaker_stage, s.seed_policy,
             s.$next, a.rotate_roles, n.$inner"""
 
     /** Decodes the stage's id, by `id`, followed by [[columns]]. */
     def row[I](id: Codec[I]): Decoder[Row[I]] =
         (id *: text *: int4.opt *: text *: text *: bool *: bool *: int4.opt *: int4.opt *: int4.opt *: int4.opt *:
-            int4.opt *: int4 *: int4 *: bool *: int4.opt *: bool *: bool *: bool *: text *: id.opt *: bool.opt *:
-            id.opt).to[Row[I]]
+            int4.opt *: int4 *: int4 *: bool *: int4.opt *: bool *: bool.opt *: bool *: bool *: text *: id.opt *:
+            bool.opt *: id.opt).to[Row[I]]
 
     /** What is written of a stage: its properties and the stage after it, in the order of [[insertColumns]]. */
     def fields[I](id: Codec[I]): Encoder[(StageDesign, Option[I])] =
         (text *: int4.opt *: text *: text *: bool *: bool *: int4.opt *: int4.opt *: int4.opt *: int4.opt *: int4.opt *:
-            int4 *: int4 *: bool *: int4.opt *: bool *: bool *: bool *: text *: id.opt).contramap { case (s, next) =>
-            val (repetitions, remaining) = s.repeat match {
-                case Repetition.Fixed(k)          => (Some(k), None)
-                case Repetition.UntilRemaining(c) => (None, Some(c))
-                case Repetition.UntilStopped      => (None, None)
-            }
-            (
-              if (s.design.isDefined) "N" else "A",
-              s.poolSize,
-              s.name,
-              s.description,
-              s.concurrentRounds,
-              s.brackets,
-              repetitions,
-              remaining,
-              s.demote,
-              s.maxStratum,
-              s.minStratum,
-              s.points,
-              s.pointsForDraw,
-              s.pointsBonus,
-              s.promote,
-              s.rubberMatch,
-              s.strictStrata,
-              s.tieBreakerStage,
-              s.seedPolicy.code,
-              next
-            )
+            int4 *: int4 *: bool *: int4.opt *: bool *: bool.opt *: bool *: bool *: text *: id.opt).contramap {
+            case (s, next) =>
+                val (repetitions, remaining) = s.repeat match {
+                    case Repetition.Fixed(k)          => (Some(k), None)
+                    case Repetition.UntilRemaining(c) => (None, Some(c))
+                    case Repetition.UntilStopped      => (None, None)
+                }
+                (
+                  if (s.design.isDefined) "N" else "A",
+                  s.poolSize,
+                  s.name,
+                  s.description,
+                  s.concurrentRounds,
+                  s.brackets,
+                  repetitions,
+                  remaining,
+                  s.demote,
+                  s.maxStratum,
+                  s.minStratum,
+                  s.points,
+                  s.pointsForDraw,
+                  s.pointsBonus,
+                  s.promote,
+                  s.rubberMatch,
+                  s.tiesAllowed,
+                  s.strictStrata,
+                  s.tieBreakerStage,
+                  s.seedPolicy.code,
+                  next
+                )
         }
 
     /** The columns [[fields]] writes, `next` being the table's own column for the stage played after. */
     def insertColumns(next: String): String =
         s"""kind, pool_size, name, description, concurrent_rounds, bracketed, repetitions, remaining_participants,
             demote, max_stratum, min_stratum, points_for_win, points_for_draw, points_bonus, promote, rubber_match,
-            strict_strata, tie_breaker_stage, seed_policy, $next"""
+            ties_allowed, strict_strata, tie_breaker_stage, seed_policy, $next"""
 
     /** A stage from its row, with `inner` the design its pools play if it is a nesting stage. */
     def stageOf[I](r: Row[I], inner: Option[TournamentDesign]): StageDesign =
@@ -117,6 +120,7 @@ private[persistence] object StageRows {
           tieBreakerStage = r.tieBreakerStage,
           seedPolicy = SeedPolicy.fromCode(r.seedPolicy),
           rubberMatch = r.rubberMatch,
+          tiesAllowed = r.tiesAllowed,
           name = r.name,
           description = r.description
         )

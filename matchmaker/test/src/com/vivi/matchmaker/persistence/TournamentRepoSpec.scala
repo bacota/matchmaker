@@ -203,7 +203,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
 
     test("invitations are kept once, listed by nickname, and revoked") {
         val (invited, listed, after) = run { session =>
-            val repo = new TournamentInvitationRepo(session)
+            val repo = new InvitationRepo(session)
             for {
                 f <- fixture(session)
                 t <- made(session, f)
@@ -225,7 +225,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             for {
                 f <- fixture(session)
                 t <- made(session, f)
-                _ <- new TournamentInvitationRepo(session).invite(f.game.gameId, t.tournamentId, f.other.playerId)
+                _ <- new InvitationRepo(session).invite(f.game.gameId, t.tournamentId, f.other.playerId)
                 nobody <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
                 mine <- new TournamentRepo(session).listForPlayer(f.owner.playerId)
                 theirs <- new TournamentRepo(session).listForPlayer(f.other.playerId)
@@ -236,19 +236,5 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
         assertEquals(mine, theirs)
         assertEquals(mine.size, 1)
         assertEquals(stranger, 0)
-    }
-
-    test("a match must come from a challenge or a tournament, and not both".tag(Quiet)) {
-        val refused = run { session =>
-            for {
-                f <- fixture(session)
-                m = Generators
-                    .genMatch(f.game.gameId, Generators.newMatchId(), None, f.owner.playerId)
-                    .sample
-                    .get
-                attempt <- new MatchRepo(session).create(m).attempt
-            } yield attempt.isLeft
-        }
-        assert(refused)
     }
 }

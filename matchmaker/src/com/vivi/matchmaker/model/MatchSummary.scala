@@ -18,9 +18,9 @@ import java.time.{Duration, Instant}
   *   whether the creator called the match off; a cancelled match is over but has no result, and is listed with the
   *   finished ones rather than the active ones
   * @param isCreator
-  *   whether this player is the one who created the match — the challenger of the challenge it was started from, and
-  *   the only player who may cancel it. A property of the pair, not of the match, which is why it belongs on a read
-  *   model that is already scoped to one player
+  *   whether this player is the one who created the match — the owner of the tournament it is played in, and the only
+  *   player who may cancel it. A property of the pair, not of the match, which is why it belongs on a read model that
+  *   is already scoped to one player
   * @param characterId
   *   the character playing this participant's seat, if the game requires one
   */
@@ -38,10 +38,9 @@ case class MatchSummary(
     pending: Boolean,
     participantId: ParticipantId,
     characterId: Option[CharacterId],
-    // The clock this match is being played under, carried from the challenge it was started
-    // from. `due` says when this player's current turn runs out; these say what rule produced
-    // it, which is not recoverable from the deadline alone — and they are the only statement of
-    // the terms once the challenge that set them is no longer on screen.
+    // The clock this match is being played under, set from its tournament's round duration when
+    // it was created in the engine. `due` says when this player's current turn runs out; these say
+    // what rule produced it, which is not recoverable from the deadline alone.
     timeLimit: Option[Duration] = None,
     timeLimitKind: TimeLimitKind = TimeLimitKind.PerTurn,
     timeLimitUnit: TimeLimitUnit = TimeLimitUnit.Minutes,

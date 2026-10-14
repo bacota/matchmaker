@@ -2,20 +2,20 @@ package com.vivi.matchmaker.model
 
 import java.time.Duration
 
-/** The unit a time limit was offered in.
+/** The unit a time limit is shown in.
   *
-  * The limit is a `Duration` and means the same however it was said; this is how the challenger said it. Kept rather
-  * than worked out on the way to the screen, because several units are right for the same duration — 48 hours and 2
-  * days are the same offer — and which of them to show is a fact about the offer, not a calculation over it.
+  * The limit is a `Duration` and means the same however it is said; this is how to say it. Kept rather than worked out
+  * on the way to the screen, because several units are right for the same duration — 48 hours and 2 days are the same
+  * limit — and which of them to show is decided once, as a match is created (`TournamentRounds.unitFor`).
   *
-  * The challenge form offers [[TimeLimitUnit.offered]]; seconds stay here for the limits already offered in them, and
-  * for an API caller. Anything a limit could be that is not a whole number of one of these (an API caller's 90 seconds)
-  * is displayed as what it is instead; see the UI's `Format.duration`.
+  * The challenge form offers [[TimeLimitUnit.offered]] for its time to play; seconds stay here for an API caller.
+  * Anything a limit could be that is not a whole number of one of these (an API caller's 90 seconds) is displayed as
+  * what it is instead; see the UI's `Format.duration`.
   */
 enum TimeLimitUnit(val code: String, val label: String, val perUnit: Duration) {
 
     /** What a live match's turns were measured in. No longer offered by the challenge form, but read and shown for the
-      * challenges and matches that were.
+      * matches that were.
       */
     case Seconds extends TimeLimitUnit("SECONDS", "seconds", Duration.ofSeconds(1))
     case Minutes extends TimeLimitUnit("MINUTES", "minutes", Duration.ofMinutes(1))
@@ -25,7 +25,7 @@ enum TimeLimitUnit(val code: String, val label: String, val perUnit: Duration) {
 
 object TimeLimitUnit {
 
-    /** The units the challenge form offers: a turn is offered in minutes at the least. */
+    /** The units the challenge form offers: a time to play is offered in minutes at the least. */
     val offered: Seq[TimeLimitUnit] = Seq(Minutes, Hours, Days)
 
     def fromCode(code: String): TimeLimitUnit =

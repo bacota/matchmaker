@@ -23,6 +23,7 @@ class TournamentRepo(session: Session[IO]) {
     private val modelId = SkunkIdCodecs.tournamentModelId
     private val playerId = SkunkIdCodecs.playerId
     private val instant = SkunkCodecs.instant
+    private val settings = SkunkCodecs.jsonb
 
     private val status: Codec[TournamentStatus] = text.imap(TournamentStatus.fromCode)(_.code)
 
@@ -51,12 +52,19 @@ class TournamentRepo(session: Session[IO]) {
         Boolean,
         Option[Instant],
         Option[Instant],
-        Option[Instant]
+        Option[Instant],
+        String,
+        Boolean,
+        Option[Instant],
+        Boolean,
+        Option[Int],
+        Boolean
     )
 
     private val written: Codec[Written] =
         text *: text *: playerId *: status *: modelId *: int4 *: bool *: bool *: bool *: bool *: int4.opt *: int4.opt *:
-            bool *: int4 *: float8.opt *: int4.opt *: bool *: instant.opt *: instant.opt *: instant.opt
+            bool *: int4 *: float8.opt *: int4.opt *: bool *: instant.opt *: instant.opt *: instant.opt *: settings *:
+            bool *: instant.opt *: bool *: int4.opt *: bool
 
     // What is read: the written columns, then the round being played's start and deadline.
     private type Row = (Written, Option[Instant], Option[Instant])
@@ -66,7 +74,8 @@ class TournamentRepo(session: Session[IO]) {
         sql"""#$t.name, #$t.description, #$t.owner, #$t.status, #$t.tournament_model_id, #$t.default_pool_size,
               #$t.automatic_rounds, #$t.friendly, #$t.invitational, #$t.late_entries, #$t.min_rating, #$t.max_rating,
               #$t.public, #$t.entries_per_player, EXTRACT(EPOCH FROM #$t.round_duration)::float8, #$t.max_turns,
-              #$t.concurrent_rounds, #$t.started_at, #$t.ended_at, #$t.checked_at,
+              #$t.concurrent_rounds, #$t.started_at, #$t.ended_at, #$t.checked_at, #$t.settings, #$t.live, #$t.start,
+              #$t.choose_roles, #$t.max_entrants, #$t.auto_start,
               (SELECT r.start_date FROM round r
                 WHERE r.game_id = #$t.game_id AND r.tournament_id = #$t.tournament_id AND r.round = #$t.current_round),
               (SELECT r.deadline FROM round r
@@ -95,7 +104,13 @@ class TournamentRepo(session: Session[IO]) {
           t.settings.concurrentRounds,
           t.startedAt,
           t.endedAt,
-          t.checkedAt
+          t.checkedAt,
+          t.settings.gameSettings,
+          t.settings.live,
+          t.settings.start,
+          t.settings.chooseRoles,
+          t.settings.maxEntrants,
+          t.settings.autoStart
         )
 
     private def tournamentOf(game: GameId, id: TournamentId, r: Row): Tournament = {
@@ -120,7 +135,13 @@ class TournamentRepo(session: Session[IO]) {
           concurrentRounds,
           startedAt,
           endedAt,
-          checkedAt
+          checkedAt,
+          gameSettings,
+          live,
+          start,
+          chooseRoles,
+          maxEntrants,
+          autoStart
         ) = w
         Tournament(
           game,
@@ -141,7 +162,13 @@ class TournamentRepo(session: Session[IO]) {
             duration(roundSeconds),
             maxTurns,
             concurrentRounds,
-            isPublic
+            isPublic,
+            gameSettings,
+            live,
+            start,
+            chooseRoles,
+            maxEntrants,
+            autoStart
           ),
           st,
           startedAt,
@@ -158,10 +185,11 @@ class TournamentRepo(session: Session[IO]) {
         sql"""INSERT INTO tournament (game_id, name, description, owner, status, tournament_model_id, default_pool_size,
                                       automatic_rounds, friendly, invitational, late_entries, min_rating, max_rating,
                                       public, entries_per_player, round_duration, max_turns, concurrent_rounds,
-                                      started_at, ended_at, checked_at, first_stage_id)
+                                      started_at, ended_at, checked_at, settings, live, start, choose_roles,
+                                      max_entrants, auto_start, first_stage_id)
           VALUES ($gameId, $text, $text, $playerId, $status, $modelId, $int4, $bool, $bool, $bool, $bool, ${int4.opt},
                   ${int4.opt}, $bool, $int4, ${float8.opt} * INTERVAL '1 second', ${int4.opt}, $bool, ${instant.opt},
-                  ${instant.opt}, ${instant.opt}, 0)
+                  ${instant.opt}, ${instant.opt}, $settings, $bool, ${instant.opt}, $bool, ${int4.opt}, $bool, 0)
           RETURNING tournament_id""".query(tournamentId)
 
     /** Writes a new tournament. Its stages are written next, by [[StageRepo.copy]], in the same transaction. */
@@ -188,7 +216,8 @@ class TournamentRepo(session: Session[IO]) {
                  invitational = $bool, late_entries = $bool, min_rating = ${int4.opt}, max_rating = ${int4.opt},
                  public = $bool, entries_per_player = $int4, round_duration = ${float8.opt} * INTERVAL '1 second',
                  max_turns = ${int4.opt}, concurrent_rounds = $bool, started_at = ${instant.opt},
-                 ended_at = ${instant.opt}, checked_at = ${instant.opt}
+                 ended_at = ${instant.opt}, checked_at = ${instant.opt}, settings = $settings, live = $bool,
+                 start = ${instant.opt}, choose_roles = $bool, max_entrants = ${int4.opt}, auto_start = $bool
           WHERE game_id = $gameId AND tournament_id = $tournamentId""".command
 
     /** Rewrites the tournament's own columns. Not the round being played, which is the round's to say. */
@@ -230,7 +259,7 @@ class TournamentRepo(session: Session[IO]) {
           WHERE t.owner = $playerId
              OR EXISTS (SELECT 1 FROM entrant e
                          WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId)
-             OR EXISTS (SELECT 1 FROM tournament_invitation i
+             OR EXISTS (SELECT 1 FROM invitation i
                          WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = $playerId)
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(gameId *: tournamentId *: row)
 
@@ -249,7 +278,7 @@ class TournamentRepo(session: Session[IO]) {
                 WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.withdrawn_at IS NULL),
               EXISTS (SELECT 1 FROM entrant e
                        WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId),
-              EXISTS (SELECT 1 FROM tournament_invitation i
+              EXISTS (SELECT 1 FROM invitation i
                        WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = $playerId),
               t.status = 'running' AND t.current_round IS NOT NULL AND NOT EXISTS (SELECT 1 FROM match m
                        WHERE m.game_id = t.game_id AND m.tournament_id = t.tournament_id
@@ -280,7 +309,7 @@ class TournamentRepo(session: Session[IO]) {
           WHERE t.owner = $playerId
              OR EXISTS (SELECT 1 FROM entrant e
                          WHERE e.game_id = t.game_id AND e.tournament_id = t.tournament_id AND e.player_id = $playerId)
-             OR EXISTS (SELECT 1 FROM tournament_invitation i
+             OR EXISTS (SELECT 1 FROM invitation i
                          WHERE i.game_id = t.game_id AND i.tournament_id = t.tournament_id AND i.player_id = $playerId)
           ORDER BY t.create_date DESC, t.tournament_id DESC""".query(summaryCodec)
 
@@ -411,8 +440,8 @@ class TournamentRepo(session: Session[IO]) {
           "round",
           "character_entrant",
           "entrant",
-          "tournament_character_invitation",
-          "tournament_invitation",
+          "character_invitation",
+          "invitation",
           "nesting_stage",
           "atomic_stage",
           "stage",

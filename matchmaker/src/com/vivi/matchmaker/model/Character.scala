@@ -20,3 +20,8 @@ case class CharacterProfile(
     owner: Option[PublicPlayer],
     record: MatchRecord = MatchRecord()
 )
+
+/** A character by name, without its state: another player's character, as a list or a link shows it. A character's
+  * state is its owner's business, which is why this is not a [[Character]].
+  */
+case class CharacterName(characterId: CharacterId, gameId: GameId, name: String)

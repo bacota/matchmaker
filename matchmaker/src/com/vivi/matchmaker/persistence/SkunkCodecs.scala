@@ -23,7 +23,7 @@ object SkunkCodecs {
         timestamptz.imap(_.toInstant)(i => OffsetDateTime.ofInstant(i, ZoneOffset.UTC))
 
     /** The `game_type` discriminator column (`CHAR(1)`, `'C'`/`'P'`), on `game` and on every table split by it
-      * (`challenge`, `acceptance`, `participant`, and their `character_*` siblings).
+      * (`entrant`, `participant`, and their `character_*` siblings).
       */
     val gameType: Codec[GameType] = bpchar(1).imap(s => GameType.fromCode(s.head))(_.code.toString)
 
@@ -36,8 +36,8 @@ object SkunkCodecs {
     val moveType: Codec[MoveType] = text.imap(MoveType.fromCode)(_.code)
     val timeoutAction: Codec[TimeoutAction] = text.imap(TimeoutAction.fromCode)(_.code)
 
-    /** `time_limit_kind` on `match` and `challenge`: whether the limit is per turn or the player's budget for the whole
-      * match. Text under a check constraint, as `timeoutAction` is.
+    /** `time_limit_kind` on `match`: whether the limit is per turn or the player's budget for the whole match. Text
+      * under a check constraint, as `timeoutAction` is.
       */
     val timeLimitKind: Codec[TimeLimitKind] = text.imap(TimeLimitKind.fromCode)(_.code)
 
@@ -64,7 +64,7 @@ object SkunkCodecs {
     /** The four `notify_*` columns of `participant`, as one value.
       *
       * Four rather than eleven, and so its own codec rather than [[notificationPreferences]]: a seat can only be asked
-      * about a match it is in, and the seven kinds about a challenge have no column here to answer from. Bound
+      * about a match it is in, and the kinds about entries and rounds have no column here to answer from. Bound
       * positionally in `NotificationType.onSeat` order, which is `values` order narrowed — the same rule as the other
       * codec, so a kind added to the enum in the wrong place is wrong in one way rather than two.
       */

@@ -79,8 +79,9 @@ class MatchService(
     /** The matches another player has marked public that are still running.
       *
       * The one kind of list here that is not about the caller, and so the one with a visibility rule: only matches
-      * whose challenge was offered as public. That rule lives in the queries (`MatchRepo.listPublicActiveForPlayer` and
-      * its counterparts) rather than here, so a private match is never read at all.
+      * whose challenge or tournament was offered as public. That rule lives in the queries
+      * (`MatchRepo.listPublicActiveForPlayer` and its counterparts) rather than here, so a private match is never read
+      * at all.
       *
       * The caller still has to be a registered player -- who plays here is for the people who play here -- but there is
       * nothing else to authorize: a public match is public to all of them, and the caller's own relationship to it
@@ -168,7 +169,7 @@ class MatchService(
 
     /** The summaries of these rows, each with the parameter values its match is played under.
       *
-      * The values are resolved here, as `GameEngineService` resolved them for the engine: the challenger's choice where
+      * The values are resolved here, as `GameEngineService` resolved them for the engine: the tournament's choice where
       * the game still allows it, the default otherwise. Every parameter is listed, chosen or not — a match played at
       * the default is played under that value just the same, and "12 rounds" is what a player wants to see either way.
       */
@@ -201,9 +202,9 @@ class MatchService(
       * The rows arrive grouped by match and in the order the list wants, so this preserves both: `groupBy` would not,
       * and re-sorting afterwards would mean restating in Scala the ORDER BY the database has already applied.
       *
-      * Grouped by the match alone, not by the match and the caller's seat, because a player has at most one seat in a
-      * match: a participant comes from an acceptance, and `acceptance` is keyed by (game, challenge, player), so
-      * accepting the same challenge twice is not something the schema permits.
+      * Grouped by the match alone, not by the match and the caller's seat, because a player plays at most one seat in a
+      * match: a challenge takes one entry per player, and a tournament that takes more forfeits every seat of a player
+      * but their strongest before play (`MultipleEntries`).
       */
     private def summarise(rows: List[MatchRepo.MatchSeatRow]): List[MatchSummary] =
         rows
@@ -306,9 +307,9 @@ class MatchService(
 
     /** Calls a match off, at the request of the player who created it.
       *
-      * The creator is the challenger of the challenge the match was started from — matchmaker has no separate notion of
-      * one, and the challenge is kept for exactly this reason. A participant who merely accepted cannot cancel: they
-      * agreed to play, which is not the same as having called the match into being.
+      * The creator is the owner of the challenge or tournament the match is played in, copied onto the match as it is
+      * written. A participant who merely entered cannot cancel: they agreed to play, which is not the same as having
+      * called the match into being.
       *
       * Cancelling is refused once the match is over, in either sense. A completed match has a result and cancelling it
       * would contradict a fact the engine reported; a cancelled one is already cancelled, and saying so is more useful

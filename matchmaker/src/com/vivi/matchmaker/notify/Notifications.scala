@@ -9,10 +9,10 @@ import com.vivi.matchmaker.persistence._
 /** Everything matchmaker decides about notifications: who is told what, and when nobody is.
   *
   * A class of its own, and one method per thing that happens, because none of this is any of the services' business.
-  * What a service knows is that it has accepted a challenge or recorded a move; which of eleven kinds of news that is
-  * to which of the players in it, whether any of them has asked not to hear about it, and what the mail then says are
-  * all questions with one right answer wherever the event came from. Those answers used to be spread across four
-  * services, where the same thirty lines appeared twice and the largest of them sat inline in `GameEngineService`.
+  * What a service knows is that somebody has entered a tournament or moved; which of eleven kinds of news that is to
+  * which of the players in it, whether any of them has asked not to hear about it, and what the mail then says are all
+  * questions with one right answer wherever the event came from. Those answers used to be spread across four services,
+  * where the same thirty lines appeared twice and the largest of them sat inline in `GameEngineService`.
   *
   * So a service calls one method, after its transaction has committed, and passes the thing that happened. Every method
   * here reads whatever else it needs for itself, which is why the call sites are one line: a notification is a report,
@@ -47,186 +47,139 @@ import com.vivi.matchmaker.persistence._
 class Notifications(notifier: Notifier, mail: MailSettings) {
 
     // -------------------------------------------------------------------------
-    // Things that happen to a challenge
+    // Things that happen to a challenge or tournament's entries
     // -------------------------------------------------------------------------
 
-    /** Somebody has accepted a challenge. Told to the challenger, and to everyone else who has accepted it.
+    /** Somebody has entered a challenge or tournament. Told to its owner, and to everyone else who has entered it.
       *
       * @param actor
-      *   the player who accepted. Passed rather than read because the caller has just had it in hand, and because they
+      *   the player who entered. Passed rather than read because the caller has just had it in hand, and because they
       *   are the one person not told.
       * @param wasInvited
-      *   whether this acceptance answers an invitation. It changes what the *challenger* can be told — their invitation
-      *   was taken up, which is more than that somebody accepted — and nothing else: being invited is between them and
-      *   the invitee, so the other acceptors hear what they always hear. One mail either way, with
-      *   [[com.vivi.matchmaker.model.NotificationPolicy.choose]] picking the best kind the challenger has not refused;
-      *   a second call for the invitation would write to them twice about one event.
+      *   whether this entry answers an invitation. It changes what the *owner* can be told — their invitation was taken
+      *   up, which is more than that somebody entered — and nothing else: being invited is between them and the
+      *   invitee, so the other entrants hear what they always hear. One mail either way, with
+      *   [[com.vivi.matchmaker.model.NotificationPolicy.choose]] picking the best kind the owner has not refused.
       */
-    def challengeAccepted(
-        session: Session[IO],
-        gameId: GameId,
-        challengeId: ChallengeId,
-        actor: Player,
-        wasInvited: Boolean = false
-    ): IO[Unit] =
-        rosterChanged(session, gameId, challengeId, actor, joined = true, except = None, wasInvited = wasInvited)
+    def entered(session: Session[IO], tournament: Tournament, actor: Player, wasInvited: Boolean = false): IO[Unit] =
+        entriesChanged(session, tournament, actor, joined = true, except = None, wasInvited = wasInvited)
 
-    /** Somebody's acceptance has gone. Told to the same audience, minus whoever did it.
+    /** Somebody's entry has been withdrawn. Told to the same audience, minus whoever did it.
       *
-      * @param acceptor
-      *   the player whose seat has opened up. The one thing that cannot be read here: their acceptance row is already
-      *   gone, so the caller holds the last thing that knows their nickname.
+      * @param entrant
+      *   the player whose entry it was.
       * @param removedBy
-      *   whoever did it, which is usually the acceptor and may be the challenger — a challenger may remove another
-      *   player's acceptance, and should no more be told about that than about their own.
+      *   whoever did it, which is usually the entrant and may be the owner — an owner may withdraw another player's
+      *   entry, and should no more be told about that than about their own.
       */
-    def acceptanceWithdrawn(
-        session: Session[IO],
-        gameId: GameId,
-        challengeId: ChallengeId,
-        acceptor: Player,
-        removedBy: Player
-    ): IO[Unit] =
-        rosterChanged(session, gameId, challengeId, acceptor, joined = false, except = Some(removedBy.playerId))
+    def withdrawn(session: Session[IO], tournament: Tournament, entrant: Player, removedBy: Player): IO[Unit] =
+        entriesChanged(session, tournament, entrant, joined = false, except = Some(removedBy.playerId))
 
     // -------------------------------------------------------------------------
     // Things that happen to an invitation
     // -------------------------------------------------------------------------
 
-    /** Somebody has been invited to a challenge. Told to them, and to nobody else.
+    /** Somebody has been invited to a challenge or tournament. Told to them, and to nobody else.
       *
-      * Nobody else, unlike every other event here: an invitation is between the challenger who made it and the player
-      * it was made to. The other acceptors are not waiting on it — a challenge does not become startable by somebody
-      * being asked — and telling them would be reporting a decision that is not theirs and may never come to anything.
-      *
-      * @param invited
-      *   the player invited. Passed rather than read for the reason `challengeAccepted`'s actor is: the caller has just
-      *   had them in hand, and they are the recipient here rather than the one person left out.
-      * @param roleName
-      *   the seat they were asked to play, when the invitation named one.
+      * Nobody else, unlike every other event here: an invitation is between the owner who made it and the player it was
+      * made to. The entrants are not waiting on it, and telling them would be reporting a decision that is not theirs
+      * and may never come to anything.
       */
-    def invitationMade(
-        session: Session[IO],
-        gameId: GameId,
-        challengeId: ChallengeId,
-        invited: Player,
-        roleName: Option[String]
-    ): IO[Unit] =
-        aboutInvitation(session, gameId, challengeId, NotificationType.InvitationReceived, roleName) { challenger =>
-            (invited, challenger.nickname)
-        }
+    def invitationMade(session: Session[IO], tournament: Tournament, invited: Player): IO[Unit] =
+        aboutInvitation(session, tournament, NotificationType.InvitationReceived)(owner => (invited, owner.nickname))
 
-    /** An invitation has been turned down. Told to the challenger.
+    /** An invitation has been turned down. Told to the owner.
       *
       * The one event in matchmaker that reports something *not* happening, and it earns its mail because nothing else
-      * would say so: rejecting deletes the invitation and leaves the challenge exactly as it was, so a challenger who
-      * was holding a seat for somebody would otherwise find out by going to look.
+      * would say so: turning one down deletes the invitation and leaves everything else as it was, so an owner waiting
+      * on somebody would otherwise find out by going to look.
       */
-    def invitationRejected(
-        session: Session[IO],
-        gameId: GameId,
-        challengeId: ChallengeId,
-        rejector: Player
-    ): IO[Unit] =
-        aboutInvitation(session, gameId, challengeId, NotificationType.InvitationRejected, None) { challenger =>
-            (challenger, rejector.nickname)
-        }
+    def invitationRejected(session: Session[IO], tournament: Tournament, rejector: Player): IO[Unit] =
+        aboutInvitation(session, tournament, NotificationType.InvitationRejected)(owner => (owner, rejector.nickname))
 
-    /* The three invitation mails, which differ only in who is written to and whose name the sentence
-     * carries. `addressee` answers both from the challenger: the invitee for an invitation made, the
-     * challenger for an answer to one.
+    /* The invitation mails, which differ only in who is written to and whose name the sentence
+     * carries. `addressee` answers both from the owner: the invitee for an invitation made, the owner
+     * for an answer to one.
      *
-     * The recipient's preferences are read by `levelsForPlayer` rather than `levelsForChallenge`,
-     * because neither of them need be an acceptor: an invited player has accepted nothing yet, and a
-     * challenger who has retired their own seat is no longer in the roster either.
+     * The recipient's preferences are read by `levelsForPlayer` rather than `levelsForTournament`,
+     * because an invited player has not entered.
      *
-     * One kind rather than a list, unlike a roster change: there is no second, plainer thing any of
-     * these could say, so a recipient who has turned the kind off hears nothing -- which is what
+     * One kind rather than a list, unlike a change to the entries: there is no second, plainer thing
+     * any of these could say, so a recipient who has turned the kind off hears nothing -- which is what
      * turning it off means. */
-    private def aboutInvitation(
-        session: Session[IO],
-        gameId: GameId,
-        challengeId: ChallengeId,
-        kind: NotificationType,
-        roleName: Option[String]
-    )(addressee: Player => (Player, String)): IO[Unit] =
-        dispatch(session, s"invitation to challenge ${challengeId.value} of game ${gameId.value}") {
+    private def aboutInvitation(session: Session[IO], tournament: Tournament, kind: NotificationType)(
+        addressee: Player => (Player, String)
+    ): IO[Unit] =
+        dispatch(session, s"invitation to tournament ${tournament.tournamentId} of game ${tournament.gameId}") {
             (from, uiBaseUrl) =>
                 val notificationRepo = new NotificationRepo(session)
-                val challengeRepo = new ChallengeRepo(session)
-                val playerRepo = new PlayerRepo(session)
-                val acceptanceRepo = new AcceptanceRepo(session)
-
-                notificationRepo.gameNotice(gameId).flatMap {
-                    // As in `rosterChanged`: a game or challenge that is no longer there is not a thing
-                    // to write about, and this path reports rather than decides -- it sends nothing
-                    // instead of failing what has already happened.
+                notificationRepo.gameNotice(tournament.gameId).flatMap {
+                    // A game that is no longer there is not a thing to write about, and this path reports rather
+                    // than decides -- it sends nothing instead of failing what has already happened.
                     case None => IO.pure(Seq.empty[MailMessage])
                     case Some(notice) =>
-                        challengeRepo.read(gameId, challengeId).flatMap {
-                            case None => IO.pure(Seq.empty[MailMessage])
-                            case Some(challenge) =>
-                                for {
-                                    challenger <- playerRepo.read(challenge.challenger)
-                                    waitingFor <- acceptanceRepo.unclaimedRoles(gameId, challengeId)
-                                    mail <- challenger.traverse { offeredBy =>
-                                        val (recipient, subject) = addressee(offeredBy)
-                                        notificationRepo
-                                            .levelsForPlayer(recipient.playerId, gameId)
-                                            .map { levels =>
-                                                val news = ChallengeNews(
-                                                  gameName = notice.name,
-                                                  description = challenge.message,
-                                                  actor = subject,
-                                                  role = roleName,
-                                                  joined = true,
-                                                  challenger = offeredBy.nickname,
-                                                  waitingFor = waitingFor
-                                                )
-
-                                                Option
-                                                    .when(NotificationPolicy.wants(kind, levels.apply))(())
-                                                    .flatMap(_ =>
-                                                        ChallengeMail.compose(from, uiBaseUrl, recipient, kind, news)
-                                                    )
-                                            }
-                                    }
-                                } yield mail.flatten.toSeq
-                        }
+                        for {
+                            owner <- new PlayerRepo(session).read(tournament.owner)
+                            room <- roomIn(session, tournament)
+                            mail <- owner.traverse { offeredBy =>
+                                val (recipient, subject) = addressee(offeredBy)
+                                notificationRepo.levelsForPlayer(recipient.playerId, tournament.gameId).map { levels =>
+                                    val news = newsOf(notice, tournament, subject, joined = true, offeredBy, room)
+                                    Option
+                                        .when(NotificationPolicy.wants(kind, levels.apply))(())
+                                        .flatMap(_ => ChallengeMail.compose(from, uiBaseUrl, recipient, kind, news))
+                                }
+                            }
+                        } yield mail.flatten.toSeq
                 }
+        }
+
+    /* How a mail about entries names what they are entries in: a challenge, which says no more about
+     * itself than that, or a tournament by its name. */
+    private def newsOf(
+        notice: GameNotice,
+        tournament: Tournament,
+        actor: String,
+        joined: Boolean,
+        owner: Player,
+        room: Option[Int]
+    ): ChallengeNews = {
+        val challenge = tournament.tournamentModelId == com.vivi.matchmaker.model.tournament.standard.Challenge.modelId
+        ChallengeNews(
+          gameName = notice.name,
+          what = if (challenge) "challenge" else "tournament",
+          title = if (challenge) "" else tournament.name,
+          actor = actor,
+          joined = joined,
+          challenger = owner.nickname,
+          room = room
+        )
+    }
+
+    /* How many more entries a tournament takes before it is full, if it takes a limited number. */
+    private def roomIn(session: Session[IO], tournament: Tournament): IO[Option[Int]] =
+        tournament.settings.maxEntrants.traverse { most =>
+            new EntrantRepo(session)
+                .list(tournament.gameId, tournament.tournamentId)
+                .map(entries => math.max(0, most - entries.count(!_.withdrawn)))
         }
 
     // -------------------------------------------------------------------------
     // Things that happen to a match
     // -------------------------------------------------------------------------
 
-    /** A match has begun. Told to everyone in it but the challenger.
+    /** A match has begun. Told to everyone in it.
       *
       * The mail introduces the match — who else is in it, whether this player moves first and by when — so it is the
-      * one event whose news differs per recipient in more than its deadline.
-      *
-      * @param startedBy
-      *   the challenger, and the one person not written to: they pressed Start and are reading the answer to their own
-      *   click. Passed rather than read, for the same reason `matchEnded` is told who cancelled — who caused an event
-      *   is something its caller knows and nothing here could work out. `None` when nobody pressed anything: a
-      *   challenge that starts itself has no such person, and the challenger is then owed this mail like everyone else
-      *   — it is the only thing that tells them their challenge has become a match.
-      * @param acceptedBy
-      *   the nickname of whoever's acceptance started it, on that same path. It goes into the mail, which then says
-      *   both things that happened rather than only the second: see `MatchNews.acceptedBy`. `None` for a match somebody
-      *   pressed Start on, where the acceptance was mailed as news of its own.
+      * one event whose news differs per recipient in more than its deadline. Nobody pressed anything to start it: a
+      * match begins when its round has settled its roles, so everyone in it is owed this mail.
       */
-    def matchStarted(
-        session: Session[IO],
-        started: Match,
-        startedBy: Option[PlayerId],
-        acceptedBy: Option[String] = None
-    ): IO[Unit] =
+    def matchStarted(session: Session[IO], started: Match): IO[Unit] =
         aboutMatch(session, started, s"start of match ${started.matchId.value}") {
             (from, uiBaseUrl, notice, seats, participants) =>
                 val byId = participants.map(participant => participant.participantId -> participant).toMap
 
-                seats.filterNot(seat => startedBy.contains(seat.player.playerId)).flatMap { seat =>
+                seats.flatMap { seat =>
                     val participant = byId.get(seat.participantId)
                     NotificationPolicy
                         .choose(Seq(NotificationType.MatchStarted), seat.preferences.apply)
@@ -241,11 +194,10 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                 description = started.description,
                                 due = participant.flatMap(_.due),
                                 // In seat order, which is the order the game was dealt in.
-                                acceptedBy = acceptedBy,
                                 others = seats
                                     .filter(_.player.playerId != seat.player.playerId)
                                     .map(_.player.nickname),
-                                // Whose turn it is first is the engine's to say, and `start` has already
+                                // Whose turn it is first is the engine's to say, and the launch has already
                                 // asked and written the answer down. Read back rather than worked out
                                 // again, which is how the mail comes to disagree with the screen.
                                 yourTurn = participant.exists(_.pending),
@@ -381,69 +333,43 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
     // The two shapes those five events come in
     // -------------------------------------------------------------------------
 
-    /* An acceptance and a withdrawal have the same audience and the same shape, and differ in one
-     * boolean and one sentence -- so they are one method with two entry points rather than the same
-     * thirty lines twice.
+    /* An entry and a withdrawal have the same audience and the same shape, and differ in one boolean
+     * and one sentence -- so they are one method with two entry points rather than the same thirty lines
+     * twice.
      *
      * Two audiences, from one query:
      *
-     *   - the challenger, whose challenge this is. They are the only one who can start it, so when
-     *     the last required role has just been filled that is the news; otherwise they get the
-     *     plainer "somebody accepted".
-     *   - everyone else who has accepted. Nothing is being asked of them, so their pair of kinds is
-     *     the other one: "a challenge you accepted is ready" over "somebody else joined it".
+     *   - the owner. They are the only one who can start it, so when it has just become full that is
+     *     the news; otherwise they get the plainer "somebody entered".
+     *   - everyone else who has entered. Nothing is being asked of them, so their pair of kinds is the
+     *     other one: "one you entered is ready" over "somebody else entered it".
      *
-     * At most one mail each, which is why the kinds go to `choose` as a pair rather than being tested
-     * one at a time: an acceptance that completes a roster is two reasons to write to the challenger,
-     * and they are owed one email. */
-    private def rosterChanged(
+     * At most one mail each, which is why the kinds go to `choose` as a list rather than being tested
+     * one at a time: an entry that fills it is two reasons to write to the owner, and they are owed one
+     * email. */
+    private def entriesChanged(
         session: Session[IO],
-        gameId: GameId,
-        challengeId: ChallengeId,
+        tournament: Tournament,
         actor: Player,
         joined: Boolean,
         except: Option[PlayerId],
         wasInvited: Boolean = false
     ): IO[Unit] =
-        dispatch(session, s"challenge ${challengeId.value} of game ${gameId.value}") { (from, uiBaseUrl) =>
+        dispatch(session, s"tournament ${tournament.tournamentId} of game ${tournament.gameId}") { (from, uiBaseUrl) =>
             val notificationRepo = new NotificationRepo(session)
-            val acceptanceRepo = new AcceptanceRepo(session)
-            val challengeRepo = new ChallengeRepo(session)
-
-            notificationRepo.gameNotice(gameId).flatMap {
-                // A game that is not there is not a thing to write about, and this is the reporting
-                // path: it sends nothing rather than failing the accept that got here.
+            notificationRepo.gameNotice(tournament.gameId).flatMap {
+                // A game that is not there is not a thing to write about, and this is the reporting path: it
+                // sends nothing rather than failing the entry that got here.
                 case None => IO.pure(Seq.empty[MailMessage])
                 case Some(notice) =>
                     for {
-                        // Read rather than passed: it is where the challenger and their own description
-                        // of the challenge are. Absent if the challenge has been deleted since the
-                        // commit, which is an ordinary race outside the lock.
-                        challenge <- challengeRepo.read(gameId, challengeId)
-                        waitingFor <- acceptanceRepo.unclaimedRoles(gameId, challengeId)
-                        audience <- notificationRepo.levelsForChallenge(gameId, challengeId)
-                    } yield challenge.toSeq.flatMap { offered =>
-                        val news = ChallengeNews(
-                          gameName = notice.name,
-                          description = offered.message,
-                          actor = actor.nickname,
-                          // The role they took, for an acceptance. Taken from their own row in the
-                          // audience, which is also why a withdrawal says nothing about the role it
-                          // freed: that row is gone, and the roster line names the role anyway
-                          // whenever it is one a start waits for.
-                          role = audience.find(_.player.playerId == actor.playerId).flatMap(_.roleName),
-                          joined = joined,
-                          // The challenger is in the audience, seated or not: `levelsForChallenge` adds
-                          // a seatless challenge's host. The fallback is unreachable by anything that can
-                          // happen, and is a phrase rather than a crash because a notification is not the
-                          // place to discover a broken row.
-                          challenger = audience
-                              .find(_.player.playerId == offered.challenger)
-                              .map(_.player.nickname)
-                              .getOrElse("Whoever offered it"),
-                          waitingFor = waitingFor
-                        )
-
+                        room <- roomIn(session, tournament)
+                        audience <- notificationRepo.levelsForTournament(tournament.gameId, tournament.tournamentId)
+                        owner <- new PlayerRepo(session).read(tournament.owner)
+                    } yield owner.toSeq.flatMap { offeredBy =>
+                        val news = newsOf(notice, tournament, actor.nickname, joined, offeredBy, room)
+                        // Full now, and waiting on its owner: one that starts itself is starting, not waiting.
+                        val ready = joined && room.contains(0) && !tournament.settings.autoStart
                         audience
                             .filter(recipient =>
                                 recipient.player.playerId != actor.playerId &&
@@ -452,7 +378,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                             .flatMap(recipient =>
                                 NotificationPolicy
                                     .choose(
-                                      kindsFor(recipient, offered, joined, waitingFor, wasInvited),
+                                      kindsFor(recipient.player.playerId == tournament.owner, ready, wasInvited),
                                       recipient.levels.apply
                                     )
                                     .flatMap(ChallengeMail.compose(from, uiBaseUrl, recipient.player, _, news))
@@ -461,34 +387,17 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
             }
         }
 
-    /* What this recipient could be told about a roster change, most informative first.
+    /* What a recipient could be told about a change to the entries, most informative first.
      *
-     * The "ready" kinds are offered only for an acceptance. A withdrawal can leave a roster still
-     * full -- an optional role freed -- but "you can start it now" is not the news when somebody has
-     * just left, and telling a challenger their challenge is ready because a player walked out of it
-     * would be actively misleading.
-     *
-     * Nothing here is conditioned on the challenge starting itself, and deliberately not: on that
-     * path this notification is not sent at all, because the acceptance that filled the roster was
-     * the match beginning rather than news about a challenge -- `ChallengeService.accept` is
-     * where that is decided, and it decides it by asking whether a match was actually started. Which
-     * leaves one case here that looks like it should be quiet and must not be: an auto-start that
-     * failed. The challenge is still there, still startable by hand, and "every role is taken, you
-     * can start it" is then the only mail that says so. */
-    private def kindsFor(
-        recipient: AcceptorNotifications,
-        challenge: Challenge,
-        joined: Boolean,
-        waitingFor: Seq[String],
-        wasInvited: Boolean
-    ): Seq[NotificationType] = {
-        val ready = joined && waitingFor.isEmpty
-        if (recipient.player.playerId == challenge.challenger)
-            // `InvitationAccepted` sits between the two for an acceptance that answers an invitation:
-            // less useful than "you can start it now", more than "somebody accepted", and offered only
-            // to the challenger because they are the only one whose invitation it was. A challenger who
-            // has turned it off still hears the plain version, which is the whole point of asking in
-            // order rather than picking one kind and then testing it.
+     * The "ready" kinds are offered only for an entry that has just filled it. A withdrawal never makes
+     * anything ready, and telling an owner their challenge can start because a player walked out of it
+     * would be actively misleading. */
+    private def kindsFor(isOwner: Boolean, ready: Boolean, wasInvited: Boolean): Seq[NotificationType] =
+        if (isOwner)
+            // `InvitationAccepted` sits between the two for an entry that answers an invitation: less useful than
+            // "you can start it now", more than "somebody entered", and offered only to the owner because they
+            // are the only one whose invitation it was. An owner who has turned it off still hears the plain
+            // version, which is the whole point of asking in order rather than picking one kind and testing it.
             if (ready && wasInvited)
                 Seq(
                   NotificationType.ChallengeReady,
@@ -500,7 +409,6 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
             else Seq(NotificationType.ChallengeAccepted)
         else if (ready) Seq(NotificationType.AcceptedChallengeReady, NotificationType.AcceptanceChanged)
         else Seq(NotificationType.AcceptanceChanged)
-    }
 
     /* The reads every event about a match needs, done once: what the game is called and what it asks
      * for, who is in the match with what they want to hear about it, and the seats as they now stand.

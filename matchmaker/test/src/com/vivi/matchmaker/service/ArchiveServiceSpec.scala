@@ -14,9 +14,9 @@ import com.vivi.matchmaker.TestMigration
 import com.vivi.matchmaker.archive.{ArchiveBucket, ArchiveStore, LocalArchiveStore}
 import com.vivi.matchmaker.engine.{CreateGameRequest, CreateGameResponse, GameEngineClient, GameStatusResponse}
 import com.vivi.matchmaker.model._
+import com.vivi.matchmaker.persistence.TestMatches
 import com.vivi.matchmaker.persistence.{
     ArchiveRepo,
-    ChallengeRepo,
     CharacterRepo,
     GameRepo,
     MatchRepo,
@@ -87,27 +87,14 @@ class ArchiveServiceSpec extends FunSuite {
                 character <- new CharacterRepo[String](session).create(
                   Character(CharacterId(0), game.gameId, "character", "description", "", Some(player.playerId))
                 )
-                challenge <- new ChallengeRepo(session).create(
-                  CharacterChallenge(
-                    ChallengeId(0),
-                    player.playerId,
-                    "challenge",
-                    None,
-                    None,
-                    "{}",
-                    game.gameId,
-                    Some(character.characterId),
-                    isPublic = false,
-                    Some(game.roles.head.gameRoleId)
-                  )
-                )
                 matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
-                _ <- new MatchRepo(session).create(
+                _ <- TestMatches.writeMatch(
+                  session,
                   Match(
                     game.gameId,
                     matchId,
-                    Some(challenge.challengeId),
-                    challenge.challenger,
+                    TournamentId.unassigned,
+                    player.playerId,
                     "description",
                     Option.when(completed)(completedAt),
                     Some(Instant.ofEpochSecond(1000)),
@@ -120,7 +107,8 @@ class ArchiveServiceSpec extends FunSuite {
                     friendly = friendly
                   )
                 )
-                _ <- new ParticipantRepo(session).create(
+                _ <- TestMatches.writeSeat(
+                  session,
                   CharacterParticipant(
                     ParticipantId(0),
                     game.gameId,
@@ -141,27 +129,14 @@ class ArchiveServiceSpec extends FunSuite {
     private def addCompletedMatch(f: Fixture): IO[MatchId] =
         TestSession.resource.use { session =>
             for {
-                challenge <- new ChallengeRepo(session).create(
-                  CharacterChallenge(
-                    ChallengeId(0),
-                    f.player.playerId,
-                    "challenge",
-                    None,
-                    None,
-                    "{}",
-                    f.game.gameId,
-                    Some(f.character.characterId),
-                    isPublic = false,
-                    Some(f.game.roles.head.gameRoleId)
-                  )
-                )
-                matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
-                _ <- new MatchRepo(session).create(
+                matchId <- IO(com.vivi.matchmaker.persistence.Generators.newMatchId())
+                _ <- TestMatches.writeMatch(
+                  session,
                   Match(
                     f.game.gameId,
                     matchId,
-                    Some(challenge.challengeId),
-                    challenge.challenger,
+                    TournamentId.unassigned,
+                    f.player.playerId,
                     "description",
                     Some(completedAt),
                     Some(Instant.ofEpochSecond(1000)),
@@ -171,7 +146,8 @@ class ArchiveServiceSpec extends FunSuite {
                     publicUrl = Some("https://engine.example.com/matches/m/board")
                   )
                 )
-                _ <- new ParticipantRepo(session).create(
+                _ <- TestMatches.writeSeat(
+                  session,
                   CharacterParticipant(
                     ParticipantId(0),
                     f.game.gameId,
@@ -347,7 +323,8 @@ class ArchiveServiceSpec extends FunSuite {
         // A second seat for the same player: a match that can only be friendly, refused in the
         // transaction -- after the copy has been made.
         run(TestSession.resource.use { session =>
-            new ParticipantRepo(session).create(
+            TestMatches.writeSeat(
+              session,
               CharacterParticipant(
                 ParticipantId(0),
                 f.game.gameId,

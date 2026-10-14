@@ -10,7 +10,6 @@ import com.vivi.matchmaker.ending.MatchEndings
 import com.vivi.matchmaker.engine._
 import com.vivi.matchmaker.model._
 import com.vivi.matchmaker.persistence.{
-    ChallengeRepo,
     EloRatingRepo,
     GameRepo,
     MatchRepo,
@@ -99,54 +98,25 @@ class EloRatingServiceSpec extends PropertySuite {
 
     /** A match between the two players, hosted by the game's admin, started and not yet over. */
     private def started(f: Fixture, friendly: Boolean, timeLimit: Option[Duration] = None): IO[MatchId] =
-        for {
-            created <- services.challenges.create(
-              PlainChallenge(
-                ChallengeId(0),
-                f.host.playerId,
-                "a match for you two",
-                start = None,
-                timeLimit = timeLimit,
-                settings = "{}",
-                gameId = f.game.gameId,
-                gameRoleId = None,
-                isOpen = false,
-                friendly = friendly,
-                autoStart = true
+        Challenges
+            .startedMatch(
+              services,
+              f.game,
+              List(
+                Challenges.Seat(f.first, f.game.roles(0).gameRoleId),
+                Challenges.Seat(f.second, f.game.roles(1).gameRoleId)
               ),
-              f.host.externalId,
-              Seq(
-                Invite(f.first.playerId, Some(f.game.roles(0).gameRoleId)),
-                Invite(f.second.playerId, Some(f.game.roles(1).gameRoleId))
-              )
+              friendly = friendly,
+              roundDuration = timeLimit,
+              hostedBy = Some(f.host)
             )
-            _ <- services.challenges
-                .accept(f.game.gameId, created.challengeId, None, f.game.roles(0).gameRoleId, f.first.externalId)
-            _ <- services.challenges
-                .accept(f.game.gameId, created.challengeId, None, f.game.roles(1).gameRoleId, f.second.externalId)
-            matchId <- TestSession.resource.use(session =>
-                new ChallengeRepo(session).startedMatch(f.game.gameId, created.challengeId)
-            )
-        } yield matchId.get
+            .map(_._2)
 
-    /** An open challenge the game's admin offers and will not play in, which anybody may accept — `first` included, for
-      * both of its seats when the challenge is friendly.
-      */
-    private def openChallenge(f: Fixture, friendly: Boolean): IO[Challenge] =
-        services.challenges.create(
-          PlainChallenge(
-            ChallengeId(0),
-            f.host.playerId,
-            "anybody",
-            start = None,
-            timeLimit = None,
-            settings = "{}",
-            gameId = f.game.gameId,
-            gameRoleId = None,
-            isOpen = true,
-            friendly = friendly,
-            autoStart = true
-          ),
+    /** A challenge the game's admin offers and will not play in, which anybody may enter. */
+    private def openChallenge(f: Fixture, friendly: Boolean): IO[Tournament] =
+        services.tournaments.createChallenge(
+          f.game.gameId,
+          ChallengeRequest(plays = false, poolSize = Some(2), friendly = friendly, autoStart = true),
           f.host.externalId
         )
 
@@ -529,15 +499,13 @@ class EloRatingServiceSpec extends PropertySuite {
         assertEquals(after, Map(f.first.playerId -> (1516, 1), f.second.playerId -> (1484, 1)))
     }
 
-    test("a player cannot take two seats of a challenge that is not friendly") {
+    test("a player cannot take two seats of a challenge") {
         val result = for {
             f <- fixture()
             created <- openChallenge(f, friendly = false)
-            _ <- services.challenges
-                .accept(f.game.gameId, created.challengeId, None, f.game.roles(0).gameRoleId, f.first.externalId)
+            _ <- services.tournaments.enter(f.game.gameId, created.tournamentId, None, f.first.externalId)
             refused <- refusal(
-              services.challenges
-                  .accept(f.game.gameId, created.challengeId, None, f.game.roles(1).gameRoleId, f.first.externalId)
+              services.tournaments.enter(f.game.gameId, created.tournamentId, None, f.first.externalId)
             )
         } yield refused
         val refused = result.timeout(caseTimeout).unsafeRunSync()

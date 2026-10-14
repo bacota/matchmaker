@@ -5,6 +5,7 @@ import munit.FunSuite
 import upickle.default.{read, write}
 import com.vivi.matchmaker.api.Json
 import com.vivi.matchmaker.api.Json.given
+import com.vivi.matchmaker.api.TournamentJson.given
 import com.vivi.matchmaker.model._
 
 /** The shared wire format, compiled for Scala.js.
@@ -22,7 +23,7 @@ class WireFormatSpec extends FunSuite {
         val played = Match(
           gameId = GameId(7),
           matchId = MatchId(1),
-          challengeId = Some(ChallengeId(3)),
+          tournamentId = TournamentId(3),
           creator = PlayerId(4),
           description = "a friendly game",
           completedAt = Some(Instant.parse("2030-01-01T10:42:00Z")),
@@ -39,12 +40,12 @@ class WireFormatSpec extends FunSuite {
         assertEquals(read[Match](write(played)), played)
     }
 
-    // A tournament's match has no challenge, and its creator says whose it is.
-    test("a match with no challenge round-trips, carrying its creator") {
+    // Every match is a tournament's, and its creator says whose it is.
+    test("a match round-trips, carrying its tournament and its creator") {
         val created = Match(
           gameId = GameId(7),
           matchId = MatchId(1),
-          challengeId = None,
+          tournamentId = TournamentId(3),
           creator = PlayerId(4),
           description = "round 1",
           completedAt = None,
@@ -54,7 +55,7 @@ class WireFormatSpec extends FunSuite {
         )
 
         val json = ujson.read(write(created))
-        assert(json.obj.get("challengeId").forall(_.isNull), json)
+        assertEquals(json("tournamentId").num.toLong, 3L)
         assertEquals(json("creator").num.toLong, 4L)
         assertEquals(read[Match](write(created)), created)
     }
@@ -151,200 +152,49 @@ class WireFormatSpec extends FunSuite {
     }
 
     // The browser's half of the invitations contract. `isOpen` and `invitations` both have defaults, and
-    // upickle omits a field equal to its default -- so an open challenge arrives with neither field
-    // present, as does every challenge stored before invitations existed. Reading that as "open, nobody
-    // invited" is what keeps those challenges joinable in a browser holding a newer bundle.
-    test("a closed challenge and its invitations survive the trip, and an open one needs no flag") {
-        val closed = ChallengeSummary(
-          PlainChallenge(
-            challengeId = ChallengeId(1),
-            challenger = PlayerId(2),
-            message = "just us",
-            start = None,
-            timeLimit = None,
-            settings = "{}",
-            gameId = GameId(3),
-            gameRoleId = Some(GameRoleId(4)),
-            isOpen = false
+    // The body the challenge form sends, and what the game screen and the home screen decode: written by the
+    // browser's upickle and read by the server's, so the two have to agree about every Option and default.
+    test("a challenge request round-trips, its absent optionals staying absent") {
+        val request = ChallengeRequest(
+          characterId = Some(CharacterId(1)),
+          poolSize = Some(2),
+          roundDuration = Some(Duration.ofMinutes(30)),
+          gameSettings = """{"rounds":"5"}""",
+          start = Some(Instant.parse("2030-01-01T10:00:00Z")),
+          open = false,
+          invitations = List(PlayerId(4))
+        )
+        assertEquals(read[ChallengeRequest](write(request)), request)
+        val bare = ChallengeRequest()
+        assertEquals(ujson.read(write(bare)).obj.get("start"), None)
+        assertEquals(read[ChallengeRequest](write(bare)), bare)
+    }
+
+    test("a challenge summary round-trips its tournament, entries and invitations") {
+        val summary = ChallengeSummary(
+          TournamentSummary(
+            Tournament(
+              GameId(1),
+              TournamentId(2),
+              "ada's challenge",
+              "",
+              PlayerId(3),
+              TournamentModelId("challenge"),
+              2,
+              TournamentSettings(roundDuration = Some(Duration.ofHours(1)), maxEntrants = Some(2), chooseRoles = true),
+              TournamentStatus.Open
+            ),
+            "Chess",
+            "ada",
+            1,
+            isOwner = true,
+            entered = true,
+            invited = false
           ),
-          acceptances = 1,
-          takenRoles = Seq(GameRoleId(4)),
-          invitations = Seq(
-            Invitation(GameId(3), ChallengeId(1), PlayerId(5), Some(GameRoleId(6))),
-            Invitation(GameId(3), ChallengeId(1), PlayerId(7))
-          ),
-          acceptedInvitees = Seq(PlayerId(5))
+          List(Entrant(GameId(1), TournamentId(2), EntrantId(4), PlayerId(3), None, 1500, Instant.ofEpochSecond(100))),
+          List(PlayerName(PlayerId(5), "grace"))
         )
-
-        val decoded = read[ChallengeSummary](write(closed))
-        assertEquals(decoded, closed)
-        assert(!decoded.challenge.isOpen)
-        assertEquals(decoded.invitations.map(_.gameRoleId), Seq(Some(GameRoleId(6)), None))
-        // Which of the invited players have accepted, which the invitation rows cannot say: this is
-        // what decides whether the challenger's row offers Revoke or Remove.
-        assertEquals(decoded.acceptedInvitees, Seq(PlayerId(5)))
-
-        val open = closed.copy(
-          challenge = closed.challenge.asInstanceOf[PlainChallenge].copy(isOpen = true),
-          invitations = Seq.empty,
-          acceptedInvitees = Seq.empty
-        )
-        val fromOlderServer = read[ChallengeSummary](write(open))
-        assert(fromOlderServer.challenge.isOpen)
-        assert(fromOlderServer.invitations.isEmpty)
-        assert(fromOlderServer.acceptedInvitees.isEmpty)
-    }
-
-    // The body `POST /challenges` takes: the challenge nested, and the invitations to
-    // send with it beside it. Written here rather than only on the server because the browser is
-    // what composes it, and a nested `Challenge` has to keep its discriminator through the wrapper
-    // -- the same hazard `ChallengeSummary` has below.
-    test("a create-challenge body round-trips, and invitations are optional") {
-        val challenge = PlainChallenge(
-          challengeId = ChallengeId(0),
-          challenger = PlayerId(1),
-          message = "fancy a game?",
-          start = None,
-          timeLimit = None,
-          settings = "{}",
-          gameId = GameId(2),
-          gameRoleId = Some(GameRoleId(3)),
-          isOpen = false
-        )
-        val invited = Json.CreateChallenge(
-          challenge,
-          Seq(Invite(PlayerId(4), Some(GameRoleId(5))), Invite(PlayerId(6)))
-        )
-
-        val decoded = read[Json.CreateChallenge](write(invited))
-        assertEquals(decoded, invited)
-        // The subtype survives the nesting, which is what the discriminator is for.
-        assert(decoded.challenge.isInstanceOf[PlainChallenge])
-        assertEquals(decoded.invitations.map(_.gameRoleId), Seq(Some(GameRoleId(5)), None))
-
-        // And an open challenge nobody was asked to: `invitations` is defaulted, so the field is
-        // absent on the wire and reads back empty.
-        val alone = Json.CreateChallenge(challenge.copy(isOpen = true))
-        assertEquals(read[Json.CreateChallenge](write(alone)), alone)
-        assert(read[Json.CreateChallenge](write(alone)).invitations.isEmpty)
-    }
-
-    // What the home page's invitations section decodes, and the one DTO here that carries names
-    // rather than ids -- it is drawn on a screen that spans every game and has nothing to look a
-    // game's name or a challenger's nickname up from.
-    test("a ChallengeInvitation round-trips, with and without the role it was offered as") {
-        val asWhite = ChallengeInvitation(
-          Invitation(GameId(1), ChallengeId(2), PlayerId(3), Some(GameRoleId(4))),
-          gameName = "Chess",
-          gameType = GameType.Plain,
-          challengerNickname = "ada",
-          message = "best of three",
-          roleName = Some("white"),
-          invitedAt = java.time.Instant.parse("2026-09-21T12:00:00.123456Z")
-        )
-        val anySeat = asWhite.copy(
-          invitation = asWhite.invitation.copy(gameRoleId = None),
-          roleName = None
-        )
-
-        assertEquals(read[ChallengeInvitation](write(asWhite)), asWhite)
-        assertEquals(read[ChallengeInvitation](write(anySeat)), anySeat)
-        // A list, which is the response shape rather than a single invitation.
-        val both = List(asWhite, anySeat)
-        assertEquals(read[List[ChallengeInvitation]](write(both)), both)
-    }
-
-    // The challenges page decodes this and nothing else, and the nested `challenge` goes through
-    // the merged Challenge reader. A discriminator or field mapping that does not survive being
-    // nested would break only here, in the browser, on the one screen that loads it.
-    test("a ChallengeSummary round-trips both kinds of challenge, keeping the subtype") {
-        val character = ChallengeSummary(
-          CharacterChallenge(
-            challengeId = ChallengeId(1),
-            challenger = PlayerId(2),
-            message = "anyone?",
-            start = Some(Instant.parse("2026-08-07T12:00:00Z")),
-            timeLimit = Some(Duration.ofMinutes(5)),
-            settings = "{}",
-            gameId = GameId(3),
-            characterId = Some(CharacterId(9)),
-            isPublic = true,
-            gameRoleId = Some(GameRoleId(4))
-          ),
-          acceptances = 2,
-          takenRoles = Seq(GameRoleId(4))
-        )
-        val plain = ChallengeSummary(
-          PlainChallenge(
-            challengeId = ChallengeId(5),
-            challenger = PlayerId(6),
-            message = "a plain game",
-            start = None,
-            timeLimit = None,
-            settings = "{}",
-            gameId = GameId(7),
-            gameRoleId = Some(GameRoleId(8))
-          ),
-          acceptances = 1,
-          takenRoles = Seq(GameRoleId(8))
-        )
-
-        // The list is the response shape; decoding them singly would not notice a broken Seq codec.
-        val decoded = read[Seq[ChallengeSummary]](write(Seq(character, plain)))
-
-        assertEquals(decoded, Seq(character, plain))
-        // Which subtype came back decides whether the UI offers a character to accept with, so it is
-        // asserted rather than left to equality.
-        assert(decoded.head.challenge.isInstanceOf[CharacterChallenge])
-        assert(decoded(1).challenge.isInstanceOf[PlainChallenge])
-        // The count is what the Start button is shown or hidden on.
-        assertEquals(decoded.map(_.acceptances), Seq(2, 1))
-        assertEquals(decoded.head.challenge.start, character.challenge.start)
-    }
-
-    // The browser writes the create body for a game admin's seatless bout and reads it back in the
-    // game's challenge list, so both directions are exercised here as well as on the server.
-    test("a seatless CharacterChallenge leaves its character and role empty, and reads back that way") {
-        val challenge = CharacterChallenge(
-          challengeId = ChallengeId(0),
-          challenger = PlayerId(1),
-          message = "hosted",
-          start = None,
-          timeLimit = None,
-          settings = "{}",
-          gameId = GameId(1),
-          characterId = None,
-          gameRoleId = None,
-          autoStart = true
-        )
-        val json = ujson.read(write(challenge))
-
-        // Written as null, as the other optional fields without a default are, and read back as
-        // None -- not as some default character or role.
-        assertEquals(json("characterId"), ujson.Null)
-        assertEquals(json("gameRoleId"), ujson.Null)
-        val decoded = read[Challenge](json)
-        assertEquals(decoded, challenge)
-        assert(decoded.isInstanceOf[CharacterChallenge])
-    }
-
-    test("an absent optional stays absent rather than becoming a default") {
-        val challenge = CharacterChallenge(
-          challengeId = ChallengeId(0),
-          challenger = PlayerId(1),
-          message = "anyone?",
-          start = None,
-          timeLimit = Some(Duration.ofMinutes(5)),
-          settings = "{}",
-          gameId = GameId(1),
-          characterId = Some(CharacterId(9)),
-          gameRoleId = Some(GameRoleId(2))
-        )
-
-        val decoded = read[Challenge](write(challenge))
-
-        assertEquals(decoded.start, None)
-        assertEquals(decoded.timeLimit, Some(Duration.ofSeconds(300)))
+        assertEquals(read[Seq[ChallengeSummary]](write(Seq(summary))), Seq(summary))
     }
 }
 

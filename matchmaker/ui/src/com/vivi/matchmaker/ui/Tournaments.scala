@@ -742,6 +742,12 @@ object Tournaments {
         val entries = Var(s0.entriesPerPlayer.toString)
         val hours = Var(s0.roundDuration.fold("48")(d => (d.toMinutes / 60.0).toString.stripSuffix(".0")))
         val maxTurns = Var(s0.maxTurns.fold("")(_.toString))
+        val chooseRoles = Var(s0.chooseRoles)
+        val live = Var(s0.live)
+        val maxEntrants = Var(s0.maxEntrants.fold("")(_.toString))
+        val autoStart = Var(s0.autoStart)
+        val plannedStart = Var(s0.start.fold("")(Views.localInputOf))
+        val parameters = Var(Views.startingChoices(game, s0.gameSettings))
         val problems: Var[List[Problem]] = Var(Nil)
         val chosen: Var[Option[TournamentModel]] = Var(None)
         // The model an existing tournament was made from, when the game no longer offers it -- its admins took it off,
@@ -751,13 +757,15 @@ object Tournaments {
             models.map(ms => kept.filter(id => ms.nonEmpty && !ms.exists(_.tournamentModelId == id)))
         def keeping: Boolean = chosen.now().isEmpty && modelId.now().exists(kept.contains)
 
-        /* Choosing a model fills in the pool size it suggests -- the game's R where it suggests none -- and whether it
-         * takes late entries; both stay the creator's to change. */
+        /* Choosing a model fills in the pool size it suggests -- the game's R where it suggests none -- whether it
+         * takes late entries, and whether its players choose their roles; all stay the creator's to change, but for a
+         * model whose players always choose, which every tournament made from it does. */
         def choose(m: TournamentModel): Unit = {
             modelId.set(Some(m.tournamentModelId))
             chosen.set(Some(m))
             poolSize.set(m.poolSize.getOrElse(r).toString)
             lateEntries.set(m.lateEntries)
+            chooseRoles.set(m.chooseRoles)
         }
 
         def int(v: Var[String]) = v.now().trim.toIntOption
@@ -773,7 +781,13 @@ object Tournaments {
               hours.now().trim.toDoubleOption.filter(_ > 0).map(h => java.time.Duration.ofMinutes((h * 60).round)),
           maxTurns = int(maxTurns),
           concurrentRounds = concurrentRounds.now(),
-          isPublic = isPublic.now()
+          isPublic = isPublic.now(),
+          gameSettings = Views.settingsOf(parameters.now()),
+          live = live.now(),
+          start = Views.startOf(plannedStart.now()),
+          chooseRoles = chooseRoles.now(),
+          maxEntrants = int(maxEntrants),
+          autoStart = autoStart.now() && int(maxEntrants).isDefined
         )
         def check(): Unit =
             problems.set(chosen.now() match {
@@ -894,7 +908,34 @@ object Tournaments {
             concurrentRounds,
             "A round-robin pool plays all of its matches in one round, rather than each player one match a round."
           ),
-          checkbox("Public", isPublic, "Anybody may see it listed."),
+          checkbox("Public", isPublic, "Anybody may see it listed, and watch its matches."),
+          checkbox(
+            "Players choose roles",
+            chooseRoles,
+            "Every match's players choose their roles before it starts, the strongest seed first, rather than " +
+                "being given them."
+          ),
+          checkbox(
+            "Live",
+            live,
+            "Its matches are played in real time: the game engine runs the turns and keeps the clock, so a round " +
+                "length is required."
+          ),
+          number("Most entries", maxEntrants, "Leave blank for no limit."),
+          checkbox("Start when full", autoStart, "It starts by itself as soon as it has its most entries."),
+          Views.tipField(
+            freshTipId(s"$key-tip"),
+            "When to play (optional)",
+            "When you mean it to be played, shown to anyone deciding whether to enter. It starts it no sooner and " +
+                "no later."
+          )(
+            input(
+              tpe := "datetime-local",
+              controlled(value <-- plannedStart.signal, onInput.mapToValue --> plannedStart)
+            )
+          ),
+          // The game's own settings, as a challenge offers them: copied to every match, and so to the engine.
+          Views.parameterFields(game, parameters),
           number("Minimum rating", minRating, "Leave blank for no minimum."),
           number("Maximum rating", maxRating, "Leave blank for no maximum."),
           number("Entries per player", entries, "How many times one player may enter."),

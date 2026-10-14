@@ -19,8 +19,6 @@ case class Services[T](
     gameAdmins: GameAdminService[T],
     ratings: EloRatingService[T],
     characters: CharacterService[T],
-    challenges: ChallengeService[T],
-    acceptances: AcceptanceService,
     matches: MatchService,
     engine: GameEngineService[T],
     archives: ArchiveService,
@@ -104,11 +102,6 @@ object Services {
         )
         lazy val matches = new MatchService(pool, notifications, Some(archives), endings)
 
-        /* Built before the services it is given to, because it is given to one of them: a challenge
-         * offered as starting itself turns an acceptance into a start, and the acceptance is
-         * `challenges`' to record while the start is this one's to carry out. Only the function is
-         * shared, so neither service has to know about the other -- see
-         * `ChallengeService.autoStart`. */
         lazy val engine: GameEngineService[T] =
             new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications, Some(archives), endings)
         lazy val rounds: TournamentRounds[T] = new TournamentRounds[T](pool, engine, endings, notifications)
@@ -120,19 +113,17 @@ object Services {
           gameAdmins = new GameAdminService[T](pool),
           ratings = new EloRatingService[T](pool, endings),
           characters = new CharacterService[T](pool),
-          // One `Notifications` for the four services that cause something worth an email. One
-          // rather than one each, because who is told what does not depend on which service the
-          // event came from -- that is the whole point of it being a class of its own.
-          challenges = new ChallengeService[T](pool, notifications, engine.startIfReady(_, _, _, _).map(_.isMatch)),
-          acceptances = new AcceptanceService(pool, notifications),
           matches = matches,
           engine = engine,
           archives = archives,
           ending = ending,
           notifications = new NotificationService(pool),
           suppression = new SuppressionService(pool),
-          // A tournament with automatic rounds begins its first as it starts.
-          tournaments = new TournamentService[T](pool, started = (g, t) => endings.tournamentRoundDue(g, t)),
+          // A tournament with automatic rounds begins its first as it starts. One `Notifications` for every
+          // service that causes something worth an email, because who is told what does not depend on which
+          // service the event came from -- that is the whole point of it being a class of its own.
+          tournaments =
+              new TournamentService[T](pool, notifications, started = (g, t) => endings.tournamentRoundDue(g, t)),
           tournamentModels = new TournamentModelService[T](pool),
           rounds = rounds
         )

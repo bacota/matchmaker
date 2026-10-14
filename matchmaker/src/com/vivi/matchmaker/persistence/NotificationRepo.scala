@@ -27,18 +27,16 @@ case class Seat(participantId: ParticipantId, player: Player, preferences: SeatN
   */
 case class GameNotice(gameId: GameId, name: String)
 
-/** One acceptor of a challenge, with everything that bears on writing to them about it.
+/** One player with a stake in a tournament -- its owner, or a player with an entry in it -- with everything that bears
+  * on writing to them about it.
   *
   * The whole `Player` rather than an id, because the caller is composing mail: it needs the nickname to address them by
-  * and the address to send to, and a challenge's roster is small enough that fetching them with the preferences costs
-  * one join rather than a query per recipient.
+  * and the address to send to, and fetching them with the preferences costs one join rather than a query per recipient.
   *
-  * Two levels, which is all there is to ask: nobody is a participant in anything until the challenge is started, so the
-  * level that would otherwise answer does not exist yet.
-  *
-  * `roleName` is the role's display name, since it is only ever written into the mail.
+  * Two levels, which is all there is to ask: nobody has a seat in any match until the tournament starts, so the level
+  * that would otherwise answer does not exist yet.
   */
-case class AcceptorNotifications(player: Player, roleName: Option[String], levels: NotificationLevels)
+case class EntrantNotifications(player: Player, levels: NotificationLevels)
 
 /** The `notify_*` columns of `player`, `participant` and `player_game`.
   *
@@ -58,7 +56,7 @@ class NotificationRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val matchId = SkunkIdCodecs.matchId
     private val participantId = SkunkIdCodecs.participantId
-    private val challengeId = SkunkIdCodecs.challengeId
+    private val tournamentId = SkunkIdCodecs.tournamentId
     private val preferences = SkunkCodecs.notificationPreferences
     private val seatAnswers = SkunkCodecs.seatNotifications
 
@@ -175,55 +173,34 @@ class NotificationRepo(session: Session[IO]) {
           ORDER BY p.participant_id"""
             .query(participantId *: playerId *: text *: bool *: text *: text.opt *: seatAnswers)
 
-    /* Everyone who has accepted one challenge, with the two levels that can speak for them.
-     *
-     * The challenge-stage counterpart of `selectSeatPreferences`, and a chain rather than an answer
-     * for a reason that is not an omission: a participant row is what a start creates, so there is
-     * nothing more specific than the player's settings for the game to ask while a challenge is still
-     * a challenge.
-     *
-     * The challenger is in here too, because creating a challenge inserts their own acceptance --
-     * see `ChallengeService.create`. So this one query is the whole audience for anything that
-     * happens to a challenge, and which of them is the challenger is a comparison the caller makes.
-     */
-    /* Everyone with a seat, and the challenger whether or not they have one: a seatless challenge's
-     * host (a game's admin offering a match they will not play in) has no acceptance, and is still the
-     * person the challenge is reporting to. No role for them, and never twice for a seated one. */
-    private val selectLevelsForChallenge: Query[
-      (GameId, ChallengeId, GameId, ChallengeId),
-      (
-          PlayerId,
-          String,
-          Boolean,
-          String,
-          Option[String],
-          Option[String],
-          NotificationPreferences,
-          NotificationPreferences
-      )
+    /* The owner of one tournament and every player with an entry still in it, each once, with the two
+     * levels that can speak for them. A chain rather than an answer, because a seat is what a round
+     * creates, so there is nothing more specific than the player's settings for the game to ask before
+     * then. The owner is in it whether or not they have entered: they are who it reports to. */
+    private val selectLevelsForTournament: Query[
+      (GameId, TournamentId, GameId, TournamentId),
+      (PlayerId, String, Boolean, String, Option[String], NotificationPreferences, NotificationPreferences)
     ] =
-        sql"""SELECT pl.player_id, pl.nickname, pl.is_admin, pl.external_id, pl.email, r.display_name,
+        sql"""SELECT pl.player_id, pl.nickname, pl.is_admin, pl.external_id, pl.email,
                  pg.notify_challenge_accepted, pg.notify_challenge_ready, pg.notify_acceptance_changed,
-                 pg.notify_accepted_challenge_ready, pg.notify_invitation_received, pg.notify_invitation_accepted, pg.notify_invitation_rejected, pg.notify_match_started, pg.notify_turn_taken,
+                 pg.notify_accepted_challenge_ready, pg.notify_invitation_received, pg.notify_invitation_accepted,
+                 pg.notify_invitation_rejected, pg.notify_match_started, pg.notify_turn_taken,
                  pg.notify_your_turn, pg.notify_match_ended, pg.notify_tournament_round_done,
                  pl.notify_challenge_accepted, pl.notify_challenge_ready, pl.notify_acceptance_changed,
-                 pl.notify_accepted_challenge_ready, pl.notify_invitation_received, pl.notify_invitation_accepted, pl.notify_invitation_rejected, pl.notify_match_started, pl.notify_turn_taken,
+                 pl.notify_accepted_challenge_ready, pl.notify_invitation_received, pl.notify_invitation_accepted,
+                 pl.notify_invitation_rejected, pl.notify_match_started, pl.notify_turn_taken,
                  pl.notify_your_turn, pl.notify_match_ended, pl.notify_tournament_round_done
-          FROM (SELECT a.game_id, a.player_id, a.game_role_id
-                  FROM acceptance a
-                 WHERE a.game_id = $gameId AND a.challenge_id = $challengeId
-                UNION ALL
-                SELECT ch.game_id, ch.challenger, NULL
-                  FROM challenge ch
-                 WHERE ch.game_id = $gameId AND ch.challenge_id = $challengeId
-                   AND NOT EXISTS (SELECT 1 FROM acceptance mine
-                                    WHERE mine.game_id = ch.game_id AND mine.challenge_id = ch.challenge_id
-                                      AND mine.player_id = ch.challenger)) a
+          FROM (SELECT e.game_id, e.player_id
+                  FROM entrant e
+                 WHERE e.game_id = $gameId AND e.tournament_id = $tournamentId AND e.withdrawn_at IS NULL
+                UNION
+                SELECT t.game_id, t.owner
+                  FROM tournament t
+                 WHERE t.game_id = $gameId AND t.tournament_id = $tournamentId) a
           JOIN player pl ON pl.player_id = a.player_id
-          LEFT JOIN game_role r ON r.game_id = a.game_id AND r.game_role_id = a.game_role_id
           LEFT JOIN player_game pg ON pg.player_id = a.player_id AND pg.game_id = a.game_id
           ORDER BY a.player_id"""
-            .query(playerId *: text *: bool *: text *: text.opt *: text.opt *: preferences *: preferences)
+            .query(playerId *: text *: bool *: text *: text.opt *: preferences *: preferences)
 
     /* The caller's own seats in one match. Plural: a player may hold two, and they are not two
      * settings -- so the read takes the first and the write covers all of them. */
@@ -359,7 +336,7 @@ class NotificationRepo(session: Session[IO]) {
           WHERE p.player_id = $playerId AND p.game_id = r.game_id AND p.completed_at IS NULL""".command
             // Four flags, in `NotificationType.onSeat` order: those are the only columns a
             // seat has, so they are the only kinds a cascade into one can touch -- a player who changed
-            // what they hear about challenges has changed nothing a seat holds. Bound positionally like
+            // what they hear about entries has changed nothing a seat holds. Bound positionally like
             // every other column list here. The player is named twice in the statement -- once to
             // resolve the chain, once to pick the seats -- so it is bound twice from the one value.
             .contramap { case (changed, player, game) =>
@@ -514,16 +491,15 @@ class NotificationRepo(session: Session[IO]) {
     def applyToMatches(id: PlayerId, game: Option[GameId], changed: Set[NotificationType]): IO[Unit] =
         session.execute(restampParticipants)((changed, id, game)).void
 
-    /** Everyone who has accepted a challenge, and its challenger even if they have not — a seatless challenge's host —
-      * with what each of them wants to hear about it.
+    /** A tournament's owner and everyone with an entry still in it, each once, with what each of them wants to hear
+      * about it.
       */
-    def levelsForChallenge(gameId: GameId, challengeId: ChallengeId): IO[List[AcceptorNotifications]] =
+    def levelsForTournament(gameId: GameId, tournament: TournamentId): IO[List[EntrantNotifications]] =
         session
-            .execute(selectLevelsForChallenge)((gameId, challengeId, gameId, challengeId))
-            .map(_.map { case (id, nickname, isAdmin, externalId, email, roleName, perGame, overall) =>
-                AcceptorNotifications(
+            .execute(selectLevelsForTournament)((gameId, tournament, gameId, tournament))
+            .map(_.map { case (id, nickname, isAdmin, externalId, email, perGame, overall) =>
+                EntrantNotifications(
                   Player(id, nickname, isAdmin, externalId, email),
-                  roleName,
                   NotificationLevels(playerGame = perGame, player = overall)
                 )
             })
@@ -533,13 +509,13 @@ class NotificationRepo(session: Session[IO]) {
       * Takes no defaults and joins no other level: a seat's own columns are the answer, which is what they are for.
       */
     /* One player's two levels for one game, for a notification about somebody who is not in the
-     * challenge yet.
+     * tournament yet.
      *
-     * `levelsForChallenge` cannot answer this: it reads the acceptance rows, and an invited player has
-     * no acceptance -- that is the whole difference between being invited and having accepted. So this
-     * is the same chain read for one named player, joined the same way (LEFT JOIN, since a player who
-     * has never opened a game's settings has no player_game row and NULLs fall through the chain
-     * exactly as an unanswered question does). */
+     * `levelsForTournament` cannot answer this: it reads the entries, and an invited player has none --
+     * that is the whole difference between being invited and having entered. So this is the same chain
+     * read for one named player, joined the same way (LEFT JOIN, since a player who has never opened a
+     * game's settings has no player_game row and NULLs fall through the chain exactly as an unanswered
+     * question does). */
     private val selectLevelsForPlayer: Query[(PlayerId, GameId), (NotificationPreferences, NotificationPreferences)] =
         sql"""SELECT pg.notify_challenge_accepted, pg.notify_challenge_ready, pg.notify_acceptance_changed,
                  pg.notify_accepted_challenge_ready,
@@ -559,8 +535,8 @@ class NotificationRepo(session: Session[IO]) {
 
     /** The chain for one player in one game.
       *
-      * For an event about a player who has not accepted anything -- an invitation made, or turned down -- where
-      * [[levelsForChallenge]] has no row to find them by. both levels unset if the player is gone, which resolves to
+      * For an event about a player who has not entered -- an invitation made, or turned down -- where
+      * [[levelsForTournament]] has no row to find them by. both levels unset if the player is gone, which resolves to
       * sending everything: a notification is not the place to discover a missing row.
       */
     def levelsForPlayer(player: PlayerId, game: GameId): IO[NotificationLevels] =

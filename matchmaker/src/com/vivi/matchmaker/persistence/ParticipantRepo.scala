@@ -19,49 +19,6 @@ class ParticipantRepo(session: Session[IO]) {
     private val gameRoleId = SkunkIdCodecs.gameRoleId
     private val instant = SkunkCodecs.instant
 
-    /* A seat, stamped on creation with what its player wants to hear about it.
-     *
-     * INSERT ... SELECT rather than VALUES, because the seat's four `notify_*` columns are NOT NULL
-     * and what goes in them is the chain resolved at this moment: what the player has said about this
-     * game, else what they have said in general, else send it. That is the same rule as
-     * `NotificationLevels.apply`, done here instead of read and passed in, so that a seat cannot be
-     * created unstamped and the resolution cannot happen a query earlier than the row it describes.
-     *
-     * The LEFT JOIN is the "else what they have said in general": a player who has never opened this
-     * game's settings has no `player_game` row, and NULLs from the outer join fall through the
-     * COALESCE exactly as an unanswered question does.
-     *
-     * The player, the game and the match are each named again -- to find the match's challenge and to
-     * resolve the chain -- so each value is bound more than once. */
-    private val insertParticipant: Query[
-      (GameId, MatchId, GameType, PlayerId, Boolean, Boolean, Option[Instant], GameRoleId, Int, Option[Int]),
-      ParticipantId
-    ] =
-        // `completed_at` is the database's now() for a seat created already finished, as
-        // `updateParticipant` stamps one below; Scala says only whether it is.
-        // The seat names its match's challenge, taken from the match itself so that it cannot name another.
-        sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, pending, completed_at, due, game_role_id,
-              elo_start, elo_role_start, notify_match_started, notify_turn_taken, notify_your_turn, notify_match_ended,
-              challenge_id)
-          SELECT $gameId, $matchId, $gameType, $playerId, $bool, CASE WHEN $bool THEN now() END, ${instant.opt},
-                 $gameRoleId, $int4, ${int4.opt},
-                 COALESCE(pg.notify_match_started, pl.notify_match_started, TRUE),
-                 COALESCE(pg.notify_turn_taken, pl.notify_turn_taken, TRUE),
-                 COALESCE(pg.notify_your_turn, pl.notify_your_turn, TRUE),
-                 COALESCE(pg.notify_match_ended, pl.notify_match_ended, TRUE),
-                 m.challenge_id
-          FROM player pl
-              JOIN match m ON m.game_id = $gameId AND m.match_id = $matchId
-              LEFT JOIN player_game pg ON pg.player_id = pl.player_id AND pg.game_id = $gameId
-          WHERE pl.player_id = $playerId
-          RETURNING participant_id"""
-            .query(participantId)
-            .contramap { case t @ (game, matchId, _, player, _, _, _, _, _, _) => t ++ (game, matchId, game, player) }
-
-    private val insertCharacterParticipant: Command[(GameId, ParticipantId, CharacterId)] =
-        sql"""INSERT INTO character_participant (game_id, participant_id, game_type, character_id)
-          VALUES ($gameId, $participantId, 'C', $characterId)""".command
-
     // participant_id is only unique within its game_id — the table's primary key is the composite
     // (game_id, participant_id), with no separate UNIQUE(participant_id) the way character has —
     // so both columns are required in the WHERE clause here, not participant_id alone.
@@ -159,29 +116,6 @@ class ParticipantRepo(session: Session[IO]) {
         }
     }
 
-    /** Seats `p`, whose player was rated `eloStart` in the game as the match began, and `eloRoleStart` in the seat's
-      * role — none for a game whose roles are unimportant.
-      */
-    def create(p: Participant, eloStart: Int, eloRoleStart: Option[Int] = None): IO[Participant] = {
-        val gt = p match {
-            case _: CharacterParticipant => GameType.Character
-            case _: PlainParticipant     => GameType.Plain
-        }
-        for {
-            id <- session.unique(insertParticipant)(
-              (p.gameId, p.matchId, gt, p.playerId, p.pending, p.completed, p.due, p.gameRoleId, eloStart, eloRoleStart)
-            )
-            _ <- p match {
-                case cp: CharacterParticipant =>
-                    session.execute(insertCharacterParticipant)((p.gameId, id, cp.characterId)).void
-                case _: PlainParticipant => IO.unit
-            }
-        } yield p match {
-            case cp: CharacterParticipant => cp.copy(participantId = id)
-            case pp: PlainParticipant     => pp.copy(participantId = id)
-        }
-    }
-
     def read(gameId: GameId, id: ParticipantId): IO[Option[Participant]] =
         session.option(selectParticipant)((gameId, id)).map(_.map(row => toParticipant(id, gameId, row)))
 
@@ -219,30 +153,11 @@ class ParticipantRepo(session: Session[IO]) {
     def completeForMatch(gameId: GameId, matchId: MatchId): IO[Unit] =
         session.execute(completeParticipantsForMatch)((gameId, matchId)).void
 
-    // character_participant has a FK to participant, so its rows go first.
-    private val deleteCharacterParticipantsForMatch: Command[(GameId, MatchId)] =
-        sql"""DELETE FROM character_participant cp
-          USING participant p
-          WHERE p.game_id = cp.game_id AND p.participant_id = cp.participant_id
-            AND p.game_id = $gameId AND p.match_id = $matchId""".command
-
-    private val deleteParticipantsForMatch: Command[(GameId, MatchId)] =
-        sql"DELETE FROM participant WHERE game_id = $gameId AND match_id = $matchId".command
-
-    /** Removes every participant in a match. Only used to undo a match whose game the engine failed to create;
-      * participants of a match that is actually being played are completed, never deleted.
-      */
-    def deleteForMatch(gameId: GameId, matchId: MatchId): IO[Unit] =
-        for {
-            _ <- session.execute(deleteCharacterParticipantsForMatch)((gameId, matchId))
-            _ <- session.execute(deleteParticipantsForMatch)((gameId, matchId))
-        } yield ()
-
     /** Everyone playing one match, together with the player's external id and role name.
       *
       * The two extra columns are there for the game-engine calls: the engine is told which Cognito identity plays which
       * role, and knows nothing of matchmaker's own player or role ids. Both are inner joins -- a participant always has
-      * a player, and a seat of a challenge always has a role.
+      * a player, and a seat of a match being played always has a role.
       */
     def listForMatch(gameId: GameId, matchId: MatchId): IO[List[(Participant, String, String)]] =
         session

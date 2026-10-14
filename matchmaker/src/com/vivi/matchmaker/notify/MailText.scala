@@ -7,8 +7,8 @@ import com.vivi.matchmaker.model.Player
 /** The few things every notification puts together the same way.
   *
   * None of the words are here — they are in `mail/messages.properties`, and this asks `MailTemplates` for them. What is
-  * here is the handful of decisions about *which* words: whether there is a game to link to, whether the challenger
-  * wrote a description, how many names are in a list. Those are the things a properties file deliberately cannot
+  * here is the handful of decisions about *which* words: whether there is a game to link to, whether there is a name or
+  * description to quote, how many names are in a list. Those are the things a properties file deliberately cannot
   * decide.
   */
 object MailText {
@@ -42,11 +42,11 @@ object MailText {
             MailTemplates.render("mail.links.play", "playUrl" -> url, "uiBaseUrl" -> uiBaseUrl)
         )
 
-    /** The challenger's own words, when they wrote any: that is what a player recognises their challenge by.
+    /** A tournament's name or a match's description, when there is one: that is what a player recognises it by.
       *
-      * Empty when there are none, which is how the clause disappears from the sentence it sits inside — a challenge
-      * with no description must not produce a mail quoting nothing. The space in front of it belongs to the clause and
-      * is in the properties file with it.
+      * Empty when there is none, which is how the clause disappears from the sentence it sits inside — a challenge,
+      * which has nothing of the kind, must not produce a mail quoting nothing. The space in front of it belongs to the
+      * clause and is in the properties file with it.
       */
     def quoted(description: String): String =
         Some(description.trim)

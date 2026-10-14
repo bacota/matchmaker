@@ -9,7 +9,7 @@ import scala.util.matching.Regex
 /** The words matchmaker's notifications are written in, read from `mail/messages.properties`.
   *
   * Not a template language, deliberately. A value may contain `${name}` and nothing else: no conditionals, no
-  * formatting, no expressions. Anything that needs deciding — whether a challenge is ready, whether this player has a
+  * formatting, no expressions. Anything that needs deciding — whether a challenge is full, whether this player has a
   * deadline, which of two plurals applies — is decided in Scala, which then asks for the key it has decided on. A file
   * that could decide things for itself would be a second program in a language with no compiler and no tests.
   *
@@ -52,8 +52,8 @@ object MailTemplates {
 
     /** The text for `key`, with each `${name}` replaced by the value given for it.
       *
-      * A value may be empty, which is how an optional clause disappears — `mail.quoted` is empty when the challenger
-      * wrote no description, and the sentence it sits inside reads correctly without it.
+      * A value may be empty, which is how an optional clause disappears — `mail.quoted` is empty when there is no name
+      * or description to quote, and the sentence it sits inside reads correctly without it.
       *
       * A variable the file names and the caller did not supply is a mistake, and so is a key that is not in the file.
       * Both throw rather than producing a mail: a player sent the literal text "${actor}" is worse served than a player

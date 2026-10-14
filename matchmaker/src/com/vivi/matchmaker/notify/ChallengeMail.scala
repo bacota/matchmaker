@@ -2,109 +2,109 @@ package com.vivi.matchmaker.notify
 
 import com.vivi.matchmaker.model.NotificationType
 
-/** What has just happened to a challenge, from the point of view of everyone who has a stake in it.
+/** What has just happened to the entries of a challenge or tournament, from the point of view of everyone who has a
+  * stake in it.
   *
-  * One value for the whole audience rather than one per recipient: an acceptance is a single event, and the difference
-  * between what the challenger is told and what the other acceptors are told is which of them is reading — which is
-  * `kind` in [[ChallengeMail.compose]], not a different set of facts.
+  * One value for the whole audience rather than one per recipient: an entry is a single event, and the difference
+  * between what the owner is told and what the other entrants are told is which of them is reading — which is `kind` in
+  * [[ChallengeMail.compose]], not a different set of facts.
   *
+  * @param what
+  *   "challenge" for a tournament of the challenge model, "tournament" for any other
+  * @param title
+  *   a tournament's name, quoted in the mail; empty for a challenge, whose name only says that it is one
   * @param actor
-  *   the nickname of whoever has just accepted or backed out — or, for the invitation kinds, whoever accepted or
-  *   rejected an invitation. Unused by [[NotificationType.InvitationReceived]], whose recipient *is* the invitee and so
-  *   is not named to themselves
-  * @param role
-  *   the role they took, when they took one. A withdrawal says nothing about the role it freed: the roster line below
-  *   already names it whenever it is a role a start waits for, and naming an optional one adds nothing.
+  *   the nickname of whoever has just entered or withdrawn — or, for the invitation kinds, whoever took up or turned
+  *   down an invitation. Unused by [[NotificationType.InvitationReceived]], whose recipient *is* the invitee and so is
+  *   not named to themselves
   * @param joined
-  *   true for an acceptance, false for a withdrawal
+  *   true for an entry, false for a withdrawal
   * @param challenger
-  *   the nickname of whoever offered the challenge, for the mails that are not addressed to them
-  * @param waitingFor
-  *   the required roles still unclaimed, in the game's role order. Empty means the challenge is ready to start.
+  *   the nickname of its owner, for the mails that are not addressed to them
+  * @param room
+  *   how many more entries it takes before it is full, for one that takes a limited number; `None` for one that does
+  *   not. `Some(0)` is full.
   */
 case class ChallengeNews(
     gameName: String,
-    description: String,
+    what: String,
+    title: String,
     actor: String,
-    role: Option[String],
     joined: Boolean,
     challenger: String,
-    waitingFor: Seq[String]
+    room: Option[Int]
 )
 
-/** What a player is told when a challenge they are in changes.
+/** What a player is told when a challenge or tournament they own or have entered changes.
   *
-  * Seven of the eleven notification kinds land here, and they are two pairs: something happened (an acceptance, a
-  * withdrawal) and the roster is now complete. Each pair is said once to the player who offered the challenge and once
-  * to the players who accepted it, because those are different pieces of news — one of them can press Start.
+  * Seven of the twelve notification kinds land here, and they are two pairs: something happened (an entry, a
+  * withdrawal) and it is now full. Each pair is said once to its owner and once to the players who entered it, because
+  * those are different pieces of news — only one of them can start it.
   *
   * The other three are the invitation kinds, which are the same shape one level out: an invitation is made, taken up,
-  * or turned down, and the first of those is the only mail here addressed to somebody who is not yet in the challenge
-  * at all.
+  * or turned down, and the first of those is the only mail here addressed to somebody who is not yet in it at all.
   *
   * Rendering is separated from deciding who to write to, and is a pure function of its arguments, so what the mail says
-  * can be tested without a challenge or a database. The deciding halves are `ChallengeService.accept`,
-  * `ChallengeService.invite`, `ChallengeService.reject` and `AcceptanceService.delete`.
+  * can be tested without a tournament or a database. The deciding half is `Notifications`.
   */
 object ChallengeMail extends NotificationMail[ChallengeNews] {
 
-    /* No play link on any of these four: a challenge is not a match yet, so there is nothing to play
-     * at. `NotificationMail.playUrl` defaults to none, which is why it is not overridden here. */
+    /* No play link on any of these: nothing is a match yet, so there is nothing to play at.
+     * `NotificationMail.playUrl` defaults to none, which is why it is not overridden here. */
     protected def lines(kind: NotificationType, news: ChallengeNews): Option[(String, String)] = {
         val name = news.gameName
-        // Empty when the challenger wrote no description, which is how the clause disappears from
-        // whichever sentence it sits inside.
-        val quoted = MailText.quoted(news.description)
-        // The part they took, for an acceptance; a withdrawal has no row left to read one from.
-        val role = news.role.fold("")(taken => MailTemplates.render("mail.role", "role" -> taken))
+        val what = news.what
+        // Empty for a challenge, which is how the clause disappears from whichever sentence it sits inside.
+        val quoted = MailText.quoted(news.title)
 
-        // What the challenge is still waiting for, named rather than counted. The mail that says the
-        // roster is full says it in its own words, so this is only the other half.
-        val roster =
-            if (news.waitingFor.isEmpty) MailTemplates.render("mail.challenge.roster.full")
-            else MailTemplates.render("mail.challenge.roster.waiting", "roles" -> MailText.and(news.waitingFor))
+        // How far it is from full. The mail that says it is full says it in its own words, so this is only the
+        // other half -- and nothing at all for one that takes any number.
+        val roster = news.room match {
+            case Some(0)     => MailTemplates.render("mail.challenge.roster.full")
+            case Some(count) => MailTemplates.render("mail.challenge.roster.room", "count" -> count.toString)
+            case None        => ""
+        }
 
         kind match {
-            // To the challenger, about somebody else's decision. The roster line matters most here:
-            // they are the one who can start it, so what they need to know is how far off that is.
+            // To the owner, about somebody else's decision. The roster line matters most here: they are the one
+            // who can start it, so what they need to know is how far off that is.
             case NotificationType.ChallengeAccepted =>
                 val prefix = if (news.joined) "mail.challenge.accepted" else "mail.challenge.withdrawn"
                 Some(
                   (
-                    MailTemplates.render(s"$prefix.subject", "actor" -> news.actor, "game" -> name),
+                    MailTemplates.render(s"$prefix.subject", "actor" -> news.actor, "game" -> name, "what" -> what),
                     MailTemplates.render(
                       s"$prefix.body",
                       "actor" -> news.actor,
                       "game" -> name,
+                      "what" -> what,
                       "quoted" -> quoted,
-                      "role" -> role,
                       "roster" -> roster
                     )
                   )
                 )
 
-            // Also to the challenger, and the one mail here that asks them to do something.
+            // Also to the owner, and the one mail here that asks them to do something.
             case NotificationType.ChallengeReady =>
                 Some(
                   (
-                    MailTemplates.render("mail.challenge.ready.subject", "game" -> name),
+                    MailTemplates.render("mail.challenge.ready.subject", "game" -> name, "what" -> what),
                     MailTemplates.render(
                       "mail.challenge.ready.body",
                       "actor" -> news.actor,
                       "game" -> name,
-                      "quoted" -> quoted,
-                      "role" -> role
+                      "what" -> what,
+                      "quoted" -> quoted
                     )
                   )
                 )
 
-            // To the other players who accepted. They cannot start it and are not being asked to do
-            // anything, so this says who they will be playing with and what it is still waiting for.
+            // To the other entrants. They cannot start it and are not being asked to do anything, so this says
+            // who they will be playing with and how far it is from full.
             case NotificationType.AcceptanceChanged =>
                 val event =
                     if (news.joined)
-                        MailTemplates
-                            .render("mail.challenge.changed.accepted.event", "actor" -> news.actor, "role" -> role)
+                        MailTemplates.render("mail.challenge.changed.accepted.event", "actor" -> news.actor)
                     else MailTemplates.render("mail.challenge.changed.withdrawn.event", "actor" -> news.actor)
 
                 val subject =
@@ -113,11 +113,12 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
 
                 Some(
                   (
-                    MailTemplates.render(subject, "actor" -> news.actor, "game" -> name),
+                    MailTemplates.render(subject, "actor" -> news.actor, "game" -> name, "what" -> what),
                     MailTemplates.render(
                       "mail.challenge.changed.body",
                       "challenger" -> news.challenger,
                       "game" -> name,
+                      "what" -> what,
                       "quoted" -> quoted,
                       "event" -> event,
                       "roster" -> roster
@@ -125,24 +126,25 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
                   )
                 )
 
-            // And to the other players when it fills up: nothing for them to do, but it says who
-            // they are now waiting on, which is the honest answer to "when does this start?".
+            // And to the other entrants when it fills up: nothing for them to do, but it says who they are now
+            // waiting on, which is the honest answer to "when does this start?".
             case NotificationType.AcceptedChallengeReady =>
                 Some(
                   (
-                    MailTemplates.render("mail.challenge.acceptedReady.subject", "game" -> name),
+                    MailTemplates.render("mail.challenge.acceptedReady.subject", "game" -> name, "what" -> what),
                     MailTemplates.render(
                       "mail.challenge.acceptedReady.body",
                       "challenger" -> news.challenger,
                       "game" -> name,
+                      "what" -> what,
                       "quoted" -> quoted
                     )
                   )
                 )
 
-            // To the invited player, and the only mail here that its recipient did not already know
-            // they had a stake in. `actor` is not used: they are the one being written to, and the
-            // challenger is who the news is about.
+            // To the invited player, and the only mail here that its recipient did not already know they had a
+            // stake in. `actor` is not used: they are the one being written to, and the owner is who the news is
+            // about.
             case NotificationType.InvitationReceived =>
                 Some(
                   (
@@ -152,44 +154,39 @@ object ChallengeMail extends NotificationMail[ChallengeNews] {
                       "mail.invitation.received.body",
                       "challenger" -> news.challenger,
                       "game" -> name,
-                      "quoted" -> quoted,
-                      "role" -> role
+                      "what" -> what,
+                      "quoted" -> quoted
                     )
                   )
                 )
 
-            // Back to the challenger. The roster line is here for the reason it is on
-            // ChallengeAccepted: they are the one who can start it, so how far off that is is the
-            // part they need.
+            // Back to the owner, with the roster line for the reason it is on ChallengeAccepted.
             case NotificationType.InvitationAccepted =>
                 Some(
                   (
-                    MailTemplates
-                        .render("mail.invitation.accepted.subject", "actor" -> news.actor, "game" -> name),
+                    MailTemplates.render("mail.invitation.accepted.subject", "actor" -> news.actor, "game" -> name),
                     MailTemplates.render(
                       "mail.invitation.accepted.body",
                       "actor" -> news.actor,
                       "game" -> name,
+                      "what" -> what,
                       "quoted" -> quoted,
-                      "role" -> role,
                       "roster" -> roster
                     )
                   )
                 )
 
-            // Also to the challenger, and no roster line: a rejection changes nothing about what the
-            // challenge is waiting for, since the invitation was never an acceptance. What it says
-            // instead is that the challenge is still there, which is the thing a challenger would
-            // otherwise have to go and check.
+            // Also to the owner, and no roster line: turning an invitation down changes nothing about the entries.
+            // What it says instead is that it is still open, which the owner would otherwise have to go and check.
             case NotificationType.InvitationRejected =>
                 Some(
                   (
-                    MailTemplates
-                        .render("mail.invitation.rejected.subject", "actor" -> news.actor, "game" -> name),
+                    MailTemplates.render("mail.invitation.rejected.subject", "actor" -> news.actor, "game" -> name),
                     MailTemplates.render(
                       "mail.invitation.rejected.body",
                       "actor" -> news.actor,
                       "game" -> name,
+                      "what" -> what,
                       "quoted" -> quoted
                     )
                   )

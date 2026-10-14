@@ -13,7 +13,6 @@ import MatchRepo.{CompletedSpan, GameParameterRow, MatchClockRow, MatchSeatRow}
 class MatchRepo(session: Session[IO]) {
     private val gameId = SkunkIdCodecs.gameId
     private val matchId = SkunkIdCodecs.matchId
-    private val challengeId = SkunkIdCodecs.challengeId
     private val tournamentId = SkunkIdCodecs.tournamentId
     // Declared here rather than beside the queries that use it further down, as `playerId` is: a val
     // is initialised in order, and the game's match list above comes first.
@@ -28,40 +27,9 @@ class MatchRepo(session: Session[IO]) {
     private def toSeconds(d: Option[Duration]): Option[Double] = d.map(_.getSeconds.toDouble)
     private def fromSeconds(s: Option[Double]): Option[Duration] = s.map(v => Duration.ofSeconds(v.toLong))
 
-    private val insertMatch: Command[
-      (
-          GameId,
-          MatchId,
-          Option[ChallengeId],
-          PlayerId,
-          String,
-          Option[Instant],
-          Boolean,
-          Option[Instant],
-          Option[Double],
-          String,
-          Boolean,
-          Option[String],
-          Option[String],
-          Option[String],
-          TimeLimitKind,
-          TimeLimitUnit,
-          Boolean,
-          Boolean,
-          Option[TournamentId],
-          MatchStatus
-      )
-    ] =
-        sql"""INSERT INTO match (game_id, match_id, challenge_id, creator, description, completed_at, cancelled, start,
-                             time_limit, settings, public, status_url, play_url, public_url, time_limit_kind,
-                             time_limit_unit, live, friendly, tournament_id, status)
-          VALUES ($gameId, $matchId, ${challengeId.opt}, $playerIdOf, $text, ${instant.opt}, $bool, ${instant.opt}, ${float8.opt} * INTERVAL '1 second',
-                  $settings, $bool, ${text.opt}, ${text.opt}, ${text.opt}, $timeLimitKind, $timeLimitUnit, $bool,
-                  $bool, ${tournamentId.opt}, $matchStatus)""".command
-
     private type MatchRow =
         (
-            Option[ChallengeId],
+            TournamentId,
             PlayerId,
             String,
             Option[Instant],
@@ -84,11 +52,11 @@ class MatchRepo(session: Session[IO]) {
 
     // The last two are the archive's, read here and never written: `ArchiveRepo` owns them.
     private val matchRow: Codec[MatchRow] =
-        challengeId.opt *: playerIdOf *: text *: instant.opt *: bool *: instant.opt *: float8.opt *: settings *: bool *: text.opt *:
+        tournamentId *: playerIdOf *: text *: instant.opt *: bool *: instant.opt *: float8.opt *: settings *: bool *: text.opt *:
             text.opt *: text.opt *: timeLimitKind *: timeLimitUnit *: bool *: bool *: instant.opt *: bool *: matchStatus
 
     private val selectMatch: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT challenge_id, creator, description, completed_at, cancelled, start,
+        sql"""SELECT tournament_id, creator, description, completed_at, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
                  archived_at, #${ArchiveRepo.expired("match")}, status
@@ -100,7 +68,7 @@ class MatchRepo(session: Session[IO]) {
      * callbacks, which read a match, decide from it, and write it back — a concurrent callback for
      * the same match would otherwise be able to interleave between the two. */
     private val selectMatchForUpdate: Query[(GameId, MatchId), MatchRow] =
-        sql"""SELECT challenge_id, creator, description, completed_at, cancelled, start,
+        sql"""SELECT tournament_id, creator, description, completed_at, cancelled, start,
                  EXTRACT(EPOCH FROM time_limit)::float8, settings,
                  public, status_url, play_url, public_url, time_limit_kind, time_limit_unit, live, friendly,
                  archived_at, #${ArchiveRepo.expired("match")}, status
@@ -108,8 +76,7 @@ class MatchRepo(session: Session[IO]) {
           WHERE game_id = $gameId AND match_id = $matchId FOR UPDATE"""
             .query(matchRow)
 
-    // challenge_id and creator are not updatable: a match is started from one challenge, or by one
-    // player, and stays theirs.
+    // tournament_id and creator are not updatable: a match is played in one tournament, and stays its owner's.
     private val updateMatch: Command[
       (
           String,
@@ -136,39 +103,6 @@ class MatchRepo(session: Session[IO]) {
           time_limit_kind = $timeLimitKind, time_limit_unit = $timeLimitUnit, friendly = $bool, status = $matchStatus
           WHERE game_id = $gameId AND match_id = $matchId""".command
 
-    /** Writes a new match of a challenge. A tournament's matches are written with their pools, by
-      * `TournamentStateRepo`, since a tournament match is its pool's and its round's as well as its tournament's.
-      */
-    def create(m: Match): IO[Match] = write(m, None)
-
-    private def write(m: Match, tournament: Option[TournamentId]): IO[Match] =
-        session
-            .execute(insertMatch)(
-              (
-                m.gameId,
-                m.matchId,
-                m.challengeId,
-                m.creator,
-                m.description,
-                m.completedAt,
-                m.cancelled,
-                m.start,
-                toSeconds(m.timeLimit),
-                m.settings,
-                m.isPublic,
-                m.statusUrl,
-                m.playUrl,
-                m.publicUrl,
-                m.timeLimitKind,
-                m.timeLimitUnit,
-                m.live,
-                m.friendly,
-                tournament,
-                statusOf(m)
-              )
-            )
-            .as(m.copy(status = statusOf(m)))
-
     /* What is written as a match's status: whatever it says, unless it is over, which completedAt and
      * cancelled already say -- and the table holds the three in step, so a caller that cancels a match
      * by copying it with cancelled = true need not also remember its status. */
@@ -177,7 +111,7 @@ class MatchRepo(session: Session[IO]) {
 
     private def toMatch(gameId: GameId, matchId: MatchId, row: MatchRow): Match = {
         val (
-          challengeId,
+          tournament,
           creator,
           description,
           completedAt,
@@ -200,7 +134,7 @@ class MatchRepo(session: Session[IO]) {
         Match(
           gameId,
           matchId,
-          challengeId,
+          tournament,
           creator,
           description,
           completedAt,
@@ -316,15 +250,6 @@ class MatchRepo(session: Session[IO]) {
 
     def complete(gameId: GameId, matchId: MatchId): IO[Instant] =
         session.unique(completeMatch)((gameId, matchId))
-
-    private val deleteMatch: Command[(GameId, MatchId)] =
-        sql"DELETE FROM match WHERE game_id = $gameId AND match_id = $matchId".command
-
-    /** Removes a match. Only used to undo a match whose game the engine failed to create — a played match is completed,
-      * never deleted, and its participants would block this anyway.
-      */
-    def delete(gameId: GameId, matchId: MatchId): IO[Unit] =
-        session.execute(deleteMatch)((gameId, matchId)).void
 
     private val playerId = SkunkIdCodecs.playerId
 
@@ -531,9 +456,8 @@ class MatchRepo(session: Session[IO]) {
 
     /* The same two lists, for a player who is not the caller: only the matches marked public.
      *
-     * `m.public` is set when the match is started, from the challenge it was started from -- the
-     * "Public" box on the challenge form -- and it is the player's own statement that this match may
-     * be looked at by anybody. So it is the whole of the visibility rule here, and it is applied in
+     * `m.public` is its tournament's -- the "Public" box on the challenge or tournament form -- and it
+     * is the owner's statement that this match may be looked at by anybody. So it is the whole of the visibility rule here, and it is applied in
      * the WHERE rather than by the caller: a filter in Scala would mean the private matches were
      * fetched, and a list that is filtered after it is read is one refactor away from being
      * returned unfiltered.
@@ -957,7 +881,7 @@ object MatchRepo {
         // The match's archive: when it was confirmed, and whether a friendly one has expired.
         archivedAt: Option[Instant] = None,
         archiveExpired: Boolean = false,
-        // The match's settings, which hold the challenger's choice for each of the game's
+        // The match's settings, which hold its tournament's choice for each of the game's
         // parameters (see `ChallengeSettings`); likewise the match's.
         settings: String = "{}",
         // How the match came out, in the engine's words; likewise the match's.

@@ -60,12 +60,6 @@ object ParticipantId {
     extension (id: ParticipantId) def value: Long = id
 }
 
-opaque type ChallengeId = Long
-object ChallengeId {
-    def apply(value: Long): ChallengeId = value
-    extension (id: ChallengeId) def value: Long = id
-}
-
 opaque type TournamentId = Long
 object TournamentId {
     def apply(value: Long): TournamentId = value

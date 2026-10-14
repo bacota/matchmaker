@@ -115,7 +115,7 @@ object TournamentFixtures {
                       }, #${id.toString},
                                 #${pool.toString}, 1, #${stage.toString})""".command
                 )((m.matchId.value, m.description, m.completedAt, m.publicUrl))
-            } yield m.copy(challengeId = None)
+            } yield m.copy(tournamentId = t.tournamentId)
         }
 
     /** A seat of a begun tournament match ([[begunMatch]]), as a tournament's seat is once it is played: entered by

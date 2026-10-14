@@ -12,7 +12,6 @@ object SkunkIdCodecs {
     val gameRoleId: Codec[GameRoleId] = int4.imap(GameRoleId.apply)(_.value)
     val gameParameterId: Codec[GameParameterId] = int4.imap(GameParameterId.apply)(_.value)
     val participantId: Codec[ParticipantId] = int8.imap(ParticipantId.apply)(_.value)
-    val challengeId: Codec[ChallengeId] = int8.imap(ChallengeId.apply)(_.value)
     val tournamentId: Codec[TournamentId] = int8.imap(TournamentId.apply)(_.value)
     val tournamentModelId: Codec[TournamentModelId] = text.imap(TournamentModelId.apply)(_.value)
     val entrantId: Codec[EntrantId] = int8.imap(EntrantId.apply)(_.value)
