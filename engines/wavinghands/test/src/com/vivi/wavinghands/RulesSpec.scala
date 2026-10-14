@@ -132,6 +132,24 @@ class RulesSpec extends FunSuite {
         assert(last(m).exists(_.contains("stab is blocked")), last(m))
     }
 
+    test("dispel magic works whatever its subject: cast at nobody, or at a wizard under a counter-spell") {
+        // B: C-D-P-W, dispel magic on turn 4. A: a missile at B on turn 4, and a counter-spell (W-P-P) at B with it.
+        val prepared = turn(
+          turn(turn(duel(), B -> req("C C")), A -> req("- W"), B -> req("D -")),
+          A -> req("S P"),
+          B -> req("P -")
+        )
+        val atNobody = turn(prepared, A -> req("D -"), B -> req("W -", _.copy(targets = Map("left" -> "nobody"))))
+        assert(last(atNobody).exists(_.contains("Missile is dispelled")), last(atNobody))
+        val countered = turn(
+          prepared,
+          A -> req("D P", _.copy(targets = Map("right" -> "wizard:2"))),
+          B -> req("W -")
+        )
+        assert(last(countered).exists(_.contains("Counter-spell is dispelled")), last(countered))
+        assert(!last(countered).exists(_.contains("Dispel Magic is stopped")), last(countered))
+    }
+
     test("a fireball does five unless its subject resists heat; removing the resistance as it lands lets it through") {
         val resistant = gestures(duel(), B, "W -", "W -", "F -", "P -")
         assert(resistant.battle.wizard(B).get.isResistantToHeat)

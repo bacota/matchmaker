@@ -45,6 +45,9 @@ engine does:
   When the gestures complete more than one spell, the wizard chooses; by default the longest is
   cast.
 - **Reflection.** A spell turned back by a magic mirror is not reflected again.
+- **Dispel magic is universal.** It stops every other spell cast that turn whatever its own
+  subject: cast at nobody, or at a wizard who is out, it still works, and only its shield needs a
+  subject. Nothing stops it — the rules exempt it from counter-spells and mirrors.
 - **Several wizards.** A wizard who surrenders is out, and the duel goes on among the others. The
   last wizard standing wins. The others rank by how long they lasted, and on the same turn a wizard
   who surrendered and lived ranks above one who died.
