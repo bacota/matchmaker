@@ -104,8 +104,9 @@ case class MatchSummary(
 
 /** One of the other seats in a match: the player in it -- in a character game, the one who owned the character when the
   * match was played, which is not necessarily who owns it now -- and the character they played, where there was one.
+  * `player` is `None` for a character seat nobody played, its character having had no owner.
   */
-case class Opponent(player: PublicPlayer, character: Option[CharacterName] = None)
+case class Opponent(player: Option[PublicPlayer], character: Option[CharacterName] = None)
 
 /** How a finished match came out for one player in it: what it added to their win-loss-draw record ([[MatchRecord]]),
   * so that a match marked won here is one counted as a win in the rankings.

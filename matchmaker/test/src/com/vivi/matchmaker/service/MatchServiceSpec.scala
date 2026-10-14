@@ -386,7 +386,7 @@ class MatchServiceSpec extends PropertySuite {
         def summary(externalId: String) =
             run(matchService.completed(externalId, CompletedQuery(gameId = Some(game.gameId)))).matches
                 .find(_.matchId == matchId)
-                .map(s => (s.opponents.map(_.player.nickname), s.outcome, s.eloDelta))
+                .map(s => (s.opponents.flatMap(_.player.map(_.nickname)), s.outcome, s.eloDelta))
 
         assertEquals(summary(unique), Some((Seq(rival), Some(MatchOutcome.Won), Some(16))))
         assertEquals(summary(rival), Some((Seq(unique), Some(MatchOutcome.Lost), Some(-16))))
@@ -450,7 +450,10 @@ class MatchServiceSpec extends PropertySuite {
         })
         val mine = CharacterName(character.characterId, game.gameId, "character")
         val against =
-            Opponent(PublicPlayer(other.playerId, rival), Some(CharacterName(theirs.characterId, game.gameId, "rival")))
+            Opponent(
+              Some(PublicPlayer(other.playerId, rival)),
+              Some(CharacterName(theirs.characterId, game.gameId, "rival"))
+            )
 
         val active = run(matchService.characterActive(buyer, game.gameId, character.characterId))
         assertEquals(active.map(_.matchId), List(running))
@@ -463,7 +466,7 @@ class MatchServiceSpec extends PropertySuite {
 
         // From the rival's side the same match, with this player's character as the opponent.
         val seen = run(matchService.characterActive(buyer, game.gameId, theirs.characterId))
-        assertEquals(seen.flatMap(_.opponents), List(Opponent(PublicPlayer(player.playerId, unique), Some(mine))))
+        assertEquals(seen.flatMap(_.opponents), List(Opponent(Some(PublicPlayer(player.playerId, unique)), Some(mine))))
 
         // And the page's heading names the owner it has now.
         val profile = run(characterService.profile(game.gameId, theirs.characterId, buyer))
@@ -505,10 +508,47 @@ class MatchServiceSpec extends PropertySuite {
         assertEquals(record(theirs.characterId), MatchRecord(losses = 1, forfeitLosses = 1))
     }
 
+    test("a seat nobody played, its character having no owner, is still listed, as its character alone") {
+        val unique = genUniqueString.sample.get
+        val (game, matchId, ownerless) = run(TestSession.resource.use { session =>
+            for {
+                prepared <- setup(session, unique, unique)
+                (player, game, character) = prepared
+                matchId <- addMatch(session, player, game, character, Generators.newMatchId(), None, pending = true)
+                ownerless <- new CharacterRepo[String](session).create(
+                  Character(CharacterId(0), game.gameId, "ownerless", "description", "", None)
+                )
+                seat <- TestMatches.writeSeat(
+                  session,
+                  CharacterParticipant(
+                    ParticipantId(0),
+                    game.gameId,
+                    matchId,
+                    player.playerId,
+                    false,
+                    false,
+                    None,
+                    ownerless.characterId,
+                    game.roles.head.gameRoleId
+                  ),
+                  EloRating.initial
+                )
+                // Nobody plays it: written as a round writes a seat whose character has no owner.
+                _ <- session.execute(sql"UPDATE participant SET player_id = NULL WHERE participant_id = $int8".command)(
+                  seat.participantId.value
+                )
+            } yield (game, matchId, ownerless)
+        })
+        val listed = run(matchService.active(unique)).filter(_.matchId == matchId)
+        assertEquals(
+          listed.map(_.opponents),
+          List(Seq(Opponent(None, Some(CharacterName(ownerless.characterId, game.gameId, "ownerless")))))
+        )
+    }
+
     /* Another player's page: the two lists a stranger is shown, which are the same two lists the
      * caller sees of their own matches minus every match that was not offered as public. The rule is
      * in the query, so what these check is that the query is the one being used. */
-
     property("publicActive shows a public match and hides a private one") {
         forAll(genUniqueString, genUniqueString, genUniqueString, Generators.genMatchId, Generators.genMatchId) {
             (nickname, externalId, watcherId, openId, hiddenId) =>

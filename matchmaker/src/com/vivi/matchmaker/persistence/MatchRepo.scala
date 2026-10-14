@@ -257,8 +257,8 @@ class MatchRepo(session: Session[IO]) {
     // character_id is nullable: a 'P'-type game's participant has no character_participant row.
     private val seatRow =
         gameId *: matchId *: text *: text *: instant.opt *: bool *: bool *: instant *: float8.opt *: timeLimitKind *:
-            timeLimitUnit *: bool *: int8 *: int8.opt *: bool *: instant.opt *: text *: bool *: bool *: instant.opt *:
-            text.opt *: bool *: instant.opt *: bool *: settings *: text.opt *: int8 *: int4.opt *: int4.opt *: int8 *:
+            timeLimitUnit *: bool *: int8 *: int8.opt *: bool *: instant.opt *: text.opt *: bool *: bool *: instant.opt *:
+            text.opt *: bool *: instant.opt *: bool *: settings *: text.opt *: int8 *: int4.opt *: int4.opt *: int8.opt *:
             int8.opt *: text.opt
 
     private def toSeatRow(
@@ -279,7 +279,7 @@ class MatchRepo(session: Session[IO]) {
             Option[Long],
             Boolean,
             Option[Instant],
-            String,
+            Option[String],
             Boolean,
             Boolean,
             Option[Instant],
@@ -292,7 +292,7 @@ class MatchRepo(session: Session[IO]) {
             Long,
             Option[Int],
             Option[Int],
-            Long,
+            Option[Long],
             Option[Long],
             Option[String]
         )
@@ -361,7 +361,7 @@ class MatchRepo(session: Session[IO]) {
           ParticipantId(seatParticipantId),
           seatRank,
           seatEloDelta,
-          PlayerId(seatPlayerId),
+          seatPlayerId.map(PlayerId.apply),
           seatCharacterId.zip(seatCharacterName).map((id, name) => CharacterName(CharacterId(id), gameId, name))
         )
     }
@@ -396,7 +396,8 @@ class MatchRepo(session: Session[IO]) {
           -- Everyone in the match, the caller included. This is what multiplies the rows, and
           -- what lets a caller say who is playing and who is waited on without asking again.
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
-          JOIN player seat_player ON seat_player.player_id = seat.player_id
+          -- Outer: a seat whose character had no owner is nobody's, and is still a seat of the match.
+          LEFT JOIN player seat_player ON seat_player.player_id = seat.player_id
           -- How the seat came out, where the engine has said: where it finished, and so -- with the
           -- caller's own seat beside the others -- whether the caller won, lost or drew. A LEFT JOIN,
           -- since a running match has no results, and one row at most per seat, on result's key.
@@ -442,7 +443,8 @@ class MatchRepo(session: Session[IO]) {
           JOIN game g ON g.game_id = m.game_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
-          JOIN player seat_player ON seat_player.player_id = seat.player_id
+          -- Outer: a seat whose character had no owner is nobody's, and is still a seat of the match.
+          LEFT JOIN player seat_player ON seat_player.player_id = seat.player_id
           LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
           LEFT JOIN character_participant seat_cp
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
@@ -489,7 +491,8 @@ class MatchRepo(session: Session[IO]) {
           JOIN game g ON g.game_id = m.game_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
-          JOIN player seat_player ON seat_player.player_id = seat.player_id
+          -- Outer: a seat whose character had no owner is nobody's, and is still a seat of the match.
+          LEFT JOIN player seat_player ON seat_player.player_id = seat.player_id
           LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
           LEFT JOIN character_participant seat_cp
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
@@ -531,7 +534,8 @@ class MatchRepo(session: Session[IO]) {
           JOIN game g ON g.game_id = m.game_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
-          JOIN player seat_player ON seat_player.player_id = seat.player_id
+          -- Outer: a seat whose character had no owner is nobody's, and is still a seat of the match.
+          LEFT JOIN player seat_player ON seat_player.player_id = seat.player_id
           LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
           LEFT JOIN character_participant seat_cp
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
@@ -564,7 +568,8 @@ class MatchRepo(session: Session[IO]) {
           JOIN game g ON g.game_id = m.game_id
           LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
-          JOIN player seat_player ON seat_player.player_id = seat.player_id
+          -- Outer: a seat whose character had no owner is nobody's, and is still a seat of the match.
+          LEFT JOIN player seat_player ON seat_player.player_id = seat.player_id
           LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
           LEFT JOIN character_participant seat_cp
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
@@ -652,7 +657,8 @@ class MatchRepo(session: Session[IO]) {
           JOIN tournament tn ON tn.game_id = m.game_id AND tn.tournament_id = m.tournament_id
           JOIN game g ON g.game_id = m.game_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
-          JOIN player seat_player ON seat_player.player_id = seat.player_id
+          -- Outer: a seat whose character had no owner is nobody's, and is still a seat of the match.
+          LEFT JOIN player seat_player ON seat_player.player_id = seat.player_id
           LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
           LEFT JOIN character_participant seat_cp
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
@@ -678,7 +684,8 @@ class MatchRepo(session: Session[IO]) {
           JOIN tournament tn ON tn.game_id = m.game_id AND tn.tournament_id = m.tournament_id
           JOIN game g ON g.game_id = m.game_id
           JOIN participant seat ON seat.game_id = m.game_id AND seat.match_id = m.match_id
-          JOIN player seat_player ON seat_player.player_id = seat.player_id
+          -- Outer: a seat whose character had no owner is nobody's, and is still a seat of the match.
+          LEFT JOIN player seat_player ON seat_player.player_id = seat.player_id
           LEFT JOIN result r ON r.game_id = seat.game_id AND r.participant_id = seat.participant_id
           LEFT JOIN character_participant seat_cp
                  ON seat_cp.game_id = seat.game_id AND seat_cp.participant_id = seat.participant_id
@@ -873,8 +880,8 @@ object MatchRepo {
         callerCharacterId: Option[CharacterId],
         callerPending: Boolean,
         callerDue: Option[Instant],
-        // The seat this row is about, which may be the caller's own or anyone else's.
-        seatNickname: String,
+        // The seat this row is about, which may be the caller's own or anyone else's: `None` for nobody's.
+        seatNickname: Option[String],
         seatPending: Boolean,
         seatCompleted: Boolean,
         seatDue: Option[Instant],
@@ -897,8 +904,8 @@ object MatchRepo {
         seatRank: Option[Int] = None,
         // What the match did to that seat's Elo rating: `None` until it has a result, and on a friendly match's.
         seatEloDelta: Option[Int] = None,
-        // Whose seat it is, so a list can link to the player.
-        seatPlayerId: PlayerId = PlayerId.unassigned,
+        // Whose seat it is, so a list can link to the player: `None` for a seat whose character had no owner.
+        seatPlayerId: Option[PlayerId] = None,
         // The character in that seat, in a character game.
         seatCharacter: Option[CharacterName] = None
     )

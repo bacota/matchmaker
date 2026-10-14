@@ -244,7 +244,7 @@ class MatchService(
                   timeLimitKind = first.timeLimitKind,
                   timeLimitUnit = first.timeLimitUnit,
                   live = first.live,
-                  whoseTurn = onTheClock.map(_.seatNickname),
+                  whoseTurn = onTheClock.flatMap(_.seatNickname),
                   // The earliest, so a game where several move at once counts down to the first clock to
                   // run out, which is the first one anything happens on.
                   turnDue = onTheClock.flatMap(_.seatDue).minOption,
@@ -256,7 +256,10 @@ class MatchService(
                   archiveExpired = first.archiveExpired,
                   resultSummary = first.resultSummary,
                   opponents = others
-                      .map(seat => Opponent(PublicPlayer(seat.seatPlayerId, seat.seatNickname), seat.seatCharacter)),
+                      .map { seat =>
+                          val player = seat.seatPlayerId.zip(seat.seatNickname).map(PublicPlayer.apply)
+                          Opponent(player, seat.seatCharacter)
+                      },
                   // Not for a match called off, whose results -- if any -- are not how it ended.
                   outcome =
                       if (first.cancelled) None

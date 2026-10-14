@@ -162,14 +162,20 @@ class JsonSpec extends FunSuite {
     }
 
     test("an opponent is written as the player it was before characters, with the character beside it") {
-        val plain = Opponent(PublicPlayer(PlayerId(2), "bob"))
+        val plain = Opponent(Some(PublicPlayer(PlayerId(2), "bob")))
         val inCharacter =
-            Opponent(PublicPlayer(PlayerId(2), "bob"), Some(CharacterName(CharacterId(7), GameId(1), "Joe")))
+            Opponent(Some(PublicPlayer(PlayerId(2), "bob")), Some(CharacterName(CharacterId(7), GameId(1), "Joe")))
         assertEquals(ujson.read(write(plain)), ujson.Obj("playerId" -> 2, "nickname" -> "bob"))
         // Still a player to a client that reads one, and the same opponent back to one that knows the character.
-        assertEquals(read[PublicPlayer](write(inCharacter)), plain.player)
+        assertEquals(read[PublicPlayer](write(inCharacter)), plain.player.get)
         assertEquals(read[Opponent](write(inCharacter)), inCharacter)
         assertEquals(read[Opponent](write(plain)), plain)
+    }
+
+    test("a seat nobody played is written as its character alone") {
+        val nobody = Opponent(None, Some(CharacterName(CharacterId(7), GameId(1), "Joe")))
+        assertEquals(ujson.read(write(nobody)).obj.keySet, Set("character"))
+        assertEquals(read[Opponent](write(nobody)), nobody)
     }
 
     test("a Player and a Character round-trip") {

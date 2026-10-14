@@ -67,12 +67,15 @@ class ResultRepo(session: Session[IO]) {
           Option[Int]
       )
     ] =
-        sql"""SELECT p.game_id, p.match_id, p.participant_id, pl.nickname, gr.display_name, r.rank, r.scores, r.is_winner, r.forfeit,
+        sql"""SELECT p.game_id, p.match_id, p.participant_id, COALESCE(pl.nickname, ch.name), gr.display_name, r.rank, r.scores, r.is_winner, r.forfeit,
                  p.elo_start, r.elo_delta
           FROM participant mine
           JOIN match m ON m.game_id = mine.game_id AND m.match_id = mine.match_id
           JOIN participant p ON p.game_id = m.game_id AND p.match_id = m.match_id
-          JOIN player pl ON pl.player_id = p.player_id
+          -- Outer: a seat whose character had no owner is nobody's, and goes by its character's name instead.
+          LEFT JOIN player pl ON pl.player_id = p.player_id
+          LEFT JOIN character_participant cp ON cp.game_id = p.game_id AND cp.participant_id = p.participant_id
+          LEFT JOIN character ch ON ch.game_id = cp.game_id AND ch.character_id = cp.character_id
           JOIN game_role gr ON gr.game_id = p.game_id AND gr.game_role_id = p.game_role_id
           LEFT JOIN result r ON r.game_id = p.game_id AND r.participant_id = p.participant_id
           -- Begun: a tournament's match cancelled before it began has seats with no ratings and no results.

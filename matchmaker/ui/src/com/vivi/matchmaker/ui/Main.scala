@@ -1148,6 +1148,10 @@ object Views {
           onClick --> (_ => Store.show(Store.Page.OnePlayer(player)))
         )
 
+    /** Who played an opposing seat, as the way to their page; a seat whose character had no owner was nobody's. */
+    private def seatPlayer(o: Opponent): HtmlElement =
+        o.player.fold(span(cls := "detail", "nobody"))(playerLink)
+
     /** A character's name as the way to its page, as [[playerLink]] is a player's. */
     private def characterLink(character: CharacterName): HtmlElement =
         button(
@@ -1712,11 +1716,11 @@ object Views {
                 if (summary.opponents.isEmpty) "nobody"
                 else
                     listed(summary.opponents.map { o =>
-                        o.character.filter(_ => showOwner).fold(playerLink(o.player))(characterLink)
+                        o.character.filter(_ => showOwner).fold(seatPlayer(o))(characterLink)
                     })
             // Who owned each opposing character for the match; nothing for a plain game's row, whose opponent is
             // already the player.
-            val owners = summary.opponents.filter(_.character.isDefined).map(o => playerLink(o.player))
+            val owners = summary.opponents.filter(_.character.isDefined).map(seatPlayer)
 
             val ended: Modifier[HtmlElement] =
                 dated(summary) match {
