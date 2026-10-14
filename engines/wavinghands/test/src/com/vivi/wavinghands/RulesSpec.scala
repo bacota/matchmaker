@@ -2,6 +2,7 @@ package com.vivi.wavinghands
 
 import java.time.Instant
 import munit.FunSuite
+import com.vivi.engine.Outcome
 import Protocol.MoveRequest
 
 /** The rules, played turn by turn: gestures in, the battle out. Each turn goes through [[Engine.orders]], as a player's
@@ -308,6 +309,16 @@ class RulesSpec extends FunSuite {
         assert(Engine.orders(m, m.battle.wizard(B).get, req("stab -", _.copy(stab = Some("wizard:1"))), at).isLeft)
         val targets = Engine.yourTurn(m, m.battle.wizard(B).get, Map(A -> "Ann", B -> "Bob", C3 -> "Cat")).targets
         assert(!targets.map(_.code).contains("wizard:1"), targets)
+    }
+
+    test("when the match may not be drawn, a tie for first goes to one wizard and the others rank below them") {
+        // All three surrender together: tied for first, until the tiebreak picks the first seated.
+        val m = turn(duel(3).copy(canTie = false), A -> req("P P"), B -> req("P P"), C3 -> req("P P"))
+        assert(m.isOver && !m.isDrawn)
+        assertEquals(m.winners.map(_.participantId), List(A))
+        val ranks = m.wizards.map(w => w.participantId -> Duel.rank(m, w)).toMap
+        assertEquals(ranks, Map(A -> Some(1), B -> Some(2), C3 -> Some(2)))
+        assertEquals(m.wizards.map(w => Duel.outcome(m, w)), List(Outcome.Win, Outcome.Loss, Outcome.Loss))
     }
 
     test("with three wizards an attack spell needs a target; with none named it goes to nobody") {
