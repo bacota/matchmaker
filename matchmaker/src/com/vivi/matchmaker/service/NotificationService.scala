@@ -48,7 +48,7 @@ class NotificationService(sessionPool: SessionPool) {
                     case Some(address) =>
                         new SuppressionRepo(session)
                             .read(address)
-                            .map(_.filter(_.active(Instant.now())).map(EmailSuppression.Notice.of))
+                            .map(_.filter(_.isActive(Instant.now())).map(EmailSuppression.Notice.of))
                 }
             } yield NotificationSettings(overall, games, suppressed)
         }

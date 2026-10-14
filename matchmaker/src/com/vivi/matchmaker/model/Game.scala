@@ -25,7 +25,7 @@ case class GameParameter[T](
   *
   * `Recommended` is a role a match can go without, as an optional one can, but which counts toward the size of a
   * tournament pool: a game's "R" is its required and recommended roles together. Outside tournaments the two are the
-  * same, so everything that asks whether a start must wait for a role asks [[GameRole.optional]].
+  * same, so everything that asks whether a start must wait for a role asks [[GameRole.isOptional]].
   */
 enum RoleType(val code: String, val label: String) {
     case Required extends RoleType("required", "Required")
@@ -68,7 +68,7 @@ case class GameRole(
 ) {
 
     /** Whether a match may start with this role empty: true of a recommended role as well as an optional one. */
-    def optional: Boolean = roleType != RoleType.Required
+    def isOptional: Boolean = roleType != RoleType.Required
 }
 
 /** Whether a game's entries and seats require an attached character. Mirrors the `game_type` discriminator column

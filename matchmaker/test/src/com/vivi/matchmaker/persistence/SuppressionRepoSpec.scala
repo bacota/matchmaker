@@ -15,7 +15,7 @@ import com.vivi.matchmaker.model.{EmailSuppression, SuppressionReason}
   * third delay, an event after a release — and a generator would only obscure which sequence failed. The addresses are
   * generated, so cases cannot collide with each other or with a previous run's rows.
   *
-  * The last test is the one that earns its keep over time: [[EmailSuppression.active]] and the `WHERE` clause in
+  * The last test is the one that earns its keep over time: [[EmailSuppression.isActive]] and the `WHERE` clause in
   * `SuppressionRepo.activeFor` state the same rule twice, in Scala and in SQL, and nothing but this stops them from
   * drifting apart.
   */
@@ -264,7 +264,7 @@ class SuppressionRepoSpec extends FunSuite {
                 // And whichever order it happened in, the address is suppressed: either the
                 // complaint won and suppresses on its own, or the release won and the complaint that
                 // followed re-suppressed it.
-                assert(held.active(Instant.now()), s"mail is flowing to a complained address: $held")
+                assert(held.isActive(Instant.now()), s"mail is flowing to a complained address: $held")
             }
         }
     }
@@ -309,7 +309,7 @@ class SuppressionRepoSpec extends FunSuite {
         assertEquals(active, Set(suppressed))
     }
 
-    /* The duplication check. `EmailSuppression.active` is the rule the screens and the model ask;
+    /* The duplication check. `EmailSuppression.isActive` is the rule the screens and the model ask;
      * the WHERE clause in `activeFor` is the same rule asked of Postgres, which is the one the send
      * path uses. They are written twice because they are asked in two places, and this is what says
      * they still agree. */
@@ -332,7 +332,7 @@ class SuppressionRepoSpec extends FunSuite {
                 } yield {
                     val now = Instant.now()
                     assertEquals(
-                      row.exists(_.active(now)),
+                      row.exists(_.isActive(now)),
                       active.contains(email.toLowerCase),
                       s"disagreed about $email after ${events.map(_.reason.code).mkString(", ")}"
                     )

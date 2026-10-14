@@ -74,13 +74,13 @@ object Fixtures {
         var state = Tournament.start(ids, env)
         var rounds = List.empty[List[RoundMatch]]
         var guard = 0
-        while (!state.finished && guard < maxRounds) {
+        while (!state.isFinished && guard < maxRounds) {
             val (next, matches) = Tournament.nextRound(state, env)
             state = next
-            if (!state.finished) {
+            if (!state.isFinished) {
                 rounds = rounds :+ matches
                 matches.foreach(m => state = Tournament.record(state, m.poolId, m.planned.no, oracle(m)))
-                assert(Tournament.roundComplete(state), "every match of the round was recorded")
+                assert(Tournament.isRoundComplete(state), "every match of the round was recorded")
                 state = between(state, state.round)
             }
             guard += 1

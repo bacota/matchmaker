@@ -82,13 +82,13 @@ case class TurnClock(
         startedFor(participantId, turnStartedAt).map(_.plus(allowance(participantId, turns)))
 
     /** Whether the match has been ended by this clock. */
-    def ranOut: Boolean = timedOut.nonEmpty
+    def hasRunOut: Boolean = timedOut.nonEmpty
 
     /** How the match came out for a seat because of this clock, if it was the clock that ended it. Every seat that ran
       * out loses — two that ran out together both lose, with nobody winning — and every other seat wins.
       */
     def outcomeOf(participantId: Long): Option[Outcome] =
-        Option.when(ranOut)(if (timedOut.contains(participantId)) Outcome.Loss else Outcome.Win)
+        Option.when(hasRunOut)(if (timedOut.contains(participantId)) Outcome.Loss else Outcome.Win)
 
     private def later(a: Instant, b: Instant): Instant = if (a.isAfter(b)) a else b
 }

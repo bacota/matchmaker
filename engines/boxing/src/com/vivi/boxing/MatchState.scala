@@ -108,10 +108,10 @@ case class Bout(
       * round's clock run out. A bout that may not be drawn and is level after its schedule fights [[roundLimit]]'s one
       * more.
       */
-    def isOver: Boolean = ranOut || knockout.isDefined || rounds.size >= roundLimit
+    def isOver: Boolean = hasRunOut || knockout.isDefined || rounds.size >= roundLimit
 
     /** Whether the scheduled rounds have all been fought, and left the cards level. */
-    private def levelAfterSchedule: Boolean =
+    private def isLevelAfterSchedule: Boolean =
         rounds.size >= scheduledRounds && {
             val scheduled = rounds.take(scheduledRounds).flatMap(_.outcome.score)
             scheduled.map(_.red).sum == scheduled.map(_.blue).sum
@@ -120,10 +120,10 @@ case class Bout(
     /** How many rounds this bout can last: its schedule, and one more when ties are not allowed and the schedule left
       * it level.
       */
-    def roundLimit: Int = if (!canTie && levelAfterSchedule) scheduledRounds + 1 else scheduledRounds
+    def roundLimit: Int = if (!canTie && isLevelAfterSchedule) scheduledRounds + 1 else scheduledRounds
 
     /** Whether the bout went to an extra round because it may not be drawn. */
-    def extraRound: Boolean = rounds.size > scheduledRounds
+    def hasExtraRound: Boolean = rounds.size > scheduledRounds
 
     /** The corner a lot gives an extra round that was level too. Fixed by the match id, so it is the same every time
       * the bout is read rather than drawn again on each, and nothing either player chose can steer it.
@@ -131,11 +131,11 @@ case class Bout(
     private def lot: Side = if ((matchId.hashCode & 1) == 0) Side.Red else Side.Blue
 
     /** Whether the bout was decided by lot: an extra round that was itself level. */
-    def decidedByLot: Boolean =
-        isOver && !ranOut && knockout.isEmpty && extraRound && points(Side.Red) == points(Side.Blue)
+    def isDecidedByLot: Boolean =
+        isOver && !hasRunOut && knockout.isEmpty && hasExtraRound && points(Side.Red) == points(Side.Blue)
 
     /** Whether a live bout's clock ended this one. */
-    def ranOut: Boolean = clock.exists(_.ranOut)
+    def hasRunOut: Boolean = clock.exists(_.hasRunOut)
 
     /** The round being planned now. Past the last one once the bout is over. */
     def currentRound: Int = rounds.size + 1
@@ -159,7 +159,7 @@ case class Bout(
       */
     def winner: Option[Corner] =
         if (!isOver) None
-        else if (ranOut) corners.find(c => clock.flatMap(_.outcomeOf(c.participantId)).contains(Outcome.Win))
+        else if (hasRunOut) corners.find(c => clock.flatMap(_.outcomeOf(c.participantId)).contains(Outcome.Win))
         else
             knockout.flatMap(_.outcome.winner) match {
                 case Some(side) => cornerOf(side)
@@ -167,18 +167,18 @@ case class Bout(
                     val (red, blue) = (points(Side.Red), points(Side.Blue))
                     if (red > blue) cornerOf(Side.Red)
                     else if (blue > red) cornerOf(Side.Blue)
-                    else if (decidedByLot) cornerOf(lot)
+                    else if (isDecidedByLot) cornerOf(lot)
                     else None
             }
 
-    def isDrawn: Boolean = isOver && !ranOut && winner.isEmpty
+    def isDrawn: Boolean = isOver && !hasRunOut && winner.isEmpty
 
     /** How a finished bout was won — "knockout", "points" or, in a live bout, "forfeit" — as matchmaker records it and
       * as the page says it.
       */
     def method: Option[String] =
         Option.when(isOver)(
-          if (ranOut) "forfeit" else if (knockout.isDefined) "knockout" else if (decidedByLot) "lot" else "points"
+          if (hasRunOut) "forfeit" else if (knockout.isDefined) "knockout" else if (isDecidedByLot) "lot" else "points"
         )
 
     /** The number a tournament's score tiebreak reads for a corner: its points on the cards, and 25 more for a corner
@@ -327,19 +327,19 @@ object Bout extends Game[Bout, Corner, Plan] {
             def rounds(n: Int) = if (n == 1) "1 round" else s"$n rounds"
             val fought = m.rounds.size
             (m.winner, m.corners.find(c => !m.winner.contains(c))) match {
-                case (Some(w), Some(l)) if m.ranOut =>
+                case (Some(w), Some(l)) if m.hasRunOut =>
                     s"${who(w)} won by forfeit: ${who(l)} ran out of time after ${rounds(fought)}."
                 case (Some(w), Some(l)) if m.knockout.isDefined =>
                     s"${who(w)} knocked out ${who(l)} in round ${m.knockout.map(_.number).getOrElse(fought)}."
-                case (Some(w), Some(l)) if m.decidedByLot =>
+                case (Some(w), Some(l)) if m.isDecidedByLot =>
                     s"${who(w)} and ${who(l)} were level after an extra round, ${m.points(w.side)}–${m.points(l.side)}. " +
                         s"${who(w)} won the bout by lot."
-                case (Some(w), Some(l)) if m.extraRound =>
+                case (Some(w), Some(l)) if m.hasExtraRound =>
                     s"${who(w)} beat ${who(l)} on points in an extra round, ${m.points(w.side)}–${m.points(l.side)} " +
                         s"after ${rounds(fought)}."
                 case (Some(w), Some(l)) =>
                     s"${who(w)} beat ${who(l)} on points, ${m.points(w.side)}–${m.points(l.side)} after ${rounds(fought)}."
-                case _ if m.ranOut => "Both corners ran out of time. Nobody wins."
+                case _ if m.hasRunOut => "Both corners ran out of time. Nobody wins."
                 case _ =>
                     val names = m.corners.map(who).mkString(" and ")
                     val each = m.corners.headOption.map(c => m.points(c.side)).getOrElse(0)
@@ -363,7 +363,7 @@ object Bout extends Game[Bout, Corner, Plan] {
           resultsCallbackUrl = request.resultsCallbackUrl,
           gameDisplayName = request.gameDisplayName,
           description = request.description,
-          canTie = Protocol.tiesAllowed(request)
+          canTie = Protocol.canTie(request)
         )
 
     // Stored as JSON, as rock-paper-scissors stores its matches: the whole bout is one attribute.

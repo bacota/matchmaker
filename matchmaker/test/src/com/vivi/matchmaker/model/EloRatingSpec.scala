@@ -47,7 +47,7 @@ class EloRatingSpec extends FunSuite {
           deltas(Seq(seat(1, a, 1500, 1), seat(2, b, 1500, 2), seat(3, a, 1500, 3))),
           Map.empty[ParticipantId, Int]
         )
-        assert(!EloRating.playersOnce(Seq(a, b, a)))
-        assert(EloRating.playersOnce(Seq(a, b, c)))
+        assert(!EloRating.hasDistinctPlayers(Seq(a, b, a)))
+        assert(EloRating.hasDistinctPlayers(Seq(a, b, c)))
     }
 }

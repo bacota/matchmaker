@@ -55,7 +55,7 @@ object Protocol {
         description: Option[String] = None,
         // False when the match must not end in a draw — a tournament's elimination match. Sent only then,
         // so absent means ties are allowed, as from a matchmaker that predates it. What an engine does about
-        // it is the game's business, and a game may do nothing: see `Protocol.tiesAllowed`.
+        // it is the game's business, and a game may do nothing: see `Protocol.canTie`.
         canTie: Option[Boolean] = None
     )
 
@@ -64,7 +64,7 @@ object Protocol {
       * round, stratego counts captures, rock-paper-scissors throws again. One that cannot, plays the match as it always
       * would.
       */
-    def tiesAllowed(request: CreateGameRequest): Boolean = request.canTie.getOrElse(true)
+    def canTie(request: CreateGameRequest): Boolean = request.canTie.getOrElse(true)
 
     /** The terms of a live match, which the engine keeps rather than matchmaker.
       *

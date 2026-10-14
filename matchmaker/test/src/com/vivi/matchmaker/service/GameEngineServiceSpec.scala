@@ -755,7 +755,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     )
                     turns <- turnsOf(started)
                     ended <- matchOf(fixture.game.gameId, started.matchId)
-                } yield ended.exists(_.completed) &&
+                } yield ended.exists(_.isCompleted) &&
                     turns.map(t => (t.participantId, t.takenAt, t.startedAt)).toSet == Set(
                       (mine.participantId, created.plusSeconds(10), created),
                       (theirs.participantId, created.plusSeconds(40), created.plusSeconds(10))
@@ -833,7 +833,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     )
                     turns <- turnsOf(started)
                     ended <- matchOf(fixture.game.gameId, started.matchId)
-                } yield ended.exists(_.completed) &&
+                } yield ended.exists(_.isCompleted) &&
                     asked == askedBefore &&
                     turns.map(t => (t.participantId, t.takenAt, t.startedAt)).toSet == Set(
                       (mine.participantId, created.plusSeconds(10), created),
@@ -862,7 +862,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 ended <- matchOf(fixture.game.gameId, started.matchId)
                 turns <- turnsOf(started)
             } yield refused.left.exists(_.isInstanceOf[ValidationError]) &&
-                ended.exists(!_.completed) &&
+                ended.exists(!_.isCompleted) &&
                 turns.isEmpty
             result.timeout(15.seconds).unsafeRunSync()
         }
@@ -884,7 +884,7 @@ class GameEngineServiceSpec extends PropertySuite {
                   gameExternalId
                 )
                 ended <- matchOf(fixture.game.gameId, started.matchId)
-            } yield ended.exists(_.completed)
+            } yield ended.exists(_.isCompleted)
             result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -965,8 +965,8 @@ class GameEngineServiceSpec extends PropertySuite {
                         )
                         ended <- matchOf(fixture.game.gameId, started.matchId)
                         seats <- participantsOf(started)
-                    } yield refreshed.completed &&
-                        ended.exists(_.completed) &&
+                    } yield refreshed.isCompleted &&
+                        ended.exists(_.isCompleted) &&
                         seats.forall(p => p.isCompleted && !p.isPending)
                 }
                 val result = for {
@@ -1035,7 +1035,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
                     after <- participantsOf(started)
                 } yield refused.left.exists(_.isInstanceOf[UnauthorizedError]) &&
-                    !refreshed.completed &&
+                    !refreshed.isCompleted &&
                     after.head.isPending &&
                     after.head.due.contains(due)
                 result.timeout(15.seconds).unsafeRunSync()
@@ -1064,8 +1064,8 @@ class GameEngineServiceSpec extends PropertySuite {
                 )
                 refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
                 reread <- matchOf(fixture.game.gameId, started.matchId)
-            } yield refreshed.isCancelled && !refreshed.completed &&
-                reread.exists(m => m.isCancelled && !m.completed)
+            } yield refreshed.isCancelled && !refreshed.isCompleted &&
+                reread.exists(m => m.isCancelled && !m.isCompleted)
             result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -1303,7 +1303,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     loser = results.find(_.participantId == mine.participantId)
                     winner = results.find(_.participantId == theirs.participantId)
                     after <- participantsOf(started)
-                } yield refreshed.completed &&
+                } yield refreshed.isCompleted &&
                     results.forall(_.isForfeit) &&
                     loser.exists(r => !r.isWinner && r.rank == 2) &&
                     winner.exists(r => r.isWinner && r.rank == 1) &&
@@ -1357,7 +1357,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     }
                     refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
                     results <- resultsOf(started)
-                } yield !refreshed.completed && results.isEmpty
+                } yield !refreshed.isCompleted && results.isEmpty
                 result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -1404,7 +1404,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     seen <- unreachable.engine.read(fixture.game.gameId, started.matchId, externalId)
                     results <- resultsOf(started)
                     after <- participantsOf(started)
-                } yield !seen.completed &&
+                } yield !seen.isCompleted &&
                     results.isEmpty &&
                     after.exists(p => p.isPending && !p.isCompleted)
                 result.timeout(15.seconds).unsafeRunSync()
@@ -1591,7 +1591,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     // Asked by the player who is not out of time, as a real opponent would.
                     refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId)
                     results <- resultsOf(started)
-                } yield refreshed.completed &&
+                } yield refreshed.isCompleted &&
                     results.forall(_.isForfeit) &&
                     results.find(_.participantId == mine.participantId).exists(r => !r.isWinner && r.rank == 2) &&
                     results.find(_.participantId == theirs.participantId).exists(r => r.isWinner && r.rank == 1)
@@ -1625,7 +1625,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     (fixture, started, _, _) = prepared
                     refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId)
                     results <- resultsOf(started)
-                } yield !refreshed.completed && results.isEmpty
+                } yield !refreshed.isCompleted && results.isEmpty
                 result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -1691,7 +1691,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     turns <- turnsOf(started)
                     after <- participantsOf(started)
                     challenger = after.find(_.participantId == mine.participantId).get
-                } yield !refreshed.completed &&
+                } yield !refreshed.isCompleted &&
                     turns.map(_.takenAt) == List(first, second, third, fourth) &&
                     // Four minutes and then five: one minute of the ten is left.
                     challenger.due.contains(fourth.plus(Duration.ofMinutes(1)))
@@ -2030,7 +2030,7 @@ class GameEngineServiceSpec extends PropertySuite {
                     participants <- participantsOf(started)
                     due <- services.matches.due(externalId)
                     active <- services.matches.active(externalId)
-                } yield !refreshed.completed &&
+                } yield !refreshed.isCompleted &&
                     participants.forall(p => !p.isPending && p.due.isEmpty) &&
                     due.isEmpty &&
                     active.find(_.matchId == started.matchId).exists(_.isLive)
@@ -2051,7 +2051,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 results <- resultsOf(started)
                 reread <- matchOf(fixture.game.gameId, started.matchId)
             } yield results.exists(r => r.participantId == seat && r.isForfeit && !r.isWinner) &&
-                reread.exists(_.completed)
+                reread.exists(_.isCompleted)
             result.timeout(15.seconds).unsafeRunSync()
         }
     }
@@ -2069,7 +2069,7 @@ class GameEngineServiceSpec extends PropertySuite {
                 refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
                 participants <- participantsOf(started)
                 active <- services.matches.active(externalId)
-            } yield refreshed.completed &&
+            } yield refreshed.isCompleted &&
                 participants.nonEmpty &&
                 participants.forall(p => p.isCompleted && !p.isPending && p.due.isEmpty) &&
                 !active.exists(_.matchId == started.matchId)

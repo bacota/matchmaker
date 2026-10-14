@@ -104,7 +104,7 @@ class LocalLiveServer(port: Int) extends LiveChannel {
 
     private class Connection(out: OutputStream) {
 
-        @volatile private var open = false
+        @volatile private var isOpen = false
 
         def accept(acceptKey: String): Unit = synchronized {
             out.write(
@@ -112,11 +112,11 @@ class LocalLiveServer(port: Int) extends LiveChannel {
                   s"Sec-WebSocket-Accept: $acceptKey\r\n\r\n").getBytes(ISO_8859_1)
             )
             out.flush()
-            open = true
+            isOpen = true
         }
 
         def text(message: String): Boolean =
-            if (!open) true
+            if (!isOpen) true
             else
                 try {
                     frame(0x1, message.getBytes(UTF_8))

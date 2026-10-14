@@ -678,7 +678,7 @@ object Router {
             // far enough back, names an instant that cannot be computed or stored, and that is the
             // request's mistake to be told about rather than a 500.
             inRange <- Either.cond(
-              window.inRange(java.time.Instant.now()),
+              window.isInRange(java.time.Instant.now()),
               window,
               "that window of completed matches is out of range"
             )

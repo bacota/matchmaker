@@ -99,7 +99,7 @@ class TournamentRounds[T](
                     new TournamentRepo(session).readForUpdate(gameId, tournamentId).flatMap {
                         case Some(t) if t.status == TournamentStatus.Running && t.settings.hasAutomaticRounds =>
                             requireLoaded(session, t).flatMap { loaded =>
-                                if (Progress.roundComplete(loaded.state)) begin(session, t, None).map(_._2)
+                                if (Progress.isRoundComplete(loaded.state)) begin(session, t, None).map(_._2)
                                 else IO.pure(Nil)
                             }
                         case _ => IO.pure(Nil)
@@ -122,13 +122,13 @@ class TournamentRounds[T](
         for {
             game <- requireGame(session, t.gameId)
             loaded <- requireLoaded(session, t)
-            _ <- IO.raiseUnless(Progress.roundComplete(loaded.state))(
+            _ <- IO.raiseUnless(Progress.isRoundComplete(loaded.state))(
               ConflictError("the round being played is not finished")
             )
             env <- envFor(session, t, game, loaded.design)
             (next, _) = Progress.nextRound(loaded.state, env)
             result <-
-                if (next.finished) finish(session, t, loaded, next).as((None, Nil))
+                if (next.isFinished) finish(session, t, loaded, next).as((None, Nil))
                 else
                     for {
                         _ <- stateRepo(session).save(t.gameId, t.tournamentId, loaded, next)
@@ -308,7 +308,7 @@ class TournamentRounds[T](
             saved: Match,
             game: Game,
             players: List[com.vivi.matchmaker.engine.EnginePlayer],
-            tiesAllowed: Boolean
+            canTie: Boolean
         )
     }
 
@@ -464,14 +464,14 @@ class TournamentRounds[T](
       */
     private def settle(session: Session[IO], t: Tournament, game: Game): IO[Option[Int]] =
         requireLoaded(session, t).flatMap { loaded =>
-            if (!Progress.roundComplete(loaded.state) || loaded.state.round == 0) IO.pure(None)
+            if (!Progress.isRoundComplete(loaded.state) || loaded.state.round == 0) IO.pure(None)
             else
                 for {
                     env <- envFor(session, t, game, loaded.design)
                     advanced = Progress.advance(loaded.state, env)
                     first <- stateRepo(session).markRoundComplete(t.gameId, t.tournamentId, loaded.state.round)
                     finished <-
-                        if (advanced.finished) finish(session, t, loaded, advanced).as(true)
+                        if (advanced.isFinished) finish(session, t, loaded, advanced).as(true)
                         else stateRepo(session).save(t.gameId, t.tournamentId, loaded, advanced).as(false)
                 } yield Option.when(first && !finished)(loaded.state.round)
         }
@@ -501,7 +501,7 @@ class TournamentRounds[T](
     /* A tournament match over without being played to an end: called off, its seats finished with. */
     private def callOff(session: Session[IO], gameId: GameId, matchId: MatchId): IO[Unit] =
         new MatchRepo(session).readForUpdate(gameId, matchId).flatMap {
-            case Some(m) if !m.isCancelled && !m.completed =>
+            case Some(m) if !m.isCancelled && !m.isCompleted =>
                 new MatchRepo(session).update(m.copy(isCancelled = true)) *>
                     new ParticipantRepo(session).completeForMatch(gameId, matchId)
             case _ => IO.unit
@@ -664,7 +664,7 @@ class TournamentRounds[T](
                         )
                         game <- requireGame(session, gameId)
                         m <- new MatchRepo(session).readForUpdate(gameId, matchId)
-                        _ <- IO.raiseWhen(m.exists(_.completed))(
+                        _ <- IO.raiseWhen(m.exists(_.isCompleted))(
                           ConflictError("this match was played to an end; its result stands")
                         )
                         recorded <- tm.seats.traverse(s => new ResultRepo(session).read(gameId, s.participantId))

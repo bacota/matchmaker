@@ -16,7 +16,7 @@ object Standings {
                 run.copy(pools = run.pools.map { pool =>
                     val withSub = pool.copy(sub = pool.sub.map(node))
                     stage match {
-                        case Some(s) if !pool.isCompleted && pool.sub.isEmpty && pool.matches.exists(_.finished) =>
+                        case Some(s) if !pool.isCompleted && pool.sub.isEmpty && pool.matches.exists(_.isFinished) =>
                             val regular = pool.matches.filterNot(_.planned.isRubber).flatMap(_.outcome)
                             val seedIn = pool.members.map(m => m.entrant -> m.seedIn).toMap
                             val ranking = Ranking.rankPool(seedIn, regular, Map.empty, s, game)

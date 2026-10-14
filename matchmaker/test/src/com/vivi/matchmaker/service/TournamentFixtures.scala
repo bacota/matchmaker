@@ -111,7 +111,7 @@ object TournamentFixtures {
                         VALUES (#${g.toString}, $int8, $text,
                                 ${com.vivi.matchmaker.persistence.SkunkCodecs.instant.opt}, now(), '{}', #${m.isPublic.toString},
                                 ${text.opt}, #${m.isFriendly.toString}, #${
-                          if (m.completed) "'F'" else "'P'"
+                          if (m.isCompleted) "'F'" else "'P'"
                       }, #${id.toString},
                                 #${pool.toString}, 1, #${stage.toString})""".command
                 )((m.matchId.value, m.description, m.completedAt, m.publicUrl))

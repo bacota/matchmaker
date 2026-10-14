@@ -471,7 +471,7 @@ class EloRatingServiceSpec extends PropertySuite {
           (records._1.map(_.record), records._2.map(_.record)),
           (Some(MatchRecord(losses = 1, forfeitLosses = 1)), Some(MatchRecord(wins = 1, forfeitWins = 1)))
         )
-        assert(refreshed.completed, refreshed)
+        assert(refreshed.isCompleted, refreshed)
         assertEquals(now, Map(f.first.playerId -> (1484, 1), f.second.playerId -> (1516, 1)))
         assertEquals(
           recorded.view.mapValues(_._2).toMap,
@@ -494,7 +494,7 @@ class EloRatingServiceSpec extends PropertySuite {
             // The engine is shared with the cases after this one, which start matches of their own.
             .guarantee(IO { engine.status = GameStatusResponse(isCompleted = false, participants = Nil) })
         val (f, refreshed, before, after) = result.timeout(caseTimeout).unsafeRunSync()
-        assert(refreshed.completed, refreshed)
+        assert(refreshed.isCompleted, refreshed)
         assertEquals(before, Map.empty[PlayerId, (Int, Int)])
         assertEquals(after, Map(f.first.playerId -> (1516, 1), f.second.playerId -> (1484, 1)))
     }
@@ -541,7 +541,7 @@ class EloRatingServiceSpec extends PropertySuite {
             recorded <- eloSeats(f, matchId)
         } yield (stored, now, recorded)
         val (stored, now, recorded) = result.timeout(caseTimeout).unsafeRunSync()
-        assert(stored.exists(_.completed), stored)
+        assert(stored.exists(_.isCompleted), stored)
         assertEquals(now, Map.empty[PlayerId, (Int, Int)])
         assertEquals(recorded.values.map(_._2).toSet, Set(Option.empty[Int]))
     }

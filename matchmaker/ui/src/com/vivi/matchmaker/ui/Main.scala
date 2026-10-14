@@ -19,7 +19,7 @@ object Main {
         // Must run before anything reads the token: this may be the page load that carries an
         // authorization code back from the hosted sign-up or password-reset pages, and until it has
         // been redeemed there is no session. An ordinary load has no code and falls straight through.
-        if (Config.current.headerAuth) {
+        if (Config.current.isHeaderAuth) {
             // Nothing to sign in to: the identity is whatever the config says. Straight to the app.
             Store.signedIn.set(true)
             Store.loadAll()
@@ -237,7 +237,7 @@ object Views {
           h1("Matchmaker"),
           // Unmissable, because a page that looks like the real thing but authenticates nobody is
           // exactly the page you do not want to be confused about.
-          if (Config.current.headerAuth)
+          if (Config.current.isHeaderAuth)
               div(cls := "banner", s"local mode — signed in as ${Config.current.localExternalId}, no authentication")
           else emptyNode,
           child <-- Store.player.signal.map {
@@ -247,7 +247,7 @@ object Views {
                     span(player.nickname),
                     // Where a page like this puts it: top right, next to who you are signed in as.
                     Account.view,
-                    if (Config.current.headerAuth) emptyNode
+                    if (Config.current.isHeaderAuth) emptyNode
                     else button(cls := "link", "Sign out", onClick --> (_ => Store.signOut()))
                   )
               case _ => emptyNode
@@ -319,7 +319,7 @@ object Views {
           field("Nickname", input(controlled(value <-- nickname.signal, onInput.mapToValue --> nickname))),
           busyButton("Create Player", disabledWhen = nickname.signal.map(_.trim.isEmpty)) { busy =>
               Store.run(ApiClient.register(nickname.now().trim, Auth.email), busy) { player =>
-                  if (Store.stillSignedInAs(signIn)) {
+                  if (Store.isStillSignedInAs(signIn)) {
                       Store.player.set(Store.PlayerState.Registered(player))
                       Store.refreshMatches()
                       Store.refreshGames()
@@ -535,11 +535,11 @@ object Views {
     private def reloadAfterMatchRefresh(refreshed: Match): Unit = {
         refresh(refreshingDue, () => Store.reloadDue())
         refresh(refreshingActive, () => Store.reloadActive())
-        if (refreshed.completed || refreshed.isCancelled) refresh(refreshingCompleted, () => Store.reloadCompleted())
+        if (refreshed.isCompleted || refreshed.isCancelled) refresh(refreshingCompleted, () => Store.reloadCompleted())
     }
 
     /* What the caller is to a challenge, which decides the section it is listed in. */
-    private def invitedTo(c: ChallengeSummary): Boolean =
+    private def isInvitedTo(c: ChallengeSummary): Boolean =
         c.summary.isInvited && !c.summary.isEntered && !c.summary.isOwner
 
     /* The fewest entries a challenge can start with: enough to fill the game's required roles, and never fewer than
@@ -579,7 +579,7 @@ object Views {
                 Store.failed(Store.Fetch.MyChallenges)
               )
               .map { (challenges, games, known, failed) =>
-                  val unanswered = challenges.filter(invitedTo)
+                  val unanswered = challenges.filter(isInvitedTo)
                   /* Three states, not two, and emptiness tells none of them apart. A list that failed
                    * stands with a line saying to ask again, and its refresh button is what asks -- the
                    * other sections drawn from this list are absent when it is empty, their buttons with
@@ -1550,7 +1550,7 @@ object Views {
               val asked = mount
               val signIn = Store.currentSignIn
               ApiClient.characterNames(gameId, owner.playerId).onComplete { answer =>
-                  if (asked == mount && Store.stillSignedInAs(signIn)) answer match {
+                  if (asked == mount && Store.isStillSignedInAs(signIn)) answer match {
                       case scala.util.Success(names) =>
                           loaded.set(Some(Right(names.filterNot(c => exclude.contains(c.characterId)))))
                       case scala.util.Failure(_) =>
@@ -1631,8 +1631,8 @@ object Views {
       * button once a friendly match's archive has expired.
       */
     private def reviewControl(summary: MatchSummary): HtmlElement =
-        if (summary.completed && summary.isArchiveExpired) archiveExpiredNote
-        else if (summary.completed)
+        if (summary.isCompleted && summary.isArchiveExpired) archiveExpiredNote
+        else if (summary.isCompleted)
             busyButton("Review game", classes = Some("link")) { busy =>
                 Store.run(ApiClient.matchDetail(summary.gameId, summary.matchId), busy) { m =>
                     m.playUrl.orElse(m.publicUrl) match {
@@ -3029,7 +3029,7 @@ object Views {
         def fetch(asked: Int): Future[Unit] = {
             val signIn = Store.currentSignIn
             ApiClient.gameMatches(game.gameId, Some(player.playerId)).map { found =>
-                if (asked == mount && Store.stillSignedInAs(signIn)) matches.set(Some(found))
+                if (asked == mount && Store.isStillSignedInAs(signIn)) matches.set(Some(found))
             }
         }
 
@@ -3192,7 +3192,7 @@ object Views {
             request += 1
             val asked = request
             val signIn = Store.currentSignIn
-            def current = asked == request && Store.stillSignedInAs(signIn)
+            def current = asked == request && Store.isStillSignedInAs(signIn)
             mineRequest += 1
             val askedMine = mineRequest
             busy.set(true)
@@ -3209,7 +3209,7 @@ object Views {
                     case error => Left(s"Your standing could not be loaded: ${error.getMessage}")
                 }
                 .foreach(answer =>
-                    if (askedMine == mineRequest && Store.stillSignedInAs(signIn)) mine.set(Some(answer))
+                    if (askedMine == mineRequest && Store.isStillSignedInAs(signIn)) mine.set(Some(answer))
                 )
             ApiClient
                 .leaderboard(game.gameId, at, roleId)
@@ -3735,8 +3735,8 @@ object Views {
                         // succeeded or failed, so not even its failure is reported to them.
                         val signIn = Store.currentSignIn
                         val asked = ApiClient.characters(game.gameId).transform {
-                            case _ if !Store.stillSignedInAs(signIn) => scala.util.Success(None)
-                            case answered                            => answered.map(Some(_))
+                            case _ if !Store.isStillSignedInAs(signIn) => scala.util.Success(None)
+                            case answered                              => answered.map(Some(_))
                         }
                         Store.run(asked, busy) {
                             case None => ()
@@ -4027,7 +4027,7 @@ object Views {
                         // sign-out would teach the next player's session who the previous one was looking for.
                         val signIn = Store.currentSignIn
                         Store.run(ApiClient.searchPlayers(prefix.now().trim), busy) { result =>
-                            if (Store.stillSignedInAs(signIn)) {
+                            if (Store.isStillSignedInAs(signIn)) {
                                 Store.remember(result.players)
                                 found.set(Some(result))
                             }
@@ -4519,7 +4519,7 @@ object Views {
         val plays = Var(canPlay)
         val friendly = Var(true)
         val seated: Signal[Boolean] = plays.signal.combineWith(administers.signal).map((p, a) => p || !a)
-        def seatedNow: Boolean = plays.now() || !administers.now()
+        def isSeatedNow: Boolean = plays.now() || !administers.now()
         val characterGame = game.gameType == GameType.Character
         // The challenger's own character: the first of them to start with, which is the only one for most players,
         // but chosen here rather than assumed.
@@ -4765,8 +4765,8 @@ object Views {
                 }
           ) { busy =>
               val request = ChallengeRequest(
-                characterId = if (characterGame && seatedNow) ownCharacter.now() else None,
-                isPlaying = seatedNow,
+                characterId = if (characterGame && isSeatedNow) ownCharacter.now() else None,
+                isPlaying = isSeatedNow,
                 poolSize = Some(seats.now()),
                 roundDuration = durationOf(timeLimit.now(), timeLimitUnit.now()),
                 gameSettings = settingsOf(parameters.now()),
@@ -4774,7 +4774,7 @@ object Views {
                 isFriendly = !administers.now() || friendly.now(),
                 isPublic = isPublic.now(),
                 start = startOf(plannedStart.now()),
-                isAutoStarted = autoStart.now() || !seatedNow,
+                isAutoStarted = autoStart.now() || !isSeatedNow,
                 isOpen = invitee.isEmpty,
                 invitations = if (characterGame) Nil else invitee.map(_.playerId).toList,
                 characterInvitations = if (characterGame) inviteeCharacter.now().toList else Nil
@@ -4792,7 +4792,7 @@ object Views {
                   plays.set(true)
                   friendly.set(true)
                   plannedStart.set("")
-                  if (Store.stillSignedInAs(signIn) && Store.page.now() == Store.Page.OneGame(game.gameId)) {
+                  if (Store.isStillSignedInAs(signIn) && Store.page.now() == Store.Page.OneGame(game.gameId)) {
                       // The challenge it was open for now exists and is in the list below it. The invitation went
                       // with it, so the slot is spent.
                       Store.showChallengeForm.set(false)

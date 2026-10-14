@@ -265,7 +265,7 @@ object EloRatingService {
              * this is the last word rather than the only one: a match like that is left unrated, and
              * said so, rather than refused -- its results are still its results, and failing the
              * callback that brought them would leave it unfinished as well. */
-            if (!EloRating.playersOnce(rows.map(_.playerId)))
+            if (!EloRating.hasDistinctPlayers(rows.map(_.playerId)))
                 IO(
                   System.err.println(
                     s"match ${matchId.value} of game ${gameId.value} is rated but has a player in two seats; " +
@@ -278,7 +278,7 @@ object EloRatingService {
                       EloRating.Seat(row.participantId, row.playerId, row.eloStart, ranks(row.participantId))
                   )
                 )
-                // Over every seat, as `playersOnce` is: a seat with no result has no rank, and no delta.
+                // Over every seat, as `hasDistinctPlayers` is: a seat with no result has no rank, and no delta.
                 val inRole = roleDeltas(rows, ranks.get)
                 // Each rating to move, overall and in a role: one seat per player, so a seat's delta is its
                 // player's. And each player's record, from where they finished among the seats with a
@@ -353,7 +353,7 @@ object EloRatingService {
             deltas <-
                 if (friendly) IO.pure(Map.empty[ParticipantId, Int])
                 else
-                    IO.raiseUnless(EloRating.playersOnce(seats.map(_.playerId)))(
+                    IO.raiseUnless(EloRating.hasDistinctPlayers(seats.map(_.playerId)))(
                       ConflictError("a player holds more than one seat in this match, so it can only be friendly")
                     ) *> IO.pure(
                       EloRating.deltas(

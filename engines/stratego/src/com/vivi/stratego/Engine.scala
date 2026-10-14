@@ -75,7 +75,7 @@ class Engine(
             for {
                 _ <- Either.cond(!current.isOver, (), Refusal.Invalid("this match is already over"))
                 _ <- Either.cond(
-                  current.inPlay,
+                  current.isInPlay,
                   (),
                   Refusal.Invalid(
                     if (current.hasDeployed(seat.side)) s"${seat.side.other} has not deployed yet"
@@ -92,7 +92,7 @@ class Engine(
                 _ <- current.board.cells.lift(from).flatten.filter(_.side == seat.side) match {
                     case Some(p)
                         if current.board.targets(seat.side, from).contains(to) &&
-                            Rules.shuttles(current.history(seat.side), Step(p.id, from, to)) =>
+                            Rules.isShuttling(current.history(seat.side), Step(p.id, from, to)) =>
                         Left(
                           Refusal.Invalid(
                             s"that would be a fourth move in a row between ${Board.name(from)} and ${Board.name(to)}"
@@ -144,7 +144,7 @@ class Engine(
             m.board.cells.indices.toList.flatMap(square =>
                 m.board(square).flatMap { p =>
                     val own = viewer.contains(p.side)
-                    Option.when(m.inPlay || own)(
+                    Option.when(m.isInPlay || own)(
                       PieceView(
                         square,
                         p.side.toString,
@@ -157,13 +157,13 @@ class Engine(
             )
         StateResponse(
           matchId = m.matchId,
-          phase = if (over) "over" else if (m.inPlay) "play" else "setup",
+          phase = if (over) "over" else if (m.isInPlay) "play" else "setup",
           you = viewer.map(_.toString),
           deployed = Side.values.toList.filter(m.hasDeployed).map(_.toString),
-          turn = Option.when(m.inPlay && !over)(m.toMove.toString),
+          turn = Option.when(m.isInPlay && !over)(m.toMove.toString),
           pieces = pieces,
           legalMoves = viewer
-              .filter(v => m.inPlay && !over && v == m.toMove)
+              .filter(v => m.isInPlay && !over && v == m.toMove)
               .toList
               .flatMap(m.legalMoves)
               .map((from, to) => List(from, to)),

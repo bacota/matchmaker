@@ -76,7 +76,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
       * The comparison is constant-time, and a wrong key is refused the same way as a missing one: distinguishing them
       * tells a caller that guessing is worth continuing.
       */
-    private def fromMatchmaker(request: EngineRequest): Boolean =
+    private def isFromMatchmaker(request: EngineRequest): Boolean =
         matchmakerKey match {
             case None => true
             case Some(expected) =>
@@ -146,7 +146,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
         (request.method.toUpperCase, request.segments) match {
 
             // Step 1. Matchmaker creating a game; the only route that makes a match exist.
-            case ("POST", "games" :: Nil) if !fromMatchmaker(request) => unauthenticated
+            case ("POST", "games" :: Nil) if !isFromMatchmaker(request) => unauthenticated
 
             case ("POST", "games" :: Nil) =>
                 parse[Protocol.CreateGameRequest](request.body) match {
@@ -159,7 +159,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
                 }
 
             // Step 4. Matchmaker asking how the match is going.
-            case ("GET", "matches" :: matchId :: "status" :: Nil) if !fromMatchmaker(request) => unauthenticated
+            case ("GET", "matches" :: matchId :: "status" :: Nil) if !isFromMatchmaker(request) => unauthenticated
 
             case ("GET", "matches" :: matchId :: "status" :: Nil) =>
                 // Unparseable rather than absent is answered as a bad request: matchmaker sends this to
@@ -182,7 +182,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
 
             // Matchmaker saying the match was cancelled. Like status, it is matchmaker's alone; a
             // player cancels through matchmaker, which owns who may.
-            case ("POST", "matches" :: matchId :: "cancel" :: Nil) if !fromMatchmaker(request) => unauthenticated
+            case ("POST", "matches" :: matchId :: "cancel" :: Nil) if !isFromMatchmaker(request) => unauthenticated
 
             case ("POST", "matches" :: matchId :: "cancel" :: Nil) =>
                 engine.cancel(matchId)
@@ -197,7 +197,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
              * matchmaker gets a bare 401 with nowhere to sign in.
              */
             case ("GET", "matches" :: matchId :: "play" :: Nil) =>
-                currentMatch(matchId, archivedHint(request)) match {
+                currentMatch(matchId, hasArchivedHint(request)) match {
                     case Left(refusal) => error(refusal)
                     case Right(found) =>
                         val seat = playAuth.callerOf(request).toOption.flatMap(engine.seatOf(found, _).toOption)
@@ -243,7 +243,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
             // The public board, for a match created public. Nobody's seat, so no token, no moves, and
             // no sight of anything a seat would hide — see `stateOf`.
             case ("GET", "matches" :: matchId :: "board" :: Nil) =>
-                withPublic(matchId, archivedHint(request))(m =>
+                withPublic(matchId, hasArchivedHint(request))(m =>
                     html(
                       page(matchId, MatchTitle.of(m, gameTitle), Some(stateOf(m, None)), None, live.map(_.url), true)
                     )
@@ -343,7 +343,7 @@ abstract class EngineRoutes[M <: MatchLike, S <: SeatLike, V: Writer](
     /** Whether matchmaker's link said the match is archived (`archived=1`): a hint about where to look first, and
       * nothing more. A link without it still finds an archived match.
       */
-    private def archivedHint(request: EngineRequest): Boolean = request.query.get("archived").contains("1")
+    private def hasArchivedHint(request: EngineRequest): Boolean = request.query.get("archived").contains("1")
 
     private def unauthenticated: EngineResponse = error(401, "this route is matchmaker's; a valid API key is required")
 

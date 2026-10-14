@@ -126,7 +126,7 @@ class EngineSpec extends FunSuite with QuietTests {
         assertEquals(f.recorder.moves.last._2.next, List(11L))
         assertEquals(f.recorder.moves.last._2.state.get.pending, List(Protocol.PendingSeat(11L, start.plusSeconds(30))))
         assertEquals(f.recorder.moves.map(_._2.startedAt), List(start, start))
-        assert(f.m.inPlay)
+        assert(f.m.isInPlay)
     }
 
     test("each deployment keeps the army it put down, which is the opening position a replay starts from") {

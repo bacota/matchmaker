@@ -88,7 +88,7 @@ case class StrategoMatch(
     def hasDeployed(side: Side): Boolean = turns.exists(t => t.side == side && t.isSetup)
 
     /** Both armies are on the board, and the setup phase is over. */
-    def inPlay: Boolean = Side.values.forall(hasDeployed)
+    def isInPlay: Boolean = Side.values.forall(hasDeployed)
 
     /** The piece moves, without the two setups or a concession. */
     def moves: List[MoveRecord] = turns.filter(_.step.isDefined)
@@ -104,10 +104,10 @@ case class StrategoMatch(
 
     def legalMoves(side: Side): List[(Int, Int)] = Rules.legalMoves(board, side, history(side))
 
-    private def stuck(side: Side): Boolean = legalMoves(side).isEmpty
+    private def isStuck(side: Side): Boolean = legalMoves(side).isEmpty
 
     /** Whether a live match's clock ended this one. */
-    def ranOut: Boolean = clock.exists(_.ranOut)
+    def hasRunOut: Boolean = clock.exists(_.hasRunOut)
 
     /** Why the match is over, or `None` while it is not.
       *
@@ -115,11 +115,11 @@ case class StrategoMatch(
       * flag taken; the side to move having nothing it may move; and the move cap.
       */
     def ending: Option[Ending] =
-        if (ranOut) Some(Ending.Forfeit)
+        if (hasRunOut) Some(Ending.Forfeit)
         else if (conceded.isDefined) Some(Ending.Conceded)
-        else if (!inPlay) None
+        else if (!isInPlay) None
         else if (Side.values.exists(s => !board.hasFlag(s))) Some(Ending.FlagTaken)
-        else if (stuck(toMove)) Some(Ending.NoMoves)
+        else if (isStuck(toMove)) Some(Ending.NoMoves)
         else if (moves.sizeIs >= maxMoves) Some(Ending.MoveCap)
         else None
 
@@ -132,11 +132,11 @@ case class StrategoMatch(
         ending match {
             case Some(Ending.Forfeit) =>
                 seats.find(s => clock.flatMap(_.outcomeOf(s.participantId)).contains(Outcome.Win)).map(_.side)
-            case Some(Ending.Conceded)                        => conceded.map(_.other)
-            case Some(Ending.FlagTaken)                       => Side.values.find(board.hasFlag)
-            case Some(Ending.NoMoves) if !stuck(toMove.other) => Some(toMove.other)
-            case Some(_) if !canTie                           => onPoints
-            case _                                            => None
+            case Some(Ending.Conceded)                          => conceded.map(_.other)
+            case Some(Ending.FlagTaken)                         => Side.values.find(board.hasFlag)
+            case Some(Ending.NoMoves) if !isStuck(toMove.other) => Some(toMove.other)
+            case Some(_) if !canTie                             => onPoints
+            case _                                              => None
         }
 
     /** The side ahead on [[capturePoints]], or `None` if they are level: what decides a match that would otherwise be
@@ -148,15 +148,15 @@ case class StrategoMatch(
     }
 
     /** Whether a match that would have been drawn went to the side ahead on points instead. */
-    def decidedOnPoints: Boolean = !canTie && onPoints.isDefined && wouldBeDrawn
+    def isDecidedOnPoints: Boolean = !canTie && onPoints.isDefined && isDrawByRules
 
     /** Whether the way the match ended is a draw by the game's own rules: the move cap, or neither side able to move.
       */
-    private def wouldBeDrawn: Boolean =
-        ending.contains(Ending.MoveCap) || (ending.contains(Ending.NoMoves) && stuck(toMove.other))
+    private def isDrawByRules: Boolean =
+        ending.contains(Ending.MoveCap) || (ending.contains(Ending.NoMoves) && isStuck(toMove.other))
 
     /** Not a match the clock ended with nobody winning: two players who both ran out both lost. */
-    def isDrawn: Boolean = isOver && !ranOut && winner.isEmpty
+    def isDrawn: Boolean = isOver && !hasRunOut && winner.isEmpty
 
     /** How many enemy pieces `side` has taken: every battle it won, and every one where both pieces fell. */
     def captured(side: Side): Int = taken(side).size
@@ -187,7 +187,7 @@ case class StrategoMatch(
       * fighting. `None` too if the turns do not account for every piece, which a match this engine played cannot do.
       */
     def opening: Option[Board] =
-        if (!inPlay) None
+        if (!isInPlay) None
         else {
             val kept = turns.filter(_.isSetup).flatMap(t => t.setup.map(t.side -> _)).toMap
             if (kept.sizeIs == 2)
@@ -289,12 +289,12 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
 
     def pending(m: StrategoMatch): List[Seat] =
         if (m.isOver) Nil
-        else if (!m.inPlay) m.seats.filterNot(s => m.hasDeployed(s.side))
+        else if (!m.isInPlay) m.seats.filterNot(s => m.hasDeployed(s.side))
         else m.seatOf(m.toMove).toList
 
     /** The match's creation through the setup, and the turn before after it. */
     def clockStartedAt(m: StrategoMatch): Instant =
-        if (!m.inPlay) m.createdAt else m.turns.lastOption.map(_.takenAt).getOrElse(m.createdAt)
+        if (!m.isInPlay) m.createdAt else m.turns.lastOption.map(_.takenAt).getOrElse(m.createdAt)
 
     def turns(m: StrategoMatch): List[MoveRecord] = m.turns
 
@@ -322,7 +322,7 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
                 case (Ending.Conceded, Some(w)) => s"${who(w.other)} surrendered to ${who(w)}."
                 case (Ending.FlagTaken, Some(w)) =>
                     s"${who(w)} captured ${who(w.other)}'s flag in ${moves(m.moves.size)}."
-                case (Ending.NoMoves, Some(w)) if m.decidedOnPoints =>
+                case (Ending.NoMoves, Some(w)) if m.isDecidedOnPoints =>
                     s"Neither side could move. ${who(w)} wins on captures, ${m.capturePoints(w)}–${m.capturePoints(w.other)}."
                 case (Ending.NoMoves, Some(w)) => s"${who(w.other)} had no piece left to move. ${who(w)} wins."
                 case (Ending.MoveCap, Some(w)) =>
@@ -361,7 +361,7 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
           maxMoves = maxMoves,
           gameDisplayName = request.gameDisplayName,
           description = request.description,
-          canTie = Protocol.tiesAllowed(request)
+          canTie = Protocol.canTie(request)
         )
 
     /** A piece as it is stored: on its square, since a board is mostly empty and storing 100 cells would mostly store

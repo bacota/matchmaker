@@ -126,7 +126,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                                 notificationRepo.levelsForPlayer(recipient.playerId, tournament.gameId).map { levels =>
                                     val news = newsOf(notice, tournament, subject, joined = true, offeredBy, room)
                                     Option
-                                        .when(NotificationPolicy.wants(kind, levels.apply))(())
+                                        .when(NotificationPolicy.isWanted(kind, levels.apply))(())
                                         .flatMap(_ => ChallengeMail.compose(from, uiBaseUrl, recipient, kind, news))
                                 }
                             }
@@ -161,7 +161,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         tournament.settings.maxEntrants.traverse { most =>
             new EntrantRepo(session)
                 .list(tournament.gameId, tournament.tournamentId)
-                .map(entries => math.max(0, most - entries.count(!_.withdrawn)))
+                .map(entries => math.max(0, most - entries.count(!_.isWithdrawn)))
         }
 
     // -------------------------------------------------------------------------
@@ -315,7 +315,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                         levels <- notificationRepo.levelsForPlayer(tournament.owner, tournament.gameId)
                     } yield owner.toSeq.flatMap { recipient =>
                         Option
-                            .when(NotificationPolicy.wants(NotificationType.TournamentRoundDone, levels.apply))(())
+                            .when(NotificationPolicy.isWanted(NotificationType.TournamentRoundDone, levels.apply))(())
                             .flatMap(_ =>
                                 TournamentMail.compose(
                                   from,

@@ -99,9 +99,9 @@ case class RpsMatch(
     /** The seat whose throw won a round, or `None` for a tie or a round not yet thrown. */
     private def decide(round: List[ThrowRecord]): Option[Seat] =
         round match {
-            case x :: y :: Nil if x.shape.beats(y.shape) => seats.find(_.participantId == x.participantId)
-            case x :: y :: Nil if y.shape.beats(x.shape) => seats.find(_.participantId == y.participantId)
-            case _                                       => None
+            case x :: y :: Nil if x.shape.canBeat(y.shape) => seats.find(_.participantId == x.participantId)
+            case x :: y :: Nil if y.shape.canBeat(x.shape) => seats.find(_.participantId == y.participantId)
+            case _                                         => None
         }
 
     /** The seats still being waited on — all of them at the start, and none once the match is over.
@@ -116,21 +116,21 @@ case class RpsMatch(
       * nothing to end but the pair being complete — or, when ties are not allowed, the moment a pair is thrown that
       * somebody wins. Or, in a live match, the moment the clock ran out on whoever had not.
       */
-    def isOver: Boolean = ranOut || (completeRounds > 0 && (canTie || decide(lastRound).isDefined))
+    def isOver: Boolean = hasRunOut || (completeRounds > 0 && (canTie || decide(lastRound).isDefined))
 
     /** Whether a live match's clock ended this one. */
-    def ranOut: Boolean = clock.exists(_.ranOut)
+    def hasRunOut: Boolean = clock.exists(_.hasRunOut)
 
     /** The winning seat, once there is one. `None` while a throw is still to come, and `None` for a draw — which
       * [[isDrawn]] is how to tell apart from an unfinished match. In a match the clock ended, whoever threw in time.
       */
     def winner: Option[Seat] =
-        if (ranOut) seats.find(s => clock.flatMap(_.outcomeOf(s.participantId)).contains(Outcome.Win))
+        if (hasRunOut) seats.find(s => clock.flatMap(_.outcomeOf(s.participantId)).contains(Outcome.Win))
         else if (isOver) decide(lastRound)
         else None
 
     /** Not a match the clock ended with nobody winning: two players who both ran out both lost. */
-    def isDrawn: Boolean = isOver && !ranOut && winner.isEmpty
+    def isDrawn: Boolean = isOver && !hasRunOut && winner.isEmpty
 
     /** How the match came out for one seat. Only meaningful once it is over. */
     def outcomeFor(seat: Seat): Outcome =
@@ -212,13 +212,13 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
                 case n => s", after $n tied throws"
             }
             (m.winner, m.seats) match {
-                case (Some(w), _) if m.ranOut =>
+                case (Some(w), _) if m.hasRunOut =>
                     m.seats
                         .find(_ != w)
                         .fold(s"${who(w)} won by forfeit.")(l =>
                             s"${who(w)} won by forfeit: ${who(l)} did not throw in time."
                         )
-                case (None, _) if m.ranOut => "Neither player threw in time. Nobody wins."
+                case (None, _) if m.hasRunOut => "Neither player threw in time. Nobody wins."
                 case (Some(w), _) =>
                     m.seats
                         .find(_ != w)
@@ -252,7 +252,7 @@ object RpsMatch extends Game[RpsMatch, Seat, ThrowRecord] {
               resultsCallbackUrl = request.resultsCallbackUrl,
               gameDisplayName = request.gameDisplayName,
               description = request.description,
-              canTie = Protocol.tiesAllowed(request)
+              canTie = Protocol.canTie(request)
             )
         }
 

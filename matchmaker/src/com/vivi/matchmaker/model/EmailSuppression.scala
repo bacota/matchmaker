@@ -41,7 +41,7 @@ object SuppressionReason {
 /** One address we have stopped writing to, or are counting failures against.
   *
   * A row exists as soon as anything goes wrong, which is not the same as the address being suppressed — see
-  * [[EmailSuppression.active]]. That split is deliberate: a single transient failure is worth recording and not worth
+  * [[EmailSuppression.isActive]]. That split is deliberate: a single transient failure is worth recording and not worth
   * acting on, and a table that only held the acted-on ones could not count to three.
   */
 case class EmailSuppression(
@@ -62,7 +62,7 @@ case class EmailSuppression(
       * ago counts), while the screens and the tests ask a value they are already holding. Both are
       * `SuppressionRepoSpec`'s to keep honest, and that spec asserts the two agree rather than trusting that they do.
       */
-    def active(now: Instant): Boolean =
+    def isActive(now: Instant): Boolean =
         releasedAt.isEmpty && (isPermanent || (
           occurrences >= EmailSuppression.transientThreshold &&
               lastSeenAt.isAfter(now.minus(EmailSuppression.transientWindow))

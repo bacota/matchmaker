@@ -18,7 +18,7 @@ import java.time.{Duration, Instant}
   * and has no result and never will. Both are over.
   *
   * `completedAt` is a time rather than a flag so that a finished match can say when it finished — a history in no
-  * particular order is not much of a history. `completed` is kept beside it as a derived answer to the question most
+  * particular order is not much of a history. `isCompleted` is kept beside it as a derived answer to the question most
   * callers actually ask, and is deliberately not a field: two stored columns saying the same thing could disagree.
   *
   * `status` says where the match is in its life, and is the source of truth: a tournament's match is written when its
@@ -35,7 +35,7 @@ enum MatchStatus(val code: String) {
     case Finished extends MatchStatus("F")
 
     /** Whether the engine has been asked to create the match's game: it has begun, or is over. */
-    def begun: Boolean = this == InProgress || this == Finished
+    def hasBegun: Boolean = this == InProgress || this == Finished
 }
 
 object MatchStatus {
@@ -83,5 +83,5 @@ case class Match(
 ) {
 
     /** Whether the match was played to an end. */
-    def completed: Boolean = completedAt.isDefined
+    def isCompleted: Boolean = completedAt.isDefined
 }

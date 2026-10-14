@@ -62,8 +62,8 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
         NNode(
           n.path,
           n.members.sortBy(_.entrant),
-          if (n.finished) -1 else n.stage,
-          if (n.finished) -1 else n.repetition,
+          if (n.isFinished) -1 else n.stage,
+          if (n.isFinished) -1 else n.repetition,
           n.runs.map(r =>
               NRun(
                 r.stage,
@@ -176,9 +176,9 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
             check(started, saved(s, started))
         }
         var steps = 0
-        while (!state.finished && steps < 200) {
+        while (!state.isFinished && steps < 200) {
             steps += 1
-            if (Progress.roundComplete(state)) {
+            if (Progress.isRoundComplete(state)) {
                 val (next, _) = Progress.nextRound(state, s.env)
                 state = check(next, saved(s, next))
             } else {
@@ -197,7 +197,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                 state = check(next, saved(s, next))
             }
         }
-        assert(state.finished, s"$key did not finish in 200 steps")
+        assert(state.isFinished, s"$key did not finish in 200 steps")
         state
     }
 

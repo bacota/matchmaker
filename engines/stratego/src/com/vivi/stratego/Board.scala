@@ -41,7 +41,7 @@ enum Rank(val strength: Int, val count: Int) {
     case Marshal extends Rank(10, 1)
     case Bomb extends Rank(11, 6)
 
-    def movable: Boolean = this != Bomb && this != Flag
+    def isMovable: Boolean = this != Bomb && this != Flag
 }
 
 object Rank {
@@ -117,7 +117,7 @@ case class Board(cells: Vector[Option[Piece]]) {
       */
     def targets(side: Side, from: Int): List[Int] =
         cells(from) match {
-            case Some(p) if p.side == side && p.rank.movable =>
+            case Some(p) if p.side == side && p.rank.isMovable =>
                 Board.directions.flatMap { (dr, dc) =>
                     def walk(at: Int, acc: List[Int]): List[Int] =
                         Board.step(at, dr, dc) match {
@@ -142,13 +142,13 @@ case class Board(cells: Vector[Option[Piece]]) {
       * tapped the wrong square — that is a 400, not a failure of the engine.
       */
     def move(side: Side, from: Int, to: Int): Either[String, Moved] =
-        if (!Board.onBoard(from)) Left(s"square $from is not on the board; squares are numbered 0 to 99")
-        else if (!Board.onBoard(to)) Left(s"square $to is not on the board; squares are numbered 0 to 99")
+        if (!Board.isOnBoard(from)) Left(s"square $from is not on the board; squares are numbered 0 to 99")
+        else if (!Board.isOnBoard(to)) Left(s"square $to is not on the board; squares are numbered 0 to 99")
         else
             cells(from) match {
-                case None                       => Left(s"there is no piece on ${Board.name(from)}")
-                case Some(p) if p.side != side  => Left(s"the piece on ${Board.name(from)} is not yours")
-                case Some(p) if !p.rank.movable => Left(s"a ${p.rank.toString.toLowerCase} cannot move")
+                case None                         => Left(s"there is no piece on ${Board.name(from)}")
+                case Some(p) if p.side != side    => Left(s"the piece on ${Board.name(from)} is not yours")
+                case Some(p) if !p.rank.isMovable => Left(s"a ${p.rank.toString.toLowerCase} cannot move")
                 case Some(p) if !targets(side, from).contains(to) =>
                     Left(
                       s"your ${p.rank.toString.toLowerCase} cannot move from ${Board.name(from)} to ${Board.name(to)}"
@@ -191,7 +191,7 @@ object Board {
 
     private val directions: List[(Int, Int)] = List((1, 0), (-1, 0), (0, 1), (0, -1))
 
-    def onBoard(square: Int): Boolean = square >= 0 && square < 100
+    def isOnBoard(square: Int): Boolean = square >= 0 && square < 100
 
     def row(square: Int): Int = square / 10
 

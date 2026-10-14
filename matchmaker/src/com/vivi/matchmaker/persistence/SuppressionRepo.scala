@@ -81,7 +81,7 @@ class SuppressionRepo(session: Session[IO]) {
         sql"""SELECT email, reason, is_permanent, diagnostic, first_seen_at, last_seen_at, occurrences, released_at
               FROM email_suppression WHERE email = lower($text)""".query(suppressionRow)
 
-    /* The predicate in `EmailSuppression.active`, in SQL, asked of many addresses at once.
+    /* The predicate in `EmailSuppression.isActive`, in SQL, asked of many addresses at once.
      *
      * The database's own `now()` rather than a time from the caller, and one query rather than one
      * per recipient: this runs on the path a player is waiting on, where the send path already went

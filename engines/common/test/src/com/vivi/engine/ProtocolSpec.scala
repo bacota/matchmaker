@@ -77,10 +77,10 @@ class ProtocolSpec extends FunSuite {
           canTie = Some(false)
         )
         val asEngine = read[Protocol.CreateGameRequest](write(fromMatchmaker))
-        assert(!Protocol.tiesAllowed(asEngine))
+        assert(!Protocol.canTie(asEngine))
         // Absent rather than true: a match that allows ties is sent nothing new.
         assert(!write(fromMatchmaker.copy(canTie = None)).contains("canTie"))
-        assert(Protocol.tiesAllowed(read[Protocol.CreateGameRequest](write(fromMatchmaker.copy(canTie = None)))))
+        assert(Protocol.canTie(read[Protocol.CreateGameRequest](write(fromMatchmaker.copy(canTie = None)))))
     }
 
     test("the engine's create response reads as matchmaker's") {

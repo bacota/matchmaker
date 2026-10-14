@@ -98,7 +98,7 @@ class EndingSpec extends FunSuite {
         assertEquals(m.ending, Some(Ending.NoMoves))
         assertEquals(m.winner, Some(Side.Red))
         assert(!m.isDrawn)
-        assert(m.decidedOnPoints)
+        assert(m.isDecidedOnPoints)
         assertEquals(
           StrategoMatch.summary(m),
           Some("Neither side could move. <strong>Red</strong> wins on captures, 7–2.")
@@ -132,6 +132,6 @@ class EndingSpec extends FunSuite {
           50 -> (Side.Blue, Rank.Scout)
         ).copy(canTie = false)
         assertEquals(m.winner, Some(Side.Blue))
-        assert(!m.decidedOnPoints)
+        assert(!m.isDecidedOnPoints)
     }
 }

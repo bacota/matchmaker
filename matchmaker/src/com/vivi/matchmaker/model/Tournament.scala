@@ -130,7 +130,7 @@ case class Entrant(
     nickname: String = "",
     characterName: Option[String] = None
 ) {
-    def withdrawn: Boolean = withdrawnAt.isDefined
+    def isWithdrawn: Boolean = withdrawnAt.isDefined
 }
 
 /** Where a tournament match is: its seats choosing roles, due to be created, created, or over -- `match.status` `C`,

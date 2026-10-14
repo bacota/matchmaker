@@ -204,7 +204,7 @@ class EndingServiceSpec extends FunSuite with QuietTests {
         run(services.engine.recordResults(game.gameId, matchId, Nil, game.externalId))
         assert(
           run(TestSession.resource.use(session => new MatchRepo(session).read(game.gameId, matchId)))
-              .exists(_.completed)
+              .exists(_.isCompleted)
         )
         // And it is settled once the connection is given back: just finished, so owed its archive.
         run(IO.sleep(50.millis).iterateUntil(_ => settled.nonEmpty))

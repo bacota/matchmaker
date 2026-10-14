@@ -739,7 +739,7 @@ class MatchServiceSpec extends PropertySuite {
                             .map(_.matches.toList)
                     } yield running.isEmpty && over.map(_.matchId) == List(mid) &&
                         // Still an unfinished match, which is why the row cannot say it completed.
-                        over.forall(s => !s.completed && !s.isCancelled)
+                        over.forall(s => !s.isCompleted && !s.isCancelled)
                 }
                 result.timeout(15.seconds).unsafeRunSync()
         }

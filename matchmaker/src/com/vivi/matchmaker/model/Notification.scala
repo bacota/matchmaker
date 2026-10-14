@@ -127,7 +127,7 @@ enum NotificationType(val code: String, val label: String, val detail: String) {
       * the per-match form uses — `MatchStarted` is stored but not offered, since a match that has started cannot start
       * again.
       */
-    def inProgress: Boolean = this match {
+    def isInProgress: Boolean = this match {
         case NotificationType.TurnTaken | NotificationType.YourTurn | NotificationType.MatchEnded => true
         case _                                                                                    => false
     }
@@ -137,10 +137,10 @@ object NotificationType {
 
     /** The kinds a match already under way can still produce, in the order [[NotificationType.values]] gives them.
       *
-      * What the per-match form asks about. Derived from [[NotificationType.inProgress]] rather than written out, so a
+      * What the per-match form asks about. Derived from [[NotificationType.isInProgress]] rather than written out, so a
       * kind added to the enum has to say for itself which side of the start it falls on.
       */
-    val duringMatch: Seq[NotificationType] = values.toSeq.filter(_.inProgress)
+    val duringMatch: Seq[NotificationType] = values.toSeq.filter(_.isInProgress)
 
     /** The kinds a seat in a match can answer at all, which is what `participant` stores.
       *
@@ -152,7 +152,7 @@ object NotificationType {
       * Derived rather than written out, so that a kind added to the enum joins this list only if it says it belongs
       * there.
       */
-    val onSeat: Seq[NotificationType] = values.toSeq.filter(kind => kind.inProgress || kind == MatchStarted)
+    val onSeat: Seq[NotificationType] = values.toSeq.filter(kind => kind.isInProgress || kind == MatchStarted)
 }
 
 /** What a player has said about each kind of notification, at one level of the chain.
@@ -360,7 +360,7 @@ case class NotificationSettings(
   */
 object NotificationPolicy {
 
-    def wants(kind: NotificationType, answers: NotificationType => Boolean): Boolean = answers(kind)
+    def isWanted(kind: NotificationType, answers: NotificationType => Boolean): Boolean = answers(kind)
 
     /** The one notification a recipient gets for an event that is several kinds of news at once.
       *
@@ -376,5 +376,5 @@ object NotificationPolicy {
       * `None` when they have refused all of them, which is the only case that sends nothing.
       */
     def choose(kinds: Seq[NotificationType], answers: NotificationType => Boolean): Option[NotificationType] =
-        kinds.find(wants(_, answers))
+        kinds.find(isWanted(_, answers))
 }

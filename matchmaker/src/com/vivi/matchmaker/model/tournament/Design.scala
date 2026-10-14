@@ -93,7 +93,7 @@ case class StageDesign(
   * never may, whatever its pool or stage: it exists to break a tie.
   */
 object Ties {
-    def allowed(members: Int, rubber: Boolean = false, stage: Option[Boolean] = None): Boolean =
+    def isAllowed(members: Int, rubber: Boolean = false, stage: Option[Boolean] = None): Boolean =
         !rubber && stage.getOrElse(members > 2)
 }
 
@@ -129,7 +129,7 @@ case class TournamentGame(
             roles.filter(_.roleType == RoleType.Optional)
 
     /** Whether a rubber match can break a tie: only in a game of exactly two roles (Q7). */
-    def rubberApplies: Boolean = roles.sizeIs == 2
+    def isRubberApplicable: Boolean = roles.sizeIs == 2
 }
 
 object TournamentGame {
@@ -270,7 +270,7 @@ object Validation {
           )(
             w("points, rotation and concurrent rounds are set, but this stage's pools play a design, which ranks them")
           ),
-          Option.when(stage.hasRubberMatch && !game.rubberApplies)(
+          Option.when(stage.hasRubberMatch && !game.isRubberApplicable)(
             w("a rubber match only breaks ties in a game of two roles; scores will be used instead")
           ),
           Option.when(stage.hasBrackets && stage.advancing.isDefined && stage.seedPolicy != SeedPolicy.WinnerTakesSeed)(

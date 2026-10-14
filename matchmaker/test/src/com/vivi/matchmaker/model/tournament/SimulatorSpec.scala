@@ -14,7 +14,7 @@ class SimulatorSpec extends ScalaCheckSuite {
     private def log2(n: Int) = Iterator.iterate(1)(_ * 2).indexWhere(_ >= n)
 
     /** Nobody plays twice in a round, nobody eliminated plays again, and every match seats only members of its pool. */
-    private def wellFormed(played: Played): Boolean =
+    private def isWellFormed(played: Played): Boolean =
         played.rounds.forall { matches =>
             val who = matches.flatMap(_.planned.seats.map(_.entrant))
             who.distinct.size == who.size
@@ -23,8 +23,8 @@ class SimulatorSpec extends ScalaCheckSuite {
     property("single elimination of n takes ceil(log2 n) rounds and has one winner") {
         forAll(Gen.choose(2, 40), Gen.long) { (n, seed) =>
             val played = play(standard("single-elimination"), n, random(seed))
-            played.state.finished && played.rounds.size == log2(n) && played.ranking.values.count(_ == 1) == 1 &&
-            played.ranking.size == n && wellFormed(played)
+            played.state.isFinished && played.rounds.size == log2(n) && played.ranking.values.count(_ == 1) == 1 &&
+            played.ranking.size == n && isWellFormed(played)
         }
     }
 
@@ -54,7 +54,7 @@ class SimulatorSpec extends ScalaCheckSuite {
 
     test("an elimination of matches that are all drawn still finishes, the weaker seed advancing every time (Q6)") {
         val played = play(standard("single-elimination"), 4, draws)
-        assert(played.state.finished)
+        assert(played.state.isFinished)
         // 4 beats 1 and 3 beats 2, the weaker seed taking each draw. 4 takes seed 1 from the pool it won and 3 takes
         // seed 2, so in the final 3 is the weaker seed, and takes it.
         assertEquals(played.ranking(3L), 1)
@@ -81,7 +81,7 @@ class SimulatorSpec extends ScalaCheckSuite {
         )
         forAll(Gen.oneOf(finite), Gen.choose(2, 24), Gen.long) { (key, n, seed) =>
             val played = play(standard(key), n, random(seed))
-            played.state.finished && played.ranking.keySet == (1 to n).map(_.toLong).toSet && wellFormed(played) &&
+            played.state.isFinished && played.ranking.keySet == (1 to n).map(_.toLong).toSet && isWellFormed(played) &&
             played.ranking.values.min == 1
         }
     }
@@ -90,7 +90,7 @@ class SimulatorSpec extends ScalaCheckSuite {
         assert(StandardDesigns.build("heats", 2, None).exists(_.stages.head.poolSize.isEmpty))
         assert(StandardDesigns.build("heats", 2, Some(0)).isLeft)
         val played = play(standard("heats", poolSize = Some(4)), 12, random(7))
-        assert(played.state.finished)
+        assert(played.state.isFinished)
         assertEquals(played.ranking.size, 12)
     }
 
@@ -98,7 +98,7 @@ class SimulatorSpec extends ScalaCheckSuite {
       "double elimination: a first loss drops to stratum -1, a second eliminates, and the winner ranks first wherever they came from"
     ) {
         val played = play(standard("double-elimination"), 8, favourites)
-        assert(played.state.finished)
+        assert(played.state.isFinished)
         assertEquals(played.ranking(1L), 1)
         // With upsets, the bottom seed wins every match and still ranks first.
         val upset = play(standard("double-elimination"), 8, upsets)
@@ -130,7 +130,7 @@ class SimulatorSpec extends ScalaCheckSuite {
           maxRounds = 20,
           between = (s, round) => if (round == 3) Tournament.requestStop(s) else s
         )
-        assert(played.state.finished)
+        assert(played.state.isFinished)
         // Asked after the third run's matches, the stop ends the stage there: no fourth run is begun.
         assertEquals(played.rounds.size, 3)
         val strata = played.state.root.members.map(m => m.entrant -> m.stratum).toMap
@@ -139,7 +139,7 @@ class SimulatorSpec extends ScalaCheckSuite {
 
     test("a ladder that is never stopped keeps going") {
         val played = play(standard("ladder"), 4, random(1), maxRounds = 30)
-        assert(!played.state.finished)
+        assert(!played.state.isFinished)
         assertEquals(played.rounds.size, 30)
     }
 
@@ -151,7 +151,7 @@ class SimulatorSpec extends ScalaCheckSuite {
           between = (s, round) => if (round == 1) Tournament.withdraw(s, 1L) else s
         )
         assert(played.rounds.drop(1).forall(_.forall(!_.planned.seats.exists(_.entrant == 1L))))
-        assert(played.state.finished)
+        assert(played.state.isFinished)
     }
 
     test("a late entry joins stratum 0 and plays from the next run") {
@@ -201,6 +201,6 @@ class SimulatorSpec extends ScalaCheckSuite {
         val played = play(design, 4, favourites, g = g)
         assert(played.rounds.flatten.forall(_.planned.seats.size == 3))
         assertEquals(played.rounds.flatten.size, 4)
-        assert(played.state.finished)
+        assert(played.state.isFinished)
     }
 }

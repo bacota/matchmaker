@@ -76,7 +76,7 @@ object Tournaments {
                   )
           },
           child <-- Store.myTournaments.signal.map { mine =>
-              val waiting = mine.filter(waitsOnMe)
+              val waiting = mine.filter(isWaitingOnMe)
               if (waiting.isEmpty) emptyNode
               else
                   Views.refreshableSection("Rounds to Start", () => Store.reloadMyTournaments(), subsection = false)(
@@ -179,7 +179,7 @@ object Tournaments {
     }
 
     /** A tournament of the viewer's own whose round is over and that waits on them to start the next. */
-    private def waitsOnMe(s: TournamentSummary): Boolean =
+    private def isWaitingOnMe(s: TournamentSummary): Boolean =
         s.isOwner && s.isRoundOver && !s.tournament.settings.hasAutomaticRounds
 
     private def summaryList(rows: Seq[TournamentSummary], showGame: Boolean): HtmlElement =
@@ -197,7 +197,7 @@ object Tournaments {
                 span(
                   cls := "detail",
                   (Option.when(showGame)(s.gameName).toList ++ List(t.status.label, s"${s.entrants} entered") ++
-                      Option.when(waitsOnMe(s))("round over") ++
+                      Option.when(isWaitingOnMe(s))("round over") ++
                       Option.when(s.isOwner)("yours") ++ Option.when(s.isEntered)("entered") ++
                       Option.when(s.isInvited && !s.isEntered)("invited")).mkString(" · ", " · ", "")
                 )
@@ -349,7 +349,7 @@ object Tournaments {
         val characterGame = d.gameType == GameType.Character
         val chosen: Var[Option[CharacterId]] = Var(None)
         sectionTag(
-          h3(s"Entries (${d.entries.count(!_.withdrawn)})"),
+          h3(s"Entries (${d.entries.count(!_.isWithdrawn)})"),
           if (d.entries.isEmpty) p(cls := "empty", "Nobody has entered yet.")
           else
               ul(
@@ -357,9 +357,13 @@ object Tournaments {
                     li(
                       cls := "row",
                       span(nameOf(d)(e.entrantId.value)),
-                      span(cls := "detail", (if (e.withdrawn) " · withdrawn" else "") + s" · rated ${e.ratingAtEntry}"),
+                      span(
+                        cls := "detail",
+                        (if (e.isWithdrawn) " · withdrawn" else "") + s" · rated ${e.ratingAtEntry}"
+                      ),
                       if (
-                        !e.withdrawn && (mine.contains(e) || d.summary.isOwner) && t.status != TournamentStatus.Finished
+                        !e.isWithdrawn && (mine
+                            .contains(e) || d.summary.isOwner) && t.status != TournamentStatus.Finished
                       )
                           busyButton("Withdraw")(busy =>
                               Store.run(ApiClient.withdrawFromTournament(t.gameId, t.tournamentId, e.entrantId), busy)(
@@ -372,8 +376,8 @@ object Tournaments {
               ),
           // Offered while the caller has an entry left to make, or one withdrawn to take back up.
           if (
-            !open || me.isEmpty || (mine.count(!_.withdrawn) >= t.settings.entriesPerPlayer && !mine
-                .exists(_.withdrawn))
+            !open || me.isEmpty || (mine.count(!_.isWithdrawn) >= t.settings.entriesPerPlayer && !mine
+                .exists(_.isWithdrawn))
           )
               emptyNode
           else
@@ -398,7 +402,7 @@ object Tournaments {
                       )
                     )
                 else emptyNode,
-                busyButton(if (mine.exists(_.withdrawn)) "Enter Again" else "Enter")(busy =>
+                busyButton(if (mine.exists(_.isWithdrawn)) "Enter Again" else "Enter")(busy =>
                     Store.run(ApiClient.enterTournament(t.gameId, t.tournamentId, chosen.now()), busy)(_ => reload(d))
                 )
               )
@@ -797,7 +801,7 @@ object Tournaments {
         val kept = existing.map(_.tournamentModelId)
         val keptRetired: Signal[Option[TournamentModelId]] =
             models.map(ms => kept.filter(id => ms.nonEmpty && !ms.exists(_.tournamentModelId == id)))
-        def keeping: Boolean = chosen.now().isEmpty && modelId.now().exists(kept.contains)
+        def isKeeping: Boolean = chosen.now().isEmpty && modelId.now().exists(kept.contains)
 
         /* Choosing a model fills in the pool size it suggests -- the game's R where it suggests none -- whether it
          * takes late entries, and whether its players choose their roles; all stay the creator's to change, but for a
@@ -834,8 +838,8 @@ object Tournaments {
         def check(): Unit =
             problems.set(chosen.now() match {
                 // The format it was made from, checked again as it is saved.
-                case None if keeping => Nil
-                case None            => List(Problem("", "choose a format"))
+                case None if isKeeping => Nil
+                case None              => List(Problem("", "choose a format"))
                 case Some(m) =>
                     Validation.validate(
                       m.design,

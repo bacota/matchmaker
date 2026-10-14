@@ -12,7 +12,7 @@ import java.time.{Duration, Instant}
   *   whether it is this player's turn. Set from what the engine reports about each participant, and the flag `due`
   *   selects on — not, despite an older reading of the name, whether the match has started yet
   * @param completedAt
-  *   when the match was played to an end, if it was — the database's clock, stamped once. `completed` is derived from
+  *   when the match was played to an end, if it was — the database's clock, stamped once. `isCompleted` is derived from
   *   it, as on `Match`, so a list can both ask whether a match is finished and say when
   * @param cancelled
   *   whether its tournament's owner called the match off; a cancelled match is over but has no result, and is listed
@@ -99,7 +99,7 @@ case class MatchSummary(
 ) {
 
     /** Whether the match was played to an end. */
-    def completed: Boolean = completedAt.isDefined
+    def isCompleted: Boolean = completedAt.isDefined
 }
 
 /** One of the other seats in a match: the player in it -- in a character game, the one who owned the character when the

@@ -29,9 +29,9 @@ import scala.util.control.NonFatal
 private[ui] final class Coalescer[K](spacingMs: Double, now: () => Double, later: (Double, () => Unit) => Unit) {
 
     private final class Slot {
-        var running = false
+        var isRunning = false
         var startedAt = Double.NegativeInfinity
-        var timerSet = false
+        var isTimerSet = false
         // The asks since the last start: one promise between them, and the latest of their starts.
         var waiting: Option[Promise[Unit]] = None
         var next: Option[() => Future[Unit]] = None
@@ -55,25 +55,25 @@ private[ui] final class Coalescer[K](spacingMs: Double, now: () => Double, later
     }
 
     private def pump(slot: Slot): Unit =
-        if (!slot.running && slot.waiting.isDefined) {
+        if (!slot.isRunning && slot.waiting.isDefined) {
             val wait = slot.startedAt + spacingMs - now()
             if (wait > 0) {
-                if (!slot.timerSet) {
-                    slot.timerSet = true
-                    later(wait, () => { slot.timerSet = false; pump(slot) })
+                if (!slot.isTimerSet) {
+                    slot.isTimerSet = true
+                    later(wait, () => { slot.isTimerSet = false; pump(slot) })
                 }
             } else {
                 val promise = slot.waiting.get
                 val start = slot.next.get
                 slot.waiting = None
                 slot.next = None
-                slot.running = true
+                slot.isRunning = true
                 slot.startedAt = now()
                 val request =
                     try start()
                     catch { case NonFatal(e) => Future.failed(e) }
                 request.onComplete { _ =>
-                    slot.running = false
+                    slot.isRunning = false
                     promise.success(())
                     pump(slot)
                 }

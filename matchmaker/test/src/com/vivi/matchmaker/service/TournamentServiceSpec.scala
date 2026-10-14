@@ -356,7 +356,7 @@ class TournamentServiceSpec extends FunSuite with QuietTests {
             after <- tournaments.detail(f.game.gameId, t.tournamentId, f.owner.externalId)
         } yield (before, after))
         assertEquals(before.entries.size, 2)
-        assert(after.entries.exists(e => e.withdrawn))
+        assert(after.entries.exists(e => e.isWithdrawn))
         assert(after.state.exists(_.withdrawn.nonEmpty))
     }
 

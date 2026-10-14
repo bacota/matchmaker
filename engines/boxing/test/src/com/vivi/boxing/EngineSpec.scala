@@ -453,7 +453,7 @@ class EngineSpec extends FunSuite with QuietTests {
         val m = bout(store)
         assert(m.isOver)
         assertEquals(m.rounds.size, 4)
-        assert(m.decidedByLot)
+        assert(m.isDecidedByLot)
         assert(!m.isDrawn)
         assertEquals(m.method, Some("lot"))
         // The lot is the match id's, so reading the bout again cannot change it.

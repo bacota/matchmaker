@@ -75,7 +75,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                 } catch {
                     case _: ConcurrentModification =>
                         store.get(created.matchId) match {
-                            case Some(stored) if sameSeats(stored, request) => Right(responseFor(stored))
+                            case Some(stored) if hasSameSeats(stored, request) => Right(responseFor(stored))
                             case Some(_) =>
                                 Left(Refusal.Conflict(s"match '${created.matchId}' already exists with other players"))
                             // Gone between the failed create and this read: cancelled in the meantime.
@@ -93,7 +93,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         )
 
     /** Whether a stored match seats exactly the players `request` names: the same create sent again. */
-    private def sameSeats(stored: M, request: CreateGameRequest): Boolean =
+    private def hasSameSeats(stored: M, request: CreateGameRequest): Boolean =
         game.seats(stored).map(s => (s.participantId, s.cognitoId)).toSet ==
             request.players.map(p => (p.participantId, p.cognitoId)).toSet
 
@@ -428,7 +428,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
       * ended by its clock is a forfeit on every seat, as matchmaker records its own.
       */
     def resultsOf(m: M): MatchResults = {
-        val forfeit = game.clock(m).exists(_.ranOut)
+        val forfeit = game.clock(m).exists(_.hasRunOut)
         MatchResults(
           game.seats(m).map { seat =>
               val outcome = game.outcome(m, seat)

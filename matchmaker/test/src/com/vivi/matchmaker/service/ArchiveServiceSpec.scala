@@ -548,8 +548,8 @@ class ArchiveServiceSpec extends FunSuite {
     test("only a friendly archive older than its retention may have expired") {
         val now = Instant.parse("2026-10-03T00:00:00Z")
         val old = now.minus(Duration.ofDays(31))
-        assert(ArchiveService.mayHaveExpired(friendly = true, old, now))
-        assert(!ArchiveService.mayHaveExpired(friendly = false, old, now))
-        assert(!ArchiveService.mayHaveExpired(friendly = true, now.minus(Duration.ofDays(29)), now))
+        assert(ArchiveService.canHaveExpired(friendly = true, old, now))
+        assert(!ArchiveService.canHaveExpired(friendly = false, old, now))
+        assert(!ArchiveService.canHaveExpired(friendly = true, now.minus(Duration.ofDays(29)), now))
     }
 }

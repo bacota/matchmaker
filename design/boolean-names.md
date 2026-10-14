@@ -57,3 +57,32 @@ turn", not a notification preference, so it kept its name.
 | `is_complete` (`round`) | `is_completed`, to match `isCompleted` elsewhere |
 
 The rest read naturally: `isActive`, `isLive`, `isFriendly`, `isCancelled`, `isPending`, `isRevealed`, and so on.
+
+## Methods
+
+The same rule now covers methods that return a boolean, local defs included. Renamed:
+
+| Was | Now |
+|---|---|
+| `ranOut` (every engine's match state, `TurnClock`) | `hasRunOut` |
+| `completed` (`Match`, `MatchSummary`), `finished` (tournament state) | `isCompleted`, `isFinished` |
+| `begun`, `withdrawn`, `optional`, `running` (`PlayerClock`), `inProgress`, `inPlay`, `movable`, `onBoard`, `stuck` | `hasBegun`, `isWithdrawn`, `isOptional`, `isRunning`, `isInProgress`, `isInPlay`, `isMovable`, `isOnBoard`, `isStuck` |
+| `decidedByLot`, `decidedOnPoints`, `levelAfterSchedule`, `extraRound` (`Bout`) | `isDecidedByLot`, `isDecidedOnPoints`, `isLevelAfterSchedule`, `hasExtraRound` |
+| `wouldBeDrawn` (stratego) | `isDrawByRules` |
+| `rubberApplies` | `isRubberApplicable` |
+| `plays` (a pool) | `hasPlay` |
+| `Protocol.tiesAllowed(request)` | `Protocol.canTie(request)` |
+| `allowed`, `active` (`EmailSuppression`), `verified`, `offline`, `inRange`, `roundComplete`, `runPlayed`, `wants`, `lockFailure`, `fromMatchmaker`, `headerAuth`, `wellFormed`, `resolved` | `isAllowed`, `isActive`, `isVerified`, `isOffline`, `isInRange`, `isRoundComplete`, `isRunPlayed`, `isWanted`, `isLockFailure`, `isFromMatchmaker`, `isHeaderAuth`, `isWellFormed`, `isResolved` |
+| `playersOnce`, `sameSeats`, `archivedHint` | `hasDistinctPlayers`, `hasSameSeats`, `hasArchivedHint` |
+| `beats` (rps), `mayHaveExpired`, `mayClear` | `canBeat`, `canHaveExpired`, `canClear` |
+| `shuttles` (stratego) | `isShuttling` |
+| UI: `stillSignedInAs`, `newest`, `endsSession`, `unexpired`, `plausibleEmail`, `invitedTo`, `waitsOnMe`, `keeping`, `seatedNow` | `isStillSignedInAs`, `isNewest`, `isSessionEnding`, `isUnexpired`, `isPlausibleEmail`, `isInvitedTo`, `isWaitingOnMe`, `isKeeping`, `isSeatedNow` |
+
+Fields the first pass missed, being in nested classes: `LocalLiveServer`'s `open` → `isOpen`, and `Coalescer`'s
+`running`/`timerSet` → `isRunning`/`isTimerSet`.
+
+Left alone on purpose:
+- `send` (Play Live's channels) and `text`, which act and report whether it arrived; a predicate name would hide the
+  side effect.
+- `apply`, whose name is what makes `Notifications(kind)` work.
+- Local vals and vars, which are not fields.

@@ -121,7 +121,7 @@ object Account {
             ApiClient.updateNickname(wanted).onComplete { result =>
                 busy.set(false)
                 result match {
-                    case Success(player) if Store.stillSignedInAs(signIn) =>
+                    case Success(player) if Store.isStillSignedInAs(signIn) =>
                         // The header shows the nickname, so the change has to reach the store or the menu
                         // would report a rename the rest of the page disagrees with.
                         Store.player.set(Store.PlayerState.Registered(player))
@@ -150,7 +150,7 @@ object Account {
      * here to stop the offer being made for something that is plainly not an address yet, mid-typing
      * or mistyped, and no more than that.
      */
-    private def plausibleEmail(address: String): Boolean = {
+    private def isPlausibleEmail(address: String): Boolean = {
         val trimmed = address.trim
         trimmed.count(_ == '@') == 1 && !trimmed.exists(_.isWhitespace) && {
             val Array(local, domain) = trimmed.split("@", 2)
@@ -168,7 +168,7 @@ object Account {
         // The button is disabled until this passes, so this is the keyboard's path in -- a form with a
         // single text field submits on Enter -- and the message is the one the disabled button cannot
         // give.
-        if (!plausibleEmail(wanted)) emailOutcome.set(Some(Outcome(true, "Enter an email address.")))
+        if (!isPlausibleEmail(wanted)) emailOutcome.set(Some(Outcome(true, "Enter an email address.")))
         else
             withAccessToken(emailOutcome, busy) { token =>
                 CognitoIdp.updateEmail(token, wanted).map { destination =>
@@ -372,7 +372,7 @@ object Account {
           notificationForms,
           // Nothing to change at Cognito when there is no Cognito: local mode authenticates with a
           // header, and offering forms that could only fail would be worse than leaving them out.
-          if (Config.current.headerAuth)
+          if (Config.current.isHeaderAuth)
               p(cls := "empty", "Email and password are managed by the sign-in service, which is not in use locally.")
           else
               div(emailForm, passwordForm),
@@ -497,7 +497,7 @@ object Account {
                           ApiClient
                               .updateGameNotifications(gameId, preferences, applyToMatches = alsoMatches.chosen.now())
                               .map { _ =>
-                                  if (Store.stillSignedInAs(signIn)) {
+                                  if (Store.isStillSignedInAs(signIn)) {
                                       perGame.update(_.updated(gameId, preferences))
                                       Store.notificationSettings.update(_.map { current =>
                                           current.copy(
@@ -555,7 +555,7 @@ object Account {
                       else {
                           // Nothing below this level was touched, so there is nothing to ask about and
                           // the one field that changed can be written here.
-                          if (Store.stillSignedInAs(signIn))
+                          if (Store.isStillSignedInAs(signIn))
                               Store.notificationSettings.update(_.map(_.copy(player = preferences)))
                           Future.unit
                       }
@@ -627,7 +627,7 @@ object Account {
             // on the notification questions, so it is read out as part of the field rather than as
             // text that happens to be near it.
             child <-- email.signal.map {
-                case typed if typed.trim.nonEmpty && !plausibleEmail(typed) =>
+                case typed if typed.trim.nonEmpty && !isPlausibleEmail(typed) =>
                     span(cls := "detail hint", "That is not an email address yet.")
                 case _ => emptyNode
             }
@@ -678,7 +678,7 @@ object Account {
           },
           child <-- emailStage.signal.map {
               case EmailStage.Idle =>
-                  submit("Send verification code", busy, blocked = email.signal.map(!plausibleEmail(_)))
+                  submit("Send verification code", busy, blocked = email.signal.map(!isPlausibleEmail(_)))
               case EmailStage.Sent(_) => submit("Confirm new address", busy)
           },
           report(emailOutcome)

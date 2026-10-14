@@ -77,7 +77,7 @@ class CognitoIdpSpec extends FunSuite {
     }
 
     // Cognito qualifies the type with a namespace in some responses and not in others. Callers
-    // match on the bare name — `endsSession` and the sign-in form's wording both do — so both
+    // match on the bare name — `isSessionEnding` and the sign-in form's wording both do — so both
     // spellings have to reduce to it.
     test("an error type is read whether or not it is namespaced") {
         val bare = CognitoIdp.errorOf(
@@ -94,7 +94,7 @@ class CognitoIdpSpec extends FunSuite {
     }
 
     // A 5xx from in front of Cognito is an HTML error page, not JSON. That is a reachability
-    // problem, and `endsSession` must not read it as a rejected token and sign the player out.
+    // problem, and `isSessionEnding` must not read it as a rejected token and sign the player out.
     test("a non-JSON error body is unavailability, not a rejection") {
         assert(CognitoIdp.errorOf(503, "<html>Service Unavailable</html>").isInstanceOf[CognitoIdp.IdpUnavailable])
     }

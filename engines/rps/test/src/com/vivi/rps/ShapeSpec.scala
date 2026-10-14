@@ -6,19 +6,19 @@ class ShapeSpec extends FunSuite {
 
     test("each shape beats exactly one other and loses to exactly one") {
         Shape.values.foreach { shape =>
-            assertEquals(Shape.values.count(shape.beats), 1, s"$shape should beat one shape")
-            assertEquals(Shape.values.count(_.beats(shape)), 1, s"$shape should lose to one shape")
+            assertEquals(Shape.values.count(shape.canBeat), 1, s"$shape should beat one shape")
+            assertEquals(Shape.values.count(_.canBeat(shape)), 1, s"$shape should lose to one shape")
         }
     }
 
     test("the cycle is the one everybody knows") {
-        assert(Shape.Rock.beats(Shape.Scissors))
-        assert(Shape.Scissors.beats(Shape.Paper))
-        assert(Shape.Paper.beats(Shape.Rock))
+        assert(Shape.Rock.canBeat(Shape.Scissors))
+        assert(Shape.Scissors.canBeat(Shape.Paper))
+        assert(Shape.Paper.canBeat(Shape.Rock))
     }
 
     test("a shape does not beat itself, which is what makes a draw") {
-        Shape.values.foreach(shape => assert(!shape.beats(shape)))
+        Shape.values.foreach(shape => assert(!shape.canBeat(shape)))
     }
 
     test("a throw is named by word or by initial, in any case") {

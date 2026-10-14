@@ -152,7 +152,7 @@ class TournamentService[T](
         summaries.traverse { s =>
             val t = s.tournament
             (
-              new EntrantRepo(session).list(t.gameId, t.tournamentId).map(_.filterNot(_.withdrawn)),
+              new EntrantRepo(session).list(t.gameId, t.tournamentId).map(_.filterNot(_.isWithdrawn)),
               new InvitationRepo(session).list(t.gameId, t.tournamentId),
               new CharacterInvitationRepo(session).list(t.gameId, t.tournamentId)
             ).mapN((entries, invited, characters) =>
@@ -338,7 +338,7 @@ class TournamentService[T](
                                 settings = TournamentService.settingsFor(model, request.settings)
                                 _ <- checkSettings(game, model, request, settings, poolSize)
                                 entries <- new EntrantRepo(session).list(gameId, tournamentId)
-                                _ <- IO.raiseWhen(settings.maxEntrants.exists(_ < entries.count(!_.withdrawn)))(
+                                _ <- IO.raiseWhen(settings.maxEntrants.exists(_ < entries.count(!_.isWithdrawn)))(
                                   ValidationError("it already has more entries than that")
                                 )
                                 // Made from another model: its stages are the new model's from now on.
@@ -591,14 +591,14 @@ class TournamentService[T](
               )
             )
             existing <- entrants.list(gameId, tournamentId)
-            active = existing.count(!_.withdrawn)
+            active = existing.count(!_.isWithdrawn)
             _ <- IO.raiseWhen(t.settings.maxEntrants.exists(active >= _))(
               ConflictError(s"this ${TournamentService.noun(t)} is full")
             )
             // The entries the caller plays now, which in a character game are their characters' as they stand.
             mine = existing.filter(_.playerId.contains(caller.playerId))
             // Coming back: the withdrawn entry with this character, or with none in a plain game.
-            returning = mine.find(e => e.withdrawn && e.characterId == characterId)
+            returning = mine.find(e => e.isWithdrawn && e.characterId == characterId)
             entrant <- returning match {
                 case Some(e) =>
                     for {
@@ -609,7 +609,7 @@ class TournamentService[T](
                     } yield e.copy(withdrawnAt = None)
                 case None =>
                     for {
-                        _ <- IO.raiseWhen(mine.count(!_.withdrawn) >= t.settings.entriesPerPlayer)(
+                        _ <- IO.raiseWhen(mine.count(!_.isWithdrawn) >= t.settings.entriesPerPlayer)(
                           ConflictError(
                             if (t.settings.entriesPerPlayer == 1)
                                 s"you have already entered this ${TournamentService.noun(t)}"
@@ -639,7 +639,7 @@ class TournamentService[T](
                         )
                         // Seeded against everyone's rating now, the newcomer's among them.
                         ratings <-
-                            (if (late) currentRatings(session, gameId, existing.filterNot(_.withdrawn))
+                            (if (late) currentRatings(session, gameId, existing.filterNot(_.isWithdrawn))
                              else IO.pure(Map.empty[Long, Int]))
                         _ <- IO.whenA(late)(requireDesign(session, t).flatMap { design =>
                             updateState(session, t, game) { s =>
@@ -731,7 +731,7 @@ class TournamentService[T](
             _ <- IO.raiseUnless(t.status == TournamentStatus.Draft || t.status == TournamentStatus.Open)(
               ConflictError(s"this tournament cannot be started; it is ${t.status.label.toLowerCase}")
             )
-            entries <- new EntrantRepo(session).list(t.gameId, t.tournamentId).map(_.filterNot(_.withdrawn))
+            entries <- new EntrantRepo(session).list(t.gameId, t.tournamentId).map(_.filterNot(_.isWithdrawn))
             least = math.max(2, game.requiredSeats)
             _ <- IO.raiseWhen(entries.sizeIs < least)(
               ConflictError(s"a ${TournamentService.noun(t)} needs at least $least entries to start")

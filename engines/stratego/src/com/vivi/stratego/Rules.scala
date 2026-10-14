@@ -20,7 +20,7 @@ object Rules {
       * same two squares is refused — the player has to do something else first, which is what stops a lone piece
       * fleeing back and forth for ever.
       */
-    def shuttles(history: List[Step], proposed: Step): Boolean = {
+    def isShuttling(history: List[Step], proposed: Step): Boolean = {
         val recent = history.takeRight(shuttleLimit)
         val squares = Set(proposed.from, proposed.to)
         recent.sizeIs == shuttleLimit &&
@@ -30,6 +30,6 @@ object Rules {
     /** Every move `side` may make now: what the board allows, less what the two-square rule forbids. */
     def legalMoves(board: Board, side: Side, history: List[Step]): List[(Int, Int)] =
         board.moves(side).filterNot { (from, to) =>
-            board(from).exists(p => shuttles(history, Step(p.id, from, to)))
+            board(from).exists(p => isShuttling(history, Step(p.id, from, to)))
         }
 }

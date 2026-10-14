@@ -89,7 +89,7 @@ object EloRating {
     /** Whether every seat is a different player's — which a match that is not friendly requires: a player in two of its
       * seats would be rated against themselves, and the deltas would no longer add up to nothing.
       */
-    def playersOnce(players: Seq[PlayerId]): Boolean = players.distinct.size == players.size
+    def hasDistinctPlayers(players: Seq[PlayerId]): Boolean = players.distinct.size == players.size
 
     /** The chance Elo gives a player rated `mine` of beating one rated `theirs`, a draw counting as half. */
     def expected(mine: Int, theirs: Int): Double = 1.0 / (1.0 + math.pow(10.0, (theirs - mine) / 400.0))
@@ -97,11 +97,12 @@ object EloRating {
     /** What the match did to each seat's rating, by seat, worked out from the ratings the seats began it at.
       *
       * Each delta is rounded on its own, so that the deltas stored are exactly what the ratings moved by; before the
-      * rounding they add up to nothing. That needs every seat to be a different player's — see [[playersOnce]] — and a
-      * match that is not has no deltas at all, as has one with fewer than two seats: there is nobody to have beaten.
+      * rounding they add up to nothing. That needs every seat to be a different player's — see [[hasDistinctPlayers]] —
+      * and a match that is not has no deltas at all, as has one with fewer than two seats: there is nobody to have
+      * beaten.
       */
     def deltas(seats: Seq[Seat]): Map[ParticipantId, Int] =
-        if (seats.size < 2 || !playersOnce(seats.map(_.player))) Map.empty
+        if (seats.size < 2 || !hasDistinctPlayers(seats.map(_.player))) Map.empty
         else
             seats.map { seat =>
                 val opponents = seats.filter(_ != seat)

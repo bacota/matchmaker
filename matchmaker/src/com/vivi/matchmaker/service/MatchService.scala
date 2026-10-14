@@ -356,12 +356,12 @@ class MatchService(
                               )
                             )
                             // A tournament's match that has not begun is its tournament's to call off.
-                            _ <- IO.raiseUnless(existing.status.begun)(
+                            _ <- IO.raiseUnless(existing.status.hasBegun)(
                               ConflictError(
                                 s"match ${matchId.value} has not begun; its tournament decides what becomes of it"
                               )
                             )
-                            _ <- IO.raiseWhen(existing.completed)(
+                            _ <- IO.raiseWhen(existing.isCompleted)(
                               ConflictError(s"match ${matchId.value} is completed and can no longer be cancelled")
                             )
                             _ <- IO.raiseWhen(existing.isCancelled)(
@@ -473,7 +473,7 @@ class MatchService(
                                 )
                         }
                         // Its seats are not yet rated before it begins, and rating is what this changes.
-                        _ <- IO.raiseUnless(existing.status.begun)(
+                        _ <- IO.raiseUnless(existing.status.hasBegun)(
                           ConflictError(s"match ${matchId.value} has not begun")
                         )
                         changed = existing.isFriendly != friendly
@@ -483,19 +483,19 @@ class MatchService(
                         players <- new ParticipantRepo(session)
                             .listForMatch(gameId, matchId)
                             .map(_.map((p, _, _) => p.playerId))
-                        _ <- IO.raiseWhen(changed && !friendly && !EloRating.playersOnce(players))(
+                        _ <- IO.raiseWhen(changed && !friendly && !EloRating.hasDistinctPlayers(players))(
                           ConflictError("a player holds more than one seat in this match, so it can only be friendly")
                         )
-                        _ <- IO.whenA(changed && existing.completed)(
+                        _ <- IO.whenA(changed && existing.isCompleted)(
                           EloRatingService.reclassify(session, gameId, matchId, friendly)
                         )
                         moved <-
-                            if (changed && existing.completed && !friendly)
+                            if (changed && existing.isCompleted && !friendly)
                                 archives.fold(IO.pure(false))(_.recordMove(session, prepared, gameId, matchId))
                             else IO.pure(false)
                         classified = existing.copy(isFriendly = friendly)
                         _ <- IO.whenA(changed)(matchRepo.update(classified))
-                    } yield (classified, moved, changed && existing.completed)
+                    } yield (classified, moved, changed && existing.isCompleted)
                 }
             }
             (classified, moved, rerated) = decided
@@ -521,7 +521,7 @@ class MatchService(
                         if (caller.isAdmin) IO.pure(true)
                         else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
                     found <- new MatchRepo(session).read(gameId, matchId)
-                } yield allowed && found.exists(m => m.completed && m.isFriendly)
+                } yield allowed && found.exists(m => m.isCompleted && m.isFriendly)
         }
 
     private def resolveCaller(session: Session[IO], callerExternalId: String) =

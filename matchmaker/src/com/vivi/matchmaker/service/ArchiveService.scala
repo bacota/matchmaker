@@ -188,7 +188,7 @@ class ArchiveService(
                     _ <- IO.raiseWhen(row.expiredAt.isDefined)(expired(matchId))
                     bucket = bucketOf(row)
                     _ <-
-                        if (mayHaveExpired(bucket.isFriendly, archivedAt, now()))
+                        if (canHaveExpired(bucket.isFriendly, archivedAt, now()))
                             store.head(bucket, key).flatMap {
                                 case Some(_) => IO.unit
                                 case None    => recordExpired(row) *> IO.raiseError(expired(matchId))
@@ -240,7 +240,7 @@ class ArchiveService(
       */
     def settle(summaries: List[MatchSummary]): IO[List[MatchSummary]] = {
         val at = now()
-        val due = summaries.filter(s => !s.isArchiveExpired && s.archivedAt.exists(mayHaveExpired(s.isFriendly, _, at)))
+        val due = summaries.filter(s => !s.isArchiveExpired && s.archivedAt.exists(canHaveExpired(s.isFriendly, _, at)))
         if (due.isEmpty) IO.pure(summaries)
         else
             IO.parTraverseN(CheckParallelism)(due.take(ChecksPerRequest))(s =>
@@ -253,7 +253,7 @@ class ArchiveService(
 
     /** [[settle]], for the one match a player is about to open. */
     def settle(m: Match): IO[Match] =
-        if (m.isArchiveExpired || !m.archivedAt.exists(mayHaveExpired(m.isFriendly, _, now()))) IO.pure(m)
+        if (m.isArchiveExpired || !m.archivedAt.exists(canHaveExpired(m.isFriendly, _, now()))) IO.pure(m)
         else expiredNow(m.gameId, m.matchId).map(gone => if (gone) markExpired(m) else m)
 
     /* Whether the archive is gone, recording it if so. False for anything that cannot be decided --
@@ -390,7 +390,7 @@ object ArchiveService {
     val MaxSize: Long = 16L * 1024 * 1024
 
     /** Whether an archive this old may have been expired by its bucket — which only a friendly one ever is. */
-    def mayHaveExpired(friendly: Boolean, archivedAt: Instant, at: Instant): Boolean =
+    def canHaveExpired(friendly: Boolean, archivedAt: Instant, at: Instant): Boolean =
         friendly && archivedAt.plus(FriendlyRetention).isBefore(at)
 
     /** Where a match's archive goes: a folder per game, a subfolder per day it completed (UTC), and a file named by the

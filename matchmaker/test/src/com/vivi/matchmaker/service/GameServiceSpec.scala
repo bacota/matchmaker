@@ -506,7 +506,7 @@ class GameServiceSpec extends PropertySuite {
               roles = created.roles.map(role =>
                   role.copy(
                     name = s"${role.name}-renamed",
-                    roleType = if (role.optional) RoleType.Required else RoleType.Recommended,
+                    roleType = if (role.isOptional) RoleType.Required else RoleType.Recommended,
                     preferenceLevel = Some(3)
                   )
               )
@@ -519,7 +519,7 @@ class GameServiceSpec extends PropertySuite {
             updated.roles.map(_.gameRoleId).toSet == created.roles.map(_.gameRoleId).toSet &&
             updated.roles.map(_.name).toSet == created.roles.map(_.name + "-renamed").toSet &&
             updated.roles.forall(role =>
-                created.roles.exists(c => c.gameRoleId == role.gameRoleId && c.optional != role.optional) &&
+                created.roles.exists(c => c.gameRoleId == role.gameRoleId && c.isOptional != role.isOptional) &&
                     role.preferenceLevel.contains(3)
             )
 
@@ -543,7 +543,7 @@ class GameServiceSpec extends PropertySuite {
             )
             updated <- gameService.createOrUpdate(admin.externalId, edited)
         } yield updated.roles.sizeIs == created.roles.size + 1 &&
-            updated.roles.exists(r => r.name == "added" && r.optional && r.gameRoleId != GameRoleId.unassigned) &&
+            updated.roles.exists(r => r.name == "added" && r.isOptional && r.gameRoleId != GameRoleId.unassigned) &&
             created.roles.map(_.gameRoleId).forall(id => updated.roles.exists(_.gameRoleId == id))
 
         assert(result.unsafeRunSync())

@@ -124,11 +124,11 @@ class RulesSpec extends ScalaCheckSuite {
 
     test("a piece may not make a fourth consecutive move between the same two squares") {
         val history = List(Step(5, 40, 50), Step(5, 50, 40), Step(5, 40, 50))
-        assert(Rules.shuttles(history, Step(5, 50, 40)))
+        assert(Rules.isShuttling(history, Step(5, 50, 40)))
         // A different piece, a different square, or a break in the run are all fine.
-        assert(!Rules.shuttles(history, Step(6, 50, 40)))
-        assert(!Rules.shuttles(history, Step(5, 50, 60)))
-        assert(!Rules.shuttles(Step(7, 0, 10) :: history.tail, Step(5, 50, 40)))
+        assert(!Rules.isShuttling(history, Step(6, 50, 40)))
+        assert(!Rules.isShuttling(history, Step(5, 50, 60)))
+        assert(!Rules.isShuttling(Step(7, 0, 10) :: history.tail, Step(5, 50, 40)))
 
         val board = boardOf(50 -> (Side.Red, Rank.Captain))
         val shuttled = List(Step(0, 40, 50), Step(0, 50, 40), Step(0, 40, 50))

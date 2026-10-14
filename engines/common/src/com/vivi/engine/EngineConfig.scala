@@ -54,10 +54,10 @@ object EngineConfig {
         }
         // Not when matchmaker is offline: there is nothing to archive through, and the local engine
         // keeps every match in memory for as long as it runs.
-        ArchivingMatchStore.around(live, matchmaker(env), matchmakerUrl(env).filterNot(_ => offline(env)))
+        ArchivingMatchStore.around(live, matchmaker(env), matchmakerUrl(env).filterNot(_ => isOffline(env)))
     }
 
-    private def offline(env: String => Option[String]): Boolean = env("MATCHMAKER_OFFLINE").contains("true")
+    private def isOffline(env: String => Option[String]): Boolean = env("MATCHMAKER_OFFLINE").contains("true")
 
     /** Where matchmaker's API is, for the calls an engine makes on its own account rather than about one match's moves:
       * archiving a finished match and reading it back once its live copy is gone, which every engine does, and a
@@ -73,7 +73,7 @@ object EngineConfig {
     /** How matchmaker is called back: over HTTP, or — with `MATCHMAKER_OFFLINE=true` — not at all, the calls printed.
       */
     def matchmaker(env: String => Option[String]): Matchmaker =
-        if (offline(env)) RecordingMatchmaker(println)
+        if (isOffline(env)) RecordingMatchmaker(println)
         // Unsigned: matchmaker's callback routes take an API key now, not a SigV4 signature. The
         // signed client stays for DynamoDB above, which is still AWS and still needs one.
         else HttpMatchmaker(SignedHttp(None, region(env)), matchmakerKey(env), env("GAME_EXTERNAL_ID"))

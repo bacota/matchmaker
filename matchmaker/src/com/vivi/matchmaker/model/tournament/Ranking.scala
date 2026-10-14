@@ -88,8 +88,8 @@ object Ranking {
             )
         }.toMap
 
-        val useRubber = stage.hasRubberMatch && game.rubberApplies
-        val tiesAllowed = Ties.allowed(members.size, stage = stage.canTie)
+        val useRubber = stage.hasRubberMatch && game.isRubberApplicable
+        val tiesAllowed = Ties.isAllowed(members.size, stage = stage.canTie)
         var wanted = List.empty[(Long, Long)]
 
         // Members in groups that are still level, best group first; each group's order within it is decided below.

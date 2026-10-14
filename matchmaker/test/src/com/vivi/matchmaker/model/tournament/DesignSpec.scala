@@ -70,9 +70,9 @@ class DesignSpec extends FunSuite {
     }
 
     test("a match may not be drawn in a pool of two, nor ever in a rubber; in a larger pool it may") {
-        assert(!Ties.allowed(2))
-        assert(Ties.allowed(3))
-        assert(!Ties.allowed(3, rubber = true))
+        assert(!Ties.isAllowed(2))
+        assert(Ties.isAllowed(3))
+        assert(!Ties.isAllowed(3, rubber = true))
     }
 
     test("a sequential game gives each seat a chess clock of d/n; a simultaneous one a turn limit of d/t") {
