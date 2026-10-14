@@ -106,7 +106,7 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
                       VALUES ($g, $t, $entrant, $player)"""
             )
             _ <- exec(session, "SET CONSTRAINTS ALL IMMEDIATE")
-        } yield Ids(g, gameType, player, role, t, character)
+        } yield Ids(game = g, gameType = gameType, player = player, role = role, tournament = t, character = character)
 
     /** Whether `statement` is refused, leaving the transaction as it was either way. */
     private def refused(session: Session[IO], xa: Transaction[IO], statement: String): IO[Boolean] =
@@ -141,7 +141,11 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
     test("a tournament match may be scheduled, with no start and no urls, in a pool and round of one stage") {
         val ok = inRolledBack { (session, xa) =>
             tournament(session).flatMap(ids =>
-                refused(session, xa, tournamentMatch(ids, Generators.newMatchId().value.toString, "S"))
+                refused(
+                  session = session,
+                  xa = xa,
+                  statement = tournamentMatch(ids = ids, id = Generators.newMatchId().value.toString, status = "S")
+                )
             )
         }
         assert(!ok, "a scheduled tournament match was refused")
@@ -151,9 +155,9 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
         assert(inRolledBack { (session, xa) =>
             tournament(session).flatMap { ids =>
                 refused(
-                  session,
-                  xa,
-                  s"""INSERT INTO match (game_id, match_id, description, settings, start, status)
+                  session = session,
+                  xa = xa,
+                  statement = s"""INSERT INTO match (game_id, match_id, description, settings, start, status)
                       VALUES (${ids.game}, ${Generators.newMatchId().value}, '', '{}', now(), 'P')"""
                 )
             }
@@ -164,13 +168,13 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
         assert(inRolledBack { (session, xa) =>
             tournament(session).flatMap { ids =>
                 refused(
-                  session,
-                  xa,
-                  tournamentMatch(
-                    ids,
-                    Generators.newMatchId().value.toString,
-                    "C",
-                    "status_url='https://engine.test/s'"
+                  session = session,
+                  xa = xa,
+                  statement = tournamentMatch(
+                    ids = ids,
+                    id = Generators.newMatchId().value.toString,
+                    status = "C",
+                    extra = "status_url='https://engine.test/s'"
                   )
                 )
             }
@@ -180,7 +184,16 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
     test("a finished match must be completed or cancelled") {
         assert(inRolledBack { (session, xa) =>
             tournament(session).flatMap { ids =>
-                refused(session, xa, tournamentMatch(ids, Generators.newMatchId().value.toString, "F", "start=now()"))
+                refused(
+                  session = session,
+                  xa = xa,
+                  statement = tournamentMatch(
+                    ids = ids,
+                    id = Generators.newMatchId().value.toString,
+                    status = "F",
+                    extra = "start=now()"
+                  )
+                )
             }
         })
     }
@@ -189,13 +202,13 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
         assert(inRolledBack { (session, xa) =>
             tournament(session).flatMap { ids =>
                 refused(
-                  session,
-                  xa,
-                  tournamentMatch(
-                    ids,
-                    Generators.newMatchId().value.toString,
-                    "S",
-                    "is_rubber=true;can_tie=true"
+                  session = session,
+                  xa = xa,
+                  statement = tournamentMatch(
+                    ids = ids,
+                    id = Generators.newMatchId().value.toString,
+                    status = "S",
+                    extra = "is_rubber=true;can_tie=true"
                   )
                 )
             }
@@ -207,7 +220,7 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
             for {
                 ids <- tournament(session)
                 matchId = Generators.newMatchId().value.toString
-                _ <- exec(session, tournamentMatch(ids, matchId, "C"))
+                _ <- exec(session, tournamentMatch(ids = ids, id = matchId, status = "C"))
                 entrant <- long(
                   session,
                   s"SELECT entrant_id FROM entrant WHERE game_id = ${ids.game} AND tournament_id = ${ids.tournament}"
@@ -230,8 +243,8 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
                                   true, true, true$values)
                           RETURNING game_id, participant_id, tournament_id, entrant_id)
                         $subtype"""
-                withoutEntrant <- refused(session, xa, seat("", ""))
-                withoutRole <- refused(session, xa, seat(", entrant_id", s", $entrant"))
+                withoutEntrant <- refused(session = session, xa = xa, statement = seat("", ""))
+                withoutRole <- refused(session = session, xa = xa, statement = seat(", entrant_id", s", $entrant"))
             } yield (withoutEntrant, withoutRole)
         }
         assert(withoutEntrant, "a seat with no entrant was accepted")
@@ -244,16 +257,16 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
                 ids <- tournament(session)
                 // A character game's entry with no character_entrant row.
                 missing <- refused(
-                  session,
-                  xa,
-                  s"""INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
+                  session = session,
+                  xa = xa,
+                  statement = s"""INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
                       VALUES (${ids.game}, ${ids.tournament}, '${ids.gameType}', 1500)"""
                 )
                 // And one given a player's subtype instead.
                 wrong <- refused(
-                  session,
-                  xa,
-                  s"""WITH e AS (INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
+                  session = session,
+                  xa = xa,
+                  statement = s"""WITH e AS (INSERT INTO entrant (game_id, tournament_id, game_type, rating_at_entry)
                                  VALUES (${ids.game}, ${ids.tournament}, '${ids.gameType}', 1500)
                                  RETURNING game_id, tournament_id, entrant_id)
                       INSERT INTO player_entrant (game_id, tournament_id, entrant_id, player_id)
@@ -270,18 +283,19 @@ class TournamentSchemaSpec extends FunSuite with QuietTests {
             for {
                 ids <- tournament(session)
                 missing <- refused(
-                  session,
-                  xa,
-                  s"INSERT INTO stage (game_id, tournament_id, kind, name, seed_policy) VALUES (${ids.game}, ${ids.tournament}, 'N', 'bare', 'ELO')"
+                  session = session,
+                  xa = xa,
+                  statement =
+                      s"INSERT INTO stage (game_id, tournament_id, kind, name, seed_policy) VALUES (${ids.game}, ${ids.tournament}, 'N', 'bare', 'ELO')"
                 )
                 stage <- long(
                   session,
                   s"SELECT first_stage_id FROM tournament WHERE game_id = ${ids.game} AND tournament_id = ${ids.tournament}"
                 )
                 wrong <- refused(
-                  session,
-                  xa,
-                  s"""INSERT INTO nesting_stage (game_id, tournament_id, stage_id, inner_first_stage_id)
+                  session = session,
+                  xa = xa,
+                  statement = s"""INSERT INTO nesting_stage (game_id, tournament_id, stage_id, inner_first_stage_id)
                       VALUES (${ids.game}, ${ids.tournament}, $stage, $stage)"""
                 )
             } yield (missing, wrong)

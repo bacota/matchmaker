@@ -24,7 +24,7 @@ object LocalServer {
         // matchmaker at once — which is the only way to see two games in one player's lists.
         LocalEngineServer.run("rock-paper-scissors", defaultPort = 8091) { (baseUrl, live) =>
             Config.routes(
-              sys.env.get,
+              env = sys.env.get,
               defaultBaseUrl = Some(baseUrl),
               live = Some(live),
               announce = m => {

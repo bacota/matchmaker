@@ -151,7 +151,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
         for {
             clock <- game.clock(m)
             if !game.isOver(m)
-            due = game.pending(m).flatMap(seat => deadlineOf(m, clock, seat).map(seat -> _))
+            due = game.pending(m).flatMap(seat => deadlineOf(m = m, clock = clock, seat = seat).map(seat -> _))
             first <- due.map(_._2).minOption
             if !at.isBefore(first)
             late = due.collect { case (seat, d) if d == first => seat }
@@ -159,7 +159,11 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
 
     /** When a seat's clock runs out on the turn now being played; `None` while its player has not opened the board. */
     private def deadlineOf(m: M, clock: TurnClock, seat: S): Option[Instant] =
-        clock.deadlineFor(seat.participantId, game.clockStartedAt(m), game.turns(m))
+        clock.deadlineFor(
+          participantId = seat.participantId,
+          turnStartedAt = game.clockStartedAt(m),
+          turns = game.turns(m)
+        )
 
     /** A seated player has opened the board of match `matchId`: in a live match, the moment their clock may start.
       *
@@ -209,7 +213,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
               seats = shown.map { seat =>
                   val id = seat.participantId
                   val started = Option.when(waiting(id))(clock.startedFor(id, game.clockStartedAt(m))).flatten
-                  val deadline = Option.when(waiting(id))(deadlineOf(m, clock, seat)).flatten
+                  val deadline = Option.when(waiting(id))(deadlineOf(m = m, clock = clock, seat = seat)).flatten
                   SeatClock(
                     participantId = id,
                     isWaiting = waiting(id),
@@ -305,7 +309,13 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
                     val (played, turn) = decided
                     val finished = game.isOver(played)
                     val settled = if (finished) game.markCompleted(played) else played
-                    MoveApplied(settled, seat, turn, next(current, settled, seat), finished)
+                    MoveApplied(
+                      state = settled,
+                      moved = seat,
+                      turn = turn,
+                      next = next(before = current, after = settled, mover = seat),
+                      isFinished = finished
+                    )
                 }
 
             decision match {
@@ -430,7 +440,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
     def resultsOf(m: M): MatchResults = {
         val forfeit = game.clock(m).exists(_.hasRunOut)
         MatchResults(
-          game.seats(m).map { seat =>
+          results = game.seats(m).map { seat =>
               val outcome = game.outcome(m, seat)
               ResultEntry(
                 participantId = seat.participantId,
@@ -448,5 +458,7 @@ class GameEngine[M <: MatchLike, S <: SeatLike, T <: TurnLike](
     }
 
     private def engineTurns(turns: List[T]): List[EngineTurn] =
-        turns.sortBy(_.takenAt).map(t => EngineTurn(t.participantId, t.takenAt, Some(t.startedAt)))
+        turns
+            .sortBy(_.takenAt)
+            .map(t => EngineTurn(participantId = t.participantId, takenAt = t.takenAt, startedAt = Some(t.startedAt)))
 }

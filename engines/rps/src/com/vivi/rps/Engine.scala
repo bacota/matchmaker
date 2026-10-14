@@ -58,10 +58,14 @@ class Engine(
                 // that was later.
                 val record =
                     ThrowRecord(
-                      seat.participantId,
-                      shape,
-                      at,
-                      TurnClock.turnStart(current.clock, seat.participantId, current.roundStartedAt)
+                      participantId = seat.participantId,
+                      shape = shape,
+                      takenAt = at,
+                      startedAt = TurnClock.turnStart(
+                        clock = current.clock,
+                        participantId = seat.participantId,
+                        turnStartedAt = current.roundStartedAt
+                      )
                     )
                 (current.copy(throws = current.throws :+ record), record)
             }

@@ -19,7 +19,7 @@ object LocalServer {
         // engine can be run against one matchmaker at once.
         LocalEngineServer.run("stratego", defaultPort = 8093) { (baseUrl, live) =>
             Config.routes(
-              sys.env.get,
+              env = sys.env.get,
               defaultBaseUrl = Some(baseUrl),
               live = Some(live),
               announce = m => {

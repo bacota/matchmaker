@@ -47,13 +47,19 @@ class EloRatingRepo(session: Session[IO]) {
                   forfeitLosses
                 ) =>
                 EloRating(
-                  PublicPlayer(id, nickname),
-                  rating,
-                  matches,
-                  rank,
-                  ranked,
-                  behind,
-                  MatchRecord(wins, losses, draws, forfeitWins, forfeitLosses)
+                  player = PublicPlayer(id, nickname),
+                  rating = rating,
+                  matches = matches,
+                  rank = rank,
+                  rankedRating = ranked,
+                  rankedMatches = behind,
+                  record = MatchRecord(
+                    wins = wins,
+                    losses = losses,
+                    draws = draws,
+                    forfeitWins = forfeitWins,
+                    forfeitLosses = forfeitLosses
+                  )
                 )
         }
 
@@ -138,7 +144,7 @@ class EloRatingRepo(session: Session[IO]) {
                         by <- rankedRating
                         behind <- rankedMatches
                     } yield Placed(r, Standing(by, behind))
-                    Placing(Standing(rating, matches), rated, placed)
+                    Placing(standing = Standing(rating, matches), isRated = rated, placed = placed)
             }
 
         /* The probes placing walks the leaderboard with: each one row, found by the rank index, and
@@ -181,21 +187,22 @@ class EloRatingRepo(session: Session[IO]) {
     }
 
     private val overallSql = new BoardSql(
-      "elo_rating",
-      "game_id",
-      gameId.contramap[Board](_.game),
-      a => sql"#${a}game_id = $gameId".contramap[Board](_.game),
-      a => s"${a}matches > 0 OR ${a}set_by IS NOT NULL"
+      table = "elo_rating",
+      keyColumns = "game_id",
+      key = gameId.contramap[Board](_.game),
+      where = a => sql"#${a}game_id = $gameId".contramap[Board](_.game),
+      rated = a => s"${a}matches > 0 OR ${a}set_by IS NOT NULL"
     )
 
     /* Only ever asked about a board with a role: `on` sends the overall board elsewhere. */
     private val roleSql = new BoardSql(
-      "elo_role_rating",
-      "game_id, game_role_id",
+      table = "elo_role_rating",
+      keyColumns = "game_id, game_role_id",
       // Raw numbers: a twiddle ending in an opaque id does not reduce to a tuple (see GameRepo).
-      (int4 *: int4).contramap[Board](b => (b.game.value, b.role.get.value)),
-      a => sql"#${a}game_id = $gameId AND #${a}game_role_id = $gameRoleId".contramap[Board](b => (b.game, b.role.get)),
-      a => s"${a}matches > 0"
+      key = (int4 *: int4).contramap[Board](b => (b.game.value, b.role.get.value)),
+      where = a =>
+          sql"#${a}game_id = $gameId AND #${a}game_role_id = $gameRoleId".contramap[Board](b => (b.game, b.role.get)),
+      rated = a => s"${a}matches > 0"
     )
 
     private def on(b: Board): BoardSql = if (b.role.isEmpty) overallSql else roleSql
@@ -322,13 +329,13 @@ class EloRatingRepo(session: Session[IO]) {
 
     /** The player's row in the game, overall or in `role`, rated or not: nothing only if there is no row at all. */
     def read(game: GameId, player: PlayerId, role: Option[GameRoleId] = None): IO[Option[EloRating]] =
-        readWhere(game, player, role)(_ => true)
+        readWhere(game = game, player = player, role = role)(_ => true)
 
     /** The player's rating in the game, overall or in `role`, as the leaderboard counts it, or nothing if they have
       * none: a row a match's start made, which nothing has rated yet, is none.
       */
     def readRated(game: GameId, player: PlayerId, role: Option[GameRoleId] = None): IO[Option[EloRating]] =
-        readWhere(game, player, role)(identity)
+        readWhere(game = game, player = player, role = role)(identity)
 
     /** The game's leaderboard, overall or `role`'s, from place `first` to place `last`, and whether anybody is placed
       * after it — or nothing, if there is no such game, or no such role in it.

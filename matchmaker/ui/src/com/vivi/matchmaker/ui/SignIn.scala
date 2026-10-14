@@ -76,21 +76,29 @@ object SignIn {
       */
     private def withPassword(): Unit = {
         val username = email.now().trim
-        run(username)(CognitoIdp.initiateUserAuth(username, "PASSWORD", Some(password.now())))
+        run(username)(
+          CognitoIdp.initiateUserAuth(
+            username = username,
+            preferredChallenge = "PASSWORD",
+            password = Some(password.now())
+          )
+        )
     }
 
     /** The alternative: no password, mail a code. Always comes back as a challenge. */
     private def withEmailCode(): Unit = {
         val username = email.now().trim
-        run(username)(CognitoIdp.initiateUserAuth(username, "EMAIL_OTP", None))
+        run(username)(
+          CognitoIdp.initiateUserAuth(username = username, preferredChallenge = "EMAIL_OTP", password = None)
+        )
     }
 
     private def answerCode(stageNow: Stage.Code): Unit =
         run(stageNow.username)(
           CognitoIdp.respondToChallenge(
-            stageNow.challenge,
-            stageNow.session,
-            Map(
+            challengeName = stageNow.challenge,
+            session = stageNow.session,
+            responses = Map(
               "USERNAME" -> stageNow.username,
               codeResponseKeys(stageNow.challenge) -> code.now().trim
             )
@@ -100,9 +108,9 @@ object SignIn {
     private def answerNewPassword(stageNow: Stage.NewPassword): Unit =
         run(stageNow.username)(
           CognitoIdp.respondToChallenge(
-            "NEW_PASSWORD_REQUIRED",
-            stageNow.session,
-            Map("USERNAME" -> stageNow.username, "NEW_PASSWORD" -> newPassword.now())
+            challengeName = "NEW_PASSWORD_REQUIRED",
+            session = stageNow.session,
+            responses = Map("USERNAME" -> stageNow.username, "NEW_PASSWORD" -> newPassword.now())
           )
         )
 
@@ -135,7 +143,14 @@ object SignIn {
                 case name if codeResponseKeys.contains(name) =>
                     code.set("")
                     isNextStageFocused = true
-                    stage.set(Stage.Code(name, username, challenge.session, challenge.deliveredTo))
+                    stage.set(
+                      Stage.Code(
+                        challenge = name,
+                        username = username,
+                        session = challenge.session,
+                        deliveredTo = challenge.deliveredTo
+                      )
+                    )
 
                 case "NEW_PASSWORD_REQUIRED" =>
                     newPassword.set("")
@@ -151,9 +166,9 @@ object SignIn {
                 case "PASSWORD" | "PASSWORD_SRP" if password.now().nonEmpty =>
                     run(username)(
                       CognitoIdp.respondToChallenge(
-                        "PASSWORD",
-                        challenge.session,
-                        Map("USERNAME" -> username, "PASSWORD" -> password.now())
+                        challengeName = "PASSWORD",
+                        session = challenge.session,
+                        responses = Map("USERNAME" -> username, "PASSWORD" -> password.now())
                       )
                     )
 
@@ -163,9 +178,9 @@ object SignIn {
                 case "SELECT_CHALLENGE" if challenge.availableChallenges.contains("PASSWORD") =>
                     run(username)(
                       CognitoIdp.respondToChallenge(
-                        "SELECT_CHALLENGE",
-                        challenge.session,
-                        Map("USERNAME" -> username, "ANSWER" -> "PASSWORD")
+                        challengeName = "SELECT_CHALLENGE",
+                        session = challenge.session,
+                        responses = Map("USERNAME" -> username, "ANSWER" -> "PASSWORD")
                       )
                     )
 

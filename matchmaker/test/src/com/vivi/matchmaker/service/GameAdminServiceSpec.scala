@@ -16,7 +16,7 @@ class GameAdminServiceSpec extends PropertySuite {
 
     private def unique(prefix: String): String = s"$prefix-${java.util.UUID.randomUUID()}"
 
-    private def register(): IO[Player] = registration.register(unique("ga"), unique("ga-sub"))
+    private def register(): IO[Player] = registration.register(nickname = unique("ga"), externalId = unique("ga-sub"))
 
     private def makeOverallAdmin(): IO[Player] =
         for {
@@ -32,8 +32,12 @@ class GameAdminServiceSpec extends PropertySuite {
             overall <- makeOverallAdmin()
             game <- IO(Generators.genGameWithRole.sample.get).flatMap(games.createOrUpdate(overall.externalId, _))
             gameAdmin <- register()
-            _ <- admins.grant(game.gameId, gameAdmin.playerId, overall.externalId)
-        } yield Fixture(overall, game.gameId, gameAdmin)
+            _ <- admins.grant(
+              gameId = game.gameId,
+              playerId = gameAdmin.playerId,
+              callerExternalId = overall.externalId
+            )
+        } yield Fixture(overall = overall, game = game.gameId, gameAdmin = gameAdmin)
 
     private def listed(f: Fixture): IO[Set[PlayerId]] =
         admins.list(f.game, f.overall.externalId).map(_.map(_.player.playerId).toSet)
@@ -63,7 +67,7 @@ class GameAdminServiceSpec extends PropertySuite {
         val result = for {
             f <- fixture()
             other <- register()
-            _ <- admins.grant(f.game, other.playerId, f.gameAdmin.externalId)
+            _ <- admins.grant(gameId = f.game, playerId = other.playerId, callerExternalId = f.gameAdmin.externalId)
             now <- listed(f)
         } yield now == Set(f.gameAdmin.playerId, other.playerId)
         assert(result.unsafeRunSync())
@@ -74,7 +78,9 @@ class GameAdminServiceSpec extends PropertySuite {
             f <- fixture()
             g <- fixture()
             other <- register()
-            refused <- refusal(admins.grant(g.game, other.playerId, f.gameAdmin.externalId))
+            refused <- refusal(
+              admins.grant(gameId = g.game, playerId = other.playerId, callerExternalId = f.gameAdmin.externalId)
+            )
             now <- listed(g)
         } yield (refused, now)
         val (refused, now) = result.unsafeRunSync()
@@ -86,7 +92,9 @@ class GameAdminServiceSpec extends PropertySuite {
         val result = for {
             f <- fixture()
             player <- register()
-            refused <- refusal(admins.grant(f.game, player.playerId, player.externalId))
+            refused <- refusal(
+              admins.grant(gameId = f.game, playerId = player.playerId, callerExternalId = player.externalId)
+            )
             now <- listed(f)
         } yield (refused, now)
         val (refused, now) = result.unsafeRunSync()
@@ -98,15 +106,19 @@ class GameAdminServiceSpec extends PropertySuite {
         val result = for {
             f <- fixture()
             mine <- register()
-            _ <- admins.grant(f.game, mine.playerId, f.gameAdmin.externalId)
+            _ <- admins.grant(gameId = f.game, playerId = mine.playerId, callerExternalId = f.gameAdmin.externalId)
             // Made by somebody else: another admin of the same game.
             peer <- register()
-            _ <- admins.grant(f.game, peer.playerId, f.overall.externalId)
+            _ <- admins.grant(gameId = f.game, playerId = peer.playerId, callerExternalId = f.overall.externalId)
             theirs <- register()
-            _ <- admins.grant(f.game, theirs.playerId, peer.externalId)
-            notTheirs <- refusal(admins.revoke(f.game, theirs.playerId, f.gameAdmin.externalId))
-            notOwn <- refusal(admins.revoke(f.game, f.gameAdmin.playerId, f.gameAdmin.externalId))
-            _ <- admins.revoke(f.game, mine.playerId, f.gameAdmin.externalId)
+            _ <- admins.grant(gameId = f.game, playerId = theirs.playerId, callerExternalId = peer.externalId)
+            notTheirs <- refusal(
+              admins.revoke(gameId = f.game, playerId = theirs.playerId, callerExternalId = f.gameAdmin.externalId)
+            )
+            notOwn <- refusal(
+              admins.revoke(gameId = f.game, playerId = f.gameAdmin.playerId, callerExternalId = f.gameAdmin.externalId)
+            )
+            _ <- admins.revoke(gameId = f.game, playerId = mine.playerId, callerExternalId = f.gameAdmin.externalId)
             now <- listed(f)
         } yield (notTheirs, notOwn, now == Set(f.gameAdmin.playerId, peer.playerId, theirs.playerId))
         val (notTheirs, notOwn, rightOnesLeft) = result.unsafeRunSync()
@@ -119,9 +131,15 @@ class GameAdminServiceSpec extends PropertySuite {
         val result = for {
             f <- fixture()
             mine <- register()
-            _ <- admins.grant(f.game, mine.playerId, f.gameAdmin.externalId)
-            _ <- admins.revoke(f.game, f.gameAdmin.playerId, f.overall.externalId)
-            refused <- refusal(admins.revoke(f.game, mine.playerId, f.gameAdmin.externalId))
+            _ <- admins.grant(gameId = f.game, playerId = mine.playerId, callerExternalId = f.gameAdmin.externalId)
+            _ <- admins.revoke(
+              gameId = f.game,
+              playerId = f.gameAdmin.playerId,
+              callerExternalId = f.overall.externalId
+            )
+            refused <- refusal(
+              admins.revoke(gameId = f.game, playerId = mine.playerId, callerExternalId = f.gameAdmin.externalId)
+            )
             now <- listed(f)
         } yield (refused, now == Set(mine.playerId))
         val (refused, kept) = result.unsafeRunSync()
@@ -133,12 +151,12 @@ class GameAdminServiceSpec extends PropertySuite {
         val result = for {
             f <- fixture()
             mine <- register()
-            _ <- admins.grant(f.game, mine.playerId, f.gameAdmin.externalId)
-            _ <- admins.grant(f.game, mine.playerId, f.overall.externalId)
+            _ <- admins.grant(gameId = f.game, playerId = mine.playerId, callerExternalId = f.gameAdmin.externalId)
+            _ <- admins.grant(gameId = f.game, playerId = mine.playerId, callerExternalId = f.overall.externalId)
             by <- admins
                 .list(f.game, f.overall.externalId)
                 .map(_.find(_.player.playerId == mine.playerId).map(_.grantedBy))
-            _ <- admins.revoke(f.game, mine.playerId, f.gameAdmin.externalId)
+            _ <- admins.revoke(gameId = f.game, playerId = mine.playerId, callerExternalId = f.gameAdmin.externalId)
             now <- listed(f)
         } yield (by, f.gameAdmin, now)
         val (by, gameAdmin, now) = result.unsafeRunSync()
@@ -149,12 +167,20 @@ class GameAdminServiceSpec extends PropertySuite {
     test("an admin takes a player's admin of a game away, and a second revoke finds nothing to take") {
         val result = for {
             f <- fixture()
-            _ <- admins.revoke(f.game, f.gameAdmin.playerId, f.overall.externalId)
+            _ <- admins.revoke(
+              gameId = f.game,
+              playerId = f.gameAdmin.playerId,
+              callerExternalId = f.overall.externalId
+            )
             now <- listed(f)
-            again <- refusal(admins.revoke(f.game, f.gameAdmin.playerId, f.overall.externalId))
+            again <- refusal(
+              admins.revoke(gameId = f.game, playerId = f.gameAdmin.playerId, callerExternalId = f.overall.externalId)
+            )
             // And having lost it, they can no longer make admins.
             other <- register()
-            lost <- refusal(admins.grant(f.game, other.playerId, f.gameAdmin.externalId))
+            lost <- refusal(
+              admins.grant(gameId = f.game, playerId = other.playerId, callerExternalId = f.gameAdmin.externalId)
+            )
         } yield (now, again, lost)
         val (now, again, lost) = result.unsafeRunSync()
         assertEquals(now, Set.empty[PlayerId])
@@ -165,8 +191,12 @@ class GameAdminServiceSpec extends PropertySuite {
     test("making an admin of somebody who already is one changes nothing") {
         val result = for {
             f <- fixture()
-            _ <- admins.grant(f.game, f.gameAdmin.playerId, f.overall.externalId)
-            _ <- admins.grant(f.game, f.gameAdmin.playerId, f.gameAdmin.externalId)
+            _ <- admins.grant(gameId = f.game, playerId = f.gameAdmin.playerId, callerExternalId = f.overall.externalId)
+            _ <- admins.grant(
+              gameId = f.game,
+              playerId = f.gameAdmin.playerId,
+              callerExternalId = f.gameAdmin.externalId
+            )
             now <- listed(f)
         } yield (now, f.gameAdmin.playerId)
         val (now, gameAdmin) = result.unsafeRunSync()
@@ -185,8 +215,16 @@ class GameAdminServiceSpec extends PropertySuite {
     test("an unknown player or game is not found, and an unregistered caller is refused") {
         val result = for {
             f <- fixture()
-            noPlayer <- refusal(admins.grant(f.game, PlayerId(Long.MaxValue), f.overall.externalId))
-            noGame <- refusal(admins.grant(GameId(Int.MaxValue), f.gameAdmin.playerId, f.overall.externalId))
+            noPlayer <- refusal(
+              admins.grant(gameId = f.game, playerId = PlayerId(Long.MaxValue), callerExternalId = f.overall.externalId)
+            )
+            noGame <- refusal(
+              admins.grant(
+                gameId = GameId(Int.MaxValue),
+                playerId = f.gameAdmin.playerId,
+                callerExternalId = f.overall.externalId
+              )
+            )
             listNoGame <- refusal(admins.list(GameId(Int.MaxValue), f.overall.externalId))
             nobody <- refusal(admins.list(f.game, unique("nobody")))
         } yield (noPlayer, noGame, listNoGame, nobody)

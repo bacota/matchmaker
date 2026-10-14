@@ -20,7 +20,7 @@ class ProtocolSpec extends FunSuite {
     import Protocol.given
     import EngineJson.given
 
-    private val average = Fighter(5, 5, 5, 5, 5)
+    private val average = Fighter(strength = 5, speed = 5, agility = 5, workrate = 5, chin = 5)
 
     private val create = Protocol.CreateGameRequest(
       matchId = "m-1",
@@ -30,22 +30,35 @@ class ProtocolSpec extends FunSuite {
       settings = "{}",
       timeLimitSeconds = Some(600L),
       players = List(
-        Protocol.EnginePlayer("sub-alice", 11L, Some("Red"), Some(101L), Some(Fighter.toState(average))),
-        Protocol.EnginePlayer("sub-bob", 22L, Some("Blue"), Some(202L), Some(Fighter.toState(average)))
+        Protocol.EnginePlayer(
+          cognitoId = "sub-alice",
+          participantId = 11L,
+          role = Some("Red"),
+          characterId = Some(101L),
+          characterState = Some(Fighter.toState(average))
+        ),
+        Protocol.EnginePlayer(
+          cognitoId = "sub-bob",
+          participantId = 22L,
+          role = Some("Blue"),
+          characterId = Some(202L),
+          characterState = Some(Fighter.toState(average))
+        )
       ),
       moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/moves"),
       resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/results")
     )
 
     private def fought(plans: (String, Allocation)*): Engine = {
-        val engine = Engine(InMemoryMatchStore(), RecordingMatchmaker(), "http://engine.test")
+        val engine =
+            Engine(store = InMemoryMatchStore(), matchmaker = RecordingMatchmaker(), baseUrl = "http://engine.test")
         engine.createGame(create)
-        plans.foreach((player, a) => engine.plan("m-1", player, a))
+        plans.foreach((player, a) => engine.plan(matchId = "m-1", cognitoId = player, allocation = a))
         engine
     }
 
     test("a status answer mid-round reads as matchmaker's, turns and all") {
-        val status = fought("sub-alice" -> Allocation(5, 0, 0)).status("m-1").toOption.get
+        val status = fought("sub-alice" -> Allocation(offense = 5, defense = 0, power = 0)).status("m-1").toOption.get
         val asMatchmaker = read[MmGameStatusResponse](write(status))
 
         assertEquals(asMatchmaker.isCompleted, false)
@@ -59,7 +72,14 @@ class ProtocolSpec extends FunSuite {
 
     test("the engine's results callback reads as matchmaker's MatchResults, scores and all") {
         val engine =
-            fought((1 to 3).flatMap(_ => List("sub-alice" -> Allocation(5, 0, 0), "sub-bob" -> Allocation(0, 5, 0)))*)
+            fought(
+              (1 to 3).flatMap(_ =>
+                  List(
+                    "sub-alice" -> Allocation(offense = 5, defense = 0, power = 0),
+                    "sub-bob" -> Allocation(offense = 0, defense = 5, power = 0)
+                  )
+              )*
+            )
         val results = engine.resultsOf(engine.read("m-1").toOption.get)
         val asMatchmaker = read[Json.MatchResults](write(results))(using Json.given_ReadWriter_MatchResults)
 

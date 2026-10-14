@@ -36,9 +36,22 @@ class ProtocolSpec extends FunSuite {
       settings = """{"variant":"standard"}""",
       timeLimitSeconds = Some(600L),
       players = List(
-        Protocol.EnginePlayer("sub-alice", 11L, Some("Red"), Some(101L), Some("""{"strength":5}"""), Some("alice")),
+        Protocol.EnginePlayer(
+          cognitoId = "sub-alice",
+          participantId = 11L,
+          role = Some("Red"),
+          characterId = Some(101L),
+          characterState = Some("""{"strength":5}"""),
+          nickname = Some("alice")
+        ),
         // A seat with no character, as in a game that has none, and no nickname, as from a matchmaker that predates them.
-        Protocol.EnginePlayer("sub-bob", 22L, None, None, None)
+        Protocol.EnginePlayer(
+          cognitoId = "sub-bob",
+          participantId = 22L,
+          role = None,
+          characterId = None,
+          characterState = None
+        )
       ),
       moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/moves"),
       resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/results")
@@ -54,7 +67,14 @@ class ProtocolSpec extends FunSuite {
           timeLimitSeconds = create.timeLimitSeconds,
           players = create.players.map(p =>
               com.vivi.matchmaker.engine
-                  .EnginePlayer(p.cognitoId, p.participantId, p.role, p.characterId, p.characterState, p.nickname)
+                  .EnginePlayer(
+                    cognitoId = p.cognitoId,
+                    participantId = p.participantId,
+                    role = p.role,
+                    characterId = p.characterId,
+                    characterState = p.characterState,
+                    nickname = p.nickname
+                  )
           ),
           moveCallbackUrl = create.moveCallbackUrl,
           resultsCallbackUrl = create.resultsCallbackUrl
@@ -85,7 +105,11 @@ class ProtocolSpec extends FunSuite {
 
     test("the engine's create response reads as matchmaker's") {
         val response =
-            Protocol.CreateGameResponse("http://engine/status", "http://engine/play", Some("http://engine/board"))
+            Protocol.CreateGameResponse(
+              statusUrl = "http://engine/status",
+              playUrl = "http://engine/play",
+              publicUrl = Some("http://engine/board")
+            )
         val asMatchmaker = read[MmCreateGameResponse](write(response))
 
         assertEquals(asMatchmaker.statusUrl, response.statusUrl)
@@ -95,7 +119,8 @@ class ProtocolSpec extends FunSuite {
 
     test("a move callback naming nobody as next reads as matchmaker's MoveNotification") {
         val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
-        val notification = Protocol.MoveNotification(11L, Nil, at, at.minusSeconds(90))
+        val notification =
+            Protocol.MoveNotification(participantId = 11L, next = Nil, takenAt = at, startedAt = at.minusSeconds(90))
         val asMatchmaker =
             read[Json.MoveNotification](write(notification))(using Json.given_ReadWriter_MoveNotification)
 
@@ -111,7 +136,12 @@ class ProtocolSpec extends FunSuite {
 
     test("a move callback naming the next seat reads as matchmaker's MoveNotification") {
         val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
-        val notification = Protocol.MoveNotification(11L, List(22L), at, at.minusSeconds(60))
+        val notification = Protocol.MoveNotification(
+          participantId = 11L,
+          next = List(22L),
+          takenAt = at,
+          startedAt = at.minusSeconds(60)
+        )
         val asMatchmaker =
             read[Json.MoveNotification](write(notification))(using Json.given_ReadWriter_MoveNotification)
 
@@ -124,7 +154,12 @@ class ProtocolSpec extends FunSuite {
 
     test("a move callback naming the mover among the next reads as matchmaker's MoveNotification") {
         val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
-        val notification = Protocol.MoveNotification(11L, List(11L, 22L), at, at.minusSeconds(90))
+        val notification = Protocol.MoveNotification(
+          participantId = 11L,
+          next = List(11L, 22L),
+          takenAt = at,
+          startedAt = at.minusSeconds(90)
+        )
         val asMatchmaker =
             read[Json.MoveNotification](write(notification))(using Json.given_ReadWriter_MoveNotification)
 
@@ -139,11 +174,11 @@ class ProtocolSpec extends FunSuite {
         val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
         val notification =
             Protocol.MoveNotification(
-              11L,
-              Nil,
-              at,
-              at.minusSeconds(90),
-              Some(Protocol.MoveState(3L, List(Protocol.PendingSeat(22L, at))))
+              participantId = 11L,
+              next = Nil,
+              takenAt = at,
+              startedAt = at.minusSeconds(90),
+              state = Some(Protocol.MoveState(3L, List(Protocol.PendingSeat(22L, at))))
             )
         val asMatchmaker =
             read[Json.MoveNotification](write(notification))(using Json.given_ReadWriter_MoveNotification)
@@ -163,11 +198,11 @@ class ProtocolSpec extends FunSuite {
     test("results carrying the match's turns read as matchmaker's MatchResults, turns and all") {
         val at = java.time.Instant.parse("2026-01-01T00:00:00Z")
         val results = Protocol.MatchResults(
-          Nil,
-          Some(
+          results = Nil,
+          turns = Some(
             List(
-              Protocol.EngineTurn(11L, at.plusSeconds(10), Some(at)),
-              Protocol.EngineTurn(22L, at.plusSeconds(20), None)
+              Protocol.EngineTurn(participantId = 11L, takenAt = at.plusSeconds(10), startedAt = Some(at)),
+              Protocol.EngineTurn(participantId = 22L, takenAt = at.plusSeconds(20), startedAt = None)
             )
           )
         )
@@ -179,7 +214,7 @@ class ProtocolSpec extends FunSuite {
     }
 
     test("results carrying a summary read as matchmaker's MatchResults, summary and all") {
-        val results = Protocol.MatchResults(Nil, summary = Some("<strong>alice</strong> won"))
+        val results = Protocol.MatchResults(results = Nil, summary = Some("<strong>alice</strong> won"))
         val asMatchmaker = read[Json.MatchResults](write(results))(using Json.given_ReadWriter_MatchResults)
         assertEquals(asMatchmaker.summary, Some("<strong>alice</strong> won"))
     }
@@ -205,9 +240,21 @@ class ProtocolSpec extends FunSuite {
 
     test("results ending a live match by forfeit read as matchmaker's, forfeit and all") {
         val results = Protocol.MatchResults(
-          List(
-            Protocol.ResultEntry(11L, 2, Map("outcome" -> ujson.Str("loss")), isWinner = false, isForfeit = true),
-            Protocol.ResultEntry(22L, 1, Map("outcome" -> ujson.Str("win")), isWinner = true, isForfeit = true)
+          results = List(
+            Protocol.ResultEntry(
+              participantId = 11L,
+              rank = 2,
+              scores = Map("outcome" -> ujson.Str("loss")),
+              isWinner = false,
+              isForfeit = true
+            ),
+            Protocol.ResultEntry(
+              participantId = 22L,
+              rank = 1,
+              scores = Map("outcome" -> ujson.Str("win")),
+              isWinner = true,
+              isForfeit = true
+            )
           )
         )
         val asMatchmaker = read[Json.MatchResults](write(results))(using Json.given_ReadWriter_MatchResults)
@@ -230,7 +277,12 @@ class ProtocolSpec extends FunSuite {
     }
 
     test("a character an engine registers reads as matchmaker's registration request, and its answer back") {
-        val request = Protocol.RegisterCharacterRequest("Iron Mike", "a slugger", "sub-1", """{"strength":9}""")
+        val request = Protocol.RegisterCharacterRequest(
+          name = "Iron Mike",
+          description = "a slugger",
+          ownerExternalId = "sub-1",
+          state = """{"strength":9}"""
+        )
         val asMatchmaker =
             read[Json.RegisterCharacterRequest](write(request))(using Json.given_ReadWriter_RegisterCharacterRequest)
         assertEquals(
@@ -245,7 +297,7 @@ class ProtocolSpec extends FunSuite {
     }
 
     test("an engine's edits read as matchmaker's, and matchmaker's characters read as the engine's") {
-        val edit = Protocol.EditCharacterRequest("Kid Dynamite", "fast", "sub-1")
+        val edit = Protocol.EditCharacterRequest(name = "Kid Dynamite", description = "fast", ownerExternalId = "sub-1")
         val editRead = read[Json.EditCharacterRequest](write(edit))(using Json.given_ReadWriter_EditCharacterRequest)
         assertEquals((editRead.name, editRead.description, editRead.ownerExternalId), ("Kid Dynamite", "fast", "sub-1"))
 
@@ -256,23 +308,34 @@ class ProtocolSpec extends FunSuite {
 
         // What GET /characters answers with is matchmaker's own Character JSON, written by its codecs.
         val character = com.vivi.matchmaker.model.Character[String](
-          com.vivi.matchmaker.model.CharacterId(5L),
-          com.vivi.matchmaker.model.GameId(3),
-          "Iron Mike",
-          "a slugger",
-          """{"strength":9}""",
-          Some(com.vivi.matchmaker.model.PlayerId(7L))
+          characterId = com.vivi.matchmaker.model.CharacterId(5L),
+          gameId = com.vivi.matchmaker.model.GameId(3),
+          name = "Iron Mike",
+          description = "a slugger",
+          state = """{"strength":9}""",
+          playerId = Some(com.vivi.matchmaker.model.PlayerId(7L))
         )
         val written = "[" + write(character)(using Json.given_ReadWriter_Character) + "]"
         assertEquals(
           read[List[Protocol.OwnedCharacter]](written),
-          List(Protocol.OwnedCharacter(5L, "Iron Mike", "a slugger", """{"strength":9}"""))
+          List(
+            Protocol.OwnedCharacter(
+              characterId = 5L,
+              name = "Iron Mike",
+              description = "a slugger",
+              state = """{"strength":9}"""
+            )
+          )
         )
     }
 
     test("an engine's archive upload request reads as matchmaker's, and matchmaker's answers read as the engine's") {
         val request =
-            Protocol.ArchiveUploadRequest(120L, "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=", Some("stored-match-1"))
+            Protocol.ArchiveUploadRequest(
+              size = 120L,
+              sha256 = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+              formatVersion = Some("stored-match-1")
+            )
         val requestRead =
             read[Json.ArchiveUploadRequest](write(request))(using Json.given_ReadWriter_ArchiveUploadRequest)
         assertEquals(
@@ -282,12 +345,26 @@ class ProtocolSpec extends FunSuite {
 
         val at = java.time.Instant.parse("2026-10-03T12:00:00Z")
         val upload = Json.ArchiveUploadAnswer(upload =
-            Some(Json.ArchiveUpload("https://s3/b/k", "PUT", Map("x-amz-checksum-sha256" -> request.sha256), at))
+            Some(
+              Json.ArchiveUpload(
+                url = "https://s3/b/k",
+                method = "PUT",
+                headers = Map("x-amz-checksum-sha256" -> request.sha256),
+                expiresAt = at
+              )
+            )
         )
         assertEquals(
           read[Protocol.ArchiveUploadAnswer](write(upload)(using Json.given_ReadWriter_ArchiveUploadAnswer)),
           Protocol.ArchiveUploadAnswer(upload =
-              Some(Protocol.ArchiveUpload("https://s3/b/k", "PUT", Map("x-amz-checksum-sha256" -> request.sha256), at))
+              Some(
+                Protocol.ArchiveUpload(
+                  url = "https://s3/b/k",
+                  method = "PUT",
+                  headers = Map("x-amz-checksum-sha256" -> request.sha256),
+                  expiresAt = at
+                )
+              )
           )
         )
         val already = Json.ArchiveUploadAnswer(archivedAt = Some(at))

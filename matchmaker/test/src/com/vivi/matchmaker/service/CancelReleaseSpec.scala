@@ -43,18 +43,24 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
     private def runningMatch(services: Services[String], cancelUrl: Option[String]): IO[(Player, Game, MatchId)] =
         TestSession.resource.use { session =>
             for {
-                player <- services.registration.register(unique("canceller"), unique("sub"))
+                player <- services.registration.register(nickname = unique("canceller"), externalId = unique("sub"))
                 game <- new GameRepo[String](session).create(
                   Game(
-                    GameId.unassigned,
-                    GameType.Plain,
-                    "tictactoe",
-                    "Tic-tac-toe",
-                    "description",
-                    "url",
+                    gameId = GameId.unassigned,
+                    gameType = GameType.Plain,
+                    name = "tictactoe",
+                    displayName = "Tic-tac-toe",
+                    description = "description",
+                    url = "url",
                     isActive = true,
                     Seq(
-                      GameRole(GameRoleId(0), GameId.unassigned, "X", roleType = RoleType.Required, displayName = "X")
+                      GameRole(
+                        gameRoleId = GameRoleId(0),
+                        gameId = GameId.unassigned,
+                        name = "X",
+                        roleType = RoleType.Required,
+                        displayName = "X"
+                      )
                     ),
                     Seq.empty,
                     unique("engine")
@@ -62,30 +68,30 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
                 )
                 matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
                 m = Match(
-                  game.gameId,
-                  matchId,
-                  TournamentId.unassigned,
-                  "d",
-                  None,
-                  Some(Instant.ofEpochSecond(1000)),
-                  None,
-                  "{}"
+                  gameId = game.gameId,
+                  matchId = matchId,
+                  tournamentId = TournamentId.unassigned,
+                  description = "d",
+                  completedAt = None,
+                  start = Some(Instant.ofEpochSecond(1000)),
+                  timeLimit = None,
+                  settings = "{}"
                 )
-                _ <- TestMatches.writeMatch(session, m, player.playerId)
+                _ <- TestMatches.writeMatch(session = session, m = m, owner = player.playerId)
                 _ <- new MatchRepo(session).setUrls(m.copy(statusUrl = Some("https://engine/status")), cancelUrl)
                 _ <- TestMatches.writeSeat(
-                  session,
-                  PlainParticipant(
-                    ParticipantId(0),
-                    game.gameId,
-                    matchId,
-                    player.playerId,
+                  session = session,
+                  p = PlainParticipant(
+                    participantId = ParticipantId(0),
+                    gameId = game.gameId,
+                    matchId = matchId,
+                    playerId = player.playerId,
                     isPending = true,
                     isCompleted = false,
                     None,
                     game.roles.head.gameRoleId
                   ),
-                  EloRating.initial
+                  eloStart = EloRating.initial
                 )
             } yield (player, game, matchId)
         }
@@ -108,7 +114,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
     private class Queueing(engine: GameEngineClient) {
         @volatile var ended: List[MatchId] = Nil
         val services: Services[String] = TestServices.servicesWith(
-          engine,
+          engine = engine,
           matchEndings = Some(new MatchEndings {
               def ended(gameId: GameId, matchId: MatchId): IO[Unit] = IO { Queueing.this.ended :+= matchId }
               def ratingsChanged(gameId: GameId): IO[Unit] = IO.unit
@@ -122,7 +128,8 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
         val services = queueing.services
         val (player, game, matchId) = run(runningMatch(services, Some("https://engine/matches/m/cancel")))
 
-        val cancelled = run(services.matches.cancel(game.gameId, matchId, player.externalId))
+        val cancelled =
+            run(services.matches.cancel(gameId = game.gameId, matchId = matchId, callerExternalId = player.externalId))
         assert(cancelled.isCancelled)
         assertEquals(queueing.ended, List(matchId))
         // Not told by the cancel itself: that is the listener's.
@@ -141,7 +148,11 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
         val services = queueing.services
         val (player, game, matchId) = run(runningMatch(services, Some("https://engine/matches/m/cancel")))
 
-        assert(run(services.matches.cancel(game.gameId, matchId, player.externalId)).isCancelled)
+        assert(
+          run(
+            services.matches.cancel(gameId = game.gameId, matchId = matchId, callerExternalId = player.externalId)
+          ).isCancelled
+        )
         assert(run(services.ending.settle(game.gameId, matchId)).isInstanceOf[Settlement.Owed])
         assertEquals(run(released(game.gameId, matchId)), None)
     }
@@ -151,7 +162,7 @@ class CancelReleaseSpec extends FunSuite with QuietTests {
         val services = Queueing(engine).services
         val (player, game, matchId) = run(runningMatch(services, None))
 
-        run(services.matches.cancel(game.gameId, matchId, player.externalId))
+        run(services.matches.cancel(gameId = game.gameId, matchId = matchId, callerExternalId = player.externalId))
         assertEquals(run(services.ending.settle(game.gameId, matchId)), Settlement.Settled)
         assertEquals(engine.cancelled, Nil)
     }

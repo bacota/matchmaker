@@ -44,7 +44,8 @@ object TestServices {
         DbSession.pooled(config, size).allocated.unsafeRunSync()._1
     }
 
-    lazy val services: Services[String] = Services.fromPool[String](pool, archiveStore = ArchiveStore.Unavailable)
+    lazy val services: Services[String] =
+        Services.fromPool[String](pool = pool, archiveStore = ArchiveStore.Unavailable)
 
     /** Services whose game-engine calls go to `engine` instead of over the network. A game engine is a remote system no
       * test can stand up, so the tests of the engine flow drive a stub.
@@ -57,7 +58,15 @@ object TestServices {
         archiveStore: ArchiveStore = ArchiveStore.Unavailable,
         matchEndings: Option[MatchEndings] = None
     ): Services[String] =
-        Services.fromPool[String](pool, engine, callbackBaseUrl, notifier, mail, archiveStore, matchEndings)
+        Services.fromPool[String](
+          pool = pool,
+          engineClient = engine,
+          callbackBaseUrl = callbackBaseUrl,
+          notifier = notifier,
+          mail = mail,
+          archiveStore = archiveStore,
+          matchEndings = matchEndings
+        )
 
     /** As [[servicesWith]], with every ending, round and match the queue would settle settled in the call that says it,
       * rather than on a fiber of its own that nothing waits for.
@@ -74,12 +83,18 @@ object TestServices {
         mail: MailSettings = MailSettings.none
     ): Services[String] = {
         lazy val built: Services[String] =
-            servicesWith(engine, callbackBaseUrl, notifier, mail, matchEndings = Some(inline))
+            servicesWith(
+              engine = engine,
+              callbackBaseUrl = callbackBaseUrl,
+              notifier = notifier,
+              mail = mail,
+              matchEndings = Some(inline)
+            )
         lazy val inline: MatchEndings = new MatchEndings {
             def ended(gameId: GameId, matchId: MatchId): IO[Unit] = built.ending.settle(gameId, matchId).void
             def ratingsChanged(gameId: GameId): IO[Unit] = built.ending.rank(gameId).void
             override def tournamentMatchDue(gameId: GameId, tournamentId: TournamentId, matchId: MatchId): IO[Unit] =
-                built.rounds.createMatch(gameId, tournamentId, matchId).void
+                built.rounds.createMatch(gameId = gameId, tournamentId = tournamentId, matchId = matchId).void
             override def tournamentRoundDue(gameId: GameId, tournamentId: TournamentId): IO[Unit] =
                 built.rounds.autoStart(gameId, tournamentId).void
             override def tournamentRoundCheck(

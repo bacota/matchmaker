@@ -34,7 +34,7 @@ class ArchiveServiceSpec extends FunSuite {
     TestMigration.ensure()
 
     private val dir = Files.createTempDirectory("archive-spec")
-    private val store = LocalArchiveStore(dir, "http://localhost:0")
+    private val store = LocalArchiveStore(dir = dir, baseUrl = "http://localhost:0")
 
     private object NoEngine extends GameEngineClient {
         def createGame(url: String, key: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
@@ -43,7 +43,7 @@ class ArchiveServiceSpec extends FunSuite {
             IO.raiseError(new IllegalStateException("no engine in these tests"))
     }
 
-    private val services = TestServices.servicesWith(NoEngine, archiveStore = store)
+    private val services = TestServices.servicesWith(engine = NoEngine, archiveStore = store)
     private val archives = services.archives
 
     private val completedAt = Instant.parse("2026-10-03T12:00:00Z")
@@ -61,21 +61,21 @@ class ArchiveServiceSpec extends FunSuite {
     ): IO[Fixture] =
         TestSession.resource.use { session =>
             for {
-                player <- services.registration.register(unique("archiver"), unique("sub"))
+                player <- services.registration.register(nickname = unique("archiver"), externalId = unique("sub"))
                 game <- new GameRepo[String](session).create(
                   Game(
-                    GameId.unassigned,
-                    GameType.Character,
-                    "stratego",
-                    "Stratego",
-                    "description",
-                    "url",
+                    gameId = GameId.unassigned,
+                    gameType = GameType.Character,
+                    name = "stratego",
+                    displayName = "Stratego",
+                    description = "description",
+                    url = "url",
                     isActive = true,
                     Seq(
                       GameRole(
-                        GameRoleId(0),
-                        GameId.unassigned,
-                        "only",
+                        gameRoleId = GameRoleId(0),
+                        gameId = GameId.unassigned,
+                        name = "only",
                         roleType = RoleType.Required,
                         displayName = "only"
                       )
@@ -85,44 +85,51 @@ class ArchiveServiceSpec extends FunSuite {
                   )
                 )
                 character <- new CharacterRepo[String](session).create(
-                  Character(CharacterId(0), game.gameId, "character", "description", "", Some(player.playerId))
+                  Character(
+                    characterId = CharacterId(0),
+                    gameId = game.gameId,
+                    name = "character",
+                    description = "description",
+                    state = "",
+                    playerId = Some(player.playerId)
+                  )
                 )
                 matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
                 _ <- TestMatches.writeMatch(
-                  session,
-                  Match(
-                    game.gameId,
-                    matchId,
-                    TournamentId.unassigned,
-                    "description",
-                    Option.when(completed)(completedAt),
-                    Some(Instant.ofEpochSecond(1000)),
-                    None,
-                    "{}",
+                  session = session,
+                  m = Match(
+                    gameId = game.gameId,
+                    matchId = matchId,
+                    tournamentId = TournamentId.unassigned,
+                    description = "description",
+                    completedAt = Option.when(completed)(completedAt),
+                    start = Some(Instant.ofEpochSecond(1000)),
+                    timeLimit = None,
+                    settings = "{}",
                     isPublic = isPublic,
                     isCancelled = cancelled,
                     playUrl = Some("https://engine.example.com/matches/m/play"),
                     publicUrl = Option.when(isPublic)("https://engine.example.com/matches/m/board?view=1"),
                     isFriendly = friendly
                   ),
-                  player.playerId
+                  owner = player.playerId
                 )
                 _ <- TestMatches.writeSeat(
-                  session,
-                  CharacterParticipant(
-                    ParticipantId(0),
-                    game.gameId,
-                    matchId,
-                    player.playerId,
+                  session = session,
+                  p = CharacterParticipant(
+                    participantId = ParticipantId(0),
+                    gameId = game.gameId,
+                    matchId = matchId,
+                    playerId = player.playerId,
                     isPending = false,
                     isCompleted = completed || cancelled,
                     None,
                     character.characterId,
                     game.roles.head.gameRoleId
                   ),
-                  EloRating.initial
+                  eloStart = EloRating.initial
                 )
-            } yield Fixture(player, game, matchId, character)
+            } yield Fixture(player = player, game = game, matchId = matchId, character = character)
         }
 
     /** Another completed, friendly, public match of `f`'s game for `f`'s player. */
@@ -131,35 +138,35 @@ class ArchiveServiceSpec extends FunSuite {
             for {
                 matchId <- IO(com.vivi.matchmaker.persistence.Generators.newMatchId())
                 _ <- TestMatches.writeMatch(
-                  session,
-                  Match(
-                    f.game.gameId,
-                    matchId,
-                    TournamentId.unassigned,
-                    "description",
-                    Some(completedAt),
-                    Some(Instant.ofEpochSecond(1000)),
-                    None,
-                    "{}",
+                  session = session,
+                  m = Match(
+                    gameId = f.game.gameId,
+                    matchId = matchId,
+                    tournamentId = TournamentId.unassigned,
+                    description = "description",
+                    completedAt = Some(completedAt),
+                    start = Some(Instant.ofEpochSecond(1000)),
+                    timeLimit = None,
+                    settings = "{}",
                     isPublic = true,
                     publicUrl = Some("https://engine.example.com/matches/m/board")
                   ),
-                  f.player.playerId
+                  owner = f.player.playerId
                 )
                 _ <- TestMatches.writeSeat(
-                  session,
-                  CharacterParticipant(
-                    ParticipantId(0),
-                    f.game.gameId,
-                    matchId,
-                    f.player.playerId,
+                  session = session,
+                  p = CharacterParticipant(
+                    participantId = ParticipantId(0),
+                    gameId = f.game.gameId,
+                    matchId = matchId,
+                    playerId = f.player.playerId,
                     isPending = false,
                     isCompleted = true,
                     None,
                     f.character.characterId,
                     f.game.roles.head.gameRoleId
                   ),
-                  EloRating.initial
+                  eloStart = EloRating.initial
                 )
             } yield matchId
         }
@@ -169,13 +176,20 @@ class ArchiveServiceSpec extends FunSuite {
     /** Asks for an upload of `body`, and makes it as an engine would: to the url, with the headers. */
     private def upload(f: Fixture, body: Array[Byte] = content): IO[Unit] =
         archives
-            .requestUpload(f.matchId, body.length.toLong, ArchiveStore.sha256(body), Some("v1"), f.game.externalId)
+            .requestUpload(
+              matchId = f.matchId,
+              size = body.length.toLong,
+              sha256 = ArchiveStore.sha256(body),
+              formatVersion = Some("v1"),
+              callerExternalId = f.game.externalId
+            )
             .flatMap {
                 case UploadAnswer.Upload(signed) =>
-                    IO(store.put(signed.url.split("/local-archive/")(1), body, signed.headers)).flatMap {
-                        case Right(())    => IO.unit
-                        case Left(reason) => IO.raiseError(new IllegalStateException(reason))
-                    }
+                    IO(store.put(path = signed.url.split("/local-archive/")(1), body = body, headers = signed.headers))
+                        .flatMap {
+                            case Right(())    => IO.unit
+                            case Left(reason) => IO.raiseError(new IllegalStateException(reason))
+                        }
                 case other => IO.raiseError(new IllegalStateException(s"expected an upload url, got $other"))
             }
 
@@ -213,7 +227,15 @@ class ArchiveServiceSpec extends FunSuite {
 
         // A lost confirm, retried from the top: the engine is told it may let its copy go.
         val again =
-            run(archives.requestUpload(f.matchId, 3, ArchiveStore.sha256("abc".getBytes), None, f.game.externalId))
+            run(
+              archives.requestUpload(
+                matchId = f.matchId,
+                size = 3,
+                sha256 = ArchiveStore.sha256("abc".getBytes),
+                formatVersion = None,
+                callerExternalId = f.game.externalId
+              )
+            )
         assertEquals(again, UploadAnswer.AlreadyArchived(confirmed))
         // And a repeated confirm answers the same.
         assertEquals(run(archives.confirm(f.matchId, f.game.externalId)), confirmed)
@@ -239,7 +261,15 @@ class ArchiveServiceSpec extends FunSuite {
         val other = run(fixture())
         val sha = ArchiveStore.sha256(content)
         assert(
-          refusal(archives.requestUpload(theirs.matchId, 10, sha, None, other.game.externalId))
+          refusal(
+            archives.requestUpload(
+              matchId = theirs.matchId,
+              size = 10,
+              sha256 = sha,
+              formatVersion = None,
+              callerExternalId = other.game.externalId
+            )
+          )
               .isInstanceOf[NotFoundError]
         )
     }
@@ -248,14 +278,38 @@ class ArchiveServiceSpec extends FunSuite {
         val f = run(fixture())
         val sha = ArchiveStore.sha256(content)
         assert(
-          refusal(archives.requestUpload(f.matchId, 0, sha, None, f.game.externalId)).isInstanceOf[ValidationError]
+          refusal(
+            archives.requestUpload(
+              matchId = f.matchId,
+              size = 0,
+              sha256 = sha,
+              formatVersion = None,
+              callerExternalId = f.game.externalId
+            )
+          ).isInstanceOf[ValidationError]
         )
         assert(
-          refusal(archives.requestUpload(f.matchId, ArchiveService.MaxSize + 1, sha, None, f.game.externalId))
+          refusal(
+            archives.requestUpload(
+              matchId = f.matchId,
+              size = ArchiveService.MaxSize + 1,
+              sha256 = sha,
+              formatVersion = None,
+              callerExternalId = f.game.externalId
+            )
+          )
               .isInstanceOf[ValidationError]
         )
         assert(
-          refusal(archives.requestUpload(f.matchId, 10, "not-a-digest", None, f.game.externalId))
+          refusal(
+            archives.requestUpload(
+              matchId = f.matchId,
+              size = 10,
+              sha256 = "not-a-digest",
+              formatVersion = None,
+              callerExternalId = f.game.externalId
+            )
+          )
               .isInstanceOf[ValidationError]
         )
     }
@@ -264,14 +318,34 @@ class ArchiveServiceSpec extends FunSuite {
         val f = run(fixture())
         assert(refusal(archives.confirm(f.matchId, f.game.externalId)).isInstanceOf[ConflictError])
 
-        run(archives.requestUpload(f.matchId, 10, ArchiveStore.sha256(content), None, f.game.externalId))
+        run(
+          archives.requestUpload(
+            matchId = f.matchId,
+            size = 10,
+            sha256 = ArchiveStore.sha256(content),
+            formatVersion = None,
+            callerExternalId = f.game.externalId
+          )
+        )
         assert(refusal(archives.confirm(f.matchId, f.game.externalId)).isInstanceOf[ConflictError])
 
         // The store refuses a body that is not the one whose checksum was signed.
         val sha = ArchiveStore.sha256(content)
         val UploadAnswer.Upload(signed) =
-            run(archives.requestUpload(f.matchId, 3, sha, None, f.game.externalId)): @unchecked
-        assert(store.put(signed.url.split("/local-archive/")(1), "abc".getBytes, signed.headers).isLeft)
+            run(
+              archives.requestUpload(
+                matchId = f.matchId,
+                size = 3,
+                sha256 = sha,
+                formatVersion = None,
+                callerExternalId = f.game.externalId
+              )
+            ): @unchecked
+        assert(
+          store
+              .put(path = signed.url.split("/local-archive/")(1), body = "abc".getBytes, headers = signed.headers)
+              .isLeft
+        )
         assertEquals(run(row(f)).flatMap(_.archivedAt), None)
     }
 
@@ -287,7 +361,7 @@ class ArchiveServiceSpec extends FunSuite {
         run(TestSession.resource.use(session => new PlayerRepo(session).update(f.player.copy(isAdmin = true))))
 
     private def notFriendly(f: Fixture): IO[Match] =
-        services.matches.setFriendly(f.game.gameId, f.matchId, friendly = false, f.player.externalId)
+        services.matches.setFriendly(gameId = f.game.gameId, matchId = f.matchId, friendly = false, f.player.externalId)
 
     test("a completed match an admin says was not friendly after all has its archive moved to the permanent bucket") {
         val f = run(fixture(friendly = true).flatMap(archived))
@@ -302,7 +376,10 @@ class ArchiveServiceSpec extends FunSuite {
     test("a completed match an admin says was friendly after all keeps its archive in the permanent bucket, for good") {
         val f = run(fixture(friendly = false).flatMap(archived))
         makeAdmin(f)
-        run(services.matches.setFriendly(f.game.gameId, f.matchId, friendly = true, f.player.externalId))
+        run(
+          services.matches
+              .setFriendly(gameId = f.game.gameId, matchId = f.matchId, friendly = true, f.player.externalId)
+        )
         assertEquals(run(row(f)).flatMap(_.isInFriendlyBucket), Some(false))
         assertEquals(where(f), (false, true))
         // And it does not expire: past a friendly archive's 30 days, it is read without a check.
@@ -324,19 +401,19 @@ class ArchiveServiceSpec extends FunSuite {
         // transaction -- after the copy has been made.
         run(TestSession.resource.use { session =>
             TestMatches.writeSeat(
-              session,
-              CharacterParticipant(
-                ParticipantId(0),
-                f.game.gameId,
-                f.matchId,
-                f.player.playerId,
+              session = session,
+              p = CharacterParticipant(
+                participantId = ParticipantId(0),
+                gameId = f.game.gameId,
+                matchId = f.matchId,
+                playerId = f.player.playerId,
                 isPending = false,
                 isCompleted = true,
                 None,
                 f.character.characterId,
                 f.game.roles.head.gameRoleId
               ),
-              EloRating.initial
+              eloStart = EloRating.initial
             )
         })
         assert(refusal(notFriendly(f)).isInstanceOf[ConflictError])
@@ -362,22 +439,22 @@ class ArchiveServiceSpec extends FunSuite {
         makeAdmin(f)
         run(
           archives.requestUpload(
-            f.matchId,
-            content.length.toLong,
-            ArchiveStore.sha256(content),
-            None,
-            f.game.externalId
+            matchId = f.matchId,
+            size = content.length.toLong,
+            sha256 = ArchiveStore.sha256(content),
+            formatVersion = None,
+            callerExternalId = f.game.externalId
           )
         )
         run(notFriendly(f))
         assertEquals(run(row(f)).flatMap(_.isInFriendlyBucket), Some(false))
         val UploadAnswer.Upload(signed) = run(
           archives.requestUpload(
-            f.matchId,
-            content.length.toLong,
-            ArchiveStore.sha256(content),
-            None,
-            f.game.externalId
+            matchId = f.matchId,
+            size = content.length.toLong,
+            sha256 = ArchiveStore.sha256(content),
+            formatVersion = None,
+            callerExternalId = f.game.externalId
           )
         ): @unchecked
         assert(signed.url.contains("/local-archive/permanent/"), signed.url)
@@ -483,12 +560,16 @@ class ArchiveServiceSpec extends FunSuite {
 
     test("the match a player opens to review carries the marked play url, or none once expired") {
         val f = run(fixture().flatMap(archived))
-        val opened = run(services.engine.read(f.game.gameId, f.matchId, f.player.externalId))
+        val opened = run(
+          services.engine.read(gameId = f.game.gameId, matchId = f.matchId, callerExternalId = f.player.externalId)
+        )
         assertEquals(opened.playUrl, Some("https://engine.example.com/matches/m/play?archived=1"))
 
         run(age(f, 31))
         store.delete(ArchiveBucket.Friendly, run(row(f)).flatMap(_.key).get)
-        val expired = run(services.engine.read(f.game.gameId, f.matchId, f.player.externalId))
+        val expired = run(
+          services.engine.read(gameId = f.game.gameId, matchId = f.matchId, callerExternalId = f.player.externalId)
+        )
         assertEquals((expired.isArchiveExpired, expired.playUrl, expired.publicUrl), (true, None, None))
     }
 
@@ -503,27 +584,39 @@ class ArchiveServiceSpec extends FunSuite {
 
     test("an archive's key is the game's folder, the day it completed, and the match id") {
         val at = Instant.parse("2026-01-31T23:59:59Z")
-        assertEquals(ArchiveService.keyFor("tictactoe", at, MatchId(41)), "tictactoe/2026-01-31/41.json")
+        assertEquals(
+          ArchiveService.keyFor(gameName = "tictactoe", completedAt = at, matchId = MatchId(41)),
+          "tictactoe/2026-01-31/41.json"
+        )
         // A name that would not survive as a key as it is.
         assertEquals(
-          ArchiveService.keyFor("rock paper/scissors", at, MatchId(1)),
+          ArchiveService.keyFor(gameName = "rock paper/scissors", completedAt = at, matchId = MatchId(1)),
           "rock%20paper%2Fscissors/2026-01-31/1.json"
         )
-        assertEquals(ArchiveService.keyFor("..", at, MatchId(1)), "%2E%2E/2026-01-31/1.json")
+        assertEquals(
+          ArchiveService.keyFor(gameName = "..", completedAt = at, matchId = MatchId(1)),
+          "%2E%2E/2026-01-31/1.json"
+        )
     }
 
     test("a game name too long for a key is cut short and hashed, without splitting an escape") {
         val at = Instant.parse("2026-01-31T00:00:00Z")
         val long = "é" * 300
-        val key = ArchiveService.keyFor(long, at, MatchId(1))
+        val key = ArchiveService.keyFor(gameName = long, completedAt = at, matchId = MatchId(1))
         val folder = key.split('/').head
         assert(folder.length <= ArchiveService.MaxSegment, folder)
         assert(folder.matches("(%[0-9A-F]{2})+-[0-9a-f]{16}"), folder)
         // Two names alike in what is kept still get folders of their own.
-        assertNotEquals(ArchiveService.keyFor(long + "x", at, MatchId(1)).split('/').head, folder)
+        assertNotEquals(
+          ArchiveService.keyFor(gameName = long + "x", completedAt = at, matchId = MatchId(1)).split('/').head,
+          folder
+        )
         assert(key.getBytes("UTF-8").length < 1024)
         // A short name is untouched.
-        assertEquals(ArchiveService.keyFor("stratego", at, MatchId(1)), "stratego/2026-01-31/1.json")
+        assertEquals(
+          ArchiveService.keyFor(gameName = "stratego", completedAt = at, matchId = MatchId(1)),
+          "stratego/2026-01-31/1.json"
+        )
     }
 
     test("a long history checks only so many archives per list, and the next list carries on") {

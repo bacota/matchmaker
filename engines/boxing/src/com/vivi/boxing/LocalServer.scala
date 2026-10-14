@@ -27,7 +27,7 @@ object LocalServer {
         // be run against one matchmaker at once.
         LocalEngineServer.run("boxing", defaultPort = 8092) { (baseUrl, live) =>
             Config.routes(
-              k => sys.env.get(k).orElse(Option.when(k == "MATCHMAKER_URL")("http://localhost:8080")),
+              env = k => sys.env.get(k).orElse(Option.when(k == "MATCHMAKER_URL")("http://localhost:8080")),
               defaultBaseUrl = Some(baseUrl),
               live = Some(live),
               announce =

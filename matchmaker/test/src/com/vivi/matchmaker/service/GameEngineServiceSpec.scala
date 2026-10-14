@@ -43,7 +43,11 @@ class GameEngineServiceSpec extends PropertySuite {
 
     /** Records the last create request so the tests can assert on what the engine was told. */
     private class StubEngine(
-        response: CreateGameResponse = CreateGameResponse("https://engine/status/1", "https://engine/play/1", None),
+        response: CreateGameResponse = CreateGameResponse(
+          statusUrl = "https://engine/status/1",
+          playUrl = "https://engine/play/1",
+          publicUrl = None
+        ),
         var status: GameStatusResponse = GameStatusResponse(isCompleted = false, participants = Nil),
         isFailing: Boolean = false,
         // Run in the middle of a status call, which is the only way a test can reach the window
@@ -73,7 +77,13 @@ class GameEngineServiceSpec extends PropertySuite {
 
         def createGame(gameUrl: String, apiKey: Option[String], request: CreateGameRequest): IO[CreateGameResponse] =
             IO { firstSeat = request.players.headOption.map(_.participantId) }
-                .as(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+                .as(
+                  CreateGameResponse(
+                    statusUrl = "https://engine/status/1",
+                    playUrl = "https://engine/play/1",
+                    publicUrl = None
+                  )
+                )
 
         def status(statusUrl: String, apiKey: Option[String], since: Option[Instant] = None): IO[GameStatusResponse] =
             IO.pure(
@@ -101,15 +111,15 @@ class GameEngineServiceSpec extends PropertySuite {
     ): IO[Fixture] =
         TestSession.resource.use { session =>
             for {
-                owner <- TestServices.services.registration.register(nickname, externalId)
+                owner <- TestServices.services.registration.register(nickname = nickname, externalId = externalId)
                 game <- new GameRepo[String](session).create(
                   Game(
-                    GameId.unassigned,
-                    GameType.Character,
-                    "game",
-                    "game",
-                    "description",
-                    "https://engine.example.com/games",
+                    gameId = GameId.unassigned,
+                    gameType = GameType.Character,
+                    name = "game",
+                    displayName = "game",
+                    description = "description",
+                    url = "https://engine.example.com/games",
                     isActive = true,
                     // attacker is required, defender is not: a start waits for the first to be taken and
                     // never for the second, which is what lets these tests start a match with the
@@ -120,18 +130,37 @@ class GameEngineServiceSpec extends PropertySuite {
                     // that a recommended role is one a start does not wait for; other specs keep
                     // an optional one.
                     Seq(
-                      GameRole(GameRoleId(0), GameId.unassigned, "attacker", RoleType.Required, "Attacker side"),
-                      GameRole(GameRoleId(0), GameId.unassigned, "defender", RoleType.Recommended, "Defender side")
+                      GameRole(
+                        gameRoleId = GameRoleId(0),
+                        gameId = GameId.unassigned,
+                        name = "attacker",
+                        roleType = RoleType.Required,
+                        displayName = "Attacker side"
+                      ),
+                      GameRole(
+                        gameRoleId = GameRoleId(0),
+                        gameId = GameId.unassigned,
+                        name = "defender",
+                        roleType = RoleType.Recommended,
+                        displayName = "Defender side"
+                      )
                     ),
                     parameters,
                     gameExternalId
                   )
                 )
                 character <- new CharacterRepo[String](session).create(
-                  Character(CharacterId(0), game.gameId, "character", "description", "", Some(owner.playerId))
+                  Character(
+                    characterId = CharacterId(0),
+                    gameId = game.gameId,
+                    name = "character",
+                    description = "description",
+                    state = "",
+                    playerId = Some(owner.playerId)
+                  )
                 )
                 _ <- Challenges.offeredIn(game)
-            } yield Fixture(owner, game, character)
+            } yield Fixture(owner = owner, game = game, character = character)
         }
 
     /** The terms a match is played under, as a spec writes one directly: see [[begin]]. */
@@ -156,7 +185,16 @@ class GameEngineServiceSpec extends PropertySuite {
         start: Option[Instant] = None,
         settings: String = "{}",
         live: Boolean = false
-    ): Terms = Terms(isPublic, timeLimit, message, timeLimitKind, timeLimitUnit, start, settings, live)
+    ): Terms = Terms(
+      isPublic = isPublic,
+      timeLimit = timeLimit,
+      message = message,
+      timeLimitKind = timeLimitKind,
+      timeLimitUnit = timeLimitUnit,
+      start = start,
+      settings = settings,
+      isLive = live
+    )
 
     /** A match of `fixture`'s game begun as its engine has made it -- urls and a start -- written straight into the
       * tables (`TestMatches`), with the owner seated as the game's first role and `other`, if given, as its second.
@@ -174,34 +212,34 @@ class GameEngineServiceSpec extends PropertySuite {
             val matchId = com.vivi.matchmaker.persistence.Generators.newMatchId()
             def seat(player: Player, character: Character[String], role: GameRoleId) =
                 TestMatches.writeSeat(
-                  session,
-                  CharacterParticipant(
-                    ParticipantId(0),
-                    fixture.game.gameId,
-                    matchId,
-                    player.playerId,
+                  session = session,
+                  p = CharacterParticipant(
+                    participantId = ParticipantId(0),
+                    gameId = fixture.game.gameId,
+                    matchId = matchId,
+                    playerId = player.playerId,
                     isPending = false,
                     isCompleted = false,
                     due = None,
                     character.characterId,
                     role
                   ),
-                  EloRating.initial,
-                  Some(EloRating.initial)
+                  eloStart = EloRating.initial,
+                  eloRoleStart = Some(EloRating.initial)
                 )
             for {
                 written <- TestMatches.writeMatch(
-                  session,
-                  Match(
-                    fixture.game.gameId,
-                    matchId,
-                    TournamentId.unassigned,
-                    terms.message,
-                    None,
-                    Some(terms.start.getOrElse(Instant.now())),
-                    terms.timeLimit,
-                    terms.settings,
-                    terms.isPublic,
+                  session = session,
+                  m = Match(
+                    gameId = fixture.game.gameId,
+                    matchId = matchId,
+                    tournamentId = TournamentId.unassigned,
+                    description = terms.message,
+                    completedAt = None,
+                    start = Some(terms.start.getOrElse(Instant.now())),
+                    timeLimit = terms.timeLimit,
+                    settings = terms.settings,
+                    isPublic = terms.isPublic,
                     statusUrl = Some("https://engine/status/1"),
                     playUrl = Some("https://engine/play/1"),
                     publicUrl = Option.when(terms.isPublic)("https://engine/public/1"),
@@ -209,21 +247,34 @@ class GameEngineServiceSpec extends PropertySuite {
                     timeLimitUnit = terms.timeLimitUnit,
                     isLive = terms.isLive
                   ),
-                  fixture.owner.playerId
+                  owner = fixture.owner.playerId
                 )
-                _ <- seat(fixture.owner, fixture.character, fixture.game.roles(0).gameRoleId)
-                _ <- other.traverse_((player, character) => seat(player, character, fixture.game.roles(1).gameRoleId))
+                _ <- seat(
+                  player = fixture.owner,
+                  character = fixture.character,
+                  role = fixture.game.roles(0).gameRoleId
+                )
+                _ <- other.traverse_((player, character) =>
+                    seat(player = player, character = character, role = fixture.game.roles(1).gameRoleId)
+                )
             } yield written
         }
 
     /** Another player with a character in `fixture`'s game. */
     private def opponent(services: Services[String], fixture: Fixture, nickname: String, externalId: String) =
         for {
-            other <- services.registration.register(nickname, externalId)
+            other <- services.registration.register(nickname = nickname, externalId = externalId)
             character <- TestSession.resource.use { session =>
                 new CharacterRepo[String](session)
                     .create(
-                      Character(CharacterId(0), fixture.game.gameId, "other", "description", "", Some(other.playerId))
+                      Character(
+                        characterId = CharacterId(0),
+                        gameId = fixture.game.gameId,
+                        name = "other",
+                        description = "description",
+                        state = "",
+                        playerId = Some(other.playerId)
+                      )
                     )
             }
         } yield (other, character)
@@ -241,14 +292,27 @@ class GameEngineServiceSpec extends PropertySuite {
         settings: String = "{}"
     ): IO[(Match, Player)] =
         for {
-            found <- opponent(services, fixture, s"other-$otherExternalId", otherExternalId)
+            found <- opponent(
+              services = services,
+              fixture = fixture,
+              nickname = s"other-$otherExternalId",
+              externalId = otherExternalId
+            )
             (other, otherCharacter) = found
             made <- Challenges.startedMatch(
-              services,
-              fixture.game,
-              List(
-                Challenges.Seat(fixture.owner, fixture.game.roles(0).gameRoleId, Some(fixture.character.characterId)),
-                Challenges.Seat(other, fixture.game.roles(1).gameRoleId, Some(otherCharacter.characterId))
+              services = services,
+              game = fixture.game,
+              seats = List(
+                Challenges.Seat(
+                  player = fixture.owner,
+                  role = fixture.game.roles(0).gameRoleId,
+                  character = Some(fixture.character.characterId)
+                ),
+                Challenges.Seat(
+                  player = other,
+                  role = fixture.game.roles(1).gameRoleId,
+                  character = Some(otherCharacter.characterId)
+                )
               ),
               roundDuration = roundDuration,
               live = live,
@@ -271,10 +335,19 @@ class GameEngineServiceSpec extends PropertySuite {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
                 val services =
-                    TestServices.servicesWith(engine, callbackBaseUrl = Some("https://matchmaker.example.com"))
+                    TestServices.servicesWith(engine = engine, callbackBaseUrl = Some("https://matchmaker.example.com"))
                 val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    made <- challenged(services, fixture, otherExternalId, isPublic = true)
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
+                    made <- challenged(
+                      services = services,
+                      fixture = fixture,
+                      otherExternalId = otherExternalId,
+                      isPublic = true
+                    )
                     (started, other) = made
                     participants <- participantsOf(started)
                     // Started, so it is no longer open to enter.
@@ -308,12 +381,14 @@ class GameEngineServiceSpec extends PropertySuite {
     /** A game parameter a challenger chooses among: `rounds`, 3 to 5, defaulting to 4. */
     private val roundsParameter: GameParameter[?] =
         GameParameter[String](
-          GameId.unassigned,
-          GameParameterId(0),
-          "rounds",
-          Some("4"),
-          Seq("3", "4", "5").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v)),
-          "Rounds"
+          gameId = GameId.unassigned,
+          gameParameterId = GameParameterId(0),
+          name = "rounds",
+          defaultValue = Some("4"),
+          values = Seq("3", "4", "5").map(v =>
+              GameParameterValue(gameId = GameId.unassigned, gameParameterId = GameParameterId(0), value = v)
+          ),
+          displayName = "Rounds"
         )
 
     // Every fixture's game is on the same engine host, which is the case a key filed by host could
@@ -322,17 +397,25 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 // Fresh for each case: keys are unique across games, and the database outlives a run.
                 val (otherKey, thisKey) = (s"other-$gameExternalId", s"this-$gameExternalId")
                 val result = for {
-                    other <- makeFixture(s"$nickname-o", s"$externalId-o", s"$gameExternalId-o")
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
+                    other <- makeFixture(
+                      nickname = s"$nickname-o",
+                      externalId = s"$externalId-o",
+                      gameExternalId = s"$gameExternalId-o"
+                    )
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
                     _ <- TestSession.resource.use { session =>
                         val keys = new GameApiKeyRepo(session)
                         keys.set(other.game.gameId, otherKey) *> keys.set(fixture.game.gameId, thisKey)
                     }
-                    _ <- challenged(services, fixture, otherExternalId)
+                    _ <- challenged(services = services, fixture = fixture, otherExternalId = otherExternalId)
                 } yield (engine.lastCreateKey, engine.lastStatusKey)
 
                 result.timeout(30.seconds).unsafeRunSync() == (Some(thisKey), Some(thisKey))
@@ -343,12 +426,22 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId, Seq(roundsParameter))
-                    _ <- challenged(services, fixture, otherExternalId, settings = """{"rounds":"5"}""")
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      parameters = Seq(roundsParameter)
+                    )
+                    _ <- challenged(
+                      services = services,
+                      fixture = fixture,
+                      otherExternalId = otherExternalId,
+                      settings = """{"rounds":"5"}"""
+                    )
                     withChoice = engine.lastRequest.get
-                    _ <- challenged(services, fixture, s"$otherExternalId-2")
+                    _ <- challenged(services = services, fixture = fixture, otherExternalId = s"$otherExternalId-2")
                     withoutChoice = engine.lastRequest.get
                 } yield withChoice.parameters == Map("rounds" -> "5") &&
                     withChoice.settings.contains("\"rounds\"") &&
@@ -359,17 +452,23 @@ class GameEngineServiceSpec extends PropertySuite {
 
     property("a challenge choosing a value its game does not allow is refused when it is made") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val services = TestServices.servicesWith(StubEngine())
+            val services = TestServices.servicesWith(engine = StubEngine())
             def offer(fixture: Fixture, settings: String) =
                 services.tournaments
                     .createChallenge(
-                      fixture.game.gameId,
-                      ChallengeRequest(characterId = Some(fixture.character.characterId), gameSettings = settings),
-                      externalId
+                      gameId = fixture.game.gameId,
+                      request =
+                          ChallengeRequest(characterId = Some(fixture.character.characterId), gameSettings = settings),
+                      callerExternalId = externalId
                     )
                     .attempt
             val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId, Seq(roundsParameter))
+                fixture <- makeFixture(
+                  nickname = nickname,
+                  externalId = externalId,
+                  gameExternalId = gameExternalId,
+                  parameters = Seq(roundsParameter)
+                )
                 refused <- offer(fixture, """{"rounds":"9"}""")
                 notObject <- offer(fixture, "[]")
             } yield refused.left.toOption.exists {
@@ -382,15 +481,21 @@ class GameEngineServiceSpec extends PropertySuite {
 
     property("a challenge cannot start until it has enough entries to fill the game's required roles") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val services = TestServices.servicesWith(StubEngine())
+            val services = TestServices.servicesWith(engine = StubEngine())
             val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
                 offered <- services.tournaments.createChallenge(
-                  fixture.game.gameId,
-                  ChallengeRequest(characterId = Some(fixture.character.characterId)),
-                  externalId
+                  gameId = fixture.game.gameId,
+                  request = ChallengeRequest(characterId = Some(fixture.character.characterId)),
+                  callerExternalId = externalId
                 )
-                attempt <- services.tournaments.start(fixture.game.gameId, offered.tournamentId, externalId).attempt
+                attempt <- services.tournaments
+                    .start(
+                      gameId = fixture.game.gameId,
+                      tournamentId = offered.tournamentId,
+                      callerExternalId = externalId
+                    )
+                    .attempt
             } yield attempt.left.exists(_.isInstanceOf[ConflictError])
             result.timeout(15.seconds).unsafeRunSync()
         }
@@ -399,21 +504,40 @@ class GameEngineServiceSpec extends PropertySuite {
     property("a challenge is started by its owner and nobody else") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
-                val services = TestServices.servicesWith(StubEngine())
+                val services = TestServices.servicesWith(engine = StubEngine())
                 val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    found <- opponent(services, fixture, s"other-$nickname", otherExternalId)
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
+                    found <- opponent(
+                      services = services,
+                      fixture = fixture,
+                      nickname = s"other-$nickname",
+                      externalId = otherExternalId
+                    )
                     (other, otherCharacter) = found
                     t <- Challenges.offered(
-                      services,
-                      fixture.game,
-                      List(
+                      services = services,
+                      game = fixture.game,
+                      seats = List(
                         Challenges
-                            .Seat(fixture.owner, fixture.game.roles(0).gameRoleId, Some(fixture.character.characterId)),
-                        Challenges.Seat(other, fixture.game.roles(1).gameRoleId, Some(otherCharacter.characterId))
+                            .Seat(
+                              player = fixture.owner,
+                              role = fixture.game.roles(0).gameRoleId,
+                              character = Some(fixture.character.characterId)
+                            ),
+                        Challenges.Seat(
+                          player = other,
+                          role = fixture.game.roles(1).gameRoleId,
+                          character = Some(otherCharacter.characterId)
+                        )
                       )
                     )
-                    attempt <- services.tournaments.start(fixture.game.gameId, t, otherExternalId).attempt
+                    attempt <- services.tournaments
+                        .start(gameId = fixture.game.gameId, tournamentId = t, callerExternalId = otherExternalId)
+                        .attempt
                 } yield attempt.left.exists(_.isInstanceOf[UnauthorizedError])
                 result.timeout(30.seconds).unsafeRunSync()
         }
@@ -426,30 +550,51 @@ class GameEngineServiceSpec extends PropertySuite {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 // Settled in the call, so that the failed attempt has been made and undone by the time the last role is
                 // chosen, rather than racing the reads below on a fiber of its own.
-                val failing = TestServices.servicesInline(new StubEngine(isFailing = true))
-                val working = TestServices.servicesWith(StubEngine())
+                val failing = TestServices.servicesInline(engine = new StubEngine(isFailing = true))
+                val working = TestServices.servicesWith(engine = StubEngine())
                 val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    found <- opponent(failing, fixture, s"other-$nickname", otherExternalId)
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
+                    found <- opponent(
+                      services = failing,
+                      fixture = fixture,
+                      nickname = s"other-$nickname",
+                      externalId = otherExternalId
+                    )
                     (other, otherCharacter) = found
                     seats = List(
                       Challenges
-                          .Seat(fixture.owner, fixture.game.roles(0).gameRoleId, Some(fixture.character.characterId)),
-                      Challenges.Seat(other, fixture.game.roles(1).gameRoleId, Some(otherCharacter.characterId))
+                          .Seat(
+                            player = fixture.owner,
+                            role = fixture.game.roles(0).gameRoleId,
+                            character = Some(fixture.character.characterId)
+                          ),
+                      Challenges.Seat(
+                        player = other,
+                        role = fixture.game.roles(1).gameRoleId,
+                        character = Some(otherCharacter.characterId)
+                      )
                     )
-                    t <- Challenges.offered(failing, fixture.game, seats)
-                    _ <- failing.tournaments.start(fixture.game.gameId, t, externalId)
+                    t <- Challenges.offered(services = failing, game = fixture.game, seats = seats)
+                    _ <- failing.tournaments.start(
+                      gameId = fixture.game.gameId,
+                      tournamentId = t,
+                      callerExternalId = externalId
+                    )
                     matchId <- Challenges.choose(
-                      failing,
-                      fixture.game,
-                      t,
-                      seats,
-                      fixture.owner,
+                      services = failing,
+                      game = fixture.game,
+                      t = t,
+                      seats = seats,
+                      viewer = fixture.owner,
                       settled = _ == TournamentMatchStatus.Due
                     )
                     stranded <- matchOf(fixture.game.gameId, matchId)
                     before <- failing.matches.active(externalId)
-                    _ <- working.rounds.createMatch(fixture.game.gameId, t, matchId)
+                    _ <- working.rounds.createMatch(gameId = fixture.game.gameId, tournamentId = t, matchId = matchId)
                     created <- matchOf(fixture.game.gameId, matchId)
                     after <- working.matches.active(externalId)
                 } yield stranded.exists(m => m.status == MatchStatus.Due && m.playUrl.isEmpty) &&
@@ -462,29 +607,40 @@ class GameEngineServiceSpec extends PropertySuite {
 
     property("a move callback moves the turn on, and is authorized by the game's external id") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val services = TestServices.servicesWith(StubEngine())
+            val services = TestServices.servicesWith(engine = StubEngine())
             val prevMoveAt = Instant.parse("2030-01-01T00:00:00Z")
             // The engine reports when the move was made; the deadline for whoever moves next is that
             // plus the match's time limit.
             val due = prevMoveAt.plusSeconds(300)
             val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                started <- begin(fixture, challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(5))))
+                fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
+                started <- begin(
+                  fixture = fixture,
+                  terms = challengeFor(fixture = fixture, timeLimit = Some(Duration.ofMinutes(5)))
+                )
                 participants <- participantsOf(started)
                 seat = participants.head.participantId
                 // A player's own token is not a game's secret, and the callback is the game's route.
                 refused <- services.engine
-                    .recordMove(fixture.game.gameId, started.matchId, seat, Nil, prevMoveAt, prevMoveAt, externalId)
+                    .recordMove(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      moved = seat,
+                      next = Nil,
+                      takenAt = prevMoveAt,
+                      startedAt = prevMoveAt,
+                      callerExternalId = externalId
+                    )
                     .attempt
                 _ <- services.engine
                     .recordMove(
-                      fixture.game.gameId,
-                      started.matchId,
-                      seat,
-                      List(seat),
-                      prevMoveAt,
-                      started.start.get,
-                      gameExternalId
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      moved = seat,
+                      next = List(seat),
+                      takenAt = prevMoveAt,
+                      startedAt = started.start.get,
+                      callerExternalId = gameExternalId
                     )
                 after <- participantsOf(started)
             } yield refused.left.exists(_.isInstanceOf[UnauthorizedError]) &&
@@ -509,9 +665,9 @@ class GameEngineServiceSpec extends PropertySuite {
         pending: List[(Participant, Instant)]
     ): IO[Unit] =
         services.engine.recordMove(
-          fixture.game.gameId,
-          started.matchId,
-          moved.participantId,
+          gameId = fixture.game.gameId,
+          matchId = started.matchId,
+          moved = moved.participantId,
           next = Nil,
           takenAt = takenAt,
           startedAt = startedAt,
@@ -522,33 +678,42 @@ class GameEngineServiceSpec extends PropertySuite {
     property("a round's resolving move arriving before the round's first move leaves both seats pending") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
-                val services = TestServices.servicesWith(StubEngine())
+                val services = TestServices.servicesWith(engine = StubEngine())
                 val roundOne = Instant.parse("2030-01-01T00:00:00Z")
                 val firstPlan = roundOne.plusSeconds(60)
                 val roundTwo = roundOne.plusSeconds(90)
                 val result = for {
                     seated <- twoSeats(
-                      services,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       challenge = challengeFor(_, timeLimit = Some(Duration.ofMinutes(5)))
                     )
                     (fixture, started, mine, theirs) = seated
                     // Theirs resolved round one and started round two for both seats...
                     _ <- callback(
-                      services,
-                      fixture,
-                      started,
-                      theirs,
-                      roundTwo,
-                      roundOne,
-                      2,
-                      List(mine -> roundTwo, theirs -> roundTwo)
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = theirs,
+                      takenAt = roundTwo,
+                      startedAt = roundOne,
+                      sequence = 2,
+                      pending = List(mine -> roundTwo, theirs -> roundTwo)
                     )
                     // ...and mine, the round's first plan, lands afterwards, saying only theirs was pending.
-                    _ <- callback(services, fixture, started, mine, firstPlan, roundOne, 1, List(theirs -> roundOne))
+                    _ <- callback(
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = mine,
+                      takenAt = firstPlan,
+                      startedAt = roundOne,
+                      sequence = 1,
+                      pending = List(theirs -> roundOne)
+                    )
                     after <- participantsOf(started)
                     turns <- turnsOf(started)
                 } yield after.forall(_.isPending) &&
@@ -562,24 +727,39 @@ class GameEngineServiceSpec extends PropertySuite {
     property("numbered moves applied in order leave the seats as the latest move says") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
-                val services = TestServices.servicesWith(StubEngine())
+                val services = TestServices.servicesWith(engine = StubEngine())
                 val roundOne = Instant.parse("2030-01-01T00:00:00Z")
                 val firstPlan = roundOne.plusSeconds(60)
                 val roundTwo = roundOne.plusSeconds(90)
                 val result = for {
-                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
                     (fixture, started, mine, theirs) = seated
-                    _ <- callback(services, fixture, started, mine, firstPlan, roundOne, 1, List(theirs -> roundOne))
+                    _ <- callback(
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = mine,
+                      takenAt = firstPlan,
+                      startedAt = roundOne,
+                      sequence = 1,
+                      pending = List(theirs -> roundOne)
+                    )
                     between <- participantsOf(started)
                     _ <- callback(
-                      services,
-                      fixture,
-                      started,
-                      theirs,
-                      roundTwo,
-                      roundOne,
-                      2,
-                      List(mine -> roundTwo, theirs -> roundTwo)
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = theirs,
+                      takenAt = roundTwo,
+                      startedAt = roundOne,
+                      sequence = 2,
+                      pending = List(mine -> roundTwo, theirs -> roundTwo)
                     )
                     after <- participantsOf(started)
                 } yield between.find(_.participantId == mine.participantId).exists(!_.isPending) &&
@@ -594,21 +774,36 @@ class GameEngineServiceSpec extends PropertySuite {
     property("a first throw arriving after the second leaves nobody pending") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
-                val services = TestServices.servicesWith(StubEngine())
+                val services = TestServices.servicesWith(engine = StubEngine())
                 val created = Instant.parse("2030-01-01T00:00:00Z")
                 val result = for {
-                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
                     (fixture, started, mine, theirs) = seated
-                    _ <- callback(services, fixture, started, theirs, created.plusSeconds(20), created, 2, Nil)
                     _ <- callback(
-                      services,
-                      fixture,
-                      started,
-                      mine,
-                      created.plusSeconds(10),
-                      created,
-                      1,
-                      List(theirs -> created)
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = theirs,
+                      takenAt = created.plusSeconds(20),
+                      startedAt = created,
+                      sequence = 2,
+                      pending = Nil
+                    )
+                    _ <- callback(
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = mine,
+                      takenAt = created.plusSeconds(10),
+                      startedAt = created,
+                      sequence = 1,
+                      pending = List(theirs -> created)
                     )
                     after <- participantsOf(started)
                 } yield after.forall(!_.isPending)
@@ -619,32 +814,47 @@ class GameEngineServiceSpec extends PropertySuite {
     property("a repeated callback changes nothing the first delivery did not") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
-                val services = TestServices.servicesWith(StubEngine())
+                val services = TestServices.servicesWith(engine = StubEngine())
                 val created = Instant.parse("2030-01-01T00:00:00Z")
                 val result = for {
-                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
                     (fixture, started, mine, theirs) = seated
                     _ <- callback(
-                      services,
-                      fixture,
-                      started,
-                      mine,
-                      created.plusSeconds(10),
-                      created,
-                      1,
-                      List(theirs -> created)
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = mine,
+                      takenAt = created.plusSeconds(10),
+                      startedAt = created,
+                      sequence = 1,
+                      pending = List(theirs -> created)
                     )
                     _ <- callback(
-                      services,
-                      fixture,
-                      started,
-                      theirs,
-                      created.plusSeconds(20),
-                      created,
-                      2,
-                      List(mine -> created.plusSeconds(20))
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = theirs,
+                      takenAt = created.plusSeconds(20),
+                      startedAt = created,
+                      sequence = 2,
+                      pending = List(mine -> created.plusSeconds(20))
                     )
-                    _ <- callback(services, fixture, started, theirs, created.plusSeconds(20), created, 2, Nil)
+                    _ <- callback(
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = theirs,
+                      takenAt = created.plusSeconds(20),
+                      startedAt = created,
+                      sequence = 2,
+                      pending = Nil
+                    )
                     after <- participantsOf(started)
                     turns <- turnsOf(started)
                 } yield after.find(_.participantId == mine.participantId).exists(_.isPending) &&
@@ -658,20 +868,26 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val created = Instant.parse("2030-01-01T00:00:00Z")
                 val result = for {
-                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
                     (fixture, started, mine, theirs) = seated
                     _ <- callback(
-                      services,
-                      fixture,
-                      started,
-                      theirs,
-                      created.plusSeconds(20),
-                      created,
-                      2,
-                      List(mine -> created.plusSeconds(20), theirs -> created.plusSeconds(20))
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = theirs,
+                      takenAt = created.plusSeconds(20),
+                      startedAt = created,
+                      sequence = 2,
+                      pending = List(mine -> created.plusSeconds(20), theirs -> created.plusSeconds(20))
                     )
                     // The engine answered before move 2: only theirs pending.
                     _ <- IO {
@@ -679,13 +895,13 @@ class GameEngineServiceSpec extends PropertySuite {
                           isCompleted = false,
                           participants = List(
                             EngineParticipantStatus(
-                              mine.participantId.value,
+                              participantId = mine.participantId.value,
                               isPending = false,
                               isCompleted = false,
                               None
                             ),
                             EngineParticipantStatus(
-                              theirs.participantId.value,
+                              participantId = theirs.participantId.value,
                               isPending = true,
                               isCompleted = false,
                               Some(created)
@@ -694,11 +910,19 @@ class GameEngineServiceSpec extends PropertySuite {
                           sequence = Some(1)
                         )
                     }
-                    _ <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                    _ <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
                     stale <- participantsOf(started)
                     // An answer as new as the move is applied.
                     _ <- IO { engine.status = engine.status.copy(sequence = Some(3)) }
-                    _ <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                    _ <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
                     fresh <- participantsOf(started)
                 } yield stale.forall(_.isPending) &&
                     fresh.find(_.participantId == mine.participantId).exists(!_.isPending) &&
@@ -713,21 +937,27 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val created = Instant.parse("2030-01-01T00:00:00Z")
                 val result = for {
-                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
                     (fixture, started, mine, theirs) = seated
                     // Only the first move's callback arrives.
                     _ <- callback(
-                      services,
-                      fixture,
-                      started,
-                      mine,
-                      created.plusSeconds(10),
-                      created,
-                      1,
-                      List(theirs -> created.plusSeconds(10))
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = mine,
+                      takenAt = created.plusSeconds(10),
+                      startedAt = created,
+                      sequence = 1,
+                      pending = List(theirs -> created.plusSeconds(10))
                     )
                     // The engine has both, the second being the move that ended the match.
                     _ <- IO {
@@ -735,23 +965,37 @@ class GameEngineServiceSpec extends PropertySuite {
                           isCompleted = true,
                           participants = Nil,
                           turns = List(
-                            EngineTurn(mine.participantId.value, created.plusSeconds(10), Some(created)),
                             EngineTurn(
-                              theirs.participantId.value,
-                              created.plusSeconds(40),
-                              Some(created.plusSeconds(10))
+                              participantId = mine.participantId.value,
+                              takenAt = created.plusSeconds(10),
+                              startedAt = Some(created)
+                            ),
+                            EngineTurn(
+                              participantId = theirs.participantId.value,
+                              takenAt = created.plusSeconds(40),
+                              startedAt = Some(created.plusSeconds(10))
                             )
                           )
                         )
                     }
                     _ <- services.engine.recordResults(
-                      fixture.game.gameId,
-                      started.matchId,
-                      List(
-                        ReportedResult(mine.participantId, rank = 1, scores = Map.empty, isWinner = true),
-                        ReportedResult(theirs.participantId, rank = 2, scores = Map.empty, isWinner = false)
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      results = List(
+                        ReportedResult(
+                          participantId = mine.participantId,
+                          rank = 1,
+                          scores = Map.empty,
+                          isWinner = true
+                        ),
+                        ReportedResult(
+                          participantId = theirs.participantId,
+                          rank = 2,
+                          scores = Map.empty,
+                          isWinner = false
+                        )
                       ),
-                      gameExternalId
+                      callerExternalId = gameExternalId
                     )
                     turns <- turnsOf(started)
                     ended <- matchOf(fixture.game.gameId, started.matchId)
@@ -770,18 +1014,34 @@ class GameEngineServiceSpec extends PropertySuite {
     property("a summary sent with the results is stored cleaned, and the completed match carries it") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
-                val services = TestServices.servicesWith(StubEngine())
+                val services = TestServices.servicesWith(engine = StubEngine())
                 val result = for {
-                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
                     (fixture, started, mine, theirs) = seated
                     _ <- services.engine.recordResults(
-                      fixture.game.gameId,
-                      started.matchId,
-                      List(
-                        ReportedResult(mine.participantId, rank = 1, scores = Map.empty, isWinner = true),
-                        ReportedResult(theirs.participantId, rank = 2, scores = Map.empty, isWinner = false)
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      results = List(
+                        ReportedResult(
+                          participantId = mine.participantId,
+                          rank = 1,
+                          scores = Map.empty,
+                          isWinner = true
+                        ),
+                        ReportedResult(
+                          participantId = theirs.participantId,
+                          rank = 2,
+                          scores = Map.empty,
+                          isWinner = false
+                        )
                       ),
-                      gameExternalId,
+                      callerExternalId = gameExternalId,
                       turns = Some(Nil),
                       summary = Some("<strong>me</strong> won<script>alert(1)</script>")
                     )
@@ -798,36 +1058,60 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 @volatile var asked = 0
-                val services = TestServices.servicesWith(StubEngine(beforeStatus = IO { asked += 1 }))
+                val services = TestServices.servicesWith(engine = StubEngine(beforeStatus = IO { asked += 1 }))
                 val created = Instant.parse("2030-01-01T00:00:00Z")
                 val result = for {
-                    seated <- twoSeats(services, nickname, externalId, gameExternalId, otherExternalId)
+                    seated <- twoSeats(
+                      services = services,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId
+                    )
                     (fixture, started, mine, theirs) = seated
                     // Only the first move's callback arrived; the results carry both.
                     _ <- callback(
-                      services,
-                      fixture,
-                      started,
-                      mine,
-                      created.plusSeconds(10),
-                      created,
-                      1,
-                      List(theirs -> created.plusSeconds(10))
+                      services = services,
+                      fixture = fixture,
+                      started = started,
+                      moved = mine,
+                      takenAt = created.plusSeconds(10),
+                      startedAt = created,
+                      sequence = 1,
+                      pending = List(theirs -> created.plusSeconds(10))
                     )
                     // `start` asks once, for the opening seats; what matters is the results asking nothing.
                     askedBefore = asked
                     _ <- services.engine.recordResults(
-                      fixture.game.gameId,
-                      started.matchId,
-                      List(
-                        ReportedResult(mine.participantId, rank = 1, scores = Map.empty, isWinner = true),
-                        ReportedResult(theirs.participantId, rank = 2, scores = Map.empty, isWinner = false)
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      results = List(
+                        ReportedResult(
+                          participantId = mine.participantId,
+                          rank = 1,
+                          scores = Map.empty,
+                          isWinner = true
+                        ),
+                        ReportedResult(
+                          participantId = theirs.participantId,
+                          rank = 2,
+                          scores = Map.empty,
+                          isWinner = false
+                        )
                       ),
-                      gameExternalId,
+                      callerExternalId = gameExternalId,
                       turns = Some(
                         List(
-                          EngineTurn(mine.participantId.value, created.plusSeconds(10), Some(created)),
-                          EngineTurn(theirs.participantId.value, created.plusSeconds(40), Some(created.plusSeconds(10)))
+                          EngineTurn(
+                            participantId = mine.participantId.value,
+                            takenAt = created.plusSeconds(10),
+                            startedAt = Some(created)
+                          ),
+                          EngineTurn(
+                            participantId = theirs.participantId.value,
+                            takenAt = created.plusSeconds(40),
+                            startedAt = Some(created.plusSeconds(10))
+                          )
                         )
                       )
                     )
@@ -845,18 +1129,21 @@ class GameEngineServiceSpec extends PropertySuite {
 
     property("results whose turns name someone not in the match are refused, and nothing is written") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val services = TestServices.servicesWith(StubEngine())
+            val services = TestServices.servicesWith(engine = StubEngine())
             val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                started <- begin(fixture, challengeFor(fixture))
+                fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
+                started <- begin(fixture = fixture, terms = challengeFor(fixture = fixture))
                 seat <- participantsOf(started).map(_.head.participantId)
                 refused <- services.engine
                     .recordResults(
-                      fixture.game.gameId,
-                      started.matchId,
-                      List(ReportedResult(seat, rank = 1, scores = Map.empty, isWinner = true)),
-                      gameExternalId,
-                      turns = Some(List(EngineTurn(Long.MaxValue, Instant.parse("2030-01-01T00:00:00Z"))))
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      results =
+                          List(ReportedResult(participantId = seat, rank = 1, scores = Map.empty, isWinner = true)),
+                      callerExternalId = gameExternalId,
+                      turns = Some(
+                        List(EngineTurn(participantId = Long.MaxValue, takenAt = Instant.parse("2030-01-01T00:00:00Z")))
+                      )
                     )
                     .attempt
                 ended <- matchOf(fixture.game.gameId, started.matchId)
@@ -871,17 +1158,17 @@ class GameEngineServiceSpec extends PropertySuite {
     property("an engine that cannot be asked for its turns does not fail the results".tag(Quiet)) {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val services = TestServices.servicesWith(
-              StubEngine(beforeStatus = IO.raiseError(GameEngineError("engine is down")))
+              engine = StubEngine(beforeStatus = IO.raiseError(GameEngineError("engine is down")))
             )
             val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                started <- begin(fixture, challengeFor(fixture))
+                fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
+                started <- begin(fixture = fixture, terms = challengeFor(fixture = fixture))
                 seat <- participantsOf(started).map(_.head.participantId)
                 _ <- services.engine.recordResults(
-                  fixture.game.gameId,
-                  started.matchId,
-                  List(ReportedResult(seat, rank = 1, scores = Map.empty, isWinner = true)),
-                  gameExternalId
+                  gameId = fixture.game.gameId,
+                  matchId = started.matchId,
+                  results = List(ReportedResult(participantId = seat, rank = 1, scores = Map.empty, isWinner = true)),
+                  callerExternalId = gameExternalId
                 )
                 ended <- matchOf(fixture.game.gameId, started.matchId)
             } yield ended.exists(_.isCompleted)
@@ -905,14 +1192,14 @@ class GameEngineServiceSpec extends PropertySuite {
                         duringStatus = IO.unit
                         once
                     })
-                    val services = TestServices.servicesWith(engine)
+                    val services = TestServices.servicesWith(engine = engine)
                     for {
                         seated <- twoSeats(
-                          services,
-                          s"$nickname-$suffix",
-                          s"$externalId-$suffix",
-                          s"$gameExternalId-$suffix",
-                          s"$otherExternalId-$suffix"
+                          services = services,
+                          nickname = s"$nickname-$suffix",
+                          externalId = s"$externalId-$suffix",
+                          gameExternalId = s"$gameExternalId-$suffix",
+                          otherExternalId = s"$otherExternalId-$suffix"
                         )
                         (fixture, started, mine, theirs) = seated
                         _ <- IO {
@@ -920,13 +1207,13 @@ class GameEngineServiceSpec extends PropertySuite {
                               isCompleted = false,
                               participants = List(
                                 EngineParticipantStatus(
-                                  mine.participantId.value,
+                                  participantId = mine.participantId.value,
                                   isPending = true,
                                   isCompleted = false,
                                   Some(created)
                                 ),
                                 EngineParticipantStatus(
-                                  theirs.participantId.value,
+                                  participantId = theirs.participantId.value,
                                   isPending = true,
                                   isCompleted = false,
                                   Some(created)
@@ -937,31 +1224,41 @@ class GameEngineServiceSpec extends PropertySuite {
                             duringStatus = for {
                                 _ <- sequence.traverse_(_ =>
                                     callback(
-                                      services,
-                                      fixture,
-                                      started,
-                                      theirs,
-                                      created.plusSeconds(30),
-                                      created,
-                                      2,
-                                      Nil
+                                      services = services,
+                                      fixture = fixture,
+                                      started = started,
+                                      moved = theirs,
+                                      takenAt = created.plusSeconds(30),
+                                      startedAt = created,
+                                      sequence = 2,
+                                      pending = Nil
                                     )
                                 )
                                 _ <- services.engine.recordResults(
-                                  fixture.game.gameId,
-                                  started.matchId,
-                                  List(
-                                    ReportedResult(mine.participantId, rank = 1, scores = Map.empty, isWinner = true),
-                                    ReportedResult(theirs.participantId, rank = 2, scores = Map.empty, isWinner = false)
+                                  gameId = fixture.game.gameId,
+                                  matchId = started.matchId,
+                                  results = List(
+                                    ReportedResult(
+                                      participantId = mine.participantId,
+                                      rank = 1,
+                                      scores = Map.empty,
+                                      isWinner = true
+                                    ),
+                                    ReportedResult(
+                                      participantId = theirs.participantId,
+                                      rank = 2,
+                                      scores = Map.empty,
+                                      isWinner = false
+                                    )
                                   ),
-                                  fixture.game.externalId
+                                  callerExternalId = fixture.game.externalId
                                 )
                             } yield ()
                         }
                         refreshed <- services.engine.refresh(
-                          fixture.game.gameId,
-                          started.matchId,
-                          s"$externalId-$suffix"
+                          gameId = fixture.game.gameId,
+                          matchId = started.matchId,
+                          callerExternalId = s"$externalId-$suffix"
                         )
                         ended <- matchOf(fixture.game.gameId, started.matchId)
                         seats <- participantsOf(started)
@@ -979,21 +1276,43 @@ class GameEngineServiceSpec extends PropertySuite {
 
     property("a results callback completes the match and writes the result rows") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val services = TestServices.servicesWith(StubEngine())
+            val services = TestServices.servicesWith(engine = StubEngine())
             val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                started <- begin(fixture, challengeFor(fixture))
+                fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
+                started <- begin(fixture = fixture, terms = challengeFor(fixture = fixture))
                 participants <- participantsOf(started)
                 seat = participants.head.participantId
-                reported = ReportedResult(seat, rank = 1, scores = Map("points" -> 42.0), isWinner = true)
-                _ <- services.engine.recordResults(fixture.game.gameId, started.matchId, List(reported), gameExternalId)
+                reported = ReportedResult(
+                  participantId = seat,
+                  rank = 1,
+                  scores = Map("points" -> 42.0),
+                  isWinner = true
+                )
+                _ <- services.engine.recordResults(
+                  gameId = fixture.game.gameId,
+                  matchId = started.matchId,
+                  results = List(reported),
+                  callerExternalId = gameExternalId
+                )
                 stored <- TestSession.resource.use(session => new ResultRepo(session).read(fixture.game.gameId, seat))
                 after <- participantsOf(started)
                 completed <- services.matches.completed(externalId).map(_.matches.toList)
                 // Not just that it is over, but when: the column is a timestamp, and a match completed
                 // by this callback is stamped as the callback runs.
-                reread <- services.engine.read(fixture.game.gameId, started.matchId, externalId)
-            } yield stored.contains(model.Result(fixture.game.gameId, seat, 1, Map("points" -> 42.0), true)) &&
+                reread <- services.engine.read(
+                  gameId = fixture.game.gameId,
+                  matchId = started.matchId,
+                  callerExternalId = externalId
+                )
+            } yield stored.contains(
+              model.Result(
+                gameId = fixture.game.gameId,
+                participantId = seat,
+                rank = 1,
+                scores = Map("points" -> 42.0),
+                isWinner = true
+              )
+            ) &&
                 after.head.isCompleted &&
                 !after.head.isPending &&
                 reread.completedAt.exists(at => !at.isBefore(started.start.get)) &&
@@ -1006,15 +1325,22 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val prevMoveAt = Instant.parse("2031-02-03T04:05:00Z")
                 // The engine says when the turn started; the deadline is that plus the match's own time
                 // limit, which came from the challenge below.
                 val due = prevMoveAt.plusSeconds(600)
                 val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    _ <- services.registration.register(s"other-$nickname", otherExternalId)
-                    started <- begin(fixture, challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(10))))
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
+                    _ <- services.registration.register(nickname = s"other-$nickname", externalId = otherExternalId)
+                    started <- begin(
+                      fixture = fixture,
+                      terms = challengeFor(fixture = fixture, timeLimit = Some(Duration.ofMinutes(10)))
+                    )
                     participants <- participantsOf(started)
                     seat = participants.head.participantId
                     _ <- IO {
@@ -1022,7 +1348,7 @@ class GameEngineServiceSpec extends PropertySuite {
                           isCompleted = false,
                           participants = List(
                             EngineParticipantStatus(
-                              seat.value,
+                              participantId = seat.value,
                               isPending = true,
                               isCompleted = false,
                               prevMoveAt = Some(prevMoveAt)
@@ -1031,8 +1357,18 @@ class GameEngineServiceSpec extends PropertySuite {
                         )
                     }
                     // Only someone playing the match may ask about it.
-                    refused <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId).attempt
-                    refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                    refused <- services.engine
+                        .refresh(
+                          gameId = fixture.game.gameId,
+                          matchId = started.matchId,
+                          callerExternalId = otherExternalId
+                        )
+                        .attempt
+                    refreshed <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
                     after <- participantsOf(started)
                 } yield refused.left.exists(_.isInstanceOf[UnauthorizedError]) &&
                     !refreshed.isCompleted &&
@@ -1050,19 +1386,25 @@ class GameEngineServiceSpec extends PropertySuite {
             // Set up after the fixture, because cancelling needs the match it does not have yet.
             val cancelling: Ref[IO, IO[Unit]] = Ref.unsafe(IO.unit)
             val engine = StubEngine(beforeStatus = cancelling.get.flatten)
-            val services = TestServices.servicesWith(engine)
+            val services = TestServices.servicesWith(engine = engine)
             val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                started <- begin(fixture, challengeFor(fixture))
+                fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
+                started <- begin(fixture = fixture, terms = challengeFor(fixture = fixture))
                 // The engine will claim the match is over, which is the answer that would do the most
                 // damage if it were applied: it completes the match and writes it a finish time.
                 _ <- IO {
                     engine.status = GameStatusResponse(isCompleted = true, participants = Nil)
                 }
                 _ <- cancelling.set(
-                  services.matches.cancel(fixture.game.gameId, started.matchId, externalId).void
+                  services.matches
+                      .cancel(gameId = fixture.game.gameId, matchId = started.matchId, callerExternalId = externalId)
+                      .void
                 )
-                refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                refreshed <- services.engine.refresh(
+                  gameId = fixture.game.gameId,
+                  matchId = started.matchId,
+                  callerExternalId = externalId
+                )
                 reread <- matchOf(fixture.game.gameId, started.matchId)
             } yield refreshed.isCancelled && !refreshed.isCompleted &&
                 reread.exists(m => m.isCancelled && !m.isCompleted)
@@ -1075,10 +1417,10 @@ class GameEngineServiceSpec extends PropertySuite {
     property("refresh leaves the due date unset when the match has no time limit") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val engine = StubEngine()
-            val services = TestServices.servicesWith(engine)
+            val services = TestServices.servicesWith(engine = engine)
             val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                started <- begin(fixture, challengeFor(fixture, timeLimit = None))
+                fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
+                started <- begin(fixture = fixture, terms = challengeFor(fixture = fixture, timeLimit = None))
                 participants <- participantsOf(started)
                 seat = participants.head.participantId
                 _ <- IO {
@@ -1086,7 +1428,7 @@ class GameEngineServiceSpec extends PropertySuite {
                       isCompleted = false,
                       participants = List(
                         EngineParticipantStatus(
-                          seat.value,
+                          participantId = seat.value,
                           isPending = true,
                           isCompleted = false,
                           prevMoveAt = Some(Instant.parse("2031-02-03T04:05:00Z"))
@@ -1094,7 +1436,11 @@ class GameEngineServiceSpec extends PropertySuite {
                       )
                     )
                 }
-                _ <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                _ <- services.engine.refresh(
+                  gameId = fixture.game.gameId,
+                  matchId = started.matchId,
+                  callerExternalId = externalId
+                )
                 after <- participantsOf(started)
             } yield after.head.isPending && after.head.due.isEmpty
             result.timeout(15.seconds).unsafeRunSync()
@@ -1119,10 +1465,19 @@ class GameEngineServiceSpec extends PropertySuite {
         prevMoveAt: Instant
     ): IO[(Fixture, Match, Participant, Participant)] =
         for {
-            fixture <- makeFixture(nickname, externalId, gameExternalId)
-            found <- opponent(services, fixture, s"other-$nickname", otherExternalId)
+            fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
+            found <- opponent(
+              services = services,
+              fixture = fixture,
+              nickname = s"other-$nickname",
+              externalId = otherExternalId
+            )
             (other, otherCharacter) = found
-            started <- begin(fixture, challengeFor(fixture, timeLimit = Some(Duration.ofMinutes(10))), Some(found))
+            started <- begin(
+              fixture = fixture,
+              terms = challengeFor(fixture = fixture, timeLimit = Some(Duration.ofMinutes(10))),
+              other = Some(found)
+            )
             participants <- participantsOf(started)
             mine = participants.find(_.playerId == fixture.owner.playerId).get
             theirs = participants.find(_.playerId == other.playerId).get
@@ -1131,8 +1486,8 @@ class GameEngineServiceSpec extends PropertySuite {
             // than through a refresh, because a refresh is one of the two places the clock is
             // enforced — it would decide the very thing these tests are set up to ask.
             _ <- services.engine.recordMove(
-              fixture.game.gameId,
-              started.matchId,
+              gameId = fixture.game.gameId,
+              matchId = started.matchId,
               moved = theirs.participantId,
               next = List(mine.participantId),
               takenAt = prevMoveAt,
@@ -1148,13 +1503,13 @@ class GameEngineServiceSpec extends PropertySuite {
                   isCompleted = false,
                   participants = List(
                     EngineParticipantStatus(
-                      mine.participantId.value,
+                      participantId = mine.participantId.value,
                       isPending = true,
                       isCompleted = false,
                       prevMoveAt = Some(prevMoveAt)
                     ),
                     EngineParticipantStatus(
-                      theirs.participantId.value,
+                      participantId = theirs.participantId.value,
                       isPending = false,
                       isCompleted = false,
                       prevMoveAt = None
@@ -1177,10 +1532,15 @@ class GameEngineServiceSpec extends PropertySuite {
         challenge: Fixture => Terms = challengeFor(_)
     ): IO[(Fixture, Match, Participant, Participant)] =
         for {
-            fixture <- makeFixture(nickname, externalId, gameExternalId)
-            found <- opponent(services, fixture, s"other-$nickname", otherExternalId)
+            fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
+            found <- opponent(
+              services = services,
+              fixture = fixture,
+              nickname = s"other-$nickname",
+              externalId = otherExternalId
+            )
             (other, _) = found
-            started <- begin(fixture, challenge(fixture), Some(found))
+            started <- begin(fixture = fixture, terms = challenge(fixture), other = Some(found))
             participants <- participantsOf(started)
             mine = participants.find(_.playerId == fixture.owner.playerId).get
             theirs = participants.find(_.playerId == other.playerId).get
@@ -1213,19 +1573,24 @@ class GameEngineServiceSpec extends PropertySuite {
     ): IO[(Fixture, Match, Participant, Participant)] =
         for {
             seated <- twoSeats(
-              services,
-              nickname,
-              externalId,
-              gameExternalId,
-              otherExternalId,
+              services = services,
+              nickname = nickname,
+              externalId = externalId,
+              gameExternalId = gameExternalId,
+              otherExternalId = otherExternalId,
               challenge = fixture =>
-                  challengeFor(fixture, timeLimit = Some(timeLimit), timeLimitKind = kind, start = Some(matchStart))
+                  challengeFor(
+                    fixture = fixture,
+                    timeLimit = Some(timeLimit),
+                    timeLimitKind = kind,
+                    start = Some(matchStart)
+                  )
             )
             (fixture, started, mine, theirs) = seated
             // The challenger moves first, spending firstMoveAt - matchStart of their own budget...
             _ <- services.engine.recordMove(
-              fixture.game.gameId,
-              started.matchId,
+              gameId = fixture.game.gameId,
+              matchId = started.matchId,
               moved = mine.participantId,
               next = List(theirs.participantId),
               takenAt = firstMoveAt,
@@ -1234,8 +1599,8 @@ class GameEngineServiceSpec extends PropertySuite {
             )
             // ...and the other player replies, which puts the challenger back on the clock.
             _ <- services.engine.recordMove(
-              fixture.game.gameId,
-              started.matchId,
+              gameId = fixture.game.gameId,
+              matchId = started.matchId,
               moved = theirs.participantId,
               next = List(mine.participantId),
               takenAt = secondMoveAt,
@@ -1249,13 +1614,13 @@ class GameEngineServiceSpec extends PropertySuite {
                   isCompleted = false,
                   participants = List(
                     EngineParticipantStatus(
-                      mine.participantId.value,
+                      participantId = mine.participantId.value,
                       isPending = true,
                       isCompleted = false,
                       prevMoveAt = Some(secondMoveAt)
                     ),
                     EngineParticipantStatus(
-                      theirs.participantId.value,
+                      participantId = theirs.participantId.value,
                       isPending = false,
                       isCompleted = false,
                       prevMoveAt = None
@@ -1281,24 +1646,28 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     // An hour ago, against a ten-minute limit: fifty minutes over.
                     prepared <- IO.realTimeInstant.map(_.minusSeconds(3600)).flatMap { long_ago =>
                         startedWithClock(
-                          services,
-                          engine,
-                          nickname,
-                          externalId,
-                          gameExternalId,
-                          otherExternalId,
-                          long_ago
+                          services = services,
+                          engine = engine,
+                          nickname = nickname,
+                          externalId = externalId,
+                          gameExternalId = gameExternalId,
+                          otherExternalId = otherExternalId,
+                          prevMoveAt = long_ago
                         )
                     }
                     (fixture, started, mine, theirs) = prepared
                     // Asked by the player who is *not* out of time — the clock is enforced for whoever
                     // looks, not only against the person who looks.
-                    refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId)
+                    refreshed <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = otherExternalId
+                    )
                     results <- resultsOf(started)
                     loser = results.find(_.participantId == mine.participantId)
                     winner = results.find(_.participantId == theirs.participantId)
@@ -1319,17 +1688,17 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     prepared <- IO.realTimeInstant.map(_.minusSeconds(3600)).flatMap { long_ago =>
                         startedWithClock(
-                          services,
-                          engine,
-                          nickname,
-                          externalId,
-                          gameExternalId,
-                          otherExternalId,
-                          long_ago
+                          services = services,
+                          engine = engine,
+                          nickname = nickname,
+                          externalId = externalId,
+                          gameExternalId = gameExternalId,
+                          otherExternalId = otherExternalId,
+                          prevMoveAt = long_ago
                         )
                     }
                     (fixture, started, mine, theirs) = prepared
@@ -1341,13 +1710,13 @@ class GameEngineServiceSpec extends PropertySuite {
                           isCompleted = false,
                           participants = List(
                             EngineParticipantStatus(
-                              mine.participantId.value,
+                              participantId = mine.participantId.value,
                               isPending = false,
                               isCompleted = false,
                               prevMoveAt = None
                             ),
                             EngineParticipantStatus(
-                              theirs.participantId.value,
+                              participantId = theirs.participantId.value,
                               isPending = true,
                               isCompleted = false,
                               prevMoveAt = Some(justNow)
@@ -1355,7 +1724,11 @@ class GameEngineServiceSpec extends PropertySuite {
                           )
                         )
                     }
-                    refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                    refreshed <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
                     results <- resultsOf(started)
                 } yield !refreshed.isCompleted && results.isEmpty
                 result.timeout(15.seconds).unsafeRunSync()
@@ -1370,23 +1743,23 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     prepared <- IO.realTimeInstant.map(_.minusSeconds(3600)).flatMap { longAgo =>
                         startedWithClock(
-                          services,
-                          engine,
-                          nickname,
-                          externalId,
-                          gameExternalId,
-                          otherExternalId,
-                          longAgo
+                          services = services,
+                          engine = engine,
+                          nickname = nickname,
+                          externalId = externalId,
+                          gameExternalId = gameExternalId,
+                          otherExternalId = otherExternalId,
+                          prevMoveAt = longAgo
                         )
                     }
                     (fixture, started, _, _) = prepared
                     // The status call now fails, with the deadline long past and matchmaker's own copy
                     // still saying it is the challenger's turn.
-                    unreachable = TestServices.servicesWith(new GameEngineClient {
+                    unreachable = TestServices.servicesWith(engine = new GameEngineClient {
                         def createGame(
                             gameUrl: String,
                             apiKey: Option[String],
@@ -1401,7 +1774,11 @@ class GameEngineServiceSpec extends PropertySuite {
                             IO.raiseError(GameEngineError("engine is down"))
                     })
                     // `read` is the path that rechecks — `refresh` would fail on the status call itself.
-                    seen <- unreachable.engine.read(fixture.game.gameId, started.matchId, externalId)
+                    seen <- unreachable.engine.read(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
                     results <- resultsOf(started)
                     after <- participantsOf(started)
                 } yield !seen.isCompleted &&
@@ -1418,18 +1795,18 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     start <- IO.realTimeInstant.map(_.minusSeconds(3600))
                     first = start.plusSeconds(240)
                     second = first.plusSeconds(180)
                     prepared <- playedTwice(
-                      services,
-                      engine,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      engine = engine,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       matchStart = start,
                       timeLimit = Duration.ofMinutes(10),
                       kind = TimeLimitKind.Total,
@@ -1457,18 +1834,18 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     start <- IO.realTimeInstant.map(_.minusSeconds(3600))
                     first = start.plusSeconds(240)
                     second = first.plusSeconds(180)
                     prepared <- playedTwice(
-                      services,
-                      engine,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      engine = engine,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       matchStart = start,
                       timeLimit = Duration.ofMinutes(10),
                       kind = TimeLimitKind.Total,
@@ -1494,18 +1871,18 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     start <- IO.realTimeInstant.map(_.minusSeconds(3600))
                     first = start.plusSeconds(240)
                     second = first.plusSeconds(180)
                     prepared <- playedTwice(
-                      services,
-                      engine,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      engine = engine,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       matchStart = start,
                       timeLimit = Duration.ofMinutes(10),
                       kind = TimeLimitKind.Total,
@@ -1532,18 +1909,18 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     start <- IO.realTimeInstant.map(_.minusSeconds(3600))
                     first = start.plusSeconds(240)
                     second = first.plusSeconds(180)
                     prepared <- playedTwice(
-                      services,
-                      engine,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      engine = engine,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       matchStart = start,
                       timeLimit = Duration.ofMinutes(10),
                       kind = TimeLimitKind.PerTurn,
@@ -1568,19 +1945,19 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     now <- IO.realTimeInstant
                     start = now.minusSeconds(3600)
                     first = start.plusSeconds(540)
                     second = now.minusSeconds(120)
                     prepared <- playedTwice(
-                      services,
-                      engine,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      engine = engine,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       matchStart = start,
                       timeLimit = Duration.ofMinutes(10),
                       kind = TimeLimitKind.Total,
@@ -1589,7 +1966,11 @@ class GameEngineServiceSpec extends PropertySuite {
                     )
                     (fixture, started, mine, theirs) = prepared
                     // Asked by the player who is not out of time, as a real opponent would.
-                    refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId)
+                    refreshed <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = otherExternalId
+                    )
                     results <- resultsOf(started)
                 } yield refreshed.isCompleted &&
                     results.forall(_.isForfeit) &&
@@ -1603,19 +1984,19 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     now <- IO.realTimeInstant
                     start = now.minusSeconds(3600)
                     first = start.plusSeconds(540)
                     second = now.minusSeconds(120)
                     prepared <- playedTwice(
-                      services,
-                      engine,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      engine = engine,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       matchStart = start,
                       timeLimit = Duration.ofMinutes(10),
                       kind = TimeLimitKind.PerTurn,
@@ -1623,7 +2004,11 @@ class GameEngineServiceSpec extends PropertySuite {
                       secondMoveAt = second
                     )
                     (fixture, started, _, _) = prepared
-                    refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId)
+                    refreshed <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = otherExternalId
+                    )
                     results <- resultsOf(started)
                 } yield !refreshed.isCompleted && results.isEmpty
                 result.timeout(15.seconds).unsafeRunSync()
@@ -1637,7 +2022,7 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     // Counted back from now, so that the deadline the last of these moves implies is
                     // still ahead of us: this property is about what was recorded and charged, and a
@@ -1649,12 +2034,12 @@ class GameEngineServiceSpec extends PropertySuite {
                     first = second.minusSeconds(180)
                     start = first.minusSeconds(240)
                     prepared <- playedTwice(
-                      services,
-                      engine,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      engine = engine,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       matchStart = start,
                       timeLimit = Duration.ofMinutes(10),
                       kind = TimeLimitKind.Total,
@@ -1669,25 +2054,37 @@ class GameEngineServiceSpec extends PropertySuite {
                           isCompleted = false,
                           participants = List(
                             EngineParticipantStatus(
-                              mine.participantId.value,
+                              participantId = mine.participantId.value,
                               isPending = true,
                               isCompleted = false,
                               prevMoveAt = Some(fourth)
                             ),
                             EngineParticipantStatus(
-                              theirs.participantId.value,
+                              participantId = theirs.participantId.value,
                               isPending = false,
                               isCompleted = false,
                               prevMoveAt = None
                             )
                           ),
                           turns = List(
-                            EngineTurn(mine.participantId.value, third, Some(second)),
-                            EngineTurn(theirs.participantId.value, fourth, Some(third))
+                            EngineTurn(
+                              participantId = mine.participantId.value,
+                              takenAt = third,
+                              startedAt = Some(second)
+                            ),
+                            EngineTurn(
+                              participantId = theirs.participantId.value,
+                              takenAt = fourth,
+                              startedAt = Some(third)
+                            )
                           )
                         )
                     }
-                    refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, otherExternalId)
+                    refreshed <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = otherExternalId
+                    )
                     turns <- turnsOf(started)
                     after <- participantsOf(started)
                     challenger = after.find(_.participantId == mine.participantId).get
@@ -1706,19 +2103,19 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     now <- IO.realTimeInstant
                     second = now.minusSeconds(60)
                     first = second.minusSeconds(180)
                     start = first.minusSeconds(240)
                     prepared <- playedTwice(
-                      services,
-                      engine,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      engine = engine,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       matchStart = start,
                       timeLimit = Duration.ofMinutes(10),
                       kind = TimeLimitKind.Total,
@@ -1752,19 +2149,19 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     now <- IO.realTimeInstant
                     second = now.minusSeconds(60)
                     first = second.minusSeconds(180)
                     start = first.minusSeconds(240)
                     prepared <- playedTwice(
-                      services,
-                      engine,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      engine = engine,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       matchStart = start,
                       timeLimit = Duration.ofMinutes(10),
                       kind = TimeLimitKind.Total,
@@ -1798,19 +2195,19 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     now <- IO.realTimeInstant
                     second = now.minusSeconds(60)
                     first = second.minusSeconds(180)
                     start = first.minusSeconds(240)
                     prepared <- playedTwice(
-                      services,
-                      engine,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      engine = engine,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       matchStart = start,
                       timeLimit = Duration.ofMinutes(10),
                       kind = TimeLimitKind.PerTurn,
@@ -1830,19 +2227,19 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
                     now <- IO.realTimeInstant
                     second = now.minusSeconds(60)
                     first = second.minusSeconds(180)
                     start = first.minusSeconds(240)
                     prepared <- playedTwice(
-                      services,
-                      engine,
-                      nickname,
-                      externalId,
-                      gameExternalId,
-                      otherExternalId,
+                      services = services,
+                      engine = engine,
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId,
+                      otherExternalId = otherExternalId,
                       matchStart = start,
                       timeLimit = Duration.ofMinutes(10),
                       kind = TimeLimitKind.Total,
@@ -1852,13 +2249,23 @@ class GameEngineServiceSpec extends PropertySuite {
                     (fixture, started, mine, theirs) = prepared
                     // The engine ends it, the ordinary way a match finishes.
                     _ <- services.engine.recordResults(
-                      fixture.game.gameId,
-                      started.matchId,
-                      List(
-                        ReportedResult(mine.participantId, rank = 1, scores = Map.empty, isWinner = true),
-                        ReportedResult(theirs.participantId, rank = 2, scores = Map.empty, isWinner = false)
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      results = List(
+                        ReportedResult(
+                          participantId = mine.participantId,
+                          rank = 1,
+                          scores = Map.empty,
+                          isWinner = true
+                        ),
+                        ReportedResult(
+                          participantId = theirs.participantId,
+                          rank = 2,
+                          scores = Map.empty,
+                          isWinner = false
+                        )
                       ),
-                      gameExternalId
+                      callerExternalId = gameExternalId
                     )
                     rows <- services.matches.results(externalId)
                     mineRow = rows.find(_.participantId == mine.participantId).get
@@ -1876,10 +2283,19 @@ class GameEngineServiceSpec extends PropertySuite {
     property("a challenge's match is created under the clock its round duration gives it") {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
-                val services = TestServices.servicesWith(StubEngine())
+                val services = TestServices.servicesWith(engine = StubEngine())
                 val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    made <- challenged(services, fixture, otherExternalId, roundDuration = Some(Duration.ofHours(2)))
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
+                    made <- challenged(
+                      services = services,
+                      fixture = fixture,
+                      otherExternalId = otherExternalId,
+                      roundDuration = Some(Duration.ofHours(2))
+                    )
                     (started, _) = made
                     listed <- services.matches.active(externalId)
                     row = listed.find(_.matchId == started.matchId).get
@@ -1895,10 +2311,14 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = new FirstTurnEngine
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    made <- challenged(services, fixture, otherExternalId)
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
+                    made <- challenged(services = services, fixture = fixture, otherExternalId = otherExternalId)
                     (started, other) = made
                     participants <- participantsOf(started)
                     // The lists the main page's "waiting on you" is drawn from, asked for with no refresh in
@@ -1922,7 +2342,13 @@ class GameEngineServiceSpec extends PropertySuite {
                         apiKey: Option[String],
                         request: CreateGameRequest
                     ): IO[CreateGameResponse] =
-                        IO.pure(CreateGameResponse("https://engine/status/1", "https://engine/play/1", None))
+                        IO.pure(
+                          CreateGameResponse(
+                            statusUrl = "https://engine/status/1",
+                            playUrl = "https://engine/play/1",
+                            publicUrl = None
+                          )
+                        )
                     def status(
                         statusUrl: String,
                         apiKey: Option[String],
@@ -1930,10 +2356,14 @@ class GameEngineServiceSpec extends PropertySuite {
                     ): IO[GameStatusResponse] =
                         IO.raiseError(GameEngineError("status is down"))
                 }
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    made <- challenged(services, fixture, otherExternalId)
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
+                    made <- challenged(services = services, fixture = fixture, otherExternalId = otherExternalId)
                     (started, _) = made
                     participants <- participantsOf(started)
                 } yield started.playUrl.contains("https://engine/play/1") && participants.forall(!_.isPending)
@@ -1943,7 +2373,7 @@ class GameEngineServiceSpec extends PropertySuite {
 
     private def liveChallenge(fixture: Fixture): Terms =
         challengeFor(
-          fixture,
+          fixture = fixture,
           timeLimit = Some(Duration.ofSeconds(30)),
           timeLimitUnit = TimeLimitUnit.Seconds,
           live = true
@@ -1954,13 +2384,17 @@ class GameEngineServiceSpec extends PropertySuite {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
                 val services =
-                    TestServices.servicesWith(engine, callbackBaseUrl = Some("https://matchmaker.example.com"))
+                    TestServices.servicesWith(engine = engine, callbackBaseUrl = Some("https://matchmaker.example.com"))
                 val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
                     made <- challenged(
-                      services,
-                      fixture,
-                      otherExternalId,
+                      services = services,
+                      fixture = fixture,
+                      otherExternalId = otherExternalId,
                       roundDuration = Some(Duration.ofMinutes(1)),
                       live = true
                     )
@@ -1981,10 +2415,19 @@ class GameEngineServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 val engine = StubEngine()
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
-                    made <- challenged(services, fixture, otherExternalId, roundDuration = Some(Duration.ofMinutes(10)))
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
+                    made <- challenged(
+                      services = services,
+                      fixture = fixture,
+                      otherExternalId = otherExternalId,
+                      roundDuration = Some(Duration.ofMinutes(10))
+                    )
                     (started, _) = made
                 } yield !started.isLive && engine.lastRequest.exists(_.live.isEmpty)
                 result.timeout(30.seconds).unsafeRunSync()
@@ -1993,14 +2436,14 @@ class GameEngineServiceSpec extends PropertySuite {
 
     property("a live challenge needs a time to play") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val services = TestServices.servicesWith(StubEngine())
+            val services = TestServices.servicesWith(engine = StubEngine())
             val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
+                fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
                 noLimit <- services.tournaments
                     .createChallenge(
-                      fixture.game.gameId,
-                      ChallengeRequest(characterId = Some(fixture.character.characterId), isLive = true),
-                      externalId
+                      gameId = fixture.game.gameId,
+                      request = ChallengeRequest(characterId = Some(fixture.character.characterId), isLive = true),
+                      callerExternalId = externalId
                     )
                     .attempt
             } yield noLimit.left.exists(_.isInstanceOf[ValidationError])
@@ -2015,18 +2458,26 @@ class GameEngineServiceSpec extends PropertySuite {
             (nickname, externalId, gameExternalId, otherExternalId) =>
                 // Names the first seat as the one to move, which an ordinary match would record.
                 val engine = new FirstTurnEngine
-                val services = TestServices.servicesWith(engine)
+                val services = TestServices.servicesWith(engine = engine)
                 val result = for {
-                    fixture <- makeFixture(nickname, externalId, gameExternalId)
+                    fixture <- makeFixture(
+                      nickname = nickname,
+                      externalId = externalId,
+                      gameExternalId = gameExternalId
+                    )
                     made <- challenged(
-                      services,
-                      fixture,
-                      otherExternalId,
+                      services = services,
+                      fixture = fixture,
+                      otherExternalId = otherExternalId,
                       roundDuration = Some(Duration.ofMinutes(1)),
                       live = true
                     )
                     (started, _) = made
-                    refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                    refreshed <- services.engine.refresh(
+                      gameId = fixture.game.gameId,
+                      matchId = started.matchId,
+                      callerExternalId = externalId
+                    )
                     participants <- participantsOf(started)
                     due <- services.matches.due(externalId)
                     active <- services.matches.active(externalId)
@@ -2040,14 +2491,25 @@ class GameEngineServiceSpec extends PropertySuite {
 
     property("a live match the engine ends by forfeit is recorded as a forfeit") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
-            val services = TestServices.servicesWith(StubEngine())
+            val services = TestServices.servicesWith(engine = StubEngine())
             val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                started <- begin(fixture, liveChallenge(fixture))
+                fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
+                started <- begin(fixture = fixture, terms = liveChallenge(fixture))
                 participants <- participantsOf(started)
                 seat = participants.head.participantId
-                reported = ReportedResult(seat, rank = 2, scores = Map.empty, isWinner = false, isForfeit = true)
-                _ <- services.engine.recordResults(fixture.game.gameId, started.matchId, List(reported), gameExternalId)
+                reported = ReportedResult(
+                  participantId = seat,
+                  rank = 2,
+                  scores = Map.empty,
+                  isWinner = false,
+                  isForfeit = true
+                )
+                _ <- services.engine.recordResults(
+                  gameId = fixture.game.gameId,
+                  matchId = started.matchId,
+                  results = List(reported),
+                  callerExternalId = gameExternalId
+                )
                 results <- resultsOf(started)
                 reread <- matchOf(fixture.game.gameId, started.matchId)
             } yield results.exists(r => r.participantId == seat && r.isForfeit && !r.isWinner) &&
@@ -2061,12 +2523,16 @@ class GameEngineServiceSpec extends PropertySuite {
     property("a live match that Refresh finds over has every seat retired, and leaves the active list") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, gameExternalId) =>
             val engine = StubEngine()
-            val services = TestServices.servicesWith(engine)
+            val services = TestServices.servicesWith(engine = engine)
             val result = for {
-                fixture <- makeFixture(nickname, externalId, gameExternalId)
-                started <- begin(fixture, liveChallenge(fixture))
+                fixture <- makeFixture(nickname = nickname, externalId = externalId, gameExternalId = gameExternalId)
+                started <- begin(fixture = fixture, terms = liveChallenge(fixture))
                 _ <- IO { engine.status = GameStatusResponse(isCompleted = true, participants = Nil) }
-                refreshed <- services.engine.refresh(fixture.game.gameId, started.matchId, externalId)
+                refreshed <- services.engine.refresh(
+                  gameId = fixture.game.gameId,
+                  matchId = started.matchId,
+                  callerExternalId = externalId
+                )
                 participants <- participantsOf(started)
                 active <- services.matches.active(externalId)
             } yield refreshed.isCompleted &&

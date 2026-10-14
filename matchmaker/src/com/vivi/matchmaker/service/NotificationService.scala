@@ -50,7 +50,7 @@ class NotificationService(sessionPool: SessionPool) {
                             .read(address)
                             .map(_.filter(_.isActive(Instant.now())).map(EmailSuppression.Notice.of))
                 }
-            } yield NotificationSettings(overall, games, suppressed)
+            } yield NotificationSettings(player = overall, games = games, suppressed = suppressed)
         }
 
     /** Records the caller's defaults, and optionally carries them downwards.
@@ -94,10 +94,10 @@ class NotificationService(sessionPool: SessionPool) {
                         _ <- repo.updateForPlayer(player.playerId, preferences)
                         // Nothing changed is nothing to carry anywhere, whatever was ticked.
                         _ <- IO.whenA(applyToGames && changed.nonEmpty)(
-                          repo.alignGamesWithPlayer(player.playerId, preferences, changed)
+                          repo.alignGamesWithPlayer(id = player.playerId, preferences = preferences, changed = changed)
                         )
                         _ <- IO.whenA(applyToMatches && changed.nonEmpty)(
-                          repo.applyToMatches(player.playerId, None, changed)
+                          repo.applyToMatches(id = player.playerId, game = None, changed = changed)
                         )
                     } yield ()
                 }
@@ -140,9 +140,9 @@ class NotificationService(sessionPool: SessionPool) {
                     _ <- repo.lockSettings(player.playerId)
                     before <- repo.readForPlayerGame(player.playerId, gameId)
                     changed = before.differences(preferences)
-                    _ <- repo.updateForPlayerGame(player.playerId, gameId, preferences)
+                    _ <- repo.updateForPlayerGame(id = player.playerId, game = gameId, preferences = preferences)
                     _ <- IO.whenA(applyToMatches && changed.nonEmpty)(
-                      repo.applyToMatches(player.playerId, Some(gameId), changed)
+                      repo.applyToMatches(id = player.playerId, game = Some(gameId), changed = changed)
                     )
                 } yield ()
             }
@@ -163,15 +163,17 @@ class NotificationService(sessionPool: SessionPool) {
             for {
                 player <- callerPlayer(session, callerExternalId)
                 // The read itself is the membership check: no seat, no row.
-                preferences <- repo.readForPlayerInMatch(gameId, matchId, player.playerId).flatMap {
-                    case Some(found) => IO.pure(found)
-                    case None =>
-                        IO.raiseError(
-                          NotFoundError(
-                            s"player ${player.playerId.value} has no seat in match ${matchId.value} of game ${gameId.value}"
-                          )
-                        )
-                }
+                preferences <- repo
+                    .readForPlayerInMatch(gameId = gameId, matchId = matchId, playerId = player.playerId)
+                    .flatMap {
+                        case Some(found) => IO.pure(found)
+                        case None =>
+                            IO.raiseError(
+                              NotFoundError(
+                                s"player ${player.playerId.value} has no seat in match ${matchId.value} of game ${gameId.value}"
+                              )
+                            )
+                    }
             } yield preferences
         }
 
@@ -193,7 +195,12 @@ class NotificationService(sessionPool: SessionPool) {
             session.transaction.use { _ =>
                 for {
                     player <- callerPlayer(session, callerExternalId)
-                    written <- repo.updateForPlayerInMatch(gameId, matchId, player.playerId, preferences)
+                    written <- repo.updateForPlayerInMatch(
+                      gameId = gameId,
+                      matchId = matchId,
+                      playerId = player.playerId,
+                      preferences = preferences
+                    )
                     _ <- IO.raiseUnless(written)(
                       NotFoundError(
                         s"player ${player.playerId.value} has no seat in match ${matchId.value} of game ${gameId.value}"

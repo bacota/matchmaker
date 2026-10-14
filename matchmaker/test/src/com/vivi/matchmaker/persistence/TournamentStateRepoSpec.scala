@@ -60,38 +60,38 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
 
     private def normal(n: Node): NNode =
         NNode(
-          n.path,
-          n.members.sortBy(_.entrant),
-          if (n.isFinished) -1 else n.stage,
-          if (n.isFinished) -1 else n.repetition,
-          n.runs.map(r =>
+          path = n.path,
+          members = n.members.sortBy(_.entrant),
+          stage = if (n.isFinished) -1 else n.stage,
+          repetition = if (n.isFinished) -1 else n.repetition,
+          runs = n.runs.map(r =>
               NRun(
-                r.stage,
-                r.repetition,
-                r.pools.map(p =>
+                stage = r.stage,
+                repetition = r.repetition,
+                pools = r.pools.map(p =>
                     NPool(
-                      p.stratum,
-                      p.members.sortBy(_.entrant),
-                      p.matches
+                      stratum = p.stratum,
+                      members = p.members.sortBy(_.entrant),
+                      matches = p.matches
                           .map(m =>
                               NMatch(
-                                m.planned.seats.map(_.entrant).sorted,
-                                m.planned.isRubber,
-                                m.canTie,
-                                m.round,
-                                m.outcome.map(_.sortBy(_.entrant))
+                                seats = m.planned.seats.map(_.entrant).sorted,
+                                isRubber = m.planned.isRubber,
+                                canTie = m.canTie,
+                                round = m.round,
+                                outcome = m.outcome.map(_.sortBy(_.entrant))
                               )
                           )
                           .sortBy(m => (m.round.getOrElse(Int.MaxValue), m.seats.mkString(","), m.isRubber)),
-                      p.sub.map(normal),
-                      p.isCompleted
+                      sub = p.sub.map(normal),
+                      isCompleted = p.isCompleted
                     )
                 ),
-                r.sittingOut.sorted,
-                r.isCompleted
+                sittingOut = r.sittingOut.sorted,
+                isCompleted = r.isCompleted
               )
           ),
-          n.ranking
+          ranking = n.ranking
         )
 
     // ---- playing through the database ----
@@ -105,7 +105,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
             for {
                 game <- new GameRepo[String](session).create(Generators.genGame(GameType.Plain).sample.get)
                 owner <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
-                made <- TournamentFixtures.tournament(session, game, owner.playerId, key)
+                made <- TournamentFixtures.tournament(session = session, game = game, owner = owner.playerId, key = key)
                 t = poolSize.fold(made)(p => made.copy(defaultPoolSize = p))
                 _ <- new TournamentRepo(session).update(
                   t.copy(status = TournamentStatus.Running, startedAt = Some(java.time.Instant.now()))
@@ -115,20 +115,27 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                         .create(Generators.genPlayer.sample.get)
                         .flatMap(p =>
                             new EntrantRepo(session)
-                                .create(game.gameId, GameType.Plain, t.tournamentId, p.playerId, None, 1500)
+                                .create(
+                                  game = game.gameId,
+                                  gt = GameType.Plain,
+                                  tournament = t.tournamentId,
+                                  player = p.playerId,
+                                  character = None,
+                                  rating = 1500
+                                )
                         )
                 }
                 design <- new StageRepo(session).design(game.gameId, t.tournamentId).map(_.get)
             } yield Setup(
-              game,
-              t,
-              Env(
-                design,
-                TournamentGame.of(game),
-                entrants.map(_.entrantId.value -> 1500).toMap,
-                Some(t.defaultPoolSize)
+              game = game,
+              t = t,
+              env = Env(
+                design = design,
+                game = TournamentGame.of(game),
+                ratings = entrants.map(_.entrantId.value -> 1500).toMap,
+                defaultPoolSize = Some(t.defaultPoolSize)
               ),
-              entrants.map(_.entrantId.value)
+              entrants = entrants.map(_.entrantId.value)
             )
         }
         .timeout(60.seconds)
@@ -137,7 +144,9 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
     /** Saves `next` and reads it back. */
     private def saved(s: Setup, next: TournamentState): TournamentStateRepo.Loaded = run { session =>
         val repo = new TournamentStateRepo(session)
-        repo.write(s.game.gameId, s.t.tournamentId, next) *> repo.load(s.game.gameId, s.t.tournamentId).map(_.get)
+        repo.write(game = s.game.gameId, tournament = s.t.tournamentId, after = next) *> repo
+            .load(s.game.gameId, s.t.tournamentId)
+            .map(_.get)
     }
 
     /** Plays a match of the round being played as an engine reporting it would leave it: over, each seat with a result,
@@ -165,14 +174,15 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
 
     /** Plays a whole tournament, checking every state the database holds against the one the rules made. */
     private def playThrough(key: String, n: Int, poolSize: Option[Int] = None): TournamentState = {
-        val s = setup(key, n, poolSize)
+        val s = setup(key = key, n = n, poolSize = poolSize)
         def check(made: TournamentState, read: TournamentStateRepo.Loaded): TournamentState = {
             assertEquals(normal(read.state.root), normal(made.root), s"$key, round ${made.round}")
             assertEquals(read.state.round, made.round)
             read.state
         }
         var state = {
-            val started = Progress.start(s.entrants, s.env, TournamentStateRepo.NewPoolIds)
+            val started =
+                Progress.start(entrants = s.entrants, env = s.env, firstPoolId = TournamentStateRepo.NewPoolIds)
             check(started, saved(s, started))
         }
         var steps = 0
@@ -186,7 +196,7 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
                     run(session => new TournamentStateRepo(session).load(s.game.gameId, s.t.tournamentId).map(_.get))
                 Progress
                     .roundMatches(state)
-                    .filterNot(m => Progress.isRecorded(state, m.poolId, m.planned.no))
+                    .filterNot(m => Progress.isRecorded(state = state, poolId = m.poolId, matchNo = m.planned.no))
                     .foreach { m =>
                         play(s, loaded.matchIds((m.poolId, m.planned.no)))
                     }
@@ -202,30 +212,30 @@ class TournamentStateRepoSpec extends FunSuite with QuietTests {
     }
 
     test("a single elimination is played through its rows, every state read back as the rules made it") {
-        val end = playThrough("single-elimination", 8)
+        val end = playThrough(key = "single-elimination", n = 8)
         assertEquals(end.root.ranking.map(_.values.min), Some(1))
     }
 
     test("a single elimination with byes, and one with a consolation match, are read back as they were made") {
-        playThrough("single-elimination", 5)
-        playThrough("single-elimination-consolation", 6)
+        playThrough(key = "single-elimination", n = 5)
+        playThrough(key = "single-elimination-consolation", n = 6)
     }
 
     test("double elimination, whose losers drop a stratum, is read back as it was made") {
-        playThrough("double-elimination", 6)
+        playThrough(key = "double-elimination", n = 6)
     }
 
     test("group round robins, then a knockout, are read back as they were made") {
-        playThrough("world-cup", 8)
+        playThrough(key = "world-cup", n = 8)
     }
 
     test("heats take the tournament's pool size, and are read back as they were made") {
-        playThrough("heats", 9, poolSize = Some(3))
+        playThrough(key = "heats", n = 9, poolSize = Some(3))
     }
 
     test("a finished tournament's ranking is read back from its entrants' final ranks") {
         // `playThrough` compares the ranking read back, which is entrant.final_rank, with the rules' own.
-        val end = playThrough("single-elimination", 4)
+        val end = playThrough(key = "single-elimination", n = 4)
         assertEquals(end.root.ranking.map(_.size), Some(4))
     }
 }

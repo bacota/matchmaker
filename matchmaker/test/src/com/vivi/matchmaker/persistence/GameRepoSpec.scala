@@ -14,14 +14,35 @@ class GameRepoSpec extends PropertySuite {
       */
     private def gameWithFanOut: Game = {
         val base = Generators.genGame().sample.get.copy(isActive = true)
-        val values = Seq("a", "b", "c").map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v))
+        val values = Seq("a", "b", "c").map(v =>
+            GameParameterValue(gameId = GameId.unassigned, gameParameterId = GameParameterId(0), value = v)
+        )
         base.copy(
           roles = Seq(
-            GameRole(GameRoleId(0), GameId.unassigned, "first", roleType = RoleType.Required, displayName = "first"),
-            GameRole(GameRoleId(0), GameId.unassigned, "second", roleType = RoleType.Optional, displayName = "second")
+            GameRole(
+              gameRoleId = GameRoleId(0),
+              gameId = GameId.unassigned,
+              name = "first",
+              roleType = RoleType.Required,
+              displayName = "first"
+            ),
+            GameRole(
+              gameRoleId = GameRoleId(0),
+              gameId = GameId.unassigned,
+              name = "second",
+              roleType = RoleType.Optional,
+              displayName = "second"
+            )
           ),
           parameters = Seq(
-            GameParameter(GameId.unassigned, GameParameterId(0), "parameter", Some("a"), values, "Parameter")
+            GameParameter(
+              gameId = GameId.unassigned,
+              gameParameterId = GameParameterId(0),
+              name = "parameter",
+              defaultValue = Some("a"),
+              values = values,
+              displayName = "Parameter"
+            )
           )
         )
     }
@@ -134,9 +155,30 @@ class GameRepoSpec extends PropertySuite {
                   moveType = MoveType.Simultaneous,
                   maxTurns = Some(12),
                   roles = Seq(
-                    GameRole(GameRoleId(0), GameId.unassigned, "first", RoleType.Required, "first", Some(2)),
-                    GameRole(GameRoleId(0), GameId.unassigned, "second", RoleType.Recommended, "second", None),
-                    GameRole(GameRoleId(0), GameId.unassigned, "third", RoleType.Optional, "third", Some(1))
+                    GameRole(
+                      gameRoleId = GameRoleId(0),
+                      gameId = GameId.unassigned,
+                      name = "first",
+                      roleType = RoleType.Required,
+                      displayName = "first",
+                      preferenceLevel = Some(2)
+                    ),
+                    GameRole(
+                      gameRoleId = GameRoleId(0),
+                      gameId = GameId.unassigned,
+                      name = "second",
+                      roleType = RoleType.Recommended,
+                      displayName = "second",
+                      preferenceLevel = None
+                    ),
+                    GameRole(
+                      gameRoleId = GameRoleId(0),
+                      gameId = GameId.unassigned,
+                      name = "third",
+                      roleType = RoleType.Optional,
+                      displayName = "third",
+                      preferenceLevel = Some(1)
+                    )
                   )
                 )
                 for {

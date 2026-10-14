@@ -46,20 +46,29 @@ class TournamentMatchRepo(session: Session[IO]) {
     private def seatOf(r: SeatRow): TournamentSeat = {
         val (_, participant, entrant, role, order, started, chosen, forfeit) = r
         TournamentSeat(
-          ParticipantId(participant),
-          EntrantId(entrant),
-          role.map(GameRoleId(_)),
-          order,
-          started,
-          chosen,
-          forfeit
+          participantId = ParticipantId(participant),
+          entrantId = EntrantId(entrant),
+          gameRoleId = role.map(GameRoleId(_)),
+          chooseOrder = order,
+          chooseStartedAt = started,
+          chosenAt = chosen,
+          isForfeit = forfeit
         )
     }
 
     private def assemble(matches: List[MatchRow], seats: List[SeatRow]): List[TournamentMatch] = {
         val byMatch = seats.groupBy(_._1)
         matches.map { case (g, t, id, pool, round, st, ties) =>
-            TournamentMatch(g, t, id, pool.toInt, round, st, ties, byMatch.getOrElse(id, Nil).map(seatOf))
+            TournamentMatch(
+              gameId = g,
+              tournamentId = t,
+              matchId = id,
+              poolId = pool.toInt,
+              round = round,
+              status = st,
+              canTie = ties,
+              seats = byMatch.getOrElse(id, Nil).map(seatOf)
+            )
         }
     }
 

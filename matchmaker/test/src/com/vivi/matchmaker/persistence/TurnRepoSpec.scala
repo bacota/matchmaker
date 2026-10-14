@@ -23,22 +23,26 @@ class TurnRepoSpec extends PropertySuite {
                 game <- gameRepo.create(Generators.genGameWithRole.sample.get)
                 owner <- Generators.ownerIn(session, game)
                 matchId = mid
-                _ <- TestMatches.writeMatch(session, Generators.matchFrom(game.gameId, matchId), owner)
+                _ <- TestMatches.writeMatch(
+                  session = session,
+                  m = Generators.matchFrom(game.gameId, matchId),
+                  owner = owner
+                )
                 createdPlayer <- playerRepo.create(player)
                 character <- characterRepo.create(Generators.genCharacter(game.gameId, None).sample.get)
                 participant <- TestMatches.writeSeat(
-                  session,
-                  Generators
+                  session = session,
+                  p = Generators
                       .genParticipant(
-                        game.gameId,
-                        matchId,
-                        createdPlayer.playerId,
-                        character.characterId,
-                        game.roles.head.gameRoleId
+                        gameId = game.gameId,
+                        matchId = matchId,
+                        playerId = createdPlayer.playerId,
+                        characterId = character.characterId,
+                        gameRoleId = game.roles.head.gameRoleId
                       )
                       .sample
                       .get,
-                  EloRating.initial
+                  eloStart = EloRating.initial
                 )
             } yield (session, game.gameId, matchId, participant.participantId)
         }
@@ -50,8 +54,20 @@ class TurnRepoSpec extends PropertySuite {
                     val repo = new TurnRepo(session)
                     val start = Instant.parse("2026-01-01T00:00:00Z")
                     // Written newest first, to show the ordering is the query's and not the insert order's.
-                    val second = Turn(gameId, matchId, participantId, start.plusSeconds(120), start.plusSeconds(60))
-                    val first = Turn(gameId, matchId, participantId, start.plusSeconds(60), start)
+                    val second = Turn(
+                      gameId = gameId,
+                      matchId = matchId,
+                      participantId = participantId,
+                      takenAt = start.plusSeconds(120),
+                      startedAt = start.plusSeconds(60)
+                    )
+                    val first = Turn(
+                      gameId = gameId,
+                      matchId = matchId,
+                      participantId = participantId,
+                      takenAt = start.plusSeconds(60),
+                      startedAt = start
+                    )
                     for {
                         _ <- repo.create(second)
                         _ <- repo.create(first)
@@ -70,7 +86,13 @@ class TurnRepoSpec extends PropertySuite {
                 .flatMap { case (session, gameId, matchId, participantId) =>
                     val repo = new TurnRepo(session)
                     val at = Instant.parse("2026-01-01T00:01:00Z")
-                    val turn = Turn(gameId, matchId, participantId, at, at.minusSeconds(60))
+                    val turn = Turn(
+                      gameId = gameId,
+                      matchId = matchId,
+                      participantId = participantId,
+                      takenAt = at,
+                      startedAt = at.minusSeconds(60)
+                    )
                     for {
                         _ <- repo.create(turn)
                         _ <- repo.create(turn)
@@ -91,8 +113,24 @@ class TurnRepoSpec extends PropertySuite {
                     for {
                         empty <- repo.latestTakenAt(gameId, matchId)
                         // 30 seconds, then 45.
-                        _ <- repo.create(Turn(gameId, matchId, participantId, start.plusSeconds(30), start))
-                        _ <- repo.create(Turn(gameId, matchId, participantId, last, last.minusSeconds(45)))
+                        _ <- repo.create(
+                          Turn(
+                            gameId = gameId,
+                            matchId = matchId,
+                            participantId = participantId,
+                            takenAt = start.plusSeconds(30),
+                            startedAt = start
+                          )
+                        )
+                        _ <- repo.create(
+                          Turn(
+                            gameId = gameId,
+                            matchId = matchId,
+                            participantId = participantId,
+                            takenAt = last,
+                            startedAt = last.minusSeconds(45)
+                          )
+                        )
                         used <- repo.timeUsed(gameId, matchId)
                         latest <- repo.latestTakenAt(gameId, matchId)
                     } yield empty.isEmpty &&

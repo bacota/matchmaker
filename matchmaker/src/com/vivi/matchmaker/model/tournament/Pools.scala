@@ -63,7 +63,9 @@ object Pools {
         if (strict)
             strata.flatMap { s =>
                 val members = bySeed(participants.filter(_.stratum == s))
-                val count = if (members.sizeIs < required) 0 else poolCount(members.size, n, advancing, brackets)
+                val count =
+                    if (members.sizeIs < required) 0
+                    else poolCount(r = members.size, n = n, advancing = advancing, brackets = brackets)
                 deal(members, count).map(FormedPool(s, _))
             }
         else {
@@ -76,7 +78,7 @@ object Pools {
                     val below = participants
                         .filter(p => p.stratum < s && !used(p.entrant))
                         .sortBy(p => (-p.stratum, -p.seed, -p.entrant))
-                    val count = poolCount(own.size, n, advancing, brackets)
+                    val count = poolCount(r = own.size, n = n, advancing = advancing, brackets = brackets)
                     // Chosen weakest first, but dealt like everyone else, in seed order.
                     val fillers = below.take(count * n - own.size).sortBy(p => (-p.stratum, p.seed, p.entrant))
                     val members = own ++ fillers

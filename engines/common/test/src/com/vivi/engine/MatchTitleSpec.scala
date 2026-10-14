@@ -18,18 +18,31 @@ class MatchTitleSpec extends FunSuite {
     private val id = "3f1c2a9e-0b7d-4c55-9a1e-6d2b8f4e7a10"
 
     test("the game's name and the match's message") {
-        assertEquals(MatchTitle.of(AMatch(id, Some("Boxing"), Some("Title fight")), "boxing"), "Boxing — Title fight")
+        assertEquals(
+          MatchTitle
+              .of(AMatch(matchId = id, gameDisplayName = Some("Boxing"), description = Some("Title fight")), "boxing"),
+          "Boxing — Title fight"
+        )
     }
 
     test("the game's name alone when the match has no message") {
-        assertEquals(MatchTitle.of(AMatch(id, Some("Boxing"), Some("  ")), "boxing"), "Boxing")
-        assertEquals(MatchTitle.of(AMatch(id, Some("Boxing"), None), "boxing"), "Boxing")
+        assertEquals(
+          MatchTitle.of(AMatch(matchId = id, gameDisplayName = Some("Boxing"), description = Some("  ")), "boxing"),
+          "Boxing"
+        )
+        assertEquals(
+          MatchTitle.of(AMatch(matchId = id, gameDisplayName = Some("Boxing"), description = None), "boxing"),
+          "Boxing"
+        )
     }
 
     test("a match that kept no name is titled by the engine's own, and never by its id") {
-        val title = MatchTitle.of(AMatch(id, None, None), "boxing")
+        val title = MatchTitle.of(AMatch(matchId = id, gameDisplayName = None, description = None), "boxing")
         assertEquals(title, "boxing")
         assert(!title.contains(id))
-        assertEquals(MatchTitle.of(AMatch(id, None, Some("Rematch")), "boxing"), "boxing — Rematch")
+        assertEquals(
+          MatchTitle.of(AMatch(matchId = id, gameDisplayName = None, description = Some("Rematch")), "boxing"),
+          "boxing — Rematch"
+        )
     }
 }

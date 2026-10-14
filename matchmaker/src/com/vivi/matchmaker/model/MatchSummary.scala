@@ -132,7 +132,7 @@ object MatchOutcome {
       */
     def of(rank: Option[Int], ranks: Seq[Int]): Option[MatchOutcome] =
         rank.map { mine =>
-            val record = MatchRecord.of(mine, ranks, forfeit = false)
+            val record = MatchRecord.of(rank = mine, ranks = ranks, forfeit = false)
             if (record.wins > 0) Won else if (record.draws > 0) Drew else Lost
         }
 }

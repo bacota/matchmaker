@@ -534,9 +534,10 @@ object Store {
         // is asked for, or its answer lands under this player's name. See `gated`.
         val stamp = ask(lists)
         gated(lists) { () =>
-            val running = reloadAs(ApiClient.publicMatches(playerId), stamp, lists)(publicActive.set)
+            val running =
+                reloadAs(action = ApiClient.publicMatches(playerId), stamp = stamp, fetches = lists)(publicActive.set)
             // And their finished public matches in every game, a window of them: a list of its own.
-            showCompleted(CompletedList.Public(playerId, None))
+            showCompleted(list = CompletedList.Public(playerId, None))
 
             // However it settled: `reloadAs` reports a failure and succeeds, so this runs on either
             // outcome, which is what stops a failed fetch from leaving the page loading for ever. Guarded
@@ -561,9 +562,13 @@ object Store {
         val stamp = ask(lists)
         gated(lists) { () =>
             val profile =
-                reloadAs(ApiClient.characterProfile(character), stamp, lists)(p => characterProfile.set(Some(p)))
-            val running = reloadAs(ApiClient.characterMatches(character), stamp, lists)(publicActive.set)
-            showCompleted(CompletedList.OfCharacter(character))
+                reloadAs(action = ApiClient.characterProfile(character), stamp = stamp, fetches = lists)(p =>
+                    characterProfile.set(Some(p))
+                )
+            val running = reloadAs(action = ApiClient.characterMatches(character), stamp = stamp, fetches = lists)(
+              publicActive.set
+            )
+            showCompleted(list = CompletedList.OfCharacter(character))
             profile.zip(running).map(_ => if (isNewest(stamp, lists)) publicMatchesLoading.set(false))
         }
     }
@@ -1083,7 +1088,7 @@ object Store {
       */
     private def reload[A](action: => Future[A], fetches: Fetch*)(onSuccess: A => Unit): Future[Unit] = {
         val stamp = ask(fetches)
-        gated(fetches)(() => reloadAs(action, stamp, fetches)(onSuccess))
+        gated(fetches)(() => reloadAs(action = action, stamp = stamp, fetches = fetches)(onSuccess))
     }
 
     /** `reload`, against a stamp already taken rather than one of its own.
@@ -1133,7 +1138,7 @@ object Store {
             // asking that again is asking what has finished since, so it is measured from now.
             case Some(view) if completedAsked.now().contains(view.list) =>
                 val page = view.page.page
-                showCompleted(view.list, page, Option.when(page > 0)(view.page.asOf))
+                showCompleted(list = view.list, page = page, asOf = Option.when(page > 0)(view.page.asOf))
             case _ => completedAsked.now().fold(Future.unit)(showCompleted(_))
         }
         val rows = reload(ApiClient.results(), Fetch.Results)(r => resultsByMatch.set(r.groupBy(_.matchId)))
@@ -1165,7 +1170,7 @@ object Store {
         completedLoading.set(Some(list))
         completedFailed.set(None)
         if (!completedView.now().exists(_.list == list)) completedView.set(None)
-        val query = CompletedQuery(completedFrame.now(), page, asOf, list.gameId)
+        val query = CompletedQuery(frame = completedFrame.now(), page = page, asOf = asOf, gameId = list.gameId)
         def fetch = list match {
             case CompletedList.Mine(_)             => ApiClient.completedMatches(query)
             case CompletedList.Public(playerId, _) => ApiClient.publicCompletedMatches(playerId, query)

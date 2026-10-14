@@ -130,26 +130,26 @@ class MatchRepo(session: Session[IO]) {
           status
         ) = row
         Match(
-          gameId,
-          matchId,
-          tournament,
-          description,
-          completedAt,
-          start,
-          fromSeconds(timeLimitSeconds),
-          settings,
-          isPublic,
-          cancelled,
-          statusUrl,
-          playUrl,
-          publicUrl,
-          timeLimitKind,
-          timeLimitUnit,
-          live,
-          friendly,
-          archivedAt,
-          archiveExpired,
-          status
+          gameId = gameId,
+          matchId = matchId,
+          tournamentId = tournament,
+          description = description,
+          completedAt = completedAt,
+          start = start,
+          timeLimit = fromSeconds(timeLimitSeconds),
+          settings = settings,
+          isPublic = isPublic,
+          isCancelled = cancelled,
+          statusUrl = statusUrl,
+          playUrl = playUrl,
+          publicUrl = publicUrl,
+          timeLimitKind = timeLimitKind,
+          timeLimitUnit = timeLimitUnit,
+          isLive = live,
+          isFriendly = friendly,
+          archivedAt = archivedAt,
+          isArchiveExpired = archiveExpired,
+          status = status
         )
     }
 
@@ -332,37 +332,39 @@ class MatchRepo(session: Session[IO]) {
           seatCharacterName
         ) = row
         MatchSeatRow(
-          gameId,
-          matchId,
-          gameName,
-          description,
-          completedAt,
-          cancelled,
-          isOwner,
-          start,
-          fromSeconds(timeLimitSeconds),
-          timeLimitKind,
-          timeLimitUnit,
-          live,
-          ParticipantId(callerParticipantId),
-          callerCharacterId.map(CharacterId.apply),
-          callerPending,
-          callerDue,
-          seatNickname,
-          seatPending,
-          seatCompleted,
-          seatDue,
-          publicUrl,
-          friendly,
-          archivedAt,
-          archiveExpired,
-          matchSettings,
-          resultSummary,
-          ParticipantId(seatParticipantId),
-          seatRank,
-          seatEloDelta,
-          seatPlayerId.map(PlayerId.apply),
-          seatCharacterId.zip(seatCharacterName).map((id, name) => CharacterName(CharacterId(id), gameId, name))
+          gameId = gameId,
+          matchId = matchId,
+          gameName = gameName,
+          description = description,
+          completedAt = completedAt,
+          isCancelled = cancelled,
+          isOwner = isOwner,
+          start = start,
+          timeLimit = fromSeconds(timeLimitSeconds),
+          timeLimitKind = timeLimitKind,
+          timeLimitUnit = timeLimitUnit,
+          isLive = live,
+          callerParticipantId = ParticipantId(callerParticipantId),
+          callerCharacterId = callerCharacterId.map(CharacterId.apply),
+          isCallerPending = callerPending,
+          callerDue = callerDue,
+          seatNickname = seatNickname,
+          isSeatPending = seatPending,
+          isSeatCompleted = seatCompleted,
+          seatDue = seatDue,
+          publicUrl = publicUrl,
+          isFriendly = friendly,
+          archivedAt = archivedAt,
+          isArchiveExpired = archiveExpired,
+          settings = matchSettings,
+          resultSummary = resultSummary,
+          seatParticipantId = ParticipantId(seatParticipantId),
+          seatRank = seatRank,
+          seatEloDelta = seatEloDelta,
+          seatPlayerId = seatPlayerId.map(PlayerId.apply),
+          seatCharacter = seatCharacterId
+              .zip(seatCharacterName)
+              .map((id, name) => CharacterName(characterId = CharacterId(id), gameId = gameId, name = name))
         )
     }
 
@@ -789,7 +791,13 @@ class MatchRepo(session: Session[IO]) {
                 .execute(selectParametersForGames(ids.size))(ids)
                 .map(
                   _.map((game, name, displayName, defaultValue, values) =>
-                      GameParameterRow(game, name, displayName, defaultValue, values.flattenTo(List))
+                      GameParameterRow(
+                        gameId = game,
+                        name = name,
+                        displayName = displayName,
+                        defaultValue = defaultValue,
+                        values = values.flattenTo(List)
+                      )
                   )
                 )
         }
@@ -827,7 +835,15 @@ class MatchRepo(session: Session[IO]) {
             .execute(selectForGame)((gameId, player, player, limit))
             .map(
               _.map((id, description, start, completedAt, cancelled, friendly, players) =>
-                  GameMatch(id, description, start, completedAt, cancelled, friendly, players.flattenTo(List))
+                  GameMatch(
+                    matchId = id,
+                    description = description,
+                    start = start,
+                    completedAt = completedAt,
+                    isCancelled = cancelled,
+                    isFriendly = friendly,
+                    players = players.flattenTo(List)
+                  )
               )
             )
 
@@ -836,7 +852,13 @@ class MatchRepo(session: Session[IO]) {
         session
             .execute(selectClocksForPlayer)(playerId)
             .map(_.map { case (gameId, matchId, nickname, seconds, due) =>
-                MatchClockRow(gameId, matchId, nickname, Duration.ofMillis((seconds * 1000).toLong), due)
+                MatchClockRow(
+                  gameId = gameId,
+                  matchId = matchId,
+                  nickname = nickname,
+                  remaining = Duration.ofMillis((seconds * 1000).toLong),
+                  due = due
+                )
             })
 }
 

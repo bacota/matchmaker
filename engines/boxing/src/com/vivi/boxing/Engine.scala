@@ -42,7 +42,13 @@ class Engine(
       * which they will find in matchmaker.
       */
     def buildFighter(cognitoId: String, request: BuildRequest): Either[Refusal, BuiltFighter] = {
-        val fighter = Fighter(request.strength, request.speed, request.agility, request.workrate, request.chin)
+        val fighter = Fighter(
+          strength = request.strength,
+          speed = request.speed,
+          agility = request.agility,
+          workrate = request.workrate,
+          chin = request.chin
+        )
         for {
             name <- named(request.name)
             valid <- Fighter.validate(fighter).left.map(Refusal.Invalid(_))
@@ -50,10 +56,15 @@ class Engine(
             characterId <- ask("registering a fighter", Unknown)(
               matchmaker.registerCharacter(
                 url,
-                RegisterCharacterRequest(name, request.description.trim, cognitoId, Fighter.toState(valid))
+                RegisterCharacterRequest(
+                  name = name,
+                  description = request.description.trim,
+                  ownerExternalId = cognitoId,
+                  state = Fighter.toState(valid)
+                )
               )
             )
-        } yield BuiltFighter(characterId, name, view(valid))
+        } yield BuiltFighter(characterId = characterId, name = name, fighter = view(valid))
     }
 
     /** The player's fighters, as matchmaker has them — this engine keeps none. A fighter whose state is not one this
@@ -64,7 +75,14 @@ class Engine(
         for {
             url <- matchmakerUrl.toRight(noMatchmaker)
             owned <- ask("listing fighters", Unknown)(matchmaker.listCharacters(url, cognitoId))
-        } yield owned.map(c => MyFighter(c.characterId, c.name, c.description, Fighter.fromState(c.state).map(view)))
+        } yield owned.map(c =>
+            MyFighter(
+              characterId = c.characterId,
+              name = c.name,
+              description = c.description,
+              fighter = Fighter.fromState(c.state).map(view)
+            )
+        )
 
     /** A player changing one of their fighters' name and description. Edits are made here, as fighters are built here,
       * and matchmaker is told; it checks that the fighter is the player's, since it is what knows who owns what.
@@ -79,9 +97,13 @@ class Engine(
             name <- named(newName)
             url <- matchmakerUrl.toRight(noMatchmaker)
             _ <- ask("editing a fighter", notYours(characterId))(
-              matchmaker.editCharacter(url, characterId, EditCharacterRequest(name, description.trim, cognitoId))
+              matchmaker.editCharacter(
+                matchmakerUrl = url,
+                characterId = characterId,
+                request = EditCharacterRequest(name = name, description = description.trim, ownerExternalId = cognitoId)
+              )
             )
-        } yield Edited(characterId, name, description.trim)
+        } yield Edited(characterId = characterId, name = name, description = description.trim)
 
     /** A player giving one of their fighters to another player, named by their matchmaker nickname. Checked by
       * matchmaker as an edit is; a nickname nobody has is matchmaker's to say, and is passed on.
@@ -91,7 +113,11 @@ class Engine(
             to <- Option(toNickname.trim).filter(_.nonEmpty).toRight(Refusal.Invalid("say who to give it to"))
             url <- matchmakerUrl.toRight(noMatchmaker)
             _ <- ask("giving a fighter away", notYours(characterId))(
-              matchmaker.transferCharacter(url, characterId, TransferCharacterRequest(to, cognitoId))
+              matchmaker.transferCharacter(
+                matchmakerUrl = url,
+                characterId = characterId,
+                request = TransferCharacterRequest(to, cognitoId)
+              )
             )
         } yield Given(characterId, to)
 
@@ -100,7 +126,8 @@ class Engine(
     private def named(name: String): Either[Refusal, String] =
         Option(name.trim).filter(_.nonEmpty).toRight(Refusal.Invalid("give your fighter a name"))
 
-    private def view(f: Fighter): FighterView = FighterView(f.strength, f.speed, f.agility, f.workrate, f.chin)
+    private def view(f: Fighter): FighterView =
+        FighterView(strength = f.strength, speed = f.speed, agility = f.agility, workrate = f.workrate, chin = f.chin)
 
     private val noMatchmaker = Refusal.Unavailable("this engine has no matchmaker to keep fighters with")
 
@@ -152,8 +179,18 @@ class Engine(
                 )
             } yield {
                 // The round's start, or, in a live bout, this player's opening the board if that was later.
-                val started = TurnClock.turnStart(current.clock, corner.participantId, current.roundStartedAt)
-                val record = Plan(corner.participantId, round, valid, at, started)
+                val started = TurnClock.turnStart(
+                  clock = current.clock,
+                  participantId = corner.participantId,
+                  turnStartedAt = current.roundStartedAt
+                )
+                val record = Plan(
+                  participantId = corner.participantId,
+                  round = round,
+                  allocation = valid,
+                  takenAt = at,
+                  startedAt = started
+                )
                 (current.copy(plans = current.plans :+ record), record)
             }
         }
@@ -169,8 +206,8 @@ class Engine(
       */
     def stateOf(m: Bout, corner: Option[Corner]): StateResponse = {
         val over = m.isOver
-        def planView(a: Allocation) = PlanRequest(a.offense, a.defense, a.power)
-        def numbers(e: Effective) = Numbers(e.offense, e.defense, e.power)
+        def planView(a: Allocation) = PlanRequest(offense = a.offense, defense = a.defense, power = a.power)
+        def numbers(e: Effective) = Numbers(offense = e.offense, defense = e.defense, power = e.power)
         // The viewer's own corner, whose characteristics they may see; nobody's on the public board.
         def yoursIs(side: Side) = corner.exists(_.side == side)
         def yours(c: Corner) = yoursIs(c.side)

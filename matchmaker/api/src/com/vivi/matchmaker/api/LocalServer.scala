@@ -48,15 +48,21 @@ object LocalServer {
         // locally can archive a match and read it back with no AWS involved.
         val localArchive = Option.when(env("ARCHIVE_BUCKET").isEmpty)(
           LocalArchiveStore(
-            Paths.get(env("ARCHIVE_DIR").getOrElse(s"${System.getProperty("java.io.tmpdir")}/matchmaker-archive")),
-            s"http://localhost:$port"
+            dir =
+                Paths.get(env("ARCHIVE_DIR").getOrElse(s"${System.getProperty("java.io.tmpdir")}/matchmaker-archive")),
+            baseUrl = s"http://localhost:$port"
           )
         )
         val archiveStore = localArchive.getOrElse(ArchiveStore.fromEnvironment())
 
         val (services, release) =
             Services
-                .resource[String](config, poolSize, notifier = Notifier.logging, archiveStore = archiveStore)
+                .resource[String](
+                  config = config,
+                  poolSize = poolSize,
+                  notifier = Notifier.logging,
+                  archiveStore = archiveStore
+                )
                 .allocated
                 .unsafeRunSync()
 
@@ -133,9 +139,9 @@ object LocalServer {
                         val headers = exchange.getRequestHeaders.asScala.flatMap { case (name, values) =>
                             values.asScala.headOption.map(name.toLowerCase -> _)
                         }.toMap
-                        store.put(path, exchange.getRequestBody.readAllBytes(), headers) match {
+                        store.put(path = path, body = exchange.getRequestBody.readAllBytes(), headers = headers) match {
                             case Right(())    => exchange.sendResponseHeaders(200, -1)
-                            case Left(reason) => sendText(exchange, 400, reason)
+                            case Left(reason) => sendText(exchange = exchange, status = 400, text = reason)
                         }
                     case "GET" =>
                         store.get(path) match {
@@ -143,9 +149,9 @@ object LocalServer {
                                 exchange.getResponseHeaders.set("Content-Type", "application/json")
                                 exchange.sendResponseHeaders(200, bytes.length.toLong)
                                 exchange.getResponseBody.write(bytes)
-                            case None => sendText(exchange, 404, "NoSuchKey")
+                            case None => sendText(exchange = exchange, status = 404, text = "NoSuchKey")
                         }
-                    case _ => sendText(exchange, 405, "method not allowed")
+                    case _ => sendText(exchange = exchange, status = 405, text = "method not allowed")
                 }
             } finally exchange.close()
 
@@ -176,7 +182,7 @@ object LocalServer {
                 val response =
                     try
                         Router
-                            .dispatch(services, requestOf(exchange), authenticator)
+                            .dispatch(services = services, request = requestOf(exchange), authenticator = authenticator)
                             .handleError { error =>
                                 // Router maps ServiceErrors itself, so anything arriving here is unexpected;
                                 // `toResponse` writes the trace, named by the request that produced it.
@@ -218,7 +224,13 @@ object LocalServer {
 
             val body = String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
 
-            Request(exchange.getRequestMethod, uri.getPath, headers, queryOf(uri.getRawQuery), body)
+            Request(
+              method = exchange.getRequestMethod,
+              path = uri.getPath,
+              headers = headers,
+              query = queryOf(uri.getRawQuery),
+              body = body
+            )
         }
 
         private def queryOf(raw: String): Map[String, String] =

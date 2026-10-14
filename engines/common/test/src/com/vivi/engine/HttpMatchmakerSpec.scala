@@ -12,7 +12,12 @@ import Protocol.given
   */
 class HttpMatchmakerSpec extends FunSuite {
 
-    private val request = Protocol.RegisterCharacterRequest("Iron Mike", "a slugger", "sub-1", """{"strength":9}""")
+    private val request = Protocol.RegisterCharacterRequest(
+      name = "Iron Mike",
+      description = "a slugger",
+      ownerExternalId = "sub-1",
+      state = """{"strength":9}"""
+    )
 
     /** What the server saw: method, path, the API key header and the body. */
     private case class Seen(method: String, path: String, apiKey: Option[String], body: String)
@@ -26,10 +31,10 @@ class HttpMatchmakerSpec extends FunSuite {
               val body = String(exchange.getRequestBody.readAllBytes(), UTF_8)
               seen = Some(
                 Seen(
-                  exchange.getRequestMethod,
-                  exchange.getRequestURI.getPath,
-                  Option(exchange.getRequestHeaders.getFirst("x-api-key")),
-                  body
+                  method = exchange.getRequestMethod,
+                  path = exchange.getRequestURI.getPath,
+                  apiKey = Option(exchange.getRequestHeaders.getFirst("x-api-key")),
+                  body = body
                 )
               )
               val bytes = answer.getBytes(UTF_8)
@@ -41,7 +46,11 @@ class HttpMatchmakerSpec extends FunSuite {
         server.start()
         try
             f(
-              HttpMatchmaker(SignedHttp(None, "us-east-1"), Some("the-key"), None),
+              HttpMatchmaker(
+                http = SignedHttp(credentials = None, region = "us-east-1"),
+                apiKey = Some("the-key"),
+                externalId = None
+              ),
               s"http://127.0.0.1:${server.getAddress.getPort}/",
               () => seen
             )
@@ -78,7 +87,7 @@ class HttpMatchmakerSpec extends FunSuite {
         withMatchmaker(200, listed) { (matchmaker, url, seen) =>
             assertEquals(
               matchmaker.listCharacters(url, "sub 1+x"),
-              List(Protocol.OwnedCharacter(5L, "Iron Mike", "d", "{}"))
+              List(Protocol.OwnedCharacter(characterId = 5L, name = "Iron Mike", description = "d", state = "{}"))
             )
             val s = seen().get
             assertEquals((s.method, s.path, s.apiKey), ("GET", "/characters", Some("the-key")))
@@ -87,22 +96,27 @@ class HttpMatchmakerSpec extends FunSuite {
 
     test("an edit is put to the character, a transfer to its owner, and a character not the owner's is refused") {
         withMatchmaker(200, "{}") { (matchmaker, url, seen) =>
-            val edit = Protocol.EditCharacterRequest("Kid Dynamite", "fast", "sub-1")
-            matchmaker.editCharacter(url, 5L, edit)
+            val edit =
+                Protocol.EditCharacterRequest(name = "Kid Dynamite", description = "fast", ownerExternalId = "sub-1")
+            matchmaker.editCharacter(matchmakerUrl = url, characterId = 5L, request = edit)
             val s = seen().get
             assertEquals((s.method, s.path), ("PUT", "/characters/5"))
             assertEquals(read[Protocol.EditCharacterRequest](s.body), edit)
         }
         withMatchmaker(200, "{}") { (matchmaker, url, seen) =>
             val transfer = Protocol.TransferCharacterRequest("bob", "sub-1")
-            matchmaker.transferCharacter(url, 5L, transfer)
+            matchmaker.transferCharacter(matchmakerUrl = url, characterId = 5L, request = transfer)
             val s = seen().get
             assertEquals((s.method, s.path), ("PUT", "/characters/5/owner"))
             assertEquals(read[Protocol.TransferCharacterRequest](s.body), transfer)
         }
         withMatchmaker(404, """{"error":"no character with id 5"}""") { (matchmaker, url, _) =>
             val refusal = intercept[MatchmakerRefusal](
-              matchmaker.editCharacter(url, 5L, Protocol.EditCharacterRequest("x", "", "sub-2"))
+              matchmaker.editCharacter(
+                matchmakerUrl = url,
+                characterId = 5L,
+                request = Protocol.EditCharacterRequest(name = "x", description = "", ownerExternalId = "sub-2")
+              )
             )
             assertEquals(refusal.status, 404)
         }

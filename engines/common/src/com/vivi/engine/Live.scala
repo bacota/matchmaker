@@ -73,7 +73,7 @@ class Live(
 
         val watchers = within(until, s"finding who watches match '$matchId'")(start(subscriptions.watching(matchId)))
         val sends = watchers.getOrElse(Nil).map(s => start(inTurn(until)(push(s, message))))
-        settle(until, sends, s"pushing a change in match '$matchId'")
+        settle(until = until, sends = sends, what = s"pushing a change in match '$matchId'")
     }
 
     private def push(watcher: Subscription, message: String): Unit =
@@ -239,7 +239,13 @@ class ApiGatewayChannel(http: SignedHttp, endpoint: String) extends LiveChannel 
 
     def send(connectionId: String, message: String): Boolean = {
         val url = s"$base/@connections/${URLEncoder.encode(connectionId, UTF_8)}"
-        http.exchange("POST", url, Some(message), "execute-api", Map("content-type" -> "application/json")) match {
+        http.exchange(
+          method = "POST",
+          url = url,
+          body = Some(message),
+          service = "execute-api",
+          headers = Map("content-type" -> "application/json")
+        ) match {
             case (status, _) if status >= 200 && status < 300 => true
             case (410, _)                                     => false
             case (status, body)                               => throw AwsError(s"POST $url returned $status: $body")

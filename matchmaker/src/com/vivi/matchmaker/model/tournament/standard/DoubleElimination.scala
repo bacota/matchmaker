@@ -3,11 +3,11 @@ package standard
 
 object DoubleElimination
     extends StandardModel(
-      "double-elimination",
-      1,
-      "Double Elimination",
-      "Lose twice and you are out; the two brackets' winners meet in a final.",
-      "Elimination"
+      id = "double-elimination",
+      version = 1,
+      name = "Double Elimination",
+      description = "Lose twice and you are out; the two brackets' winners meet in a final.",
+      classification = "Elimination"
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

@@ -37,7 +37,7 @@ abstract class LambdaHandler extends RequestStreamHandler {
                     // see the reason for has to be readable here.
                     Log.failure(e, "undecoded event")
                     log(s"could not handle event: $e")
-                    EngineResponse(500, """{"error":"internal error"}""")
+                    EngineResponse(status = 500, body = """{"error":"internal error"}""")
             }
 
         output.write(LambdaEvent.encode(response).getBytes(UTF_8))
@@ -119,13 +119,13 @@ object LambdaEvent {
         } yield (id, eventType)
 
         EngineRequest(
-          connection.map(_._2).getOrElse(method),
-          if (connection.isDefined) "/live" else path,
-          query,
-          if (isBase64 && rawBody.nonEmpty) String(Base64.getDecoder.decode(rawBody), UTF_8) else rawBody,
-          headers,
-          claims,
-          connection.map(_._1)
+          method = connection.map(_._2).getOrElse(method),
+          path = if (connection.isDefined) "/live" else path,
+          query = query,
+          body = if (isBase64 && rawBody.nonEmpty) String(Base64.getDecoder.decode(rawBody), UTF_8) else rawBody,
+          headers = headers,
+          claims = claims,
+          connectionId = connection.map(_._1)
         )
     }
 

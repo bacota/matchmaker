@@ -54,7 +54,7 @@ class GameAdminService[T](sessionPool: SessionPool)(using TextCodec[T]) {
                         case Some(_) => IO.unit
                         case None    => IO.raiseError(NotFoundError(s"no player with id ${playerId.value}"))
                     }
-                    _ <- adminRepo.grant(playerId, gameId, caller.playerId)
+                    _ <- adminRepo.grant(player = playerId, game = gameId, grantedBy = caller.playerId)
                 } yield ()
             }
         }

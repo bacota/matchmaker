@@ -25,7 +25,7 @@ class RankingServiceSpec extends PropertySuite {
     private val caseTimeout = 60.seconds
 
     private val services = TestServices.services
-    private val ranking = new RankingService(TestServices.pool)
+    private val ranking = new RankingService(sessionPool = TestServices.pool)
 
     private def unique(prefix: String): String = s"$prefix-${java.util.UUID.randomUUID()}"
 
@@ -33,15 +33,21 @@ class RankingServiceSpec extends PropertySuite {
         TestSession.resource.use { session =>
             new GameRepo[String](session).create(
               Game(
-                GameId.unassigned,
-                GameType.Plain,
-                "Ladder",
-                "Ladder",
-                "description",
-                "https://engine.example.com/games",
+                gameId = GameId.unassigned,
+                gameType = GameType.Plain,
+                name = "Ladder",
+                displayName = "Ladder",
+                description = "description",
+                url = "https://engine.example.com/games",
                 isActive = true,
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "only", roleType = RoleType.Required, displayName = "Only")
+                  GameRole(
+                    gameRoleId = GameRoleId(0),
+                    gameId = GameId.unassigned,
+                    name = "only",
+                    roleType = RoleType.Required,
+                    displayName = "Only"
+                  )
                 ),
                 Seq.empty,
                 unique("ladder")
@@ -50,7 +56,8 @@ class RankingServiceSpec extends PropertySuite {
         }
 
     private def players(n: Int): IO[List[Player]] =
-        List.fill(n)(()).traverse(_ => services.registration.register(unique("rank"), unique("rank-sub")))
+        List.fill(n)(())
+            .traverse(_ => services.registration.register(nickname = unique("rank"), externalId = unique("rank-sub")))
 
     /** A player's rating as play or an admin leaves it: `isRated` is whether the leaderboard shows it — a match has
       * moved it — or not, as for a row a match's start made; and how many rated matches stand behind it, which tell
@@ -105,7 +112,7 @@ class RankingServiceSpec extends PropertySuite {
             rating <- Gen.choose(1494, 1500)
             rated <- Gen.frequency(5 -> true, 1 -> false)
             matches <- Gen.choose(1, 3)
-        } yield Rating(rating, rated, matches)
+        } yield Rating(rating = rating, isRated = rated, matches = matches)
 
     /** Rounds of moves: in each, some of the players' ratings move, and then the leaderboard is put in order. */
     private val genRounds: Gen[(Int, List[Map[Int, Rating]])] =
@@ -151,11 +158,21 @@ class RankingServiceSpec extends PropertySuite {
             game <- makeGame()
             people <- players(4)
             List(a, b, c, d) = people: @unchecked
-            _ <- write(game, Map(a -> Rating(1600, true), b -> Rating(1550, true), c -> Rating(1500, true)))
+            _ <- write(
+              game,
+              Map(
+                a -> Rating(rating = 1600, isRated = true),
+                b -> Rating(rating = 1550, isRated = true),
+                c -> Rating(rating = 1500, isRated = true)
+              )
+            )
             _ <- ranking.rank(game.gameId)
             before <- places(game)
             // c climbs past b; d arrives level with a.
-            _ <- write(game, Map(c -> Rating(1580, true), d -> Rating(1600, true)))
+            _ <- write(
+              game,
+              Map(c -> Rating(rating = 1580, isRated = true), d -> Rating(rating = 1600, isRated = true))
+            )
             _ <- ranking.rank(game.gameId)
             after <- places(game)
         } yield (List(a, b, c, d).map(_.playerId.value), before, after)
@@ -169,11 +186,18 @@ class RankingServiceSpec extends PropertySuite {
             game <- makeGame()
             people <- players(3)
             List(a, b, c) = people: @unchecked
-            _ <- write(game, Map(a -> Rating(1500, true, 3), b -> Rating(1500, true, 5), c -> Rating(1500, true, 3)))
+            _ <- write(
+              game,
+              Map(
+                a -> Rating(rating = 1500, isRated = true, matches = 3),
+                b -> Rating(rating = 1500, isRated = true, matches = 5),
+                c -> Rating(rating = 1500, isRated = true, matches = 3)
+              )
+            )
             _ <- ranking.rank(game.gameId)
             before <- places(game)
             // A match that moves a's rating by nothing still adds one: a passes c, and draws level with nobody.
-            _ <- write(game, Map(a -> Rating(1500, true, 4)))
+            _ <- write(game, Map(a -> Rating(rating = 1500, isRated = true, matches = 4)))
             _ <- ranking.rank(game.gameId)
             after <- places(game)
         } yield (people.map(_.playerId.value), before, after)
@@ -183,14 +207,18 @@ class RankingServiceSpec extends PropertySuite {
     }
 
     test("a placing that cannot have a row's lock gives up rather than waiting, and is placed once it can".tag(Quiet)) {
-        val impatient = new RankingService(TestServices.pool, attempts = 3, pause = _ => IO.sleep(10.millis))
+        val impatient =
+            new RankingService(sessionPool = TestServices.pool, attempts = 3, pause = _ => IO.sleep(10.millis))
         val lockRow: Query[(Int, Long), Boolean] =
             sql"""SELECT true FROM elo_rating WHERE game_id = $int4 AND player_id = $int8 FOR UPDATE""".query(bool)
         val result = for {
             game <- makeGame()
             people <- players(2)
             List(a, b) = people: @unchecked
-            _ <- write(game, Map(a -> Rating(1600, true), b -> Rating(1500, true)))
+            _ <- write(
+              game,
+              Map(a -> Rating(rating = 1600, isRated = true), b -> Rating(rating = 1500, isRated = true))
+            )
             // Somebody else -- a completion, say -- holds b's row while the leaderboard is put in order.
             held <- TestSession.resource.use(session =>
                 session.transaction.use(_ =>
@@ -211,11 +239,13 @@ class RankingServiceSpec extends PropertySuite {
     }
 
     test("placings of one game run at once take turns, and leave it in order") {
-        val patient = new RankingService(TestServices.pool, attempts = 100)
+        val patient = new RankingService(sessionPool = TestServices.pool, attempts = 100)
         val result = for {
             game <- makeGame()
             people <- players(8)
-            ratings = people.zipWithIndex.map((p, i) => p -> Rating(1500 + (i % 3) * 10 + i, true)).toMap
+            ratings = people.zipWithIndex
+                .map((p, i) => p -> Rating(rating = 1500 + (i % 3) * 10 + i, isRated = true))
+                .toMap
             _ <- write(game, ratings)
             settled <- List.fill(4)(patient.rank(game.gameId)).parSequence
             placed <- places(game)
@@ -238,7 +268,14 @@ class RankingServiceSpec extends PropertySuite {
             people <- players(3)
             List(a, b, c) = people: @unchecked
             // Overall a leads; in the role c does, and a has not played it.
-            _ <- write(game, Map(a -> Rating(1600, true), b -> Rating(1550, true), c -> Rating(1500, true)))
+            _ <- write(
+              game,
+              Map(
+                a -> Rating(rating = 1600, isRated = true),
+                b -> Rating(rating = 1550, isRated = true),
+                c -> Rating(rating = 1500, isRated = true)
+              )
+            )
             _ <- TestSession.resource.use(session =>
                 session.execute(inRole)((game.gameId.value, role, b.playerId.value, 1490)) *>
                     session.execute(inRole)((game.gameId.value, role, c.playerId.value, 1530))
@@ -263,13 +300,27 @@ class RankingServiceSpec extends PropertySuite {
             _ <- write(
               game,
               people.zipWithIndex
-                  .map((p, i) => p -> Rating(if (i < 18) 2000 - i else if (i < 22) 1000 else 900 - i, true))
+                  .map((p, i) =>
+                      p -> Rating(rating = if (i < 18) 2000 - i else if (i < 22) 1000 else 900 - i, isRated = true)
+                  )
                   .toMap
             )
             _ <- ranking.rank(game.gameId)
-            first <- services.ratings.leaderboard(game.gameId, 0, people.head.externalId)
-            second <- services.ratings.leaderboard(game.gameId, 1, people.head.externalId)
-            third <- services.ratings.leaderboard(game.gameId, 2, people.head.externalId)
+            first <- services.ratings.leaderboard(
+              gameId = game.gameId,
+              page = 0,
+              callerExternalId = people.head.externalId
+            )
+            second <- services.ratings.leaderboard(
+              gameId = game.gameId,
+              page = 1,
+              callerExternalId = people.head.externalId
+            )
+            third <- services.ratings.leaderboard(
+              gameId = game.gameId,
+              page = 2,
+              callerExternalId = people.head.externalId
+            )
         } yield (first, second, third)
         val (first, second, third) = result.timeout(caseTimeout).unsafeRunSync()
         assertEquals(first.ratings.flatMap(_.rank), (1 to 18).toList ++ List.fill(4)(19))

@@ -14,13 +14,25 @@ class S3ArchiveStoreSpec extends FunSuite {
     }
 
     private val store =
-        S3ArchiveStore("matchmaker-dev-archive.vivi.com", "matchmaker-dev-friendly-archive.vivi.com", "us-east-1")
+        S3ArchiveStore(
+          permanent = "matchmaker-dev-archive.vivi.com",
+          friendly = "matchmaker-dev-friendly-archive.vivi.com",
+          region = "us-east-1"
+        )
 
     private val sha = ArchiveStore.sha256("{}".getBytes)
 
     test("urls are path-style, because the bucket names have dots in them") {
         val upload =
-            store.signUpload(ArchiveBucket.Permanent, "stratego/2026-10-03/m.json", 2, sha, Some("v1")).unsafeRunSync()
+            store
+                .signUpload(
+                  bucket = ArchiveBucket.Permanent,
+                  key = "stratego/2026-10-03/m.json",
+                  size = 2,
+                  sha256 = sha,
+                  formatVersion = Some("v1")
+                )
+                .unsafeRunSync()
         assert(
           upload.url.startsWith(
             "https://s3.amazonaws.com/matchmaker-dev-archive.vivi.com/stratego/2026-10-03/m.json?"
@@ -38,7 +50,15 @@ class S3ArchiveStoreSpec extends FunSuite {
     }
 
     test("an upload is signed for its checksum, its length and its format, and the engine is told to send them") {
-        val upload = store.signUpload(ArchiveBucket.Permanent, "k.json", 2, sha, Some("v1")).unsafeRunSync()
+        val upload = store
+            .signUpload(
+              bucket = ArchiveBucket.Permanent,
+              key = "k.json",
+              size = 2,
+              sha256 = sha,
+              formatVersion = Some("v1")
+            )
+            .unsafeRunSync()
         assertEquals(upload.method, "PUT")
         assertEquals(upload.headers.get("x-amz-checksum-sha256"), Some(sha))
         assertEquals(upload.headers.get("content-length"), Some("2"))

@@ -144,38 +144,38 @@ class TournamentRepo(session: Session[IO]) {
           autoStart
         ) = w
         Tournament(
-          game,
-          id,
-          name,
-          description,
-          owner,
-          model,
-          defaultPoolSize,
-          TournamentSettings(
-            auto,
-            friendly,
-            invitational,
-            late,
-            minRating,
-            maxRating,
-            entries,
-            duration(roundSeconds),
-            maxTurns,
-            concurrentRounds,
-            isPublic,
-            gameSettings,
-            live,
-            start,
-            chooseRoles,
-            maxEntrants,
-            autoStart
+          gameId = game,
+          tournamentId = id,
+          name = name,
+          description = description,
+          owner = owner,
+          tournamentModelId = model,
+          defaultPoolSize = defaultPoolSize,
+          settings = TournamentSettings(
+            hasAutomaticRounds = auto,
+            isFriendly = friendly,
+            isInvitational = invitational,
+            hasLateEntries = late,
+            minRating = minRating,
+            maxRating = maxRating,
+            entriesPerPlayer = entries,
+            roundDuration = duration(roundSeconds),
+            maxTurns = maxTurns,
+            hasConcurrentRounds = concurrentRounds,
+            isPublic = isPublic,
+            gameSettings = gameSettings,
+            isLive = live,
+            start = start,
+            hasRoleChoice = chooseRoles,
+            maxEntrants = maxEntrants,
+            isAutoStarted = autoStart
           ),
-          st,
-          startedAt,
-          endedAt,
-          roundStartedAt,
-          roundDeadline,
-          checkedAt
+          status = st,
+          startedAt = startedAt,
+          endedAt = endedAt,
+          roundStartedAt = roundStartedAt,
+          roundDeadline = roundDeadline,
+          checkedAt = checkedAt
         )
     }
 
@@ -243,7 +243,7 @@ class TournamentRepo(session: Session[IO]) {
         id: TournamentId,
         state: com.vivi.matchmaker.model.tournament.TournamentState
     ): IO[Unit] =
-        new TournamentStateRepo(session).write(game, id, state).void
+        new TournamentStateRepo(session).write(game = game, tournament = id, after = state).void
 
     private val selectForGame: Query[GameId, TournamentId *: Row] =
         sql"""SELECT tournament_id, $columns FROM tournament WHERE game_id = $gameId
@@ -251,7 +251,7 @@ class TournamentRepo(session: Session[IO]) {
 
     /** Every tournament of a game, newest first. */
     def listForGame(game: GameId): IO[List[Tournament]] =
-        session.execute(selectForGame)(game).map(_.map { case id *: r => tournamentOf(game, id, r) })
+        session.execute(selectForGame)(game).map(_.map { case id *: r => tournamentOf(game = game, id = id, r = r) })
 
     // A player's tournaments: owned, entered (with any entry, withdrawn or not), or invited to -- themselves, or a
     // character they own now.
@@ -273,7 +273,7 @@ class TournamentRepo(session: Session[IO]) {
     def listForPlayer(player: PlayerId): IO[List[Tournament]] =
         session
             .execute(selectForPlayer)((player, player, player))
-            .map(_.map { case g *: id *: r => tournamentOf(g, id, r) })
+            .map(_.map { case g *: id *: r => tournamentOf(game = g, id = id, r = r) })
 
     // What a list shows beside each tournament, for a viewer: its game's name, its owner's nickname, how many
     // entries are still in it, whether the viewer has an entry or an invitation, and whether it is under way
@@ -304,8 +304,17 @@ class TournamentRepo(session: Session[IO]) {
 
     private def summaryOf(viewer: PlayerId)(s: SummaryRow): TournamentSummary = {
         val (game, id, r, gameName, owner, entrants, entered, invited, roundOver) = s
-        val t = tournamentOf(game, id, r)
-        TournamentSummary(t, gameName, owner, entrants.toInt, t.owner == viewer, entered, invited, roundOver)
+        val t = tournamentOf(game = game, id = id, r = r)
+        TournamentSummary(
+          tournament = t,
+          gameName = gameName,
+          ownerNickname = owner,
+          entrants = entrants.toInt,
+          isOwner = t.owner == viewer,
+          isEntered = entered,
+          isInvited = invited,
+          isRoundOver = roundOver
+        )
     }
 
     private val selectSummariesForGame: Query[((PlayerId, PlayerId), GameId), SummaryRow] =
@@ -400,18 +409,18 @@ class TournamentRepo(session: Session[IO]) {
             .execute(selectStandings)(player)
             .map(_.map { case (g, t, name, gameName, st, entrant, character, seed, stratum, out, entrants, rank) =>
                 TournamentStanding(
-                  g,
-                  t,
-                  name,
-                  gameName,
-                  st,
-                  EntrantId(entrant),
-                  character,
-                  seed,
-                  stratum,
-                  out,
-                  entrants.toInt,
-                  rank
+                  gameId = g,
+                  tournamentId = t,
+                  tournamentName = name,
+                  gameName = gameName,
+                  status = st,
+                  entrantId = EntrantId(entrant),
+                  characterName = character,
+                  seed = seed,
+                  stratum = stratum,
+                  isEliminated = out,
+                  entrants = entrants.toInt,
+                  finalRank = rank
                 )
             })
 

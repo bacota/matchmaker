@@ -9,7 +9,12 @@ import munit.FunSuite
   */
 class SesSpec extends FunSuite {
 
-    private val message = MailMessage("matchmaker@example.com", "alice@example.com", "subject", "line one\nline two")
+    private val message = MailMessage(
+      sender = "matchmaker@example.com",
+      recipient = "alice@example.com",
+      subject = "subject",
+      body = "line one\nline two"
+    )
 
     test("the body is a v2 SendEmail with a simple text part") {
         val json = ujson.read(Ses.sendEmailBody(message))

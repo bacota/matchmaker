@@ -102,7 +102,7 @@ case class StrategoMatch(
     /** A side's own moves, oldest first — what the two-square rule reads. */
     def history(side: Side): List[Step] = moves.filter(_.side == side).flatMap(_.step)
 
-    def legalMoves(side: Side): List[(Int, Int)] = Rules.legalMoves(board, side, history(side))
+    def legalMoves(side: Side): List[(Int, Int)] = Rules.legalMoves(board = board, side = side, history = history(side))
 
     private def isStuck(side: Side): Boolean = legalMoves(side).isEmpty
 
@@ -220,7 +220,7 @@ case class StrategoMatch(
         val ranks = fallen ++ standing
         Option.when((0 until 80).forall(ranks.contains))(
           Board((0 until 80).foldLeft(Board.empty.cells) { (cells, id) =>
-              cells.updated(homeOf(id), Some(Piece(id, sideOf(id), ranks(id))))
+              cells.updated(homeOf(id), Some(Piece(id = id, side = sideOf(id), rank = ranks(id))))
           })
         )
     }
@@ -270,7 +270,13 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
             val sides =
                 if (requested.flatten.distinct.sizeIs == 2) requested.map(_.get)
                 else List(Side.Red, Side.Blue)
-            Right(players.zip(sides).map((p, side) => Seat(side, p.cognitoId, p.participantId, p.nickname)))
+            Right(
+              players
+                  .zip(sides)
+                  .map((p, side) =>
+                      Seat(side = side, cognitoId = p.cognitoId, participantId = p.participantId, nickname = p.nickname)
+                  )
+            )
         }
 
     /** The `maxMoves` game parameter, if matchmaker sent one: a whole number of piece moves, at least one. */
@@ -389,11 +395,27 @@ object StrategoMatch extends Game[StrategoMatch, Seat, MoveRecord] {
         .bimap(
           board =>
               board.cells.indices.toList
-                  .flatMap(i => board(i).map(p => Placed(i, p.id, p.side, p.rank, p.isRevealed, p.isMoved))),
+                  .flatMap(i =>
+                      board(i).map(p =>
+                          Placed(
+                            square = i,
+                            id = p.id,
+                            side = p.side,
+                            rank = p.rank,
+                            isRevealed = p.isRevealed,
+                            isMoved = p.isMoved
+                          )
+                      )
+                  ),
           placed =>
               Board(
                 placed.foldLeft(Board.empty.cells)((cells, p) =>
-                    cells.updated(p.square, Some(Piece(p.id, p.side, p.rank, p.isRevealed, p.isMoved)))
+                    cells.updated(
+                      p.square,
+                      Some(
+                        Piece(id = p.id, side = p.side, rank = p.rank, isRevealed = p.isRevealed, isMoved = p.isMoved)
+                      )
+                    )
                 )
               )
         )

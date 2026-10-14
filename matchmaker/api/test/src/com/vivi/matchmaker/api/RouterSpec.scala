@@ -24,7 +24,7 @@ class RouterSpec extends FunSuite {
     private val unusablePool: SessionPool =
         Resource.eval(IO.raiseError[Session[IO]](new IllegalStateException("the database must not be reached")))
 
-    private val services: Services[String] = Services.fromPool[String](unusablePool)
+    private val services: Services[String] = Services.fromPool[String](pool = unusablePool)
 
     private def request(
         method: String,
@@ -49,14 +49,16 @@ class RouterSpec extends FunSuite {
             case _ => (path, Map.empty[String, String])
         }
 
-        Request(method, bare, headers, query, body)
+        Request(method = method, path = bare, headers = headers, query = query, body = body)
     }
 
     private def dispatch(request: Request): ApiGateway.Response =
-        Router.dispatch(services, request, Authenticator.TrustedHeader).unsafeRunSync()
+        Router
+            .dispatch(services = services, request = request, authenticator = Authenticator.TrustedHeader)
+            .unsafeRunSync()
 
     private def statusOf(method: String, path: String, headers: Map[String, String], body: String): Int =
-        dispatch(request(method, path, headers, body)).statusCode
+        dispatch(request(method = method, path = path, headers = headers, body = body)).statusCode
 
     /** Runs a body whose 500s are the point of the test, without their stack traces on the console.
       *
@@ -83,11 +85,11 @@ class RouterSpec extends FunSuite {
     }
 
     test("a request without the identity header is unauthenticated") {
-        assertEquals(statusOf("GET", "/me", Map.empty, "{}"), 401)
+        assertEquals(statusOf(method = "GET", path = "/me", headers = Map.empty, body = "{}"), 401)
     }
 
     test("a blank identity header is treated as missing") {
-        assertEquals(statusOf("GET", "/me", Map("x-external-id" -> "   "), "{}"), 401)
+        assertEquals(statusOf(method = "GET", path = "/me", headers = Map("x-external-id" -> "   "), body = "{}"), 401)
     }
 
     // Guards the by-name `services` parameter. `fail` as the argument stands in for the pool
@@ -101,66 +103,81 @@ class RouterSpec extends FunSuite {
 
         val response =
             Router.dispatch(
-              fail("services must not be forced for a rejected request"),
-              request("GET", "/me"),
-              alwaysRejects
+              services = fail("services must not be forced for a rejected request"),
+              request = request(method = "GET", path = "/me"),
+              authenticator = alwaysRejects
             )
 
         assertEquals(response.unsafeRunSync().statusCode, 401)
     }
 
     test("an unknown path is not found") {
-        assertEquals(dispatch(request("GET", "/nonsense")).statusCode, 404)
+        assertEquals(dispatch(request(method = "GET", path = "/nonsense")).statusCode, 404)
     }
 
     test("a known path with the wrong method is not found") {
-        assertEquals(dispatch(request("DELETE", "/register")).statusCode, 404)
+        assertEquals(dispatch(request(method = "DELETE", path = "/register")).statusCode, 404)
     }
 
     test("a malformed request body is a bad request, before any service is called") {
-        assertEquals(dispatch(request("POST", "/register", body = "not json")).statusCode, 400)
+        assertEquals(dispatch(request(method = "POST", path = "/register", body = "not json")).statusCode, 400)
     }
 
     test("a body missing a required field is a bad request") {
-        assertEquals(dispatch(request("POST", "/register", body = """{"wrong":"field"}""")).statusCode, 400)
+        assertEquals(
+          dispatch(request(method = "POST", path = "/register", body = """{"wrong":"field"}""")).statusCode,
+          400
+        )
     }
 
     test("a match id that is not a number is a bad request") {
-        assertEquals(dispatch(request("GET", "/games/1/matches/m1")).statusCode, 400)
-        assertEquals(dispatch(request("POST", "/matches/m1/archive/confirm")).statusCode, 400)
-        assertEquals(dispatch(request("POST", "/games/1/tournaments/2/matches/m1/role", body = "{}")).statusCode, 400)
+        assertEquals(dispatch(request(method = "GET", path = "/games/1/matches/m1")).statusCode, 400)
+        assertEquals(dispatch(request(method = "POST", path = "/matches/m1/archive/confirm")).statusCode, 400)
+        assertEquals(
+          dispatch(request(method = "POST", path = "/games/1/tournaments/2/matches/m1/role", body = "{}")).statusCode,
+          400
+        )
     }
 
     // Every part of a completed list's window is optional, and each one given has to be well formed.
     test("a completed list's window with a part that is not well formed is a bad request") {
-        assertEquals(dispatch(request("GET", "/me/matches/completed?frame=fortnight")).statusCode, 400)
-        assertEquals(dispatch(request("GET", "/me/matches/completed?page=-1")).statusCode, 400)
-        assertEquals(dispatch(request("GET", "/me/matches/completed?page=many")).statusCode, 400)
-        assertEquals(dispatch(request("GET", "/me/matches/completed?asOf=yesterday")).statusCode, 400)
-        assertEquals(dispatch(request("GET", "/players/2/matches/completed?gameId=abc")).statusCode, 400)
+        assertEquals(dispatch(request(method = "GET", path = "/me/matches/completed?frame=fortnight")).statusCode, 400)
+        assertEquals(dispatch(request(method = "GET", path = "/me/matches/completed?page=-1")).statusCode, 400)
+        assertEquals(dispatch(request(method = "GET", path = "/me/matches/completed?page=many")).statusCode, 400)
+        assertEquals(dispatch(request(method = "GET", path = "/me/matches/completed?asOf=yesterday")).statusCode, 400)
+        assertEquals(
+          dispatch(request(method = "GET", path = "/players/2/matches/completed?gameId=abc")).statusCode,
+          400
+        )
     }
 
     // Well formed, but naming a window that cannot be computed or stored: refused, not a 500.
     test("a completed list's window out of any history's range is a bad request") {
         // Parses, as Instant.MIN; a day before it is not an instant at all.
         assertEquals(
-          dispatch(request("GET", "/me/matches/completed?asOf=-1000000000-01-01T00:00:00Z")).statusCode,
+          dispatch(request(method = "GET", path = "/me/matches/completed?asOf=-1000000000-01-01T00:00:00Z")).statusCode,
           400
         )
         // Ten thousand years back from now.
-        assertEquals(dispatch(request("GET", "/me/matches/completed?frame=year&page=10000")).statusCode, 400)
+        assertEquals(
+          dispatch(request(method = "GET", path = "/me/matches/completed?frame=year&page=10000")).statusCode,
+          400
+        )
         // A moment nobody's history reaches yet.
-        assertEquals(dispatch(request("GET", "/me/matches/completed?asOf=2999-01-01T00:00:00Z")).statusCode, 400)
+        assertEquals(
+          dispatch(request(method = "GET", path = "/me/matches/completed?asOf=2999-01-01T00:00:00Z")).statusCode,
+          400
+        )
     }
 
     // `?role=` names a role's ratings rather than the overall ones, by its id.
     test("a ratings role that is not a role id is a bad request") {
-        assertEquals(dispatch(request("GET", "/games/1/ratings?role=first")).statusCode, 400)
-        assertEquals(dispatch(request("GET", "/games/1/ratings/2?role=first")).statusCode, 400)
+        assertEquals(dispatch(request(method = "GET", path = "/games/1/ratings?role=first")).statusCode, 400)
+        assertEquals(dispatch(request(method = "GET", path = "/games/1/ratings/2?role=first")).statusCode, 400)
     }
 
     test("a non-numeric game id is a bad request") {
-        assertEquals(dispatch(request("GET", "/games/abc/challenges")).statusCode, 400)
+        assertEquals(dispatch(request(method = "GET", path = "/games/abc/challenges")).statusCode, 400)
     }
 
     // The per-game route takes the same body as the defaults route above it, so the flag that only
@@ -169,18 +186,21 @@ class RouterSpec extends FunSuite {
     // before the service is reached, which the unusable pool proves -- reaching it would be a 500.
     test("a cascade the per-game route cannot carry out is a bad request") {
         val body = """{"preferences":{"isNotifiedOfMatchStarted":true},"isAppliedToGames":true}"""
-        assertEquals(dispatch(request("PUT", "/me/notifications/games/1", body = body)).statusCode, 400)
+        assertEquals(dispatch(request(method = "PUT", path = "/me/notifications/games/1", body = body)).statusCode, 400)
     }
 
     // And the flag it can act on still reaches the service, so the refusal above is about one field
     // and has not made the route reject every cascade.
     test("the cascade the per-game route does support reaches the service") {
         val body = """{"preferences":{"isNotifiedOfMatchStarted":true},"isAppliedToMatches":true}"""
-        assertEquals(quietly(dispatch(request("PUT", "/me/notifications/games/1", body = body))).statusCode, 500)
+        assertEquals(
+          quietly(dispatch(request(method = "PUT", path = "/me/notifications/games/1", body = body))).statusCode,
+          500
+        )
     }
 
     test("a non-numeric character id is a bad request") {
-        assertEquals(dispatch(request("PUT", "/characters/abc")).statusCode, 400)
+        assertEquals(dispatch(request(method = "PUT", path = "/characters/abc")).statusCode, 400)
     }
 
     /** Bodies are serialized from real model values rather than hand-written JSON, so that a body is never accidentally
@@ -188,12 +208,12 @@ class RouterSpec extends FunSuite {
       */
     private val gameBody = write(
       Game(
-        GameId.unassigned,
-        GameType.Character,
-        "name",
-        "name",
-        "description",
-        "url",
+        gameId = GameId.unassigned,
+        gameType = GameType.Character,
+        name = "name",
+        displayName = "name",
+        description = "description",
+        url = "url",
         isActive = true,
         Seq.empty,
         Seq.empty,
@@ -207,7 +227,16 @@ class RouterSpec extends FunSuite {
         write(ChallengeRequest(characterId = Some(CharacterId(1)), poolSize = Some(2), invitations = List(PlayerId(2))))
 
     private val resultsBody = write(
-      Json.MatchResults(List(Json.ResultEntry(ParticipantId(1), 1, Map("points" -> ujson.Num(3)), isWinner = true)))
+      Json.MatchResults(results =
+          List(
+            Json.ResultEntry(
+              participantId = ParticipantId(1),
+              rank = 1,
+              scores = Map("points" -> ujson.Num(3)),
+              isWinner = true
+            )
+          )
+      )
     )
 
     /** Every route in `Router`. Keep in step with it: a route missing from here is a route no test would notice
@@ -330,7 +359,11 @@ class RouterSpec extends FunSuite {
         // exactly the evidence that the route is wired up and its body was understood.
         quietly {
             routed.foreach { case (method, path, body) =>
-                assertEquals(statusOf(method, path, Map("x-external-id" -> "sub-1"), body), 500, s"$method $path")
+                assertEquals(
+                  statusOf(method = method, path = path, headers = Map("x-external-id" -> "sub-1"), body = body),
+                  500,
+                  s"$method $path"
+                )
             }
         }
     }
@@ -344,7 +377,11 @@ class RouterSpec extends FunSuite {
 
     test("every routed endpoint requires the identity header") {
         routed.foreach { case (method, path, body) =>
-            assertEquals(statusOf(method, path, Map.empty, body), 401, s"$method $path")
+            assertEquals(
+              statusOf(method = method, path = path, headers = Map.empty, body = body),
+              401,
+              s"$method $path"
+            )
         }
     }
 
@@ -357,7 +394,13 @@ class RouterSpec extends FunSuite {
 
         val response =
             quietly(
-              Router.dispatch(services, request("GET", "/me", headers = Map.empty), fromElsewhere).unsafeRunSync()
+              Router
+                  .dispatch(
+                    services = services,
+                    request = request(method = "GET", path = "/me", headers = Map.empty),
+                    authenticator = fromElsewhere
+                  )
+                  .unsafeRunSync()
             )
 
         // No header at all, yet the request is authenticated and reaches the unusable pool.
@@ -370,7 +413,13 @@ class RouterSpec extends FunSuite {
                 IO.pure(Left(Errors.response(401, "token has expired")))
         }
 
-        val response = Router.dispatch(services, request("GET", "/me"), alwaysExpired).unsafeRunSync()
+        val response = Router
+            .dispatch(
+              services = services,
+              request = request(method = "GET", path = "/me"),
+              authenticator = alwaysExpired
+            )
+            .unsafeRunSync()
 
         assertEquals(response.statusCode, 401)
         assert(response.body.contains("token has expired"), response.body)
@@ -383,11 +432,11 @@ class RouterSpec extends FunSuite {
 
     test("the gateway authenticator turns an engine's API key into that engine's name") {
         val request = ApiGateway.Request(
-          "POST",
-          "/games/1/matches/11/results",
-          Map(ApiKeys.Header -> "s3cret"),
-          Map.empty,
-          "{}"
+          method = "POST",
+          path = "/games/1/matches/11/results",
+          headers = Map(ApiKeys.Header -> "s3cret"),
+          query = Map.empty,
+          body = "{}"
         )
 
         assertEquals(Authenticator.Gateway(keys).callerOf(request).unsafeRunSync(), Right("tictactoe"))
@@ -397,7 +446,15 @@ class RouterSpec extends FunSuite {
         def callerOf(headers: Map[String, String]) =
             Authenticator
                 .Gateway(keys)
-                .callerOf(ApiGateway.Request("POST", "/games/1/matches/11/results", headers, Map.empty, "{}"))
+                .callerOf(
+                  ApiGateway.Request(
+                    method = "POST",
+                    path = "/games/1/matches/11/results",
+                    headers = headers,
+                    query = Map.empty,
+                    body = "{}"
+                  )
+                )
                 .unsafeRunSync()
 
         assertEquals(callerOf(Map(ApiKeys.Header -> "guess")), Left(Errors.unauthenticated))
@@ -410,7 +467,15 @@ class RouterSpec extends FunSuite {
         val unread = () => IO.raiseError[ApiKeys](new AssertionError("the keys were read"))
         val outcome = Authenticator
             .ApiKey(unread)
-            .callerOf(ApiGateway.Request("POST", "/games/1/matches/11/results", Map.empty, Map.empty, "{}"))
+            .callerOf(
+              ApiGateway.Request(
+                method = "POST",
+                path = "/games/1/matches/11/results",
+                headers = Map.empty,
+                query = Map.empty,
+                body = "{}"
+              )
+            )
             .unsafeRunSync()
 
         assertEquals(outcome, Left(Errors.unauthenticated))
@@ -418,13 +483,13 @@ class RouterSpec extends FunSuite {
 
     test("the gateway authenticator prefers a verified token over anything else on the request") {
         val request = ApiGateway.Request(
-          "GET",
-          "/me",
+          method = "GET",
+          path = "/me",
           // Both a spoofable identity header and a real key: neither displaces the claim, so an
           // engine holding a valid key cannot present itself as a player.
-          Map(ApiGateway.ExternalIdHeader.toLowerCase -> "spoofed", ApiKeys.Header -> "s3cret"),
-          Map.empty,
-          "{}",
+          headers = Map(ApiGateway.ExternalIdHeader.toLowerCase -> "spoofed", ApiKeys.Header -> "s3cret"),
+          query = Map.empty,
+          body = "{}",
           claims = Map("sub" -> "sub-from-token")
         )
 
@@ -433,13 +498,26 @@ class RouterSpec extends FunSuite {
 
     test("a request the gateway authenticated in neither way is unauthenticated") {
         val request =
-            ApiGateway.Request("GET", "/me", Map(ApiGateway.ExternalIdHeader.toLowerCase -> "sub-1"), Map.empty, "{}")
+            ApiGateway.Request(
+              method = "GET",
+              path = "/me",
+              headers = Map(ApiGateway.ExternalIdHeader.toLowerCase -> "sub-1"),
+              query = Map.empty,
+              body = "{}"
+            )
         assertEquals(Authenticator.Gateway(keys).callerOf(request).unsafeRunSync(), Left(Errors.unauthenticatedToken))
     }
 
     test("the gateway authenticator takes the caller from the verified sub claim") {
         val request =
-            Request("GET", "/me", Map.empty, Map.empty, "{}", Map("sub" -> "sub-from-token", "email" -> "a@b.c"))
+            Request(
+              method = "GET",
+              path = "/me",
+              headers = Map.empty,
+              query = Map.empty,
+              body = "{}",
+              claims = Map("sub" -> "sub-from-token", "email" -> "a@b.c")
+            )
 
         assertEquals(Authenticator.GatewayClaims.callerOf(request).unsafeRunSync(), Right("sub-from-token"))
     }
@@ -447,14 +525,24 @@ class RouterSpec extends FunSuite {
     test("the gateway authenticator ignores the identity header entirely") {
         // The header is the local mode's mechanism. Were it honoured deployed, anyone could set it
         // and become any player, which is exactly what the JWT authorizer is there to prevent.
-        val request = Request("GET", "/me", Map("x-external-id" -> "someone-else"), Map.empty, "{}")
+        val request = Request(
+          method = "GET",
+          path = "/me",
+          headers = Map("x-external-id" -> "someone-else"),
+          query = Map.empty,
+          body = "{}"
+        )
 
         assert(Authenticator.GatewayClaims.callerOf(request).unsafeRunSync().isLeft)
     }
 
     test("a request with no claims is unauthenticated under the gateway authenticator") {
         val response = Router
-            .dispatch(services, request("GET", "/me", headers = Map.empty), Authenticator.GatewayClaims)
+            .dispatch(
+              services = services,
+              request = request(method = "GET", path = "/me", headers = Map.empty),
+              authenticator = Authenticator.GatewayClaims
+            )
             .unsafeRunSync()
 
         assertEquals(response.statusCode, 401)

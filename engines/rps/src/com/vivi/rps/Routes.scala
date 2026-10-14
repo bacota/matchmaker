@@ -8,11 +8,11 @@ import Protocol.given
   */
 class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], live: Option[Live] = None)
     extends EngineRoutes[RpsMatch, Seat, Protocol.StateResponse](
-      engine.core,
-      playAuth,
-      matchmakerKey,
-      Html.signIn,
-      live
+      engine = engine.core,
+      playAuth = playAuth,
+      matchmakerKey = matchmakerKey,
+      signIn = Html.signIn,
+      live = live
     ) {
 
     protected def stateOf(m: RpsMatch, seat: Option[Seat]): Protocol.StateResponse = engine.stateOf(m, seat)
@@ -26,7 +26,14 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], 
         login: Option[LoginConfig],
         liveUrl: Option[String],
         publicView: Boolean
-    ): String = Html.board(matchId, title, state, login, liveUrl, publicView)
+    ): String = Html.board(
+      matchId = matchId,
+      title = title,
+      state = state,
+      login = login,
+      liveUrl = liveUrl,
+      publicView = publicView
+    )
 
     protected def move(request: EngineRequest, matchId: String): EngineResponse =
         // Two ways to be a bad throw, answered the same way: a body that is not a move at all,
@@ -36,7 +43,10 @@ class Routes(engine: Engine, playAuth: PlayAuth, matchmakerKey: Option[String], 
         parse[Protocol.MoveRequest](request.body).flatMap(move =>
             Shape.parse(move.shape).toRight(s"'${move.shape}' is not a throw; expected rock, paper or scissors")
         ) match {
-            case Left(why)    => error(400, why)
-            case Right(shape) => asPlayer(request)(caller => engine.move(matchId, caller, shape).map(moved))
+            case Left(why) => error(400, why)
+            case Right(shape) =>
+                asPlayer(request)(caller =>
+                    engine.move(matchId = matchId, cognitoId = caller, shape = shape).map(moved)
+                )
         }
 }

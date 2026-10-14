@@ -74,7 +74,7 @@ class RankingService(
             session.transaction.use { _ =>
                 repo.tryLockRanking(gameId).flatMap {
                     case false => IO.raiseError(RankingService.Busy)
-                    case true  => RankingService.place(repo, Board(gameId, key.role), key.player)
+                    case true  => RankingService.place(repo = repo, game = Board(gameId, key.role), player = key.player)
                 }
             }
         }
@@ -126,18 +126,27 @@ object RankingService {
             case Some(row) if !row.isRated => row.placed.traverse_(takeOff(repo, game, player, _))
             case Some(row) =>
                 row.placed match {
-                    case None                              => placeNew(repo, game, player, row.standing)
+                    case None => placeNew(repo = repo, game = game, player = player, standing = row.standing)
                     case Some(at) if at.by == row.standing => IO.unit
-                    case Some(at) if row.standing > at.by  => climb(repo, game, player, at, row.standing)
-                    case Some(at)                          => sink(repo, game, player, at, row.standing)
+                    case Some(at) if row.standing > at.by =>
+                        climb(repo = repo, game = game, player = player, from = at, standing = row.standing)
+                    case Some(at) => sink(repo = repo, game = game, player = player, from = at, standing = row.standing)
                 }
         }
 
     private val bottom = Int.MaxValue
 
     private def takeOff(repo: EloRatingRepo, game: Board, player: PlayerId, from: Placed): IO[Unit] =
-        repo.shift(game, from.rank + 1, bottom, Standing.lowest, from.by, -1, player) *>
-            repo.place(game, player, None)
+        repo.shift(
+          b = game,
+          from = from.rank + 1,
+          to = bottom,
+          atLeast = Standing.lowest,
+          below = from.by,
+          by = -1,
+          except = player
+        ) *>
+            repo.place(b = game, player = player, place = None)
 
     private def placeNew(repo: EloRatingRepo, game: Board, player: PlayerId, standing: Standing): IO[Unit] = {
         // The first place at or after `low` standing no higher than this player: theirs, since everybody above it
@@ -146,16 +155,24 @@ object RankingService {
             if (low >= high) IO.pure(low)
             else {
                 val middle = low + (high - low) / 2
-                repo.placeFrom(game, middle, player).flatMap { found =>
+                repo.placeFrom(b = game, rank = middle, except = player).flatMap { found =>
                     if (found.forall(_.by <= standing)) search(low, middle) else search(middle + 1, high)
                 }
             }
         for {
             end <- repo.placeAfterLast(game, player)
             from <- search(1, end)
-            k <- repo.placeFrom(game, from, player).map(_.fold(end)(_.rank))
-            _ <- repo.shift(game, k, bottom, Standing.lowest, standing, 1, player)
-            _ <- repo.place(game, player, Some(Placed(k, standing)))
+            k <- repo.placeFrom(b = game, rank = from, except = player).map(_.fold(end)(_.rank))
+            _ <- repo.shift(
+              b = game,
+              from = k,
+              to = bottom,
+              atLeast = Standing.lowest,
+              below = standing,
+              by = 1,
+              except = player
+            )
+            _ <- repo.place(b = game, player = player, place = Some(Placed(k, standing)))
         } yield ()
     }
 
@@ -170,13 +187,21 @@ object RankingService {
         standing: Standing
     ): IO[Unit] = {
         def walk(x: Int): IO[Int] =
-            repo.placeAbove(game, x, player).flatMap {
+            repo.placeAbove(b = game, rank = x, except = player).flatMap {
                 case Some(above) if above.by <= standing => walk(above.rank)
                 case _                                   => IO.pure(x)
             }
         walk(from.rank).flatMap { k =>
-            repo.shift(game, k, from.rank, from.by, standing, 1, player) *>
-                repo.place(game, player, Some(Placed(k, standing)))
+            repo.shift(
+              b = game,
+              from = k,
+              to = from.rank,
+              atLeast = from.by,
+              below = standing,
+              by = 1,
+              except = player
+            ) *>
+                repo.place(b = game, player = player, place = Some(Placed(k, standing)))
         }
     }
 
@@ -192,16 +217,24 @@ object RankingService {
         standing: Standing
     ): IO[Unit] = {
         def walk(x: Int): IO[(Int, Option[Placed])] =
-            repo.placeFrom(game, x + 1, player).flatMap {
+            repo.placeFrom(b = game, rank = x + 1, except = player).flatMap {
                 case Some(below) if below.by > standing => walk(below.rank)
                 case stopped                            => IO.pure((x, stopped))
             }
         walk(from.rank).flatMap { (passed, stopped) =>
             val last = stopped.filter(_.by == standing).fold(passed)(_.rank)
             for {
-                _ <- repo.shift(game, from.rank + 1, last, standing, from.by, -1, player)
+                _ <- repo.shift(
+                  b = game,
+                  from = from.rank + 1,
+                  to = last,
+                  atLeast = standing,
+                  below = from.by,
+                  by = -1,
+                  except = player
+                )
                 k <- stopped.fold(repo.placeAfterLast(game, player))(next => IO.pure(next.rank - 1))
-                _ <- repo.place(game, player, Some(Placed(k, standing)))
+                _ <- repo.place(b = game, player = player, place = Some(Placed(k, standing)))
             } yield ()
         }
     }

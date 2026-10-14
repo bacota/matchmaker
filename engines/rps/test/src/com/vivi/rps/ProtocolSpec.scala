@@ -30,8 +30,20 @@ class ProtocolSpec extends FunSuite {
       settings = """{"variant":"standard"}""",
       timeLimitSeconds = Some(600L),
       players = List(
-        Protocol.EnginePlayer("sub-alice", 11L, Some("One"), None, None),
-        Protocol.EnginePlayer("sub-bob", 22L, Some("Two"), Some(7L), Some("{}"))
+        Protocol.EnginePlayer(
+          cognitoId = "sub-alice",
+          participantId = 11L,
+          role = Some("One"),
+          characterId = None,
+          characterState = None
+        ),
+        Protocol.EnginePlayer(
+          cognitoId = "sub-bob",
+          participantId = 22L,
+          role = Some("Two"),
+          characterId = Some(7L),
+          characterState = Some("{}")
+        )
       ),
       moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/moves"),
       resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/results")
@@ -39,9 +51,9 @@ class ProtocolSpec extends FunSuite {
 
     private def played(throws: (String, Shape)*): Engine = {
         val store = InMemoryMatchStore[RpsMatch]()
-        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
+        val engine = Engine(store = store, matchmaker = RecordingMatchmaker(), baseUrl = "http://engine.test")
         engine.createGame(create)
-        throws.foreach((player, shape) => engine.move("m-1", player, shape))
+        throws.foreach((player, shape) => engine.move(matchId = "m-1", cognitoId = player, shape = shape))
         engine
     }
 

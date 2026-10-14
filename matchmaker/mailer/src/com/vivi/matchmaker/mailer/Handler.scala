@@ -92,6 +92,10 @@ object Handler {
     lazy val sender: MailSender = {
         val region = sys.env.get("AWS_REGION").orElse(sys.env.get("AWS_DEFAULT_REGION")).getOrElse("us-east-1")
         val configurationSet = sys.env.get("MAIL_CONFIG_SET").map(_.trim).filter(_.nonEmpty)
-        new SesSender(region, new SigV4(AwsCredentials.fromEnvironment(), region), configurationSet)
+        new SesSender(
+          region = region,
+          sigV4 = new SigV4(credentials = AwsCredentials.fromEnvironment(), region = region),
+          configurationSet = configurationSet
+        )
     }
 }

@@ -3,11 +3,11 @@ package standard
 
 object WorldCup
     extends StandardModel(
-      "world-cup",
-      1,
-      "Soccer World Cup",
-      "Group round robins, then single elimination.",
-      "Pools, then elimination"
+      id = "world-cup",
+      version = 1,
+      name = "Soccer World Cup",
+      description = "Group round robins, then single elimination.",
+      classification = "Pools, then elimination"
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

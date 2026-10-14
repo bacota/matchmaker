@@ -64,13 +64,13 @@ console.log(JSON.stringify(seen));
                 .toSeq
                 .map(s =>
                     Seen(
-                      s("hidden").bool,
-                      s("cls").str,
-                      s("art").str,
-                      s("caption").str,
-                      s("draws").num.toInt,
-                      s("statusFocused").num.toInt,
-                      s("statusTabindex").strOpt
+                      isHidden = s("hidden").bool,
+                      cls = s("cls").str,
+                      art = s("art").str,
+                      caption = s("caption").str,
+                      draws = s("draws").num.toInt,
+                      statusFocused = s("statusFocused").num.toInt,
+                      statusTabindex = s("statusTabindex").strOpt
                     )
                 )
         } finally Files.deleteIfExists(file)
@@ -79,7 +79,10 @@ console.log(JSON.stringify(seen));
     test("nothing is shown until there is a result, and then the winner's picture or the loser's") {
         val seen = run("show(null)", """show("win")""")
         assert(seen(0).isHidden)
-        assertEquals(seen(1), Seen(false, "finale win", win.svg, win.caption, 1))
+        assertEquals(
+          seen(1),
+          Seen(isHidden = false, cls = "finale win", art = win.svg, caption = win.caption, draws = 1)
+        )
 
         val lost = run("""show("lose")""").head
         assertEquals((lost.isHidden, lost.cls, lost.art, lost.caption), (false, "finale lose", lose.svg, lose.caption))

@@ -3,11 +3,11 @@ package standard
 
 object Ncaa
     extends StandardModel(
-      "ncaa",
-      1,
-      "NCAA Football Style",
-      "Large round-robin conferences, then single elimination.",
-      "Pools, then elimination"
+      id = "ncaa",
+      version = 1,
+      name = "NCAA Football Style",
+      description = "Large round-robin conferences, then single elimination.",
+      classification = "Pools, then elimination"
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

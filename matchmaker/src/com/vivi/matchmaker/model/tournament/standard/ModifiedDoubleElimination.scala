@@ -3,11 +3,11 @@ package standard
 
 object ModifiedDoubleElimination
     extends StandardModel(
-      "modified-double-elimination",
-      1,
-      "Modified Double Elimination",
-      "Lose twice and you are out, until a winner of each bracket is left to meet.",
-      "Elimination"
+      id = "modified-double-elimination",
+      version = 1,
+      name = "Modified Double Elimination",
+      description = "Lose twice and you are out, until a winner of each bracket is left to meet.",
+      classification = "Elimination"
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

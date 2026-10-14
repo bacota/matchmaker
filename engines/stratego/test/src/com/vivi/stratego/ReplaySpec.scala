@@ -25,7 +25,12 @@ class ReplaySpec extends FunSuite with QuietTests {
     private class Played(seed: Long, moves: Int) {
         private val random = Random(seed)
         val store = InMemoryMatchStore[StrategoMatch]()
-        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test", () => Instant.EPOCH)
+        val engine = Engine(
+          store = store,
+          matchmaker = RecordingMatchmaker(),
+          baseUrl = "http://engine.test",
+          now = () => Instant.EPOCH
+        )
         engine.createGame(
           Protocol.CreateGameRequest(
             matchId = "m-1",
@@ -35,8 +40,20 @@ class ReplaySpec extends FunSuite with QuietTests {
             settings = "{}",
             timeLimitSeconds = None,
             players = List(
-              Protocol.EnginePlayer(red, 11L, Some("Red"), None, None),
-              Protocol.EnginePlayer(blue, 22L, Some("Blue"), None, None)
+              Protocol.EnginePlayer(
+                cognitoId = red,
+                participantId = 11L,
+                role = Some("Red"),
+                characterId = None,
+                characterState = None
+              ),
+              Protocol.EnginePlayer(
+                cognitoId = blue,
+                participantId = 22L,
+                role = Some("Blue"),
+                characterId = None,
+                characterState = None
+              )
             ),
             moveCallbackUrl = None,
             resultsCallbackUrl = None
@@ -46,12 +63,16 @@ class ReplaySpec extends FunSuite with QuietTests {
         def who(side: Side): String = if (side == Side.Red) red else blue
 
         for (side <- Side.values)
-            assert(engine.deploy("m-1", who(side), Board.randomSetup(random).map(_.toString)).isRight)
+            assert(
+              engine
+                  .deploy(matchId = "m-1", cognitoId = who(side), ranks = Board.randomSetup(random).map(_.toString))
+                  .isRight
+            )
         val boards: List[Board] = m.board :: (1 to moves).toList.flatMap { _ =>
             val legal = if (m.isOver) Nil else m.legalMoves(m.toMove)
             Option.when(legal.nonEmpty) {
                 val (from, to) = legal(random.nextInt(legal.size))
-                assert(engine.move("m-1", who(m.toMove), from, to).isRight)
+                assert(engine.move(matchId = "m-1", cognitoId = who(m.toMove), from = from, to = to).isRight)
                 m.board
             }
         }
@@ -137,18 +158,26 @@ console.log(JSON.stringify(out));
         frame("by").obj.values.toList
             .map(p =>
                 Protocol.PieceView(
-                  p("square").num.toInt,
-                  p("side").str,
-                  p("rank").strOpt,
-                  p("isRevealed").bool,
-                  p("isMoved").bool
+                  square = p("square").num.toInt,
+                  side = p("side").str,
+                  rank = p("rank").strOpt,
+                  isRevealed = p("isRevealed").bool,
+                  isMoved = p("isMoved").bool
                 )
             )
             .sortBy(_.square)
 
     private def viewOf(board: Board): List[Protocol.PieceView] =
         board.cells.indices.toList.flatMap(sq =>
-            board(sq).map(q => Protocol.PieceView(sq, q.side.toString, Some(q.rank.toString), q.isRevealed, q.isMoved))
+            board(sq).map(q =>
+                Protocol.PieceView(
+                  square = sq,
+                  side = q.side.toString,
+                  rank = Some(q.rank.toString),
+                  isRevealed = q.isRevealed,
+                  isMoved = q.isMoved
+                )
+            )
         )
 
     test("every move made again on the opening arrives at the board the engine had after it") {

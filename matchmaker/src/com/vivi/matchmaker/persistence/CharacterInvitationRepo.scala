@@ -70,7 +70,7 @@ class CharacterInvitationRepo(session: Session[IO]) {
             .execute(selectAll)((game, tournament))
             .map(_.map { (id, name, owner, nickname) =>
                 InvitedCharacter(
-                  CharacterName(CharacterId(id), game, name),
+                  CharacterName(characterId = CharacterId(id), gameId = game, name = name),
                   owner.zip(nickname).map((o, n) => PlayerName(PlayerId(o), n))
                 )
             })

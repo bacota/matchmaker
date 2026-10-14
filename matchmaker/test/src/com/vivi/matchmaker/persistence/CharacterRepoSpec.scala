@@ -47,9 +47,9 @@ class CharacterRepoSpec extends PropertySuite {
                         // it returns has them empty, whatever the game was created with.
                     } yield found == Some(
                       CharacterWithOwnerAndGame(
-                        created,
-                        createdPlayer,
-                        createdGame.copy(
+                        character = created,
+                        owner = createdPlayer,
+                        game = createdGame.copy(
                           roles = Seq.empty,
                           parameters = Seq.empty,
                           characterUrl = None,

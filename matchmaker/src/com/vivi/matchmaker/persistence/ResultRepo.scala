@@ -99,17 +99,17 @@ class ResultRepo(session: Session[IO]) {
             .map(_.map {
                 case (game, match_, id, nickname, roleName, rank, scores, isWinner, forfeit, eloStart, eloDelta) =>
                     ParticipantResultRow(
-                      game,
-                      match_,
-                      id,
-                      nickname,
-                      roleName,
-                      rank,
-                      scores.getOrElse(Map.empty),
-                      isWinner.getOrElse(false),
-                      forfeit.getOrElse(false),
-                      eloStart,
-                      eloDelta
+                      gameId = game,
+                      matchId = match_,
+                      participantId = id,
+                      nickname = nickname,
+                      roleName = roleName,
+                      rank = rank,
+                      scores = scores.getOrElse(Map.empty),
+                      isWinner = isWinner.getOrElse(false),
+                      isForfeit = forfeit.getOrElse(false),
+                      eloStart = eloStart,
+                      eloDelta = eloDelta
                     )
             })
 
@@ -143,7 +143,11 @@ class ResultRepo(session: Session[IO]) {
         session
             .execute(selectTimeTakenForPlayer)(playerId)
             .map(_.map { case (gameId, participantId, seconds) =>
-                TimeTakenRow(gameId, participantId, Duration.ofMillis((seconds * 1000).toLong))
+                TimeTakenRow(
+                  gameId = gameId,
+                  participantId = participantId,
+                  timeTaken = Duration.ofMillis((seconds * 1000).toLong)
+                )
             })
 
     private val selectExistsForMatch: Query[(GameId, MatchId), Boolean] =
@@ -209,7 +213,16 @@ class ResultRepo(session: Session[IO]) {
         session
             .option(selectResult)((gameId, id))
             .map(_.map { case (rank, scores, isWinner, forfeit, eloDelta, eloRoleDelta) =>
-                Result(gameId, id, rank, scores, isWinner, forfeit, eloDelta, eloRoleDelta)
+                Result(
+                  gameId = gameId,
+                  participantId = id,
+                  rank = rank,
+                  scores = scores,
+                  isWinner = isWinner,
+                  isForfeit = forfeit,
+                  eloDelta = eloDelta,
+                  eloRoleDelta = eloRoleDelta
+                )
             })
 
     def update(result: Result): IO[Unit] =

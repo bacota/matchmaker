@@ -115,26 +115,40 @@ class TournamentStateRepo(session: Session[IO]) {
                     seats <- session.execute(selectSeats)((game, tournament))
                     entrants <- session.execute(selectEntrants)((game, tournament))
                 } yield {
-                    val built = Assembly(design, stageIds, pools, members, seeds, matches, seats, entrants)
+                    val built = Assembly(
+                      design = design,
+                      stageIds = stageIds,
+                      pools = pools,
+                      members = members,
+                      seeds = seeds,
+                      matches = matches,
+                      seats = seats,
+                      entrants = entrants
+                    )
                     built.root.map { (root, matchIds) =>
                         val roundOf = matches.map(m => m.id -> m).toMap
                         Loaded(
-                          TournamentState(
-                            root,
-                            currentRound.getOrElse(0),
-                            NewPoolIds,
-                            stopRequested,
-                            entrants.collect { case (e, _, true, _, _) => e }.toSet
+                          state = TournamentState(
+                            root = root,
+                            round = currentRound.getOrElse(0),
+                            nextPoolId = NewPoolIds,
+                            isStopRequested = stopRequested,
+                            withdrawn = entrants.collect { case (e, _, true, _, _) => e }.toSet
                           ),
-                          matchIds,
-                          design,
-                          stageIds,
-                          pools.find(_.kind == "R").map(_.id).getOrElse(0L),
-                          Context(friendly, isPublic, gameType, entrants.map(e => e._1 -> (e._2, e._5)).toMap),
-                          matchIds.flatMap((key, id) =>
+                          matchIds = matchIds,
+                          design = design,
+                          stageIds = stageIds,
+                          rootPool = pools.find(_.kind == "R").map(_.id).getOrElse(0L),
+                          context = Context(
+                            isFriendly = friendly,
+                            isPublic = isPublic,
+                            gameType = gameType,
+                            entrants = entrants.map(e => e._1 -> (e._2, e._5)).toMap
+                          ),
+                          matchRounds = matchIds.flatMap((key, id) =>
                               roundOf.get(id.value).filter(_.status != "S").map(m => key -> m.round)
                           ),
-                          seeds
+                          eliminatedRound = seeds
                               .groupBy(r => (r.pool, r.entrant))
                               .flatMap((key, rows) => rows.last.eliminated.map(key -> _))
                         )
@@ -242,8 +256,8 @@ class TournamentStateRepo(session: Session[IO]) {
         // first matches of a pool formed now are played then, and the seeds a finished run leaves are its seeds from
         // then.
         val effective = before.state.round + 1
-        val walked = Walk(after, before.design, before.rootPool)
-        val beforeWalk = Walk(before.state, before.design, before.rootPool)
+        val walked = Walk(state = after, design = before.design, rootPool = before.rootPool)
+        val beforeWalk = Walk(state = before.state, design = before.design, rootPool = before.rootPool)
         val beforePools = beforeWalk.pools.map(p => p.pool.id -> p).toMap
 
         def stageOf(w: WalkedPool): Long =
@@ -368,7 +382,15 @@ class TournamentStateRepo(session: Session[IO]) {
                                     m.planned.isRubber
                                   )
                                 )
-                                _ <- m.planned.seats.traverse_(seat => writeSeat(game, tournament, ctx, id, seat))
+                                _ <- m.planned.seats.traverse_(seat =>
+                                    writeSeat(
+                                      game = game,
+                                      tournament = tournament,
+                                      ctx = ctx,
+                                      matchId = id,
+                                      seat = seat
+                                    )
+                                )
                                 _ <- m.round.traverse_(r => session.execute(beginMatch)((statusAt(m), r, game, id)))
                             } yield ()
                     }
@@ -445,7 +467,7 @@ class TournamentStateRepo(session: Session[IO]) {
       */
     def write(game: GameId, tournament: TournamentId, after: TournamentState): IO[Map[Int, Long]] =
         load(game, tournament).flatMap {
-            case Some(before) => save(game, tournament, before, after)
+            case Some(before) => save(game = game, tournament = tournament, before = before, after = after)
             case None         => IO.raiseError(new IllegalStateException(s"no tournament $tournament in game $game"))
         }
 }
@@ -549,7 +571,7 @@ object TournamentStateRepo {
                         // A nesting stage's pool that could play nothing has no sub-tournament, but is a group still.
                         val nesting = p.sub.isDefined || stages.lift(run.stage).exists(_.design.isDefined)
                         val (pools, nodes) = p.sub.fold((Nil, Nil))(node(_, p.id.toLong))
-                        (WalkedPool(p, scope, key, nesting) :: pools, nodes)
+                        (WalkedPool(pool = p, scope = scope, stageKey = key, isNested = nesting) :: pools, nodes)
                     }
                 }
                 (inRuns.flatMap(_._1), here :: inRuns.flatMap(_._2))
@@ -587,7 +609,7 @@ object TournamentStateRepo {
                 val ranking = Option.when(entrants.nonEmpty && entrants.forall(_._4.isDefined))(
                   entrants.map(e => e._1 -> e._4.get).toMap
                 )
-                val (n, ids) = node(r.id, Nil, ranking)
+                val (n, ids) = node(scope = r.id, path = Nil, ranking = ranking)
                 (n, ids)
             }
 
@@ -602,7 +624,13 @@ object TournamentStateRepo {
             val members = rows.toList
                 .map { (e, rs) =>
                     val last = rs.last
-                    Member(e, last.seed, last.stratum, rs.head.seed, last.eliminated.isDefined)
+                    Member(
+                      entrant = e,
+                      seed = last.seed,
+                      stratum = last.stratum,
+                      initialSeed = rs.head.seed,
+                      isEliminated = last.eliminated.isDefined
+                    )
                 }
                 .sortBy(m => (m.initialSeed, m.entrant))
             val children = childrenOf.getOrElse(scope, Nil)
@@ -616,7 +644,17 @@ object TournamentStateRepo {
                 val repetition = grouped.take(i).count(_._1._2 == stage)
                 val nextRound = runRounds.lift(i + 1).getOrElse(Int.MaxValue)
                 val completed = ps.forall(_.isCompleted)
-                val made = ps.sortBy(_.id).map(p => pool(p, scope, path :+ stage, completed, nextRound))
+                val made = ps
+                    .sortBy(_.id)
+                    .map(p =>
+                        pool(
+                          p = p,
+                          scope = scope,
+                          stageKey = path :+ stage,
+                          runCompleted = completed,
+                          nextRound = nextRound
+                        )
+                    )
                 val pooled = made.flatMap(_._1.members.map(_.entrant)).toSet
                 val withdrawn = entrants.collect { case (e, _, true, _, _) => e }.toSet
                 val sittingOut = members
@@ -626,7 +664,16 @@ object TournamentStateRepo {
                             !withdrawn(m.entrant)
                     )
                     .map(_.entrant)
-                (StageRun(stage, repetition, made.map(_._1), sittingOut, completed), made.flatMap(_._2).toMap)
+                (
+                  StageRun(
+                    stage = stage,
+                    repetition = repetition,
+                    pools = made.map(_._1),
+                    sittingOut = sittingOut,
+                    isCompleted = completed
+                  ),
+                  made.flatMap(_._2).toMap
+                )
             }
             val runs = built.map(_._1)
             val stagesHere = designAt(path).stages.size
@@ -636,7 +683,17 @@ object TournamentStateRepo {
                 case Some(done)                      => (done.stage + 1, 0)
                 case None                            => (0, 0)
             }
-            (Node(path, members, stage, repetition, runs, ranking), built.flatMap(_._2).toMap)
+            (
+              Node(
+                path = path,
+                members = members,
+                stage = stage,
+                repetition = repetition,
+                runs = runs,
+                ranking = ranking
+              ),
+              built.flatMap(_._2).toMap
+            )
         }
 
         private def pool(
@@ -654,25 +711,37 @@ object TournamentStateRepo {
                     val in = latest(rows, round)
                     val out = rows.filter(r => r.round > round && r.round <= nextRound).lastOption
                     PoolMember(
-                      m.entrant,
-                      in.map(_.seed).getOrElse(0),
-                      in.map(_.stratum).getOrElse(0),
-                      m.rank,
-                      m.points,
-                      m.totalScore.zip(m.scoreAgainst).map(_ - _),
-                      m.totalScore,
-                      Option.when(runCompleted)(out.map(_.stratum).getOrElse(in.map(_.stratum).getOrElse(0))),
-                      runCompleted && out.exists(_.eliminated.isDefined) && !in.exists(_.eliminated.isDefined)
+                      entrant = m.entrant,
+                      seedIn = in.map(_.seed).getOrElse(0),
+                      stratumIn = in.map(_.stratum).getOrElse(0),
+                      rank = m.rank,
+                      points = m.points,
+                      scoreDiff = m.totalScore.zip(m.scoreAgainst).map(_ - _),
+                      totalScore = m.totalScore,
+                      stratumOut =
+                          Option.when(runCompleted)(out.map(_.stratum).getOrElse(in.map(_.stratum).getOrElse(0))),
+                      isEliminated =
+                          runCompleted && out.exists(_.eliminated.isDefined) && !in.exists(_.eliminated.isDefined)
                     )
                 }
                 .sortBy(m => (m.seedIn, m.entrant))
             if (p.kind == "G") {
                 // A sub-tournament once one was seeded in it: a nesting stage's pool too small to play has none.
-                if (!seedsIn.contains(p.id)) (Pool(p.id.toInt, p.stratum, ms, isCompleted = p.isCompleted), Map.empty)
+                if (!seedsIn.contains(p.id))
+                    (Pool(id = p.id.toInt, stratum = p.stratum, members = ms, isCompleted = p.isCompleted), Map.empty)
                 else {
                     val ranking = Option.when(p.isCompleted)(ms.flatMap(m => m.rank.map(m.entrant -> _)).toMap)
-                    val (sub, ids) = node(p.id, stageKey, ranking)
-                    (Pool(p.id.toInt, p.stratum, ms, sub = Some(sub), isCompleted = p.isCompleted), ids)
+                    val (sub, ids) = node(scope = p.id, path = stageKey, ranking = ranking)
+                    (
+                      Pool(
+                        id = p.id.toInt,
+                        stratum = p.stratum,
+                        members = ms,
+                        sub = Some(sub),
+                        isCompleted = p.isCompleted
+                      ),
+                      ids
+                    )
                 }
             } else {
                 val rows = matchesOf.getOrElse(p.id, Nil).map { m =>
@@ -689,21 +758,32 @@ object TournamentStateRepo {
                     val outcome = Option.when(
                       m.status == "F" && seats.nonEmpty && (m.isCancelled || seats.forall(_.rank.isDefined))
                     )(
-                      seats.map(s => Placing(s.entrant, s.rank, scoreOf(s.scores)))
+                      seats.map(s => Placing(entrant = s.entrant, rank = s.rank, score = scoreOf(s.scores)))
                     )
                     val planned = PlannedMatch(
-                      i + 1,
-                      m.round,
-                      seats.map(s => SeatPlan(s.entrant, s.role, s.chooseOrder)),
-                      m.isRubber
+                      no = i + 1,
+                      slot = m.round,
+                      seats = seats.map(s => SeatPlan(entrant = s.entrant, role = s.role, chooseOrder = s.chooseOrder)),
+                      isRubber = m.isRubber
                     )
                     (
-                      PoolMatch(planned, m.canTie, Option.unless(m.status == "S")(m.round), outcome),
+                      PoolMatch(
+                        planned = planned,
+                        canTie = m.canTie,
+                        round = Option.unless(m.status == "S")(m.round),
+                        outcome = outcome
+                      ),
                       (p.id.toInt, i + 1) -> MatchId(m.id)
                     )
                 }
                 (
-                  Pool(p.id.toInt, p.stratum, ms, matches = numbered.map(_._1), isCompleted = p.isCompleted),
+                  Pool(
+                    id = p.id.toInt,
+                    stratum = p.stratum,
+                    members = ms,
+                    matches = numbered.map(_._1),
+                    isCompleted = p.isCompleted
+                  ),
                   numbered.map(_._2).toMap
                 )
             }

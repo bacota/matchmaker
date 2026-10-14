@@ -186,18 +186,36 @@ object Rules {
     def resolve(red: Effective, blue: Effective): RoundOutcome = {
         val tiebreak = edge(red, blue)
 
-        val knockout = landed(red.power > blue.effectiveChin, blue.power > red.effectiveChin, tiebreak)
-        val knockdown = landed(red.power > blue.knockdownLine, blue.power > red.knockdownLine, tiebreak)
-        val tellingBlow = landed(red.power > blue.defense, blue.power > red.defense, tiebreak)
+        val knockout = landed(
+          redLands = red.power > blue.effectiveChin,
+          blueLands = blue.power > red.effectiveChin,
+          edge = tiebreak
+        )
+        val knockdown = landed(
+          redLands = red.power > blue.knockdownLine,
+          blueLands = blue.power > red.knockdownLine,
+          edge = tiebreak
+        )
+        val tellingBlow =
+            landed(redLands = red.power > blue.defense, blueLands = blue.power > red.defense, edge = tiebreak)
 
         knockout
-            .map(w => RoundOutcome(Decision.Knockout, Some(w), None))
-            .orElse(knockdown.map(w => RoundOutcome(Decision.Knockdown, Some(w), Some(Score.to(w, 8)))))
-            .orElse(tellingBlow.map(w => RoundOutcome(Decision.TellingBlow, Some(w), Some(Score.to(w, 9)))))
+            .map(w => RoundOutcome(decision = Decision.Knockout, winner = Some(w), score = None))
+            .orElse(
+              knockdown.map(w =>
+                  RoundOutcome(decision = Decision.Knockdown, winner = Some(w), score = Some(Score.to(w, 8)))
+              )
+            )
+            .orElse(
+              tellingBlow.map(w =>
+                  RoundOutcome(decision = Decision.TellingBlow, winner = Some(w), score = Some(Score.to(w, 9)))
+              )
+            )
             .getOrElse(
               tiebreak match {
-                  case Some(w) => RoundOutcome(Decision.Activity, Some(w), Some(Score.to(w, 9)))
-                  case None    => RoundOutcome(Decision.Even, None, Some(Score(10, 10)))
+                  case Some(w) =>
+                      RoundOutcome(decision = Decision.Activity, winner = Some(w), score = Some(Score.to(w, 9)))
+                  case None => RoundOutcome(decision = Decision.Even, winner = None, score = Some(Score(10, 10)))
               }
             )
     }

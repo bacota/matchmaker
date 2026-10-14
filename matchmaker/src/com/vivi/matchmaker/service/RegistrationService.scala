@@ -24,8 +24,8 @@ class RegistrationService(sessionPool: SessionPool) {
                 new PlayerRepo(session)
                     .create(
                       Player(
-                        PlayerId.unassigned,
-                        nickname,
+                        playerId = PlayerId.unassigned,
+                        nickname = nickname,
                         isAdmin = false,
                         externalId,
                         email.map(_.trim).filter(_.nonEmpty)

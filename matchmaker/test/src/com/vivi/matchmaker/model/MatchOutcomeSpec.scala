@@ -22,7 +22,7 @@ class MatchOutcomeSpec extends FunSuite {
             ranks <- Seq(Seq(1, 2), Seq(1, 1), Seq(1, 2, 3), Seq(1, 1, 3), Seq(2, 2))
             rank <- ranks.distinct
         } {
-            val record = MatchRecord.of(rank, ranks, forfeit = false)
+            val record = MatchRecord.of(rank = rank, ranks = ranks, forfeit = false)
             val expected =
                 if (record.wins == 1) MatchOutcome.Won
                 else if (record.draws == 1) MatchOutcome.Drew

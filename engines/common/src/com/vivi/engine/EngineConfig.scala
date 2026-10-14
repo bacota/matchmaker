@@ -47,14 +47,22 @@ object EngineConfig {
     def matchStore[M <: HasMatchId: ReadWriter](env: String => Option[String]): MatchStore[M] = {
         val live = env("MATCH_TABLE") match {
             case Some(table) =>
-                DynamoDbMatchStore[M](SignedHttp(AwsCredentials.provider(env), region(env)), table, region(env))
+                DynamoDbMatchStore[M](
+                  SignedHttp(credentials = AwsCredentials.provider(env), region = region(env)),
+                  table,
+                  region(env)
+                )
             // Fine for the local server, whose process outlives its matches, and wrong for Lambda,
             // where the next invocation may be a different container — hence the table.
             case None => InMemoryMatchStore[M]()
         }
         // Not when matchmaker is offline: there is nothing to archive through, and the local engine
         // keeps every match in memory for as long as it runs.
-        ArchivingMatchStore.around(live, matchmaker(env), matchmakerUrl(env).filterNot(_ => isOffline(env)))
+        ArchivingMatchStore.around(
+          live = live,
+          matchmaker = matchmaker(env),
+          matchmakerUrl = matchmakerUrl(env).filterNot(_ => isOffline(env))
+        )
     }
 
     private def isOffline(env: String => Option[String]): Boolean = env("MATCHMAKER_OFFLINE").contains("true")
@@ -76,7 +84,12 @@ object EngineConfig {
         if (isOffline(env)) RecordingMatchmaker(println)
         // Unsigned: matchmaker's callback routes take an API key now, not a SigV4 signature. The
         // signed client stays for DynamoDB above, which is still AWS and still needs one.
-        else HttpMatchmaker(SignedHttp(None, region(env)), matchmakerKey(env), env("GAME_EXTERNAL_ID"))
+        else
+            HttpMatchmaker(
+              http = SignedHttp(credentials = None, region = region(env)),
+              apiKey = matchmakerKey(env),
+              externalId = env("GAME_EXTERNAL_ID")
+            )
 
     /** The sign-in the board page offers, when there is a user pool to offer it against.
       *
@@ -86,7 +99,14 @@ object EngineConfig {
     def loginConfig(env: String => Option[String], baseUrl: String): Option[LoginConfig] =
         (env("HOSTED_LOGIN_URL"), env("COGNITO_CLIENT_ID")) match {
             case (Some(hostedLogin), Some(clientId)) =>
-                Some(LoginConfig(hostedLogin.stripSuffix("/"), clientId, s"$baseUrl/auth/callback", region(env)))
+                Some(
+                  LoginConfig(
+                    hostedLoginUrl = hostedLogin.stripSuffix("/"),
+                    clientId = clientId,
+                    redirectUri = s"$baseUrl/auth/callback",
+                    region = region(env)
+                  )
+                )
             case (None, None) => None
             case _ =>
                 throw IllegalStateException(
@@ -123,8 +143,9 @@ object EngineConfig {
                 )
                 PlayAuth.VerifiedToken(
                   JwtVerifier(
-                    issuer.getOrElse(throw IllegalStateException("COGNITO_ISSUER is required to verify tokens")),
-                    clientId
+                    issuer =
+                        issuer.getOrElse(throw IllegalStateException("COGNITO_ISSUER is required to verify tokens")),
+                    audience = clientId
                   ),
                   login
                 )
@@ -142,15 +163,19 @@ object EngineConfig {
         env("LIVE_URL").map(_.trim).filter(_.nonEmpty).map { url =>
             def required(name: String) =
                 env(name).getOrElse(throw IllegalStateException(s"LIVE_URL is set but $name is not"))
-            val http = SignedHttp(AwsCredentials.provider(env), region(env))
+            val http = SignedHttp(credentials = AwsCredentials.provider(env), region = region(env))
             Live(
-              url,
-              liveAuth(env, baseUrl),
-              DynamoDbSubscriptions(http, required("LIVE_TABLE"), region(env)),
+              url = url,
+              auth = liveAuth(env, baseUrl),
+              subscriptions = DynamoDbSubscriptions(http = http, table = required("LIVE_TABLE"), region = region(env)),
               // A push that has not landed in two seconds is not going to be worth waiting for: the
               // page checks for itself within the minute. See `Live`'s deadline.
-              ApiGatewayChannel(
-                SignedHttp(AwsCredentials.provider(env), region(env), timeout = Duration.ofSeconds(2)),
+              channel = ApiGatewayChannel(
+                SignedHttp(
+                  credentials = AwsCredentials.provider(env),
+                  region = region(env),
+                  timeout = Duration.ofSeconds(2)
+                ),
                 required("LIVE_ENDPOINT")
               )
             )
@@ -169,7 +194,7 @@ object EngineConfig {
             case gateway: PlayAuth.GatewayClaims =>
                 (env("COGNITO_ISSUER"), env("COGNITO_CLIENT_ID")) match {
                     case (Some(issuer), Some(clientId)) =>
-                        PlayAuth.VerifiedToken(JwtVerifier(issuer, clientId), gateway.login)
+                        PlayAuth.VerifiedToken(JwtVerifier(issuer = issuer, audience = clientId), gateway.login)
                     case _ => gateway
                 }
             case other => other

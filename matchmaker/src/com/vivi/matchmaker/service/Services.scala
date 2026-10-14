@@ -82,29 +82,50 @@ object Services {
         matchEndings: Option[MatchEndings] = None
     )(using codec: TextCodec[T]): Services[T] = {
         val notifications = new Notifications(notifier, mail)
-        val archives = new ArchiveService(pool, archiveStore)
+        val archives = new ArchiveService(sessionPool = pool, store = archiveStore)
         /* The ending, the queue and a tournament's rounds each need another of the three: a match's
          * end is recorded in its tournament, a round's matches are created from the queue, and the
          * queue -- where there is none -- settles endings and creates matches in this process. So
          * they are lazy, and each is handed the others as functions. */
         lazy val ending: EndingService =
-            new EndingService(pool, engineClient, tournamentEnding = (g, m) => rounds.recordEnding(g, m))
+            new EndingService(
+              sessionPool = pool,
+              engine = engineClient,
+              tournamentEnding = (g, m) => rounds.recordEnding(g, m)
+            )
         lazy val endings: MatchEndings = matchEndings.getOrElse(
           MatchEndings.fromEnvironment(
             MatchEndings.inline(
-              (gameId, matchId) => ending.settle(gameId, matchId).void,
-              ending.rank(_).void,
-              (g, t, m) => rounds.createMatch(g, t, m).void,
-              (g, t) => rounds.autoStart(g, t).void,
-              (g, t) => rounds.runCheck(g, t).void
+              settle = (gameId, matchId) => ending.settle(gameId, matchId).void,
+              rank = ending.rank(_).void,
+              matchDue = (g, t, m) => rounds.createMatch(gameId = g, tournamentId = t, matchId = m).void,
+              roundDue = (g, t) => rounds.autoStart(g, t).void,
+              roundCheck = (g, t) => rounds.runCheck(g, t).void
             )
           )
         )
-        lazy val matches = new MatchService(pool, notifications, Some(archives), endings)
+        lazy val matches = new MatchService(
+          sessionPool = pool,
+          notifications = notifications,
+          archives = Some(archives),
+          endings = endings
+        )
 
         lazy val engine: GameEngineService[T] =
-            new GameEngineService[T](pool, engineClient, callbackBaseUrl, notifications, Some(archives), endings)
-        lazy val rounds: TournamentRounds[T] = new TournamentRounds[T](pool, engine, endings, notifications)
+            new GameEngineService[T](
+              sessionPool = pool,
+              engine = engineClient,
+              callbackBaseUrl = callbackBaseUrl,
+              notifications = notifications,
+              archives = Some(archives),
+              endings = endings
+            )
+        lazy val rounds: TournamentRounds[T] = new TournamentRounds[T](
+          sessionPool = pool,
+          engine = engine,
+          endings = endings,
+          notifications = notifications
+        )
 
         Services(
           registration = new RegistrationService(pool),
@@ -122,8 +143,11 @@ object Services {
           // A tournament with automatic rounds begins its first as it starts. One `Notifications` for every
           // service that causes something worth an email, because who is told what does not depend on which
           // service the event came from -- that is the whole point of it being a class of its own.
-          tournaments =
-              new TournamentService[T](pool, notifications, started = (g, t) => endings.tournamentRoundDue(g, t)),
+          tournaments = new TournamentService[T](
+            sessionPool = pool,
+            notifications = notifications,
+            started = (g, t) => endings.tournamentRoundDue(g, t)
+          ),
           tournamentModels = new TournamentModelService[T](pool),
           rounds = rounds
         )

@@ -76,10 +76,12 @@ class TournamentService[T](
         sessionPool.use { session =>
             for {
                 caller <- requireCaller(session, callerExternalId)
-                summary <- new TournamentRepo(session).summary(gameId, tournamentId, caller.playerId).flatMap {
-                    case Some(s) => IO.pure(s)
-                    case None    => IO.raiseError(NotFoundError(s"no tournament $tournamentId in game $gameId"))
-                }
+                summary <- new TournamentRepo(session)
+                    .summary(game = gameId, id = tournamentId, viewer = caller.playerId)
+                    .flatMap {
+                        case Some(s) => IO.pure(s)
+                        case None    => IO.raiseError(NotFoundError(s"no tournament $tournamentId in game $gameId"))
+                    }
                 design <- new StageRepo(session).design(gameId, tournamentId).map(_.getOrElse(TournamentDesign(Nil)))
                 entries <- new EntrantRepo(session).list(gameId, tournamentId)
                 invited <- new InvitationRepo(session).list(gameId, tournamentId)
@@ -89,27 +91,32 @@ class TournamentService[T](
                     if (summary.tournament.startedAt.isEmpty) IO.pure(None)
                     else new TournamentRepo(session).readState(gameId, tournamentId)
                 round <- state.filter(_.round > 0) match {
-                    case Some(s) => new TournamentMatchRepo(session).listRound(gameId, tournamentId, s.round)
-                    case None    => IO.pure(Nil)
+                    case Some(s) =>
+                        new TournamentMatchRepo(session).listRound(
+                          game = gameId,
+                          tournament = tournamentId,
+                          round = s.round
+                        )
+                    case None => IO.pure(Nil)
                 }
                 game <- new GameRepo[T](session).read(gameId).flatMap {
                     case Some(g) => IO.pure(g)
                     case None    => IO.raiseError(NotFoundError(s"no game $gameId"))
                 }
             } yield TournamentDetail(
-              summary,
-              game.gameType,
-              design,
-              entries,
-              invited.map((id, name) => PlayerName(id, name)),
+              summary = summary,
+              gameType = game.gameType,
+              design = design,
+              entries = entries,
+              invited = invited.map((id, name) => PlayerName(id, name)),
               // Pools still being played shown as their finished matches stand.
-              state.map(s => Standings.provisional(s, design, TournamentGame.of(game))),
-              round.map { m =>
-                  val by = TournamentRounds.chooseBy(summary.tournament, game, m)
+              state = state.map(s => Standings.provisional(state = s, design = design, game = TournamentGame.of(game))),
+              round = round.map { m =>
+                  val by = TournamentRounds.chooseBy(t = summary.tournament, game = game, tm = m)
                   val v = TournamentService.view(m)
                   v.copy(seats = v.seats.map(s => if (s.isChoosing) s.copy(chooseBy = by) else s))
               },
-              invitedCharacters
+              invitedCharacters = invitedCharacters
             )
         }
 
@@ -156,7 +163,12 @@ class TournamentService[T](
               new InvitationRepo(session).list(t.gameId, t.tournamentId),
               new CharacterInvitationRepo(session).list(t.gameId, t.tournamentId)
             ).mapN((entries, invited, characters) =>
-                ChallengeSummary(s, entries, invited.map((id, name) => PlayerName(id, name)), characters)
+                ChallengeSummary(
+                  summary = s,
+                  entries = entries,
+                  invited = invited.map((id, name) => PlayerName(id, name)),
+                  invitedCharacters = characters
+                )
             )
         }
 
@@ -179,18 +191,22 @@ class TournamentService[T](
                     for {
                         caller <- requireCaller(session, callerExternalId)
                         game <- requireGame(session, gameId)
-                        model <- requireModel(session, gameId, Challenge.modelId)
+                        model <- requireModel(session = session, gameId = gameId, id = Challenge.modelId)
                         _ <- IO.raiseWhen(!request.isPlaying && !request.isAutoStarted)(
                           ValidationError(
                             "a challenge whose challenger will not play in it has to start when it is full"
                           )
                         )
                         _ <- IO.whenA(!request.isPlaying || !request.isFriendly)(
-                          requireGameAdmin(session, caller, game)
+                          requireGameAdmin(session = session, player = caller, game = game)
                         )
                         invited = request.invitations.distinct
                         invitedCharacters = request.characterInvitations.distinct
-                        _ <- requireInvitationKind(game, invited.size, invitedCharacters.size)
+                        _ <- requireInvitationKind(
+                          game = game,
+                          players = invited.size,
+                          characters = invitedCharacters.size
+                        )
                         _ <- IO.raiseWhen(!request.isOpen && invited.isEmpty && invitedCharacters.isEmpty)(
                           ValidationError(
                             s"a challenge that is not open must invite at least one ${inviteeNoun(game)}"
@@ -205,17 +221,19 @@ class TournamentService[T](
                                 case None    => IO.raiseError(NotFoundError(s"no player $id"))
                             }
                         )
-                        owners <- invitedCharacters.traverse(id => invitableOwner(session, game, id))
+                        owners <- invitedCharacters.traverse(id =>
+                            invitableOwner(session = session, game = game, characterId = id)
+                        )
                         _ <- IO.raiseWhen(request.isPlaying && owners.exists(_.playerId == caller.playerId))(
                           ValidationError("a challenger cannot invite their own characters to their own challenge")
                         )
                         poolSize = request.poolSize.getOrElse(game.poolSeats)
                         made <- createIn(
-                          session,
-                          caller,
-                          game,
-                          model,
-                          TournamentRequest(
+                          session = session,
+                          caller = caller,
+                          game = game,
+                          model = model,
+                          request = TournamentRequest(
                             name = s"${caller.nickname}'s challenge",
                             tournamentModelId = model.tournamentModelId,
                             defaultPoolSize = Some(poolSize),
@@ -234,16 +252,25 @@ class TournamentService[T](
                               maxEntrants = Some(poolSize)
                             )
                           ),
-                          TournamentStatus.Open
+                          status = TournamentStatus.Open
                         )
                         _ <- invitees.traverse_(p =>
-                            new InvitationRepo(session).invite(gameId, made.tournamentId, p.playerId)
+                            new InvitationRepo(session)
+                                .invite(game = gameId, tournament = made.tournamentId, player = p.playerId)
                         )
                         _ <- invitedCharacters.traverse_(c =>
-                            new CharacterInvitationRepo(session).invite(gameId, made.tournamentId, c)
+                            new CharacterInvitationRepo(session)
+                                .invite(game = gameId, tournament = made.tournamentId, character = c)
                         )
                         entered <-
-                            if (request.isPlaying) enterIn(session, made, game, caller, request.characterId).map(_._2)
+                            if (request.isPlaying)
+                                enterIn(
+                                  session = session,
+                                  t = made,
+                                  game = game,
+                                  caller = caller,
+                                  characterId = request.characterId
+                                ).map(_._2)
                             else IO.pure(None)
                     } yield (entered.getOrElse(made), invitees ++ owners)
                 }
@@ -265,8 +292,15 @@ class TournamentService[T](
                 for {
                     caller <- requireCaller(session, callerExternalId)
                     game <- requireGame(session, gameId)
-                    model <- requireModel(session, gameId, request.tournamentModelId)
-                    made <- createIn(session, caller, game, model, request, TournamentStatus.Draft)
+                    model <- requireModel(session = session, gameId = gameId, id = request.tournamentModelId)
+                    made <- createIn(
+                      session = session,
+                      caller = caller,
+                      game = game,
+                      model = model,
+                      request = request,
+                      status = TournamentStatus.Draft
+                    )
                 } yield made
             }
         }
@@ -280,24 +314,24 @@ class TournamentService[T](
         request: TournamentRequest,
         status: TournamentStatus
     ): IO[Tournament] = {
-        val poolSize = defaultPoolSize(game, model, request)
+        val poolSize = defaultPoolSize(game = game, model = model, request = request)
         val settings = TournamentService.settingsFor(model, request.settings)
         for {
-            _ <- checkSettings(game, model, request, settings, poolSize)
+            _ <- checkSettings(game = game, model = model, request = request, settings = settings, poolSize = poolSize)
             made <- new TournamentRepo(session).create(
               Tournament(
-                game.gameId,
-                TournamentId.unassigned,
-                request.name.trim,
-                request.description.trim,
-                caller.playerId,
-                model.tournamentModelId,
-                poolSize,
-                settings,
-                status
+                gameId = game.gameId,
+                tournamentId = TournamentId.unassigned,
+                name = request.name.trim,
+                description = request.description.trim,
+                owner = caller.playerId,
+                tournamentModelId = model.tournamentModelId,
+                defaultPoolSize = poolSize,
+                settings = settings,
+                status = status
               )
             )
-            _ <- new StageRepo(session).copy(game.gameId, made.tournamentId, model.design)
+            _ <- new StageRepo(session).copy(game = game.gameId, tournament = made.tournamentId, design = model.design)
             _ <- new PoolRepo(session).createRoot(game.gameId, made.tournamentId)
         } yield made
     }
@@ -315,7 +349,7 @@ class TournamentService[T](
             session.transaction.use { _ =>
                 for {
                     caller <- requireCaller(session, callerExternalId)
-                    t <- requireOwned(session, gameId, tournamentId, caller)
+                    t <- requireOwned(session = session, gameId = gameId, id = tournamentId, caller = caller)
                     game <- requireGame(session, gameId)
                     owner <- request.owner
                         .filterNot(_ == t.owner)
@@ -329,14 +363,20 @@ class TournamentService[T](
                         case TournamentStatus.Draft | TournamentStatus.Open =>
                             for {
                                 model <- requireModel(
-                                  session,
-                                  gameId,
-                                  request.tournamentModelId,
+                                  session = session,
+                                  gameId = gameId,
+                                  id = request.tournamentModelId,
                                   kept = Some(t.tournamentModelId)
                                 )
-                                poolSize = defaultPoolSize(game, model, request)
+                                poolSize = defaultPoolSize(game = game, model = model, request = request)
                                 settings = TournamentService.settingsFor(model, request.settings)
-                                _ <- checkSettings(game, model, request, settings, poolSize)
+                                _ <- checkSettings(
+                                  game = game,
+                                  model = model,
+                                  request = request,
+                                  settings = settings,
+                                  poolSize = poolSize
+                                )
                                 entries <- new EntrantRepo(session).list(gameId, tournamentId)
                                 _ <- IO.raiseWhen(settings.maxEntrants.exists(_ < entries.count(!_.isWithdrawn)))(
                                   ValidationError("it already has more entries than that")
@@ -344,7 +384,8 @@ class TournamentService[T](
                                 // Made from another model: its stages are the new model's from now on.
                                 _ <- IO.whenA(model.tournamentModelId != t.tournamentModelId)(
                                   new StageRepo(session).removeAll(gameId, tournamentId) *>
-                                      new StageRepo(session).copy(gameId, tournamentId, model.design)
+                                      new StageRepo(session)
+                                          .copy(game = gameId, tournament = tournamentId, design = model.design)
                                 )
                             } yield t.copy(
                               name = request.name.trim,
@@ -385,7 +426,7 @@ class TournamentService[T](
 
     /** Opens a draft tournament for entries. */
     def open(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Tournament] =
-        transition(gameId, tournamentId, callerExternalId) { t =>
+        transition(gameId = gameId, tournamentId = tournamentId, callerExternalId = callerExternalId) { t =>
             if (t.status == TournamentStatus.Draft) IO.pure(t.copy(status = TournamentStatus.Open))
             else
                 IO.raiseError(
@@ -395,7 +436,7 @@ class TournamentService[T](
 
     /** Calls a tournament off. Its matches already being played are left to finish as matches. */
     def cancel(gameId: GameId, tournamentId: TournamentId, callerExternalId: String): IO[Tournament] =
-        transition(gameId, tournamentId, callerExternalId) { t =>
+        transition(gameId = gameId, tournamentId = tournamentId, callerExternalId = callerExternalId) { t =>
             t.status match {
                 case TournamentStatus.Finished | TournamentStatus.Cancelled =>
                     IO.raiseError(ConflictError("this tournament is already over"))
@@ -415,23 +456,27 @@ class TournamentService[T](
                     val invitations = new InvitationRepo(session)
                     for {
                         caller <- requireCaller(session, callerExternalId)
-                        t <- requireOwned(session, gameId, tournamentId, caller)
+                        t <- requireOwned(session = session, gameId = gameId, id = tournamentId, caller = caller)
                         _ <- IO.raiseWhen(
                           t.status == TournamentStatus.Finished || t.status == TournamentStatus.Cancelled
                         )(
                           ConflictError("this tournament is over")
                         )
                         game <- requireGame(session, gameId)
-                        _ <- requireInvitationKind(game, players = 1, characters = 0)
+                        _ <- requireInvitationKind(game = game, players = 1, characters = 0)
                         invitee <- new PlayerRepo(session).readForShare(playerId).flatMap {
                             case Some(p) => IO.pure(p)
                             case None    => IO.raiseError(NotFoundError(s"no player $playerId"))
                         }
-                        already <- invitations.isInvited(gameId, tournamentId, playerId)
-                        _ <- invitations.invite(gameId, tournamentId, playerId)
+                        already <- invitations.isInvited(game = gameId, tournament = tournamentId, player = playerId)
+                        _ <- invitations.invite(game = gameId, tournament = tournamentId, player = playerId)
                     } yield Option.unless(already)((t, invitee))
                 }
-                .flatMap(_.traverse_((t, invitee) => notifications.invitationMade(session, t, invitee)))
+                .flatMap(
+                  _.traverse_((t, invitee) =>
+                      notifications.invitationMade(session = session, tournament = t, invited = invitee)
+                  )
+                )
         }
 
     /** Takes an invitation back: the owner's revoking it, or the invited player's turning it down — which is mailed to
@@ -444,17 +489,21 @@ class TournamentService[T](
                     val invitations = new InvitationRepo(session)
                     for {
                         caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session, gameId, tournamentId)
+                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         _ <- IO.raiseUnless(t.owner == caller.playerId || caller.playerId == playerId)(
                           UnauthorizedError(
                             "only the tournament's owner, or the player invited, may remove an invitation"
                           )
                         )
-                        was <- invitations.isInvited(gameId, tournamentId, playerId)
-                        _ <- invitations.revoke(gameId, tournamentId, playerId)
+                        was <- invitations.isInvited(game = gameId, tournament = tournamentId, player = playerId)
+                        _ <- invitations.revoke(game = gameId, tournament = tournamentId, player = playerId)
                     } yield Option.when(was && caller.playerId == playerId && t.owner != caller.playerId)((t, caller))
                 }
-                .flatMap(_.traverse_((t, declined) => notifications.invitationRejected(session, t, declined)))
+                .flatMap(
+                  _.traverse_((t, declined) =>
+                      notifications.invitationRejected(session = session, tournament = t, rejector = declined)
+                  )
+                )
         }
 
     /** The owner inviting a character to an invitational tournament of a character game, where it is the character that
@@ -474,20 +523,28 @@ class TournamentService[T](
                     val invitations = new CharacterInvitationRepo(session)
                     for {
                         caller <- requireCaller(session, callerExternalId)
-                        t <- requireOwned(session, gameId, tournamentId, caller)
+                        t <- requireOwned(session = session, gameId = gameId, id = tournamentId, caller = caller)
                         _ <- IO.raiseWhen(
                           t.status == TournamentStatus.Finished || t.status == TournamentStatus.Cancelled
                         )(
                           ConflictError("this tournament is over")
                         )
                         game <- requireGame(session, gameId)
-                        _ <- requireInvitationKind(game, players = 0, characters = 1)
-                        owner <- invitableOwner(session, game, characterId)
-                        already <- invitations.isInvited(gameId, tournamentId, characterId)
-                        _ <- invitations.invite(gameId, tournamentId, characterId)
+                        _ <- requireInvitationKind(game = game, players = 0, characters = 1)
+                        owner <- invitableOwner(session = session, game = game, characterId = characterId)
+                        already <- invitations.isInvited(
+                          game = gameId,
+                          tournament = tournamentId,
+                          character = characterId
+                        )
+                        _ <- invitations.invite(game = gameId, tournament = tournamentId, character = characterId)
                     } yield Option.unless(already)((t, owner))
                 }
-                .flatMap(_.traverse_((t, owner) => notifications.invitationMade(session, t, owner)))
+                .flatMap(
+                  _.traverse_((t, owner) =>
+                      notifications.invitationMade(session = session, tournament = t, invited = owner)
+                  )
+                )
         }
 
     /** Takes a character's invitation back: the owner of the tournament revoking it, or the character's owner now
@@ -505,7 +562,7 @@ class TournamentService[T](
                     val invitations = new CharacterInvitationRepo(session)
                     for {
                         caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session, gameId, tournamentId)
+                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         // Held, so that its owner -- who may answer for it -- cannot change before the delete.
                         character <- new CharacterRepo[T](session).readForShare(characterId)
                         characterOwner = character.filter(_.gameId == gameId).flatMap(_.playerId)
@@ -514,13 +571,17 @@ class TournamentService[T](
                             "only the tournament's owner, or the owner of the character invited, may remove an invitation"
                           )
                         )
-                        was <- invitations.isInvited(gameId, tournamentId, characterId)
-                        _ <- invitations.revoke(gameId, tournamentId, characterId)
+                        was <- invitations.isInvited(game = gameId, tournament = tournamentId, character = characterId)
+                        _ <- invitations.revoke(game = gameId, tournament = tournamentId, character = characterId)
                     } yield Option.when(was && characterOwner.contains(caller.playerId) && t.owner != caller.playerId)(
                       (t, caller)
                     )
                 }
-                .flatMap(_.traverse_((t, declined) => notifications.invitationRejected(session, t, declined)))
+                .flatMap(
+                  _.traverse_((t, declined) =>
+                      notifications.invitationRejected(session = session, tournament = t, rejector = declined)
+                  )
+                )
         }
 
     // ---- entries ---------------------------------------------------------------------------
@@ -545,15 +606,27 @@ class TournamentService[T](
                 .use { _ =>
                     for {
                         caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session, gameId, tournamentId)
+                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         game <- requireGame(session, gameId)
-                        invited <- isInvitedAs(session, game, tournamentId, caller, characterId)
-                        entered <- enterIn(session, t, game, caller, characterId)
+                        invited <- isInvitedAs(
+                          session = session,
+                          game = game,
+                          tournamentId = tournamentId,
+                          caller = caller,
+                          characterId = characterId
+                        )
+                        entered <- enterIn(
+                          session = session,
+                          t = t,
+                          game = game,
+                          caller = caller,
+                          characterId = characterId
+                        )
                         (entrant, startedNow) = entered
                     } yield (t, caller, entrant, invited && t.owner != caller.playerId, startedNow)
                 }
                 .flatMap { (t, caller, entrant, wasInvited, startedNow) =>
-                    notifications.entered(session, t, caller, wasInvited) *>
+                    notifications.entered(session = session, tournament = t, actor = caller, wasInvited = wasInvited) *>
                         startedNow.traverse_(running =>
                             IO.whenA(running.settings.hasAutomaticRounds)(started(running.gameId, running.tournamentId))
                         ) *>
@@ -581,8 +654,14 @@ class TournamentService[T](
                 else s"this tournament is not open for entries; it is ${t.status.label.toLowerCase}"
               )
             )
-            _ <- checkCharacter(session, game, characterId, caller)
-            invited <- isInvitedAs(session, game, tournamentId, caller, characterId)
+            _ <- checkCharacter(session = session, game = game, characterId = characterId, caller = caller)
+            invited <- isInvitedAs(
+              session = session,
+              game = game,
+              tournamentId = tournamentId,
+              caller = caller,
+              characterId = characterId
+            )
             _ <- IO.raiseUnless(!t.settings.isInvitational || invited || t.owner == caller.playerId)(
               UnauthorizedError(
                 if (game.gameType == GameType.Character)
@@ -602,9 +681,11 @@ class TournamentService[T](
             entrant <- returning match {
                 case Some(e) =>
                     for {
-                        _ <- entrants.setWithdrawnAt(gameId, e.entrantId, None)
+                        _ <- entrants.setWithdrawnAt(game = gameId, id = e.entrantId, at = None)
                         _ <- IO.whenA(late)(
-                          updateState(session, t, game)(s => Progress.reenter(s, e.entrantId.value))
+                          updateState(session = session, t = t, game = game)(s =>
+                              Progress.reenter(s, e.entrantId.value)
+                          )
                         )
                     } yield e.copy(withdrawnAt = None)
                 case None =>
@@ -619,7 +700,7 @@ class TournamentService[T](
                         _ <- IO.raiseWhen(characterId.exists(c => existing.exists(_.characterId.contains(c))))(
                           ConflictError(s"that character has already entered this ${TournamentService.noun(t)}")
                         )
-                        rating <- ratingOf(session, gameId, caller.playerId)
+                        rating <- ratingOf(session = session, gameId = gameId, player = caller.playerId)
                         _ <- IO.raiseWhen(
                           t.settings.minRating.exists(rating < _) || t.settings.maxRating.exists(rating > _)
                         )(
@@ -630,23 +711,33 @@ class TournamentService[T](
                           )
                         )
                         made <- entrants.create(
-                          gameId,
-                          game.gameType,
-                          tournamentId,
-                          caller.playerId,
-                          characterId,
-                          rating
+                          game = gameId,
+                          gt = game.gameType,
+                          tournament = tournamentId,
+                          player = caller.playerId,
+                          character = characterId,
+                          rating = rating
                         )
                         // Seeded against everyone's rating now, the newcomer's among them.
                         ratings <-
-                            (if (late) currentRatings(session, gameId, existing.filterNot(_.isWithdrawn))
+                            (if (late)
+                                 currentRatings(
+                                   session = session,
+                                   gameId = gameId,
+                                   entries = existing.filterNot(_.isWithdrawn)
+                                 )
                              else IO.pure(Map.empty[Long, Int]))
                         _ <- IO.whenA(late)(requireDesign(session, t).flatMap { design =>
-                            updateState(session, t, game) { s =>
+                            updateState(session = session, t = t, game = game) { s =>
                                 Progress.lateEntry(
-                                  s,
-                                  made.entrantId.value,
-                                  env(t, design, game, ratings + (made.entrantId.value -> rating))
+                                  state = s,
+                                  entrant = made.entrantId.value,
+                                  env = env(
+                                    t = t,
+                                    design = design,
+                                    game = game,
+                                    ratings = ratings + (made.entrantId.value -> rating)
+                                  )
                                 )
                             }
                         })
@@ -656,7 +747,7 @@ class TournamentService[T](
             full = t.settings.maxEntrants.contains(active + 1)
             startedNow <-
                 if (t.status == TournamentStatus.Open && t.settings.isAutoStarted && full)
-                    startIn(session, t, game).map(Some(_))
+                    startIn(session = session, t = t, game = game).map(Some(_))
                 else IO.pure(None)
         } yield (entrant, startedNow)
     }
@@ -672,7 +763,7 @@ class TournamentService[T](
                     val entrants = new EntrantRepo(session)
                     for {
                         caller <- requireCaller(session, callerExternalId)
-                        t <- requireTournamentForUpdate(session, gameId, tournamentId)
+                        t <- requireTournamentForUpdate(session = session, gameId = gameId, id = tournamentId)
                         found <- entrants.readForUpdate(gameId, entrantId).flatMap {
                             case Some((tid, player, withdrawnAt)) if tid == tournamentId =>
                                 IO.pure((player, withdrawnAt))
@@ -689,8 +780,10 @@ class TournamentService[T](
                             case TournamentStatus.Draft | TournamentStatus.Open => entrants.delete(gameId, entrantId)
                             case TournamentStatus.Running if withdrawnAt.isEmpty =>
                                 requireGame(session, gameId).flatMap { game =>
-                                    entrants.setWithdrawnAt(gameId, entrantId, Some(now())) *>
-                                        updateState(session, t, game)(Progress.withdraw(_, entrantId.value))
+                                    entrants.setWithdrawnAt(game = gameId, id = entrantId, at = Some(now())) *>
+                                        updateState(session = session, t = t, game = game)(
+                                          Progress.withdraw(_, entrantId.value)
+                                        )
                                 }
                             case TournamentStatus.Running =>
                                 IO.raiseError(ConflictError("that entry is already withdrawn"))
@@ -716,9 +809,9 @@ class TournamentService[T](
                 session.transaction.use { _ =>
                     for {
                         caller <- requireCaller(session, callerExternalId)
-                        t <- requireOwned(session, gameId, tournamentId, caller)
+                        t <- requireOwned(session = session, gameId = gameId, id = tournamentId, caller = caller)
                         game <- requireGame(session, gameId)
-                        running <- startIn(session, t, game)
+                        running <- startIn(session = session, t = t, game = game)
                     } yield running
                 }
             }
@@ -738,18 +831,23 @@ class TournamentService[T](
             )
             design <- requireDesign(session, t)
             problems = Validation
-                .validate(design, TournamentGame.of(game), t.settings.maxTurns, Some(t.defaultPoolSize))
+                .validate(
+                  design = design,
+                  game = TournamentGame.of(game),
+                  maxTurns = t.settings.maxTurns,
+                  defaultPoolSize = Some(t.defaultPoolSize)
+                )
                 .filterNot(_.isWarning)
             _ <- IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.map(_.describe).mkString("; ")))
-            ratings <- currentRatings(session, t.gameId, entries)
+            ratings <- currentRatings(session = session, gameId = t.gameId, entries = entries)
             state = Progress.start(
-              entries.map(_.entrantId.value),
-              env(t, design, game, ratings),
-              TournamentStateRepo.NewPoolIds
+              entrants = entries.map(_.entrantId.value),
+              env = env(t = t, design = design, game = game, ratings = ratings),
+              firstPoolId = TournamentStateRepo.NewPoolIds
             )
             running = t.copy(status = TournamentStatus.Running, startedAt = Some(now()))
             _ <- new TournamentRepo(session).update(running)
-            _ <- new TournamentRepo(session).writeState(t.gameId, t.tournamentId, state)
+            _ <- new TournamentRepo(session).writeState(game = t.gameId, id = t.tournamentId, state = state)
         } yield running
 
     // ---- shared ----------------------------------------------------------------------------
@@ -761,7 +859,7 @@ class TournamentService[T](
             session.transaction.use { _ =>
                 for {
                     caller <- requireCaller(session, callerExternalId)
-                    t <- requireOwned(session, gameId, tournamentId, caller)
+                    t <- requireOwned(session = session, gameId = gameId, id = tournamentId, caller = caller)
                     changed <- change(t)
                     _ <- new TournamentRepo(session).update(changed)
                 } yield changed
@@ -773,17 +871,18 @@ class TournamentService[T](
         change: TournamentState => TournamentState
     ): IO[Unit] =
         new TournamentRepo(session).readState(t.gameId, t.tournamentId).flatMap {
-            case Some(s) => new TournamentRepo(session).writeState(t.gameId, t.tournamentId, change(s))
-            case None    => IO.unit
+            case Some(s) =>
+                new TournamentRepo(session).writeState(game = t.gameId, id = t.tournamentId, state = change(s))
+            case None => IO.unit
         }
 
     private def env(t: Tournament, design: TournamentDesign, game: Game, ratings: Map[Long, Int]): Env =
         Env(
-          design,
-          TournamentGame.of(game).copy(hasRoleChoice = t.settings.hasRoleChoice),
-          ratings,
-          Some(t.defaultPoolSize),
-          t.settings.hasConcurrentRounds
+          design = design,
+          game = TournamentGame.of(game).copy(hasRoleChoice = t.settings.hasRoleChoice),
+          ratings = ratings,
+          defaultPoolSize = Some(t.defaultPoolSize),
+          hasConcurrentRounds = t.settings.hasConcurrentRounds
         )
 
     /* The model a tournament is made from: one the game offers, with a classification and active -- or, if it is the
@@ -856,7 +955,12 @@ class TournamentService[T](
               ChallengeSettings.problem(s.gameSettings, parameterValues(game))
             ).flatten ++
                 Validation
-                    .validate(model.design, TournamentGame.of(game), s.maxTurns, Some(poolSize))
+                    .validate(
+                      design = model.design,
+                      game = TournamentGame.of(game),
+                      maxTurns = s.maxTurns,
+                      defaultPoolSize = Some(poolSize)
+                    )
                     .filterNot(_.isWarning)
                     .map(_.describe)
         IO.raiseWhen(problems.nonEmpty)(ValidationError(problems.mkString("; ")))
@@ -872,7 +976,12 @@ class TournamentService[T](
         characterId: Option[CharacterId]
     ): IO[Boolean] =
         game.gameType match {
-            case GameType.Plain => new InvitationRepo(session).isInvited(game.gameId, tournamentId, caller.playerId)
+            case GameType.Plain =>
+                new InvitationRepo(session).isInvited(
+                  game = game.gameId,
+                  tournament = tournamentId,
+                  player = caller.playerId
+                )
             case GameType.Character =>
                 characterId.fold(IO.pure(false))(
                   new CharacterInvitationRepo(session).isInvited(game.gameId, tournamentId, _)
@@ -999,7 +1108,7 @@ class TournamentService[T](
         id: TournamentId,
         caller: Player
     ): IO[Tournament] =
-        requireTournamentForUpdate(session, gameId, id).flatMap { t =>
+        requireTournamentForUpdate(session = session, gameId = gameId, id = id).flatMap { t =>
             if (t.owner == caller.playerId) IO.pure(t)
             else IO.raiseError(UnauthorizedError("only the tournament's owner may do that"))
         }
@@ -1024,13 +1133,13 @@ object TournamentService {
     def view(m: TournamentMatch): TournamentMatchView = {
         val next = m.seats.filter(s => s.gameRoleId.isEmpty && !s.isForfeit).flatMap(_.chooseOrder).minOption
         TournamentMatchView(
-          m.poolId,
-          m.matchId,
-          m.status,
-          m.seats.map(s =>
+          poolId = m.poolId,
+          matchId = m.matchId,
+          status = m.status,
+          seats = m.seats.map(s =>
               TournamentSeatView(
-                s.entrantId,
-                s.gameRoleId,
+                entrantId = s.entrantId,
+                role = s.gameRoleId,
                 isChoosing =
                     m.status == TournamentMatchStatus.Choosing && s.gameRoleId.isEmpty && s.chooseOrder == next &&
                         next.isDefined,

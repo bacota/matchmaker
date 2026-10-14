@@ -17,22 +17,31 @@ class JsonSpec extends FunSuite {
 
     test("a Game round-trips, including its existential parameters") {
         val game = Game(
-          GameId(1),
-          GameType.Character,
-          "name",
-          "name",
-          "description",
-          "url",
+          gameId = GameId(1),
+          gameType = GameType.Character,
+          name = "name",
+          displayName = "name",
+          description = "description",
+          url = "url",
           isActive = true,
-          roles = Seq(GameRole(GameRoleId(2), GameId(1), "role", roleType = RoleType.Required, displayName = "role")),
+          roles = Seq(
+            GameRole(
+              gameRoleId = GameRoleId(2),
+              gameId = GameId(1),
+              name = "role",
+              roleType = RoleType.Required,
+              displayName = "role"
+            )
+          ),
           parameters = Seq(
             GameParameter[String](
-              GameId(1),
-              GameParameterId(3),
-              "parameter",
-              Some("default"),
-              Seq(GameParameterValue(GameId(1), GameParameterId(3), "default")),
-              "Parameter"
+              gameId = GameId(1),
+              gameParameterId = GameParameterId(3),
+              name = "parameter",
+              defaultValue = Some("default"),
+              values =
+                  Seq(GameParameterValue(gameId = GameId(1), gameParameterId = GameParameterId(3), value = "default")),
+              displayName = "Parameter"
             )
           ),
           externalId = "secret"
@@ -48,7 +57,18 @@ class JsonSpec extends FunSuite {
 
     // Unimportant roles travel with the game, and a game written before they existed keeps ratings by role.
     test("a game says whether its roles are unimportant, and one that does not say has important ones") {
-        val game = Game(GameId(1), GameType.Plain, "n", "n", "d", "u", true, Seq.empty, Seq.empty, "boxing")
+        val game = Game(
+          gameId = GameId(1),
+          gameType = GameType.Plain,
+          name = "n",
+          displayName = "n",
+          description = "d",
+          url = "u",
+          isActive = true,
+          roles = Seq.empty,
+          parameters = Seq.empty,
+          externalId = "boxing"
+        )
         assert(read[Game](write(game.copy(hasUnimportantRoles = true))).hasUnimportantRoles)
         val older = ujson.write(ujson.Obj.from(ujson.read(write(game)).obj.toSeq.filterNot(_._1 == "unimportantRoles")))
         assert(!read[Game](older).hasUnimportantRoles)
@@ -57,7 +77,18 @@ class JsonSpec extends FunSuite {
     // The key rides in the save request beside the game's fields and is read apart from them, and a
     // game written out never has one to write: there is no field for it.
     test("a game save carries its API key beside the game, and a game never writes one") {
-        val game = Game(GameId(1), GameType.Plain, "n", "n", "d", "u", true, Seq.empty, Seq.empty, "boxing")
+        val game = Game(
+          gameId = GameId(1),
+          gameType = GameType.Plain,
+          name = "n",
+          displayName = "n",
+          description = "d",
+          url = "u",
+          isActive = true,
+          roles = Seq.empty,
+          parameters = Seq.empty,
+          externalId = "boxing"
+        )
         val body = ujson.write(ujson.Obj.from(ujson.read(write(game)).obj.toSeq :+ ("apiKey" -> ujson.Str("s3cret"))))
 
         assertEquals(read[Game](body).externalId, "boxing")
@@ -124,14 +155,14 @@ class JsonSpec extends FunSuite {
     // What GET /games/:id/challenges actually returns: the tournament as a list shows it, its entries and invitations.
     test("a ChallengeSummary round-trips its tournament, entries and invitations") {
         val tournament = Tournament(
-          GameId(1),
-          TournamentId(2),
-          "ada's challenge",
-          "",
-          PlayerId(3),
-          TournamentModelId("challenge"),
-          2,
-          TournamentSettings(
+          gameId = GameId(1),
+          tournamentId = TournamentId(2),
+          name = "ada's challenge",
+          description = "",
+          owner = PlayerId(3),
+          tournamentModelId = TournamentModelId("challenge"),
+          defaultPoolSize = 2,
+          settings = TournamentSettings(
             hasAutomaticRounds = true,
             isInvitational = true,
             roundDuration = Some(Duration.ofMinutes(30)),
@@ -141,24 +172,40 @@ class JsonSpec extends FunSuite {
             maxEntrants = Some(2),
             isAutoStarted = true
           ),
-          TournamentStatus.Open
+          status = TournamentStatus.Open
         )
         val summary = ChallengeSummary(
-          TournamentSummary(tournament, "Chess", "ada", 1, isOwner = false, isEntered = false, isInvited = true),
-          List(
-            Entrant(GameId(1), TournamentId(2), EntrantId(4), Some(PlayerId(3)), None, 1500, Instant.ofEpochSecond(100))
+          summary = TournamentSummary(
+            tournament = tournament,
+            gameName = "Chess",
+            ownerNickname = "ada",
+            entrants = 1,
+            isOwner = false,
+            isEntered = false,
+            isInvited = true
           ),
-          List(PlayerName(PlayerId(5), "grace"))
+          entries = List(
+            Entrant(
+              gameId = GameId(1),
+              tournamentId = TournamentId(2),
+              entrantId = EntrantId(4),
+              playerId = Some(PlayerId(3)),
+              characterId = None,
+              ratingAtEntry = 1500,
+              enteredAt = Instant.ofEpochSecond(100)
+            )
+          ),
+          invited = List(PlayerName(PlayerId(5), "grace"))
         )
         assertEquals(read[ChallengeSummary](write(summary)), summary)
     }
 
     test("a MatchSummary round-trips") {
         val summary = MatchSummary(
-          GameId(1),
-          MatchId(1),
-          "game",
-          "description",
+          gameId = GameId(1),
+          matchId = MatchId(1),
+          gameName = "game",
+          description = "description",
           completedAt = Some(Instant.ofEpochSecond(3000)),
           isCancelled = false,
           isOwner = true,
@@ -174,7 +221,10 @@ class JsonSpec extends FunSuite {
     test("an opponent is written as the player it was before characters, with the character beside it") {
         val plain = Opponent(Some(PublicPlayer(PlayerId(2), "bob")))
         val inCharacter =
-            Opponent(Some(PublicPlayer(PlayerId(2), "bob")), Some(CharacterName(CharacterId(7), GameId(1), "Joe")))
+            Opponent(
+              Some(PublicPlayer(PlayerId(2), "bob")),
+              Some(CharacterName(characterId = CharacterId(7), gameId = GameId(1), name = "Joe"))
+            )
         assertEquals(ujson.read(write(plain)), ujson.Obj("playerId" -> 2, "nickname" -> "bob"))
         // Still a player to a client that reads one, and the same opponent back to one that knows the character.
         assertEquals(read[PublicPlayer](write(inCharacter)), plain.player.get)
@@ -183,16 +233,23 @@ class JsonSpec extends FunSuite {
     }
 
     test("a seat nobody played is written as its character alone") {
-        val nobody = Opponent(None, Some(CharacterName(CharacterId(7), GameId(1), "Joe")))
+        val nobody = Opponent(None, Some(CharacterName(characterId = CharacterId(7), gameId = GameId(1), name = "Joe")))
         assertEquals(ujson.read(write(nobody)).obj.keySet, Set("character"))
         assertEquals(read[Opponent](write(nobody)), nobody)
     }
 
     test("a Player and a Character round-trip") {
-        val player = Player(PlayerId(1), "nickname", isAdmin = true, externalId = "sub-1")
+        val player = Player(playerId = PlayerId(1), nickname = "nickname", isAdmin = true, externalId = "sub-1")
         assertEquals(read[Player](write(player)), player)
 
-        val character = Character[String](CharacterId(1), GameId(2), "name", "description", "state", Some(PlayerId(3)))
+        val character = Character[String](
+          characterId = CharacterId(1),
+          gameId = GameId(2),
+          name = "name",
+          description = "description",
+          state = "state",
+          playerId = Some(PlayerId(3))
+        )
         assertEquals(read[Character[String]](write(character)), character)
     }
 }

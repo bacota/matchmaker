@@ -97,7 +97,14 @@ class JwtVerifierSpec extends FunSuite {
           }
         )
         server.start()
-        try f(JwtVerifier(s"http://127.0.0.1:${server.getAddress.getPort}", audience, now = () => now))
+        try
+            f(
+              JwtVerifier(
+                issuer = s"http://127.0.0.1:${server.getAddress.getPort}",
+                audience = audience,
+                now = () => now
+              )
+            )
         finally server.stop(0)
     }
 
@@ -179,7 +186,7 @@ class JwtVerifierSpec extends FunSuite {
     }
 
     test("an unreachable jwks endpoint refuses rather than admits") {
-        val verifier = JwtVerifier("http://127.0.0.1:1", audience, now = () => now)
+        val verifier = JwtVerifier(issuer = "http://127.0.0.1:1", audience = audience, now = () => now)
         assertEquals(verifier.verify(token()), Left("token names an unknown key"))
     }
 

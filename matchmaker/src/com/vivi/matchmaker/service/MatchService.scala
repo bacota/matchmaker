@@ -64,7 +64,7 @@ class MatchService(
                 // Asked for at all only when one of these matches is played under a chess clock, which
                 // most are not.
                 if (summaries.exists(s => s.timeLimit.isDefined && s.timeLimitKind == TimeLimitKind.Total))
-                    withClocks(repo, playerId, summaries)
+                    withClocks(repo = repo, playerId = playerId, summaries = summaries)
                 else IO.pure(summaries)
             }
         }
@@ -79,7 +79,7 @@ class MatchService(
         forCaller(callerExternalId) { (repo, playerId) =>
             completedPage(repo, query)(
               span => repo.listCompletedForPlayer(playerId, span),
-              from => repo.hasCompletedBefore(playerId, query.gameId, from)
+              from => repo.hasCompletedBefore(playerId = playerId, gameId = query.gameId, before = from)
             )
         }.flatMap(viewedPage)
 
@@ -106,7 +106,7 @@ class MatchService(
         forRegistered(callerExternalId) { repo =>
             completedPage(repo, query)(
               span => repo.listPublicCompletedForPlayer(playerId, span),
-              from => repo.hasPublicCompletedBefore(playerId, query.gameId, from)
+              from => repo.hasPublicCompletedBefore(playerId = playerId, gameId = query.gameId, before = from)
             )
         }.flatMap(viewedPage)
 
@@ -127,8 +127,8 @@ class MatchService(
     ): IO[CompletedPage] =
         forRegistered(callerExternalId) { repo =>
             completedPage(repo, query.copy(gameId = Some(gameId)))(
-              span => repo.listPublicCompletedForCharacter(gameId, characterId, span),
-              from => repo.hasPublicCompletedBeforeForCharacter(gameId, characterId, from)
+              span => repo.listPublicCompletedForCharacter(game = gameId, character = characterId, span = span),
+              from => repo.hasPublicCompletedBeforeForCharacter(game = gameId, character = characterId, before = from)
             )
         }.flatMap(viewedPage)
 
@@ -149,10 +149,18 @@ class MatchService(
             asOf <- query.asOf.fold(repo.now)(IO.pure)
             until = query.until(asOf)
             from = query.from(asOf)
-            found <- rows(MatchRepo.CompletedSpan(from, until, query.gameId))
+            found <- rows(MatchRepo.CompletedSpan(from = from, until = until, gameId = query.gameId))
             summaries <- summarised(repo, found)
             older <- olderThan(from)
-        } yield CompletedPage(summaries, query.frame, query.page, asOf, from, until, older)
+        } yield CompletedPage(
+          matches = summaries,
+          frame = query.frame,
+          page = query.page,
+          asOf = asOf,
+          from = from,
+          until = until,
+          hasOlder = older
+        )
 
     private def viewedPage(page: CompletedPage): IO[CompletedPage] =
         viewed(page.matches.toList).map(matches => page.copy(matches = matches))
@@ -274,7 +282,9 @@ class MatchService(
             val byMatch = rows
                 .groupBy(row => (row.gameId, row.matchId))
                 .view
-                .mapValues(_.map(row => PlayerClock(row.nickname, row.remaining, row.due)))
+                .mapValues(
+                  _.map(row => PlayerClock(nickname = row.nickname, remaining = row.remaining, deadline = row.due))
+                )
                 .toMap
             summaries.map(s => byMatch.get((s.gameId, s.matchId)).fold(s)(clocks => s.copy(clocks = clocks)))
         }
@@ -296,20 +306,20 @@ class MatchService(
                 val byParticipant = spent.map(row => (row.gameId, row.participantId) -> row.timeTaken).toMap
                 rows.map { row =>
                     ParticipantResult(
-                      row.gameId,
-                      row.matchId,
-                      row.participantId,
-                      row.nickname,
-                      row.roleName,
-                      row.rank,
-                      row.scores,
-                      row.isWinner,
-                      row.isForfeit,
+                      gameId = row.gameId,
+                      matchId = row.matchId,
+                      participantId = row.participantId,
+                      nickname = row.nickname,
+                      roleName = row.roleName,
+                      rank = row.rank,
+                      scores = row.scores,
+                      isWinner = row.isWinner,
+                      isForfeit = row.isForfeit,
                       // Absent means nothing was recorded against this seat, which reads as zero — both
                       // for a player who never moved and for a match played before turns were kept.
-                      byParticipant.getOrElse((row.gameId, row.participantId), Duration.ZERO),
-                      row.eloStart,
-                      row.eloDelta
+                      timeTaken = byParticipant.getOrElse((row.gameId, row.participantId), Duration.ZERO),
+                      eloStart = row.eloStart,
+                      eloDelta = row.eloDelta
                     )
                 }
             }
@@ -385,7 +395,12 @@ class MatchService(
                          * terms every notification in this codebase is sent on. Everyone in the match except
                          * the owner, who called it off and is looking at the answer. */
                         notifications
-                            .matchEnded(session, cancelled, MatchEnding.Cancelled, except = Some(caller.playerId))
+                            .matchEnded(
+                              session = session,
+                              played = cancelled,
+                              ending = MatchEnding.Cancelled,
+                              except = Some(caller.playerId)
+                            )
                             .as(cancelled)
                     }
             }
@@ -418,7 +433,11 @@ class MatchService(
                     if (caller.isAdmin) IO.pure(true)
                     else new GameAdminRepo(session).isAdmin(caller.playerId, gameId)
                 _ <- IO.raiseUnless(allowed)(UnauthorizedError("only an admin of this game may list its matches"))
-                matches <- new MatchRepo(session).listForGame(gameId, MatchService.gameMatchLimit, player)
+                matches <- new MatchRepo(session).listForGame(
+                  gameId = gameId,
+                  limit = MatchService.gameMatchLimit,
+                  player = player
+                )
             } yield matches
         }
 
@@ -447,7 +466,15 @@ class MatchService(
             // the lock, and an answer that has changed is handled there.
             wanted <-
                 if (friendly) IO.pure(false)
-                else sessionPool.use(session => mayMoveArchive(session, gameId, matchId, callerExternalId))
+                else
+                    sessionPool.use(session =>
+                        mayMoveArchive(
+                          session = session,
+                          gameId = gameId,
+                          matchId = matchId,
+                          callerExternalId = callerExternalId
+                        )
+                    )
             prepared <-
                 if (wanted) archives.flatTraverse(_.prepareMove(gameId, matchId))
                 else IO.pure(Option.empty[PreparedMove])
@@ -487,11 +514,23 @@ class MatchService(
                           ConflictError("a player holds more than one seat in this match, so it can only be friendly")
                         )
                         _ <- IO.whenA(changed && existing.isCompleted)(
-                          EloRatingService.reclassify(session, gameId, matchId, friendly)
+                          EloRatingService.reclassify(
+                            session = session,
+                            gameId = gameId,
+                            matchId = matchId,
+                            friendly = friendly
+                          )
                         )
                         moved <-
                             if (changed && existing.isCompleted && !friendly)
-                                archives.fold(IO.pure(false))(_.recordMove(session, prepared, gameId, matchId))
+                                archives.fold(IO.pure(false))(
+                                  _.recordMove(
+                                    session = session,
+                                    prepared = prepared,
+                                    gameId = gameId,
+                                    matchId = matchId
+                                  )
+                                )
                             else IO.pure(false)
                         classified = existing.copy(isFriendly = friendly)
                         _ <- IO.whenA(changed)(matchRepo.update(classified))

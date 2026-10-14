@@ -34,10 +34,15 @@ object LocalEngineServer {
         val livePort = sys.env.get("LIVE_PORT").flatMap(_.toIntOption).getOrElse(port + 100)
         val liveServer = LocalLiveServer(livePort)
         val live =
-            Live(liveServer.url, EngineConfig.playAuth(sys.env.get, baseUrl), InMemorySubscriptions(), liveServer)
+            Live(
+              url = liveServer.url,
+              auth = EngineConfig.playAuth(sys.env.get, baseUrl),
+              subscriptions = InMemorySubscriptions(),
+              channel = liveServer
+            )
         val served = routes(baseUrl, live)
         liveServer.serve(served)
-        serve(port, baseUrl, title, served)
+        serve(port = port, baseUrl = baseUrl, title = title, routes = served)
         println(s"  live      ${liveServer.url} (Play Live)")
     }
 
@@ -90,7 +95,13 @@ object LocalEngineServer {
                     .toMap
 
                 val response = routes(
-                  EngineRequest(exchange.getRequestMethod, uri.getPath, queryOf(Option(uri.getRawQuery)), body, headers)
+                  EngineRequest(
+                    method = exchange.getRequestMethod,
+                    path = uri.getPath,
+                    query = queryOf(Option(uri.getRawQuery)),
+                    body = body,
+                    headers = headers
+                  )
                 )
 
                 val bytes = response.body.getBytes(UTF_8)

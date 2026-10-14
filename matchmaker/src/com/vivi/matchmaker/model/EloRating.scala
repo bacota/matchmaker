@@ -23,14 +23,20 @@ case class MatchRecord(wins: Int = 0, losses: Int = 0, draws: Int = 0, forfeitWi
 
     def +(other: MatchRecord): MatchRecord =
         MatchRecord(
-          wins + other.wins,
-          losses + other.losses,
-          draws + other.draws,
-          forfeitWins + other.forfeitWins,
-          forfeitLosses + other.forfeitLosses
+          wins = wins + other.wins,
+          losses = losses + other.losses,
+          draws = draws + other.draws,
+          forfeitWins = forfeitWins + other.forfeitWins,
+          forfeitLosses = forfeitLosses + other.forfeitLosses
         )
 
-    def unary_- : MatchRecord = MatchRecord(-wins, -losses, -draws, -forfeitWins, -forfeitLosses)
+    def unary_- : MatchRecord = MatchRecord(
+      wins = -wins,
+      losses = -losses,
+      draws = -draws,
+      forfeitWins = -forfeitWins,
+      forfeitLosses = -forfeitLosses
+    )
 }
 
 object MatchRecord {

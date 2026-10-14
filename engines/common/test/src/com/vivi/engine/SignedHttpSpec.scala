@@ -13,18 +13,23 @@ class SignedHttpSpec extends FunSuite {
 
     private val identity = AwsCredentialsIdentity.create("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
     private val http =
-        SignedHttp(None, "us-east-1", clock = Clock.fixed(Instant.parse("2026-10-02T12:00:00Z"), ZoneOffset.UTC))
+        SignedHttp(
+          credentials = None,
+          region = "us-east-1",
+          clock = Clock.fixed(Instant.parse("2026-10-02T12:00:00Z"), ZoneOffset.UTC)
+        )
 
     test("a Play Live push is signed with its path encoded twice, as API Gateway's @connections checks it") {
         // A connection id ends in "=", which the url carries as "%3D": the character that made every push a 403
         // while the signer was told to encode the path only once.
         val signed = http.sign(
-          "POST",
-          URI.create("https://abc123.execute-api.us-east-1.amazonaws.com/live/@connections/gcVF_C7ZSQAYKEiNEA%3D"),
-          Map("content-type" -> "application/json"),
-          """{"changed":"m-1"}""",
-          "execute-api",
-          identity
+          method = "POST",
+          uri =
+              URI.create("https://abc123.execute-api.us-east-1.amazonaws.com/live/@connections/gcVF_C7ZSQAYKEiNEA%3D"),
+          headers = Map("content-type" -> "application/json"),
+          body = """{"changed":"m-1"}""",
+          service = "execute-api",
+          identity = identity
         )
         assertEquals(
           signed("Authorization"),

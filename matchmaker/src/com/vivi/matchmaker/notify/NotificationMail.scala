@@ -39,7 +39,12 @@ trait NotificationMail[News] {
                   sender = sender,
                   recipient = address,
                   subject = subject,
-                  body = MailText.letter(recipient, body, uiBaseUrl, playUrl(news))
+                  body = MailText.letter(
+                    recipient = recipient,
+                    body = body,
+                    uiBaseUrl = uiBaseUrl,
+                    playUrl = playUrl(news)
+                  )
                 )
             }
         }

@@ -1330,7 +1330,8 @@ $replayScript
           ("Spy", "", "Assassin", "Loses any other battle — but takes the General, if the Assassin attacks first."),
           ("Bomb", "", "Mine", "Never moves. Destroys any piece that attacks it except an Engineer."),
           ("Flag", "", "Flag", "Never moves. Take the enemy's to win.")
-        ).map((rank, number, name, note) => keyEntry(rank, number, name, note)).mkString("\n      ")
+        ).map((rank, number, name, note) => keyEntry(rank = rank, number = number, name = name, note = note))
+            .mkString("\n      ")
 
     /** A line of the key: the icon and number a rank is drawn with, its name, and what is special about it. */
     private def keyEntry(rank: String, number: String, name: String, note: String): String = {

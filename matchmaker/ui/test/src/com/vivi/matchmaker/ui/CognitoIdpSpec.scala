@@ -18,7 +18,9 @@ class CognitoIdpSpec extends FunSuite {
         assertEquals(
           CognitoIdp.outcomeOf(body),
           Success(
-            CognitoIdp.AuthOutcome.Authenticated(CognitoIdp.Tokens("id.jwt", Some("refresh"), Some("access.jwt")))
+            CognitoIdp.AuthOutcome.Authenticated(
+              CognitoIdp.Tokens(idToken = "id.jwt", refreshToken = Some("refresh"), accessToken = Some("access.jwt"))
+            )
           )
         )
     }
@@ -30,7 +32,11 @@ class CognitoIdpSpec extends FunSuite {
 
         assertEquals(
           CognitoIdp.outcomeOf(body),
-          Success(CognitoIdp.AuthOutcome.Authenticated(CognitoIdp.Tokens("id.jwt", None, Some("access.jwt"))))
+          Success(
+            CognitoIdp.AuthOutcome.Authenticated(
+              CognitoIdp.Tokens(idToken = "id.jwt", refreshToken = None, accessToken = Some("access.jwt"))
+            )
+          )
         )
     }
 

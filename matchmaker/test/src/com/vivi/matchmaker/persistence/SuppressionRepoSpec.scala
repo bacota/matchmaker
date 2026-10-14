@@ -34,18 +34,30 @@ class SuppressionRepoSpec extends FunSuite {
 
     private def bounce(email: String, permanent: Boolean): EmailSuppression.Event =
         EmailSuppression.Event(
-          eventId,
-          email,
-          SuppressionReason.Bounce,
-          permanent,
-          Some("smtp; 550 5.1.1 user unknown")
+          eventId = eventId,
+          email = email,
+          reason = SuppressionReason.Bounce,
+          isPermanent = permanent,
+          diagnostic = Some("smtp; 550 5.1.1 user unknown")
         )
 
     private def delay(email: String): EmailSuppression.Event =
-        EmailSuppression.Event(eventId, email, SuppressionReason.Delay, false, None)
+        EmailSuppression.Event(
+          eventId = eventId,
+          email = email,
+          reason = SuppressionReason.Delay,
+          isPermanent = false,
+          diagnostic = None
+        )
 
     private def complaint(email: String): EmailSuppression.Event =
-        EmailSuppression.Event(eventId, email, SuppressionReason.Complaint, true, None)
+        EmailSuppression.Event(
+          eventId = eventId,
+          email = email,
+          reason = SuppressionReason.Complaint,
+          isPermanent = true,
+          diagnostic = None
+        )
 
     test("a permanent bounce suppresses on the first event") {
         val email = address

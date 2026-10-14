@@ -47,7 +47,11 @@ class Handler extends RequestStreamHandler {
                         (
                           s"match ${due.matchId} of tournament ${due.tournamentId}",
                           Handler.services.rounds
-                              .createMatch(GameId(due.gameId), TournamentId(due.tournamentId), MatchId(due.matchId))
+                              .createMatch(
+                                gameId = GameId(due.gameId),
+                                tournamentId = TournamentId(due.tournamentId),
+                                matchId = MatchId(due.matchId)
+                              )
                         )
                     case check: TournamentRoundCheck =>
                         (

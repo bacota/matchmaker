@@ -233,22 +233,22 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                     parameters <- readParameters(id)
                 } yield Some(
                   Game(
-                    id,
-                    gameType,
-                    name,
-                    displayName,
-                    description,
-                    url,
-                    active,
-                    roles,
-                    parameters,
-                    externalId,
-                    timeoutAction,
-                    characterUrl,
-                    hasKey,
-                    unimportantRoles,
-                    moveType,
-                    maxTurns
+                    gameId = id,
+                    gameType = gameType,
+                    name = name,
+                    displayName = displayName,
+                    description = description,
+                    url = url,
+                    isActive = active,
+                    roles = roles,
+                    parameters = parameters,
+                    externalId = externalId,
+                    timeoutAction = timeoutAction,
+                    characterUrl = characterUrl,
+                    hasApiKey = hasKey,
+                    hasUnimportantRoles = unimportantRoles,
+                    moveType = moveType,
+                    maxTurns = maxTurns
                   )
                 )
         }
@@ -285,7 +285,14 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
         session
             .execute(selectRoles)(gameId)
             .map(_.map { case (id, name, roleType, displayName, preferenceLevel) =>
-                GameRole(id, gameId, name, roleType, displayName, preferenceLevel)
+                GameRole(
+                  gameRoleId = id,
+                  gameId = gameId,
+                  name = name,
+                  roleType = roleType,
+                  displayName = displayName,
+                  preferenceLevel = preferenceLevel
+                )
             })
 
     /** Writes a game's roles without ever deleting one.
@@ -312,7 +319,9 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
     private def insertParameter(gameId: GameId, parameter: GameParameter[T]): IO[GameParameter[T]] =
         for {
             parameterId <- session.unique(insertParameterStmt)((gameId, parameter.name, parameter.displayName))
-            values <- parameter.values.toList.traverse(v => insertParameterValue(gameId, parameterId, v))
+            values <- parameter.values.toList.traverse(v =>
+                insertParameterValue(gameId = gameId, parameterId = parameterId, value = v)
+            )
             _ <- parameter.defaultValue match {
                 case Some(v) => session.execute(setDefaultValueStmt)((v, gameId, parameterId)).void
                 case None    => IO.unit
@@ -333,13 +342,22 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
             .execute(selectParameters)(gameId)
             .flatMap(_.traverse { case (parameterId, name, defaultValue, displayName) =>
                 readParameterValues(gameId, parameterId)
-                    .map(values => GameParameter(gameId, parameterId, name, defaultValue, values, displayName))
+                    .map(values =>
+                        GameParameter(
+                          gameId = gameId,
+                          gameParameterId = parameterId,
+                          name = name,
+                          defaultValue = defaultValue,
+                          values = values,
+                          displayName = displayName
+                        )
+                    )
             })
 
     private def readParameterValues(gameId: GameId, parameterId: GameParameterId): IO[Seq[GameParameterValue[T]]] =
         session
             .execute(selectParameterValues)((gameId, parameterId))
-            .map(_.map(v => GameParameterValue(gameId, parameterId, v)))
+            .map(_.map(v => GameParameterValue(gameId = gameId, gameParameterId = parameterId, value = v)))
 
     /** One row of the listing join: a game, optionally one of its roles, and optionally one of its parameters together
       * with one of that parameter's values.
@@ -432,12 +450,12 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                                 roleType <- row.roleType
                                 displayName <- row.roleDisplayName
                             } yield GameRole(
-                              GameRoleId(roleId),
-                              id,
-                              name,
-                              roleType,
-                              displayName,
-                              row.rolePreferenceLevel
+                              gameRoleId = GameRoleId(roleId),
+                              gameId = id,
+                              name = name,
+                              roleType = roleType,
+                              displayName = displayName,
+                              preferenceLevel = row.rolePreferenceLevel
                             )
                         }
                         .distinctBy(_.gameRoleId)
@@ -452,37 +470,37 @@ class GameRepo[T](session: Session[IO])(using codec: TextCodec[T]) {
                         .map { case (parameterId, parameterRows) =>
                             val (_, name, first) = parameterRows.head
                             GameParameter(
-                              id,
-                              GameParameterId(parameterId),
-                              name,
-                              first.parameterDefault,
-                              parameterRows
+                              gameId = id,
+                              gameParameterId = GameParameterId(parameterId),
+                              name = name,
+                              defaultValue = first.parameterDefault,
+                              values = parameterRows
                                   .flatMap(_._3.parameterValue)
                                   .distinct
                                   .map(GameParameterValue(id, GameParameterId(parameterId), _)),
                               // NOT NULL in the table; only the outer join makes it optional here.
-                              first.parameterDisplayName.getOrElse(name)
+                              displayName = first.parameterDisplayName.getOrElse(name)
                             )
                         }
                         .sortBy(_.gameParameterId.value)
 
                     Game(
-                      id,
-                      head.gameType,
-                      head.name,
-                      head.displayName,
-                      head.description,
-                      head.url,
-                      head.isActive,
-                      roles,
-                      parameters,
-                      head.externalId,
-                      head.timeoutAction,
-                      head.characterUrl,
-                      head.hasApiKey,
-                      head.hasUnimportantRoles,
-                      head.moveType,
-                      head.maxTurns
+                      gameId = id,
+                      gameType = head.gameType,
+                      name = head.name,
+                      displayName = head.displayName,
+                      description = head.description,
+                      url = head.url,
+                      isActive = head.isActive,
+                      roles = roles,
+                      parameters = parameters,
+                      externalId = head.externalId,
+                      timeoutAction = head.timeoutAction,
+                      characterUrl = head.characterUrl,
+                      hasApiKey = head.hasApiKey,
+                      hasUnimportantRoles = head.hasUnimportantRoles,
+                      moveType = head.moveType,
+                      maxTurns = head.maxTurns
                     )
                 }
                 // game_id breaks ties, so games sharing a name still come back in a stable order.

@@ -18,60 +18,64 @@ case class StandardDesign(
 object StandardDesigns {
 
     val all: List[StandardDesign] = List(
-      StandardDesign("single-elimination", "Single Elimination", "Lose once and you are out, until one is left."),
       StandardDesign(
-        "single-elimination-consolation",
-        "Single Elimination with Consolation",
-        "Single elimination, with a match for third place.",
+        key = "single-elimination",
+        name = "Single Elimination",
+        description = "Lose once and you are out, until one is left."
+      ),
+      StandardDesign(
+        key = "single-elimination-consolation",
+        name = "Single Elimination with Consolation",
+        description = "Single elimination, with a match for third place.",
         hasTwoRolesOnly = true
       ),
       StandardDesign(
-        "modified-double-elimination",
-        "Modified Double Elimination",
-        "Lose twice and you are out, until a winner of each bracket is left to meet.",
+        key = "modified-double-elimination",
+        name = "Modified Double Elimination",
+        description = "Lose twice and you are out, until a winner of each bracket is left to meet.",
         hasTwoRolesOnly = true
       ),
       StandardDesign(
-        "double-elimination",
-        "Double Elimination",
-        "Lose twice and you are out; the two brackets' winners meet in a final.",
+        key = "double-elimination",
+        name = "Double Elimination",
+        description = "Lose twice and you are out; the two brackets' winners meet in a final.",
         hasTwoRolesOnly = true
       ),
       StandardDesign(
-        "heats",
-        "Heats with Single Elimination",
-        "Round-robin heats seed a single elimination.",
+        key = "heats",
+        name = "Heats with Single Elimination",
+        description = "Round-robin heats seed a single elimination.",
         hasPoolSize = true,
         classification = "Pools, then elimination"
       ),
       StandardDesign(
-        "ladder",
-        "Ladder",
-        "Play repeatedly; win to climb a rung, lose to drop one. Runs until stopped.",
+        key = "ladder",
+        name = "Ladder",
+        description = "Play repeatedly; win to climb a rung, lose to drop one. Runs until stopped.",
         classification = "Ladder"
       ),
       StandardDesign(
-        "brazilian-repechage",
-        "Brazilian Repechage",
-        "Single elimination down to eight, then modified double elimination.",
+        key = "brazilian-repechage",
+        name = "Brazilian Repechage",
+        description = "Single elimination down to eight, then modified double elimination.",
         hasTwoRolesOnly = true
       ),
       StandardDesign(
-        "world-cup",
-        "Soccer World Cup",
-        "Group round robins, then single elimination.",
+        key = "world-cup",
+        name = "Soccer World Cup",
+        description = "Group round robins, then single elimination.",
         classification = "Pools, then elimination"
       ),
       StandardDesign(
-        "fencing",
-        "Fencing",
-        "Pools whose winners go through to single elimination.",
+        key = "fencing",
+        name = "Fencing",
+        description = "Pools whose winners go through to single elimination.",
         classification = "Pools, then elimination"
       ),
       StandardDesign(
-        "ncaa",
-        "NCAA Football Style",
-        "Large round-robin conferences, then single elimination.",
+        key = "ncaa",
+        name = "NCAA Football Style",
+        description = "Large round-robin conferences, then single elimination.",
         classification = "Pools, then elimination"
       )
     )

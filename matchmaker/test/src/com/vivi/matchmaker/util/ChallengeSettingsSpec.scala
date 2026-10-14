@@ -43,13 +43,19 @@ class ChallengeSettingsSpec extends FunSuite {
     test("the engine is told the choice where the game still allows it, and the default otherwise") {
         val defaults = Map("rounds" -> "10", "board" -> "3x3")
         assertEquals(
-          ChallengeSettings.resolve(defaults, allowed, """{"rounds":"12"}"""),
+          ChallengeSettings.resolve(defaults = defaults, allowed = allowed, settings = """{"rounds":"12"}"""),
           Map("rounds" -> "12", "board" -> "3x3")
         )
         // A value the admin has since removed falls back to the default rather than failing the start.
-        assertEquals(ChallengeSettings.resolve(defaults, allowed, """{"rounds":"99"}"""), defaults)
-        assertEquals(ChallengeSettings.resolve(defaults, allowed, "{}"), defaults)
+        assertEquals(
+          ChallengeSettings.resolve(defaults = defaults, allowed = allowed, settings = """{"rounds":"99"}"""),
+          defaults
+        )
+        assertEquals(ChallengeSettings.resolve(defaults = defaults, allowed = allowed, settings = "{}"), defaults)
         // Only the game's own parameters are sent as parameters; other keys stay in `settings`.
-        assertEquals(ChallengeSettings.resolve(defaults, allowed, """{"variant":"x"}""").keySet, Set("rounds", "board"))
+        assertEquals(
+          ChallengeSettings.resolve(defaults = defaults, allowed = allowed, settings = """{"variant":"x"}""").keySet,
+          Set("rounds", "board")
+        )
     }
 }

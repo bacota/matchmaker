@@ -102,7 +102,12 @@ object EmailSuppression {
     object Notice {
 
         def of(row: EmailSuppression): Notice =
-            Notice(row.email, row.reason, row.lastSeenAt, canRetry = row.reason != SuppressionReason.Complaint)
+            Notice(
+              address = row.email,
+              reason = row.reason,
+              since = row.lastSeenAt,
+              canRetry = row.reason != SuppressionReason.Complaint
+            )
     }
 
     /** What one SES event says, as the bounce handler hands it over. `isPermanent` is the handler's reading of the

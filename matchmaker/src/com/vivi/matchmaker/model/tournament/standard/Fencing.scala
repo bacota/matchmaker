@@ -3,11 +3,11 @@ package standard
 
 object Fencing
     extends StandardModel(
-      "fencing",
-      1,
-      "Fencing",
-      "Pools whose winners go through to single elimination.",
-      "Pools, then elimination"
+      id = "fencing",
+      version = 1,
+      name = "Fencing",
+      description = "Pools whose winners go through to single elimination.",
+      classification = "Pools, then elimination"
     ) {
 
     /** One match, and the loser drops a stratum. It is played in a pool of two, so it may not be drawn. */

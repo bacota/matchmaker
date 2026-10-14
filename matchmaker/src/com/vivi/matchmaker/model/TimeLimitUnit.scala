@@ -17,10 +17,10 @@ enum TimeLimitUnit(val code: String, val label: String, val perUnit: Duration) {
     /** What a live match's turns were measured in. No longer offered by the challenge form, but read and shown for the
       * matches that were.
       */
-    case Seconds extends TimeLimitUnit("SECONDS", "seconds", Duration.ofSeconds(1))
-    case Minutes extends TimeLimitUnit("MINUTES", "minutes", Duration.ofMinutes(1))
-    case Hours extends TimeLimitUnit("HOURS", "hours", Duration.ofHours(1))
-    case Days extends TimeLimitUnit("DAYS", "days", Duration.ofDays(1))
+    case Seconds extends TimeLimitUnit(code = "SECONDS", label = "seconds", perUnit = Duration.ofSeconds(1))
+    case Minutes extends TimeLimitUnit(code = "MINUTES", label = "minutes", perUnit = Duration.ofMinutes(1))
+    case Hours extends TimeLimitUnit(code = "HOURS", label = "hours", perUnit = Duration.ofHours(1))
+    case Days extends TimeLimitUnit(code = "DAYS", label = "days", perUnit = Duration.ofDays(1))
 }
 
 object TimeLimitUnit {

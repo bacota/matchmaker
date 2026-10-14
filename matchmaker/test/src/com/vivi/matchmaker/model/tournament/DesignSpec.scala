@@ -11,15 +11,17 @@ class DesignSpec extends FunSuite {
 
     test("every standard design is valid for a two-player game, with no errors") {
         StandardDesigns.all.foreach { std =>
-            val design = StandardDesigns.build(std.key, 2, Some(4)).toOption.get
-            val errors = Validation.validate(design, twoPlayer, None, None).filterNot(_.isWarning)
+            val design = StandardDesigns.build(key = std.key, r = 2, poolSize = Some(4)).toOption.get
+            val errors = Validation
+                .validate(design = design, game = twoPlayer, maxTurns = None, defaultPoolSize = None)
+                .filterNot(_.isWarning)
             assertEquals(errors, Nil, std.key)
         }
     }
 
     test("a two-role format is refused for a game of more players") {
-        assert(StandardDesigns.build("double-elimination", 3, None).isLeft)
-        assert(StandardDesigns.build("single-elimination", 3, None).isRight)
+        assert(StandardDesigns.build(key = "double-elimination", r = 3, poolSize = None).isLeft)
+        assert(StandardDesigns.build(key = "single-elimination", r = 3, poolSize = None).isRight)
     }
 
     test("validation names what is wrong, and where") {
@@ -30,7 +32,10 @@ class DesignSpec extends FunSuite {
             StageDesign(promote = Some(3), demote = Some(2), hasBrackets = false)
           )
         )
-        val problems = Validation.validate(bad, twoPlayer, None, None).filterNot(_.isWarning).map(_.describe)
+        val problems = Validation
+            .validate(design = bad, game = twoPlayer, maxTurns = None, defaultPoolSize = None)
+            .filterNot(_.isWarning)
+            .map(_.describe)
         assert(problems.exists(_.startsWith("stage 1: demote must be greater than 1")), problems.toString)
         assert(
           problems.exists(_.contains("stage 2: with brackets, the number advancing (3) must divide")),
@@ -42,15 +47,32 @@ class DesignSpec extends FunSuite {
     test("a stage with no pool size takes the tournament's default, and a model alone is checked as pools of R") {
         // Three advance from each bracketed pool: a pool of the game's 2 cannot send three, a pool of 6 can.
         val design = TournamentDesign(List(StageDesign(demote = Some(4))))
-        assert(Validation.designProblems(design, twoPlayer, None).exists(!_.isWarning))
-        assertEquals(Validation.designProblems(design, twoPlayer, Some(6)).filterNot(_.isWarning), Nil)
-        assertEquals(Env(design, twoPlayer, Map.empty, Some(6)).poolSize(design.stages.head), 6)
-        assertEquals(Env(design, twoPlayer, Map.empty).poolSize(design.stages.head), 2)
+        assert(
+          Validation.designProblems(design = design, game = twoPlayer, defaultPoolSize = None).exists(!_.isWarning)
+        )
+        assertEquals(
+          Validation
+              .designProblems(design = design, game = twoPlayer, defaultPoolSize = Some(6))
+              .filterNot(_.isWarning),
+          Nil
+        )
+        assertEquals(
+          Env(design = design, game = twoPlayer, ratings = Map.empty, defaultPoolSize = Some(6))
+              .poolSize(design.stages.head),
+          6
+        )
+        assertEquals(Env(design = design, game = twoPlayer, ratings = Map.empty).poolSize(design.stages.head), 2)
     }
 
     test("every standard model is valid with the pool size it suggests, and only heats leaves a stage unsized") {
         StandardModels.all.foreach { m =>
-            assertEquals(Validation.designProblems(m.design, twoPlayer, m.poolSize).filterNot(_.isWarning), Nil, m.id)
+            assertEquals(
+              Validation
+                  .designProblems(design = m.design, game = twoPlayer, defaultPoolSize = m.poolSize)
+                  .filterNot(_.isWarning),
+              Nil,
+              m.id
+            )
         }
         val heats = standard.Heats
         assertEquals(heats.poolSize, Some(4))
@@ -70,24 +92,26 @@ class DesignSpec extends FunSuite {
     }
 
     test("a match may not be drawn in a pool of two, nor ever in a rubber; in a larger pool it may") {
-        assert(!Ties.isAllowed(2))
-        assert(Ties.isAllowed(3))
-        assert(!Ties.isAllowed(3, rubber = true))
+        assert(!Ties.isAllowed(members = 2))
+        assert(Ties.isAllowed(members = 3))
+        assert(!Ties.isAllowed(members = 3, rubber = true))
     }
 
     test("a sequential game gives each seat a chess clock of d/n; a simultaneous one a turn limit of d/t") {
         assertEquals(
-          Clock.forMatch(twoPlayer, hour, 2, tiesAllowed = true, choosing = false, None).limit,
+          Clock.forMatch(game = twoPlayer, d = hour, seats = 2, tiesAllowed = true, choosing = false, None).limit,
           Duration.ofMinutes(30)
         )
         val sim = twoPlayer.copy(moveType = com.vivi.matchmaker.model.MoveType.Simultaneous, maxTurns = Some(5))
         assertEquals(
-          Clock.forMatch(sim, hour, 2, tiesAllowed = true, choosing = false, None).limit,
+          Clock.forMatch(game = sim, d = hour, seats = 2, tiesAllowed = true, choosing = false, None).limit,
           Duration.ofMinutes(12)
         )
         // One more turn when ties are not allowed, and one more for choosing roles: 60 / 7.
         assertEquals(
-          Clock.forMatch(sim, Duration.ofMinutes(70), 2, tiesAllowed = false, choosing = true, None).limit,
+          Clock
+              .forMatch(game = sim, d = Duration.ofMinutes(70), seats = 2, tiesAllowed = false, choosing = true, None)
+              .limit,
           Duration.ofMinutes(10)
         )
     }
@@ -97,10 +121,10 @@ class DesignSpec extends FunSuite {
     }
 
     test("a design and a state round-trip through JSON, a design written with only what differs from the defaults") {
-        val design = StandardDesigns.build("world-cup", 2, None).toOption.get
+        val design = StandardDesigns.build(key = "world-cup", r = 2, poolSize = None).toOption.get
         assertEquals(read[TournamentDesign](write(design)), design)
         assert(!write(TournamentDesign(List(StageDesign()))).contains("allowTies"))
-        val played = play(design, 9, random(3), maxRounds = 4)
+        val played = play(design = design, n = 9, oracle = random(3), maxRounds = 4)
         assertEquals(read[TournamentState](write(played.state)), played.state)
     }
 }

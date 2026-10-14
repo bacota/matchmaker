@@ -60,7 +60,7 @@ class SignedHttp(
       * deployed call.
       */
     def post(url: String, body: String, service: String, headers: Map[String, String]): String =
-        send("POST", url, Some(body), service, headers)
+        send(method = "POST", url = url, body = Some(body), service = service, headers = headers)
 
     def send(
         method: String,
@@ -69,7 +69,7 @@ class SignedHttp(
         service: String,
         headers: Map[String, String]
     ): String = {
-        val (status, answer) = exchange(method, url, body, service, headers)
+        val (status, answer) = exchange(method = method, url = url, body = body, service = service, headers = headers)
         if (status >= 200 && status < 300) answer
         else throw AwsError(s"$method $url returned $status: $answer")
     }
@@ -90,7 +90,14 @@ class SignedHttp(
             case Some(provider) =>
                 // `join` on a provider that answers from its cache almost always; a refresh is a
                 // local call to the Lambda credentials endpoint.
-                sign(method, uri, headers, payload, service, provider.resolveIdentity().join())
+                sign(
+                  method = method,
+                  uri = uri,
+                  headers = headers,
+                  body = payload,
+                  service = service,
+                  identity = provider.resolveIdentity().join()
+                )
             case None => Map.empty[String, String]
         }
 
@@ -156,10 +163,11 @@ class DynamoDb(http: SignedHttp, region: String) {
     def call(target: String, payload: ujson.Obj): ujson.Value =
         ujson.read(
           http.post(
-            endpoint,
-            ujson.write(payload),
-            "dynamodb",
-            Map("content-type" -> "application/x-amz-json-1.0", "x-amz-target" -> s"DynamoDB_20120810.$target")
+            url = endpoint,
+            body = ujson.write(payload),
+            service = "dynamodb",
+            headers =
+                Map("content-type" -> "application/x-amz-json-1.0", "x-amz-target" -> s"DynamoDB_20120810.$target")
           )
         )
 }

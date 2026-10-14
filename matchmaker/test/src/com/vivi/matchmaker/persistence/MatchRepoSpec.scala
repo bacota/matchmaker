@@ -17,9 +17,9 @@ class MatchRepoSpec extends PropertySuite {
                         (createdGame, owner) = gameAndOwner
                         matchId = mid
                         created <- TestMatches.writeMatch(
-                          session,
-                          Generators.matchFrom(createdGame.gameId, matchId),
-                          owner
+                          session = session,
+                          m = Generators.matchFrom(createdGame.gameId, matchId),
+                          owner = owner
                         )
                         found <- matchRepo.read(createdGame.gameId, matchId)
                     } yield found == Some(created)
@@ -37,7 +37,11 @@ class MatchRepoSpec extends PropertySuite {
                         gameAndOwner <- Generators.gameWithOwner(session)
                         (createdGame, owner) = gameAndOwner
                         matchId = mid
-                        m <- TestMatches.writeMatch(session, Generators.matchFrom(createdGame.gameId, matchId), owner)
+                        m <- TestMatches.writeMatch(
+                          session = session,
+                          m = Generators.matchFrom(createdGame.gameId, matchId),
+                          owner = owner
+                        )
                         rewritten = m.copy(isFriendly = !m.isFriendly, isPublic = !m.isPublic)
                         _ <- matchRepo.update(rewritten)
                         found <- matchRepo.read(createdGame.gameId, matchId)
@@ -50,14 +54,14 @@ class MatchRepoSpec extends PropertySuite {
     test("a match is friendly unless it says otherwise") {
         val unsaid =
             Match(
-              GameId(1),
-              MatchId(1),
-              TournamentId(1),
-              "",
-              None,
-              Some(java.time.Instant.EPOCH),
-              None,
-              "{}"
+              gameId = GameId(1),
+              matchId = MatchId(1),
+              tournamentId = TournamentId(1),
+              description = "",
+              completedAt = None,
+              start = Some(java.time.Instant.EPOCH),
+              timeLimit = None,
+              settings = "{}"
             )
         assert(unsaid.isFriendly)
     }

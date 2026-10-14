@@ -18,13 +18,18 @@ object Config {
     ): Routes = {
         val baseUrl = EngineConfig.requiredBaseUrl(env, defaultBaseUrl)
         Routes(
-          engine(env, baseUrl, announce),
-          EngineConfig.playAuth(env, baseUrl),
-          EngineConfig.matchmakerKey(env),
-          live.orElse(EngineConfig.live(env, baseUrl))
+          engine = engine(env = env, baseUrl = baseUrl, announce = announce),
+          playAuth = EngineConfig.playAuth(env, baseUrl),
+          matchmakerKey = EngineConfig.matchmakerKey(env),
+          live = live.orElse(EngineConfig.live(env, baseUrl))
         )
     }
 
     def engine(env: String => Option[String], baseUrl: String, announce: TicTacToeMatch => Unit = _ => ()): Engine =
-        Engine(EngineConfig.matchStore[TicTacToeMatch](env), EngineConfig.matchmaker(env), baseUrl, announce = announce)
+        Engine(
+          store = EngineConfig.matchStore[TicTacToeMatch](env),
+          matchmaker = EngineConfig.matchmaker(env),
+          baseUrl = baseUrl,
+          announce = announce
+        )
 }

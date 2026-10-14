@@ -35,7 +35,7 @@ class Handler extends RequestStreamHandler {
                 val request = ApiGateway.decodeRequest(event)
                 where = s"${request.method} ${request.path}"
                 val result = Router
-                    .dispatch(services, request, Handler.authenticator)
+                    .dispatch(services = services, request = request, authenticator = Handler.authenticator)
                     .handleError { error =>
                         // Router maps ServiceErrors itself; reaching here means something unexpected, so
                         // the detail goes to CloudWatch and only a generic message goes to the caller.
@@ -65,7 +65,7 @@ object Handler {
       * the container, and there is no shutdown hook that could run it at a useful moment anyway.
       */
     lazy val services: Services[String] =
-        Services.resource[String](dbConfig(), poolSize).allocated.unsafeRunSync()._1
+        Services.resource[String](config = dbConfig(), poolSize = poolSize).allocated.unsafeRunSync()._1
 
     /** How the caller is identified, chosen by `AUTH_MODE`.
       *

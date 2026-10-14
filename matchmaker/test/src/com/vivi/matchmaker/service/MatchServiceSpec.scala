@@ -50,16 +50,16 @@ class MatchServiceSpec extends PropertySuite {
     ): IO[(Player, Game, MatchId)] =
         TestSession.resource.use { session =>
             for {
-                prepared <- setup(session, nickname, externalId)
+                prepared <- setup(session = session, nickname = nickname, externalId = externalId)
                 (player, game, character) = prepared
                 matchId <- addMatch(
-                  session,
-                  player,
-                  game,
-                  character,
-                  mid,
-                  Option.when(completed)(Instant.ofEpochSecond(3000)),
-                  pending
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  mid = mid,
+                  completedAt = Option.when(completed)(Instant.ofEpochSecond(3000)),
+                  pending = pending
                 )
             } yield (player, game, matchId)
         }
@@ -74,26 +74,39 @@ class MatchServiceSpec extends PropertySuite {
         parameters: Seq[GameParameter[String]] = Seq.empty
     ): IO[(Player, Game, Character[String])] =
         for {
-            player <- registrationService.register(nickname, externalId)
+            player <- registrationService.register(nickname = nickname, externalId = externalId)
             game <- new GameRepo[String](session).create(
               Game(
-                GameId.unassigned,
-                GameType.Character,
-                "game",
-                "game",
-                "description",
-                "url",
+                gameId = GameId.unassigned,
+                gameType = GameType.Character,
+                name = "game",
+                displayName = "game",
+                description = "description",
+                url = "url",
                 isActive = true,
                 // One role, because every participant names one.
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "only", roleType = RoleType.Required, displayName = "only")
+                  GameRole(
+                    gameRoleId = GameRoleId(0),
+                    gameId = GameId.unassigned,
+                    name = "only",
+                    roleType = RoleType.Required,
+                    displayName = "only"
+                  )
                 ),
                 parameters,
                 genUniqueString.sample.get
               )
             )
             character <- new CharacterRepo[String](session).create(
-              Character(CharacterId(0), game.gameId, "character", "description", "", Some(player.playerId))
+              Character(
+                characterId = CharacterId(0),
+                gameId = game.gameId,
+                name = "character",
+                description = "description",
+                state = "",
+                playerId = Some(player.playerId)
+              )
             )
         } yield (player, game, character)
 
@@ -127,33 +140,33 @@ class MatchServiceSpec extends PropertySuite {
         for {
             matchId <- IO.pure(mid)
             made = Match(
-              game.gameId,
-              matchId,
-              TournamentId.unassigned,
-              "description",
-              completedAt,
-              Some(Instant.ofEpochSecond(1000)),
-              None,
-              settings,
+              gameId = game.gameId,
+              matchId = matchId,
+              tournamentId = TournamentId.unassigned,
+              description = "description",
+              completedAt = completedAt,
+              start = Some(Instant.ofEpochSecond(1000)),
+              timeLimit = None,
+              settings = settings,
               isPublic = isPublic,
               publicUrl = publicUrl
             )
-            _ <- TestMatches.writeMatch(session, made, tournamentOwner.getOrElse(player.playerId))
+            _ <- TestMatches.writeMatch(session = session, m = made, owner = tournamentOwner.getOrElse(player.playerId))
             _ <- TestMatches
                 .writeSeat(
-                  session,
-                  CharacterParticipant(
-                    ParticipantId(0),
-                    game.gameId,
-                    matchId,
-                    player.playerId,
-                    pending,
-                    seatCompleted.getOrElse(completedAt.isDefined),
-                    Some(Instant.ofEpochSecond(2000)),
-                    character.characterId,
-                    game.roles.head.gameRoleId
+                  session = session,
+                  p = CharacterParticipant(
+                    participantId = ParticipantId(0),
+                    gameId = game.gameId,
+                    matchId = matchId,
+                    playerId = player.playerId,
+                    isPending = pending,
+                    isCompleted = seatCompleted.getOrElse(completedAt.isDefined),
+                    due = Some(Instant.ofEpochSecond(2000)),
+                    characterId = character.characterId,
+                    gameRoleId = game.roles.head.gameRoleId
                   ),
-                  EloRating.initial
+                  eloStart = EloRating.initial
                 )
         } yield matchId
 
@@ -182,8 +195,17 @@ class MatchServiceSpec extends PropertySuite {
         isPublic: Boolean = false
     ): IO[MatchId] =
         for {
-            id <- addMatch(session, player, game, character, Generators.newMatchId(), Some(at), false, isPublic)
-            _ <- finishedAt(session, game.gameId, id, at)
+            id <- addMatch(
+              session = session,
+              player = player,
+              game = game,
+              character = character,
+              mid = Generators.newMatchId(),
+              completedAt = Some(at),
+              pending = false,
+              isPublic = isPublic
+            )
+            _ <- finishedAt(session = session, gameId = game.gameId, matchId = id, at = at)
         } yield id
 
     /** A match the player called off at `at`: the match cancelled and its seats retired, as `MatchService.cancel` does.
@@ -197,11 +219,20 @@ class MatchServiceSpec extends PropertySuite {
         isPublic: Boolean = false
     ): IO[MatchId] =
         for {
-            id <- addMatch(session, player, game, character, Generators.newMatchId(), None, true, isPublic)
+            id <- addMatch(
+              session = session,
+              player = player,
+              game = game,
+              character = character,
+              mid = Generators.newMatchId(),
+              completedAt = None,
+              pending = true,
+              isPublic = isPublic
+            )
             m <- new MatchRepo(session).read(game.gameId, id).map(_.get)
             _ <- new MatchRepo(session).update(m.copy(isCancelled = true))
             _ <- new ParticipantRepo(session).completeForMatch(game.gameId, id)
-            _ <- finishedAt(session, game.gameId, id, at)
+            _ <- finishedAt(session = session, gameId = game.gameId, matchId = id, at = at)
         } yield id
 
     /** Another game, and a character in it, for a player who already has one. */
@@ -209,22 +240,35 @@ class MatchServiceSpec extends PropertySuite {
         for {
             game <- new GameRepo[String](session).create(
               Game(
-                GameId.unassigned,
-                GameType.Character,
-                "other",
-                "other",
-                "description",
-                "url",
+                gameId = GameId.unassigned,
+                gameType = GameType.Character,
+                name = "other",
+                displayName = "other",
+                description = "description",
+                url = "url",
                 isActive = true,
                 Seq(
-                  GameRole(GameRoleId(0), GameId.unassigned, "only", roleType = RoleType.Required, displayName = "only")
+                  GameRole(
+                    gameRoleId = GameRoleId(0),
+                    gameId = GameId.unassigned,
+                    name = "only",
+                    roleType = RoleType.Required,
+                    displayName = "only"
+                  )
                 ),
                 Seq.empty,
                 genUniqueString.sample.get
               )
             )
             character <- new CharacterRepo[String](session).create(
-              Character(CharacterId(0), game.gameId, "character", "description", "", Some(player.playerId))
+              Character(
+                characterId = CharacterId(0),
+                gameId = game.gameId,
+                name = "character",
+                description = "description",
+                state = "",
+                playerId = Some(player.playerId)
+              )
             )
         } yield (game, character)
 
@@ -235,13 +279,37 @@ class MatchServiceSpec extends PropertySuite {
         val unique = genUniqueString.sample.get
         val (externalId, recent, yesterday, lastWeek) = run(TestSession.resource.use { session =>
             for {
-                prepared <- setup(session, unique, unique)
+                prepared <- setup(session = session, nickname = unique, externalId = unique)
                 (player, game, character) = prepared
-                recent <- finished(session, player, game, character, now.minus(Duration.ofHours(2)))
-                yesterday <- finished(session, player, game, character, now.minus(Duration.ofHours(30)))
-                lastWeek <- finished(session, player, game, character, now.minus(Duration.ofHours(9 * 24 + 12)))
+                recent <- finished(
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  at = now.minus(Duration.ofHours(2))
+                )
+                yesterday <- finished(
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  at = now.minus(Duration.ofHours(30))
+                )
+                lastWeek <- finished(
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  at = now.minus(Duration.ofHours(9 * 24 + 12))
+                )
                 // Called off an hour ago: never in a completed list, whatever the window.
-                _ <- calledOff(session, player, game, character, now.minus(Duration.ofHours(1)))
+                _ <- calledOff(
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  at = now.minus(Duration.ofHours(1))
+                )
             } yield (unique, recent, yesterday, lastWeek)
         })
 
@@ -271,7 +339,10 @@ class MatchServiceSpec extends PropertySuite {
         assertEquals(week.matches.map(_.matchId), List(recent, yesterday))
         assert(week.hasOlder)
         val older = run(
-          matchService.completed(externalId, CompletedQuery(CompletedFrame.Week, page = 1, asOf = Some(week.asOf)))
+          matchService.completed(
+            externalId,
+            CompletedQuery(frame = CompletedFrame.Week, page = 1, asOf = Some(week.asOf))
+          )
         )
         assertEquals(older.matches.map(_.matchId), List(lastWeek))
         assert(!older.hasOlder)
@@ -283,12 +354,24 @@ class MatchServiceSpec extends PropertySuite {
         val unique = genUniqueString.sample.get
         val (externalId, game, other, here) = run(TestSession.resource.use { session =>
             for {
-                prepared <- setup(session, unique, unique)
+                prepared <- setup(session = session, nickname = unique, externalId = unique)
                 (player, game, character) = prepared
-                here <- finished(session, player, game, character, now.minus(Duration.ofHours(2)))
+                here <- finished(
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  at = now.minus(Duration.ofHours(2))
+                )
                 elsewhere <- anotherGame(session, player)
                 (other, otherCharacter) = elsewhere
-                _ <- finished(session, player, other, otherCharacter, now.minus(Duration.ofDays(20)))
+                _ <- finished(
+                  session = session,
+                  player = player,
+                  game = other,
+                  character = otherCharacter,
+                  at = now.minus(Duration.ofDays(20))
+                )
             } yield (unique, game, other, here)
         })
 
@@ -312,17 +395,43 @@ class MatchServiceSpec extends PropertySuite {
         val watcher = s"w-$unique"
         val (player, game, shown) = run(TestSession.resource.use { session =>
             for {
-                prepared <- setup(session, unique, unique)
+                prepared <- setup(session = session, nickname = unique, externalId = unique)
                 (player, game, character) = prepared
-                shown <- finished(session, player, game, character, now.minus(Duration.ofHours(2)), isPublic = true)
-                _ <- finished(session, player, game, character, now.minus(Duration.ofHours(3)))
-                _ <- calledOff(session, player, game, character, now.minus(Duration.ofHours(1)), isPublic = true)
-                _ <- registrationService.register(watcher, watcher)
+                shown <- finished(
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  at = now.minus(Duration.ofHours(2)),
+                  isPublic = true
+                )
+                _ <- finished(
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  at = now.minus(Duration.ofHours(3))
+                )
+                _ <- calledOff(
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  at = now.minus(Duration.ofHours(1)),
+                  isPublic = true
+                )
+                _ <- registrationService.register(nickname = watcher, externalId = watcher)
             } yield (player, game, shown)
         })
 
         val page =
-            run(matchService.publicCompleted(watcher, player.playerId, CompletedQuery(gameId = Some(game.gameId))))
+            run(
+              matchService.publicCompleted(
+                callerExternalId = watcher,
+                playerId = player.playerId,
+                query = CompletedQuery(gameId = Some(game.gameId))
+              )
+            )
         assertEquals(page.matches.map(_.matchId), List(shown))
         assert(!page.hasOlder)
     }
@@ -333,37 +442,49 @@ class MatchServiceSpec extends PropertySuite {
         val rival = s"r-$unique"
         val (game, matchId) = run(TestSession.resource.use { session =>
             for {
-                prepared <- setup(session, unique, unique)
+                prepared <- setup(session = session, nickname = unique, externalId = unique)
                 (player, game, character) = prepared
                 matchId <- addMatch(
-                  session,
-                  player,
-                  game,
-                  character,
-                  Generators.newMatchId(),
-                  Some(now),
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  mid = Generators.newMatchId(),
+                  completedAt = Some(now),
                   pending = false
                 )
-                other <- registrationService.register(rival, rival)
+                other <- registrationService.register(nickname = rival, externalId = rival)
                 theirs <- new CharacterRepo[String](session).create(
-                  Character(CharacterId(0), game.gameId, "rival", "description", "", Some(other.playerId))
+                  Character(
+                    characterId = CharacterId(0),
+                    gameId = game.gameId,
+                    name = "rival",
+                    description = "description",
+                    state = "",
+                    playerId = Some(other.playerId)
+                  )
                 )
                 _ <- TestMatches.writeSeat(
-                  session,
-                  CharacterParticipant(
-                    ParticipantId(0),
-                    game.gameId,
-                    matchId,
-                    other.playerId,
-                    false,
-                    true,
-                    None,
-                    theirs.characterId,
-                    game.roles.head.gameRoleId
+                  session = session,
+                  p = CharacterParticipant(
+                    participantId = ParticipantId(0),
+                    gameId = game.gameId,
+                    matchId = matchId,
+                    playerId = other.playerId,
+                    isPending = false,
+                    isCompleted = true,
+                    due = None,
+                    characterId = theirs.characterId,
+                    gameRoleId = game.roles.head.gameRoleId
                   ),
-                  EloRating.initial
+                  eloStart = EloRating.initial
                 )
-                _ <- finishedAt(session, game.gameId, matchId, now.minus(Duration.ofMinutes(5)))
+                _ <- finishedAt(
+                  session = session,
+                  gameId = game.gameId,
+                  matchId = matchId,
+                  at = now.minus(Duration.ofMinutes(5))
+                )
                 seats <- new ParticipantRepo(session).listForMatch(game.gameId, matchId)
                 results = new ResultRepo(session)
                 _ <- seats.traverse_ { case (seat, _, _) =>
@@ -371,8 +492,8 @@ class MatchServiceSpec extends PropertySuite {
                     results.create(
                       com.vivi.matchmaker.model
                           .Result(
-                            game.gameId,
-                            seat.participantId,
+                            gameId = game.gameId,
+                            participantId = seat.participantId,
                             rank = if (won) 1 else 2,
                             Map.empty,
                             isWinner = won,
@@ -398,87 +519,126 @@ class MatchServiceSpec extends PropertySuite {
         val buyer = s"b-$unique"
         val (player, game, character, theirs, other, running, done) = run(TestSession.resource.use { session =>
             for {
-                prepared <- setup(session, unique, unique)
+                prepared <- setup(session = session, nickname = unique, externalId = unique)
                 (player, game, character) = prepared
                 running <- addMatch(
-                  session,
-                  player,
-                  game,
-                  character,
-                  Generators.newMatchId(),
-                  None,
-                  true,
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  mid = Generators.newMatchId(),
+                  completedAt = None,
+                  pending = true,
                   isPublic = true
                 )
                 done <- addMatch(
-                  session,
-                  player,
-                  game,
-                  character,
-                  Generators.newMatchId(),
-                  Some(Instant.now()),
-                  false,
-                  true
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  mid = Generators.newMatchId(),
+                  completedAt = Some(Instant.now()),
+                  pending = false,
+                  isPublic = true
                 )
                 // Private: not on anybody's page but the players' own.
-                _ <- addMatch(session, player, game, character, Generators.newMatchId(), None, pending = true)
-                other <- registrationService.register(rival, rival)
+                _ <- addMatch(
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  mid = Generators.newMatchId(),
+                  completedAt = None,
+                  pending = true
+                )
+                other <- registrationService.register(nickname = rival, externalId = rival)
                 theirs <- new CharacterRepo[String](session).create(
-                  Character(CharacterId(0), game.gameId, "rival", "description", "", Some(other.playerId))
+                  Character(
+                    characterId = CharacterId(0),
+                    gameId = game.gameId,
+                    name = "rival",
+                    description = "description",
+                    state = "",
+                    playerId = Some(other.playerId)
+                  )
                 )
                 _ <- List(running, done).traverse_ { matchId =>
                     TestMatches.writeSeat(
-                      session,
-                      CharacterParticipant(
-                        ParticipantId(0),
-                        game.gameId,
-                        matchId,
-                        other.playerId,
-                        false,
-                        matchId == done,
-                        None,
-                        theirs.characterId,
-                        game.roles.head.gameRoleId
+                      session = session,
+                      p = CharacterParticipant(
+                        participantId = ParticipantId(0),
+                        gameId = game.gameId,
+                        matchId = matchId,
+                        playerId = other.playerId,
+                        isPending = false,
+                        isCompleted = matchId == done,
+                        due = None,
+                        characterId = theirs.characterId,
+                        gameRoleId = game.roles.head.gameRoleId
                       ),
-                      EloRating.initial
+                      eloStart = EloRating.initial
                     )
                 }
                 // The rival's character changes hands afterwards: the matches were still played by `other`.
-                newOwner <- registrationService.register(buyer, buyer)
+                newOwner <- registrationService.register(nickname = buyer, externalId = buyer)
                 _ <- new CharacterRepo[String](session).update(theirs.copy(playerId = Some(newOwner.playerId)))
             } yield (player, game, character, theirs, other, running, done)
         })
-        val mine = CharacterName(character.characterId, game.gameId, "character")
+        val mine = CharacterName(characterId = character.characterId, gameId = game.gameId, name = "character")
         val against =
             Opponent(
               Some(PublicPlayer(other.playerId, rival)),
-              Some(CharacterName(theirs.characterId, game.gameId, "rival"))
+              Some(CharacterName(characterId = theirs.characterId, gameId = game.gameId, name = "rival"))
             )
 
-        val active = run(matchService.characterActive(buyer, game.gameId, character.characterId))
+        val active = run(
+          matchService.characterActive(
+            callerExternalId = buyer,
+            gameId = game.gameId,
+            characterId = character.characterId
+          )
+        )
         assertEquals(active.map(_.matchId), List(running))
         assertEquals(active.map(_.opponents), List(Seq(against)))
         assertEquals(active.map(_.character), List(Some(mine)))
 
-        val over = run(matchService.characterCompleted(buyer, game.gameId, character.characterId, CompletedQuery()))
+        val over = run(
+          matchService.characterCompleted(
+            callerExternalId = buyer,
+            gameId = game.gameId,
+            characterId = character.characterId,
+            query = CompletedQuery()
+          )
+        )
         assertEquals(over.matches.map(_.matchId), List(done))
         assertEquals(over.matches.map(_.opponents), List(Seq(against)))
 
         // From the rival's side the same match, with this player's character as the opponent.
-        val seen = run(matchService.characterActive(buyer, game.gameId, theirs.characterId))
+        val seen = run(
+          matchService.characterActive(callerExternalId = buyer, gameId = game.gameId, characterId = theirs.characterId)
+        )
         assertEquals(seen.flatMap(_.opponents), List(Opponent(Some(PublicPlayer(player.playerId, unique)), Some(mine))))
 
         // And the page's heading names the owner it has now.
-        val profile = run(characterService.profile(game.gameId, theirs.characterId, buyer))
+        val profile = run(
+          characterService.profile(gameId = game.gameId, characterId = theirs.characterId, callerExternalId = buyer)
+        )
         assertEquals(profile.owner.map(_.nickname), Some(buyer))
         assertEquals(profile.description, "description")
         intercept[NotFoundError](
-          run(characterService.profile(GameId(game.gameId.value + 1), theirs.characterId, buyer))
+          run(
+            characterService.profile(
+              gameId = GameId(game.gameId.value + 1),
+              characterId = theirs.characterId,
+              callerExternalId = buyer
+            )
+          )
         )
 
         // Its record counts the finished match once it has results, and only once it is not friendly -- a forfeit
         // win for this player's character, a forfeit loss for the rival's.
-        def record(of: CharacterId) = run(characterService.profile(game.gameId, of, buyer)).record
+        def record(of: CharacterId) =
+            run(characterService.profile(gameId = game.gameId, characterId = of, callerExternalId = buyer)).record
         run(TestSession.resource.use { session =>
             new ParticipantRepo(session)
                 .listForMatch(game.gameId, done)
@@ -486,8 +646,8 @@ class MatchServiceSpec extends PropertySuite {
                     val won = seat.playerId == player.playerId
                     new ResultRepo(session).create(
                       com.vivi.matchmaker.model.Result(
-                        game.gameId,
-                        seat.participantId,
+                        gameId = game.gameId,
+                        participantId = seat.participantId,
                         rank = if (won) 1 else 2,
                         Map.empty,
                         isWinner = won,
@@ -512,26 +672,41 @@ class MatchServiceSpec extends PropertySuite {
         val unique = genUniqueString.sample.get
         val (game, matchId, ownerless) = run(TestSession.resource.use { session =>
             for {
-                prepared <- setup(session, unique, unique)
+                prepared <- setup(session = session, nickname = unique, externalId = unique)
                 (player, game, character) = prepared
-                matchId <- addMatch(session, player, game, character, Generators.newMatchId(), None, pending = true)
+                matchId <- addMatch(
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  mid = Generators.newMatchId(),
+                  completedAt = None,
+                  pending = true
+                )
                 ownerless <- new CharacterRepo[String](session).create(
-                  Character(CharacterId(0), game.gameId, "ownerless", "description", "", None)
+                  Character(
+                    characterId = CharacterId(0),
+                    gameId = game.gameId,
+                    name = "ownerless",
+                    description = "description",
+                    state = "",
+                    playerId = None
+                  )
                 )
                 seat <- TestMatches.writeSeat(
-                  session,
-                  CharacterParticipant(
-                    ParticipantId(0),
-                    game.gameId,
-                    matchId,
-                    player.playerId,
-                    false,
-                    false,
-                    None,
-                    ownerless.characterId,
-                    game.roles.head.gameRoleId
+                  session = session,
+                  p = CharacterParticipant(
+                    participantId = ParticipantId(0),
+                    gameId = game.gameId,
+                    matchId = matchId,
+                    playerId = player.playerId,
+                    isPending = false,
+                    isCompleted = false,
+                    due = None,
+                    characterId = ownerless.characterId,
+                    gameRoleId = game.roles.head.gameRoleId
                   ),
-                  EloRating.initial
+                  eloStart = EloRating.initial
                 )
                 // Nobody plays it: written as a round writes a seat whose character has no owner.
                 _ <- session.execute(sql"UPDATE participant SET player_id = NULL WHERE participant_id = $int8".command)(
@@ -542,7 +717,14 @@ class MatchServiceSpec extends PropertySuite {
         val listed = run(matchService.active(unique)).filter(_.matchId == matchId)
         assertEquals(
           listed.map(_.opponents),
-          List(Seq(Opponent(None, Some(CharacterName(ownerless.characterId, game.gameId, "ownerless")))))
+          List(
+            Seq(
+              Opponent(
+                None,
+                Some(CharacterName(characterId = ownerless.characterId, gameId = game.gameId, name = "ownerless"))
+              )
+            )
+          )
         )
     }
 
@@ -554,21 +736,29 @@ class MatchServiceSpec extends PropertySuite {
             (nickname, externalId, watcherId, openId, hiddenId) =>
                 val result = TestSession.resource.use { session =>
                     for {
-                        prepared <- setup(session, nickname, externalId)
+                        prepared <- setup(session = session, nickname = nickname, externalId = externalId)
                         (player, game, character) = prepared
                         open <- addMatch(
-                          session,
-                          player,
-                          game,
-                          character,
-                          openId,
-                          None,
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = openId,
+                          completedAt = None,
                           pending = true,
                           isPublic = true
                         )
-                        _ <- addMatch(session, player, game, character, hiddenId, None, pending = true)
+                        _ <- addMatch(
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = hiddenId,
+                          completedAt = None,
+                          pending = true
+                        )
                         // A second player, because this list is read by somebody who is not in the match.
-                        _ <- registrationService.register(watcherId, watcherId)
+                        _ <- registrationService.register(nickname = watcherId, externalId = watcherId)
                         seen <- matchService.publicActive(watcherId, player.playerId)
                         // And the player's own list is unchanged by any of it: they see both.
                         mine <- matchService.active(externalId)
@@ -586,32 +776,36 @@ class MatchServiceSpec extends PropertySuite {
             (nickname, externalId, watcherId, runningId, finishedId) =>
                 val result = TestSession.resource.use { session =>
                     for {
-                        prepared <- setup(session, nickname, externalId)
+                        prepared <- setup(session = session, nickname = nickname, externalId = externalId)
                         (player, game, character) = prepared
                         _ <- addMatch(
-                          session,
-                          player,
-                          game,
-                          character,
-                          runningId,
-                          None,
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = runningId,
+                          completedAt = None,
                           pending = true,
                           isPublic = true
                         )
                         _ <- addMatch(
-                          session,
-                          player,
-                          game,
-                          character,
-                          finishedId,
-                          Some(Instant.ofEpochSecond(5000)),
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = finishedId,
+                          completedAt = Some(Instant.ofEpochSecond(5000)),
                           pending = false,
                           isPublic = true
                         )
-                        _ <- registrationService.register(watcherId, watcherId)
+                        _ <- registrationService.register(nickname = watcherId, externalId = watcherId)
                         running <- matchService.publicActive(watcherId, player.playerId)
                         over <- matchService
-                            .publicCompleted(watcherId, player.playerId, CompletedQuery())
+                            .publicCompleted(
+                              callerExternalId = watcherId,
+                              playerId = player.playerId,
+                              query = CompletedQuery()
+                            )
                             .map(_.matches.toList)
                     } yield running.map(_.matchId) == List(runningId) &&
                         over.map(_.matchId) == List(finishedId) &&
@@ -631,12 +825,18 @@ class MatchServiceSpec extends PropertySuite {
             (nickname, externalId, runningId, finishedId) =>
                 def parameter(name: String, displayName: String, default: String, values: String*) =
                     GameParameter(
-                      GameId.unassigned,
-                      GameParameterId(0),
-                      name,
-                      Some(default),
-                      values.map(v => GameParameterValue(GameId.unassigned, GameParameterId(0), v)),
-                      displayName
+                      gameId = GameId.unassigned,
+                      gameParameterId = GameParameterId(0),
+                      name = name,
+                      defaultValue = Some(default),
+                      values = values.map(v =>
+                          GameParameterValue(
+                            gameId = GameId.unassigned,
+                            gameParameterId = GameParameterId(0),
+                            value = v
+                          )
+                      ),
+                      displayName = displayName
                     )
                 val parameters = Seq(
                   parameter("rounds", "Rounds", "3", "3", "6", "12"),
@@ -644,25 +844,30 @@ class MatchServiceSpec extends PropertySuite {
                 )
                 val result = TestSession.resource.use { session =>
                     for {
-                        prepared <- setup(session, nickname, externalId, parameters)
+                        prepared <- setup(
+                          session = session,
+                          nickname = nickname,
+                          externalId = externalId,
+                          parameters = parameters
+                        )
                         (player, game, character) = prepared
                         _ <- addMatch(
-                          session,
-                          player,
-                          game,
-                          character,
-                          runningId,
-                          None,
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = runningId,
+                          completedAt = None,
                           pending = true,
                           settings = """{"rounds":"12"}"""
                         )
                         _ <- addMatch(
-                          session,
-                          player,
-                          game,
-                          character,
-                          finishedId,
-                          Some(Instant.ofEpochSecond(5000)),
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = finishedId,
+                          completedAt = Some(Instant.ofEpochSecond(5000)),
                           pending = false,
                           settings = """{"rounds":"6","venue":"moon"}"""
                         )
@@ -685,21 +890,30 @@ class MatchServiceSpec extends PropertySuite {
                 val url = s"http://engine.test/matches/$watchableId/board"
                 val result = TestSession.resource.use { session =>
                     for {
-                        prepared <- setup(session, nickname, externalId)
+                        prepared <- setup(session = session, nickname = nickname, externalId = externalId)
                         (player, game, character) = prepared
                         _ <- addMatch(
-                          session,
-                          player,
-                          game,
-                          character,
-                          watchableId,
-                          None,
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = watchableId,
+                          completedAt = None,
                           pending = true,
                           isPublic = true,
                           publicUrl = Some(url)
                         )
-                        _ <- addMatch(session, player, game, character, plainId, None, pending = true, isPublic = true)
-                        _ <- registrationService.register(watcherId, watcherId)
+                        _ <- addMatch(
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = plainId,
+                          completedAt = None,
+                          pending = true,
+                          isPublic = true
+                        )
+                        _ <- registrationService.register(nickname = watcherId, externalId = watcherId)
                         seen <- matchService.publicActive(watcherId, player.playerId)
                         // And on the player's own list, which is the same summary read by its owner.
                         mine <- matchService.active(externalId)
@@ -718,24 +932,28 @@ class MatchServiceSpec extends PropertySuite {
             (nickname, externalId, watcherId, mid) =>
                 val result = TestSession.resource.use { session =>
                     for {
-                        prepared <- setup(session, nickname, externalId)
+                        prepared <- setup(session = session, nickname = nickname, externalId = externalId)
                         (player, game, character) = prepared
                         _ <- addMatch(
-                          session,
-                          player,
-                          game,
-                          character,
-                          mid,
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = mid,
                           // The match itself is unfinished; this player's seat is not.
-                          None,
+                          completedAt = None,
                           pending = false,
                           isPublic = true,
                           seatCompleted = Some(true)
                         )
-                        _ <- registrationService.register(watcherId, watcherId)
+                        _ <- registrationService.register(nickname = watcherId, externalId = watcherId)
                         running <- matchService.publicActive(watcherId, player.playerId)
                         over <- matchService
-                            .publicCompleted(watcherId, player.playerId, CompletedQuery())
+                            .publicCompleted(
+                              callerExternalId = watcherId,
+                              playerId = player.playerId,
+                              query = CompletedQuery()
+                            )
                             .map(_.matches.toList)
                     } yield running.isEmpty && over.map(_.matchId) == List(mid) &&
                         // Still an unfinished match, which is why the row cannot say it completed.
@@ -761,7 +979,13 @@ class MatchServiceSpec extends PropertySuite {
     property("due returns matches where it is the caller's turn") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = false,
+                  pending = true
+                )
                 (_, game, matchId) = made
                 due <- matchService.due(externalId)
             } yield due.map(s => (s.gameId, s.matchId)) == List((game.gameId, matchId)) &&
@@ -773,7 +997,13 @@ class MatchServiceSpec extends PropertySuite {
     property("due excludes matches where it is not the caller's turn") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                _ <- makeMatch(nickname, externalId, mid, completed = false, pending = false)
+                _ <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = false,
+                  pending = false
+                )
                 due <- matchService.due(externalId)
             } yield due.isEmpty
             result.timeout(10.seconds).unsafeRunSync()
@@ -783,7 +1013,13 @@ class MatchServiceSpec extends PropertySuite {
     property("active returns unfinished matches and completed returns finished ones") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = false,
+                  pending = true
+                )
                 (_, game, matchId) = made
                 active <- matchService.active(externalId)
                 completed <- matchService.completed(externalId).map(_.matches.toList)
@@ -799,27 +1035,35 @@ class MatchServiceSpec extends PropertySuite {
             (nickname, externalId, olderId, newerId, cancelledId) =>
                 val result = TestSession.resource.use { session =>
                     for {
-                        prepared <- setup(session, nickname, externalId)
+                        prepared <- setup(session = session, nickname = nickname, externalId = externalId)
                         (player, game, character) = prepared
                         _ <- addMatch(
-                          session,
-                          player,
-                          game,
-                          character,
-                          olderId,
-                          Some(Instant.ofEpochSecond(5000)),
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = olderId,
+                          completedAt = Some(Instant.ofEpochSecond(5000)),
                           pending = false
                         )
                         _ <- addMatch(
-                          session,
-                          player,
-                          game,
-                          character,
-                          newerId,
-                          Some(Instant.ofEpochSecond(9000)),
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = newerId,
+                          completedAt = Some(Instant.ofEpochSecond(9000)),
                           pending = false
                         )
-                        cancelled <- addMatch(session, player, game, character, cancelledId, None, pending = false)
+                        cancelled <- addMatch(
+                          session = session,
+                          player = player,
+                          game = game,
+                          character = character,
+                          mid = cancelledId,
+                          completedAt = None,
+                          pending = false
+                        )
                         _ <- new MatchRepo(session).read(game.gameId, cancelled).flatMap {
                             case Some(m) => new MatchRepo(session).update(m.copy(isCancelled = true))
                             case None => IO.raiseError(new IllegalStateException("the match just written is not there"))
@@ -834,7 +1078,13 @@ class MatchServiceSpec extends PropertySuite {
     property("completed returns finished matches and active excludes them") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = true, pending = false)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = true,
+                  pending = false
+                )
                 (_, game, matchId) = made
                 active <- matchService.active(externalId)
                 completed <- matchService.completed(externalId).map(_.matches.toList)
@@ -847,8 +1097,14 @@ class MatchServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId, genUniqueString, genUniqueString) {
             (nickname, externalId, mid, otherNickname, otherExternalId) =>
                 val result = for {
-                    _ <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
-                    _ <- registrationService.register(otherNickname, otherExternalId)
+                    _ <- makeMatch(
+                      nickname = nickname,
+                      externalId = externalId,
+                      mid = mid,
+                      completed = false,
+                      pending = true
+                    )
+                    _ <- registrationService.register(nickname = otherNickname, externalId = otherExternalId)
                     due <- matchService.due(otherExternalId)
                     active <- matchService.active(otherExternalId)
                 } yield due.isEmpty && active.isEmpty
@@ -874,9 +1130,15 @@ class MatchServiceSpec extends PropertySuite {
     property("the tournament's owner can cancel its match") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = false,
+                  pending = true
+                )
                 (_, game, matchId) = made
-                cancelled <- matchService.cancel(game.gameId, matchId, externalId)
+                cancelled <- matchService.cancel(gameId = game.gameId, matchId = matchId, callerExternalId = externalId)
                 due <- matchService.due(externalId)
                 active <- matchService.active(externalId)
                 over <- matchService.completed(externalId).map(_.matches.toList)
@@ -910,31 +1172,35 @@ class MatchServiceSpec extends PropertySuite {
     test("a tournament match that has not begun is in no list, no results, and cannot be opened or cancelled") {
         val result = TestSession.resource.use { session =>
             for {
-                prepared <- setup(session, genUniqueString.sample.get, genUniqueString.sample.get)
+                prepared <- setup(
+                  session = session,
+                  nickname = genUniqueString.sample.get,
+                  externalId = genUniqueString.sample.get
+                )
                 (player, game, character) = prepared
                 // Due to be created, and the player's turn by the seat's own flag: the due list's
                 // condition, apart from the match having begun.
                 waiting <- addMatch(
-                  session,
-                  player,
-                  game,
-                  character,
-                  Generators.newMatchId(),
-                  None,
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  mid = Generators.newMatchId(),
+                  completedAt = None,
                   pending = true
                 )
-                _ <- unbegin(session, game.gameId, waiting, cancelled = false)
+                _ <- unbegin(session = session, gameId = game.gameId, matchId = waiting, cancelled = false)
                 // Called off before it began: over, and still not a match the player played.
                 calledOff <- addMatch(
-                  session,
-                  player,
-                  game,
-                  character,
-                  Generators.newMatchId(),
-                  None,
+                  session = session,
+                  player = player,
+                  game = game,
+                  character = character,
+                  mid = Generators.newMatchId(),
+                  completedAt = None,
                   pending = false
                 )
-                _ <- unbegin(session, game.gameId, calledOff, cancelled = true)
+                _ <- unbegin(session = session, gameId = game.gameId, matchId = calledOff, cancelled = true)
                 _ <- new ParticipantRepo(session).completeForMatch(game.gameId, calledOff)
             } yield (player, game, Set(waiting, calledOff), waiting)
         }
@@ -944,8 +1210,12 @@ class MatchServiceSpec extends PropertySuite {
             due <- matchService.due(player.externalId)
             completed <- matchService.completed(player.externalId)
             results <- matchService.results(player.externalId)
-            read <- TestServices.services.engine.read(game.gameId, waiting, player.externalId).attempt
-            cancel <- matchService.cancel(game.gameId, waiting, player.externalId).attempt
+            read <- TestServices.services.engine
+                .read(gameId = game.gameId, matchId = waiting, callerExternalId = player.externalId)
+                .attempt
+            cancel <- matchService
+                .cancel(gameId = game.gameId, matchId = waiting, callerExternalId = player.externalId)
+                .attempt
         } yield (active, due, completed, results, read, cancel)
         val (active, due, completed, results, read, cancel) = outcome.timeout(30.seconds).unsafeRunSync()
 
@@ -960,30 +1230,44 @@ class MatchServiceSpec extends PropertySuite {
     test("a match is its tournament owner's to cancel, and listed as theirs and nobody else's") {
         val result = TestSession.resource.use { session =>
             for {
-                prepared <- setup(session, genUniqueString.sample.get, genUniqueString.sample.get)
+                prepared <- setup(
+                  session = session,
+                  nickname = genUniqueString.sample.get,
+                  externalId = genUniqueString.sample.get
+                )
                 (owner, game, ownerCharacter) = prepared
                 ownerMatch <- addMatch(
-                  session,
-                  owner,
-                  game,
-                  ownerCharacter,
-                  Generators.newMatchId(),
-                  None,
+                  session = session,
+                  player = owner,
+                  game = game,
+                  character = ownerCharacter,
+                  mid = Generators.newMatchId(),
+                  completedAt = None,
                   pending = true
                 )
                 otherExternalId = genUniqueString.sample.get
-                other <- registrationService.register(genUniqueString.sample.get, otherExternalId)
+                other <- registrationService.register(
+                  nickname = genUniqueString.sample.get,
+                  externalId = otherExternalId
+                )
                 otherCharacter <- new CharacterRepo[String](session).create(
-                  Character(CharacterId(0), game.gameId, "other", "description", "", Some(other.playerId))
+                  Character(
+                    characterId = CharacterId(0),
+                    gameId = game.gameId,
+                    name = "other",
+                    description = "description",
+                    state = "",
+                    playerId = Some(other.playerId)
+                  )
                 )
                 // Seated, but in a match the owner created for them.
                 seatedMatch <- addMatch(
-                  session,
-                  other,
-                  game,
-                  otherCharacter,
-                  Generators.newMatchId(),
-                  None,
+                  session = session,
+                  player = other,
+                  game = game,
+                  character = otherCharacter,
+                  mid = Generators.newMatchId(),
+                  completedAt = None,
                   pending = true,
                   tournamentOwner = Some(owner.playerId)
                 )
@@ -993,9 +1277,19 @@ class MatchServiceSpec extends PropertySuite {
         val outcome = for {
             ownersList <- matchService.active(owner.externalId)
             othersList <- matchService.active(otherExternalId)
-            refused <- matchService.cancel(game.gameId, seatedMatch, otherExternalId).attempt
-            cancelled <- matchService.cancel(game.gameId, ownerMatch, owner.externalId)
-            cancelledSeated <- matchService.cancel(game.gameId, seatedMatch, owner.externalId)
+            refused <- matchService
+                .cancel(gameId = game.gameId, matchId = seatedMatch, callerExternalId = otherExternalId)
+                .attempt
+            cancelled <- matchService.cancel(
+              gameId = game.gameId,
+              matchId = ownerMatch,
+              callerExternalId = owner.externalId
+            )
+            cancelledSeated <- matchService.cancel(
+              gameId = game.gameId,
+              matchId = seatedMatch,
+              callerExternalId = owner.externalId
+            )
         } yield {
             assertEquals(ownersList.map(s => (s.matchId, s.isOwner)), List((ownerMatch, true)))
             assertEquals(othersList.map(s => (s.matchId, s.isOwner)), List((seatedMatch, false)))
@@ -1012,10 +1306,16 @@ class MatchServiceSpec extends PropertySuite {
     property("cancelling retires every seat in the match") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = false,
+                  pending = true
+                )
                 (_, game, matchId) = made
                 before <- TestSession.resource.use(new ParticipantRepo(_).listForMatch(game.gameId, matchId))
-                _ <- matchService.cancel(game.gameId, matchId, externalId)
+                _ <- matchService.cancel(gameId = game.gameId, matchId = matchId, callerExternalId = externalId)
                 after <- TestSession.resource.use(new ParticipantRepo(_).listForMatch(game.gameId, matchId))
             } yield before.nonEmpty && before.forall((p, _, _) => p.isPending && !p.isCompleted) &&
                 after.forall((p, _, _) => !p.isPending && p.isCompleted && p.due.isEmpty)
@@ -1027,10 +1327,18 @@ class MatchServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId, genUniqueString, genUniqueString) {
             (nickname, externalId, mid, otherNickname, otherExternalId) =>
                 val result = for {
-                    made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
+                    made <- makeMatch(
+                      nickname = nickname,
+                      externalId = externalId,
+                      mid = mid,
+                      completed = false,
+                      pending = true
+                    )
                     (_, game, matchId) = made
-                    _ <- registrationService.register(otherNickname, otherExternalId)
-                    outcome <- matchService.cancel(game.gameId, matchId, otherExternalId).attempt
+                    _ <- registrationService.register(nickname = otherNickname, externalId = otherExternalId)
+                    outcome <- matchService
+                        .cancel(gameId = game.gameId, matchId = matchId, callerExternalId = otherExternalId)
+                        .attempt
                     // And the refusal is a refusal, not a silent no-op.
                     active <- matchService.active(externalId)
                 } yield (outcome match {
@@ -1044,9 +1352,17 @@ class MatchServiceSpec extends PropertySuite {
     property("a completed match can no longer be cancelled") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = true, pending = false)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = true,
+                  pending = false
+                )
                 (_, game, matchId) = made
-                outcome <- matchService.cancel(game.gameId, matchId, externalId).attempt
+                outcome <- matchService
+                    .cancel(gameId = game.gameId, matchId = matchId, callerExternalId = externalId)
+                    .attempt
             } yield outcome match {
                 case Left(_: ConflictError) => true
                 case _                      => false
@@ -1058,10 +1374,18 @@ class MatchServiceSpec extends PropertySuite {
     property("cancelling twice is a conflict, not a second cancel") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = false,
+                  pending = true
+                )
                 (_, game, matchId) = made
-                _ <- matchService.cancel(game.gameId, matchId, externalId)
-                outcome <- matchService.cancel(game.gameId, matchId, externalId).attempt
+                _ <- matchService.cancel(gameId = game.gameId, matchId = matchId, callerExternalId = externalId)
+                outcome <- matchService
+                    .cancel(gameId = game.gameId, matchId = matchId, callerExternalId = externalId)
+                    .attempt
             } yield outcome match {
                 case Left(_: ConflictError) => true
                 case _                      => false
@@ -1073,10 +1397,20 @@ class MatchServiceSpec extends PropertySuite {
     property("a match that does not exist is not found") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = false,
+                  pending = true
+                )
                 (_, game, _) = made
                 outcome <- matchService
-                    .cancel(game.gameId, com.vivi.matchmaker.persistence.Generators.newMatchId(), externalId)
+                    .cancel(
+                      gameId = game.gameId,
+                      matchId = com.vivi.matchmaker.persistence.Generators.newMatchId(),
+                      callerExternalId = externalId
+                    )
                     .attempt
             } yield outcome match {
                 case Left(_: NotFoundError) => true
@@ -1093,7 +1427,10 @@ class MatchServiceSpec extends PropertySuite {
     /** A registered player made an overall admin, as only the database can. */
     private def overallAdmin(): IO[Player] =
         for {
-            player <- registrationService.register(genUniqueString.sample.get, genUniqueString.sample.get)
+            player <- registrationService.register(
+              nickname = genUniqueString.sample.get,
+              externalId = genUniqueString.sample.get
+            )
             _ <- TestSession.resource.use(session => new PlayerRepo(session).update(player.copy(isAdmin = true)))
         } yield player.copy(isAdmin = true)
 
@@ -1101,16 +1438,23 @@ class MatchServiceSpec extends PropertySuite {
     private def friendlyFixture(completed: Boolean = false): IO[(Player, Game, MatchId, Player)] =
         for {
             made <- makeMatch(
-              genUniqueString.sample.get,
-              genUniqueString.sample.get,
-              Generators.newMatchId(),
+              nickname = genUniqueString.sample.get,
+              externalId = genUniqueString.sample.get,
+              mid = Generators.newMatchId(),
               completed = completed,
               pending = true
             )
             (owner, game, matchId) = made
             overall <- overallAdmin()
-            gameAdmin <- registrationService.register(genUniqueString.sample.get, genUniqueString.sample.get)
-            _ <- TestServices.services.gameAdmins.grant(game.gameId, gameAdmin.playerId, overall.externalId)
+            gameAdmin <- registrationService.register(
+              nickname = genUniqueString.sample.get,
+              externalId = genUniqueString.sample.get
+            )
+            _ <- TestServices.services.gameAdmins.grant(
+              gameId = game.gameId,
+              playerId = gameAdmin.playerId,
+              callerExternalId = overall.externalId
+            )
         } yield (owner, game, matchId, gameAdmin)
 
     private def friendlyOf(game: Game, matchId: MatchId): IO[Option[Boolean]] =
@@ -1120,9 +1464,19 @@ class MatchServiceSpec extends PropertySuite {
         val result = for {
             f <- friendlyFixture()
             (_, game, matchId, gameAdmin) = f
-            answered <- matchService.setFriendly(game.gameId, matchId, friendly = false, gameAdmin.externalId)
+            answered <- matchService.setFriendly(
+              gameId = game.gameId,
+              matchId = matchId,
+              friendly = false,
+              gameAdmin.externalId
+            )
             stored <- friendlyOf(game, matchId)
-            _ <- matchService.setFriendly(game.gameId, matchId, friendly = true, gameAdmin.externalId)
+            _ <- matchService.setFriendly(
+              gameId = game.gameId,
+              matchId = matchId,
+              friendly = true,
+              gameAdmin.externalId
+            )
             restored <- friendlyOf(game, matchId)
         } yield (answered.isFriendly, stored, restored)
         assertEquals(result.timeout(30.seconds).unsafeRunSync(), (false, Some(false), Some(true)))
@@ -1133,7 +1487,7 @@ class MatchServiceSpec extends PropertySuite {
             f <- friendlyFixture()
             (_, game, matchId, _) = f
             overall <- overallAdmin()
-            _ <- matchService.setFriendly(game.gameId, matchId, friendly = false, overall.externalId)
+            _ <- matchService.setFriendly(gameId = game.gameId, matchId = matchId, friendly = false, overall.externalId)
             stored <- friendlyOf(game, matchId)
         } yield stored
         assertEquals(result.timeout(30.seconds).unsafeRunSync(), Some(false))
@@ -1144,11 +1498,28 @@ class MatchServiceSpec extends PropertySuite {
         val result = for {
             f <- friendlyFixture(completed = true)
             (owner, game, matchId, gameAdmin) = f
-            refused <- matchService.setFriendly(game.gameId, matchId, friendly = false, owner.externalId).attempt
-            same <- matchService.setFriendly(game.gameId, matchId, friendly = true, gameAdmin.externalId)
-            _ <- matchService.setFriendly(game.gameId, matchId, friendly = false, gameAdmin.externalId)
+            refused <- matchService
+                .setFriendly(gameId = game.gameId, matchId = matchId, friendly = false, owner.externalId)
+                .attempt
+            same <- matchService.setFriendly(
+              gameId = game.gameId,
+              matchId = matchId,
+              friendly = true,
+              gameAdmin.externalId
+            )
+            _ <- matchService.setFriendly(
+              gameId = game.gameId,
+              matchId = matchId,
+              friendly = false,
+              gameAdmin.externalId
+            )
             changed <- friendlyOf(game, matchId)
-            _ <- matchService.setFriendly(game.gameId, matchId, friendly = true, gameAdmin.externalId)
+            _ <- matchService.setFriendly(
+              gameId = game.gameId,
+              matchId = matchId,
+              friendly = true,
+              gameAdmin.externalId
+            )
             back <- friendlyOf(game, matchId)
         } yield (refused, same.isFriendly, changed, back)
         val (refused, same, changed, back) = result.timeout(30.seconds).unsafeRunSync()
@@ -1162,9 +1533,14 @@ class MatchServiceSpec extends PropertySuite {
         val result = for {
             f <- friendlyFixture()
             (owner, game, matchId, gameAdmin) = f
-            _ <- matchService.setFriendly(game.gameId, matchId, friendly = false, gameAdmin.externalId)
-            listed <- matchService.listForGame(game.gameId, gameAdmin.externalId)
-            refused <- matchService.listForGame(game.gameId, owner.externalId).attempt
+            _ <- matchService.setFriendly(
+              gameId = game.gameId,
+              matchId = matchId,
+              friendly = false,
+              gameAdmin.externalId
+            )
+            listed <- matchService.listForGame(gameId = game.gameId, callerExternalId = gameAdmin.externalId)
+            refused <- matchService.listForGame(gameId = game.gameId, callerExternalId = owner.externalId).attempt
         } yield (listed, owner, matchId, refused)
         val (listed, owner, matchId, refused) = result.timeout(30.seconds).unsafeRunSync()
         assertEquals(listed.map(m => (m.matchId, m.isFriendly, m.players)), List((matchId, false, Seq(owner.nickname))))
@@ -1175,9 +1551,17 @@ class MatchServiceSpec extends PropertySuite {
         val result = for {
             f <- friendlyFixture()
             (owner, game, matchId, gameAdmin) = f
-            theirs <- matchService.listForGame(game.gameId, gameAdmin.externalId, Some(owner.playerId))
+            theirs <- matchService.listForGame(
+              gameId = game.gameId,
+              callerExternalId = gameAdmin.externalId,
+              player = Some(owner.playerId)
+            )
             // The admin has no seat in it: narrowed to them, there is nothing.
-            nobodys <- matchService.listForGame(game.gameId, gameAdmin.externalId, Some(gameAdmin.playerId))
+            nobodys <- matchService.listForGame(
+              gameId = game.gameId,
+              callerExternalId = gameAdmin.externalId,
+              player = Some(gameAdmin.playerId)
+            )
         } yield (theirs, nobodys, matchId)
         val (theirs, nobodys, matchId) = result.timeout(30.seconds).unsafeRunSync()
         assertEquals(theirs.map(_.matchId), List(matchId))
@@ -1192,13 +1576,17 @@ class MatchServiceSpec extends PropertySuite {
             (owner, game, matchId, _) = f
             other <- friendlyFixture()
             (_, _, _, otherAdmin) = other
-            byOwner <- matchService.setFriendly(game.gameId, matchId, friendly = false, owner.externalId).attempt
-            byOther <- matchService.setFriendly(game.gameId, matchId, friendly = false, otherAdmin.externalId).attempt
+            byOwner <- matchService
+                .setFriendly(gameId = game.gameId, matchId = matchId, friendly = false, owner.externalId)
+                .attempt
+            byOther <- matchService
+                .setFriendly(gameId = game.gameId, matchId = matchId, friendly = false, otherAdmin.externalId)
+                .attempt
             stored <- friendlyOf(game, matchId)
             missing <- matchService
                 .setFriendly(
-                  other._2.gameId,
-                  com.vivi.matchmaker.persistence.Generators.newMatchId(),
+                  gameId = other._2.gameId,
+                  matchId = com.vivi.matchmaker.persistence.Generators.newMatchId(),
                   friendly = false,
                   otherAdmin.externalId
                 )
@@ -1224,13 +1612,25 @@ class MatchServiceSpec extends PropertySuite {
     property("results name the player, their role, and whatever the engine scored them on") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = true, pending = false)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = true,
+                  pending = false
+                )
                 (_, game, matchId) = made
                 participantId <- onlyParticipant(game.gameId, matchId)
                 _ <- TestSession.resource.use(session =>
                     new ResultRepo(session).create(
                       com.vivi.matchmaker.model
-                          .Result(game.gameId, participantId, rank = 1, scores = Map("moves" -> 5.0), isWinner = true)
+                          .Result(
+                            gameId = game.gameId,
+                            participantId = participantId,
+                            rank = 1,
+                            scores = Map("moves" -> 5.0),
+                            isWinner = true
+                          )
                     )
                 )
                 results <- matchService.results(externalId)
@@ -1245,7 +1645,13 @@ class MatchServiceSpec extends PropertySuite {
     property("a seat the engine reported no result for is still listed, with no rank") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = true, pending = false)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = true,
+                  pending = false
+                )
                 (_, _, matchId) = made
                 results <- matchService.results(externalId)
                 mine = results.filter(_.matchId == matchId)
@@ -1258,7 +1664,13 @@ class MatchServiceSpec extends PropertySuite {
     property("results exclude matches still being played") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = false,
+                  pending = true
+                )
                 (_, _, matchId) = made
                 results <- matchService.results(externalId)
             } yield results.forall(_.matchId != matchId)
@@ -1270,8 +1682,14 @@ class MatchServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId, genUniqueString, genUniqueString) {
             (nickname, externalId, mid, otherNickname, otherExternalId) =>
                 val result = for {
-                    _ <- makeMatch(nickname, externalId, mid, completed = true, pending = false)
-                    _ <- registrationService.register(otherNickname, otherExternalId)
+                    _ <- makeMatch(
+                      nickname = nickname,
+                      externalId = externalId,
+                      mid = mid,
+                      completed = true,
+                      pending = false
+                    )
+                    _ <- registrationService.register(nickname = otherNickname, externalId = otherExternalId)
                     results <- matchService.results(otherExternalId)
                 } yield results.isEmpty
                 result.timeout(10.seconds).unsafeRunSync()
@@ -1281,7 +1699,13 @@ class MatchServiceSpec extends PropertySuite {
     property("the owner is told apart from a mere participant on every summary") {
         forAll(genUniqueString, genUniqueString, Generators.genMatchId) { (nickname, externalId, mid) =>
             val result = for {
-                made <- makeMatch(nickname, externalId, mid, completed = false, pending = true)
+                made <- makeMatch(
+                  nickname = nickname,
+                  externalId = externalId,
+                  mid = mid,
+                  completed = false,
+                  pending = true
+                )
                 active <- matchService.active(externalId)
             } yield active.forall(_.isOwner)
             result.timeout(10.seconds).unsafeRunSync()

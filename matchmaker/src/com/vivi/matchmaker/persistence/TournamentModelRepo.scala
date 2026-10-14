@@ -58,22 +58,22 @@ class TournamentModelRepo(session: Session[IO]) {
                 if (depth > 8) throw new IllegalStateException(s"model $model nests inside itself")
                 else
                     StageRows.chain(
-                      byModel.getOrElse(model, Map.empty),
-                      firstOf.getOrElse(model, throw new IllegalStateException(s"model $model is not there")),
-                      inner => designOf(TournamentModelId(inner), depth + 1)
+                      rows = byModel.getOrElse(model, Map.empty),
+                      first = firstOf.getOrElse(model, throw new IllegalStateException(s"model $model is not there")),
+                      inner = inner => designOf(TournamentModelId(inner), depth + 1)
                     )
             models.map { case (id, version, name, description, classification, poolSize, late, _, active, choose) =>
                 TournamentModel(
-                  id,
-                  version,
-                  name,
-                  description,
-                  classification,
-                  poolSize,
-                  late,
-                  designOf(id, 0),
-                  active,
-                  choose
+                  tournamentModelId = id,
+                  version = version,
+                  name = name,
+                  description = description,
+                  classification = classification,
+                  poolSize = poolSize,
+                  hasLateEntries = late,
+                  design = designOf(id, 0),
+                  isActive = active,
+                  hasRoleChoice = choose
                 )
             }
         }

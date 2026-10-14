@@ -11,11 +11,11 @@ package standard
   */
 object Challenge
     extends StandardModel(
-      "challenge",
-      1,
-      "Challenge",
-      "One match, of everyone who enters. The players choose their roles once it starts.",
-      "Challenge",
+      id = "challenge",
+      version = 1,
+      name = "Challenge",
+      description = "One match, of everyone who enters. The players choose their roles once it starts.",
+      classification = "Challenge",
       hasRoleChoice = true
     ) {
 

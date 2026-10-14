@@ -55,21 +55,24 @@ class EndingHandlerSpec extends FunSuite {
     test("a tournament's match due, round due and round check are read back as themselves, and nothing else") {
         val records = Handler.records(
           sqsEvent(
-            "m-1" -> upickle.default.write(TournamentMatchDue(7, 3, 32)),
+            "m-1" -> upickle.default.write(TournamentMatchDue(gameId = 7, tournamentId = 3, matchId = 32)),
             "m-2" -> upickle.default.write(TournamentRoundDue(7, 3)),
             "m-3" -> upickle.default.write(RatingsChanged(7)),
             "m-4" -> upickle.default.write(MatchEnded.of(GameId(7), MatchId(31))),
-            "m-5" -> upickle.default.write(TournamentRoundCheck(7, 3, 1760000000000L))
+            "m-5" -> upickle.default.write(
+              TournamentRoundCheck(gameId = 7, tournamentId = 3, checkedAt = 1760000000000L)
+            )
           )
         )
         assertEquals(
           records,
           Seq(
-            Handler.Record.Understood("m-1", TournamentMatchDue(7, 3, 32)),
+            Handler.Record.Understood("m-1", TournamentMatchDue(gameId = 7, tournamentId = 3, matchId = 32)),
             Handler.Record.Understood("m-2", TournamentRoundDue(7, 3)),
             Handler.Record.Understood("m-3", RatingsChanged(7)),
             Handler.Record.Understood("m-4", MatchEnded(7, 31)),
-            Handler.Record.Understood("m-5", TournamentRoundCheck(7, 3, 1760000000000L))
+            Handler.Record
+                .Understood("m-5", TournamentRoundCheck(gameId = 7, tournamentId = 3, checkedAt = 1760000000000L))
           )
         )
     }

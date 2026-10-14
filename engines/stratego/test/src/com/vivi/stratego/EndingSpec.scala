@@ -12,13 +12,19 @@ class EndingSpec extends FunSuite {
     private def inPlay(placed: (Int, (Side, Rank))*): StrategoMatch = {
         val board = Board(placed.zipWithIndex.foldLeft(Board.empty.cells) {
             case (cells, ((square, (side, rank)), id)) =>
-                cells.updated(square, Some(Piece(id, side, rank)))
+                cells.updated(square, Some(Piece(id = id, side = side, rank = rank)))
         })
         StrategoMatch(
           matchId = "m-1",
-          seats = List(Seat(Side.Red, "sub-alice", 11L), Seat(Side.Blue, "sub-bob", 22L)),
+          seats = List(
+            Seat(side = Side.Red, cognitoId = "sub-alice", participantId = 11L),
+            Seat(side = Side.Blue, cognitoId = "sub-bob", participantId = 22L)
+          ),
           board = board,
-          turns = List(MoveRecord(11L, Side.Red, at, at), MoveRecord(22L, Side.Blue, at, at)),
+          turns = List(
+            MoveRecord(participantId = 11L, side = Side.Red, takenAt = at, startedAt = at),
+            MoveRecord(participantId = 22L, side = Side.Blue, takenAt = at, startedAt = at)
+          ),
           isPublic = false,
           isCompleted = false,
           createdAt = at,
@@ -57,11 +63,11 @@ class EndingSpec extends FunSuite {
     /** A piece move by `side` that fought a battle — where it went does not matter to the score, only who took what. */
     private def fight(side: Side, battle: Battle): MoveRecord =
         MoveRecord(
-          if (side == Side.Red) 11L else 22L,
-          side,
-          at,
-          at,
-          step = Some(Step(0, 0, 1)),
+          participantId = if (side == Side.Red) 11L else 22L,
+          side = side,
+          takenAt = at,
+          startedAt = at,
+          step = Some(Step(pieceId = 0, from = 0, to = 1)),
           battle = Some(battle)
         )
 
@@ -74,9 +80,9 @@ class EndingSpec extends FunSuite {
     extension [A](a: A) private def pipe[B](f: A => B): B = f(a)
 
     private val battles = List(
-      fight(Side.Blue, Battle(Rank.Captain, Rank.Marshal, Result.DefenderWins)),
-      fight(Side.Red, Battle(Rank.Miner, Rank.Bomb, Result.AttackerWins)),
-      fight(Side.Blue, Battle(Rank.Major, Rank.Scout, Result.AttackerWins))
+      fight(Side.Blue, Battle(attacker = Rank.Captain, defender = Rank.Marshal, result = Result.DefenderWins)),
+      fight(Side.Red, Battle(attacker = Rank.Miner, defender = Rank.Bomb, result = Result.AttackerWins)),
+      fight(Side.Blue, Battle(attacker = Rank.Major, defender = Rank.Scout, result = Result.AttackerWins))
     )
 
     test("captures are worth each piece's strength, and a bomb or the spy is worth 1") {
@@ -119,7 +125,12 @@ class EndingSpec extends FunSuite {
         assertEquals(ahead.winner, Some(Side.Blue))
 
         val level =
-            capped.copy(turns = capped.turns :+ fight(Side.Red, Battle(Rank.Miner, Rank.Miner, Result.BothLost)))
+            capped.copy(turns =
+                capped.turns :+ fight(
+                  Side.Red,
+                  Battle(attacker = Rank.Miner, defender = Rank.Miner, result = Result.BothLost)
+                )
+            )
         assertEquals(level.capturePoints(Side.Red), level.capturePoints(Side.Blue))
         assert(level.isDrawn)
     }

@@ -120,7 +120,7 @@ case class Board(cells: Vector[Option[Piece]]) {
             case Some(p) if p.side == side && p.rank.isMovable =>
                 Board.directions.flatMap { (dr, dc) =>
                     def walk(at: Int, acc: List[Int]): List[Int] =
-                        Board.step(at, dr, dc) match {
+                        Board.step(at = at, dr = dr, dc = dc) match {
                             case None => acc
                             case Some(next) if cells(next).isEmpty =>
                                 if (p.rank == Rank.Scout) walk(next, next :: acc) else next :: acc
@@ -166,7 +166,12 @@ case class Board(cells: Vector[Option[Piece]]) {
                                 case Result.DefenderWins => cleared.updated(to, Some(defender.copy(isRevealed = true)))
                                 case Result.BothLost     => cleared.updated(to, None)
                             }
-                            Right(Moved(Board(after), Some(Battle(mover.rank, defender.rank, result))))
+                            Right(
+                              Moved(
+                                Board(after),
+                                Some(Battle(attacker = mover.rank, defender = defender.rank, result = result))
+                              )
+                            )
                     }
             }
 
@@ -175,7 +180,7 @@ case class Board(cells: Vector[Option[Piece]]) {
         Board.validateSetup(ranks).map { valid =>
             val idBase = if (side == Side.Red) 0 else 40
             val placed = side.homeSquares.zip(valid).zipWithIndex.foldLeft(cells) { case (acc, ((square, rank), i)) =>
-                acc.updated(square, Some(Piece(idBase + i, side, rank)))
+                acc.updated(square, Some(Piece(id = idBase + i, side = side, rank = rank)))
             }
             Board(placed)
         }

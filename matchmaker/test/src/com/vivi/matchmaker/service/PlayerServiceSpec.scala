@@ -21,7 +21,7 @@ class PlayerServiceSpec extends PropertySuite {
     property("me returns the player registered under the caller's externalId") {
         forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
             val result = for {
-                registered <- registrationService.register(nickname, externalId)
+                registered <- registrationService.register(nickname = nickname, externalId = externalId)
                 found <- playerService.me(externalId)
             } yield found == registered
             result.timeout(10.seconds).unsafeRunSync()
@@ -48,7 +48,7 @@ class PlayerServiceSpec extends PropertySuite {
     property("search finds a player by a prefix of their nickname") {
         forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
             val result = for {
-                registered <- registrationService.register(nickname, externalId)
+                registered <- registrationService.register(nickname = nickname, externalId = externalId)
                 found <- playerService.search(externalId, nickname.dropRight(1))
             } yield found.players.map(_.playerId) == List(registered.playerId) &&
                 found.players.map(_.nickname) == List(nickname) &&
@@ -62,7 +62,7 @@ class PlayerServiceSpec extends PropertySuite {
     property("search does not match the middle of a nickname") {
         forAll(genUniqueString, genUniqueString) { (nickname, externalId) =>
             val result = for {
-                _ <- registrationService.register(nickname, externalId)
+                _ <- registrationService.register(nickname = nickname, externalId = externalId)
                 found <- playerService.search(externalId, nickname.drop(4))
             } yield found.players.isEmpty
             result.timeout(10.seconds).unsafeRunSync()
@@ -76,8 +76,8 @@ class PlayerServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (suffix, externalId, callerId) =>
             val nickname = s"A$suffix"
             val result = for {
-                registered <- registrationService.register(nickname, externalId)
-                _ <- registrationService.register(callerId, callerId)
+                registered <- registrationService.register(nickname = nickname, externalId = externalId)
+                _ <- registrationService.register(nickname = callerId, externalId = callerId)
                 // Twenty characters of the suffix rather than four, for the reason written out on the
                 // folded search below: the shared test database holds well over a hundred thousand
                 // players, four random alphanumerics have fourteen million combinations, and the
@@ -105,9 +105,9 @@ class PlayerServiceSpec extends PropertySuite {
                 val upper = s"A$suffix"
                 val lower = s"a$suffix"
                 val result = for {
-                    first <- registrationService.register(upper, upperId)
-                    second <- registrationService.register(lower, lowerId)
-                    _ <- registrationService.register(callerId, callerId)
+                    first <- registrationService.register(nickname = upper, externalId = upperId)
+                    second <- registrationService.register(nickname = lower, externalId = lowerId)
+                    _ <- registrationService.register(nickname = callerId, externalId = callerId)
                     // A long slice of the suffix, not a short one: the shared test database holds a
                     // hundred thousand players, and a five-character prefix has already matched a third
                     // player registered by another property -- which falsified this one, since it asserts
@@ -127,8 +127,8 @@ class PlayerServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (base, externalId, callerId) =>
             val spaced = s"$base \t\n  tail"
             val result = for {
-                registered <- registrationService.register(spaced, externalId)
-                _ <- registrationService.register(callerId, callerId)
+                registered <- registrationService.register(nickname = spaced, externalId = externalId)
+                _ <- registrationService.register(nickname = callerId, externalId = callerId)
                 single <- playerService.search(callerId, s"$base tail")
                 tabbed <- playerService.search(callerId, s"$base\ttail")
                 many <- playerService.search(callerId, s"$base     tail")
@@ -145,8 +145,8 @@ class PlayerServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (base, externalId, callerId) =>
             val padded = s"  $base  "
             val result = for {
-                registered <- registrationService.register(padded, externalId)
-                _ <- registrationService.register(callerId, callerId)
+                registered <- registrationService.register(nickname = padded, externalId = externalId)
+                _ <- registrationService.register(nickname = callerId, externalId = callerId)
                 found <- playerService.search(callerId, base.take(8))
             } yield found.players.map(_.playerId) == List(registered.playerId) &&
                 // Said back as it is stored, padding and all: normalizing is how it is found, not how
@@ -167,10 +167,10 @@ class PlayerServiceSpec extends PropertySuite {
                 val underscore = s"${base}_z"
                 val other = s"${base}xz"
                 val result = for {
-                    withPercent <- registrationService.register(percent, percentId)
-                    withUnderscore <- registrationService.register(underscore, underscoreId)
-                    _ <- registrationService.register(other, otherId)
-                    _ <- registrationService.register(callerId, callerId)
+                    withPercent <- registrationService.register(nickname = percent, externalId = percentId)
+                    withUnderscore <- registrationService.register(nickname = underscore, externalId = underscoreId)
+                    _ <- registrationService.register(nickname = other, externalId = otherId)
+                    _ <- registrationService.register(nickname = callerId, externalId = callerId)
                     forPercent <- playerService.search(callerId, s"$base%")
                     forUnderscore <- playerService.search(callerId, s"${base}_")
                     // And the plain prefix finds all three, so the two above are narrower than it
@@ -189,8 +189,8 @@ class PlayerServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (base, slashId, callerId) =>
             val withSlash = s"$base\\z"
             val result = for {
-                registered <- registrationService.register(withSlash, slashId)
-                _ <- registrationService.register(callerId, callerId)
+                registered <- registrationService.register(nickname = withSlash, externalId = slashId)
+                _ <- registrationService.register(nickname = callerId, externalId = callerId)
                 found <- playerService.search(callerId, s"$base\\")
             } yield found.players.map(_.playerId) == List(registered.playerId)
             result.timeout(10.seconds).unsafeRunSync()
@@ -204,10 +204,12 @@ class PlayerServiceSpec extends PropertySuite {
         val caller = genUniqueString.sample.get
 
         val result = for {
-            _ <- registrationService.register(caller, caller)
+            _ <- registrationService.register(nickname = caller, externalId = caller)
             // One more than the limit, so the page is full *and* something is left over.
             registered <- (1 to PlayerService.searchLimit + 1).toList
-                .traverse(n => registrationService.register(f"$base-$n%03d", genUniqueString.sample.get))
+                .traverse(n =>
+                    registrationService.register(nickname = f"$base-$n%03d", externalId = genUniqueString.sample.get)
+                )
             full <- playerService.search(caller, base)
             // A prefix that matches exactly one of them says the opposite, which is the half of this
             // that would still pass if `hasMore` were hard-coded true.
@@ -223,7 +225,7 @@ class PlayerServiceSpec extends PropertySuite {
     property("search refuses a blank prefix") {
         forAll(genUniqueString) { externalId =>
             val result = for {
-                _ <- registrationService.register(externalId, externalId)
+                _ <- registrationService.register(nickname = externalId, externalId = externalId)
                 outcome <- playerService.search(externalId, "   ").attempt
             } yield outcome match {
                 case Left(_: ValidationError) => true
@@ -249,7 +251,7 @@ class PlayerServiceSpec extends PropertySuite {
     property("updateNickname renames the caller and the new name is what me reads back") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, renamed, externalId) =>
             val result = for {
-                registered <- registrationService.register(nickname, externalId)
+                registered <- registrationService.register(nickname = nickname, externalId = externalId)
                 returned <- playerService.updateNickname(externalId, renamed)
                 found <- playerService.me(externalId)
             } yield returned == found &&
@@ -264,7 +266,7 @@ class PlayerServiceSpec extends PropertySuite {
     property("updateNickname trims what it is given") {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, renamed, externalId) =>
             val result = for {
-                _ <- registrationService.register(nickname, externalId)
+                _ <- registrationService.register(nickname = nickname, externalId = externalId)
                 returned <- playerService.updateNickname(externalId, s"  $renamed  ")
             } yield returned.nickname == renamed
             result.timeout(10.seconds).unsafeRunSync()
@@ -276,7 +278,7 @@ class PlayerServiceSpec extends PropertySuite {
 
         forAll(genUniqueString, genUniqueString, genBlank) { (nickname, externalId, blank) =>
             val result = for {
-                _ <- registrationService.register(nickname, externalId)
+                _ <- registrationService.register(nickname = nickname, externalId = externalId)
                 outcome <- playerService.updateNickname(externalId, blank).attempt
                 found <- playerService.me(externalId)
             } yield outcome.isLeft && outcome.left.exists(_.isInstanceOf[ValidationError]) && found.nickname == nickname
@@ -288,8 +290,8 @@ class PlayerServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString, genUniqueString) {
             (nickname, externalId, otherNickname, otherExternalId) =>
                 val result = for {
-                    _ <- registrationService.register(nickname, externalId)
-                    _ <- registrationService.register(otherNickname, otherExternalId)
+                    _ <- registrationService.register(nickname = nickname, externalId = externalId)
+                    _ <- registrationService.register(nickname = otherNickname, externalId = otherExternalId)
                     outcome <- playerService.updateNickname(externalId, otherNickname).attempt
                     found <- playerService.me(externalId)
                 } yield outcome.left.exists(_.isInstanceOf[ConflictError]) && found.nickname == nickname
@@ -305,7 +307,7 @@ class PlayerServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, local) =>
             val address = s"$local@example.com"
             val result = for {
-                registered <- registrationService.register(nickname, externalId)
+                registered <- registrationService.register(nickname = nickname, externalId = externalId)
                 returned <- playerService.updateEmail(externalId, address)
                 found <- playerService.me(externalId)
             } yield returned == found &&
@@ -323,8 +325,12 @@ class PlayerServiceSpec extends PropertySuite {
             (nickname, externalId, otherNickname, otherExternalId) =>
                 val address = s"$externalId@example.com"
                 val result = for {
-                    withEmail <- registrationService.register(nickname, externalId, Some(address))
-                    without <- registrationService.register(otherNickname, otherExternalId)
+                    withEmail <- registrationService.register(
+                      nickname = nickname,
+                      externalId = externalId,
+                      email = Some(address)
+                    )
+                    without <- registrationService.register(nickname = otherNickname, externalId = otherExternalId)
                 } yield withEmail.email.contains(address) && without.email.isEmpty
                 result.timeout(10.seconds).unsafeRunSync()
         }
@@ -339,7 +345,11 @@ class PlayerServiceSpec extends PropertySuite {
             (nickname, externalId, local, renamed) =>
                 val address = s"$local@example.com"
                 val result = for {
-                    _ <- registrationService.register(nickname, externalId, Some(address))
+                    _ <- registrationService.register(
+                      nickname = nickname,
+                      externalId = externalId,
+                      email = Some(address)
+                    )
                     _ <- playerService.updateNickname(externalId, renamed)
                     found <- playerService.me(externalId)
                 } yield found.nickname == renamed && found.email.contains(address)
@@ -351,7 +361,7 @@ class PlayerServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, local) =>
             val address = s"$local@example.com"
             val result = for {
-                _ <- registrationService.register(nickname, externalId)
+                _ <- registrationService.register(nickname = nickname, externalId = externalId)
                 _ <- playerService.updateEmail(externalId, address)
                 again <- playerService.updateEmail(externalId, address)
             } yield again.email.contains(address)
@@ -363,7 +373,7 @@ class PlayerServiceSpec extends PropertySuite {
         forAll(genUniqueString, genUniqueString, genUniqueString) { (nickname, externalId, local) =>
             val address = s"$local@example.com"
             val result = for {
-                _ <- registrationService.register(nickname, externalId)
+                _ <- registrationService.register(nickname = nickname, externalId = externalId)
                 returned <- playerService.updateEmail(externalId, s"  $address  ")
             } yield returned.email.contains(address)
             result.timeout(10.seconds).unsafeRunSync()
@@ -378,7 +388,11 @@ class PlayerServiceSpec extends PropertySuite {
             (nickname, externalId, local, bad) =>
                 val address = s"$local@example.com"
                 val result = for {
-                    _ <- registrationService.register(nickname, externalId, Some(address))
+                    _ <- registrationService.register(
+                      nickname = nickname,
+                      externalId = externalId,
+                      email = Some(address)
+                    )
                     outcome <- playerService.updateEmail(externalId, bad).attempt
                     found <- playerService.me(externalId)
                 } yield outcome.left.exists(_.isInstanceOf[ValidationError]) && found.email.contains(address)
@@ -394,8 +408,12 @@ class PlayerServiceSpec extends PropertySuite {
             (nickname, externalId, otherNickname, otherExternalId) =>
                 val shared = s"$externalId@example.com"
                 val result = for {
-                    _ <- registrationService.register(nickname, externalId, Some(shared))
-                    _ <- registrationService.register(otherNickname, otherExternalId)
+                    _ <- registrationService.register(
+                      nickname = nickname,
+                      externalId = externalId,
+                      email = Some(shared)
+                    )
+                    _ <- registrationService.register(nickname = otherNickname, externalId = otherExternalId)
                     _ <- playerService.updateEmail(otherExternalId, shared)
                     first <- playerService.me(externalId)
                     second <- playerService.me(otherExternalId)

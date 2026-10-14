@@ -28,8 +28,20 @@ class ProtocolSpec extends FunSuite {
       settings = """{"variant":"standard"}""",
       timeLimitSeconds = Some(600L),
       players = List(
-        Protocol.EnginePlayer("sub-alice", 11L, Some("X"), None, None),
-        Protocol.EnginePlayer("sub-bob", 22L, Some("O"), Some(7L), Some("{}"))
+        Protocol.EnginePlayer(
+          cognitoId = "sub-alice",
+          participantId = 11L,
+          role = Some("X"),
+          characterId = None,
+          characterState = None
+        ),
+        Protocol.EnginePlayer(
+          cognitoId = "sub-bob",
+          participantId = 22L,
+          role = Some("O"),
+          characterId = Some(7L),
+          characterState = Some("{}")
+        )
       ),
       moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/moves"),
       resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/results")
@@ -37,7 +49,7 @@ class ProtocolSpec extends FunSuite {
 
     test("the engine's status response reads as matchmaker's, prevMoveAt included") {
         val store = InMemoryMatchStore[TicTacToeMatch]()
-        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
+        val engine = Engine(store = store, matchmaker = RecordingMatchmaker(), baseUrl = "http://engine.test")
         engine.createGame(create)
         val status = engine.status("m-1").toOption.get
 
@@ -52,9 +64,9 @@ class ProtocolSpec extends FunSuite {
 
     test("the turns in a status answer read as matchmaker's EngineTurn, timestamps and all") {
         val store = InMemoryMatchStore[TicTacToeMatch]()
-        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
+        val engine = Engine(store = store, matchmaker = RecordingMatchmaker(), baseUrl = "http://engine.test")
         engine.createGame(create)
-        engine.move("m-1", "sub-alice", 0)
+        engine.move(matchId = "m-1", cognitoId = "sub-alice", cell = 0)
 
         val status = engine.status("m-1").toOption.get
         val asMatchmaker = read[MmGameStatusResponse](write(status))
@@ -66,12 +78,14 @@ class ProtocolSpec extends FunSuite {
 
     test("the engine's results callback reads as matchmaker's MatchResults, scores and all") {
         val store = InMemoryMatchStore[TicTacToeMatch]()
-        val engine = Engine(store, RecordingMatchmaker(), "http://engine.test")
+        val engine = Engine(store = store, matchmaker = RecordingMatchmaker(), baseUrl = "http://engine.test")
         engine.createGame(create)
         val m = store.get("m-1").get
         // X takes the top row.
         List((Mark.X, 0), (Mark.O, 3), (Mark.X, 1), (Mark.O, 4), (Mark.X, 2))
-            .foreach((mark, cell) => engine.move("m-1", m.seatOf(mark).get.cognitoId, cell))
+            .foreach((mark, cell) =>
+                engine.move(matchId = "m-1", cognitoId = m.seatOf(mark).get.cognitoId, cell = cell)
+            )
 
         val results = engine.resultsOf(store.get("m-1").get)
         val asMatchmaker = read[Json.MatchResults](write(results))(using Json.given_ReadWriter_MatchResults)

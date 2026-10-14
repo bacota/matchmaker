@@ -40,18 +40,19 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             written = copyOf(SingleElimination)
             _ <- models.create(written)
             model <- models.read(written.tournamentModelId).map(_.get)
-        } yield Fixture(game, owner, other, model)
+        } yield Fixture(game = game, owner = owner, other = other, model = model)
 
     private def tournamentIn(f: Fixture): Tournament =
         Tournament(
-          f.game.gameId,
-          TournamentId.unassigned,
-          "Spring open",
-          "description",
-          f.owner.playerId,
-          f.model.tournamentModelId,
-          2,
-          TournamentSettings(roundDuration = Some(Duration.ofHours(48)), minRating = Some(1200), maxTurns = Some(5))
+          gameId = f.game.gameId,
+          tournamentId = TournamentId.unassigned,
+          name = "Spring open",
+          description = "description",
+          owner = f.owner.playerId,
+          tournamentModelId = f.model.tournamentModelId,
+          defaultPoolSize = 2,
+          settings =
+              TournamentSettings(roundDuration = Some(Duration.ofHours(48)), minRating = Some(1200), maxTurns = Some(5))
         )
 
     /** A tournament made from the fixture's model, as `TournamentService.create` makes one: the row, its stages and its
@@ -60,7 +61,7 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
     private def made(session: Session[IO], f: Fixture): IO[Tournament] =
         for {
             t <- new TournamentRepo(session).create(tournamentIn(f))
-            _ <- new StageRepo(session).copy(f.game.gameId, t.tournamentId, f.model.design)
+            _ <- new StageRepo(session).copy(game = f.game.gameId, tournament = t.tournamentId, design = f.model.design)
             _ <- new PoolRepo(session).createRoot(f.game.gameId, t.tournamentId)
         } yield t
 
@@ -87,8 +88,8 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             .use { session =>
                 for {
                     game <- new GameRepo[String](session).create(Generators.genGame(GameType.Plain).sample.get)
-                    _ <- TournamentFixtures.model(session, game, "world-cup")
-                    _ <- TournamentFixtures.model(session, game, "ladder")
+                    _ <- TournamentFixtures.model(session = session, game = game, key = "world-cup")
+                    _ <- TournamentFixtures.model(session = session, game = game, key = "ladder")
                     repo = new TournamentModelRepo(session)
                     offered <- repo.listOffered(game.gameId)
                     _ <- repo.withdraw(game.gameId, TournamentModelId("ladder"))
@@ -177,24 +178,28 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
                   Generators.genCharacter(f.game.gameId, Some(f.other.playerId)).sample.get
                 )
                 first <- repo.create(
-                  f.game.gameId,
-                  GameType.Character,
-                  t.tournamentId,
-                  f.owner.playerId,
-                  Some(own.characterId),
-                  1500
+                  game = f.game.gameId,
+                  gt = GameType.Character,
+                  tournament = t.tournamentId,
+                  player = f.owner.playerId,
+                  character = Some(own.characterId),
+                  rating = 1500
                 )
                 second <- repo.create(
-                  f.game.gameId,
-                  GameType.Character,
-                  t.tournamentId,
-                  f.other.playerId,
-                  Some(character.characterId),
-                  1700
+                  game = f.game.gameId,
+                  gt = GameType.Character,
+                  tournament = t.tournamentId,
+                  player = f.other.playerId,
+                  character = Some(character.characterId),
+                  rating = 1700
                 )
-                _ <- repo.setWithdrawnAt(f.game.gameId, first.entrantId, Some(Instant.parse("2026-10-11T00:00:00Z")))
+                _ <- repo.setWithdrawnAt(
+                  game = f.game.gameId,
+                  id = first.entrantId,
+                  at = Some(Instant.parse("2026-10-11T00:00:00Z"))
+                )
                 withdrawn <- repo.readForUpdate(f.game.gameId, first.entrantId)
-                _ <- repo.setWithdrawnAt(f.game.gameId, first.entrantId, None)
+                _ <- repo.setWithdrawnAt(game = f.game.gameId, id = first.entrantId, at = None)
                 listed <- repo.list(f.game.gameId, t.tournamentId)
                 back <- repo.readForUpdate(f.game.gameId, first.entrantId)
                 players <- repo.players(f.game.gameId, t.tournamentId)
@@ -219,12 +224,12 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             for {
                 f <- fixture(session)
                 t <- made(session, f)
-                _ <- repo.invite(f.game.gameId, t.tournamentId, f.other.playerId)
-                _ <- repo.invite(f.game.gameId, t.tournamentId, f.other.playerId)
-                invited <- repo.isInvited(f.game.gameId, t.tournamentId, f.other.playerId)
+                _ <- repo.invite(game = f.game.gameId, tournament = t.tournamentId, player = f.other.playerId)
+                _ <- repo.invite(game = f.game.gameId, tournament = t.tournamentId, player = f.other.playerId)
+                invited <- repo.isInvited(game = f.game.gameId, tournament = t.tournamentId, player = f.other.playerId)
                 listed <- repo.list(f.game.gameId, t.tournamentId)
-                _ <- repo.revoke(f.game.gameId, t.tournamentId, f.other.playerId)
-                after <- repo.isInvited(f.game.gameId, t.tournamentId, f.other.playerId)
+                _ <- repo.revoke(game = f.game.gameId, tournament = t.tournamentId, player = f.other.playerId)
+                after <- repo.isInvited(game = f.game.gameId, tournament = t.tournamentId, player = f.other.playerId)
             } yield (invited, listed, after)
         }
         assert(invited)
@@ -237,7 +242,11 @@ class TournamentRepoSpec extends FunSuite with QuietTests {
             for {
                 f <- fixture(session)
                 t <- made(session, f)
-                _ <- new InvitationRepo(session).invite(f.game.gameId, t.tournamentId, f.other.playerId)
+                _ <- new InvitationRepo(session).invite(
+                  game = f.game.gameId,
+                  tournament = t.tournamentId,
+                  player = f.other.playerId
+                )
                 nobody <- new PlayerRepo(session).create(Generators.genPlayer.sample.get)
                 mine <- new TournamentRepo(session).listForPlayer(f.owner.playerId)
                 theirs <- new TournamentRepo(session).listForPlayer(f.other.playerId)

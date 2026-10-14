@@ -20,13 +20,19 @@ object TournamentFixtures {
       * each other.
       */
     def model(session: Session[IO], game: Game, key: String): IO[TournamentModel] =
-        session.transaction.use(_ => found(session, game, key))
+        session.transaction.use(_ => found(session = session, game = game, key = key))
 
     private def found(session: Session[IO], game: Game, key: String): IO[TournamentModel] = {
         val repo = new TournamentModelRepo(session)
         val standard = StandardModels.find(key).getOrElse(throw new IllegalArgumentException(s"no standard model $key"))
         val playable =
-            Validation.designProblems(standard.design, TournamentGame.of(game), standard.poolSize).forall(_.isWarning)
+            Validation
+                .designProblems(
+                  design = standard.design,
+                  game = TournamentGame.of(game),
+                  defaultPoolSize = standard.poolSize
+                )
+                .forall(_.isWarning)
         if (playable)
             for {
                 _ <- TournamentModelService.lockSync(session)
@@ -37,12 +43,12 @@ object TournamentFixtures {
             } yield model
         else {
             val roundRobin = TournamentModel(
-              TournamentModelId(s"test-round-robin-${java.util.UUID.randomUUID()}"),
-              1,
-              "Round robin",
-              "",
-              None,
-              None,
+              tournamentModelId = TournamentModelId(s"test-round-robin-${java.util.UUID.randomUUID()}"),
+              version = 1,
+              name = "Round robin",
+              description = "",
+              classification = None,
+              poolSize = None,
               hasLateEntries = false,
               TournamentDesign(List(StageDesign(hasBrackets = false, demote = None)))
             )
@@ -60,24 +66,24 @@ object TournamentFixtures {
         key: String = "single-elimination"
     ): IO[Tournament] =
         // In one transaction, for the deferred keys between a tournament and its stages.
-        session.transaction.use(_ => made(session, game, owner, key))
+        session.transaction.use(_ => made(session = session, game = game, owner = owner, key = key))
 
     private def made(session: Session[IO], game: Game, owner: PlayerId, key: String): IO[Tournament] =
         for {
-            m <- found(session, game, key)
+            m <- found(session = session, game = game, key = key)
             t <- new TournamentRepo(session).create(
               Tournament(
-                game.gameId,
-                TournamentId.unassigned,
-                "tournament",
-                "",
-                owner,
-                m.tournamentModelId,
-                m.poolSize.getOrElse(game.poolSeats),
-                TournamentSettings()
+                gameId = game.gameId,
+                tournamentId = TournamentId.unassigned,
+                name = "tournament",
+                description = "",
+                owner = owner,
+                tournamentModelId = m.tournamentModelId,
+                defaultPoolSize = m.poolSize.getOrElse(game.poolSeats),
+                settings = TournamentSettings()
               )
             )
-            _ <- new StageRepo(session).copy(game.gameId, t.tournamentId, m.design)
+            _ <- new StageRepo(session).copy(game = game.gameId, tournament = t.tournamentId, design = m.design)
             _ <- new PoolRepo(session).createRoot(game.gameId, t.tournamentId)
         } yield t
 
@@ -135,7 +141,14 @@ object TournamentFixtures {
         session.transaction.use { _ =>
             for {
                 entrant <- new com.vivi.matchmaker.persistence.EntrantRepo(session)
-                    .create(t.gameId, GameType.Character, t.tournamentId, player, Some(character), EloRating.initial)
+                    .create(
+                      game = t.gameId,
+                      gt = GameType.Character,
+                      tournament = t.tournamentId,
+                      player = player,
+                      character = Some(character),
+                      rating = EloRating.initial
+                    )
                 participant <- session.unique(
                   sql"""INSERT INTO participant (game_id, match_id, game_type, player_id, is_pending, completed_at, due,
                             game_role_id, elo_start, tournament_id, entrant_id, is_notified_of_match_started, is_notified_of_turn_taken,

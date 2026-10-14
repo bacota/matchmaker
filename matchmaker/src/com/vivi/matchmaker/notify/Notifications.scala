@@ -62,7 +62,14 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       *   [[com.vivi.matchmaker.model.NotificationPolicy.choose]] picking the best kind the owner has not refused.
       */
     def entered(session: Session[IO], tournament: Tournament, actor: Player, wasInvited: Boolean = false): IO[Unit] =
-        entriesChanged(session, tournament, actor, joined = true, except = None, wasInvited = wasInvited)
+        entriesChanged(
+          session = session,
+          tournament = tournament,
+          actor = actor,
+          joined = true,
+          except = None,
+          wasInvited = wasInvited
+        )
 
     /** Somebody's entry has been withdrawn. Told to the same audience, minus whoever did it.
       *
@@ -73,7 +80,13 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       *   entry, and should no more be told about that than about their own.
       */
     def withdrawn(session: Session[IO], tournament: Tournament, entrant: Player, removedBy: Player): IO[Unit] =
-        entriesChanged(session, tournament, entrant, joined = false, except = Some(removedBy.playerId))
+        entriesChanged(
+          session = session,
+          tournament = tournament,
+          actor = entrant,
+          joined = false,
+          except = Some(removedBy.playerId)
+        )
 
     // -------------------------------------------------------------------------
     // Things that happen to an invitation
@@ -86,7 +99,9 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * and may never come to anything.
       */
     def invitationMade(session: Session[IO], tournament: Tournament, invited: Player): IO[Unit] =
-        aboutInvitation(session, tournament, NotificationType.InvitationReceived)(owner => (invited, owner.nickname))
+        aboutInvitation(session = session, tournament = tournament, kind = NotificationType.InvitationReceived)(owner =>
+            (invited, owner.nickname)
+        )
 
     /** An invitation has been turned down. Told to the owner.
       *
@@ -95,7 +110,9 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * on somebody would otherwise find out by going to look.
       */
     def invitationRejected(session: Session[IO], tournament: Tournament, rejector: Player): IO[Unit] =
-        aboutInvitation(session, tournament, NotificationType.InvitationRejected)(owner => (owner, rejector.nickname))
+        aboutInvitation(session = session, tournament = tournament, kind = NotificationType.InvitationRejected)(owner =>
+            (owner, rejector.nickname)
+        )
 
     /* The invitation mails, which differ only in who is written to and whose name the sentence
      * carries. `addressee` answers both from the owner: the invitee for an invitation made, the owner
@@ -124,10 +141,25 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                             mail <- owner.traverse { offeredBy =>
                                 val (recipient, subject) = addressee(offeredBy)
                                 notificationRepo.levelsForPlayer(recipient.playerId, tournament.gameId).map { levels =>
-                                    val news = newsOf(notice, tournament, subject, joined = true, offeredBy, room)
+                                    val news = newsOf(
+                                      notice = notice,
+                                      tournament = tournament,
+                                      actor = subject,
+                                      joined = true,
+                                      offeredBy,
+                                      room
+                                    )
                                     Option
                                         .when(NotificationPolicy.isWanted(kind, levels.apply))(())
-                                        .flatMap(_ => ChallengeMail.compose(from, uiBaseUrl, recipient, kind, news))
+                                        .flatMap(_ =>
+                                            ChallengeMail.compose(
+                                              sender = from,
+                                              uiBaseUrl = uiBaseUrl,
+                                              recipient = recipient,
+                                              kind = kind,
+                                              news = news
+                                            )
+                                        )
                                 }
                             }
                         } yield mail.flatten.toSeq
@@ -175,7 +207,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * match begins when its round has settled its roles, so everyone in it is owed this mail.
       */
     def matchStarted(session: Session[IO], started: Match): IO[Unit] =
-        aboutMatch(session, started, s"start of match ${started.matchId.value}") {
+        aboutMatch(session = session, played = started, about = s"start of match ${started.matchId.value}") {
             (from, uiBaseUrl, notice, seats, participants) =>
                 val byId = participants.map(participant => participant.participantId -> participant).toMap
 
@@ -185,11 +217,11 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                         .choose(Seq(NotificationType.MatchStarted), seat.preferences.apply)
                         .flatMap { kind =>
                             MatchMail.compose(
-                              from,
-                              uiBaseUrl,
-                              seat.player,
-                              kind,
-                              MatchNews(
+                              sender = from,
+                              uiBaseUrl = uiBaseUrl,
+                              recipient = seat.player,
+                              kind = kind,
+                              news = MatchNews(
                                 gameName = notice.name,
                                 description = started.description,
                                 due = participant.flatMap(_.due),
@@ -218,7 +250,7 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
       * what the rest of matchmaker answers with — and a game in which the mover moves again is then not a special case.
       */
     def turnTaken(session: Session[IO], played: Match, moved: ParticipantId): IO[Unit] =
-        aboutMatch(session, played, s"move in match ${played.matchId.value}") {
+        aboutMatch(session = session, played = played, about = s"move in match ${played.matchId.value}") {
             (from, uiBaseUrl, notice, seats, participants) =>
                 val mover = seats.find(_.participantId == moved).map(_.player.nickname)
                 val pending = participants.filter(_.isPending).map(_.participantId).toSet
@@ -234,11 +266,11 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                         .choose(kinds, seat.preferences.apply)
                         .flatMap { kind =>
                             MatchMail.compose(
-                              from,
-                              uiBaseUrl,
-                              seat.player,
-                              kind,
-                              MatchNews(
+                              sender = from,
+                              uiBaseUrl = uiBaseUrl,
+                              recipient = seat.player,
+                              kind = kind,
+                              news = MatchNews(
                                 gameName = notice.name,
                                 description = played.description,
                                 mover = mover,
@@ -271,24 +303,25 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
         ending: MatchEnding,
         except: Option[PlayerId] = None
     ): IO[Unit] =
-        aboutMatch(session, played, s"end of match ${played.matchId.value}") { (from, uiBaseUrl, notice, seats, _) =>
-            seats.filterNot(seat => except.contains(seat.player.playerId)).flatMap { seat =>
-                NotificationPolicy
-                    .choose(Seq(NotificationType.MatchEnded), seat.preferences.apply)
-                    .flatMap { kind =>
-                        MatchMail.compose(
-                          from,
-                          uiBaseUrl,
-                          seat.player,
-                          kind,
-                          MatchNews(
-                            gameName = notice.name,
-                            description = played.description,
-                            ending = Some(ending)
-                          )
-                        )
-                    }
-            }
+        aboutMatch(session = session, played = played, about = s"end of match ${played.matchId.value}") {
+            (from, uiBaseUrl, notice, seats, _) =>
+                seats.filterNot(seat => except.contains(seat.player.playerId)).flatMap { seat =>
+                    NotificationPolicy
+                        .choose(Seq(NotificationType.MatchEnded), seat.preferences.apply)
+                        .flatMap { kind =>
+                            MatchMail.compose(
+                              sender = from,
+                              uiBaseUrl = uiBaseUrl,
+                              recipient = seat.player,
+                              kind = kind,
+                              news = MatchNews(
+                                gameName = notice.name,
+                                description = played.description,
+                                ending = Some(ending)
+                              )
+                            )
+                        }
+                }
         }
 
     // -------------------------------------------------------------------------
@@ -318,11 +351,15 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                             .when(NotificationPolicy.isWanted(NotificationType.TournamentRoundDone, levels.apply))(())
                             .flatMap(_ =>
                                 TournamentMail.compose(
-                                  from,
-                                  uiBaseUrl,
-                                  recipient,
-                                  NotificationType.TournamentRoundDone,
-                                  TournamentNews(notice.name, tournament.name, round)
+                                  sender = from,
+                                  uiBaseUrl = uiBaseUrl,
+                                  recipient = recipient,
+                                  kind = NotificationType.TournamentRoundDone,
+                                  news = TournamentNews(
+                                    gameName = notice.name,
+                                    tournamentName = tournament.name,
+                                    round = round
+                                  )
                                 )
                             )
                     }
@@ -367,7 +404,14 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                         audience <- notificationRepo.levelsForTournament(tournament.gameId, tournament.tournamentId)
                         owner <- new PlayerRepo(session).read(tournament.owner)
                     } yield owner.toSeq.flatMap { offeredBy =>
-                        val news = newsOf(notice, tournament, actor.nickname, joined, offeredBy, room)
+                        val news = newsOf(
+                          notice = notice,
+                          tournament = tournament,
+                          actor = actor.nickname,
+                          joined = joined,
+                          owner = offeredBy,
+                          room = room
+                        )
                         // Full now, and waiting on its owner: one that starts itself is starting, not waiting.
                         val ready = joined && room.contains(0) && !tournament.settings.isAutoStarted
                         audience
@@ -378,7 +422,11 @@ class Notifications(notifier: Notifier, mail: MailSettings) {
                             .flatMap(recipient =>
                                 NotificationPolicy
                                     .choose(
-                                      kindsFor(recipient.player.playerId == tournament.owner, ready, wasInvited),
+                                      kindsFor(
+                                        isOwner = recipient.player.playerId == tournament.owner,
+                                        ready = ready,
+                                        wasInvited = wasInvited
+                                      ),
                                       recipient.levels.apply
                                     )
                                     .flatMap(ChallengeMail.compose(from, uiBaseUrl, recipient.player, _, news))

@@ -29,10 +29,10 @@ class StoredMatchSpec extends FunSuite {
         val store = InMemoryMatchStore[RpsMatch]()
         val engine =
             Engine(
-              store,
-              RecordingMatchmaker(),
-              "http://engine.test",
-              () => Instant.parse("2026-01-01T00:00:00Z").plusSeconds(tick.getAndIncrement())
+              store = store,
+              matchmaker = RecordingMatchmaker(),
+              baseUrl = "http://engine.test",
+              now = () => Instant.parse("2026-01-01T00:00:00Z").plusSeconds(tick.getAndIncrement())
             )
         engine.createGame(
           Protocol.CreateGameRequest(
@@ -43,14 +43,26 @@ class StoredMatchSpec extends FunSuite {
             settings = "{}",
             timeLimitSeconds = Some(600),
             players = List(
-              Protocol.EnginePlayer("sub-alice", 11L, Some("One"), None, None),
-              Protocol.EnginePlayer("sub-bob", 22L, Some("Two"), None, None)
+              Protocol.EnginePlayer(
+                cognitoId = "sub-alice",
+                participantId = 11L,
+                role = Some("One"),
+                characterId = None,
+                characterState = None
+              ),
+              Protocol.EnginePlayer(
+                cognitoId = "sub-bob",
+                participantId = 22L,
+                role = Some("Two"),
+                characterId = None,
+                characterState = None
+              )
             ),
             moveCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/moves"),
             resultsCallbackUrl = Some("http://matchmaker.test/games/1/matches/m-1/results")
           )
         )
-        engine.move("m-1", "sub-alice", Shape.Rock)
+        engine.move(matchId = "m-1", cognitoId = "sub-alice", shape = Shape.Rock)
         store.get("m-1").get
     }
 

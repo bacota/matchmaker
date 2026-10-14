@@ -18,36 +18,52 @@ class FighterRoutesSpec extends FunSuite with QuietTests {
         recorder: RecordingMatchmaker = RecordingMatchmaker(),
         url: Option[String] = Some(matchmakerUrl)
     ) = {
-        val engine = Engine(InMemoryMatchStore[Bout](), recorder, "http://engine.test", matchmakerUrl = url)
-        (Routes(engine, PlayAuth.Trusted, None), recorder)
+        val engine = Engine(
+          store = InMemoryMatchStore[Bout](),
+          matchmaker = recorder,
+          baseUrl = "http://engine.test",
+          matchmakerUrl = url
+        )
+        (Routes(engine = engine, playAuth = PlayAuth.Trusted, matchmakerKey = None), recorder)
     }
 
     private def build(routes: Routes, body: Protocol.BuildRequest, as: Option[String] = Some("sub-alice")) =
-        routes(EngineRequest("POST", "/fighters", as.map("as" -> _).toMap, write(body)))
+        routes(EngineRequest(method = "POST", path = "/fighters", query = as.map("as" -> _).toMap, body = write(body)))
 
-    private val slugger = Protocol.BuildRequest("Iron Mike", "hits hard", 8, 4, 3, 5, 5)
+    private val slugger = Protocol.BuildRequest(
+      name = "Iron Mike",
+      description = "hits hard",
+      strength = 8,
+      speed = 4,
+      agility = 3,
+      workrate = 5,
+      chin = 5
+    )
 
     test("a fighter built by a signed-in player is registered with matchmaker as theirs, and answered with its id") {
         val (routes, recorder) = fixture()
-        val response = build(routes, slugger)
+        val response = build(routes = routes, body = slugger)
 
         assertEquals(response.status, 201)
         val built = read[Protocol.BuiltFighter](response.body)
         assertEquals(built.name, "Iron Mike")
-        assertEquals(built.fighter, Protocol.FighterView(8, 4, 3, 5, 5))
+        assertEquals(built.fighter, Protocol.FighterView(strength = 8, speed = 4, agility = 3, workrate = 5, chin = 5))
 
         val List((id, registered)) = recorder.registrations: @unchecked
         assertEquals(built.characterId, id)
         assertEquals(registered.ownerExternalId, "sub-alice")
         assertEquals((registered.name, registered.description), ("Iron Mike", "hits hard"))
-        assertEquals(Fighter.fromState(registered.state), Some(Fighter(8, 4, 3, 5, 5)))
+        assertEquals(
+          Fighter.fromState(registered.state),
+          Some(Fighter(strength = 8, speed = 4, agility = 3, workrate = 5, chin = 5))
+        )
     }
 
     // The point of the state: matchmaker hands it back when it seats the character, and a bout
     // must accept what the build page made.
     test("the state a fighter is registered with is a fighter a bout will seat") {
         val (routes, recorder) = fixture()
-        build(routes, slugger)
+        build(routes = routes, body = slugger)
         val List((_, registered)) = recorder.registrations: @unchecked
         val state = registered.state
         val bout = Bout.create(
@@ -59,41 +75,60 @@ class FighterRoutesSpec extends FunSuite with QuietTests {
             settings = "{}",
             timeLimitSeconds = None,
             players = List(
-              Protocol.EnginePlayer("sub-alice", 1L, Some("Red"), Some(1L), Some(state)),
+              Protocol.EnginePlayer(
+                cognitoId = "sub-alice",
+                participantId = 1L,
+                role = Some("Red"),
+                characterId = Some(1L),
+                characterState = Some(state)
+              ),
               Protocol
-                  .EnginePlayer("sub-bob", 2L, Some("Blue"), Some(2L), Some(Fighter.toState(Fighter(5, 5, 5, 5, 5))))
+                  .EnginePlayer(
+                    cognitoId = "sub-bob",
+                    participantId = 2L,
+                    role = Some("Blue"),
+                    characterId = Some(2L),
+                    characterState =
+                        Some(Fighter.toState(Fighter(strength = 5, speed = 5, agility = 5, workrate = 5, chin = 5)))
+                  )
             ),
             moveCallbackUrl = None,
             resultsCallbackUrl = None
           ),
           java.time.Instant.EPOCH
         )
-        assertEquals(bout.map(_.corners.head.fighter), Right(Some(Fighter(8, 4, 3, 5, 5))))
+        assertEquals(
+          bout.map(_.corners.head.fighter),
+          Right(Some(Fighter(strength = 8, speed = 4, agility = 3, workrate = 5, chin = 5)))
+        )
     }
 
     test("a fighter that breaks the build rules is refused and nothing is registered") {
         val (routes, recorder) = fixture()
-        assertEquals(build(routes, slugger.copy(chin = 6)).status, 400) // 26 points
-        assertEquals(build(routes, slugger.copy(strength = 11, speed = 1)).status, 400) // over the maximum
+        assertEquals(build(routes = routes, body = slugger.copy(chin = 6)).status, 400) // 26 points
+        assertEquals(
+          build(routes = routes, body = slugger.copy(strength = 11, speed = 1)).status,
+          400
+        ) // over the maximum
         assertEquals(recorder.registrations, Nil)
     }
 
     test("a fighter needs a name") {
         val (routes, recorder) = fixture()
-        val response = build(routes, slugger.copy(name = "   "))
+        val response = build(routes = routes, body = slugger.copy(name = "   "))
         assertEquals(response.status, 400)
         assertEquals(recorder.registrations, Nil)
     }
 
     test("nobody signed in cannot build a fighter") {
         val (routes, recorder) = fixture()
-        assertEquals(build(routes, slugger, as = None).status, 401)
+        assertEquals(build(routes = routes, body = slugger, as = None).status, 401)
         assertEquals(recorder.registrations, Nil)
     }
 
     test("an engine with no matchmaker to register with refuses the build rather than making a fighter nobody has") {
         val (routes, recorder) = fixture(url = None)
-        assertEquals(build(routes, slugger).status, 502)
+        assertEquals(build(routes = routes, body = slugger).status, 502)
         assertEquals(recorder.registrations, Nil)
     }
 
@@ -101,7 +136,7 @@ class FighterRoutesSpec extends FunSuite with QuietTests {
         val recorder = RecordingMatchmaker()
         recorder.isFailingRegistrations = true
         val (routes, _) = fixture(recorder)
-        assertEquals(build(routes, slugger).status, 502)
+        assertEquals(build(routes = routes, body = slugger).status, 502)
     }
 
     test("a player matchmaker does not know is told to register with matchmaker first") {
@@ -110,7 +145,7 @@ class FighterRoutesSpec extends FunSuite with QuietTests {
                 throw MatchmakerRefusal(404, s"no player with externalId '${request.ownerExternalId}'")
         }
         val (routes, _) = fixture(unknown)
-        val response = build(routes, slugger)
+        val response = build(routes = routes, body = slugger)
         assertEquals(response.status, 400)
         assert(response.body.contains("sign in to matchmaker"), response.body)
     }
@@ -119,7 +154,7 @@ class FighterRoutesSpec extends FunSuite with QuietTests {
       "the rules page is served to anyone, with the numbers the engine plays by, and the fighters page has them in a dialog"
     ) {
         val (routes, _) = fixture()
-        val page = routes(EngineRequest("GET", "/rules"))
+        val page = routes(EngineRequest(method = "GET", path = "/rules"))
         assertEquals(page.status, 200)
         assert(page.contentType.startsWith("text/html"), page.contentType)
         assert(page.body.contains("How to play boxing"))
@@ -127,7 +162,7 @@ class FighterRoutesSpec extends FunSuite with QuietTests {
         assert(page.body.contains(s"between <strong>${Fighter.Min} and ${Fighter.Max}</strong>"))
         assert(page.body.contains(Fighter.Looks("speed")._1))
         // And the fighters page has them in a dialog, opened from under the game's name.
-        val fighters = routes(EngineRequest("GET", "/fighters")).body
+        val fighters = routes(EngineRequest(method = "GET", path = "/fighters")).body
         assert(fighters.contains("""<dialog id="rules""""), fighters.take(200))
         assert(fighters.contains("""id="rules-open""""))
         assert(fighters.contains(s"${Fighter.Budget} points"))
@@ -135,63 +170,84 @@ class FighterRoutesSpec extends FunSuite with QuietTests {
 
     test("the fighters page is served to anyone, with the rules a fighter is built to") {
         val (routes, _) = fixture()
-        val page = routes(EngineRequest("GET", "/fighters"))
+        val page = routes(EngineRequest(method = "GET", path = "/fighters"))
         assertEquals(page.status, 200)
         assert(page.body.contains("Spread 25 points"), page.body.take(200))
         assert(page.body.contains("""<label for="f-name">"""))
     }
 
     private def mine(routes: Routes, as: String) =
-        routes(EngineRequest("GET", "/fighters/mine", Map("as" -> as)))
+        routes(EngineRequest(method = "GET", path = "/fighters/mine", query = Map("as" -> as)))
 
     private def editing(routes: Routes, id: Long, name: String, description: String, as: String = "sub-alice") =
         routes(
-          EngineRequest("PUT", s"/fighters/$id", Map("as" -> as), write(Protocol.EditRequest(name, description)))
+          EngineRequest(
+            method = "PUT",
+            path = s"/fighters/$id",
+            query = Map("as" -> as),
+            body = write(Protocol.EditRequest(name, description))
+          )
         )
 
     private def giving(routes: Routes, id: Long, to: String, as: String = "sub-alice") =
-        routes(EngineRequest("PUT", s"/fighters/$id/owner", Map("as" -> as), write(Protocol.GiveRequest(to))))
+        routes(
+          EngineRequest(
+            method = "PUT",
+            path = s"/fighters/$id/owner",
+            query = Map("as" -> as),
+            body = write(Protocol.GiveRequest(to))
+          )
+        )
 
     test("a player's fighters are listed from matchmaker, theirs only, with their characteristics") {
         val (routes, _) = fixture()
-        build(routes, slugger)
-        build(routes, slugger.copy(name = "Bob's"), as = Some("sub-bob"))
+        build(routes = routes, body = slugger)
+        build(routes = routes, body = slugger.copy(name = "Bob's"), as = Some("sub-bob"))
 
         val response = mine(routes, "sub-alice")
         assertEquals(response.status, 200)
         val List(only) = read[List[Protocol.MyFighter]](response.body): @unchecked
         assertEquals((only.name, only.description), ("Iron Mike", "hits hard"))
-        assertEquals(only.fighter, Some(Protocol.FighterView(8, 4, 3, 5, 5)))
+        assertEquals(
+          only.fighter,
+          Some(Protocol.FighterView(strength = 8, speed = 4, agility = 3, workrate = 5, chin = 5))
+        )
     }
 
     test("a fighter edited by its owner has its name and description changed in matchmaker, and listed so") {
         val (routes, _) = fixture()
-        val id = read[Protocol.BuiltFighter](build(routes, slugger).body).characterId
+        val id = read[Protocol.BuiltFighter](build(routes = routes, body = slugger).body).characterId
 
-        val response = editing(routes, id, "  Kid Dynamite ", " fast hands ")
+        val response = editing(routes = routes, id = id, name = "  Kid Dynamite ", description = " fast hands ")
         assertEquals(response.status, 200)
-        assertEquals(read[Protocol.Edited](response.body), Protocol.Edited(id, "Kid Dynamite", "fast hands"))
+        assertEquals(
+          read[Protocol.Edited](response.body),
+          Protocol.Edited(characterId = id, name = "Kid Dynamite", description = "fast hands")
+        )
         val List(listed) = read[List[Protocol.MyFighter]](mine(routes, "sub-alice").body): @unchecked
         assertEquals((listed.name, listed.description), ("Kid Dynamite", "fast hands"))
-        assertEquals(listed.fighter, Some(Protocol.FighterView(8, 4, 3, 5, 5)))
+        assertEquals(
+          listed.fighter,
+          Some(Protocol.FighterView(strength = 8, speed = 4, agility = 3, workrate = 5, chin = 5))
+        )
     }
 
     test("another player's fighter cannot be edited or given away, and is answered as though it were not there") {
         val (routes, recorder) = fixture()
         recorder.players = Map("carol" -> "sub-carol")
-        val id = read[Protocol.BuiltFighter](build(routes, slugger).body).characterId
+        val id = read[Protocol.BuiltFighter](build(routes = routes, body = slugger).body).characterId
 
-        assertEquals(editing(routes, id, "Stolen", "", as = "sub-bob").status, 404)
-        assertEquals(giving(routes, id, "carol", as = "sub-bob").status, 404)
+        assertEquals(editing(routes = routes, id = id, name = "Stolen", description = "", as = "sub-bob").status, 404)
+        assertEquals(giving(routes = routes, id = id, to = "carol", as = "sub-bob").status, 404)
         assertEquals(read[List[Protocol.MyFighter]](mine(routes, "sub-alice").body).map(_.name), List("Iron Mike"))
     }
 
     test("a fighter given away by its owner belongs to the player with that nickname") {
         val (routes, recorder) = fixture()
         recorder.players = Map("bob" -> "sub-bob")
-        val id = read[Protocol.BuiltFighter](build(routes, slugger).body).characterId
+        val id = read[Protocol.BuiltFighter](build(routes = routes, body = slugger).body).characterId
 
-        val response = giving(routes, id, " bob ")
+        val response = giving(routes = routes, id = id, to = " bob ")
         assertEquals(response.status, 200)
         assertEquals(read[Protocol.Given](response.body), Protocol.Given(id, "bob"))
         assertEquals(read[List[Protocol.MyFighter]](mine(routes, "sub-alice").body), Nil)
@@ -200,22 +256,30 @@ class FighterRoutesSpec extends FunSuite with QuietTests {
 
     test("giving a fighter to a nickname nobody has is refused with matchmaker's reason") {
         val (routes, _) = fixture()
-        val id = read[Protocol.BuiltFighter](build(routes, slugger).body).characterId
+        val id = read[Protocol.BuiltFighter](build(routes = routes, body = slugger).body).characterId
 
-        val response = giving(routes, id, "nobody")
+        val response = giving(routes = routes, id = id, to = "nobody")
         assertEquals(response.status, 400)
         assert(response.body.contains("no player is called 'nobody'"), response.body)
     }
 
     test("an edit needs a name and a fighter id, a gift needs somebody, and nobody signed in can do either") {
         val (routes, recorder) = fixture()
-        val id = read[Protocol.BuiltFighter](build(routes, slugger).body).characterId
+        val id = read[Protocol.BuiltFighter](build(routes = routes, body = slugger).body).characterId
         val body = write(Protocol.EditRequest("x", ""))
 
-        assertEquals(editing(routes, id, "   ", "").status, 400)
-        assertEquals(giving(routes, id, "  ").status, 400)
-        assertEquals(routes(EngineRequest("PUT", "/fighters/abc", Map("as" -> "sub-alice"), body)).status, 400)
-        assertEquals(routes(EngineRequest("PUT", s"/fighters/$id", Map.empty, body)).status, 401)
+        assertEquals(editing(routes = routes, id = id, name = "   ", description = "").status, 400)
+        assertEquals(giving(routes = routes, id = id, to = "  ").status, 400)
+        assertEquals(
+          routes(
+            EngineRequest(method = "PUT", path = "/fighters/abc", query = Map("as" -> "sub-alice"), body = body)
+          ).status,
+          400
+        )
+        assertEquals(
+          routes(EngineRequest(method = "PUT", path = s"/fighters/$id", query = Map.empty, body = body)).status,
+          401
+        )
         assertEquals(recorder.listCharacters(matchmakerUrl, "sub-alice").map(_.name), List("Iron Mike"))
     }
 }

@@ -7,10 +7,10 @@ import java.time.{Duration, Instant}
   */
 /** `period` is the window as a step back or forward names it: "Previous week", "Next 24 hours". */
 enum CompletedFrame(val code: String, val label: String, val period: String, val days: Long) {
-    case Day extends CompletedFrame("day", "Last 24 hours", "24 hours", 1)
-    case Week extends CompletedFrame("week", "Last week", "week", 7)
-    case Month extends CompletedFrame("month", "Last month", "month", 30)
-    case Year extends CompletedFrame("year", "Last year", "year", 365)
+    case Day extends CompletedFrame(code = "day", label = "Last 24 hours", period = "24 hours", days = 1)
+    case Week extends CompletedFrame(code = "week", label = "Last week", period = "week", days = 7)
+    case Month extends CompletedFrame(code = "month", label = "Last month", period = "month", days = 30)
+    case Year extends CompletedFrame(code = "year", label = "Last year", period = "year", days = 365)
 
     def span: Duration = Duration.ofDays(days)
 }

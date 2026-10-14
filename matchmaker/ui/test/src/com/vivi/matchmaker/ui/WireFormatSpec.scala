@@ -69,15 +69,24 @@ class WireFormatSpec extends FunSuite {
           description = "the usual",
           url = "https://example.com/chess",
           isActive = true,
-          roles = Seq(GameRole(GameRoleId(1), GameId(7), "white", roleType = RoleType.Required, displayName = "white")),
+          roles = Seq(
+            GameRole(
+              gameRoleId = GameRoleId(1),
+              gameId = GameId(7),
+              name = "white",
+              roleType = RoleType.Required,
+              displayName = "white"
+            )
+          ),
           parameters = Seq(
             GameParameter(
-              GameId(7),
-              GameParameterId(2),
-              "clock",
-              Some("5+3"),
-              Seq(GameParameterValue(GameId(7), GameParameterId(2), "10+0")),
-              "Clock"
+              gameId = GameId(7),
+              gameParameterId = GameParameterId(2),
+              name = "clock",
+              defaultValue = Some("5+3"),
+              values =
+                  Seq(GameParameterValue(gameId = GameId(7), gameParameterId = GameParameterId(2), value = "10+0")),
+              displayName = "Clock"
             )
           ),
           externalId = "secret"
@@ -170,33 +179,41 @@ class WireFormatSpec extends FunSuite {
 
     test("a challenge summary round-trips its tournament, entries and invitations") {
         val summary = ChallengeSummary(
-          TournamentSummary(
-            Tournament(
-              GameId(1),
-              TournamentId(2),
-              "ada's challenge",
-              "",
-              PlayerId(3),
-              TournamentModelId("challenge"),
-              2,
-              TournamentSettings(
+          summary = TournamentSummary(
+            tournament = Tournament(
+              gameId = GameId(1),
+              tournamentId = TournamentId(2),
+              name = "ada's challenge",
+              description = "",
+              owner = PlayerId(3),
+              tournamentModelId = TournamentModelId("challenge"),
+              defaultPoolSize = 2,
+              settings = TournamentSettings(
                 roundDuration = Some(Duration.ofHours(1)),
                 maxEntrants = Some(2),
                 hasRoleChoice = true
               ),
-              TournamentStatus.Open
+              status = TournamentStatus.Open
             ),
-            "Chess",
-            "ada",
-            1,
+            gameName = "Chess",
+            ownerNickname = "ada",
+            entrants = 1,
             isOwner = true,
             isEntered = true,
             isInvited = false
           ),
-          List(
-            Entrant(GameId(1), TournamentId(2), EntrantId(4), Some(PlayerId(3)), None, 1500, Instant.ofEpochSecond(100))
+          entries = List(
+            Entrant(
+              gameId = GameId(1),
+              tournamentId = TournamentId(2),
+              entrantId = EntrantId(4),
+              playerId = Some(PlayerId(3)),
+              characterId = None,
+              ratingAtEntry = 1500,
+              enteredAt = Instant.ofEpochSecond(100)
+            )
           ),
-          List(PlayerName(PlayerId(5), "grace"))
+          invited = List(PlayerName(PlayerId(5), "grace"))
         )
         assertEquals(read[Seq[ChallengeSummary]](write(Seq(summary))), Seq(summary))
     }
@@ -220,13 +237,13 @@ class FormatSpec extends FunSuite {
 
     test("a result row's Elo round-trips, and its change is absent for a match that was not rated") {
         val rated = Json.ParticipantResultView(
-          GameId(1),
-          MatchId(1),
-          ParticipantId(2),
-          "alice",
-          "First",
-          Some(1),
-          Map.empty,
+          gameId = GameId(1),
+          matchId = MatchId(1),
+          participantId = ParticipantId(2),
+          nickname = "alice",
+          roleName = "First",
+          rank = Some(1),
+          scores = Map.empty,
           isWinner = true,
           eloStart = 1500,
           eloDelta = Some(16)
